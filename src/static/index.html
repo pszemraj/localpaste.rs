@@ -5,6 +5,76 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LocalPaste</title>
     <link rel="stylesheet" href="/css/style.css">
+    <style>
+    /* Additional styles for better UX */
+    .folder-drop-zone {
+        min-height: 30px;
+        border: 2px dashed transparent;
+        transition: all 0.2s;
+        padding: 4px;
+        margin: 2px 0;
+    }
+    
+    .folder-drop-zone.drag-over {
+        border-color: var(--accent);
+        background: rgba(88, 166, 255, 0.1);
+    }
+    
+    .paste-item {
+        cursor: move;
+        transition: all 0.2s;
+    }
+    
+    .paste-item.dragging {
+        opacity: 0.5;
+    }
+    
+    .auto-saved {
+        color: var(--success, #3fb950);
+        animation: fade-in 0.3s;
+    }
+    
+    @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    
+    /* Syntax highlighting classes */
+    .syntax-keyword { color: #ff79c6; font-weight: bold; }
+    .syntax-string { color: #f1fa8c; }
+    .syntax-comment { color: #6272a4; font-style: italic; }
+    .syntax-number { color: #bd93f9; }
+    .syntax-function { color: #50fa7b; }
+    .syntax-type { color: #8be9fd; }
+    
+    #syntax-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        pointer-events: none;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 14px;
+        line-height: 1.5;
+        overflow-y: auto;
+    }
+    
+    #editor {
+        position: relative;
+        z-index: 1;
+        background: transparent !important;
+        color: transparent;
+        caret-color: var(--text-primary);
+    }
+    
+    .editor-container {
+        position: relative;
+    }
+    </style>
 </head>
 <body>
     <div id="app">
@@ -12,36 +82,40 @@
             <div class="logo"><h1>LocalPaste</h1></div>
             <div class="quick-actions">
                 <button id="new-paste" class="btn-primary" title="New Paste (Ctrl+N)">+ New</button>
-                <button id="quick-save" class="btn-secondary" title="Quick Save (Ctrl+S)">Save</button>
             </div>
             <div class="search-container">
                 <input type="text" id="search" placeholder="Search... (Ctrl+K)" />
             </div>
-            <div class="folders">
+            
+            <!-- Recent pastes first, more prominent -->
+            <div class="pastes" style="flex: 2;">
+                <div class="section-header"><span>Recent Pastes</span></div>
+                <ul id="paste-list"></ul>
+            </div>
+            
+            <!-- Folders below, less prominent -->
+            <div class="folders" style="flex: 1;">
                 <div class="section-header">
                     <span>Folders</span>
                     <button id="new-folder" class="btn-icon" title="New Folder">+</button>
                 </div>
                 <ul id="folder-list">
-                    <li class="active" data-folder="all">All Pastes</li>
+                    <li class="active folder-drop-zone" data-folder="all">📁 All Pastes</li>
                 </ul>
-            </div>
-            <div class="pastes">
-                <div class="section-header"><span>Recent</span></div>
-                <ul id="paste-list"></ul>
             </div>
         </aside>
         <main class="main-content">
             <header class="editor-header">
                 <div class="paste-info">
-                    <input type="text" id="paste-name" class="paste-name" placeholder="untitled" />
+                    <input type="text" id="paste-name" class="paste-name" placeholder="Auto-named..." readonly style="background: transparent; border: none; cursor: text;" />
                     <select id="paste-folder" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); padding: 4px; border-radius: 4px;">
                         <option value="">No Folder</option>
                     </select>
                     <span class="paste-meta">
                         <span id="paste-language">plain</span> • 
                         <span id="paste-date">just now</span> • 
-                        <span id="char-count">0 chars</span>
+                        <span id="char-count">0 chars</span> • 
+                        <span id="save-status" class="auto-saved" style="display: none;">✓ saved</span>
                     </span>
                 </div>
                 <div class="editor-actions">
@@ -49,7 +123,8 @@
                 </div>
             </header>
             <div id="editor-container" class="editor-container">
-                <textarea id="editor" style="width: 100%; height: 100%; background: transparent; color: var(--text-primary); border: none; outline: none; resize: none; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 14px; line-height: 1.5; padding: 20px;"></textarea>
+                <div id="syntax-overlay"></div>
+                <textarea id="editor" style="width: 100%; height: 100%; border: none; outline: none; resize: none; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 14px; line-height: 1.5; padding: 20px;"></textarea>
             </div>
             <footer class="status-bar">
                 <div class="status-left"><span id="status-message">Ready</span></div>
@@ -65,7 +140,9 @@
             this.pastes = [];
             this.folders = [];
             this.editor = document.getElementById('editor');
+            this.syntaxOverlay = document.getElementById('syntax-overlay');
             this.saveTimeout = null;
+            this.draggedPaste = null;
             
             console.log('LocalPaste: Initializing...');
             this.init();
@@ -93,15 +170,18 @@
 
         bindEvents() {
             // Editor events
-            this.editor.addEventListener('input', () => this.onEditorChange());
+            this.editor.addEventListener('input', () => {
+                this.onEditorChange();
+                this.updateSyntaxHighlight();
+            });
+            this.editor.addEventListener('scroll', () => {
+                this.syntaxOverlay.scrollTop = this.editor.scrollTop;
+            });
             this.editor.addEventListener('keyup', () => this.updateCursorPosition());
             this.editor.addEventListener('click', () => this.updateCursorPosition());
             
             // New paste
             document.getElementById('new-paste').addEventListener('click', () => this.createNewPaste());
-            
-            // Save
-            document.getElementById('quick-save').addEventListener('click', () => this.savePaste());
             
             // Delete
             document.getElementById('delete-paste').addEventListener('click', () => this.deletePaste());
@@ -114,8 +194,21 @@
                 searchTimeout = setTimeout(() => this.searchPastes(e.target.value), 300);
             });
             
-            // Name change
-            document.getElementById('paste-name').addEventListener('change', () => this.savePaste());
+            // Name change (make editable on click)
+            const nameInput = document.getElementById('paste-name');
+            nameInput.addEventListener('click', () => {
+                nameInput.readOnly = false;
+                nameInput.select();
+            });
+            nameInput.addEventListener('blur', () => {
+                nameInput.readOnly = true;
+                this.savePaste();
+            });
+            nameInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    nameInput.blur();
+                }
+            });
             
             // Folder change
             document.getElementById('paste-folder').addEventListener('change', () => this.savePaste());
@@ -127,10 +220,6 @@
             document.addEventListener('keydown', (e) => {
                 if (e.ctrlKey || e.metaKey) {
                     switch(e.key) {
-                        case 's':
-                            e.preventDefault();
-                            this.savePaste();
-                            break;
                         case 'n':
                             e.preventDefault();
                             this.createNewPaste();
@@ -148,15 +237,63 @@
             });
         }
 
+        updateSyntaxHighlight() {
+            const text = this.editor.value;
+            const language = this.detectLanguage(text);
+            
+            document.getElementById('paste-language').textContent = language || 'plain';
+            
+            if (!text) {
+                this.syntaxOverlay.innerHTML = '';
+                return;
+            }
+            
+            // Simple syntax highlighting
+            let highlighted = this.escapeHtml(text);
+            
+            // Keywords
+            const keywords = /\b(function|const|let|var|if|else|for|while|return|class|import|export|from|async|await|try|catch|throw|new|this|super|extends|implements|interface|type|enum|namespace|module|declare|public|private|protected|static|readonly|abstract|override|def|elif|except|finally|lambda|pass|raise|yield|with|as|assert|break|continue|del|global|nonlocal|is|in|and|or|not)\b/g;
+            highlighted = highlighted.replace(keywords, '<span class="syntax-keyword">$1</span>');
+            
+            // Strings
+            highlighted = highlighted.replace(/(["'`])(?:(?=(\\?))\2.)*?\1/g, '<span class="syntax-string">$&</span>');
+            
+            // Comments
+            highlighted = highlighted.replace(/(\/\/.*$|#.*$|\/\*[\s\S]*?\*\/)/gm, '<span class="syntax-comment">$1</span>');
+            
+            // Numbers
+            highlighted = highlighted.replace(/\b(\d+\.?\d*)\b/g, '<span class="syntax-number">$1</span>');
+            
+            // Functions (word followed by parenthesis)
+            highlighted = highlighted.replace(/(\w+)(?=\s*\()/g, '<span class="syntax-function">$1</span>');
+            
+            this.syntaxOverlay.innerHTML = highlighted;
+        }
+
+        escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        detectLanguage(text) {
+            if (text.includes('function') || text.includes('=>') || text.includes('const ')) return 'javascript';
+            if (text.includes('def ') || text.includes('import ') || text.includes('print(')) return 'python';
+            if (text.includes('fn ') || text.includes('impl ') || text.includes('let ')) return 'rust';
+            if (text.includes('package ') || text.includes('func ')) return 'go';
+            if (text.includes('<html') || text.includes('<div')) return 'html';
+            if (text.includes('{') && text.includes('}') && text.includes(':')) return 'css';
+            if (text.includes('SELECT ') || text.includes('INSERT ')) return 'sql';
+            if (text.includes('#') && text.includes('##')) return 'markdown';
+            return null;
+        }
+
         async createNewPaste() {
             try {
                 const res = await fetch('/api/paste', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        content: '# New Paste\n\nStart typing...', 
-                        name: 'New Paste'
-                    })
+                    body: JSON.stringify({ content: '' })
                 });
                 
                 if (!res.ok) throw new Error('Failed to create paste');
@@ -165,6 +302,9 @@
                 await this.loadPastes();
                 await this.loadPaste(paste.id);
                 this.setStatus('New paste created');
+                
+                // Focus editor
+                this.editor.focus();
             } catch (err) {
                 console.error('Error creating paste:', err);
                 this.setStatus('Failed to create paste');
@@ -212,18 +352,21 @@
             
             // All Pastes
             const allItem = document.createElement('li');
-            allItem.className = 'active';
+            allItem.className = 'active folder-drop-zone';
             allItem.dataset.folder = 'all';
-            allItem.textContent = 'All Pastes';
+            allItem.textContent = '📁 All Pastes';
             allItem.addEventListener('click', () => this.selectFolder(null));
+            this.setupFolderDrop(allItem, null);
             container.appendChild(allItem);
             
             // Folders
             this.folders.forEach(folder => {
                 const li = document.createElement('li');
+                li.className = 'folder-drop-zone';
                 li.dataset.folderId = folder.id;
-                li.textContent = `${folder.name} (${folder.paste_count})`;
+                li.textContent = `📁 ${folder.name} (${folder.paste_count})`;
                 li.addEventListener('click', () => this.selectFolder(folder.id));
+                this.setupFolderDrop(li, folder.id);
                 container.appendChild(li);
             });
             
@@ -236,6 +379,45 @@
                 option.textContent = folder.name;
                 select.appendChild(option);
             });
+        }
+
+        setupFolderDrop(element, folderId) {
+            element.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                element.classList.add('drag-over');
+            });
+            
+            element.addEventListener('dragleave', () => {
+                element.classList.remove('drag-over');
+            });
+            
+            element.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                element.classList.remove('drag-over');
+                
+                if (this.draggedPaste) {
+                    await this.movePasteToFolder(this.draggedPaste, folderId);
+                }
+            });
+        }
+
+        async movePasteToFolder(pasteId, folderId) {
+            try {
+                const res = await fetch(`/api/paste/${pasteId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folder_id: folderId })
+                });
+                
+                if (!res.ok) throw new Error('Failed to move paste');
+                
+                await this.loadPastes();
+                await this.loadFolders();
+                this.setStatus('Paste moved');
+            } catch (err) {
+                console.error('Error moving paste:', err);
+                this.setStatus('Failed to move paste');
+            }
         }
 
         selectFolder(folderId) {
@@ -259,7 +441,7 @@
             
             try {
                 const content = this.editor.value;
-                const name = document.getElementById('paste-name').value || 'untitled';
+                const name = document.getElementById('paste-name').value || this.currentPaste.name;
                 const folderId = document.getElementById('paste-folder').value;
                 
                 const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
@@ -275,9 +457,16 @@
                 if (!res.ok) throw new Error('Failed to save');
                 
                 this.currentPaste = await res.json();
-                this.setStatus('Saved');
+                
+                // Show save indicator
+                const saveStatus = document.getElementById('save-status');
+                saveStatus.style.display = 'inline';
+                setTimeout(() => {
+                    saveStatus.style.display = 'none';
+                }, 2000);
+                
                 await this.loadPastes();
-                await this.loadFolders(); // Refresh folder counts
+                await this.loadFolders();
             } catch (err) {
                 console.error('Error saving:', err);
                 this.setStatus('Failed to save');
@@ -321,12 +510,28 @@
             
             this.pastes.forEach(paste => {
                 const li = document.createElement('li');
+                li.className = 'paste-item';
                 li.dataset.pasteId = paste.id;
+                li.draggable = true;
+                
                 if (this.currentPaste?.id === paste.id) {
                     li.classList.add('active');
                 }
+                
                 li.textContent = paste.name;
                 li.addEventListener('click', () => this.loadPaste(paste.id));
+                
+                // Drag support
+                li.addEventListener('dragstart', () => {
+                    this.draggedPaste = paste.id;
+                    li.classList.add('dragging');
+                });
+                
+                li.addEventListener('dragend', () => {
+                    this.draggedPaste = null;
+                    li.classList.remove('dragging');
+                });
+                
                 container.appendChild(li);
             });
         }
@@ -341,11 +546,11 @@
                 
                 // Update editor
                 this.editor.value = paste.content;
+                this.updateSyntaxHighlight();
                 
                 // Update UI
                 document.getElementById('paste-name').value = paste.name;
                 document.getElementById('paste-folder').value = paste.folder_id || '';
-                document.getElementById('paste-language').textContent = paste.language || 'plain';
                 document.getElementById('paste-date').textContent = new Date(paste.updated_at).toLocaleString();
                 document.getElementById('char-count').textContent = `${paste.content.length} chars`;
                 
@@ -371,9 +576,10 @@
                 
                 this.currentPaste = null;
                 this.editor.value = '';
+                this.syntaxOverlay.innerHTML = '';
                 
                 await this.loadPastes();
-                await this.loadFolders(); // Refresh folder counts
+                await this.loadFolders();
                 
                 if (this.pastes.length > 0) {
                     await this.loadPaste(this.pastes[0].id);
@@ -396,7 +602,7 @@
             clearTimeout(this.saveTimeout);
             this.saveTimeout = setTimeout(() => {
                 this.savePaste();
-            }, 2000);
+            }, 1000);
         }
 
         updateCursorPosition() {
