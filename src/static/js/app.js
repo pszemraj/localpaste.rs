@@ -9,6 +9,7 @@ class LocalPaste {
     async init() {
         this.initEditor();
         this.bindEvents();
+        await this.loadFolders();
         await this.loadPastes();
         if (this.pastes.length > 0) {
             this.loadPaste(this.pastes[0].id);
