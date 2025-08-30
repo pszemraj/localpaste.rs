@@ -1,8 +1,10 @@
 use axum::{
-    extract::{ws::{Message, WebSocket}, WebSocketUpgrade},
+    extract::{
+        ws::{Message, WebSocket},
+        WebSocketUpgrade,
+    },
     response::Response,
 };
-use tokio::sync::broadcast;
 use tracing::info;
 
 pub async fn websocket_handler(ws: WebSocketUpgrade) -> Response {
@@ -11,7 +13,7 @@ pub async fn websocket_handler(ws: WebSocketUpgrade) -> Response {
 
 async fn handle_socket(mut socket: WebSocket) {
     info!("WebSocket connection established");
-    
+
     while let Some(msg) = socket.recv().await {
         if let Ok(msg) = msg {
             match msg {

@@ -1,8 +1,4 @@
-use crate::{
-    error::AppError,
-    models::folder::*,
-    AppState,
-};
+use crate::{error::AppError, models::folder::*, AppState};
 use axum::{
     extract::{Path, State},
     Json,
@@ -17,9 +13,7 @@ pub async fn create_folder(
     Ok(Json(folder))
 }
 
-pub async fn list_folders(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<Folder>>, AppError> {
+pub async fn list_folders(State(state): State<AppState>) -> Result<Json<Vec<Folder>>, AppError> {
     let folders = state.db.folders.list()?;
     Ok(Json(folders))
 }

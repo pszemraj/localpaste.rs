@@ -1,9 +1,4 @@
-use crate::{
-    error::AppError,
-    models::paste::*,
-    naming,
-    AppState,
-};
+use crate::{error::AppError, models::paste::*, naming, AppState};
 use axum::{
     extract::{Path, Query, State},
     Json,
@@ -13,22 +8,30 @@ pub async fn create_paste(
     State(state): State<AppState>,
     Json(req): Json<CreatePasteRequest>,
 ) -> Result<Json<Paste>, AppError> {
+    // Check paste size limit
+    if req.content.len() > state.config.max_paste_size {
+        return Err(AppError::BadRequest(format!(
+            "Paste size exceeds maximum of {} bytes",
+            state.config.max_paste_size
+        )));
+    }
+
     let name = req.name.unwrap_or_else(naming::generate_name);
     let mut paste = Paste::new(req.content, name);
-    
+
     if let Some(folder_id) = req.folder_id {
         paste.folder_id = Some(folder_id.clone());
         state.db.folders.update_count(&folder_id, 1)?;
     }
-    
+
     if let Some(tags) = req.tags {
         paste.tags = tags;
     }
-    
+
     if let Some(language) = req.language {
         paste.language = Some(language);
     }
-    
+
     state.db.pastes.create(&paste)?;
     Ok(Json(paste))
 }
@@ -37,7 +40,10 @@ pub async fn get_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Paste>, AppError> {
-    state.db.pastes.get(&id)?
+    state
+        .db
+        .pastes
+        .get(&id)?
         .map(Json)
         .ok_or(AppError::NotFound)
 }
@@ -48,7 +54,7 @@ pub async fn update_paste(
     Json(req): Json<UpdatePasteRequest>,
 ) -> Result<Json<Paste>, AppError> {
     let old_paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
-    
+
     if req.folder_id != old_paste.folder_id {
         if let Some(ref old_folder) = old_paste.folder_id {
             state.db.folders.update_count(old_folder, -1)?;
@@ -57,8 +63,11 @@ pub async fn update_paste(
             state.db.folders.update_count(new_folder, 1)?;
         }
     }
-    
-    state.db.pastes.update(&id, req)?
+
+    state
+        .db
+        .pastes
+        .update(&id, req)?
         .map(Json)
         .ok_or(AppError::NotFound)
 }
@@ -68,11 +77,11 @@ pub async fn delete_paste(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
-    
+
     if let Some(ref folder_id) = paste.folder_id {
         state.db.folders.update_count(folder_id, -1)?;
     }
-    
+
     if state.db.pastes.delete(&id)? {
         Ok(Json(serde_json::json!({ "success": true })))
     } else {
@@ -94,6 +103,9 @@ pub async fn search_pastes(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Vec<Paste>>, AppError> {
     let limit = query.limit.unwrap_or(50).min(100);
-    let pastes = state.db.pastes.search(&query.q, limit)?;
+    let pastes = state
+        .db
+        .pastes
+        .search(&query.q, limit, query.folder_id, query.language)?;
     Ok(Json(pastes))
 }

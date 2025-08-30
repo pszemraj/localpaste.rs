@@ -1,11 +1,12 @@
-pub mod paste;
 pub mod folder;
+pub mod paste;
 
 use crate::error::AppError;
 use sled::Db;
 use std::sync::Arc;
 
 pub struct Database {
+    #[allow(dead_code)]
     db: Arc<Db>,
     pub pastes: paste::PasteDb,
     pub folders: folder::FolderDb,
@@ -14,7 +15,7 @@ pub struct Database {
 impl Database {
     pub fn new(path: &str) -> Result<Self, AppError> {
         let db = Arc::new(sled::open(path)?);
-        
+
         Ok(Self {
             pastes: paste::PasteDb::new(db.clone())?,
             folders: folder::FolderDb::new(db.clone())?,

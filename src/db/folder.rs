@@ -19,8 +19,10 @@ impl FolderDb {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, id: &str) -> Result<Option<Folder>, AppError> {
-        Ok(self.tree
+        Ok(self
+            .tree
             .get(id.as_bytes())?
             .map(|v| bincode::deserialize(&v))
             .transpose()?)

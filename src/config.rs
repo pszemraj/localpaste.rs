@@ -6,14 +6,14 @@ pub struct Config {
     pub db_path: String,
     pub port: u16,
     pub max_paste_size: usize,
+    #[allow(dead_code)]
     pub auto_save_interval: u64,
 }
 
 impl Config {
     pub fn from_env() -> Self {
         Self {
-            db_path: env::var("DB_PATH")
-                .unwrap_or_else(|_| "./data/localpaste.db".to_string()),
+            db_path: env::var("DB_PATH").unwrap_or_else(|_| "./data/localpaste.db".to_string()),
             port: env::var("PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())

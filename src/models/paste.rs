@@ -66,15 +66,35 @@ impl Paste {
 
 fn detect_language(content: &str) -> Option<String> {
     let patterns = [
-        ("rust", vec!["fn ", "impl ", "use ", "let ", "mut ", "pub ", "struct ", "enum "]),
-        ("javascript", vec!["function", "const ", "let ", "var ", "=>"]),
-        ("typescript", vec!["interface ", "type ", ": string", ": number"]),
-        ("python", vec!["def ", "import ", "from ", "class ", "if __name__"]),
+        (
+            "rust",
+            vec![
+                "fn ", "impl ", "use ", "let ", "mut ", "pub ", "struct ", "enum ",
+            ],
+        ),
+        (
+            "javascript",
+            vec!["function", "const ", "let ", "var ", "=>"],
+        ),
+        (
+            "typescript",
+            vec!["interface ", "type ", ": string", ": number"],
+        ),
+        (
+            "python",
+            vec!["def ", "import ", "from ", "class ", "if __name__"],
+        ),
         ("go", vec!["package ", "func ", "import (", "var ", "type "]),
-        ("java", vec!["public class", "private ", "protected ", "static void"]),
+        (
+            "java",
+            vec!["public class", "private ", "protected ", "static void"],
+        ),
         ("c", vec!["#include", "int main", "void ", "char *"]),
         ("cpp", vec!["#include", "std::", "template", "namespace"]),
-        ("sql", vec!["SELECT ", "INSERT ", "UPDATE ", "DELETE ", "FROM "]),
+        (
+            "sql",
+            vec!["SELECT ", "INSERT ", "UPDATE ", "DELETE ", "FROM "],
+        ),
         ("shell", vec!["#!/bin/", "echo ", "export ", "if [", "then"]),
         ("yaml", vec!["- ", ": ", "---"]),
         ("toml", vec!["[", "] =", "[[", "]]"]),

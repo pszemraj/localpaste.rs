@@ -20,7 +20,8 @@ impl PasteDb {
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Paste>, AppError> {
-        Ok(self.tree
+        Ok(self
+            .tree
             .get(id.as_bytes())?
             .map(|v| bincode::deserialize(&v))
             .transpose()?)
@@ -33,7 +34,8 @@ impl PasteDb {
 
                 if let Some(content) = &update.content {
                     paste.content = content.clone();
-                    paste.is_markdown = paste.content.contains("```") || paste.content.contains('#');
+                    paste.is_markdown =
+                        paste.content.contains("```") || paste.content.contains('#');
                 }
                 if let Some(name) = &update.name {
                     paste.name = name.clone();
@@ -82,7 +84,13 @@ impl PasteDb {
         Ok(pastes)
     }
 
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Paste>, AppError> {
+    pub fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        folder_id: Option<String>,
+        language: Option<String>,
+    ) -> Result<Vec<Paste>, AppError> {
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
 
@@ -90,10 +98,34 @@ impl PasteDb {
             let (_, value) = item?;
             let paste: Paste = bincode::deserialize(&value)?;
 
+            // Apply folder filter
+            if let Some(ref fid) = folder_id {
+                if paste.folder_id.as_ref() != Some(fid) {
+                    continue;
+                }
+            }
+
+            // Apply language filter
+            if let Some(ref lang) = language {
+                if paste.language.as_ref() != Some(lang) {
+                    continue;
+                }
+            }
+
             let mut score = 0;
-            if paste.name.to_lowercase().contains(&query_lower) { score += 10; }
-            if paste.tags.iter().any(|t| t.to_lowercase().contains(&query_lower)) { score += 5; }
-            if paste.content.to_lowercase().contains(&query_lower) { score += 1; }
+            if paste.name.to_lowercase().contains(&query_lower) {
+                score += 10;
+            }
+            if paste
+                .tags
+                .iter()
+                .any(|t| t.to_lowercase().contains(&query_lower))
+            {
+                score += 5;
+            }
+            if paste.content.to_lowercase().contains(&query_lower) {
+                score += 1;
+            }
 
             if score > 0 {
                 results.push((score, paste));
@@ -101,6 +133,10 @@ impl PasteDb {
         }
 
         results.sort_by(|a, b| b.0.cmp(&a.0));
-        Ok(results.into_iter().take(limit).map(|(_, paste)| paste).collect())
+        Ok(results
+            .into_iter()
+            .take(limit)
+            .map(|(_, paste)| paste)
+            .collect())
     }
 }

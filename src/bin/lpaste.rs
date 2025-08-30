@@ -2,7 +2,9 @@
 use clap::{Parser, Subcommand};
 #[cfg(feature = "cli")]
 use reqwest;
+#[cfg(feature = "cli")]
 use serde_json::Value;
+#[cfg(feature = "cli")]
 use std::io::{self, Read};
 
 #[cfg(feature = "cli")]
@@ -25,13 +27,19 @@ enum Commands {
         #[arg(short, long)]
         name: Option<String>,
     },
-    Get { id: String },
+    Get {
+        id: String,
+    },
     List {
         #[arg(short, long, default_value = "10")]
         limit: usize,
     },
-    Search { query: String },
-    Delete { id: String },
+    Search {
+        query: String,
+    },
+    Delete {
+        id: String,
+    },
 }
 
 #[cfg(feature = "cli")]
@@ -51,33 +59,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let mut body = serde_json::json!({ "content": content });
-            if let Some(n) = name { body["name"] = n.into(); }
+            if let Some(n) = name {
+                body["name"] = n.into();
+            }
 
-            let res = client.post(format!("{}/api/paste", cli.server)).json(&body).send().await?;
+            let res = client
+                .post(format!("{}/api/paste", cli.server))
+                .json(&body)
+                .send()
+                .await?;
             let paste: Value = res.json().await?;
-            println!("Created: {} ({})", paste["name"].as_str().unwrap(), paste["id"].as_str().unwrap());
+            println!(
+                "Created: {} ({})",
+                paste["name"].as_str().unwrap(),
+                paste["id"].as_str().unwrap()
+            );
         }
         Commands::Get { id } => {
-            let res = client.get(format!("{}/api/paste/{}", cli.server, id)).send().await?;
+            let res = client
+                .get(format!("{}/api/paste/{}", cli.server, id))
+                .send()
+                .await?;
             let paste: Value = res.json().await?;
             println!("{}", paste["content"].as_str().unwrap());
         }
         Commands::List { limit } => {
-            let res = client.get(format!("{}/api/pastes?limit={}", cli.server, limit)).send().await?;
+            let res = client
+                .get(format!("{}/api/pastes?limit={}", cli.server, limit))
+                .send()
+                .await?;
             let pastes: Vec<Value> = res.json().await?;
             for p in pastes {
-                println!("{:<24} {:<30}", p["id"].as_str().unwrap(), p["name"].as_str().unwrap());
+                println!(
+                    "{:<24} {:<30}",
+                    p["id"].as_str().unwrap(),
+                    p["name"].as_str().unwrap()
+                );
             }
         }
         Commands::Search { query } => {
-            let res = client.get(format!("{}/api/search?q={}", cli.server, query)).send().await?;
+            let res = client
+                .get(format!("{}/api/search?q={}", cli.server, query))
+                .send()
+                .await?;
             let pastes: Vec<Value> = res.json().await?;
             for p in pastes {
-                println!("{:<24} {:<30}", p["id"].as_str().unwrap(), p["name"].as_str().unwrap());
+                println!(
+                    "{:<24} {:<30}",
+                    p["id"].as_str().unwrap(),
+                    p["name"].as_str().unwrap()
+                );
             }
         }
         Commands::Delete { id } => {
-            client.delete(format!("{}/api/paste/{}", cli.server, id)).send().await?;
+            client
+                .delete(format!("{}/api/paste/{}", cli.server, id))
+                .send()
+                .await?;
             println!("Deleted paste: {}", id);
         }
     }

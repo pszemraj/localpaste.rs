@@ -1,7 +1,7 @@
 use axum::{
-    http::{StatusCode, Uri, header},
+    http::{header, StatusCode, Uri},
     response::{Html, IntoResponse, Response},
-    routing::{get, post, delete, put},
+    routing::{delete, get, post, put},
     Router,
 };
 use rust_embed::RustEmbed;
@@ -20,10 +20,7 @@ mod handlers;
 mod models;
 mod naming;
 
-use crate::{
-    config::Config,
-    db::Database,
-};
+use crate::{config::Config, db::Database};
 
 #[derive(RustEmbed)]
 #[folder = "src/static/"]
@@ -50,7 +47,10 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all("./data")?;
     let db = Arc::new(Database::new(&config.db_path)?);
 
-    let state = AppState { db, config: config.clone() };
+    let state = AppState {
+        db,
+        config: config.clone(),
+    };
 
     let app = Router::new()
         .route("/api/paste", post(handlers::paste::create_paste))
@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
                         .allow_origin(Any)
                         .allow_methods(Any)
                         .allow_headers(Any),
-                )
+                ),
         )
         .with_state(state);
 
@@ -104,11 +104,9 @@ fn serve_asset(path: &str) -> Response {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
             ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
         }
-        None => {
-            match Assets::get("index.html") {
-                Some(content) => Html(content.data).into_response(),
-                None => (StatusCode::NOT_FOUND, "Not found").into_response(),
-            }
-        }
+        None => match Assets::get("index.html") {
+            Some(content) => Html(content.data).into_response(),
+            None => (StatusCode::NOT_FOUND, "Not found").into_response(),
+        },
     }
 }

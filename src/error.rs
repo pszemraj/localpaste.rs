@@ -21,6 +21,7 @@ pub enum AppError {
     BadRequest(String),
 
     #[error("Internal server error")]
+    #[allow(dead_code)]
     Internal,
 }
 
