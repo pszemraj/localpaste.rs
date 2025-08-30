@@ -14,27 +14,13 @@ pub struct Database {
 
 impl Database {
     pub fn new(path: &str) -> Result<Self, AppError> {
-        // Try to open the database with retries for lock issues
-        let db = match sled::open(path) {
-            Ok(db) => Arc::new(db),
-            Err(e) if e.to_string().contains("WouldBlock") => {
-                // Database is locked, try to recover
-                eprintln!("Database appears to be locked. Attempting recovery...");
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                
-                // Try once more after a brief delay
-                match sled::open(path) {
-                    Ok(db) => Arc::new(db),
-                    Err(_) => {
-                        // If still locked, clear and recreate
-                        eprintln!("Could not acquire lock. Creating fresh database...");
-                        let _ = std::fs::remove_dir_all(path);
-                        Arc::new(sled::open(path)?)
-                    }
-                }
-            }
-            Err(e) => return Err(AppError::Database(e)),
-        };
+        // Ensure the data directory exists
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+
+        // Open database - sled handles concurrent access properly
+        let db = Arc::new(sled::open(path)?);
 
         Ok(Self {
             pastes: paste::PasteDb::new(db.clone())?,

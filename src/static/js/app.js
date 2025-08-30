@@ -3,28 +3,62 @@ class LocalPaste {
         this.currentPaste = null;
         this.editor = null;
         this.pastes = [];
-        this.init();
+        this.folders = [];
+        this.init().catch(err => {
+            console.error('Failed to initialize:', err);
+            this.setStatus('Failed to initialize app');
+        });
     }
 
     async init() {
-        this.initEditor();
-        this.bindEvents();
-        await this.loadFolders();
-        await this.loadPastes();
-        if (this.pastes.length > 0) {
-            this.loadPaste(this.pastes[0].id);
+        try {
+            // Initialize editor first
+            await this.initEditor();
+            
+            // Bind events
+            this.bindEvents();
+            
+            // Load data
+            await Promise.all([
+                this.loadFolders(),
+                this.loadPastes()
+            ]);
+            
+            // Load first paste if available
+            if (this.pastes.length > 0) {
+                await this.loadPaste(this.pastes[0].id);
+            }
+            
+            this.setStatus('Ready');
+        } catch (err) {
+            console.error('Initialization error:', err);
+            this.setStatus('Error loading data');
         }
     }
 
-    initEditor() {
+    async initEditor() {
+        // Wait for CodeMirror to load
+        let retries = 0;
+        while (!window.CodeMirror && retries < 20) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            retries++;
+        }
+        
+        if (!window.CodeMirror) {
+            throw new Error('CodeMirror failed to load');
+        }
+        
         const { EditorView, basicSetup, markdown, oneDark } = window.CodeMirror;
+        
         this.editor = new EditorView({
             extensions: [
                 basicSetup,
                 markdown(),
                 oneDark,
                 EditorView.updateListener.of(update => {
-                    if (update.docChanged) this.onEditorChange();
+                    if (update.docChanged) {
+                        this.onEditorChange();
+                    }
                     this.updateCursorPosition(update.state);
                 })
             ],
@@ -33,25 +67,82 @@ class LocalPaste {
     }
 
     bindEvents() {
-        document.getElementById('new-paste').addEventListener('click', () => this.createNewPaste());
-        document.getElementById('quick-save').addEventListener('click', () => this.savePaste());
-        document.getElementById('delete-paste').addEventListener('click', () => this.deletePaste());
-        document.getElementById('search').addEventListener('input', e => this.searchPastes(e.target.value));
-        document.getElementById('paste-name').addEventListener('change', () => this.savePaste());
-        document.getElementById('new-folder').addEventListener('click', () => this.createNewFolder());
+        // New paste button
+        const newBtn = document.getElementById('new-paste');
+        if (newBtn) {
+            newBtn.addEventListener('click', () => this.createNewPaste());
+        }
+        
+        // Save button
+        const saveBtn = document.getElementById('quick-save');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => this.savePaste());
+        }
+        
+        // Delete button
+        const deleteBtn = document.getElementById('delete-paste');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', () => this.deletePaste());
+        }
+        
+        // Search input
+        const searchInput = document.getElementById('search');
+        if (searchInput) {
+            searchInput.addEventListener('input', e => this.searchPastes(e.target.value));
+        }
+        
+        // Paste name input
+        const nameInput = document.getElementById('paste-name');
+        if (nameInput) {
+            nameInput.addEventListener('change', () => this.savePaste());
+        }
+        
+        // New folder button
+        const folderBtn = document.getElementById('new-folder');
+        if (folderBtn) {
+            folderBtn.addEventListener('click', () => this.createNewFolder());
+        }
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                switch(e.key) {
+                    case 's':
+                        e.preventDefault();
+                        this.savePaste();
+                        break;
+                    case 'n':
+                        e.preventDefault();
+                        this.createNewPaste();
+                        break;
+                    case 'k':
+                        e.preventDefault();
+                        document.getElementById('search')?.focus();
+                        break;
+                }
+            }
+        });
     }
 
     async createNewPaste() {
-        const res = await fetch('/api/paste', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: '', language: 'markdown' })
-        });
-        if (res.ok) {
+        try {
+            const res = await fetch('/api/paste', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: '', language: 'markdown' })
+            });
+            
+            if (!res.ok) {
+                throw new Error(`Failed to create paste: ${res.statusText}`);
+            }
+            
             const paste = await res.json();
             await this.loadPastes();
-            this.loadPaste(paste.id);
+            await this.loadPaste(paste.id);
             this.setStatus('New paste created');
+        } catch (err) {
+            console.error('Error creating paste:', err);
+            this.setStatus('Failed to create paste');
         }
     }
 
@@ -59,132 +150,294 @@ class LocalPaste {
         const name = prompt('Folder name:');
         if (!name) return;
         
-        const res = await fetch('/api/folder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name })
-        });
-        if (res.ok) {
+        try {
+            const res = await fetch('/api/folder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            
+            if (!res.ok) {
+                throw new Error(`Failed to create folder: ${res.statusText}`);
+            }
+            
             await this.loadFolders();
             this.setStatus('Folder created');
+        } catch (err) {
+            console.error('Error creating folder:', err);
+            this.setStatus('Failed to create folder');
         }
     }
 
     async loadFolders() {
-        const res = await fetch('/api/folders');
-        if (res.ok) {
-            const folders = await res.json();
-            const container = document.getElementById('folder-list');
-            container.innerHTML = '<li class="active" data-folder="all">All Pastes</li>';
-            folders.forEach(f => {
-                const li = document.createElement('li');
-                li.dataset.folderId = f.id;
-                li.textContent = `${f.name} (${f.paste_count})`;
-                li.addEventListener('click', () => this.selectFolder(f.id));
-                container.appendChild(li);
-            });
+        try {
+            const res = await fetch('/api/folders');
+            if (!res.ok) {
+                throw new Error(`Failed to load folders: ${res.statusText}`);
+            }
+            
+            this.folders = await res.json();
+            this.renderFolders();
+        } catch (err) {
+            console.error('Error loading folders:', err);
+            this.folders = [];
         }
+    }
+    
+    renderFolders() {
+        const container = document.getElementById('folder-list');
+        if (!container) return;
+        
+        // Clear and add "All Pastes"
+        container.innerHTML = '';
+        
+        const allItem = document.createElement('li');
+        allItem.className = 'active';
+        allItem.dataset.folder = 'all';
+        allItem.textContent = 'All Pastes';
+        allItem.addEventListener('click', () => {
+            this.selectFolder(null);
+        });
+        container.appendChild(allItem);
+        
+        // Add folders
+        this.folders.forEach(folder => {
+            const li = document.createElement('li');
+            li.dataset.folderId = folder.id;
+            li.textContent = `${folder.name} (${folder.paste_count})`;
+            li.addEventListener('click', () => this.selectFolder(folder.id));
+            container.appendChild(li);
+        });
     }
 
     selectFolder(folderId) {
-        document.querySelectorAll('#folder-list li').forEach(li => li.classList.remove('active'));
-        const li = document.querySelector(`[data-folder-id="${folderId}"]`);
-        if (li) li.classList.add('active');
+        // Update active state
+        document.querySelectorAll('#folder-list li').forEach(li => {
+            li.classList.remove('active');
+        });
+        
+        if (folderId) {
+            const li = document.querySelector(`[data-folder-id="${folderId}"]`);
+            if (li) li.classList.add('active');
+        } else {
+            const li = document.querySelector('[data-folder="all"]');
+            if (li) li.classList.add('active');
+        }
+        
+        // Load pastes for folder
         this.loadPastes('', folderId);
     }
 
     async savePaste() {
-        if (!this.currentPaste) return;
-        const content = this.editor.state.doc.toString();
-        const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content, name: document.getElementById('paste-name').value })
-        });
-        if (res.ok) {
+        if (!this.currentPaste || !this.editor) return;
+        
+        try {
+            const content = this.editor.state.doc.toString();
+            const name = document.getElementById('paste-name')?.value || 'untitled';
+            
+            const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content, name })
+            });
+            
+            if (!res.ok) {
+                throw new Error(`Failed to save: ${res.statusText}`);
+            }
+            
+            this.currentPaste = await res.json();
             this.setStatus('Saved');
             await this.loadPastes();
+        } catch (err) {
+            console.error('Error saving paste:', err);
+            this.setStatus('Failed to save');
         }
     }
 
     async loadPastes(query = '', folderId = null) {
-        let url = '/api/pastes?limit=50';
-        if (query) {
-            url = `/api/search?q=${encodeURIComponent(query)}&limit=50`;
-        } else if (folderId) {
-            url += `&folder_id=${folderId}`;
-        }
-        
-        const res = await fetch(url);
-        if (res.ok) {
+        try {
+            let url = '/api/pastes?limit=50';
+            
+            if (query) {
+                url = `/api/search?q=${encodeURIComponent(query)}&limit=50`;
+            } else if (folderId) {
+                url += `&folder_id=${folderId}`;
+            }
+            
+            const res = await fetch(url);
+            if (!res.ok) {
+                throw new Error(`Failed to load pastes: ${res.statusText}`);
+            }
+            
             this.pastes = await res.json();
+            this.renderPasteList();
+        } catch (err) {
+            console.error('Error loading pastes:', err);
+            this.pastes = [];
             this.renderPasteList();
         }
     }
 
-    async searchPastes(query) {
+    searchPastes(query) {
         clearTimeout(this.searchTimeout);
-        this.searchTimeout = setTimeout(() => this.loadPastes(query), 300);
+        this.searchTimeout = setTimeout(() => {
+            this.loadPastes(query);
+        }, 300);
     }
 
     renderPasteList() {
         const container = document.getElementById('paste-list');
-        container.innerHTML = this.pastes.map(p => `
-            <li data-paste-id="${p.id}" class="${this.currentPaste?.id === p.id ? 'active' : ''}">
-                ${p.name}
-            </li>
-        `).join('');
-        container.querySelectorAll('li').forEach(li => {
-            li.addEventListener('click', () => this.loadPaste(li.dataset.pasteId));
+        if (!container) return;
+        
+        container.innerHTML = '';
+        
+        if (this.pastes.length === 0) {
+            container.innerHTML = '<li style="opacity: 0.5; font-style: italic;">No pastes yet</li>';
+            return;
+        }
+        
+        this.pastes.forEach(paste => {
+            const li = document.createElement('li');
+            li.dataset.pasteId = paste.id;
+            li.className = this.currentPaste?.id === paste.id ? 'active' : '';
+            li.textContent = paste.name;
+            li.addEventListener('click', () => this.loadPaste(paste.id));
+            container.appendChild(li);
         });
     }
 
     async loadPaste(id) {
-        const res = await fetch(`/api/paste/${id}`);
-        if (res.ok) {
+        try {
+            const res = await fetch(`/api/paste/${id}`);
+            if (!res.ok) {
+                throw new Error(`Failed to load paste: ${res.statusText}`);
+            }
+            
             const paste = await res.json();
             this.currentPaste = paste;
-            this.editor.dispatch({
-                changes: { from: 0, to: this.editor.state.doc.length, insert: paste.content }
-            });
-            document.getElementById('paste-name').value = paste.name;
-            document.getElementById('paste-language').textContent = paste.language || 'plain';
-            document.getElementById('paste-date').textContent = new Date(paste.updated_at).toLocaleString();
+            
+            // Update editor
+            if (this.editor) {
+                this.editor.dispatch({
+                    changes: { 
+                        from: 0, 
+                        to: this.editor.state.doc.length, 
+                        insert: paste.content 
+                    }
+                });
+            }
+            
+            // Update UI
+            const nameInput = document.getElementById('paste-name');
+            if (nameInput) nameInput.value = paste.name;
+            
+            const langSpan = document.getElementById('paste-language');
+            if (langSpan) langSpan.textContent = paste.language || 'plain';
+            
+            const dateSpan = document.getElementById('paste-date');
+            if (dateSpan) {
+                const date = new Date(paste.updated_at);
+                dateSpan.textContent = date.toLocaleString();
+            }
+            
+            const charSpan = document.getElementById('char-count');
+            if (charSpan) {
+                charSpan.textContent = `${paste.content.length} chars`;
+            }
+            
             this.renderPasteList();
+        } catch (err) {
+            console.error('Error loading paste:', err);
+            this.setStatus('Failed to load paste');
         }
     }
 
     async deletePaste() {
-        if (!this.currentPaste || !confirm(`Delete "${this.currentPaste.name}"?`)) return;
-        const res = await fetch(`/api/paste/${this.currentPaste.id}`, { method: 'DELETE' });
-        if (res.ok) {
+        if (!this.currentPaste) return;
+        
+        if (!confirm(`Delete "${this.currentPaste.name}"?`)) return;
+        
+        try {
+            const res = await fetch(`/api/paste/${this.currentPaste.id}`, { 
+                method: 'DELETE' 
+            });
+            
+            if (!res.ok) {
+                throw new Error(`Failed to delete: ${res.statusText}`);
+            }
+            
             this.currentPaste = null;
-            this.editor.dispatch({ changes: { from: 0, to: this.editor.state.doc.length, insert: '' } });
+            
+            if (this.editor) {
+                this.editor.dispatch({ 
+                    changes: { 
+                        from: 0, 
+                        to: this.editor.state.doc.length, 
+                        insert: '' 
+                    } 
+                });
+            }
+            
             await this.loadPastes();
+            
+            // Load first paste if available
+            if (this.pastes.length > 0) {
+                await this.loadPaste(this.pastes[0].id);
+            }
+            
             this.setStatus('Paste deleted');
+        } catch (err) {
+            console.error('Error deleting paste:', err);
+            this.setStatus('Failed to delete');
         }
     }
 
     onEditorChange() {
         if (!this.currentPaste) return;
-        document.getElementById('char-count').textContent = `${this.editor.state.doc.length} chars`;
+        
+        const charCount = this.editor.state.doc.length;
+        const charSpan = document.getElementById('char-count');
+        if (charSpan) {
+            charSpan.textContent = `${charCount} chars`;
+        }
+        
+        // Auto-save after 2 seconds
         clearTimeout(this.saveTimeout);
-        this.saveTimeout = setTimeout(() => this.savePaste(), 2000);
+        this.saveTimeout = setTimeout(() => {
+            this.savePaste();
+        }, 2000);
     }
 
     updateCursorPosition(state) {
-        const line = state.doc.lineAt(state.selection.main.head);
-        document.getElementById('cursor-position').textContent = `Ln ${line.number}, Col ${state.selection.main.head - line.from + 1}`;
+        const pos = state.selection.main.head;
+        const line = state.doc.lineAt(pos);
+        const col = pos - line.from + 1;
+        
+        const posSpan = document.getElementById('cursor-position');
+        if (posSpan) {
+            posSpan.textContent = `Ln ${line.number}, Col ${col}`;
+        }
     }
 
     setStatus(message) {
         const el = document.getElementById('status-message');
-        el.textContent = message;
-        clearTimeout(this.statusTimeout);
-        this.statusTimeout = setTimeout(() => { el.textContent = 'Ready'; }, 3000);
+        if (el) {
+            el.textContent = message;
+            clearTimeout(this.statusTimeout);
+            if (message !== 'Ready') {
+                this.statusTimeout = setTimeout(() => {
+                    el.textContent = 'Ready';
+                }, 3000);
+            }
+        }
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => { 
-    window.app = new LocalPaste(); 
-});
+// Initialize app when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        window.app = new LocalPaste();
+    });
+} else {
+    window.app = new LocalPaste();
+}
