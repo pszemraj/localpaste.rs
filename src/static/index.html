@@ -6,37 +6,91 @@
     <title>LocalPaste.rs</title>
     <link rel="stylesheet" href="/css/style.css">
     <style>
-    /* Additional styles for better UX */
-    .folder-drop-zone {
-        min-height: 30px;
-        border: 2px dashed transparent;
-        transition: all 0.2s;
-        padding: 4px;
+    /* Tree view styles */
+    .tree-view {
+        padding: 0;
+        list-style: none;
+        user-select: none;
+    }
+    
+    .tree-item {
         margin: 2px 0;
     }
     
-    .folder-drop-zone.drag-over {
-        border-color: var(--accent);
-        background: rgba(229, 112, 0, 0.1);
-    }
-    
-    .paste-item {
-        cursor: move;
+    .tree-folder {
+        font-weight: 600;
+        cursor: pointer;
+        padding: 6px 8px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
         transition: all 0.2s;
     }
     
-    .paste-item.dragging {
+    .tree-folder:hover {
+        background: var(--bg-tertiary);
+    }
+    
+    .tree-folder.drag-over {
+        background: rgba(229, 112, 0, 0.2);
+        border: 1px dashed var(--accent);
+    }
+    
+    .tree-folder-icon {
+        transition: transform 0.2s;
+        display: inline-block;
+    }
+    
+    .tree-folder.expanded .tree-folder-icon {
+        transform: rotate(90deg);
+    }
+    
+    .tree-contents {
+        margin-left: 20px;
+        display: none;
+        list-style: none;
+        padding: 0;
+    }
+    
+    .tree-folder.expanded + .tree-contents {
+        display: block;
+    }
+    
+    .tree-paste {
+        padding: 4px 8px;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    
+    .tree-paste:hover {
+        background: var(--bg-tertiary);
+    }
+    
+    .tree-paste.active {
+        background: var(--accent);
+        color: white;
+    }
+    
+    .tree-paste.dragging {
         opacity: 0.5;
     }
     
-    .auto-saved {
-        color: var(--success, #3fb950);
-        animation: fade-in 0.3s;
+    .paste-date {
+        font-size: 11px;
+        opacity: 0.6;
+        margin-left: auto;
     }
     
-    @keyframes fade-in {
-        from { opacity: 0; }
-        to { opacity: 1; }
+    .empty-state {
+        padding: 20px;
+        text-align: center;
+        opacity: 0.5;
+        font-style: italic;
     }
     
     #editor {
@@ -57,6 +111,16 @@
         position: relative;
         background: var(--bg-primary);
     }
+    
+    .auto-saved {
+        color: #3fb950;
+        animation: fade-in 0.3s;
+    }
+    
+    @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
     </style>
 </head>
 <body>
@@ -65,25 +129,16 @@
             <div class="logo"><h1>LocalPaste.rs</h1></div>
             <div class="quick-actions">
                 <button id="new-paste" class="btn-primary" title="New Paste (Ctrl+N)">+ New</button>
+                <button id="new-folder" class="btn-secondary" title="New Folder">+ Folder</button>
             </div>
             <div class="search-container">
                 <input type="text" id="search" placeholder="Search... (Ctrl+K)" />
             </div>
             
-            <!-- Recent pastes first, more prominent -->
-            <div class="pastes" style="flex: 2;">
-                <div class="section-header"><span>Recent Pastes</span></div>
-                <ul id="paste-list"></ul>
-            </div>
-            
-            <!-- Folders below, less prominent -->
-            <div class="folders" style="flex: 1;">
-                <div class="section-header">
-                    <span>Folders</span>
-                    <button id="new-folder" class="btn-icon" title="New Folder">+</button>
-                </div>
-                <ul id="folder-list">
-                    <li class="active folder-drop-zone" data-folder="all">📁 All Pastes</li>
+            <!-- Single tree view for everything -->
+            <div class="pastes" style="flex: 1; overflow-y: auto; padding: 0 8px;">
+                <ul id="tree-view" class="tree-view">
+                    <!-- Tree will be rendered here -->
                 </ul>
             </div>
         </aside>
@@ -91,9 +146,6 @@
             <header class="editor-header">
                 <div class="paste-info">
                     <input type="text" id="paste-name" class="paste-name" placeholder="Auto-named..." readonly style="background: transparent; border: none; cursor: text;" />
-                    <select id="paste-folder" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); padding: 4px; border-radius: 4px;">
-                        <option value="">No Folder</option>
-                    </select>
                     <span class="paste-meta">
                         <span id="paste-language">plain</span> • 
                         <span id="paste-date">just now</span> • 
@@ -124,6 +176,7 @@
             this.editor = document.getElementById('editor');
             this.saveTimeout = null;
             this.draggedPaste = null;
+            this.expandedFolders = new Set(['unfiled']); // Start with unfiled expanded
             
             console.log('LocalPaste.rs: Initializing...');
             this.init();
@@ -132,20 +185,204 @@
         async init() {
             try {
                 this.bindEvents();
-                await Promise.all([
-                    this.loadFolders(),
-                    this.loadPastes()
-                ]);
+                await this.loadData();
+                this.setStatus('Ready');
+                console.log('LocalPaste.rs: Initialized');
+            } catch (err) {
+                console.error('LocalPaste.rs: Init failed:', err);
+                this.setStatus('Error: ' + err.message);
+            }
+        }
+
+        async loadData() {
+            await Promise.all([
+                this.loadFolders(),
+                this.loadPastes()
+            ]);
+            
+            this.renderTree();
+            
+            // Load first unfiled paste if available
+            const unfiledPastes = this.pastes.filter(p => !p.folder_id);
+            if (unfiledPastes.length > 0) {
+                await this.loadPaste(unfiledPastes[0].id);
+            }
+        }
+
+        renderTree() {
+            const container = document.getElementById('tree-view');
+            container.innerHTML = '';
+            
+            // Group pastes by folder
+            const unfiledPastes = this.pastes.filter(p => !p.folder_id);
+            const pastesByFolder = {};
+            this.pastes.forEach(paste => {
+                if (paste.folder_id) {
+                    if (!pastesByFolder[paste.folder_id]) {
+                        pastesByFolder[paste.folder_id] = [];
+                    }
+                    pastesByFolder[paste.folder_id].push(paste);
+                }
+            });
+            
+            // Render folders first
+            this.folders.forEach(folder => {
+                const folderItem = document.createElement('li');
+                folderItem.className = 'tree-item';
                 
-                if (this.pastes.length > 0) {
-                    await this.loadPaste(this.pastes[0].id);
+                const folderDiv = document.createElement('div');
+                folderDiv.className = 'tree-folder';
+                if (this.expandedFolders.has(folder.id)) {
+                    folderDiv.classList.add('expanded');
                 }
                 
-                this.setStatus('Ready');
-                console.log('LocalPaste: Initialized');
+                folderDiv.innerHTML = `
+                    <span class="tree-folder-icon">▶</span>
+                    📁 ${folder.name}
+                    <span style="opacity: 0.6; font-size: 12px; margin-left: 4px;">(${pastesByFolder[folder.id]?.length || 0})</span>
+                `;
+                
+                folderDiv.addEventListener('click', () => this.toggleFolder(folder.id));
+                this.setupFolderDrop(folderDiv, folder.id);
+                
+                folderItem.appendChild(folderDiv);
+                
+                // Folder contents
+                const contents = document.createElement('ul');
+                contents.className = 'tree-contents';
+                
+                const folderPastes = pastesByFolder[folder.id] || [];
+                if (folderPastes.length === 0) {
+                    const emptyLi = document.createElement('li');
+                    emptyLi.className = 'empty-state';
+                    emptyLi.textContent = 'Empty folder';
+                    contents.appendChild(emptyLi);
+                } else {
+                    folderPastes.forEach(paste => {
+                        contents.appendChild(this.createPasteElement(paste));
+                    });
+                }
+                
+                folderItem.appendChild(contents);
+                container.appendChild(folderItem);
+            });
+            
+            // Render unfiled pastes at the bottom
+            if (unfiledPastes.length > 0) {
+                const unfiledItem = document.createElement('li');
+                unfiledItem.className = 'tree-item';
+                
+                const unfiledDiv = document.createElement('div');
+                unfiledDiv.className = 'tree-folder';
+                if (this.expandedFolders.has('unfiled')) {
+                    unfiledDiv.classList.add('expanded');
+                }
+                
+                unfiledDiv.innerHTML = `
+                    <span class="tree-folder-icon">▶</span>
+                    📄 Unfiled
+                    <span style="opacity: 0.6; font-size: 12px; margin-left: 4px;">(${unfiledPastes.length})</span>
+                `;
+                
+                unfiledDiv.addEventListener('click', () => this.toggleFolder('unfiled'));
+                this.setupFolderDrop(unfiledDiv, null);
+                
+                unfiledItem.appendChild(unfiledDiv);
+                
+                const contents = document.createElement('ul');
+                contents.className = 'tree-contents';
+                
+                unfiledPastes.forEach(paste => {
+                    contents.appendChild(this.createPasteElement(paste));
+                });
+                
+                unfiledItem.appendChild(contents);
+                container.appendChild(unfiledItem);
+            }
+        }
+
+        createPasteElement(paste) {
+            const li = document.createElement('li');
+            li.className = 'tree-paste';
+            li.draggable = true;
+            li.dataset.pasteId = paste.id;
+            
+            if (this.currentPaste?.id === paste.id) {
+                li.classList.add('active');
+            }
+            
+            const date = new Date(paste.created_at);
+            const dateStr = date.toLocaleDateString();
+            
+            li.innerHTML = `
+                ${paste.name}
+                <span class="paste-date">${dateStr}</span>
+            `;
+            
+            li.addEventListener('click', () => this.loadPaste(paste.id));
+            
+            // Drag support
+            li.addEventListener('dragstart', (e) => {
+                this.draggedPaste = paste.id;
+                li.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            
+            li.addEventListener('dragend', () => {
+                this.draggedPaste = null;
+                li.classList.remove('dragging');
+            });
+            
+            return li;
+        }
+
+        toggleFolder(folderId) {
+            if (this.expandedFolders.has(folderId)) {
+                this.expandedFolders.delete(folderId);
+            } else {
+                this.expandedFolders.add(folderId);
+            }
+            this.renderTree();
+        }
+
+        setupFolderDrop(element, folderId) {
+            element.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                element.classList.add('drag-over');
+            });
+            
+            element.addEventListener('dragleave', (e) => {
+                e.stopPropagation();
+                element.classList.remove('drag-over');
+            });
+            
+            element.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                element.classList.remove('drag-over');
+                
+                if (this.draggedPaste) {
+                    await this.movePasteToFolder(this.draggedPaste, folderId);
+                }
+            });
+        }
+
+        async movePasteToFolder(pasteId, folderId) {
+            try {
+                const res = await fetch(`/api/paste/${pasteId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folder_id: folderId })
+                });
+                
+                if (!res.ok) throw new Error('Failed to move paste');
+                
+                await this.loadData();
+                this.setStatus('Paste moved');
             } catch (err) {
-                console.error('LocalPaste: Init failed:', err);
-                this.setStatus('Error: ' + err.message);
+                console.error('Error moving paste:', err);
+                this.setStatus('Failed to move paste');
             }
         }
 
@@ -161,6 +398,9 @@
             // New paste
             document.getElementById('new-paste').addEventListener('click', () => this.createNewPaste());
             
+            // New folder
+            document.getElementById('new-folder').addEventListener('click', () => this.createNewFolder());
+            
             // Delete
             document.getElementById('delete-paste').addEventListener('click', () => this.deletePaste());
             
@@ -172,7 +412,7 @@
                 searchTimeout = setTimeout(() => this.searchPastes(e.target.value), 300);
             });
             
-            // Name change (make editable on click)
+            // Name change
             const nameInput = document.getElementById('paste-name');
             nameInput.addEventListener('click', () => {
                 nameInput.readOnly = false;
@@ -187,12 +427,6 @@
                     nameInput.blur();
                 }
             });
-            
-            // Folder change
-            document.getElementById('paste-folder').addEventListener('change', () => this.savePaste());
-            
-            // New folder
-            document.getElementById('new-folder').addEventListener('click', () => this.createNewFolder());
             
             // Keyboard shortcuts
             document.addEventListener('keydown', (e) => {
@@ -218,14 +452,14 @@
         detectLanguage() {
             const text = this.editor.value;
             let language = null;
-            if (text.includes('function') || text.includes('=>') || text.includes('const ')) return 'javascript';
-            if (text.includes('def ') || text.includes('import ') || text.includes('print(')) return 'python';
-            if (text.includes('fn ') || text.includes('impl ') || text.includes('let ')) return 'rust';
-            if (text.includes('package ') || text.includes('func ')) return 'go';
-            if (text.includes('<html') || text.includes('<div')) return 'html';
-            if (text.includes('{') && text.includes('}') && text.includes(':')) return 'css';
-            if (text.includes('SELECT ') || text.includes('INSERT ')) return 'sql';
-            if (text.includes('#') && text.includes('##')) return 'markdown';
+            if (text.includes('function') || text.includes('=>') || text.includes('const ')) language = 'javascript';
+            if (text.includes('def ') || text.includes('import ') || text.includes('print(')) language = 'python';
+            if (text.includes('fn ') || text.includes('impl ') || text.includes('let ')) language = 'rust';
+            if (text.includes('package ') || text.includes('func ')) language = 'go';
+            if (text.includes('<html') || text.includes('<div')) language = 'html';
+            if (text.includes('{') && text.includes('}') && text.includes(':')) language = 'css';
+            if (text.includes('SELECT ') || text.includes('INSERT ')) language = 'sql';
+            if (text.includes('#') && text.includes('##')) language = 'markdown';
             document.getElementById('paste-language').textContent = language || 'plain';
         }
 
@@ -240,11 +474,9 @@
                 if (!res.ok) throw new Error('Failed to create paste');
                 
                 const paste = await res.json();
-                await this.loadPastes();
+                await this.loadData();
                 await this.loadPaste(paste.id);
                 this.setStatus('New paste created');
-                
-                // Focus editor
                 this.editor.focus();
             } catch (err) {
                 console.error('Error creating paste:', err);
@@ -265,7 +497,7 @@
                 
                 if (!res.ok) throw new Error('Failed to create folder');
                 
-                await this.loadFolders();
+                await this.loadData();
                 this.setStatus('Folder created');
             } catch (err) {
                 console.error('Error creating folder:', err);
@@ -279,102 +511,10 @@
                 if (!res.ok) throw new Error('Failed to load folders');
                 
                 this.folders = await res.json();
-                this.renderFolders();
             } catch (err) {
                 console.error('Error loading folders:', err);
                 this.folders = [];
-                this.renderFolders();
             }
-        }
-
-        renderFolders() {
-            const container = document.getElementById('folder-list');
-            container.innerHTML = '';
-            
-            // All Pastes
-            const allItem = document.createElement('li');
-            allItem.className = 'active folder-drop-zone';
-            allItem.dataset.folder = 'all';
-            allItem.textContent = '📁 All Pastes';
-            allItem.addEventListener('click', () => this.selectFolder(null));
-            this.setupFolderDrop(allItem, null);
-            container.appendChild(allItem);
-            
-            // Folders
-            this.folders.forEach(folder => {
-                const li = document.createElement('li');
-                li.className = 'folder-drop-zone';
-                li.dataset.folderId = folder.id;
-                li.textContent = `📁 ${folder.name} (${folder.paste_count})`;
-                li.addEventListener('click', () => this.selectFolder(folder.id));
-                this.setupFolderDrop(li, folder.id);
-                container.appendChild(li);
-            });
-            
-            // Update dropdown
-            const select = document.getElementById('paste-folder');
-            select.innerHTML = '<option value="">No Folder</option>';
-            this.folders.forEach(folder => {
-                const option = document.createElement('option');
-                option.value = folder.id;
-                option.textContent = folder.name;
-                select.appendChild(option);
-            });
-        }
-
-        setupFolderDrop(element, folderId) {
-            element.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                element.classList.add('drag-over');
-            });
-            
-            element.addEventListener('dragleave', () => {
-                element.classList.remove('drag-over');
-            });
-            
-            element.addEventListener('drop', async (e) => {
-                e.preventDefault();
-                element.classList.remove('drag-over');
-                
-                if (this.draggedPaste) {
-                    await this.movePasteToFolder(this.draggedPaste, folderId);
-                }
-            });
-        }
-
-        async movePasteToFolder(pasteId, folderId) {
-            try {
-                const res = await fetch(`/api/paste/${pasteId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ folder_id: folderId })
-                });
-                
-                if (!res.ok) throw new Error('Failed to move paste');
-                
-                await this.loadPastes();
-                await this.loadFolders();
-                this.setStatus('Paste moved');
-            } catch (err) {
-                console.error('Error moving paste:', err);
-                this.setStatus('Failed to move paste');
-            }
-        }
-
-        selectFolder(folderId) {
-            document.querySelectorAll('#folder-list li').forEach(li => {
-                li.classList.remove('active');
-            });
-            
-            if (folderId) {
-                const li = document.querySelector(`[data-folder-id="${folderId}"]`);
-                if (li) li.classList.add('active');
-            } else {
-                const li = document.querySelector('[data-folder="all"]');
-                if (li) li.classList.add('active');
-            }
-            
-            this.loadPastes('', folderId);
         }
 
         async savePaste() {
@@ -383,15 +523,13 @@
             try {
                 const content = this.editor.value;
                 const name = document.getElementById('paste-name').value || this.currentPaste.name;
-                const folderId = document.getElementById('paste-folder').value;
                 
                 const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         content,
-                        name,
-                        folder_id: folderId || null
+                        name
                     })
                 });
                 
@@ -406,75 +544,34 @@
                     saveStatus.style.display = 'none';
                 }, 2000);
                 
-                await this.loadPastes();
-                await this.loadFolders();
+                await this.loadData();
             } catch (err) {
                 console.error('Error saving:', err);
                 this.setStatus('Failed to save');
             }
         }
 
-        async loadPastes(query = '', folderId = null) {
+        async loadPastes(query = '') {
             try {
-                let url = '/api/pastes?limit=50';
+                let url = '/api/pastes?limit=100';
                 
                 if (query) {
-                    url = `/api/search?q=${encodeURIComponent(query)}&limit=50`;
-                } else if (folderId) {
-                    url += `&folder_id=${folderId}`;
+                    url = `/api/search?q=${encodeURIComponent(query)}&limit=100`;
                 }
                 
                 const res = await fetch(url);
                 if (!res.ok) throw new Error('Failed to load pastes');
                 
                 this.pastes = await res.json();
-                this.renderPasteList();
             } catch (err) {
                 console.error('Error loading pastes:', err);
                 this.pastes = [];
-                this.renderPasteList();
             }
         }
 
-        searchPastes(query) {
-            this.loadPastes(query);
-        }
-
-        renderPasteList() {
-            const container = document.getElementById('paste-list');
-            container.innerHTML = '';
-            
-            if (this.pastes.length === 0) {
-                container.innerHTML = '<li style="opacity: 0.5; font-style: italic;">No pastes</li>';
-                return;
-            }
-            
-            this.pastes.forEach(paste => {
-                const li = document.createElement('li');
-                li.className = 'paste-item';
-                li.dataset.pasteId = paste.id;
-                li.draggable = true;
-                
-                if (this.currentPaste?.id === paste.id) {
-                    li.classList.add('active');
-                }
-                
-                li.textContent = paste.name;
-                li.addEventListener('click', () => this.loadPaste(paste.id));
-                
-                // Drag support
-                li.addEventListener('dragstart', () => {
-                    this.draggedPaste = paste.id;
-                    li.classList.add('dragging');
-                });
-                
-                li.addEventListener('dragend', () => {
-                    this.draggedPaste = null;
-                    li.classList.remove('dragging');
-                });
-                
-                container.appendChild(li);
-            });
+        async searchPastes(query) {
+            await this.loadPastes(query);
+            this.renderTree();
         }
 
         async loadPaste(id) {
@@ -491,11 +588,10 @@
                 
                 // Update UI
                 document.getElementById('paste-name').value = paste.name;
-                document.getElementById('paste-folder').value = paste.folder_id || '';
                 document.getElementById('paste-date').textContent = new Date(paste.updated_at).toLocaleString();
                 document.getElementById('char-count').textContent = `${paste.content.length} chars`;
                 
-                this.renderPasteList();
+                this.renderTree();
                 this.updateCursorPosition();
             } catch (err) {
                 console.error('Error loading paste:', err);
@@ -518,12 +614,7 @@
                 this.currentPaste = null;
                 this.editor.value = '';
                 
-                await this.loadPastes();
-                await this.loadFolders();
-                
-                if (this.pastes.length > 0) {
-                    await this.loadPaste(this.pastes[0].id);
-                }
+                await this.loadData();
                 
                 this.setStatus('Paste deleted');
             } catch (err) {
