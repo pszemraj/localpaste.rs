@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalPaste</title>
+    <link rel="stylesheet" href="/css/style.css">
+
+    <!-- CodeMirror 6 -->
+    <script type="module">
+        import {EditorView, basicSetup} from "https://cdn.jsdelivr.net/npm/codemirror@6/+esm"
+        import {markdown} from "https://cdn.jsdelivr.net/npm/@codemirror/lang-markdown@6/+esm"
+        import {oneDark} from "https://cdn.jsdelivr.net/npm/@codemirror/theme-one-dark@6/+esm"
+
+        window.CodeMirror = { EditorView, basicSetup, markdown, oneDark };
+    </script>
+</head>
+<body>
+    <div id="app">
+        <aside class="sidebar">
+            <div class="logo"><h1>LocalPaste</h1></div>
+            <div class="quick-actions">
+                <button id="new-paste" class="btn-primary" title="New Paste (Ctrl+N)">+ New</button>
+                <button id="quick-save" class="btn-secondary" title="Quick Save (Ctrl+S)">Save</button>
+            </div>
+            <div class="search-container"><input type="text" id="search" placeholder="Search... (Ctrl+K)" /></div>
+            <div class="folders">
+                <div class="section-header"><span>Folders</span><button id="new-folder" class="btn-icon" title="New Folder">+</button></div>
+                <ul id="folder-list"><li class="active" data-folder="all">All Pastes</li></ul>
+            </div>
+            <div class="pastes">
+                <div class="section-header"><span>Recent</span></div>
+                <ul id="paste-list"></ul>
+            </div>
+        </aside>
+        <main class="main-content">
+            <header class="editor-header">
+                <div class="paste-info">
+                    <input type="text" id="paste-name" class="paste-name" placeholder="untitled" />
+                    <span class="paste-meta">
+                        <span id="paste-language">markdown</span> • <span id="paste-date">just now</span> • <span id="char-count">0 chars</span>
+                    </span>
+                </div>
+                <div class="editor-actions">
+                    <button id="delete-paste" class="btn-icon danger" title="Delete (Ctrl+D)">🗑️</button>
+                </div>
+            </header>
+            <div id="editor-container" class="editor-container"></div>
+            <footer class="status-bar">
+                <div class="status-left"><span id="status-message">Ready</span></div>
+                <div class="status-right"><span id="cursor-position">Ln 1, Col 1</span></div>
+            </footer>
+        </main>
+    </div>
+    <script type="module" src="/js/app.js"></script>
+</body>
+</html>
