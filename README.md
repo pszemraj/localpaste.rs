@@ -8,7 +8,7 @@ A blazing-fast, localhost-only pastebin with a modern editor, built in Rust.
 ## Features
 
 - **Single Binary** - Zero runtime dependencies, just run and go
-- **Syntax Highlighting** - Auto-detects language and highlights code
+- **Language Detection** - Auto-detects programming language
 - **Auto-Save** - Changes save automatically after 1 second
 - **Folder Organization** - Drag & drop pastes into folders
 - **Semantic Naming** - Auto-generates memorable names (e.g., "mythic-ruby")
@@ -59,7 +59,7 @@ echo "Hello, World!" | ./target/release/lpaste new
 
 Environment variables:
 - `PORT` - Server port (default: 3030)
-- `DB_PATH` - Database path (default: ./data/localpaste.db)
+- `DB_PATH` - Database path (default: ~/.cache/localpaste/db)
 - `MAX_PASTE_SIZE` - Maximum paste size in bytes (default: 10MB)
 
 ## Development

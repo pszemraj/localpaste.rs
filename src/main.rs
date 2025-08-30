@@ -43,8 +43,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Arc::new(Config::from_env());
-
-    std::fs::create_dir_all("./data")?;
     let db = Arc::new(Database::new(&config.db_path)?);
 
     let state = AppState {

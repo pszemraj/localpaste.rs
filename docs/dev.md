@@ -23,8 +23,8 @@ localpaste.rs/
 │   │   └── css/          # Styles
 │   └── bin/
 │       └── lpaste.rs     # CLI tool
-├── data/                 # Runtime data (git-ignored)
-│   └── localpaste.db/    # Sled database files
+├── ~/.cache/localpaste/  # Runtime data (user cache directory)
+│   └── db/               # Sled database files
 └── target/               # Build artifacts (git-ignored)
 ```
 
@@ -38,11 +38,11 @@ localpaste.rs/
 ### Database Choice
 - **Sled**: Embedded, ACID-compliant, fast
 - No external database server required
-- Data stored in `./data/localpaste.db/`
+- Data stored in `~/.cache/localpaste/db/`
 
 ### Frontend Architecture
 - Vanilla JavaScript (no framework dependencies)
-- Custom syntax highlighting using regex
+- Language detection for syntax awareness
 - Drag & drop for folder organization
 - Auto-save with debouncing
 
@@ -141,17 +141,17 @@ RUST_LOG=debug cargo run
 ### Database Inspection
 ```bash
 # View database files
-ls -la data/localpaste.db/
+ls -la ~/.cache/localpaste/db/
 
 # Database size
-du -sh data/localpaste.db/
+du -sh ~/.cache/localpaste/
 ```
 
 ### Common Issues
 
 **Database Lock Error**
 - Kill any running instances: `pkill -f localpaste`
-- Remove lock file if stuck: `rm data/localpaste.db/db.lock`
+- Remove lock file if stuck: `rm ~/.cache/localpaste/db/db.lock`
 
 **Port Already in Use**
 - Check what's using port: `lsof -i :3030`
