@@ -43,8 +43,9 @@ impl PasteDb {
                 if let Some(language) = &update.language {
                     paste.language = Some(language.clone());
                 }
-                if let Some(folder_id) = &update.folder_id {
-                    paste.folder_id = Some(folder_id.clone());
+                // Always update folder_id if provided (even if empty to clear it)
+                if update.folder_id.is_some() {
+                    paste.folder_id = update.folder_id.clone();
                 }
                 if let Some(tags) = &update.tags {
                     paste.tags = tags.clone();

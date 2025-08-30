@@ -6,7 +6,7 @@ use axum::{
 
 pub async fn create_paste(
     State(state): State<AppState>,
-    Json(req): Json<CreatePasteRequest>,
+    Json(mut req): Json<CreatePasteRequest>,
 ) -> Result<Json<Paste>, AppError> {
     // Check paste size limit
     if req.content.len() > state.config.max_paste_size {
@@ -14,6 +14,13 @@ pub async fn create_paste(
             "Paste size exceeds maximum of {} bytes",
             state.config.max_paste_size
         )));
+    }
+
+    // Normalize empty string folder_id to None
+    if let Some(ref folder_id) = req.folder_id {
+        if folder_id.is_empty() {
+            req.folder_id = None;
+        }
     }
 
     let name = req.name.unwrap_or_else(naming::generate_name);
@@ -51,9 +58,16 @@ pub async fn get_paste(
 pub async fn update_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(req): Json<UpdatePasteRequest>,
+    Json(mut req): Json<UpdatePasteRequest>,
 ) -> Result<Json<Paste>, AppError> {
     let old_paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
+
+    // Normalize empty string folder_id to None
+    if let Some(ref folder_id) = req.folder_id {
+        if folder_id.is_empty() {
+            req.folder_id = None;
+        }
+    }
 
     if req.folder_id != old_paste.folder_id {
         if let Some(ref old_folder) = old_paste.folder_id {
