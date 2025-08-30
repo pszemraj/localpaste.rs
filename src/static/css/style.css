@@ -5,8 +5,8 @@
     --text-primary: #c9d1d9;
     --text-secondary: #8b949e;
     --text-muted: #6e7681;
-    --accent: #58a6ff;
-    --accent-hover: #79c0ff;
+    --accent: #E57000;
+    --accent-hover: #CE422B;
     --danger: #f85149;
     --border: #30363d;
 }
@@ -15,7 +15,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 #app { display: flex; height: 100vh; }
 .sidebar { width: 280px; background: var(--bg-secondary); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
 .logo { padding: 20px; border-bottom: 1px solid var(--border); }
-.logo h1 { font-size: 24px; color: var(--accent); }
+.logo h1 { font-size: 24px; color: var(--accent); font-weight: 600; }
 .quick-actions { padding: 16px; display: flex; gap: 8px; }
 .btn-primary, .btn-secondary { flex: 1; padding: 8px 16px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; transition: all 0.2s; }
 .btn-primary { background: var(--accent); color: #fff; }

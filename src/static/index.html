@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LocalPaste</title>
+    <title>LocalPaste.rs</title>
     <link rel="stylesheet" href="/css/style.css">
     <style>
     /* Additional styles for better UX */
@@ -17,7 +17,7 @@
     
     .folder-drop-zone.drag-over {
         border-color: var(--accent);
-        background: rgba(88, 166, 255, 0.1);
+        background: rgba(229, 112, 0, 0.1);
     }
     
     .paste-item {
@@ -79,7 +79,7 @@
 <body>
     <div id="app">
         <aside class="sidebar">
-            <div class="logo"><h1>LocalPaste</h1></div>
+            <div class="logo"><h1>LocalPaste.rs</h1></div>
             <div class="quick-actions">
                 <button id="new-paste" class="btn-primary" title="New Paste (Ctrl+N)">+ New</button>
             </div>
@@ -144,7 +144,7 @@
             this.saveTimeout = null;
             this.draggedPaste = null;
             
-            console.log('LocalPaste: Initializing...');
+            console.log('LocalPaste.rs: Initializing...');
             this.init();
         }
 
