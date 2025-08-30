@@ -154,6 +154,7 @@
                     </span>
                 </div>
                 <div class="editor-actions">
+                    <button id="download-paste" class="btn-icon" title="Download as file">💾</button>
                     <button id="delete-paste" class="btn-icon danger" title="Delete (Ctrl+D)">🗑️</button>
                 </div>
             </header>
@@ -401,6 +402,9 @@
             // New folder
             document.getElementById('new-folder').addEventListener('click', () => this.createNewFolder());
             
+            // Download
+            document.getElementById('download-paste').addEventListener('click', () => this.downloadPaste());
+            
             // Delete
             document.getElementById('delete-paste').addEventListener('click', () => this.deletePaste());
             
@@ -597,6 +601,46 @@
                 console.error('Error loading paste:', err);
                 this.setStatus('Failed to load paste');
             }
+        }
+
+        downloadPaste() {
+            if (!this.currentPaste) {
+                this.setStatus('No paste to download');
+                return;
+            }
+            
+            // Determine file extension based on language
+            let ext = 'txt';
+            const lang = document.getElementById('paste-language').textContent;
+            const langExtMap = {
+                'javascript': 'js',
+                'python': 'py',
+                'rust': 'rs',
+                'go': 'go',
+                'html': 'html',
+                'css': 'css',
+                'sql': 'sql',
+                'markdown': 'md',
+                'json': 'json',
+                'yaml': 'yml',
+                'toml': 'toml'
+            };
+            if (langExtMap[lang]) {
+                ext = langExtMap[lang];
+            }
+            
+            // Create blob and download
+            const blob = new Blob([this.editor.value], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${this.currentPaste.name}.${ext}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            this.setStatus('Downloaded');
         }
 
         async deletePaste() {
