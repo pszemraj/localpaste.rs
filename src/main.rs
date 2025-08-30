@@ -62,7 +62,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/folder", post(handlers::folder::create_folder))
         .route("/api/folders", get(handlers::folder::list_folders))
         .route("/api/folder/:id", delete(handlers::folder::delete_folder))
-        .route("/ws", get(handlers::websocket::websocket_handler))
         .fallback(static_handler)
         .layer(
             tower::ServiceBuilder::new()
