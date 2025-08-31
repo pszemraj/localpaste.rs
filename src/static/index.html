@@ -437,7 +437,14 @@
                 
                 if (!res.ok) throw new Error('Failed to move paste');
                 
+                // Store current paste ID before reloading
+                const currentId = this.currentPaste?.id;
                 await this.loadData();
+                // Restore selection
+                if (currentId) {
+                    this.currentPaste = this.pastes.find(p => p.id === currentId);
+                    this.renderTree();
+                }
                 this.setStatus('Paste moved');
             } catch (err) {
                 console.error('Error moving paste:', err);
@@ -654,7 +661,12 @@
                     saveStatus.style.display = 'none';
                 }, 2000);
                 
+                // Store current paste ID before reloading
+                const currentId = this.currentPaste.id;
                 await this.loadData();
+                // Ensure we stay on the same paste
+                this.currentPaste = this.pastes.find(p => p.id === currentId) || this.currentPaste;
+                this.renderTree();
             } catch (err) {
                 console.error('Error saving:', err);
                 this.setStatus('Failed to save');
@@ -1053,22 +1065,37 @@
         }
         
         highlightYAML(text) {
-            text = this.escapeHtml(text);
-            // Comments
-            text = text.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
-            // Keys
-            text = text.replace(/^(\s*)([\w-]+):/gm, '$1<span class="hl-property">$2</span>:');
-            // Strings with quotes
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-            // Multi-line strings
-            text = text.replace(/[|>][\r\n]+([\s\S]*?)(?=^[^\s]|\Z)/gm, '<span class="hl-string">$&</span>');
-            // Booleans
-            text = text.replace(/\b(true|false|yes|no|on|off|null)\b/g, '<span class="hl-keyword">$1</span>');
-            // Numbers
-            text = text.replace(/\b-?\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
-            // References and anchors
-            text = text.replace(/[&*]\w+/g, '<span class="hl-type">$&</span>');
-            return text;
+            // Don't escape first - work with raw text
+            let result = '';
+            let inString = false;
+            let inComment = false;
+            
+            const lines = text.split('\n');
+            for (let line of lines) {
+                let processedLine = '';
+                inComment = false;
+                
+                // Check for comment
+                const commentIndex = line.indexOf('#');
+                if (commentIndex !== -1 && !inString) {
+                    processedLine = this.escapeHtml(line.substring(0, commentIndex));
+                    processedLine += '<span class="hl-comment">' + this.escapeHtml(line.substring(commentIndex)) + '</span>';
+                } else {
+                    // Simple key highlighting
+                    const match = line.match(/^(\s*)([\w-]+):(.*)/);
+                    if (match) {
+                        processedLine = this.escapeHtml(match[1]) + '<span class="hl-property">' + this.escapeHtml(match[2]) + '</span>:' + this.escapeHtml(match[3]);
+                    } else {
+                        processedLine = this.escapeHtml(line);
+                    }
+                    // Highlight booleans and numbers in the value part
+                    processedLine = processedLine.replace(/\b(true|false|yes|no|null)\b/g, '<span class="hl-keyword">$1</span>');
+                    processedLine = processedLine.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+                }
+                
+                result += processedLine + '\n';
+            }
+            return result;
         }
         
         highlightTOML(text) {
