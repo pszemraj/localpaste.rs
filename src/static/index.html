@@ -1140,14 +1140,122 @@
         }
         
         highlightHTML(text) {
-            // For HTML/XML, just escape and add minimal highlighting
-            // to avoid entity issues
-            return this.escapeHtml(text);
+            // Process character by character to avoid entity issues
+            let result = '';
+            let inTag = false;
+            let inString = false;
+            let inComment = false;
+            let stringChar = '';
+            let buffer = '';
+            
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                const next = text[i + 1];
+                const prev = text[i - 1];
+                
+                // Check for comment start
+                if (!inComment && !inString && char === '<' && text.substr(i, 4) === '<!--') {
+                    if (buffer) {
+                        result += this.escapeHtml(buffer);
+                        buffer = '';
+                    }
+                    inComment = true;
+                    result += '<span class="hl-comment">&lt;!--';
+                    i += 3;
+                    continue;
+                }
+                
+                // Check for comment end
+                if (inComment && char === '-' && text.substr(i, 3) === '-->') {
+                    result += '--&gt;</span>';
+                    inComment = false;
+                    i += 2;
+                    continue;
+                }
+                
+                // If in comment, just escape and add
+                if (inComment) {
+                    result += this.escapeHtml(char);
+                    continue;
+                }
+                
+                // Start of tag
+                if (!inTag && !inString && char === '<') {
+                    if (buffer) {
+                        result += this.escapeHtml(buffer);
+                        buffer = '';
+                    }
+                    inTag = true;
+                    result += '&lt;';
+                    continue;
+                }
+                
+                // End of tag
+                if (inTag && !inString && char === '>') {
+                    // Process the buffer as tag content
+                    if (buffer) {
+                        // Check if it's a closing tag
+                        if (buffer[0] === '/') {
+                            result += '/<span class="hl-tag">' + this.escapeHtml(buffer.substring(1)) + '</span>';
+                        } else {
+                            // Split tag name and attributes
+                            const spaceIndex = buffer.indexOf(' ');
+                            if (spaceIndex === -1) {
+                                // Just tag name
+                                result += '<span class="hl-tag">' + this.escapeHtml(buffer) + '</span>';
+                            } else {
+                                // Tag name and attributes
+                                const tagName = buffer.substring(0, spaceIndex);
+                                let attrs = buffer.substring(spaceIndex);
+                                result += '<span class="hl-tag">' + this.escapeHtml(tagName) + '</span>';
+                                
+                                // Simple attribute highlighting
+                                attrs = this.escapeHtml(attrs);
+                                // Highlight attribute names
+                                attrs = attrs.replace(/(\w+)=/g, '<span class="hl-attribute">$1</span>=');
+                                // Highlight strings
+                                attrs = attrs.replace(/="([^"]*)"/g, '="<span class="hl-string">$1</span>"');
+                                attrs = attrs.replace(/='([^']*)'/g, '=\'<span class="hl-string">$1</span>\'');
+                                result += attrs;
+                            }
+                        }
+                        buffer = '';
+                    }
+                    result += '&gt;';
+                    inTag = false;
+                    continue;
+                }
+                
+                // String handling in tags
+                if (inTag && !inString && (char === '"' || char === "'")) {
+                    inString = true;
+                    stringChar = char;
+                    buffer += char;
+                    continue;
+                }
+                
+                if (inTag && inString && char === stringChar && prev !== '\\') {
+                    inString = false;
+                    stringChar = '';
+                    buffer += char;
+                    continue;
+                }
+                
+                // Add to buffer
+                buffer += char;
+            }
+            
+            // Process remaining buffer
+            if (buffer) {
+                result += this.escapeHtml(buffer);
+            }
+            
+            return result;
         }
         
         highlightXML(text) {
-            // Same as HTML - just escape for now
-            return this.escapeHtml(text);
+            // Same as HTML
+            return this.highlightHTML(text);
         }
         
         highlightCSS(text) {
