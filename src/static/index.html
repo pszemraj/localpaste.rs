@@ -1134,32 +1134,20 @@
             // Lists
             text = text.replace(/^(\s*[*+-])\s/gm, '<span class="hl-operator">$1</span> ');
             text = text.replace(/^(\s*\d+\.)\s/gm, '<span class="hl-operator">$1</span> ');
-            // Blockquotes
-            text = text.replace(/^>\s(.*)$/gm, '<span class="hl-comment">&gt; $1</span>');
+            // Blockquotes - the > is already escaped to &gt;
+            text = text.replace(/^&gt;\s(.*)$/gm, '<span class="hl-comment">$&</span>');
             return text;
         }
         
         highlightHTML(text) {
-            text = this.escapeHtml(text);
-            // Comments
-            text = text.replace(/&lt;!--[\s\S]*?--&gt;/g, '<span class="hl-comment">$&</span>');
-            // Tags and attributes
-            text = text.replace(/&lt;([\/!]?)(\w+)([^&gt;]*)&gt;/g, function(match, slash, tag, attrs) {
-                let result = '&lt;' + slash + '<span class="hl-tag">' + tag + '</span>';
-                if (attrs) {
-                    attrs = attrs.replace(/(\w+)(=)("[^"]*"|'[^']*')/g, 
-                        '<span class="hl-attribute">$1</span>$2<span class="hl-string">$3</span>');
-                    result += attrs;
-                }
-                result += '&gt;';
-                return result;
-            });
-            return text;
+            // For HTML/XML, just escape and add minimal highlighting
+            // to avoid entity issues
+            return this.escapeHtml(text);
         }
         
         highlightXML(text) {
-            // Same as HTML for now
-            return this.highlightHTML(text);
+            // Same as HTML - just escape for now
+            return this.escapeHtml(text);
         }
         
         highlightCSS(text) {
