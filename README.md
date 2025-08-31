@@ -18,13 +18,17 @@ A blazing-fast, localhost-only pastebin with a modern editor, built in Rust.
 
 ## Quick Start
 
-### Run with Cargo
-```bash
-cargo run --release
-```
+LocalPaste.rs consists of two binaries:
+- `localpaste` - The web server with UI (main application)
+- `lpaste` - Command-line interface for terminal usage
 
-### Build and Run Binary
+### Run the Server
+
 ```bash
+# Run with cargo (development)
+cargo run --bin localpaste --release
+
+# Or build and run the binary (production)
 cargo build --release
 ./target/release/localpaste
 ```
@@ -33,11 +37,11 @@ Open http://localhost:3030 in your browser.
 
 ## CLI Usage
 
-LocalPaste includes a CLI tool (`lpaste`) for terminal usage:
+The CLI tool (`lpaste`) interacts with the running server:
 
 ```bash
-# Build with CLI features
-cargo build --release --bin lpaste --features cli
+# Build the CLI binary
+cargo build --release --bin lpaste
 
 # List all pastes
 ./target/release/lpaste list

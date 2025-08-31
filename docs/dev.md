@@ -60,14 +60,34 @@ RESTful endpoints:
 
 ## Development Workflow
 
+### Building the Project
+
+The project contains two binaries:
+- `localpaste` - The web server (default binary)
+- `lpaste` - CLI tool for interacting with the server
+
+```bash
+# Build both binaries
+cargo build --release
+
+# Build only the server
+cargo build --release --bin localpaste
+
+# Build only the CLI
+cargo build --release --bin lpaste
+```
+
 ### Running Locally
 ```bash
-# Install dependencies
-cargo build
+# Run the server (main application)
+cargo run --bin localpaste --release
 
 # Run with auto-reload (requires cargo-watch)
 cargo install cargo-watch
-cargo watch -x run
+cargo watch -x "run --bin localpaste"
+
+# Run with debug logging
+RUST_LOG=debug cargo run --bin localpaste
 
 # Run tests
 cargo test
@@ -81,14 +101,26 @@ cargo clippy
 
 ### Building for Production
 ```bash
-# Optimized build
+# Optimized build (both binaries)
 cargo build --release
 
-# Strip symbols for smaller binary
+# Strip symbols for smaller binaries
 strip target/release/localpaste
+strip target/release/lpaste
 
-# Check binary size
-du -h target/release/localpaste
+# Check binary sizes
+du -h target/release/localpaste target/release/lpaste
+```
+
+### Using the CLI Tool
+```bash
+# The CLI tool should be built and run from the binary, not cargo run
+./target/release/lpaste --help
+
+# Examples
+echo "test" | ./target/release/lpaste new
+./target/release/lpaste list
+./target/release/lpaste get <paste-id>
 ```
 
 ### Adding New Features
