@@ -61,6 +61,7 @@ Environment variables:
 - `PORT` - Server port (default: 3030)
 - `DB_PATH` - Database path (default: ~/.cache/localpaste/db)
 - `MAX_PASTE_SIZE` - Maximum paste size in bytes (default: 10MB)
+- `RUST_LOG` - Logging level (default: info level, use `RUST_LOG=debug` for verbose logs)
 
 ## Development
 
