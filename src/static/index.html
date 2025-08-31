@@ -741,6 +741,7 @@
             const charCount = this.editor.value.length;
             document.getElementById('char-count').textContent = `${charCount} chars`;
             
+            
             // Auto-save
             clearTimeout(this.saveTimeout);
             this.saveTimeout = setTimeout(() => {
