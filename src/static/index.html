@@ -145,9 +145,27 @@
         <main class="main-content">
             <header class="editor-header">
                 <div class="paste-info">
-                    <input type="text" id="paste-name" class="paste-name" placeholder="Auto-named..." readonly style="background: transparent; border: none; cursor: text;" />
+                    <input type="text" id="paste-name" class="paste-name" placeholder="Auto-named..." style="background: transparent; border: 1px solid transparent; cursor: text; padding: 2px 6px; border-radius: 4px;" />
                     <span class="paste-meta">
-                        <span id="paste-language">plain</span> • 
+                        <select id="paste-language" style="background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 2px 6px; border-radius: 4px; cursor: pointer;">
+                            <option value="">Auto-detect</option>
+                            <option value="python">Python</option>
+                            <option value="cpp">C++</option>
+                            <option value="c">C</option>
+                            <option value="java">Java</option>
+                            <option value="csharp">C#</option>
+                            <option value="javascript">JavaScript</option>
+                            <option value="go">Go</option>
+                            <option value="rust">Rust</option>
+                            <option value="html">HTML</option>
+                            <option value="css">CSS</option>
+                            <option value="markdown">Markdown</option>
+                            <option value="xml">XML</option>
+                            <option value="json">JSON</option>
+                            <option value="yaml">YAML</option>
+                            <option value="toml">TOML</option>
+                            <option value="latex">LaTeX</option>
+                        </select> • 
                         <span id="paste-date">just now</span> • 
                         <span id="char-count">0 chars</span> • 
                         <span id="save-status" class="auto-saved" style="display: none;">✓ saved</span>
@@ -391,7 +409,11 @@
             // Editor events
             this.editor.addEventListener('input', () => {
                 this.onEditorChange();
-                this.detectLanguage();
+                // Only detect language if auto-detect is selected
+                const langSelect = document.getElementById('paste-language');
+                if (!langSelect.value) {
+                    this.detectLanguage();
+                }
             });
             this.editor.addEventListener('keyup', () => this.updateCursorPosition());
             this.editor.addEventListener('click', () => this.updateCursorPosition());
@@ -418,9 +440,27 @@
             
             // Name change
             const nameInput = document.getElementById('paste-name');
-            nameInput.addEventListener('click', () => {
-                nameInput.readOnly = false;
-                nameInput.select();
+            nameInput.addEventListener('focus', () => {
+                nameInput.style.border = '1px solid var(--accent)';
+            });
+            nameInput.addEventListener('blur', () => {
+                nameInput.style.border = '1px solid transparent';
+                if (this.currentPaste && nameInput.value !== this.currentPaste.name) {
+                    this.savePaste();
+                }
+            });
+            nameInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    nameInput.blur();
+                }
+            });
+            
+            // Language change
+            const langSelect = document.getElementById('paste-language');
+            langSelect.addEventListener('change', () => {
+                if (this.currentPaste) {
+                    this.savePaste();
+                }
             });
             nameInput.addEventListener('blur', () => {
                 nameInput.readOnly = true;
@@ -454,17 +494,34 @@
         }
 
         detectLanguage() {
+            // Only auto-detect if no language is manually selected
+            const langSelect = document.getElementById('paste-language');
+            if (langSelect.value) return;
+            
             const text = this.editor.value;
-            let language = null;
-            if (text.includes('function') || text.includes('=>') || text.includes('const ')) language = 'javascript';
-            if (text.includes('def ') || text.includes('import ') || text.includes('print(')) language = 'python';
-            if (text.includes('fn ') || text.includes('impl ') || text.includes('let ')) language = 'rust';
-            if (text.includes('package ') || text.includes('func ')) language = 'go';
-            if (text.includes('<html') || text.includes('<div')) language = 'html';
-            if (text.includes('{') && text.includes('}') && text.includes(':')) language = 'css';
-            if (text.includes('SELECT ') || text.includes('INSERT ')) language = 'sql';
-            if (text.includes('#') && text.includes('##')) language = 'markdown';
-            document.getElementById('paste-language').textContent = language || 'plain';
+            let language = '';
+            
+            // Programming languages
+            if (text.includes('def ') || text.includes('import ') || text.includes('print(') || text.includes('if __name__')) language = 'python';
+            else if (text.includes('#include') || text.includes('std::') || text.includes('cout') || text.includes('namespace')) language = 'cpp';
+            else if (text.includes('#include') && !text.includes('std::') && (text.includes('printf') || text.includes('scanf'))) language = 'c';
+            else if (text.includes('public class') || text.includes('public static void main') || text.includes('System.out')) language = 'java';
+            else if (text.includes('namespace') && text.includes('using System') || text.includes('Console.Write')) language = 'csharp';
+            else if (text.includes('function') || text.includes('=>') || text.includes('const ') || text.includes('let ') || text.includes('var ')) language = 'javascript';
+            else if (text.includes('package main') || text.includes('func ') || text.includes('fmt.')) language = 'go';
+            else if (text.includes('fn ') || text.includes('impl ') || text.includes('let ') || text.includes('mut ') || text.includes('pub ')) language = 'rust';
+            
+            // Markup languages
+            else if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('<div') || text.includes('<body')) language = 'html';
+            else if ((text.includes('{') && text.includes('}') && text.includes(':') && text.includes(';')) || text.includes('.class') || text.includes('#id')) language = 'css';
+            else if (text.includes('#') && (text.includes('##') || text.includes('```') || text.includes('**'))) language = 'markdown';
+            else if (text.includes('<?xml') || (text.includes('<') && text.includes('>') && text.includes('/>'))) language = 'xml';
+            else if (text.startsWith('{') && text.includes('"') && text.includes(':')) language = 'json';
+            else if ((text.includes(':') && text.includes('\n') && !text.includes('{')) || text.includes('---')) language = 'yaml';
+            else if (text.includes('[') && text.includes(']') && text.includes('=')) language = 'toml';
+            else if (text.includes('\\begin{') || text.includes('\\end{') || text.includes('\\section') || text.includes('\\usepackage')) language = 'latex';
+            
+            langSelect.value = language;
         }
 
         async createNewPaste() {
@@ -527,13 +584,15 @@
             try {
                 const content = this.editor.value;
                 const name = document.getElementById('paste-name').value || this.currentPaste.name;
+                const language = document.getElementById('paste-language').value || null;
                 
                 const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         content,
-                        name
+                        name,
+                        language: language === '' ? null : language
                     })
                 });
                 
@@ -588,10 +647,13 @@
                 
                 // Update editor
                 this.editor.value = paste.content;
-                this.detectLanguage();
                 
                 // Update UI
                 document.getElementById('paste-name').value = paste.name;
+                document.getElementById('paste-language').value = paste.language || '';
+                if (!paste.language) {
+                    this.detectLanguage();
+                }
                 document.getElementById('paste-date').textContent = new Date(paste.updated_at).toLocaleString();
                 document.getElementById('char-count').textContent = `${paste.content.length} chars`;
                 
@@ -611,19 +673,24 @@
             
             // Determine file extension based on language
             let ext = 'txt';
-            const lang = document.getElementById('paste-language').textContent;
+            const lang = document.getElementById('paste-language').value;
             const langExtMap = {
                 'javascript': 'js',
                 'python': 'py',
                 'rust': 'rs',
                 'go': 'go',
+                'cpp': 'cpp',
+                'c': 'c',
+                'java': 'java',
+                'csharp': 'cs',
                 'html': 'html',
                 'css': 'css',
-                'sql': 'sql',
                 'markdown': 'md',
+                'xml': 'xml',
                 'json': 'json',
                 'yaml': 'yml',
-                'toml': 'toml'
+                'toml': 'toml',
+                'latex': 'tex'
             };
             if (langExtMap[lang]) {
                 ext = langExtMap[lang];
