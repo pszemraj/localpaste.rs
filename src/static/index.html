@@ -437,13 +437,10 @@
                 
                 if (!res.ok) throw new Error('Failed to move paste');
                 
-                // Store current paste ID before reloading
-                const currentId = this.currentPaste?.id;
                 await this.loadData();
-                // Restore selection
-                if (currentId) {
-                    this.currentPaste = this.pastes.find(p => p.id === currentId);
-                    this.renderTree();
+                // Keep the current paste selected
+                if (this.currentPaste) {
+                    await this.loadPaste(this.currentPaste.id);
                 }
                 this.setStatus('Paste moved');
             } catch (err) {
@@ -661,11 +658,11 @@
                     saveStatus.style.display = 'none';
                 }, 2000);
                 
-                // Store current paste ID before reloading
-                const currentId = this.currentPaste.id;
-                await this.loadData();
-                // Ensure we stay on the same paste
-                this.currentPaste = this.pastes.find(p => p.id === currentId) || this.currentPaste;
+                // Update the paste in the pastes list without full reload
+                const index = this.pastes.findIndex(p => p.id === this.currentPaste.id);
+                if (index !== -1) {
+                    this.pastes[index] = this.currentPaste;
+                }
                 this.renderTree();
             } catch (err) {
                 console.error('Error saving:', err);
