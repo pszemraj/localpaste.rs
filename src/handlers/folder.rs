@@ -18,10 +18,36 @@ pub async fn list_folders(State(state): State<AppState>) -> Result<Json<Vec<Fold
     Ok(Json(folders))
 }
 
+pub async fn update_folder(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateFolderRequest>,
+) -> Result<Json<Folder>, AppError> {
+    state
+        .db
+        .folders
+        .update(&id, req.name)?
+        .map(Json)
+        .ok_or(AppError::NotFound)
+}
+
 pub async fn delete_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // First, move all pastes in this folder to unfiled
+    let pastes = state.db.pastes.list(100, Some(id.clone()))?;
+    for paste in pastes {
+        let update = crate::models::paste::UpdatePasteRequest {
+            content: None,
+            name: None,
+            language: None,
+            folder_id: Some("".to_string()), // Empty string to make unfiled
+            tags: None,
+        };
+        state.db.pastes.update(&paste.id, update)?;
+    }
+
     if state.db.folders.delete(&id)? {
         Ok(Json(serde_json::json!({ "success": true })))
     } else {

@@ -58,6 +58,20 @@
         display: block;
     }
     
+    .folder-actions button {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        padding: 2px 4px;
+        font-size: 14px;
+        opacity: 0.7;
+        transition: opacity 0.2s;
+    }
+    
+    .folder-actions button:hover {
+        opacity: 1;
+    }
+    
     .tree-paste {
         padding: 4px 8px;
         cursor: pointer;
@@ -169,6 +183,12 @@
             <div class="quick-actions">
                 <button id="new-paste" class="btn-primary" title="New Paste (Ctrl+N)">+ New</button>
                 <button id="new-folder" class="btn-secondary" title="New Folder">+ Folder</button>
+                <select id="sort-order" style="background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 4px 8px; border-radius: 4px; cursor: pointer; margin-left: 8px;" title="Sort pastes">
+                    <option value="date-desc">Newest first</option>
+                    <option value="date-asc">Oldest first</option>
+                    <option value="name-asc">Name (A-Z)</option>
+                    <option value="name-desc">Name (Z-A)</option>
+                </select>
             </div>
             <div class="search-container">
                 <input type="text" id="search" placeholder="Search... (Ctrl+K)" />
@@ -236,6 +256,7 @@
             this.saveTimeout = null;
             this.draggedPaste = null;
             this.expandedFolders = new Set(['unfiled']); // Start with unfiled expanded
+            this.sortOrder = 'date-desc';
             
             console.log('LocalPaste.rs: Initializing...');
             this.init();
@@ -274,12 +295,31 @@
             }
         }
 
+        sortPastes(pastes) {
+            const sorted = [...pastes];
+            switch(this.sortOrder) {
+                case 'date-desc':
+                    sorted.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                    break;
+                case 'date-asc':
+                    sorted.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                    break;
+                case 'name-asc':
+                    sorted.sort((a, b) => a.name.localeCompare(b.name));
+                    break;
+                case 'name-desc':
+                    sorted.sort((a, b) => b.name.localeCompare(a.name));
+                    break;
+            }
+            return sorted;
+        }
+        
         renderTree() {
             const container = document.getElementById('tree-view');
             container.innerHTML = '';
             
-            // Group pastes by folder
-            const unfiledPastes = this.pastes.filter(p => !p.folder_id);
+            // Group pastes by folder and sort
+            const unfiledPastes = this.sortPastes(this.pastes.filter(p => !p.folder_id));
             const pastesByFolder = {};
             this.pastes.forEach(paste => {
                 if (paste.folder_id) {
@@ -288,6 +328,11 @@
                     }
                     pastesByFolder[paste.folder_id].push(paste);
                 }
+            });
+            
+            // Sort pastes within each folder
+            Object.keys(pastesByFolder).forEach(folderId => {
+                pastesByFolder[folderId] = this.sortPastes(pastesByFolder[folderId]);
             });
             
             // Render folders first
@@ -303,11 +348,51 @@
                 
                 folderDiv.innerHTML = `
                     <span class="tree-folder-icon">▶</span>
-                    📁 ${folder.name}
+                    📁 <span class="folder-name">${folder.name}</span>
                     <span style="opacity: 0.6; font-size: 12px; margin-left: 4px;">(${pastesByFolder[folder.id]?.length || 0})</span>
+                    <span class="folder-actions" style="float: right; display: none;">
+                        <button class="folder-rename" data-folder-id="${folder.id}" title="Rename">✏️</button>
+                        <button class="folder-delete" data-folder-id="${folder.id}" title="Delete">🗑️</button>
+                    </span>
                 `;
                 
-                folderDiv.addEventListener('click', () => this.toggleFolder(folder.id));
+                folderDiv.addEventListener('click', (e) => {
+                    // Don't toggle if clicking on actions
+                    if (e.target.classList.contains('folder-rename') || 
+                        e.target.classList.contains('folder-delete')) {
+                        return;
+                    }
+                    this.toggleFolder(folder.id);
+                });
+                
+                // Show actions on hover
+                folderDiv.addEventListener('mouseenter', () => {
+                    const actions = folderDiv.querySelector('.folder-actions');
+                    if (actions) actions.style.display = 'inline';
+                });
+                
+                folderDiv.addEventListener('mouseleave', () => {
+                    const actions = folderDiv.querySelector('.folder-actions');
+                    if (actions) actions.style.display = 'none';
+                });
+                
+                // Rename button
+                const renameBtn = folderDiv.querySelector('.folder-rename');
+                if (renameBtn) {
+                    renameBtn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        await this.renameFolder(folder.id, folder.name);
+                    });
+                }
+                
+                // Delete button
+                const deleteBtn = folderDiv.querySelector('.folder-delete');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        await this.deleteFolder(folder.id, folder.name);
+                    });
+                }
                 this.setupFolderDrop(folderDiv, folder.id);
                 
                 folderItem.appendChild(folderDiv);
@@ -480,6 +565,12 @@
             // New folder
             document.getElementById('new-folder').addEventListener('click', () => this.createNewFolder());
             
+            // Sort order
+            document.getElementById('sort-order').addEventListener('change', (e) => {
+                this.sortOrder = e.target.value;
+                this.renderTree();
+            });
+            
             // Download
             document.getElementById('download-paste').addEventListener('click', () => this.downloadPaste());
             
@@ -620,6 +711,47 @@
             } catch (err) {
                 console.error('Error creating folder:', err);
                 this.setStatus('Failed to create folder');
+            }
+        }
+        
+        async renameFolder(folderId, currentName) {
+            const newName = prompt('Rename folder:', currentName);
+            if (!newName || newName === currentName) return;
+            
+            try {
+                const res = await fetch(`/api/folder/${folderId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName })
+                });
+                
+                if (!res.ok) throw new Error('Failed to rename folder');
+                
+                await this.loadData();
+                this.setStatus('Folder renamed');
+            } catch (err) {
+                console.error('Error renaming folder:', err);
+                this.setStatus('Failed to rename folder');
+            }
+        }
+        
+        async deleteFolder(folderId, folderName) {
+            if (!confirm(`Delete folder "${folderName}"? All pastes will be moved to Unfiled.`)) {
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/folder/${folderId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (!res.ok) throw new Error('Failed to delete folder');
+                
+                await this.loadData();
+                this.setStatus('Folder deleted, pastes moved to Unfiled');
+            } catch (err) {
+                console.error('Error deleting folder:', err);
+                this.setStatus('Failed to delete folder');
             }
         }
 

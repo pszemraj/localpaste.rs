@@ -15,6 +15,11 @@ pub struct CreateFolderRequest {
     pub name: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateFolderRequest {
+    pub name: String,
+}
+
 impl Folder {
     pub fn new(name: String) -> Self {
         Self {

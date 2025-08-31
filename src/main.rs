@@ -59,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/search", get(handlers::paste::search_pastes))
         .route("/api/folder", post(handlers::folder::create_folder))
         .route("/api/folders", get(handlers::folder::list_folders))
+        .route("/api/folder/:id", put(handlers::folder::update_folder))
         .route("/api/folder/:id", delete(handlers::folder::delete_folder))
         .fallback(static_handler)
         .layer(
