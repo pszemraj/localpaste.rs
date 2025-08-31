@@ -261,10 +261,16 @@
             
             this.renderTree();
             
-            // Load first unfiled paste if available
-            const unfiledPastes = this.pastes.filter(p => !p.folder_id);
-            if (unfiledPastes.length > 0) {
-                await this.loadPaste(unfiledPastes[0].id);
+            // Try to restore last opened paste
+            const lastPasteId = localStorage.getItem('lastOpenedPaste');
+            if (lastPasteId && this.pastes.find(p => p.id === lastPasteId)) {
+                await this.loadPaste(lastPasteId);
+            } else {
+                // Load first unfiled paste if available
+                const unfiledPastes = this.pastes.filter(p => !p.folder_id);
+                if (unfiledPastes.length > 0) {
+                    await this.loadPaste(unfiledPastes[0].id);
+                }
             }
         }
 
@@ -701,6 +707,9 @@
                 const paste = await res.json();
                 this.currentPaste = paste;
                 
+                // Remember this paste for next time
+                localStorage.setItem('lastOpenedPaste', id);
+                
                 // Update editor
                 this.editor.value = paste.content;
                 
@@ -780,6 +789,12 @@
                 });
                 
                 if (!res.ok) throw new Error('Failed to delete');
+                
+                // Clear from localStorage if it was the last opened
+                const deletedId = this.currentPaste.id;
+                if (localStorage.getItem('lastOpenedPaste') === deletedId) {
+                    localStorage.removeItem('lastOpenedPaste');
+                }
                 
                 this.currentPaste = null;
                 this.editor.value = '';
