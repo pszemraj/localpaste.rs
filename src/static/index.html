@@ -183,15 +183,17 @@
             <div class="quick-actions">
                 <button id="new-paste" class="btn-primary" title="New Paste (Ctrl+N)">+ New</button>
                 <button id="new-folder" class="btn-secondary" title="New Folder">+ Folder</button>
-                <select id="sort-order" style="background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 4px 8px; border-radius: 4px; cursor: pointer; margin-left: 8px;" title="Sort pastes">
-                    <option value="date-desc">Newest first</option>
-                    <option value="date-asc">Oldest first</option>
-                    <option value="name-asc">Name (A-Z)</option>
-                    <option value="name-desc">Name (Z-A)</option>
-                </select>
             </div>
             <div class="search-container">
                 <input type="text" id="search" placeholder="Search... (Ctrl+K)" />
+            </div>
+            <div style="padding: 8px; margin-bottom: 8px;">
+                <select id="sort-order" style="width: 100%; background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;" title="Sort pastes">
+                    <option value="date-desc">⬇ Newest first</option>
+                    <option value="date-asc">⬆ Oldest first</option>
+                    <option value="name-asc">⬆ Name (A-Z)</option>
+                    <option value="name-desc">⬇ Name (Z-A)</option>
+                </select>
             </div>
             
             <!-- Single tree view for everything -->
@@ -240,7 +242,10 @@
                 <textarea id="editor"></textarea>
             </div>
             <footer class="status-bar">
-                <div class="status-left"><span id="status-message">Ready</span></div>
+                <div class="status-left">
+                    <span id="status-message">Ready</span>
+                    <a href="https://github.com/pszemraj/localpaste.rs" target="_blank" style="margin-left: 16px; color: var(--text-secondary); text-decoration: none; font-size: 11px; opacity: 0.7;" title="View on GitHub">GitHub</a>
+                </div>
                 <div class="status-right"><span id="cursor-position">Ln 1, Col 1</span></div>
             </footer>
         </main>
