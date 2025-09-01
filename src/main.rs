@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "localpaste=debug,tower_http=debug".into()),
+                .unwrap_or_else(|_| "localpaste=info,tower_http=warn".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -59,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/search", get(handlers::paste::search_pastes))
         .route("/api/folder", post(handlers::folder::create_folder))
         .route("/api/folders", get(handlers::folder::list_folders))
+        .route("/api/folder/:id", put(handlers::folder::update_folder))
         .route("/api/folder/:id", delete(handlers::folder::delete_folder))
         .fallback(static_handler)
         .layer(
@@ -78,7 +79,6 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     tracing::info!("🚀 LocalPaste running at http://{}", addr);
-    tracing::info!("📦 Single binary, zero runtime dependencies!");
 
     axum::serve(listener, app).await?;
 

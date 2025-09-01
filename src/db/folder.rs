@@ -28,6 +28,21 @@ impl FolderDb {
             .transpose()?)
     }
 
+    pub fn update(&self, id: &str, name: String) -> Result<Option<Folder>, AppError> {
+        let result = self.tree.fetch_and_update(id.as_bytes(), |old| {
+            old.and_then(|bytes| {
+                let mut folder: Folder = bincode::deserialize(bytes).ok()?;
+                folder.name = name.clone();
+                bincode::serialize(&folder).ok()
+            })
+        })?;
+
+        match result {
+            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
         Ok(self.tree.remove(id.as_bytes())?.is_some())
     }

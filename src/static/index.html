@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LocalPaste.rs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/style.css">
     <style>
     /* Tree view styles */
@@ -57,6 +58,20 @@
         display: block;
     }
     
+    .folder-actions button {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        padding: 2px 4px;
+        font-size: 14px;
+        opacity: 0.7;
+        transition: opacity 0.2s;
+    }
+    
+    .folder-actions button:hover {
+        opacity: 1;
+    }
+    
     .tree-paste {
         padding: 4px 8px;
         cursor: pointer;
@@ -97,7 +112,8 @@
         width: 100%;
         height: 100%;
         background: transparent;
-        color: var(--text-primary);
+        color: transparent;
+        caret-color: var(--text-primary);
         border: none;
         outline: none;
         resize: none;
@@ -105,7 +121,44 @@
         font-size: 14px;
         line-height: 1.5;
         padding: 20px;
+        position: relative;
+        z-index: 2;
     }
+    
+    .highlight-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 14px;
+        line-height: 1.5;
+        pointer-events: none;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-y: auto;
+        color: var(--text-primary);
+        z-index: 1;
+    }
+    
+    /* Syntax highlighting colors */
+    .hl-keyword { color: #ff79c6; font-weight: bold; }
+    .hl-string { color: #f1fa8c; }
+    .hl-comment { color: #6272a4; font-style: italic; }
+    .hl-number { color: #bd93f9; }
+    .hl-function { color: #50fa7b; }
+    .hl-type { color: #8be9fd; }
+    .hl-operator { color: #ff79c6; }
+    .hl-property { color: #50fa7b; }
+    .hl-tag { color: #ff79c6; }
+    .hl-attribute { color: #50fa7b; }
+    .hl-value { color: #f1fa8c; }
+    .hl-heading { color: #bd93f9; font-weight: bold; }
+    .hl-bold { font-weight: bold; }
+    .hl-italic { font-style: italic; }
+    .hl-code { background: rgba(68, 71, 90, 0.5); padding: 2px 4px; border-radius: 3px; }
     
     .editor-container {
         position: relative;
@@ -134,6 +187,14 @@
             <div class="search-container">
                 <input type="text" id="search" placeholder="Search... (Ctrl+K)" />
             </div>
+            <div style="padding: 8px; margin-bottom: 8px;">
+                <select id="sort-order" style="width: 100%; background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;" title="Sort pastes">
+                    <option value="date-desc">⬇ Newest first</option>
+                    <option value="date-asc">⬆ Oldest first</option>
+                    <option value="name-asc">⬆ Name (A-Z)</option>
+                    <option value="name-desc">⬇ Name (Z-A)</option>
+                </select>
+            </div>
             
             <!-- Single tree view for everything -->
             <div class="pastes" style="flex: 1; overflow-y: auto; padding: 0 8px;">
@@ -145,9 +206,27 @@
         <main class="main-content">
             <header class="editor-header">
                 <div class="paste-info">
-                    <input type="text" id="paste-name" class="paste-name" placeholder="Auto-named..." readonly style="background: transparent; border: none; cursor: text;" />
+                    <input type="text" id="paste-name" class="paste-name" placeholder="Auto-named..." style="background: transparent; border: 1px solid transparent; cursor: text; padding: 2px 6px; border-radius: 4px;" />
                     <span class="paste-meta">
-                        <span id="paste-language">plain</span> • 
+                        <select id="paste-language" style="background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 2px 6px; border-radius: 4px; cursor: pointer;">
+                            <option value="">Auto-detect</option>
+                            <option value="python">Python</option>
+                            <option value="cpp">C++</option>
+                            <option value="c">C</option>
+                            <option value="java">Java</option>
+                            <option value="csharp">C#</option>
+                            <option value="javascript">JavaScript</option>
+                            <option value="go">Go</option>
+                            <option value="rust">Rust</option>
+                            <option value="html">HTML</option>
+                            <option value="css">CSS</option>
+                            <option value="markdown">Markdown</option>
+                            <option value="xml">XML</option>
+                            <option value="json">JSON</option>
+                            <option value="yaml">YAML</option>
+                            <option value="toml">TOML</option>
+                            <option value="latex">LaTeX</option>
+                        </select> • 
                         <span id="paste-date">just now</span> • 
                         <span id="char-count">0 chars</span> • 
                         <span id="save-status" class="auto-saved" style="display: none;">✓ saved</span>
@@ -158,11 +237,15 @@
                     <button id="delete-paste" class="btn-icon danger" title="Delete (Ctrl+D)">🗑️</button>
                 </div>
             </header>
-            <div id="editor-container" class="editor-container">
+            <div id="editor-container" class="editor-container" style="position: relative;">
+                <div id="highlight-layer" class="highlight-layer"></div>
                 <textarea id="editor"></textarea>
             </div>
             <footer class="status-bar">
-                <div class="status-left"><span id="status-message">Ready</span></div>
+                <div class="status-left">
+                    <span id="status-message">Ready</span>
+                    <a href="https://github.com/pszemraj/localpaste.rs" target="_blank" style="margin-left: 16px; color: var(--text-secondary); text-decoration: none; font-size: 11px; opacity: 0.7;" title="View on GitHub">GitHub</a>
+                </div>
                 <div class="status-right"><span id="cursor-position">Ln 1, Col 1</span></div>
             </footer>
         </main>
@@ -178,6 +261,7 @@
             this.saveTimeout = null;
             this.draggedPaste = null;
             this.expandedFolders = new Set(['unfiled']); // Start with unfiled expanded
+            this.sortOrder = 'date-desc';
             
             console.log('LocalPaste.rs: Initializing...');
             this.init();
@@ -203,19 +287,44 @@
             
             this.renderTree();
             
-            // Load first unfiled paste if available
-            const unfiledPastes = this.pastes.filter(p => !p.folder_id);
-            if (unfiledPastes.length > 0) {
-                await this.loadPaste(unfiledPastes[0].id);
+            // Try to restore last opened paste
+            const lastPasteId = localStorage.getItem('lastOpenedPaste');
+            if (lastPasteId && this.pastes.find(p => p.id === lastPasteId)) {
+                await this.loadPaste(lastPasteId);
+            } else {
+                // Load first unfiled paste if available
+                const unfiledPastes = this.pastes.filter(p => !p.folder_id);
+                if (unfiledPastes.length > 0) {
+                    await this.loadPaste(unfiledPastes[0].id);
+                }
             }
         }
 
+        sortPastes(pastes) {
+            const sorted = [...pastes];
+            switch(this.sortOrder) {
+                case 'date-desc':
+                    sorted.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                    break;
+                case 'date-asc':
+                    sorted.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                    break;
+                case 'name-asc':
+                    sorted.sort((a, b) => a.name.localeCompare(b.name));
+                    break;
+                case 'name-desc':
+                    sorted.sort((a, b) => b.name.localeCompare(a.name));
+                    break;
+            }
+            return sorted;
+        }
+        
         renderTree() {
             const container = document.getElementById('tree-view');
             container.innerHTML = '';
             
-            // Group pastes by folder
-            const unfiledPastes = this.pastes.filter(p => !p.folder_id);
+            // Group pastes by folder and sort
+            const unfiledPastes = this.sortPastes(this.pastes.filter(p => !p.folder_id));
             const pastesByFolder = {};
             this.pastes.forEach(paste => {
                 if (paste.folder_id) {
@@ -224,6 +333,11 @@
                     }
                     pastesByFolder[paste.folder_id].push(paste);
                 }
+            });
+            
+            // Sort pastes within each folder
+            Object.keys(pastesByFolder).forEach(folderId => {
+                pastesByFolder[folderId] = this.sortPastes(pastesByFolder[folderId]);
             });
             
             // Render folders first
@@ -239,11 +353,51 @@
                 
                 folderDiv.innerHTML = `
                     <span class="tree-folder-icon">▶</span>
-                    📁 ${folder.name}
+                    📁 <span class="folder-name">${folder.name}</span>
                     <span style="opacity: 0.6; font-size: 12px; margin-left: 4px;">(${pastesByFolder[folder.id]?.length || 0})</span>
+                    <span class="folder-actions" style="float: right; display: none;">
+                        <button class="folder-rename" data-folder-id="${folder.id}" title="Rename">✏️</button>
+                        <button class="folder-delete" data-folder-id="${folder.id}" title="Delete">🗑️</button>
+                    </span>
                 `;
                 
-                folderDiv.addEventListener('click', () => this.toggleFolder(folder.id));
+                folderDiv.addEventListener('click', (e) => {
+                    // Don't toggle if clicking on actions
+                    if (e.target.classList.contains('folder-rename') || 
+                        e.target.classList.contains('folder-delete')) {
+                        return;
+                    }
+                    this.toggleFolder(folder.id);
+                });
+                
+                // Show actions on hover
+                folderDiv.addEventListener('mouseenter', () => {
+                    const actions = folderDiv.querySelector('.folder-actions');
+                    if (actions) actions.style.display = 'inline';
+                });
+                
+                folderDiv.addEventListener('mouseleave', () => {
+                    const actions = folderDiv.querySelector('.folder-actions');
+                    if (actions) actions.style.display = 'none';
+                });
+                
+                // Rename button
+                const renameBtn = folderDiv.querySelector('.folder-rename');
+                if (renameBtn) {
+                    renameBtn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        await this.renameFolder(folder.id, folder.name);
+                    });
+                }
+                
+                // Delete button
+                const deleteBtn = folderDiv.querySelector('.folder-delete');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        await this.deleteFolder(folder.id, folder.name);
+                    });
+                }
                 this.setupFolderDrop(folderDiv, folder.id);
                 
                 folderItem.appendChild(folderDiv);
@@ -380,6 +534,10 @@
                 if (!res.ok) throw new Error('Failed to move paste');
                 
                 await this.loadData();
+                // Keep the current paste selected
+                if (this.currentPaste) {
+                    await this.loadPaste(this.currentPaste.id);
+                }
                 this.setStatus('Paste moved');
             } catch (err) {
                 console.error('Error moving paste:', err);
@@ -391,7 +549,17 @@
             // Editor events
             this.editor.addEventListener('input', () => {
                 this.onEditorChange();
-                this.detectLanguage();
+                // Only detect language if auto-detect is selected
+                const langSelect = document.getElementById('paste-language');
+                if (!langSelect.value) {
+                    this.detectLanguage();
+                }
+                this.updateHighlighting();
+            });
+            
+            // Sync scroll between editor and highlight layer
+            this.editor.addEventListener('scroll', () => {
+                document.getElementById('highlight-layer').scrollTop = this.editor.scrollTop;
             });
             this.editor.addEventListener('keyup', () => this.updateCursorPosition());
             this.editor.addEventListener('click', () => this.updateCursorPosition());
@@ -401,6 +569,12 @@
             
             // New folder
             document.getElementById('new-folder').addEventListener('click', () => this.createNewFolder());
+            
+            // Sort order
+            document.getElementById('sort-order').addEventListener('change', (e) => {
+                this.sortOrder = e.target.value;
+                this.renderTree();
+            });
             
             // Download
             document.getElementById('download-paste').addEventListener('click', () => this.downloadPaste());
@@ -418,9 +592,28 @@
             
             // Name change
             const nameInput = document.getElementById('paste-name');
-            nameInput.addEventListener('click', () => {
-                nameInput.readOnly = false;
-                nameInput.select();
+            nameInput.addEventListener('focus', () => {
+                nameInput.style.border = '1px solid var(--accent)';
+            });
+            nameInput.addEventListener('blur', () => {
+                nameInput.style.border = '1px solid transparent';
+                if (this.currentPaste && nameInput.value !== this.currentPaste.name) {
+                    this.savePaste();
+                }
+            });
+            nameInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    nameInput.blur();
+                }
+            });
+            
+            // Language change
+            const langSelect = document.getElementById('paste-language');
+            langSelect.addEventListener('change', () => {
+                this.updateHighlighting();
+                if (this.currentPaste) {
+                    this.savePaste();
+                }
             });
             nameInput.addEventListener('blur', () => {
                 nameInput.readOnly = true;
@@ -454,17 +647,34 @@
         }
 
         detectLanguage() {
+            // Only auto-detect if no language is manually selected
+            const langSelect = document.getElementById('paste-language');
+            if (langSelect.value) return;
+            
             const text = this.editor.value;
-            let language = null;
-            if (text.includes('function') || text.includes('=>') || text.includes('const ')) language = 'javascript';
-            if (text.includes('def ') || text.includes('import ') || text.includes('print(')) language = 'python';
-            if (text.includes('fn ') || text.includes('impl ') || text.includes('let ')) language = 'rust';
-            if (text.includes('package ') || text.includes('func ')) language = 'go';
-            if (text.includes('<html') || text.includes('<div')) language = 'html';
-            if (text.includes('{') && text.includes('}') && text.includes(':')) language = 'css';
-            if (text.includes('SELECT ') || text.includes('INSERT ')) language = 'sql';
-            if (text.includes('#') && text.includes('##')) language = 'markdown';
-            document.getElementById('paste-language').textContent = language || 'plain';
+            let language = '';
+            
+            // Programming languages
+            if (text.includes('def ') || text.includes('import ') || text.includes('print(') || text.includes('if __name__')) language = 'python';
+            else if (text.includes('#include') || text.includes('std::') || text.includes('cout') || text.includes('namespace')) language = 'cpp';
+            else if (text.includes('#include') && !text.includes('std::') && (text.includes('printf') || text.includes('scanf'))) language = 'c';
+            else if (text.includes('public class') || text.includes('public static void main') || text.includes('System.out')) language = 'java';
+            else if (text.includes('namespace') && text.includes('using System') || text.includes('Console.Write')) language = 'csharp';
+            else if (text.includes('function') || text.includes('=>') || text.includes('const ') || text.includes('let ') || text.includes('var ')) language = 'javascript';
+            else if (text.includes('package main') || text.includes('func ') || text.includes('fmt.')) language = 'go';
+            else if (text.includes('fn ') || text.includes('impl ') || text.includes('let ') || text.includes('mut ') || text.includes('pub ')) language = 'rust';
+            
+            // Markup languages
+            else if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('<div') || text.includes('<body')) language = 'html';
+            else if ((text.includes('{') && text.includes('}') && text.includes(':') && text.includes(';')) || text.includes('.class') || text.includes('#id')) language = 'css';
+            else if (text.includes('#') && (text.includes('##') || text.includes('```') || text.includes('**'))) language = 'markdown';
+            else if (text.includes('<?xml') || (text.includes('<') && text.includes('>') && text.includes('/>'))) language = 'xml';
+            else if (text.startsWith('{') && text.includes('"') && text.includes(':')) language = 'json';
+            else if ((text.includes(':') && text.includes('\n') && !text.includes('{')) || text.includes('---')) language = 'yaml';
+            else if (text.includes('[') && text.includes(']') && text.includes('=')) language = 'toml';
+            else if (text.includes('\\begin{') || text.includes('\\end{') || text.includes('\\section') || text.includes('\\usepackage')) language = 'latex';
+            
+            langSelect.value = language;
         }
 
         async createNewPaste() {
@@ -508,6 +718,47 @@
                 this.setStatus('Failed to create folder');
             }
         }
+        
+        async renameFolder(folderId, currentName) {
+            const newName = prompt('Rename folder:', currentName);
+            if (!newName || newName === currentName) return;
+            
+            try {
+                const res = await fetch(`/api/folder/${folderId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName })
+                });
+                
+                if (!res.ok) throw new Error('Failed to rename folder');
+                
+                await this.loadData();
+                this.setStatus('Folder renamed');
+            } catch (err) {
+                console.error('Error renaming folder:', err);
+                this.setStatus('Failed to rename folder');
+            }
+        }
+        
+        async deleteFolder(folderId, folderName) {
+            if (!confirm(`Delete folder "${folderName}"? All pastes will be moved to Unfiled.`)) {
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/folder/${folderId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (!res.ok) throw new Error('Failed to delete folder');
+                
+                await this.loadData();
+                this.setStatus('Folder deleted, pastes moved to Unfiled');
+            } catch (err) {
+                console.error('Error deleting folder:', err);
+                this.setStatus('Failed to delete folder');
+            }
+        }
 
         async loadFolders() {
             try {
@@ -527,13 +778,15 @@
             try {
                 const content = this.editor.value;
                 const name = document.getElementById('paste-name').value || this.currentPaste.name;
+                const language = document.getElementById('paste-language').value || null;
                 
                 const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         content,
-                        name
+                        name,
+                        language: language === '' ? null : language
                     })
                 });
                 
@@ -548,7 +801,12 @@
                     saveStatus.style.display = 'none';
                 }, 2000);
                 
-                await this.loadData();
+                // Update the paste in the pastes list without full reload
+                const index = this.pastes.findIndex(p => p.id === this.currentPaste.id);
+                if (index !== -1) {
+                    this.pastes[index] = this.currentPaste;
+                }
+                this.renderTree();
             } catch (err) {
                 console.error('Error saving:', err);
                 this.setStatus('Failed to save');
@@ -586,14 +844,23 @@
                 const paste = await res.json();
                 this.currentPaste = paste;
                 
+                // Remember this paste for next time
+                localStorage.setItem('lastOpenedPaste', id);
+                
                 // Update editor
                 this.editor.value = paste.content;
-                this.detectLanguage();
                 
                 // Update UI
                 document.getElementById('paste-name').value = paste.name;
+                document.getElementById('paste-language').value = paste.language || '';
+                if (!paste.language) {
+                    this.detectLanguage();
+                }
                 document.getElementById('paste-date').textContent = new Date(paste.updated_at).toLocaleString();
                 document.getElementById('char-count').textContent = `${paste.content.length} chars`;
+                
+                // Update highlighting
+                this.updateHighlighting();
                 
                 this.renderTree();
                 this.updateCursorPosition();
@@ -611,19 +878,24 @@
             
             // Determine file extension based on language
             let ext = 'txt';
-            const lang = document.getElementById('paste-language').textContent;
+            const lang = document.getElementById('paste-language').value;
             const langExtMap = {
                 'javascript': 'js',
                 'python': 'py',
                 'rust': 'rs',
                 'go': 'go',
+                'cpp': 'cpp',
+                'c': 'c',
+                'java': 'java',
+                'csharp': 'cs',
                 'html': 'html',
                 'css': 'css',
-                'sql': 'sql',
                 'markdown': 'md',
+                'xml': 'xml',
                 'json': 'json',
                 'yaml': 'yml',
-                'toml': 'toml'
+                'toml': 'toml',
+                'latex': 'tex'
             };
             if (langExtMap[lang]) {
                 ext = langExtMap[lang];
@@ -655,6 +927,12 @@
                 
                 if (!res.ok) throw new Error('Failed to delete');
                 
+                // Clear from localStorage if it was the last opened
+                const deletedId = this.currentPaste.id;
+                if (localStorage.getItem('lastOpenedPaste') === deletedId) {
+                    localStorage.removeItem('lastOpenedPaste');
+                }
+                
                 this.currentPaste = null;
                 this.editor.value = '';
                 
@@ -672,6 +950,10 @@
             
             const charCount = this.editor.value.length;
             document.getElementById('char-count').textContent = `${charCount} chars`;
+            
+            
+            // Update highlighting
+            this.updateHighlighting();
             
             // Auto-save
             clearTimeout(this.saveTimeout);
@@ -698,6 +980,473 @@
                     el.textContent = 'Ready';
                 }, 3000);
             }
+        }
+        
+        updateHighlighting() {
+            const lang = document.getElementById('paste-language').value;
+            const text = this.editor.value;
+            const highlightLayer = document.getElementById('highlight-layer');
+            
+            if (!lang || !text) {
+                highlightLayer.innerHTML = this.escapeHtml(text);
+                return;
+            }
+            
+            let highlighted = text;
+            
+            // Apply highlighting based on language
+            switch(lang) {
+                case 'python':
+                    highlighted = this.highlightPython(text);
+                    break;
+                case 'javascript':
+                    highlighted = this.highlightJavaScript(text);
+                    break;
+                case 'cpp':
+                    highlighted = this.highlightCpp(text);
+                    break;
+                case 'c':
+                    highlighted = this.highlightC(text);
+                    break;
+                case 'java':
+                    highlighted = this.highlightJava(text);
+                    break;
+                case 'csharp':
+                    highlighted = this.highlightCSharp(text);
+                    break;
+                case 'go':
+                    highlighted = this.highlightGo(text);
+                    break;
+                case 'rust':
+                    highlighted = this.highlightRust(text);
+                    break;
+                case 'json':
+                    highlighted = this.highlightJSON(text);
+                    break;
+                case 'yaml':
+                    highlighted = this.highlightYAML(text);
+                    break;
+                case 'toml':
+                    highlighted = this.highlightTOML(text);
+                    break;
+                case 'markdown':
+                    highlighted = this.highlightMarkdown(text);
+                    break;
+                case 'html':
+                    highlighted = this.highlightHTML(text);
+                    break;
+                case 'xml':
+                    highlighted = this.highlightXML(text);
+                    break;
+                case 'css':
+                    highlighted = this.highlightCSS(text);
+                    break;
+                case 'latex':
+                    highlighted = this.highlightLaTeX(text);
+                    break;
+                default:
+                    highlighted = this.escapeHtml(text);
+            }
+            
+            highlightLayer.innerHTML = highlighted;
+        }
+        
+        escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        highlightPython(text) {
+            text = this.escapeHtml(text);
+            // Comments first
+            text = text.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
+            // Triple quoted strings
+            text = text.replace(/('''[\s\S]*?'''|"""[\s\S]*?""")/g, '<span class="hl-string">$1</span>');
+            // Regular strings
+            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            // Keywords
+            text = text.replace(/\b(def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, '<span class="hl-keyword">$1</span>');
+            // Numbers
+            text = text.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+            // Functions
+            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
+            return text;
+        }
+        
+        highlightJavaScript(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            // Strings
+            text = text.replace(/(['"`])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            // Keywords
+            text = text.replace(/\b(const|let|var|function|class|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|async|await|import|export|from|default|new|this|super|extends|static|typeof|instanceof|in|of|delete|void|yield|null|undefined|true|false)\b/g, '<span class="hl-keyword">$1</span>');
+            // Numbers
+            text = text.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+            // Functions
+            text = text.replace(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
+            return text;
+        }
+        
+        highlightCpp(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            // Strings
+            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            // Keywords
+            text = text.replace(/\b(class|public|private|protected|virtual|override|namespace|using|if|else|for|while|do|switch|case|break|continue|return|try|catch|throw|new|delete|this|nullptr|const|static|inline|typedef|typename|template|auto|void|int|char|bool|float|double|long|short|unsigned|signed|struct|enum|union)\b/g, '<span class="hl-keyword">$1</span>');
+            // Preprocessor
+            text = text.replace(/^#\s*\w+/gm, '<span class="hl-type">$&</span>');
+            // Numbers
+            text = text.replace(/\b\d+(\.\d+)?[fFlL]?\b/g, '<span class="hl-number">$&</span>');
+            // STL types
+            text = text.replace(/\b(std::\w+|string|vector|map|set|cout|cin|endl)\b/g, '<span class="hl-type">$1</span>');
+            return text;
+        }
+        
+        highlightC(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            // Strings
+            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            // Keywords
+            text = text.replace(/\b(if|else|for|while|do|switch|case|break|continue|return|goto|typedef|struct|enum|union|const|static|extern|inline|sizeof|void|int|char|float|double|long|short|unsigned|signed|NULL)\b/g, '<span class="hl-keyword">$1</span>');
+            // Preprocessor
+            text = text.replace(/^#\s*\w+/gm, '<span class="hl-type">$&</span>');
+            // Numbers
+            text = text.replace(/\b\d+(\.\d+)?[fFlL]?\b/g, '<span class="hl-number">$&</span>');
+            // Functions
+            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
+            return text;
+        }
+        
+        highlightJava(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            // Strings
+            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            // Keywords
+            text = text.replace(/\b(public|private|protected|class|interface|extends|implements|abstract|final|static|void|int|char|boolean|float|double|long|short|byte|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|throws|new|this|super|import|package|null|true|false)\b/g, '<span class="hl-keyword">$1</span>');
+            // Annotations
+            text = text.replace(/@\w+/g, '<span class="hl-type">$&</span>');
+            // Numbers
+            text = text.replace(/\b\d+(\.\d+)?[fFlLdD]?\b/g, '<span class="hl-number">$&</span>');
+            // Types
+            text = text.replace(/\b(String|Integer|Double|Float|Boolean|ArrayList|HashMap|List|Map|Set)\b/g, '<span class="hl-type">$1</span>');
+            return text;
+        }
+        
+        highlightCSharp(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            // Strings
+            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            // Interpolated strings
+            text = text.replace(/\$"[^"]*"/g, '<span class="hl-string">$&</span>');
+            // Keywords
+            text = text.replace(/\b(public|private|protected|internal|class|interface|struct|enum|abstract|sealed|static|void|int|char|bool|float|double|decimal|long|short|byte|string|if|else|for|foreach|while|do|switch|case|break|continue|return|try|catch|finally|throw|using|namespace|new|this|base|null|true|false|var|async|await|override|virtual|const|readonly)\b/g, '<span class="hl-keyword">$1</span>');
+            // Numbers
+            text = text.replace(/\b\d+(\.\d+)?[fFmMdD]?\b/g, '<span class="hl-number">$&</span>');
+            // Types
+            text = text.replace(/\b(String|Int32|Double|Float|Boolean|List|Dictionary|Task)\b/g, '<span class="hl-type">$1</span>');
+            return text;
+        }
+        
+        highlightGo(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            // Strings
+            text = text.replace(/(['"`])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            // Keywords
+            text = text.replace(/\b(package|import|func|var|const|type|struct|interface|map|chan|if|else|for|range|switch|case|break|continue|return|go|defer|select|fallthrough|default|nil|true|false)\b/g, '<span class="hl-keyword">$1</span>');
+            // Types
+            text = text.replace(/\b(bool|string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|complex64|complex128|byte|rune|error)\b/g, '<span class="hl-type">$1</span>');
+            // Numbers
+            text = text.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+            // Functions
+            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
+            return text;
+        }
+        
+        highlightRust(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            // Strings
+            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            // Keywords
+            text = text.replace(/\b(fn|let|mut|const|if|else|match|for|while|loop|break|continue|return|use|mod|pub|struct|enum|trait|impl|self|Self|super|crate|async|await|move|ref|dyn|static|extern|unsafe|where|as|in|type|impl|trait)\b/g, '<span class="hl-keyword">$1</span>');
+            // Types
+            text = text.replace(/\b(bool|char|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize|f32|f64|str|String|Vec|Option|Result|Box|Rc|Arc|HashMap|HashSet)\b/g, '<span class="hl-type">$1</span>');
+            // Lifetimes
+            text = text.replace(/'[a-z][a-z0-9_]*/g, '<span class="hl-type">$&</span>');
+            // Numbers
+            text = text.replace(/\b\d+(\.\d+)?[iu]?(8|16|32|64|128|size)?\b/g, '<span class="hl-number">$&</span>');
+            // Macros
+            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)!/g, '<span class="hl-function">$1!</span>');
+            return text;
+        }
+        
+        highlightJSON(text) {
+            text = this.escapeHtml(text);
+            // Property names
+            text = text.replace(/"([^"]+)"\s*:/g, '<span class="hl-property">"$1"</span>:');
+            // String values
+            text = text.replace(/:[\s]*"([^"]*)"/g, ': <span class="hl-string">"$1"</span>');
+            // Numbers
+            text = text.replace(/\b-?\d+(\.\d+)?([eE][+-]?\d+)?\b/g, '<span class="hl-number">$&</span>');
+            // Booleans and null
+            text = text.replace(/\b(true|false|null)\b/g, '<span class="hl-keyword">$1</span>');
+            return text;
+        }
+        
+        highlightYAML(text) {
+            // Don't escape first - work with raw text
+            let result = '';
+            let inString = false;
+            let inComment = false;
+            
+            const lines = text.split('\n');
+            for (let line of lines) {
+                let processedLine = '';
+                inComment = false;
+                
+                // Check for comment
+                const commentIndex = line.indexOf('#');
+                if (commentIndex !== -1 && !inString) {
+                    processedLine = this.escapeHtml(line.substring(0, commentIndex));
+                    processedLine += '<span class="hl-comment">' + this.escapeHtml(line.substring(commentIndex)) + '</span>';
+                } else {
+                    // Simple key highlighting
+                    const match = line.match(/^(\s*)([\w-]+):(.*)/);
+                    if (match) {
+                        processedLine = this.escapeHtml(match[1]) + '<span class="hl-property">' + this.escapeHtml(match[2]) + '</span>:' + this.escapeHtml(match[3]);
+                    } else {
+                        processedLine = this.escapeHtml(line);
+                    }
+                    // Highlight booleans and numbers in the value part
+                    processedLine = processedLine.replace(/\b(true|false|yes|no|null)\b/g, '<span class="hl-keyword">$1</span>');
+                    processedLine = processedLine.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+                }
+                
+                result += processedLine + '\n';
+            }
+            return result;
+        }
+        
+        highlightTOML(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
+            // Section headers
+            text = text.replace(/^\[([\w.]+)\]/gm, '[<span class="hl-type">$1</span>]');
+            text = text.replace(/^\[\[([\w.]+)\]\]/gm, '[[<span class="hl-type">$1</span>]]');
+            // Keys
+            text = text.replace(/^(\s*)([\w-]+)\s*=/gm, '$1<span class="hl-property">$2</span> =');
+            // Strings
+            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            // Booleans
+            text = text.replace(/\b(true|false)\b/g, '<span class="hl-keyword">$1</span>');
+            // Numbers
+            text = text.replace(/\b-?\d+(\.\d+)?([eE][+-]?\d+)?\b/g, '<span class="hl-number">$&</span>');
+            // Dates
+            text = text.replace(/\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?/g, '<span class="hl-number">$&</span>');
+            return text;
+        }
+        
+        highlightMarkdown(text) {
+            text = this.escapeHtml(text);
+            // Code blocks first
+            text = text.replace(/```[\s\S]*?```/g, '<span class="hl-code">$&</span>');
+            // Headers
+            text = text.replace(/^(#{1,6})\s+(.*)$/gm, '<span class="hl-heading">$1 $2</span>');
+            // Bold
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<span class="hl-bold">**$1**</span>');
+            text = text.replace(/__([^_]+)__/g, '<span class="hl-bold">__$1__</span>');
+            // Italic
+            text = text.replace(/\*([^*\s][^*]*)\*/g, '<span class="hl-italic">*$1*</span>');
+            text = text.replace(/_([^_\s][^_]*)_/g, '<span class="hl-italic">_$1_</span>');
+            // Inline code
+            text = text.replace(/`([^`]+)`/g, '<span class="hl-code">`$1`</span>');
+            // Links
+            text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '[<span class="hl-string">$1</span>](<span class="hl-attribute">$2</span>)');
+            // Lists
+            text = text.replace(/^(\s*[*+-])\s/gm, '<span class="hl-operator">$1</span> ');
+            text = text.replace(/^(\s*\d+\.)\s/gm, '<span class="hl-operator">$1</span> ');
+            // Blockquotes - the > is already escaped to &gt;
+            text = text.replace(/^&gt;\s(.*)$/gm, '<span class="hl-comment">$&</span>');
+            return text;
+        }
+        
+        highlightHTML(text) {
+            // Process character by character to avoid entity issues
+            let result = '';
+            let inTag = false;
+            let inString = false;
+            let inComment = false;
+            let stringChar = '';
+            let buffer = '';
+            
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                const next = text[i + 1];
+                const prev = text[i - 1];
+                
+                // Check for comment start
+                if (!inComment && !inString && char === '<' && text.substr(i, 4) === '<!--') {
+                    if (buffer) {
+                        result += this.escapeHtml(buffer);
+                        buffer = '';
+                    }
+                    inComment = true;
+                    result += '<span class="hl-comment">&lt;!--';
+                    i += 3;
+                    continue;
+                }
+                
+                // Check for comment end
+                if (inComment && char === '-' && text.substr(i, 3) === '-->') {
+                    result += '--&gt;</span>';
+                    inComment = false;
+                    i += 2;
+                    continue;
+                }
+                
+                // If in comment, just escape and add
+                if (inComment) {
+                    result += this.escapeHtml(char);
+                    continue;
+                }
+                
+                // Start of tag
+                if (!inTag && !inString && char === '<') {
+                    if (buffer) {
+                        result += this.escapeHtml(buffer);
+                        buffer = '';
+                    }
+                    inTag = true;
+                    result += '&lt;';
+                    continue;
+                }
+                
+                // End of tag
+                if (inTag && !inString && char === '>') {
+                    // Process the buffer as tag content
+                    if (buffer) {
+                        // Check if it's a closing tag
+                        if (buffer[0] === '/') {
+                            result += '/<span class="hl-tag">' + this.escapeHtml(buffer.substring(1)) + '</span>';
+                        } else {
+                            // Split tag name and attributes
+                            const spaceIndex = buffer.indexOf(' ');
+                            if (spaceIndex === -1) {
+                                // Just tag name
+                                result += '<span class="hl-tag">' + this.escapeHtml(buffer) + '</span>';
+                            } else {
+                                // Tag name and attributes
+                                const tagName = buffer.substring(0, spaceIndex);
+                                let attrs = buffer.substring(spaceIndex);
+                                result += '<span class="hl-tag">' + this.escapeHtml(tagName) + '</span>';
+                                
+                                // Simple attribute highlighting
+                                attrs = this.escapeHtml(attrs);
+                                // Highlight attribute names
+                                attrs = attrs.replace(/(\w+)=/g, '<span class="hl-attribute">$1</span>=');
+                                // Highlight strings
+                                attrs = attrs.replace(/="([^"]*)"/g, '="<span class="hl-string">$1</span>"');
+                                attrs = attrs.replace(/='([^']*)'/g, '=\'<span class="hl-string">$1</span>\'');
+                                result += attrs;
+                            }
+                        }
+                        buffer = '';
+                    }
+                    result += '&gt;';
+                    inTag = false;
+                    continue;
+                }
+                
+                // String handling in tags
+                if (inTag && !inString && (char === '"' || char === "'")) {
+                    inString = true;
+                    stringChar = char;
+                    buffer += char;
+                    continue;
+                }
+                
+                if (inTag && inString && char === stringChar && prev !== '\\') {
+                    inString = false;
+                    stringChar = '';
+                    buffer += char;
+                    continue;
+                }
+                
+                // Add to buffer
+                buffer += char;
+            }
+            
+            // Process remaining buffer
+            if (buffer) {
+                result += this.escapeHtml(buffer);
+            }
+            
+            return result;
+        }
+        
+        highlightXML(text) {
+            // Same as HTML
+            return this.highlightHTML(text);
+        }
+        
+        highlightCSS(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            // Selectors
+            text = text.replace(/([.#]?[\w-:]+)(\s*,?\s*)(?={)/g, '<span class="hl-tag">$1</span>$2');
+            // Properties
+            text = text.replace(/([\w-]+)\s*:/g, '<span class="hl-property">$1</span>:');
+            // Values
+            text = text.replace(/:\s*([^;{}]+)/g, function(match, value) {
+                // Highlight colors
+                value = value.replace(/(#[0-9a-fA-F]{3,8}|\b(?:rgb|rgba|hsl|hsla)\([^)]+\))/g, '<span class="hl-number">$1</span>');
+                // Highlight numbers with units
+                value = value.replace(/\b\d+(\.\d+)?(px|em|rem|%|vh|vw|deg|s|ms)?\b/g, '<span class="hl-number">$&</span>');
+                // Highlight strings
+                value = value.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+                return ': ' + value;
+            });
+            // Important
+            text = text.replace(/!important/g, '<span class="hl-keyword">$&</span>');
+            return text;
+        }
+        
+        highlightLaTeX(text) {
+            text = this.escapeHtml(text);
+            // Comments
+            text = text.replace(/(%.*$)/gm, '<span class="hl-comment">$1</span>');
+            // Commands
+            text = text.replace(/(\\[a-zA-Z]+)/g, '<span class="hl-keyword">$1</span>');
+            // Math mode
+            text = text.replace(/(\$[^$]+\$|\$\$[\s\S]*?\$\$)/g, '<span class="hl-string">$1</span>');
+            // Environments
+            text = text.replace(/(\\begin\{)(\w+)(\})/g, '$1<span class="hl-type">$2</span>$3');
+            text = text.replace(/(\\end\{)(\w+)(\})/g, '$1<span class="hl-type">$2</span>$3');
+            // Curly braces
+            text = text.replace(/[{}]/g, '<span class="hl-operator">$&</span>');
+            return text;
         }
     }
 
