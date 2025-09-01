@@ -79,7 +79,6 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     tracing::info!("🚀 LocalPaste running at http://{}", addr);
-    tracing::info!("📦 Single binary, zero runtime dependencies!");
 
     axum::serve(listener, app).await?;
 
