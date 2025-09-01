@@ -1,9 +1,12 @@
 # LocalPaste.rs
 
-A blazing-fast, localhost-only pastebin with a modern editor, built in Rust.
-
-![Rust](https://img.shields.io/badge/rust-%23E57000.svg?style=for-the-badge&logo=rust&logoColor=white)
 ![Status](https://img.shields.io/badge/status-active-success.svg?style=for-the-badge)
+
+A fast, localhost-only pastebin with a modern editor, built in Rust.
+
+![LocalPaste Screenshot](assets/ui.png)
+
+---
 
 ## Features
 
@@ -19,6 +22,7 @@ A blazing-fast, localhost-only pastebin with a modern editor, built in Rust.
 ## Quick Start
 
 LocalPaste.rs consists of two binaries:
+
 - `localpaste` - The web server with UI (main application)
 - `lpaste` - Command-line interface for terminal usage
 
@@ -33,7 +37,7 @@ cargo build --release
 ./target/release/localpaste
 ```
 
-Open http://localhost:3030 in your browser.
+Open <http://localhost:3030> in your browser.
 
 ## CLI Usage
 
@@ -62,6 +66,7 @@ echo "Hello, World!" | ./target/release/lpaste new
 ## Configuration
 
 Environment variables:
+
 - `PORT` - Server port (default: 3030)
 - `DB_PATH` - Database path (default: ~/.cache/localpaste/db)
 - `MAX_PASTE_SIZE` - Maximum paste size in bytes (default: 10MB)
