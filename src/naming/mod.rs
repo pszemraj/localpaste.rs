@@ -180,3 +180,29 @@ pub fn generate_name() -> String {
     let noun = NOUNS[rng.gen_range(0..NOUNS.len())];
     format!("{}-{}", adj, noun)
 }
+
+/// Generate a unique name, with collision handling
+/// Tries base name first, then appends random suffix if needed
+pub fn generate_unique_name<F>(exists_check: F) -> String 
+where 
+    F: Fn(&str) -> bool
+{
+    // Try up to 5 times with just adjective-noun
+    for _ in 0..5 {
+        let name = generate_name();
+        if !exists_check(&name) {
+            return name;
+        }
+    }
+    
+    // If still colliding, append a random suffix
+    let mut rng = rand::thread_rng();
+    loop {
+        let base = generate_name();
+        let suffix: u32 = rng.gen_range(1000..9999);
+        let name = format!("{}-{}", base, suffix);
+        if !exists_check(&name) {
+            return name;
+        }
+    }
+}
