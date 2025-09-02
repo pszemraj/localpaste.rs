@@ -34,9 +34,8 @@ pub async fn create_paste(
     let name = req.name.unwrap_or_else(naming::generate_name);
     let mut paste = Paste::new(req.content, name);
 
-    if let Some(folder_id) = req.folder_id {
+    if let Some(ref folder_id) = req.folder_id {
         paste.folder_id = Some(folder_id.clone());
-        state.db.folders.update_count(&folder_id, 1)?;
     }
 
     if let Some(tags) = req.tags {
@@ -47,7 +46,13 @@ pub async fn create_paste(
         paste.language = Some(language);
     }
 
-    state.db.pastes.create(&paste)?;
+    // Use transaction-like operation for atomic folder count update
+    if let Some(ref folder_id) = paste.folder_id {
+        crate::db::TransactionOps::create_paste_with_folder(&state.db, &paste, folder_id)?;
+    } else {
+        state.db.pastes.create(&paste)?;
+    }
+    
     Ok(Json(paste))
 }
 
@@ -93,25 +98,20 @@ pub async fn update_paste(
     // Check if folder_id is changing (DB layer will normalize empty string to None)
     let new_folder_id =
         req.folder_id
-            .as_ref()
-            .and_then(|f| if f.is_empty() { None } else { Some(f.as_str()) });
-    let old_folder_id = old_paste.folder_id.as_deref();
+            .clone()
+            .and_then(|f| if f.is_empty() { None } else { Some(f) });
+    let old_folder_id = old_paste.folder_id.clone();
 
-    if new_folder_id != old_folder_id {
-        if let Some(old_folder) = old_folder_id {
-            state.db.folders.update_count(old_folder, -1)?;
-        }
-        if let Some(new_folder) = new_folder_id {
-            state.db.folders.update_count(new_folder, 1)?;
-        }
-    }
-
-    state
-        .db
-        .pastes
-        .update(&id, req)?
-        .map(Json)
-        .ok_or(AppError::NotFound)
+    // Use transaction-like operation for atomic folder count updates
+    crate::db::TransactionOps::move_paste_between_folders(
+        &state.db,
+        &id,
+        old_folder_id.as_deref(),
+        new_folder_id.as_deref(),
+        req,
+    )?
+    .map(Json)
+    .ok_or(AppError::NotFound)
 }
 
 pub async fn delete_paste(
@@ -120,11 +120,14 @@ pub async fn delete_paste(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
 
-    if let Some(ref folder_id) = paste.folder_id {
-        state.db.folders.update_count(folder_id, -1)?;
-    }
+    // Use transaction-like operation for atomic folder count update
+    let deleted = if let Some(ref folder_id) = paste.folder_id {
+        crate::db::TransactionOps::delete_paste_with_folder(&state.db, &id, folder_id)?
+    } else {
+        state.db.pastes.delete(&id)?
+    };
 
-    if state.db.pastes.delete(&id)? {
+    if deleted {
         Ok(Json(serde_json::json!({ "success": true })))
     } else {
         Err(AppError::NotFound)
