@@ -74,6 +74,16 @@ Basic environment variables:
 
 For advanced configuration and security settings, see [docs/security.md](docs/security.md).
 
+## Running as a Background Service
+
+LocalPaste can run automatically in the background. See [docs/deployment.md](docs/deployment.md) for:
+- systemd (Linux)
+- launchd (macOS)  
+- Task Scheduler (Windows)
+- Docker setup
+- Process managers (PM2, Supervisor)
+- Auto-restart scripts
+
 ## Development
 
 See [docs/dev.md](docs/dev.md) for development documentation.
