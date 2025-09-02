@@ -57,6 +57,7 @@ reqwest = { version = "0.12", features = ["json"], optional = true }
 [dev-dependencies]
 tempfile = "3.8"
 tokio-test = "0.4"
+axum-test = "16.4"
 
 [features]
 default = []

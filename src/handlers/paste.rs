@@ -95,23 +95,34 @@ pub async fn update_paste(
         }
     }
 
-    // Check if folder_id is changing (DB layer will normalize empty string to None)
-    let new_folder_id = req
-        .folder_id
-        .clone()
-        .and_then(|f| if f.is_empty() { None } else { Some(f) });
-    let old_folder_id = old_paste.folder_id.clone();
+    // Check if folder_id field was provided in the request and if it's changing
+    if req.folder_id.is_some() {
+        // folder_id was explicitly provided, check if it's changing
+        let new_folder_id = req
+            .folder_id
+            .clone()
+            .and_then(|f| if f.is_empty() { None } else { Some(f) });
+        let old_folder_id = old_paste.folder_id.clone();
 
-    // Use transaction-like operation for atomic folder count updates
-    crate::db::TransactionOps::move_paste_between_folders(
-        &state.db,
-        &id,
-        old_folder_id.as_deref(),
-        new_folder_id.as_deref(),
-        req,
-    )?
-    .map(Json)
-    .ok_or(AppError::NotFound)
+        // Use transaction-like operation for atomic folder count updates
+        crate::db::TransactionOps::move_paste_between_folders(
+            &state.db,
+            &id,
+            old_folder_id.as_deref(),
+            new_folder_id.as_deref(),
+            req,
+        )?
+        .map(Json)
+        .ok_or(AppError::NotFound)
+    } else {
+        // folder_id wasn't provided, just update the paste without changing folder
+        state
+            .db
+            .pastes
+            .update(&id, req)?
+            .map(Json)
+            .ok_or(AppError::NotFound)
+    }
 }
 
 pub async fn delete_paste(
