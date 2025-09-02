@@ -197,12 +197,9 @@ du -sh ~/.cache/localpaste/
 - Gzip compression for HTTP responses
 - Embedded assets are compressed
 
-## Security Considerations
+## Security
 
-- Localhost-only by default (127.0.0.1)
-- No authentication (designed for local use)
-- Input sanitization for paste content
-- Size limits on paste content (10MB default)
+See [security.md](security.md) for detailed security configuration and best practices.
 
 ## Contributing
 
