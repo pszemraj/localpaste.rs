@@ -28,7 +28,6 @@ impl PasteDb {
     }
 
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
-        tracing::debug!("DB update called for paste {}, update: {:?}", id, update);
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
             old.and_then(|bytes| {
                 let mut paste: Paste = bincode::deserialize(bytes).ok()?;

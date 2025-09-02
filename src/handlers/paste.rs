@@ -73,7 +73,6 @@ pub async fn update_paste(
     Path(id): Path<String>,
     Json(req): Json<UpdatePasteRequest>,
 ) -> Result<Json<Paste>, AppError> {
-    tracing::debug!("Updating paste {} with request: {:?}", id, req);
     // Check size limit if content is being updated
     if let Some(ref content) = req.content {
         if content.len() > state.config.max_paste_size {
@@ -104,8 +103,6 @@ pub async fn update_paste(
         let old_folder = old_paste.folder_id.as_deref();
         new_folder != old_folder
     };
-    
-    tracing::debug!("Folder changing: {}, req.folder_id: {:?}", folder_changing, req.folder_id);
 
     if folder_changing {
         // folder_id is changing, use transaction for atomic count updates
@@ -126,10 +123,12 @@ pub async fn update_paste(
         .ok_or(AppError::NotFound)
     } else {
         // folder_id not changing, just update the paste
-        tracing::debug!("Calling db.pastes.update for paste {}", id);
-        let result = state.db.pastes.update(&id, req)?;
-        tracing::debug!("Update result: {:?}", result.is_some());
-        result.map(Json).ok_or(AppError::NotFound)
+        state
+            .db
+            .pastes
+            .update(&id, req)?
+            .map(Json)
+            .ok_or(AppError::NotFound)
     }
 }
 
