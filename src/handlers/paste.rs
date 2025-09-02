@@ -58,22 +58,32 @@ pub async fn get_paste(
 pub async fn update_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(mut req): Json<UpdatePasteRequest>,
+    Json(req): Json<UpdatePasteRequest>,
 ) -> Result<Json<Paste>, AppError> {
-    let old_paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
-
-    // Normalize empty string folder_id to None
-    if let Some(ref folder_id) = req.folder_id {
-        if folder_id.is_empty() {
-            req.folder_id = None;
+    // Check size limit if content is being updated
+    if let Some(ref content) = req.content {
+        if content.len() > state.config.max_paste_size {
+            return Err(AppError::BadRequest(format!(
+                "Paste size exceeds maximum of {} bytes",
+                state.config.max_paste_size
+            )));
         }
     }
 
-    if req.folder_id != old_paste.folder_id {
-        if let Some(ref old_folder) = old_paste.folder_id {
+    let old_paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
+
+    // Check if folder_id is changing (DB layer will normalize empty string to None)
+    let new_folder_id =
+        req.folder_id
+            .as_ref()
+            .and_then(|f| if f.is_empty() { None } else { Some(f.as_str()) });
+    let old_folder_id = old_paste.folder_id.as_deref();
+
+    if new_folder_id != old_folder_id {
+        if let Some(old_folder) = old_folder_id {
             state.db.folders.update_count(old_folder, -1)?;
         }
-        if let Some(ref new_folder) = req.folder_id {
+        if let Some(new_folder) = new_folder_id {
             state.db.folders.update_count(new_folder, 1)?;
         }
     }

@@ -351,15 +351,34 @@
                     folderDiv.classList.add('expanded');
                 }
                 
-                folderDiv.innerHTML = `
-                    <span class="tree-folder-icon">▶</span>
-                    📁 <span class="folder-name">${folder.name}</span>
-                    <span style="opacity: 0.6; font-size: 12px; margin-left: 4px;">(${pastesByFolder[folder.id]?.length || 0})</span>
-                    <span class="folder-actions" style="float: right; display: none;">
-                        <button class="folder-rename" data-folder-id="${folder.id}" title="Rename">✏️</button>
-                        <button class="folder-delete" data-folder-id="${folder.id}" title="Delete">🗑️</button>
-                    </span>
+                // Create elements safely to avoid XSS
+                folderDiv.innerHTML = ''; // Clear first
+                
+                const folderIcon = document.createElement('span');
+                folderIcon.className = 'tree-folder-icon';
+                folderIcon.textContent = '▶';
+                folderDiv.appendChild(folderIcon);
+                
+                folderDiv.appendChild(document.createTextNode(' 📁 '));
+                
+                const folderName = document.createElement('span');
+                folderName.className = 'folder-name';
+                folderName.textContent = folder.name; // Safe from XSS
+                folderDiv.appendChild(folderName);
+                
+                const countSpan = document.createElement('span');
+                countSpan.style.cssText = 'opacity: 0.6; font-size: 12px; margin-left: 4px;';
+                countSpan.textContent = `(${pastesByFolder[folder.id]?.length || 0})`;
+                folderDiv.appendChild(countSpan);
+                
+                const actionsSpan = document.createElement('span');
+                actionsSpan.className = 'folder-actions';
+                actionsSpan.style.cssText = 'float: right; display: none;';
+                actionsSpan.innerHTML = `
+                    <button class="folder-rename" data-folder-id="${folder.id}" title="Rename">✏️</button>
+                    <button class="folder-delete" data-folder-id="${folder.id}" title="Delete">🗑️</button>
                 `;
+                folderDiv.appendChild(actionsSpan);
                 
                 folderDiv.addEventListener('click', (e) => {
                     // Don't toggle if clicking on actions
@@ -469,10 +488,13 @@
             const date = new Date(paste.created_at);
             const dateStr = date.toLocaleDateString();
             
-            li.innerHTML = `
-                ${paste.name}
-                <span class="paste-date">${dateStr}</span>
-            `;
+            // Safe from XSS - use textContent
+            li.textContent = paste.name;
+            
+            const dateSpan = document.createElement('span');
+            dateSpan.className = 'paste-date';
+            dateSpan.textContent = dateStr;
+            li.appendChild(dateSpan);
             
             li.addEventListener('click', () => this.loadPaste(paste.id));
             
