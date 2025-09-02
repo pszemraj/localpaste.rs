@@ -20,6 +20,14 @@ pub async fn create_paste(
     if let Some(ref folder_id) = req.folder_id {
         if folder_id.is_empty() {
             req.folder_id = None;
+        } else {
+            // Validate folder exists
+            if state.db.folders.get(folder_id)?.is_none() {
+                return Err(AppError::BadRequest(format!(
+                    "Folder with id '{}' does not exist",
+                    folder_id
+                )));
+            }
         }
     }
 
@@ -71,6 +79,16 @@ pub async fn update_paste(
     }
 
     let old_paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
+
+    // Validate new folder exists if specified
+    if let Some(ref folder_id) = req.folder_id {
+        if !folder_id.is_empty() && state.db.folders.get(folder_id)?.is_none() {
+            return Err(AppError::BadRequest(format!(
+                "Folder with id '{}' does not exist",
+                folder_id
+            )));
+        }
+    }
 
     // Check if folder_id is changing (DB layer will normalize empty string to None)
     let new_folder_id =
