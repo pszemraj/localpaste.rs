@@ -1,5 +1,7 @@
 #[cfg(feature = "cli")]
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+#[cfg(feature = "cli")]
+use clap_complete::{generate, Shell};
 #[cfg(feature = "cli")]
 use reqwest;
 #[cfg(feature = "cli")]
@@ -30,6 +32,12 @@ struct Cli {
 #[cfg(feature = "cli")]
 #[derive(Subcommand)]
 enum Commands {
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
     New {
         #[arg(short, long)]
         file: Option<String>,
@@ -60,6 +68,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     match cli.command {
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            generate(shell, &mut cmd, name, &mut io::stdout());
+            return Ok(());
+        }
         Commands::New { file, name } => {
             let content = if let Some(path) = file {
                 std::fs::read_to_string(path)?
