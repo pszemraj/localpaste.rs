@@ -1,0 +1,4 @@
+Error: Database error: IO error: could not acquire lock on "/home/pszemraj/.cache/localpaste/db/db": Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+
+Caused by:
+    IO error: could not acquire lock on "/home/pszemraj/.cache/localpaste/db/db": Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
