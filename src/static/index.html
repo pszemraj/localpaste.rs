@@ -593,6 +593,7 @@
             // Name change
             const nameInput = document.getElementById('paste-name');
             nameInput.addEventListener('focus', () => {
+                nameInput.readOnly = false;  // Make editable when focused
                 nameInput.style.border = '1px solid var(--accent)';
             });
             nameInput.addEventListener('blur', () => {
@@ -613,15 +614,6 @@
                 this.updateHighlighting();
                 if (this.currentPaste) {
                     this.savePaste();
-                }
-            });
-            nameInput.addEventListener('blur', () => {
-                nameInput.readOnly = true;
-                this.savePaste();
-            });
-            nameInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    nameInput.blur();
                 }
             });
             

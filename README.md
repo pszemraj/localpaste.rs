@@ -71,6 +71,22 @@ Environment variables:
 - `DB_PATH` - Database path (default: ~/.cache/localpaste/db)
 - `MAX_PASTE_SIZE` - Maximum paste size in bytes (default: 10MB)
 - `RUST_LOG` - Logging level (default: info level, use `RUST_LOG=debug` for verbose logs)
+- `BIND` - Override bind address (default: 127.0.0.1:3030) - ⚠️ Use with caution
+- `ALLOW_PUBLIC_ACCESS` - Enable CORS for all origins (default: disabled) - ⚠️ Security risk
+
+### Security Notes
+
+By default, LocalPaste.rs is configured for local-only access:
+- Binds to `127.0.0.1` (localhost only)
+- CORS restricted to localhost origins
+- Security headers enabled (CSP, X-Frame-Options, etc.)
+- Request body size limits enforced
+- Graceful shutdown with database flush
+
+To expose the server publicly (not recommended):
+1. Set `BIND=0.0.0.0:3030` to bind to all interfaces
+2. Set `ALLOW_PUBLIC_ACCESS=1` to allow cross-origin requests
+3. Ensure proper firewall rules and authentication are in place
 
 ## Development
 

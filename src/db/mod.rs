@@ -28,4 +28,10 @@ impl Database {
             db,
         })
     }
+
+    /// Flush all pending writes to disk
+    pub fn flush(&self) -> Result<(), AppError> {
+        self.db.flush()?;
+        Ok(())
+    }
 }

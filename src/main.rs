@@ -1,14 +1,15 @@
 use axum::{
-    http::{header, StatusCode, Uri},
+    extract::DefaultBodyLimit,
+    http::{header, HeaderValue, Method, StatusCode, Uri},
     response::{Html, IntoResponse, Response},
     routing::{delete, get, post, put},
     Router,
 };
 use rust_embed::RustEmbed;
 use std::{net::SocketAddr, sync::Arc};
+use tower::ServiceBuilder;
 use tower_http::{
-    compression::CompressionLayer,
-    cors::{Any, CorsLayer},
+    compression::CompressionLayer, cors::CorsLayer, set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -46,8 +47,31 @@ async fn main() -> anyhow::Result<()> {
     let db = Arc::new(Database::new(&config.db_path)?);
 
     let state = AppState {
-        db,
+        db: db.clone(),
         config: config.clone(),
+    };
+
+    // Configure CORS - restrict to localhost by default
+    let cors = if std::env::var("ALLOW_PUBLIC_ACCESS").is_ok() {
+        tracing::warn!("⚠️  Public access enabled - server will accept requests from any origin");
+        CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+            .allow_headers(tower_http::cors::Any)
+    } else {
+        CorsLayer::new()
+            .allow_origin([
+                "http://localhost:3030".parse::<HeaderValue>().unwrap(),
+                "http://127.0.0.1:3030".parse::<HeaderValue>().unwrap(),
+                format!("http://localhost:{}", config.port)
+                    .parse::<HeaderValue>()
+                    .unwrap(),
+                format!("http://127.0.0.1:{}", config.port)
+                    .parse::<HeaderValue>()
+                    .unwrap(),
+            ])
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+            .allow_headers(tower_http::cors::Any)
     };
 
     let app = Router::new()
@@ -63,26 +87,88 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/folder/:id", delete(handlers::folder::delete_folder))
         .fallback(static_handler)
         .layer(
-            tower::ServiceBuilder::new()
+            ServiceBuilder::new()
+                // Request body size limit
+                .layer(DefaultBodyLimit::max(config.max_paste_size))
+                // Tracing
                 .layer(TraceLayer::new_for_http())
+                // Compression
                 .layer(CompressionLayer::new())
-                .layer(
-                    CorsLayer::new()
-                        .allow_origin(Any)
-                        .allow_methods(Any)
-                        .allow_headers(Any),
-                ),
+                // Security headers
+                .layer(SetResponseHeaderLayer::if_not_present(
+                    header::CONTENT_SECURITY_POLICY,
+                    HeaderValue::from_static("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';"),
+                ))
+                .layer(SetResponseHeaderLayer::if_not_present(
+                    header::X_CONTENT_TYPE_OPTIONS,
+                    HeaderValue::from_static("nosniff"),
+                ))
+                .layer(SetResponseHeaderLayer::if_not_present(
+                    header::X_FRAME_OPTIONS,
+                    HeaderValue::from_static("DENY"),
+                ))
+                .layer(SetResponseHeaderLayer::if_not_present(
+                    header::REFERRER_POLICY,
+                    HeaderValue::from_static("no-referrer"),
+                ))
+                // CORS
+                .layer(cors),
         )
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // Bind to localhost by default, allow override via BIND env var
+    let bind_addr = std::env::var("BIND")
+        .ok()
+        .and_then(|s| s.parse::<SocketAddr>().ok())
+        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], config.port)));
 
-    tracing::info!("🚀 LocalPaste running at http://{}", addr);
+    // Warn if binding to non-localhost
+    if !bind_addr.ip().is_loopback() {
+        tracing::warn!("⚠️  Binding to non-localhost address: {} - ensure proper security measures are in place", bind_addr);
+    }
 
-    axum::serve(listener, app).await?;
+    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+    tracing::info!("🚀 LocalPaste running at http://{}", bind_addr);
+
+    // Setup graceful shutdown
+    let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(db));
+
+    server.await?;
 
     Ok(())
+}
+
+async fn shutdown_signal(db: Arc<Database>) {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("Shutting down gracefully...");
+
+    // Flush the database
+    if let Err(e) = db.flush() {
+        tracing::error!("Failed to flush database: {}", e);
+    } else {
+        tracing::info!("Database flushed successfully");
+    }
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {
