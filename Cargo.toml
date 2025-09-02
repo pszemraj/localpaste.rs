@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 default-run = "localpaste"
 
+[lib]
+name = "localpaste"
+path = "src/lib.rs"
+
 [[bin]]
 name = "localpaste"
 path = "src/main.rs"
@@ -47,6 +51,10 @@ mime_guess = "2.0"
 # CLI client dependencies
 clap = { version = "4.5", features = ["derive"], optional = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio-test = "0.4"
 
 [features]
 default = []

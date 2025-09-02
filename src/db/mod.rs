@@ -12,6 +12,9 @@ pub struct Database {
     pub folders: folder::FolderDb,
 }
 
+#[cfg(test)]
+mod tests;
+
 impl Database {
     pub fn new(path: &str) -> Result<Self, AppError> {
         // Ensure the data directory exists
