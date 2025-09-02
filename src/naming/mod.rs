@@ -183,9 +183,10 @@ pub fn generate_name() -> String {
 
 /// Generate a unique name, with collision handling
 /// Tries base name first, then appends random suffix if needed
-pub fn generate_unique_name<F>(exists_check: F) -> String 
-where 
-    F: Fn(&str) -> bool
+#[allow(dead_code)]
+pub fn generate_unique_name<F>(exists_check: F) -> String
+where
+    F: Fn(&str) -> bool,
 {
     // Try up to 5 times with just adjective-noun
     for _ in 0..5 {
@@ -194,7 +195,7 @@ where
             return name;
         }
     }
-    
+
     // If still colliding, append a random suffix
     let mut rng = rand::thread_rng();
     loop {

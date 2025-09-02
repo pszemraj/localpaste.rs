@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod db_tests {
     use super::super::*;
     use crate::models::{folder::*, paste::*};
     use tempfile::TempDir;

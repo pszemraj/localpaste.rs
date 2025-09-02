@@ -29,7 +29,7 @@ impl TransactionOps {
     ) -> Result<(), AppError> {
         // First update folder count atomically
         db.folders.update_count(folder_id, 1)?;
-        
+
         // Then create paste - if this fails, rollback folder count
         if let Err(e) = db.pastes.create(paste) {
             // Best effort rollback - log but don't fail if rollback fails
@@ -38,10 +38,10 @@ impl TransactionOps {
             }
             return Err(e);
         }
-        
+
         Ok(())
     }
-    
+
     /// Atomically delete a paste and update folder count
     pub fn delete_paste_with_folder(
         db: &Database,
@@ -50,7 +50,7 @@ impl TransactionOps {
     ) -> Result<bool, AppError> {
         // Delete paste first
         let deleted = db.pastes.delete(paste_id)?;
-        
+
         if deleted {
             // Update folder count - if this fails, log but continue
             // (paste is already deleted, better to have incorrect count than fail)
@@ -58,10 +58,10 @@ impl TransactionOps {
                 tracing::error!("Failed to update folder count after paste deletion: {}", e);
             }
         }
-        
+
         Ok(deleted)
     }
-    
+
     /// Atomically move a paste between folders
     pub fn move_paste_between_folders(
         db: &Database,
@@ -76,20 +76,23 @@ impl TransactionOps {
             if let Some(old_id) = old_folder_id {
                 db.folders.update_count(old_id, -1)?;
             }
-            
+
             // Increment new folder count
             if let Some(new_id) = new_folder_id {
                 if let Err(e) = db.folders.update_count(new_id, 1) {
                     // Rollback old folder count change
                     if let Some(old_id) = old_folder_id {
                         if let Err(rollback_err) = db.folders.update_count(old_id, 1) {
-                            tracing::error!("Failed to rollback old folder count: {}", rollback_err);
+                            tracing::error!(
+                                "Failed to rollback old folder count: {}",
+                                rollback_err
+                            );
                         }
                     }
                     return Err(e);
                 }
             }
-            
+
             // Update paste - if this fails, rollback both folder counts
             match db.pastes.update(paste_id, update_req) {
                 Ok(result) => Ok(result),
@@ -97,12 +100,18 @@ impl TransactionOps {
                     // Rollback folder count changes
                     if let Some(old_id) = old_folder_id {
                         if let Err(rollback_err) = db.folders.update_count(old_id, 1) {
-                            tracing::error!("Failed to rollback old folder count: {}", rollback_err);
+                            tracing::error!(
+                                "Failed to rollback old folder count: {}",
+                                rollback_err
+                            );
                         }
                     }
                     if let Some(new_id) = new_folder_id {
                         if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
-                            tracing::error!("Failed to rollback new folder count: {}", rollback_err);
+                            tracing::error!(
+                                "Failed to rollback new folder count: {}",
+                                rollback_err
+                            );
                         }
                     }
                     Err(e)

@@ -24,13 +24,11 @@ fn expand_tilde(path: String) -> String {
 impl Config {
     pub fn from_env() -> Self {
         Self {
-            db_path: env::var("DB_PATH")
-                .map(expand_tilde)
-                .unwrap_or_else(|_| {
-                    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-                    let cache_dir = PathBuf::from(home).join(".cache").join("localpaste");
-                    cache_dir.join("db").to_string_lossy().to_string()
-                }),
+            db_path: env::var("DB_PATH").map(expand_tilde).unwrap_or_else(|_| {
+                let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                let cache_dir = PathBuf::from(home).join(".cache").join("localpaste");
+                cache_dir.join("db").to_string_lossy().to_string()
+            }),
             port: env::var("PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())

@@ -3,8 +3,6 @@ use clap::{CommandFactory, Parser, Subcommand};
 #[cfg(feature = "cli")]
 use clap_complete::{generate, Shell};
 #[cfg(feature = "cli")]
-use reqwest;
-#[cfg(feature = "cli")]
 use serde_json::Value;
 #[cfg(feature = "cli")]
 use std::io::{self, Read};
@@ -14,7 +12,12 @@ use std::io::{self, Read};
 #[command(name = "lpaste", about = "LocalPaste CLI", version)]
 struct Cli {
     /// Server URL (can also be set via LP_SERVER env var)
-    #[arg(short, long, env = "LP_SERVER", default_value = "http://localhost:3030")]
+    #[arg(
+        short,
+        long,
+        env = "LP_SERVER",
+        default_value = "http://localhost:3030"
+    )]
     server: String,
 
     /// Output in JSON format

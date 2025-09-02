@@ -52,7 +52,7 @@ pub async fn create_paste(
     } else {
         state.db.pastes.create(&paste)?;
     }
-    
+
     Ok(Json(paste))
 }
 
@@ -96,10 +96,10 @@ pub async fn update_paste(
     }
 
     // Check if folder_id is changing (DB layer will normalize empty string to None)
-    let new_folder_id =
-        req.folder_id
-            .clone()
-            .and_then(|f| if f.is_empty() { None } else { Some(f) });
+    let new_folder_id = req
+        .folder_id
+        .clone()
+        .and_then(|f| if f.is_empty() { None } else { Some(f) });
     let old_folder_id = old_paste.folder_id.clone();
 
     // Use transaction-like operation for atomic folder count updates

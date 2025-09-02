@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod model_tests {
     use super::super::*;
 
     #[test]
@@ -61,7 +61,7 @@ mod tests {
             tags: None,
         };
 
-        assert!(valid_req.content.len() > 0);
+        assert!(!valid_req.content.is_empty());
     }
 
     #[test]
