@@ -45,7 +45,7 @@ impl Config {
             auto_backup: env::var("AUTO_BACKUP")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(true), // Default to true for safety
+                .unwrap_or(false), // Default to false - backups should be explicit
         }
     }
 }

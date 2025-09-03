@@ -101,7 +101,7 @@ impl LockManager {
             })?;
         }
 
-        tracing::info!("Created database backup at: {:?}", backup_path);
+        tracing::debug!("Created database backup at: {:?}", backup_path);
         Ok(backup_path.to_string_lossy().to_string())
     }
 }

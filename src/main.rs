@@ -89,11 +89,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Auto-backup on startup if enabled and database exists
+    // Auto-backup on startup if explicitly enabled and database exists
     if config.auto_backup && std::path::Path::new(&config.db_path).exists() {
         match crate::db::lock::LockManager::backup_database(&config.db_path) {
             Ok(backup_path) if !backup_path.is_empty() => {
-                tracing::info!("Auto-backup created at: {}", backup_path);
+                tracing::debug!("Auto-backup created at: {}", backup_path);
             }
             Err(e) => {
                 tracing::warn!("Failed to create auto-backup: {}", e);
