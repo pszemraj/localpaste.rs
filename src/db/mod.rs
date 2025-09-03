@@ -195,6 +195,7 @@ impl Database {
     
     
     /// Get database checksum for verification
+    #[allow(dead_code)]
     pub fn checksum(&self) -> Result<u32, AppError> {
         self.db.checksum().map_err(|e| {
             AppError::DatabaseError(format!("Failed to compute checksum: {}", e))

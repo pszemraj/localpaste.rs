@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
             }
             
             let backup_manager = crate::db::backup::BackupManager::new(&config.db_path);
-            let backup_path = backup_manager.create_backup(&sled::Db::open(&config.db_path)?)?;
+            let backup_path = backup_manager.create_backup(&sled::open(&config.db_path)?)?;
             println!("✅ Database backed up to: {}", backup_path);
         } else {
             println!("ℹ️  No existing database to backup");

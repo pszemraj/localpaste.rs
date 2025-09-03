@@ -15,6 +15,7 @@ impl LockManager {
     }
 
     /// Check if a lock file exists and if it's stale
+    #[allow(dead_code)]
     pub fn check_lock(&self) -> LockStatus {
         if !self.lock_path.exists() {
             return LockStatus::Unlocked;
@@ -45,6 +46,7 @@ impl LockManager {
     }
 
     /// Try to clean up a stale lock
+    #[allow(dead_code)]
     pub fn cleanup_stale_lock(&self) -> Result<(), AppError> {
         match self.check_lock() {
             LockStatus::StaleLock => {
@@ -107,6 +109,7 @@ impl LockManager {
     }
 }
 
+#[allow(dead_code)]
 pub enum LockStatus {
     Unlocked,
     LockedByProcess(u32),
@@ -116,6 +119,7 @@ pub enum LockStatus {
 
 /// Check if a process with given PID is running
 #[cfg(unix)]
+#[allow(dead_code)]
 fn is_process_running(pid: u32) -> bool {
     use std::process::Command;
     

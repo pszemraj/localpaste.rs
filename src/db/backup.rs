@@ -67,6 +67,7 @@ impl BackupManager {
     }
     
     /// Restore from a backup directory
+    #[allow(dead_code)]
     pub fn restore_backup(&self, backup_dir: &str) -> Result<(), AppError> {
         // Simple directory copy restoration
         if self.db_path.exists() {
@@ -82,6 +83,7 @@ impl BackupManager {
     }
     
     /// Verify database integrity using checksums
+    #[allow(dead_code)]
     pub fn verify_integrity(db1: &sled::Db, db2: &sled::Db) -> Result<bool, AppError> {
         let checksum1 = db1.checksum().map_err(|e| {
             AppError::DatabaseError(format!("Failed to compute checksum: {}", e))
@@ -95,6 +97,7 @@ impl BackupManager {
     }
     
     /// List available backups
+    #[allow(dead_code)]
     pub fn list_backups(&self) -> Result<Vec<String>, AppError> {
         let parent = self.db_path.parent().unwrap_or(Path::new("."));
         let mut backups = Vec::new();
@@ -119,6 +122,7 @@ impl BackupManager {
     }
     
     /// Clean up old backups (keep last N backups)
+    #[allow(dead_code)]
     pub fn cleanup_old_backups(&self, keep_count: usize) -> Result<(), AppError> {
         let mut backups = self.list_backups()?;
         
