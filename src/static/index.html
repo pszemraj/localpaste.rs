@@ -245,6 +245,7 @@
                 <div class="status-left">
                     <span id="status-message">Ready</span>
                     <a href="https://github.com/pszemraj/localpaste.rs" target="_blank" style="margin-left: 16px; color: var(--text-secondary); text-decoration: none; font-size: 11px; opacity: 0.7;" title="View on GitHub">GitHub</a>
+                    <span id="paste-id" style="margin-left: 16px; color: var(--text-secondary); font-size: 11px; cursor: pointer;" title="Click to copy ID"></span>
                 </div>
                 <div class="status-right"><span id="cursor-position">Ln 1, Col 1</span></div>
             </footer>
@@ -271,6 +272,7 @@
             try {
                 this.bindEvents();
                 await this.loadData();
+                this.updatePasteIdDisplay(); // Initialize ID display
                 this.setStatus('Ready');
                 console.log('LocalPaste.rs: Initialized');
             } catch (err) {
@@ -807,6 +809,7 @@
                 if (!res.ok) throw new Error('Failed to save');
                 
                 this.currentPaste = await res.json();
+                this.updatePasteIdDisplay();
                 
                 // Show save indicator
                 const saveStatus = document.getElementById('save-status');
@@ -857,6 +860,7 @@
                 
                 const paste = await res.json();
                 this.currentPaste = paste;
+                this.updatePasteIdDisplay();
                 
                 // Remember this paste for next time
                 localStorage.setItem('lastOpenedPaste', id);
@@ -949,6 +953,7 @@
                 
                 this.currentPaste = null;
                 this.editor.value = '';
+                this.updatePasteIdDisplay();
                 
                 await this.loadData();
                 
@@ -984,6 +989,29 @@
             const col = lines[lines.length - 1].length + 1;
             
             document.getElementById('cursor-position').textContent = `Ln ${line}, Col ${col}`;
+        }
+
+        updatePasteIdDisplay() {
+            const pasteIdElement = document.getElementById('paste-id');
+            if (this.currentPaste && this.currentPaste.id) {
+                pasteIdElement.textContent = `ID: ${this.currentPaste.id}`;
+                pasteIdElement.style.display = 'inline';
+                
+                // Add click to copy functionality
+                pasteIdElement.onclick = () => {
+                    navigator.clipboard.writeText(this.currentPaste.id).then(() => {
+                        const originalText = pasteIdElement.textContent;
+                        pasteIdElement.textContent = 'Copied!';
+                        setTimeout(() => {
+                            pasteIdElement.textContent = originalText;
+                        }, 2000);
+                    }).catch(err => {
+                        console.error('Failed to copy ID:', err);
+                    });
+                };
+            } else {
+                pasteIdElement.style.display = 'none';
+            }
         }
 
         setStatus(message) {
