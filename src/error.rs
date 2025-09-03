@@ -10,6 +10,9 @@ use thiserror::Error;
 pub enum AppError {
     #[error("Database error: {0}")]
     Database(#[from] sled::Error),
+    
+    #[error("Database error: {0}")]
+    DatabaseError(String),
 
     #[error("Serialization error: {0}")]
     Serialization(#[from] bincode::Error),
@@ -30,6 +33,10 @@ impl IntoResponse for AppError {
         let (status, error_message) = match self {
             AppError::NotFound => (StatusCode::NOT_FOUND, "Not found"),
             AppError::BadRequest(ref msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
+            AppError::DatabaseError(ref msg) => {
+                tracing::error!("Database error: {}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, "Database error")
+            }
             _ => {
                 tracing::error!("Internal error: {:?}", self);
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")

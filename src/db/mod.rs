@@ -1,4 +1,5 @@
 pub mod folder;
+pub mod lock;
 pub mod paste;
 
 use crate::error::AppError;
@@ -131,8 +132,48 @@ impl Database {
             std::fs::create_dir_all(parent).ok();
         }
 
+        // Check for lock issues before opening
+        let lock_manager = lock::LockManager::new(path);
+        match lock_manager.check_lock() {
+            lock::LockStatus::StaleLock => {
+                tracing::warn!("Found stale database lock, attempting cleanup...");
+                lock_manager.cleanup_stale_lock()?;
+            }
+            lock::LockStatus::LockedByProcess(pid) => {
+                return Err(AppError::DatabaseError(format!(
+                    "Database is locked by another LocalPaste instance (PID: {}). \
+                    Please close it first or use --force-unlock if you're sure it's not running.",
+                    pid
+                )));
+            }
+            lock::LockStatus::LockedUnknown => {
+                return Err(AppError::DatabaseError(
+                    "Database appears to be locked. If LocalPaste crashed previously, \
+                    you may need to use --force-unlock to recover.".to_string()
+                ));
+            }
+            lock::LockStatus::Unlocked => {
+                // Good to go
+            }
+        }
+
         // Open database - sled handles concurrent access properly
-        let db = Arc::new(sled::open(path)?);
+        let db = match sled::open(path) {
+            Ok(db) => Arc::new(db),
+            Err(e) if e.to_string().contains("could not acquire lock") => {
+                // Provide helpful error message
+                return Err(AppError::DatabaseError(format!(
+                    "Could not open database at '{}'. Another instance may be running.\n\
+                    If you're sure no other instance is running, you can:\n\
+                    1. Run with --force-unlock to remove stale locks\n\
+                    2. Check for other LocalPaste processes: ps aux | grep localpaste\n\
+                    3. Remove lock files manually: rm {}/*.lock\n\
+                    Original error: {}",
+                    path, path, e
+                )));
+            }
+            Err(e) => return Err(AppError::DatabaseError(e.to_string())),
+        };
 
         Ok(Self {
             pastes: paste::PasteDb::new(db.clone())?,

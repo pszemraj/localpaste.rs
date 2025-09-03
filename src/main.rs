@@ -44,6 +44,59 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Arc::new(Config::from_env());
+    
+    // Handle command-line arguments for database management
+    let args: Vec<String> = std::env::args().collect();
+    
+    if args.contains(&"--help".to_string()) {
+        println!("LocalPaste Server\n");
+        println!("Usage: localpaste [OPTIONS]\n");
+        println!("Options:");
+        println!("  --force-unlock    Remove stale database locks");
+        println!("  --backup          Create a backup of the database");
+        println!("  --help            Show this help message");
+        println!("\nEnvironment variables:");
+        println!("  DB_PATH           Database path (default: ~/.cache/localpaste/db)");
+        println!("  PORT              Server port (default: 3030)");
+        println!("  MAX_PASTE_SIZE    Maximum paste size in bytes (default: 10MB)");
+        return Ok(());
+    }
+    
+    if args.contains(&"--force-unlock".to_string()) {
+        tracing::warn!("Force unlock requested");
+        let lock_manager = crate::db::lock::LockManager::new(&config.db_path);
+        lock_manager.force_unlock()?;
+        tracing::info!("Lock removed successfully");
+    }
+    
+    if args.contains(&"--backup".to_string()) {
+        tracing::info!("Creating database backup...");
+        let backup_path = crate::db::lock::LockManager::backup_database(&config.db_path)?;
+        if !backup_path.is_empty() {
+            println!("✅ Database backed up to: {}", backup_path);
+        } else {
+            println!("ℹ️  No existing database to backup");
+        }
+        // Exit after backup unless other non-flag arguments are present
+        if args.len() <= 2 { // program name + --backup
+            return Ok(());
+        }
+    }
+    
+    // Auto-backup on startup if enabled and database exists
+    if config.auto_backup && std::path::Path::new(&config.db_path).exists() {
+        match crate::db::lock::LockManager::backup_database(&config.db_path) {
+            Ok(backup_path) if !backup_path.is_empty() => {
+                tracing::info!("Auto-backup created at: {}", backup_path);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create auto-backup: {}", e);
+                // Continue anyway - backup failure shouldn't prevent startup
+            }
+            _ => {}
+        }
+    }
+    
     let db = Arc::new(Database::new(&config.db_path)?);
 
     let state = AppState {

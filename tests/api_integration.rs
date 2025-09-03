@@ -13,6 +13,7 @@ async fn setup_test_server() -> (TestServer, TempDir) {
         db_path: db_path.to_str().unwrap().to_string(),
         max_paste_size: 10_000_000,
         auto_save_interval: 2000,
+        auto_backup: false, // Disable auto-backup in tests
     };
     
     let db = Database::new(&config.db_path).unwrap();

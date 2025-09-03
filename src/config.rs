@@ -9,6 +9,7 @@ pub struct Config {
     pub max_paste_size: usize,
     #[allow(dead_code)]
     pub auto_save_interval: u64,
+    pub auto_backup: bool,
 }
 
 /// Expand tilde (~) in paths to the user's home directory
@@ -41,6 +42,10 @@ impl Config {
                 .ok()
                 .and_then(|i| i.parse().ok())
                 .unwrap_or(2000), // 2 seconds
+            auto_backup: env::var("AUTO_BACKUP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true), // Default to true for safety
         }
     }
 }
