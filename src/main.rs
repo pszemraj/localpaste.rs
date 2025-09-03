@@ -12,6 +12,7 @@ use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
+use clap::Parser;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
@@ -33,6 +34,19 @@ pub struct AppState {
     config: Arc<Config>,
 }
 
+/// Command-line arguments for the localpaste server.
+#[derive(Parser, Debug)]
+#[command(name = "localpaste", author, version, about = "A fast, localhost-only pastebin server.", long_about = None)]
+struct Cli {
+    /// Create a backup of the database and exit.
+    #[arg(long)]
+    backup: bool,
+
+    /// Remove a stale database lock.
+    #[arg(long)]
+    force_unlock: bool,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -43,33 +57,18 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let cli = Cli::parse();
     let config = Arc::new(Config::from_env());
 
     // Handle command-line arguments for database management
-    let args: Vec<String> = std::env::args().collect();
-
-    if args.contains(&"--help".to_string()) {
-        println!("LocalPaste Server\n");
-        println!("Usage: localpaste [OPTIONS]\n");
-        println!("Options:");
-        println!("  --force-unlock    Remove stale database locks");
-        println!("  --backup          Create a backup of the database");
-        println!("  --help            Show this help message");
-        println!("\nEnvironment variables:");
-        println!("  DB_PATH           Database path (default: ~/.cache/localpaste/db)");
-        println!("  PORT              Server port (default: 3030)");
-        println!("  MAX_PASTE_SIZE    Maximum paste size in bytes (default: 10MB)");
-        return Ok(());
-    }
-
-    if args.contains(&"--force-unlock".to_string()) {
+    if cli.force_unlock {
         tracing::warn!("Force unlock requested");
         let lock_manager = crate::db::lock::LockManager::new(&config.db_path);
         lock_manager.force_unlock()?;
         tracing::info!("Lock removed successfully");
     }
 
-    if args.contains(&"--backup".to_string()) {
+    if cli.backup {
         if std::path::Path::new(&config.db_path).exists() {
             // Flush database before backup if it's open
             if let Ok(temp_db) = Database::new(&config.db_path) {
@@ -82,11 +81,8 @@ async fn main() -> anyhow::Result<()> {
         } else {
             println!("ℹ️  No existing database to backup");
         }
-        // Exit after backup unless other non-flag arguments are present
-        if args.len() <= 2 {
-            // program name + --backup
-            return Ok(());
-        }
+        // Exit after backup is complete
+        return Ok(());
     }
 
     // Auto-backup on startup if explicitly enabled and database exists

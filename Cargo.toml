@@ -49,8 +49,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 rust-embed = { version = "8.5", features = ["compression"] }
 mime_guess = "2.0"
 
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive", "env"] }
+
 # CLI client dependencies
-clap = { version = "4.5", features = ["derive", "env"], optional = true }
 clap_complete = { version = "4.5", optional = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
 
@@ -61,7 +63,7 @@ axum-test = "16.4"
 
 [features]
 default = []
-cli = ["clap", "clap_complete", "reqwest"]
+cli = ["clap_complete", "reqwest"]
 
 [profile.release]
 opt-level = "z"
