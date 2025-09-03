@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod folder;
 pub mod lock;
 pub mod paste;
@@ -6,9 +7,30 @@ use crate::error::AppError;
 use sled::Db;
 use std::sync::Arc;
 
+/// Check if a LocalPaste process is already running
+#[cfg(unix)]
+fn is_localpaste_running() -> bool {
+    use std::process::Command;
+    
+    let output = Command::new("pgrep")
+        .arg("-f")
+        .arg("localpaste")
+        .output();
+    
+    match output {
+        Ok(result) => !result.stdout.is_empty(),
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn is_localpaste_running() -> bool {
+    // On non-Unix, be conservative
+    false
+}
+
 pub struct Database {
-    #[allow(dead_code)]
-    db: Arc<Db>,
+    pub db: Arc<Db>,
     pub pastes: paste::PasteDb,
     pub folders: folder::FolderDb,
 }
@@ -132,45 +154,34 @@ impl Database {
             std::fs::create_dir_all(parent).ok();
         }
 
-        // Check for lock issues before opening
-        let lock_manager = lock::LockManager::new(path);
-        match lock_manager.check_lock() {
-            lock::LockStatus::StaleLock => {
-                tracing::warn!("Found stale database lock, attempting cleanup...");
-                lock_manager.cleanup_stale_lock()?;
-            }
-            lock::LockStatus::LockedByProcess(pid) => {
-                return Err(AppError::DatabaseError(format!(
-                    "Database is locked by another LocalPaste instance (PID: {}). \
-                    Please close it first or use --force-unlock if you're sure it's not running.",
-                    pid
-                )));
-            }
-            lock::LockStatus::LockedUnknown => {
-                return Err(AppError::DatabaseError(
-                    "Database appears to be locked. If LocalPaste crashed previously, \
-                    you may need to use --force-unlock to recover.".to_string()
-                ));
-            }
-            lock::LockStatus::Unlocked => {
-                // Good to go
-            }
-        }
-
-        // Open database - sled handles concurrent access properly
+        // Try to open database - sled handles its own locking
         let db = match sled::open(path) {
             Ok(db) => Arc::new(db),
             Err(e) if e.to_string().contains("could not acquire lock") => {
-                // Provide helpful error message
-                return Err(AppError::DatabaseError(format!(
-                    "Could not open database at '{}'. Another instance may be running.\n\
-                    If you're sure no other instance is running, you can:\n\
-                    1. Run with --force-unlock to remove stale locks\n\
-                    2. Check for other LocalPaste processes: ps aux | grep localpaste\n\
-                    3. Remove lock files manually: rm {}/*.lock\n\
-                    Original error: {}",
-                    path, path, e
-                )));
+                // This is sled's internal lock, not our lock file
+                // It means another process has the database open
+                
+                // Check if there's actually another LocalPaste process
+                if is_localpaste_running() {
+                    return Err(AppError::DatabaseError(
+                        "Another LocalPaste instance is already running.\n\
+                        Please close it first or wait for it to shut down.".to_string()
+                    ));
+                } else {
+                    // No LocalPaste running, probably a stale sled lock
+                    // Sled locks are in the DB directory itself
+                    return Err(AppError::DatabaseError(format!(
+                        "Database appears to be locked but no LocalPaste is running.\n\
+                        This can happen after a crash. To recover:\n\n\
+                        1. Make a backup: cp -r {} {}.backup\n\
+                        2. Remove lock files: rm {}/*.lock {}/db.lock\n\
+                        3. Try starting again\n\n\
+                        If that doesn't work, restore from auto-backup:\n\
+                        ls -la {}/*.backup.* | tail -1",
+                        path, path, path, path, 
+                        std::path::Path::new(path).parent().unwrap_or(std::path::Path::new(".")).display()
+                    )));
+                }
             }
             Err(e) => return Err(AppError::DatabaseError(e.to_string())),
         };
@@ -179,6 +190,14 @@ impl Database {
             pastes: paste::PasteDb::new(db.clone())?,
             folders: folder::FolderDb::new(db.clone())?,
             db,
+        })
+    }
+    
+    
+    /// Get database checksum for verification
+    pub fn checksum(&self) -> Result<u32, AppError> {
+        self.db.checksum().map_err(|e| {
+            AppError::DatabaseError(format!("Failed to compute checksum: {}", e))
         })
     }
 

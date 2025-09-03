@@ -70,9 +70,14 @@ async fn main() -> anyhow::Result<()> {
     }
     
     if args.contains(&"--backup".to_string()) {
-        tracing::info!("Creating database backup...");
-        let backup_path = crate::db::lock::LockManager::backup_database(&config.db_path)?;
-        if !backup_path.is_empty() {
+        if std::path::Path::new(&config.db_path).exists() {
+            // Flush database before backup if it's open
+            if let Ok(temp_db) = Database::new(&config.db_path) {
+                temp_db.flush().ok();
+            }
+            
+            let backup_manager = crate::db::backup::BackupManager::new(&config.db_path);
+            let backup_path = backup_manager.create_backup(&sled::Db::open(&config.db_path)?)?;
             println!("✅ Database backed up to: {}", backup_path);
         } else {
             println!("ℹ️  No existing database to backup");
