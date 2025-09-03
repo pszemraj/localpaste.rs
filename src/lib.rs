@@ -12,16 +12,14 @@ pub use error::AppError;
 use axum::{
     extract::DefaultBodyLimit,
     http::header,
+    routing::{delete, get, post, put},
     Router,
-    routing::{get, post, put, delete},
-};
-use tower_http::{
-    compression::CompressionLayer,
-    cors::CorsLayer,
-    set_header::SetResponseHeaderLayer,
 };
 use hyper::HeaderMap;
 use std::sync::Arc;
+use tower_http::{
+    compression::CompressionLayer, cors::CorsLayer, set_header::SetResponseHeaderLayer,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -42,21 +40,15 @@ impl AppState {
 pub fn create_app(state: AppState) -> Router {
     // Configure security headers
     let mut default_headers = HeaderMap::new();
-    default_headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        "nosniff".parse().unwrap(),
-    );
-    default_headers.insert(
-        header::X_FRAME_OPTIONS,
-        "DENY".parse().unwrap(),
-    );
+    default_headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+    default_headers.insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
     default_headers.insert(
         header::CONTENT_SECURITY_POLICY,
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
             .parse()
             .unwrap(),
     );
-    
+
     // Configure CORS - only allow localhost origins
     let cors = CorsLayer::new()
         .allow_origin([
@@ -73,11 +65,8 @@ pub fn create_app(state: AppState) -> Router {
             axum::http::Method::PUT,
             axum::http::Method::DELETE,
         ])
-        .allow_headers([
-            header::CONTENT_TYPE,
-            header::ACCEPT,
-        ]);
-    
+        .allow_headers([header::CONTENT_TYPE, header::ACCEPT]);
+
     Router::new()
         // API routes
         .route("/api/paste", post(handlers::paste::create_paste))
@@ -102,15 +91,24 @@ pub fn create_app(state: AppState) -> Router {
                 .layer(cors)
                 .layer(SetResponseHeaderLayer::overriding(
                     header::CONTENT_SECURITY_POLICY,
-                    default_headers.get(header::CONTENT_SECURITY_POLICY).unwrap().clone(),
+                    default_headers
+                        .get(header::CONTENT_SECURITY_POLICY)
+                        .unwrap()
+                        .clone(),
                 ))
                 .layer(SetResponseHeaderLayer::overriding(
                     header::X_CONTENT_TYPE_OPTIONS,
-                    default_headers.get(header::X_CONTENT_TYPE_OPTIONS).unwrap().clone(),
+                    default_headers
+                        .get(header::X_CONTENT_TYPE_OPTIONS)
+                        .unwrap()
+                        .clone(),
                 ))
                 .layer(SetResponseHeaderLayer::overriding(
                     header::X_FRAME_OPTIONS,
-                    default_headers.get(header::X_FRAME_OPTIONS).unwrap().clone(),
-                ))
+                    default_headers
+                        .get(header::X_FRAME_OPTIONS)
+                        .unwrap()
+                        .clone(),
+                )),
         )
 }

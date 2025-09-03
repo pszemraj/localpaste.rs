@@ -97,19 +97,20 @@ pub async fn update_paste(
 
     // Check if folder_id is actually changing
     let folder_changing = req.folder_id.is_some() && {
-        let new_folder = req.folder_id.as_ref().and_then(|f| {
-            if f.is_empty() { None } else { Some(f.as_str()) }
-        });
+        let new_folder =
+            req.folder_id
+                .as_ref()
+                .and_then(|f| if f.is_empty() { None } else { Some(f.as_str()) });
         let old_folder = old_paste.folder_id.as_deref();
         new_folder != old_folder
     };
 
     if folder_changing {
         // folder_id is changing, use transaction for atomic count updates
-        let new_folder_id = req
-            .folder_id
-            .clone()
-            .and_then(|f| if f.is_empty() { None } else { Some(f) });
+        let new_folder_id =
+            req.folder_id
+                .clone()
+                .and_then(|f| if f.is_empty() { None } else { Some(f) });
         let old_folder_id = old_paste.folder_id.clone();
 
         crate::db::TransactionOps::move_paste_between_folders(

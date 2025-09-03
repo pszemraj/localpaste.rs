@@ -10,7 +10,7 @@ use thiserror::Error;
 pub enum AppError {
     #[error("Database error: {0}")]
     Database(#[from] sled::Error),
-    
+
     #[error("Database error: {0}")]
     DatabaseError(String),
 

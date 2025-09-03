@@ -44,10 +44,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Arc::new(Config::from_env());
-    
+
     // Handle command-line arguments for database management
     let args: Vec<String> = std::env::args().collect();
-    
+
     if args.contains(&"--help".to_string()) {
         println!("LocalPaste Server\n");
         println!("Usage: localpaste [OPTIONS]\n");
@@ -61,21 +61,21 @@ async fn main() -> anyhow::Result<()> {
         println!("  MAX_PASTE_SIZE    Maximum paste size in bytes (default: 10MB)");
         return Ok(());
     }
-    
+
     if args.contains(&"--force-unlock".to_string()) {
         tracing::warn!("Force unlock requested");
         let lock_manager = crate::db::lock::LockManager::new(&config.db_path);
         lock_manager.force_unlock()?;
         tracing::info!("Lock removed successfully");
     }
-    
+
     if args.contains(&"--backup".to_string()) {
         if std::path::Path::new(&config.db_path).exists() {
             // Flush database before backup if it's open
             if let Ok(temp_db) = Database::new(&config.db_path) {
                 temp_db.flush().ok();
             }
-            
+
             let backup_manager = crate::db::backup::BackupManager::new(&config.db_path);
             let backup_path = backup_manager.create_backup(&sled::open(&config.db_path)?)?;
             println!("✅ Database backed up to: {}", backup_path);
@@ -83,11 +83,12 @@ async fn main() -> anyhow::Result<()> {
             println!("ℹ️  No existing database to backup");
         }
         // Exit after backup unless other non-flag arguments are present
-        if args.len() <= 2 { // program name + --backup
+        if args.len() <= 2 {
+            // program name + --backup
             return Ok(());
         }
     }
-    
+
     // Auto-backup on startup if enabled and database exists
     if config.auto_backup && std::path::Path::new(&config.db_path).exists() {
         match crate::db::lock::LockManager::backup_database(&config.db_path) {
@@ -101,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
             _ => {}
         }
     }
-    
+
     let db = Arc::new(Database::new(&config.db_path)?);
 
     let state = AppState {

@@ -1,7 +1,7 @@
+use crate::error::AppError;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::error::AppError;
 
 /// Lock file manager for handling database locks gracefully
 pub struct LockManager {
@@ -57,16 +57,13 @@ impl LockManager {
                 Ok(())
             }
             LockStatus::Unlocked => Ok(()),
-            LockStatus::LockedByProcess(pid) => {
-                Err(AppError::DatabaseError(format!(
-                    "Database is locked by running process (PID: {})", pid
-                )))
-            }
-            LockStatus::LockedUnknown => {
-                Err(AppError::DatabaseError(
-                    "Database is locked by unknown process".to_string()
-                ))
-            }
+            LockStatus::LockedByProcess(pid) => Err(AppError::DatabaseError(format!(
+                "Database is locked by running process (PID: {})",
+                pid
+            ))),
+            LockStatus::LockedUnknown => Err(AppError::DatabaseError(
+                "Database is locked by unknown process".to_string(),
+            )),
         }
     }
 
@@ -92,9 +89,9 @@ impl LockManager {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let backup_path = db_path.with_extension(format!("backup.{}", timestamp));
-        
+
         // Copy the entire database directory
         if db_path.is_dir() {
             copy_dir_recursive(db_path, &backup_path)?;
@@ -122,7 +119,7 @@ pub enum LockStatus {
 #[allow(dead_code)]
 fn is_process_running(pid: u32) -> bool {
     use std::process::Command;
-    
+
     Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
@@ -144,13 +141,13 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), AppError> {
         AppError::DatabaseError(format!("Failed to create backup directory: {}", e))
     })?;
 
-    for entry in fs::read_dir(src).map_err(|e| {
-        AppError::DatabaseError(format!("Failed to read directory: {}", e))
-    })? {
+    for entry in fs::read_dir(src)
+        .map_err(|e| AppError::DatabaseError(format!("Failed to read directory: {}", e)))?
+    {
         let entry = entry.map_err(|e| {
             AppError::DatabaseError(format!("Failed to read directory entry: {}", e))
         })?;
-        
+
         let path = entry.path();
         let file_name = entry.file_name();
         let dst_path = dst.join(&file_name);
@@ -159,9 +156,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), AppError> {
             copy_dir_recursive(&path, &dst_path)?;
         } else {
             fs::copy(&path, &dst_path).map_err(|e| {
-                AppError::DatabaseError(format!(
-                    "Failed to copy file {:?}: {}", path, e
-                ))
+                AppError::DatabaseError(format!("Failed to copy file {:?}: {}", path, e))
             })?;
         }
     }

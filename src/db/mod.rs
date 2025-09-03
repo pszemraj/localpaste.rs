@@ -11,12 +11,9 @@ use std::sync::Arc;
 #[cfg(unix)]
 fn is_localpaste_running() -> bool {
     use std::process::Command;
-    
-    let output = Command::new("pgrep")
-        .arg("-f")
-        .arg("localpaste")
-        .output();
-    
+
+    let output = Command::new("pgrep").arg("-f").arg("localpaste").output();
+
     match output {
         Ok(result) => !result.stdout.is_empty(),
         Err(_) => false,
@@ -160,12 +157,13 @@ impl Database {
             Err(e) if e.to_string().contains("could not acquire lock") => {
                 // This is sled's internal lock, not our lock file
                 // It means another process has the database open
-                
+
                 // Check if there's actually another LocalPaste process
                 if is_localpaste_running() {
                     return Err(AppError::DatabaseError(
                         "Another LocalPaste instance is already running.\n\
-                        Please close it first or wait for it to shut down.".to_string()
+                        Please close it first or wait for it to shut down."
+                            .to_string(),
                     ));
                 } else {
                     // No LocalPaste running, probably a stale sled lock
@@ -178,8 +176,14 @@ impl Database {
                         3. Try starting again\n\n\
                         If that doesn't work, restore from auto-backup:\n\
                         ls -la {}/*.backup.* | tail -1",
-                        path, path, path, path, 
-                        std::path::Path::new(path).parent().unwrap_or(std::path::Path::new(".")).display()
+                        path,
+                        path,
+                        path,
+                        path,
+                        std::path::Path::new(path)
+                            .parent()
+                            .unwrap_or(std::path::Path::new("."))
+                            .display()
                     )));
                 }
             }
@@ -192,14 +196,13 @@ impl Database {
             db,
         })
     }
-    
-    
+
     /// Get database checksum for verification
     #[allow(dead_code)]
     pub fn checksum(&self) -> Result<u32, AppError> {
-        self.db.checksum().map_err(|e| {
-            AppError::DatabaseError(format!("Failed to compute checksum: {}", e))
-        })
+        self.db
+            .checksum()
+            .map_err(|e| AppError::DatabaseError(format!("Failed to compute checksum: {}", e)))
     }
 
     /// Flush all pending writes to disk
