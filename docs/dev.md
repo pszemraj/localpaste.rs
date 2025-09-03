@@ -177,13 +177,86 @@ ls -la ~/.cache/localpaste/db/
 
 # Database size
 du -sh ~/.cache/localpaste/
+
+# List backups
+ls -la ~/.cache/localpaste/db.backup.*
+
+# Check database integrity (requires running server)
+curl http://localhost:3030/api/health  # (if implemented)
 ```
+
+### Database Management
+
+**Backup and Recovery:**
+```bash
+# Manual backup (server can be running)
+./target/release/localpaste --backup
+
+# Automatic backups on startup (default enabled)
+AUTO_BACKUP=true ./target/release/localpaste
+
+# Disable auto-backup for development
+AUTO_BACKUP=false ./target/release/localpaste
+
+# Restore from backup
+cp -r ~/.cache/localpaste/db.backup.TIMESTAMP ~/.cache/localpaste/db
+```
+
+**Clean Shutdown:**
+- Always use Ctrl+C to stop the server (triggers graceful shutdown)
+- This ensures database flush and lock cleanup
+- Avoid `kill -9` which prevents cleanup
+
+**Development Best Practices:**
+- Use `timeout` with caution - it can leave locks
+- Create backups before testing destructive operations
+- Use a separate DB_PATH for testing: `DB_PATH=/tmp/test-db cargo run`
 
 ### Common Issues
 
 **Database Lock Error**
-- Kill any running instances: `pkill -f localpaste`
-- Remove lock file if stuck: `rm ~/.cache/localpaste/db/db.lock`
+
+⚠️ **CRITICAL: Never delete the entire database directory to fix lock issues!**
+
+When you encounter: `Error: could not acquire lock on "/home/pszemraj/.cache/localpaste/db/db"`
+
+**Safe Recovery Steps:**
+1. Check if LocalPaste is actually running:
+   ```bash
+   ps aux | grep localpaste
+   ```
+
+2. If no process is running, the lock is stale. Use the built-in recovery:
+   ```bash
+   # Recommended: Use force-unlock (preserves data)
+   ./target/release/localpaste --force-unlock
+   
+   # Or manually remove ONLY lock files (not the database!)
+   rm ~/.cache/localpaste/db/*.lock
+   ```
+
+3. **Always backup before manual intervention:**
+   ```bash
+   # Create backup first
+   ./target/release/localpaste --backup
+   # Or manually: cp -r ~/.cache/localpaste/db ~/.cache/localpaste/db.backup
+   ```
+
+**What NOT to do:**
+- ❌ `rm -rf ~/.cache/localpaste/db` - This deletes ALL your data!
+- ❌ `pkill -9 localpaste` during normal operation - Use Ctrl+C for graceful shutdown
+- ❌ Deleting the database directory - You'll lose all pastes permanently
+
+**Understanding Sled Locks:**
+- Sled creates internal lock files to prevent database corruption
+- These locks are different from PID files - they're part of the database
+- Force-killing processes (`kill -9`) can leave stale locks
+- The lock error is Sled protecting your data from corruption
+
+**Automatic Protection:**
+- LocalPaste creates automatic backups on startup (unless disabled with `AUTO_BACKUP=false`)
+- Backups are stored as `~/.cache/localpaste/db.backup.TIMESTAMP`
+- To restore from backup: `cp -r ~/.cache/localpaste/db.backup.TIMESTAMP ~/.cache/localpaste/db`
 
 **Port Already in Use**
 - Check what's using port: `lsof -i :3030`
