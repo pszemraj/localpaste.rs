@@ -220,8 +220,9 @@ async fn test_max_paste_size_enforcement() {
         }))
         .await;
     
-    // Should fail with 400 Bad Request
-    assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
+    // Should fail with 413 Payload Too Large (or 400 Bad Request)
+    // The middleware layer returns 413 when the body limit is exceeded
+    assert_eq!(response.status_code(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 #[tokio::test]

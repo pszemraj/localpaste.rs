@@ -18,7 +18,6 @@ use axum::{
 use tower_http::{
     compression::CompressionLayer,
     cors::CorsLayer,
-    services::ServeDir,
     set_header::SetResponseHeaderLayer,
 };
 use hyper::HeaderMap;
