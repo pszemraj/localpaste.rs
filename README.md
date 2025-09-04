@@ -10,7 +10,7 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 
 ## Features
 
-- **Single Binary** - Zero runtime dependencies, just run and go
+- **Self-Contained** - Zero runtime dependencies, just run and go
 - **Language Detection** - Auto-detects programming language
 - **Auto-Save** - Changes save automatically after 1 second
 - **Folder Organization** - Drag & drop pastes into folders
@@ -21,7 +21,7 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 
 ## Quick Start
 
-LocalPaste.rs consists of two binaries:
+LocalPaste.rs provides two ways to interact with your pastes:
 
 - `localpaste` - The web server with UI (main application)
 - `lpaste` - Command-line interface for terminal usage
@@ -65,11 +65,18 @@ echo "Hello, World!" | ./target/release/lpaste new
 
 ## Configuration
 
-Basic environment variables:
+Copy `.env.example` to `.env` to customize settings:
+
+```bash
+cp .env.example .env
+```
+
+Available environment variables:
 
 - `PORT` - Server port (default: 3030)
 - `DB_PATH` - Database path (default: ~/.cache/localpaste/db)
 - `MAX_PASTE_SIZE` - Maximum paste size in bytes (default: 10MB)
+- `AUTO_BACKUP` - Enable automatic backups on startup (default: false)
 - `RUST_LOG` - Logging level (default: info)
 
 For advanced configuration and security settings, see [docs/security.md](docs/security.md).

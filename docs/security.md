@@ -101,6 +101,10 @@ server {
 
 3. **Backups**: Regular database backups
    ```bash
+   # Use built-in backup command
+   ./localpaste --backup
+   
+   # Or manual backup
    cp -r ~/.cache/localpaste/db ~/.cache/localpaste/db.backup
    ```
 

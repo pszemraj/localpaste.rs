@@ -192,11 +192,11 @@ curl http://localhost:3030/api/health  # (if implemented)
 # Manual backup (server can be running)
 ./target/release/localpaste --backup
 
-# Automatic backups on startup (default enabled)
+# Enable automatic backups on startup (default: false)
 AUTO_BACKUP=true ./target/release/localpaste
 
-# Disable auto-backup for development
-AUTO_BACKUP=false ./target/release/localpaste
+# Default behavior - no auto-backup
+./target/release/localpaste
 
 # Restore from backup
 cp -r ~/.cache/localpaste/db.backup.TIMESTAMP ~/.cache/localpaste/db
@@ -254,7 +254,8 @@ When you encounter: `Error: could not acquire lock on "/home/pszemraj/.cache/loc
 - The lock error is Sled protecting your data from corruption
 
 **Automatic Protection:**
-- LocalPaste creates automatic backups on startup (unless disabled with `AUTO_BACKUP=false`)
+- LocalPaste can create automatic backups on startup when `AUTO_BACKUP=true` is set
+- Manual backups can be created with `./target/release/localpaste --backup`
 - Backups are stored as `~/.cache/localpaste/db.backup.TIMESTAMP`
 - To restore from backup: `cp -r ~/.cache/localpaste/db.backup.TIMESTAMP ~/.cache/localpaste/db`
 
