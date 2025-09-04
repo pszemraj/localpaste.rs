@@ -245,6 +245,7 @@
                 <div class="status-left">
                     <span id="status-message">Ready</span>
                     <a href="https://github.com/pszemraj/localpaste.rs" target="_blank" style="margin-left: 16px; color: var(--text-secondary); text-decoration: none; font-size: 11px; opacity: 0.7;" title="View on GitHub">GitHub</a>
+                    <span id="paste-id" style="margin-left: 16px; color: var(--text-secondary); font-size: 11px; cursor: pointer;" title="Click to copy ID"></span>
                 </div>
                 <div class="status-right"><span id="cursor-position">Ln 1, Col 1</span></div>
             </footer>
@@ -271,6 +272,7 @@
             try {
                 this.bindEvents();
                 await this.loadData();
+                this.updatePasteIdDisplay(); // Initialize ID display
                 this.setStatus('Ready');
                 console.log('LocalPaste.rs: Initialized');
             } catch (err) {
@@ -351,15 +353,34 @@
                     folderDiv.classList.add('expanded');
                 }
                 
-                folderDiv.innerHTML = `
-                    <span class="tree-folder-icon">▶</span>
-                    📁 <span class="folder-name">${folder.name}</span>
-                    <span style="opacity: 0.6; font-size: 12px; margin-left: 4px;">(${pastesByFolder[folder.id]?.length || 0})</span>
-                    <span class="folder-actions" style="float: right; display: none;">
-                        <button class="folder-rename" data-folder-id="${folder.id}" title="Rename">✏️</button>
-                        <button class="folder-delete" data-folder-id="${folder.id}" title="Delete">🗑️</button>
-                    </span>
+                // Create elements safely to avoid XSS
+                folderDiv.innerHTML = ''; // Clear first
+                
+                const folderIcon = document.createElement('span');
+                folderIcon.className = 'tree-folder-icon';
+                folderIcon.textContent = '▶';
+                folderDiv.appendChild(folderIcon);
+                
+                folderDiv.appendChild(document.createTextNode(' 📁 '));
+                
+                const folderName = document.createElement('span');
+                folderName.className = 'folder-name';
+                folderName.textContent = folder.name; // Safe from XSS
+                folderDiv.appendChild(folderName);
+                
+                const countSpan = document.createElement('span');
+                countSpan.style.cssText = 'opacity: 0.6; font-size: 12px; margin-left: 4px;';
+                countSpan.textContent = `(${pastesByFolder[folder.id]?.length || 0})`;
+                folderDiv.appendChild(countSpan);
+                
+                const actionsSpan = document.createElement('span');
+                actionsSpan.className = 'folder-actions';
+                actionsSpan.style.cssText = 'float: right; display: none;';
+                actionsSpan.innerHTML = `
+                    <button class="folder-rename" data-folder-id="${folder.id}" title="Rename">✏️</button>
+                    <button class="folder-delete" data-folder-id="${folder.id}" title="Delete">🗑️</button>
                 `;
+                folderDiv.appendChild(actionsSpan);
                 
                 folderDiv.addEventListener('click', (e) => {
                     // Don't toggle if clicking on actions
@@ -469,10 +490,13 @@
             const date = new Date(paste.created_at);
             const dateStr = date.toLocaleDateString();
             
-            li.innerHTML = `
-                ${paste.name}
-                <span class="paste-date">${dateStr}</span>
-            `;
+            // Safe from XSS - use textContent
+            li.textContent = paste.name;
+            
+            const dateSpan = document.createElement('span');
+            dateSpan.className = 'paste-date';
+            dateSpan.textContent = dateStr;
+            li.appendChild(dateSpan);
             
             li.addEventListener('click', () => this.loadPaste(paste.id));
             
@@ -593,6 +617,7 @@
             // Name change
             const nameInput = document.getElementById('paste-name');
             nameInput.addEventListener('focus', () => {
+                nameInput.readOnly = false;  // Make editable when focused
                 nameInput.style.border = '1px solid var(--accent)';
             });
             nameInput.addEventListener('blur', () => {
@@ -613,15 +638,6 @@
                 this.updateHighlighting();
                 if (this.currentPaste) {
                     this.savePaste();
-                }
-            });
-            nameInput.addEventListener('blur', () => {
-                nameInput.readOnly = true;
-                this.savePaste();
-            });
-            nameInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    nameInput.blur();
                 }
             });
             
@@ -793,6 +809,7 @@
                 if (!res.ok) throw new Error('Failed to save');
                 
                 this.currentPaste = await res.json();
+                this.updatePasteIdDisplay();
                 
                 // Show save indicator
                 const saveStatus = document.getElementById('save-status');
@@ -843,6 +860,7 @@
                 
                 const paste = await res.json();
                 this.currentPaste = paste;
+                this.updatePasteIdDisplay();
                 
                 // Remember this paste for next time
                 localStorage.setItem('lastOpenedPaste', id);
@@ -935,6 +953,7 @@
                 
                 this.currentPaste = null;
                 this.editor.value = '';
+                this.updatePasteIdDisplay();
                 
                 await this.loadData();
                 
@@ -970,6 +989,29 @@
             const col = lines[lines.length - 1].length + 1;
             
             document.getElementById('cursor-position').textContent = `Ln ${line}, Col ${col}`;
+        }
+
+        updatePasteIdDisplay() {
+            const pasteIdElement = document.getElementById('paste-id');
+            if (this.currentPaste && this.currentPaste.id) {
+                pasteIdElement.textContent = `ID: ${this.currentPaste.id}`;
+                pasteIdElement.style.display = 'inline';
+                
+                // Add click to copy functionality
+                pasteIdElement.onclick = () => {
+                    navigator.clipboard.writeText(this.currentPaste.id).then(() => {
+                        const originalText = pasteIdElement.textContent;
+                        pasteIdElement.textContent = 'Copied!';
+                        setTimeout(() => {
+                            pasteIdElement.textContent = originalText;
+                        }, 2000);
+                    }).catch(err => {
+                        console.error('Failed to copy ID:', err);
+                    });
+                };
+            } else {
+                pasteIdElement.style.display = 'none';
+            }
         }
 
         setStatus(message) {

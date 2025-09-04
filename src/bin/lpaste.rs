@@ -1,7 +1,7 @@
 #[cfg(feature = "cli")]
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 #[cfg(feature = "cli")]
-use reqwest;
+use clap_complete::{generate, Shell};
 #[cfg(feature = "cli")]
 use serde_json::Value;
 #[cfg(feature = "cli")]
@@ -11,8 +11,22 @@ use std::io::{self, Read};
 #[derive(Parser)]
 #[command(name = "lpaste", about = "LocalPaste CLI", version)]
 struct Cli {
-    #[arg(short, long, default_value = "http://localhost:3030")]
+    /// Server URL (can also be set via LP_SERVER env var)
+    #[arg(
+        short,
+        long,
+        env = "LP_SERVER",
+        default_value = "http://localhost:3030"
+    )]
     server: String,
+
+    /// Output in JSON format
+    #[arg(short, long, global = true)]
+    json: bool,
+
+    /// Request timeout in seconds
+    #[arg(short = 't', long, default_value = "30")]
+    timeout: u64,
 
     #[command(subcommand)]
     command: Commands,
@@ -21,6 +35,12 @@ struct Cli {
 #[cfg(feature = "cli")]
 #[derive(Subcommand)]
 enum Commands {
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
     New {
         #[arg(short, long)]
         file: Option<String>,
@@ -46,9 +66,17 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(cli.timeout))
+        .build()?;
 
     match cli.command {
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            generate(shell, &mut cmd, name, &mut io::stdout());
+            return Ok(());
+        }
         Commands::New { file, name } => {
             let content = if let Some(path) = file {
                 std::fs::read_to_string(path)?
@@ -69,11 +97,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .send()
                 .await?;
             let paste: Value = res.json().await?;
-            println!(
-                "Created: {} ({})",
-                paste["name"].as_str().unwrap(),
-                paste["id"].as_str().unwrap()
-            );
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&paste)?);
+            } else {
+                println!(
+                    "Created: {} ({})",
+                    paste["name"].as_str().unwrap(),
+                    paste["id"].as_str().unwrap()
+                );
+            }
         }
         Commands::Get { id } => {
             let res = client

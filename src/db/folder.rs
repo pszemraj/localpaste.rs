@@ -29,7 +29,7 @@ impl FolderDb {
     }
 
     pub fn update(&self, id: &str, name: String) -> Result<Option<Folder>, AppError> {
-        let result = self.tree.fetch_and_update(id.as_bytes(), |old| {
+        let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
             old.and_then(|bytes| {
                 let mut folder: Folder = bincode::deserialize(bytes).ok()?;
                 folder.name = name.clone();

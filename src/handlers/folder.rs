@@ -35,17 +35,24 @@ pub async fn delete_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // First, move all pastes in this folder to unfiled
-    let pastes = state.db.pastes.list(100, Some(id.clone()))?;
-    for paste in pastes {
-        let update = crate::models::paste::UpdatePasteRequest {
-            content: None,
-            name: None,
-            language: None,
-            folder_id: Some("".to_string()), // Empty string to make unfiled
-            tags: None,
-        };
-        state.db.pastes.update(&paste.id, update)?;
+    // Migrate ALL pastes in this folder to unfiled (None)
+    // Keep migrating until no more pastes remain in the folder
+    loop {
+        let pastes = state.db.pastes.list(100, Some(id.clone()))?;
+        if pastes.is_empty() {
+            break;
+        }
+
+        for paste in pastes {
+            let update = crate::models::paste::UpdatePasteRequest {
+                content: None,
+                name: None,
+                language: None,
+                folder_id: Some("".to_string()), // Will be normalized to None in DB layer
+                tags: None,
+            };
+            state.db.pastes.update(&paste.id, update)?;
+        }
     }
 
     if state.db.folders.delete(&id)? {

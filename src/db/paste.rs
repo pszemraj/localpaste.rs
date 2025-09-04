@@ -28,7 +28,7 @@ impl PasteDb {
     }
 
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
-        let result = self.tree.fetch_and_update(id.as_bytes(), |old| {
+        let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
             old.and_then(|bytes| {
                 let mut paste: Paste = bincode::deserialize(bytes).ok()?;
 
@@ -43,9 +43,13 @@ impl PasteDb {
                 if update.language.is_some() {
                     paste.language = update.language.clone();
                 }
-                // Always update folder_id if provided (even if empty to clear it)
-                if update.folder_id.is_some() {
-                    paste.folder_id = update.folder_id.clone();
+                // Normalize folder_id: empty string becomes None
+                if let Some(ref fid) = update.folder_id {
+                    paste.folder_id = if fid.is_empty() {
+                        None
+                    } else {
+                        Some(fid.clone())
+                    };
                 }
                 if let Some(tags) = &update.tags {
                     paste.tags = tags.clone();
@@ -68,7 +72,9 @@ impl PasteDb {
 
     pub fn list(&self, limit: usize, folder_id: Option<String>) -> Result<Vec<Paste>, AppError> {
         let mut pastes = Vec::new();
-        for item in self.tree.iter().rev() {
+
+        // Collect all pastes (or filtered by folder)
+        for item in self.tree.iter() {
             let (_, value) = item?;
             let paste: Paste = bincode::deserialize(&value)?;
 
@@ -78,10 +84,14 @@ impl PasteDb {
                 }
             }
             pastes.push(paste);
-            if pastes.len() >= limit {
-                break;
-            }
         }
+
+        // Sort by updated_at in descending order (newest first)
+        pastes.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
+
+        // Truncate to limit
+        pastes.truncate(limit);
+
         Ok(pastes)
     }
 
