@@ -84,8 +84,9 @@ For advanced configuration and security settings, see [docs/security.md](docs/se
 ## Running as a Background Service
 
 LocalPaste can run automatically in the background. See [docs/deployment.md](docs/deployment.md) for:
+
 - systemd (Linux)
-- launchd (macOS)  
+- launchd (macOS)
 - Task Scheduler (Windows)
 - Docker setup
 - Process managers (PM2, Supervisor)

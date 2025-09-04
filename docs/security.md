@@ -14,10 +14,10 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 
 ### Network Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BIND` | `127.0.0.1:3030` | Server bind address. ⚠️ Use caution when changing |
-| `ALLOW_PUBLIC_ACCESS` | disabled | Enable CORS for all origins. ⚠️ Security risk |
+| Variable              | Default          | Description                                      |
+| --------------------- | ---------------- | ------------------------------------------------ |
+| `BIND`                | `127.0.0.1:3030` | Server bind address. ⚠️ Use caution when changing |
+| `ALLOW_PUBLIC_ACCESS` | disabled         | Enable CORS for all origins. ⚠️ Security risk     |
 
 ### Security Headers
 
@@ -62,22 +62,22 @@ Before exposing publicly, ensure:
 server {
     listen 443 ssl http2;
     server_name paste.example.com;
-    
+
     ssl_certificate /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
-    
+
     # Security headers
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header X-XSS-Protection "1; mode=block" always;
-    
+
     location / {
         proxy_pass http://127.0.0.1:3030;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
+
         # WebSocket support (if needed)
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -89,26 +89,30 @@ server {
 ## Security Best Practices
 
 1. **Regular Updates**: Keep dependencies updated
+
    ```bash
    cargo update
    cargo audit
    ```
 
 2. **Monitoring**: Watch logs for unusual activity
+
    ```bash
    RUST_LOG=info ./localpaste 2>&1 | tee localpaste.log
    ```
 
 3. **Backups**: Regular database backups
+
    ```bash
    # Use built-in backup command
    ./localpaste --backup
-   
+
    # Or manual backup
    cp -r ~/.cache/localpaste/db ~/.cache/localpaste/db.backup
    ```
 
 4. **Access Control**: Use firewall rules
+
    ```bash
    # Allow only specific IPs (example with ufw)
    ufw allow from 192.168.1.0/24 to any port 3030
@@ -119,12 +123,14 @@ server {
 LocalPaste is designed for trusted local environments. The main security considerations:
 
 ### What's Protected
+
 - Prevents unauthorized remote access (localhost binding)
 - Prevents XSS attacks (CSP headers, input sanitization)
 - Prevents large payload DoS (size limits)
 - Prevents clickjacking (X-Frame-Options)
 
 ### What's Not Protected
+
 - No built-in authentication/authorization
 - No encryption at rest (use disk encryption)
 - No rate limiting (add reverse proxy if needed)
@@ -141,6 +147,7 @@ If you discover a security vulnerability, please:
 ## Compliance Notes
 
 LocalPaste stores all data locally and does not:
+
 - Transmit data to external services
 - Include analytics or tracking
 - Store personal information beyond paste content

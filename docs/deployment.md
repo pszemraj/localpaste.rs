@@ -65,7 +65,7 @@ Create `~/Library/LaunchAgents/rs.localpaste.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" 
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -129,12 +129,14 @@ docker run -d -p 127.0.0.1:3030:3030 -v localpaste-data:/data localpaste
 ### Auto-restart on Crash
 
 With systemd:
+
 ```ini
 Restart=always
 RestartSec=5
 ```
 
 With cron:
+
 ```bash
 # Add to crontab
 */5 * * * * pgrep localpaste || nohup /path/to/localpaste &
