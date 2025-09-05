@@ -210,7 +210,9 @@
                     <span class="paste-meta">
                         <select id="paste-language" style="background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 2px 6px; border-radius: 4px; cursor: pointer;">
                             <option value="">Auto-detect</option>
+                            <option value="plaintext">Plain Text</option>
                             <option value="python">Python</option>
+                            <option value="shell">Shell/Bash</option>
                             <option value="cpp">C++</option>
                             <option value="c">C</option>
                             <option value="java">Java</option>
@@ -670,8 +672,12 @@
             const text = this.editor.value;
             let language = '';
             
+            // Shell/Bash
+            if (text.includes('#!/bin/bash') || text.includes('#!/bin/sh') || text.includes('#!/usr/bin/env') ||
+                (text.includes('echo ') && text.includes('$')) || text.includes('export ') || 
+                text.includes('source ') || text.includes('alias ')) language = 'shell';
             // Programming languages
-            if (text.includes('def ') || text.includes('import ') || text.includes('print(') || text.includes('if __name__')) language = 'python';
+            else if (text.includes('def ') || text.includes('import ') || text.includes('print(') || text.includes('if __name__')) language = 'python';
             else if (text.includes('#include') || text.includes('std::') || text.includes('cout') || text.includes('namespace')) language = 'cpp';
             else if (text.includes('#include') && !text.includes('std::') && (text.includes('printf') || text.includes('scanf'))) language = 'c';
             else if (text.includes('public class') || text.includes('public static void main') || text.includes('System.out')) language = 'java';
@@ -913,7 +919,9 @@
                 'json': 'json',
                 'yaml': 'yml',
                 'toml': 'toml',
-                'latex': 'tex'
+                'latex': 'tex',
+                'shell': 'sh',
+                'plaintext': 'txt'
             };
             if (langExtMap[lang]) {
                 ext = langExtMap[lang];
@@ -1029,7 +1037,7 @@
             const text = this.editor.value;
             const highlightLayer = document.getElementById('highlight-layer');
             
-            if (!lang || !text) {
+            if (!lang || !text || lang === 'plaintext') {
                 highlightLayer.innerHTML = this.escapeHtml(text);
                 return;
             }
@@ -1043,6 +1051,9 @@
                     break;
                 case 'javascript':
                     highlighted = this.highlightJavaScript(text);
+                    break;
+                case 'shell':
+                    highlighted = this.highlightShell(text);
                     break;
                 case 'cpp':
                     highlighted = this.highlightCpp(text);
@@ -1220,6 +1231,72 @@
             // Functions
             text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
             return text;
+        }
+        
+        highlightShell(text) {
+            // First escape HTML to prevent injection
+            const escaped = this.escapeHtml(text);
+            const tokens = [];
+            
+            // Comments
+            escaped.replace(/(#.*$)/gm, (match, p1, offset) => {
+                tokens.push({start: offset, end: offset + match.length, type: 'comment'});
+                return match;
+            });
+            
+            // Strings (single and double quotes)
+            escaped.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, (match, p1, p2, offset) => {
+                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
+                if (!overlaps) {
+                    tokens.push({start: offset, end: offset + match.length, type: 'string'});
+                }
+                return match;
+            });
+            
+            // Variables
+            escaped.replace(/\$[a-zA-Z_][a-zA-Z0-9_]*|\${[^}]+}/g, (match, offset) => {
+                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
+                if (!overlaps) {
+                    tokens.push({start: offset, end: offset + match.length, type: 'property'});
+                }
+                return match;
+            });
+            
+            // Keywords and built-in commands
+            escaped.replace(/\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|return|break|continue|exit|export|source|alias|echo|cd|ls|cp|mv|rm|mkdir|touch|cat|grep|sed|awk|find|chmod|chown|sudo|apt|yum|npm|pip|git|docker|kubectl)\b/g, (match, p1, offset) => {
+                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
+                if (!overlaps) {
+                    tokens.push({start: offset, end: offset + match.length, type: 'keyword'});
+                }
+                return match;
+            });
+            
+            // Operators
+            escaped.replace(/(&amp;&amp;|\|\||&lt;&lt;|&gt;&gt;|&amp;|\||;)/g, (match, p1, offset) => {
+                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
+                if (!overlaps) {
+                    tokens.push({start: offset, end: offset + match.length, type: 'operator'});
+                }
+                return match;
+            });
+            
+            // Sort tokens by position
+            tokens.sort((a, b) => a.start - b.start);
+            
+            // Build highlighted text
+            let highlighted = '';
+            let lastIndex = 0;
+            
+            for (const token of tokens) {
+                highlighted += escaped.substring(lastIndex, token.start);
+                const tokenText = escaped.substring(token.start, token.end);
+                const className = 'hl-' + token.type;
+                highlighted += `<span class="${className}">${tokenText}</span>`;
+                lastIndex = token.end;
+            }
+            
+            highlighted += escaped.substring(lastIndex);
+            return highlighted;
         }
         
         highlightRust(text) {
