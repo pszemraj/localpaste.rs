@@ -1110,127 +1110,154 @@
             return div.innerHTML;
         }
         
+        // Safely highlight text - escapes HTML then applies highlighting
+        safeHighlight(text, highlightFn) {
+            // First escape all HTML
+            const escaped = this.escapeHtml(text);
+            
+            // Apply highlighting - but now we need to work with escaped entities
+            // The highlight function needs to match escaped patterns
+            return highlightFn.call(this, escaped);
+        }
+        
         highlightPython(text) {
-            text = this.escapeHtml(text);
+            // Escape HTML first to prevent XSS
+            const escaped = this.escapeHtml(text);
+            
+            // Now apply highlighting on escaped text
+            let result = escaped;
+            
             // Comments first
-            text = text.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
-            // Triple quoted strings
-            text = text.replace(/('''[\s\S]*?'''|"""[\s\S]*?""")/g, '<span class="hl-string">$1</span>');
-            // Regular strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
+            // Triple quoted strings - adjust for escaped quotes
+            result = result.replace(/(&#39;&#39;&#39;[\s\S]*?&#39;&#39;&#39;|&quot;&quot;&quot;[\s\S]*?&quot;&quot;&quot;)/g, '<span class="hl-string">$1</span>');
+            // Regular strings - match escaped quotes
+            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;)/g, '<span class="hl-string">$1</span>');
             // Keywords
-            text = text.replace(/\b(def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/\b(def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, '<span class="hl-keyword">$1</span>');
             // Numbers
-            text = text.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
             // Functions
-            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
-            return text;
+            result = result.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
+            return result;
         }
         
         highlightJavaScript(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-            // Strings
-            text = text.replace(/(['"`])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            // Strings - match escaped quotes
+            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;|`[^`]*`)/g, '<span class="hl-string">$1</span>');
             // Keywords
-            text = text.replace(/\b(const|let|var|function|class|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|async|await|import|export|from|default|new|this|super|extends|static|typeof|instanceof|in|of|delete|void|yield|null|undefined|true|false)\b/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/\b(const|let|var|function|class|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|async|await|import|export|from|default|new|this|super|extends|static|typeof|instanceof|in|of|delete|void|yield|null|undefined|true|false)\b/g, '<span class="hl-keyword">$1</span>');
             // Numbers
-            text = text.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
             // Functions
-            text = text.replace(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
-            return text;
+            result = result.replace(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
+            return result;
         }
         
         highlightCpp(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
             // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;)/g, '<span class="hl-string">$1</span>');
             // Keywords
-            text = text.replace(/\b(class|public|private|protected|virtual|override|namespace|using|if|else|for|while|do|switch|case|break|continue|return|try|catch|throw|new|delete|this|nullptr|const|static|inline|typedef|typename|template|auto|void|int|char|bool|float|double|long|short|unsigned|signed|struct|enum|union)\b/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/\b(class|public|private|protected|virtual|override|namespace|using|if|else|for|while|do|switch|case|break|continue|return|try|catch|throw|new|delete|this|nullptr|const|static|inline|typedef|typename|template|auto|void|int|char|bool|float|double|long|short|unsigned|signed|struct|enum|union)\b/g, '<span class="hl-keyword">$1</span>');
             // Preprocessor
-            text = text.replace(/^#\s*\w+/gm, '<span class="hl-type">$&</span>');
+            result = result.replace(/^#\s*\w+/gm, '<span class="hl-type">$&</span>');
             // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[fFlL]?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b\d+(\.\d+)?[fFlL]?\b/g, '<span class="hl-number">$&</span>');
             // STL types
-            text = text.replace(/\b(std::\w+|string|vector|map|set|cout|cin|endl)\b/g, '<span class="hl-type">$1</span>');
-            return text;
+            result = result.replace(/\b(std::\w+|string|vector|map|set|cout|cin|endl)\b/g, '<span class="hl-type">$1</span>');
+            return result;
         }
         
         highlightC(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
             // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;)/g, '<span class="hl-string">$1</span>');
             // Keywords
-            text = text.replace(/\b(if|else|for|while|do|switch|case|break|continue|return|goto|typedef|struct|enum|union|const|static|extern|inline|sizeof|void|int|char|float|double|long|short|unsigned|signed|NULL)\b/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/\b(if|else|for|while|do|switch|case|break|continue|return|goto|typedef|struct|enum|union|const|static|extern|inline|sizeof|void|int|char|float|double|long|short|unsigned|signed|NULL)\b/g, '<span class="hl-keyword">$1</span>');
             // Preprocessor
-            text = text.replace(/^#\s*\w+/gm, '<span class="hl-type">$&</span>');
+            result = result.replace(/^#\s*\w+/gm, '<span class="hl-type">$&</span>');
             // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[fFlL]?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b\d+(\.\d+)?[fFlL]?\b/g, '<span class="hl-number">$&</span>');
             // Functions
-            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
-            return text;
+            result = result.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
+            return result;
         }
         
         highlightJava(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
             // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;)/g, '<span class="hl-string">$1</span>');
             // Keywords
-            text = text.replace(/\b(public|private|protected|class|interface|extends|implements|abstract|final|static|void|int|char|boolean|float|double|long|short|byte|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|throws|new|this|super|import|package|null|true|false)\b/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/\b(public|private|protected|class|interface|extends|implements|abstract|final|static|void|int|char|boolean|float|double|long|short|byte|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|throws|new|this|super|import|package|null|true|false)\b/g, '<span class="hl-keyword">$1</span>');
             // Annotations
-            text = text.replace(/@\w+/g, '<span class="hl-type">$&</span>');
+            result = result.replace(/@\w+/g, '<span class="hl-type">$&</span>');
             // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[fFlLdD]?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b\d+(\.\d+)?[fFlLdD]?\b/g, '<span class="hl-number">$&</span>');
             // Types
-            text = text.replace(/\b(String|Integer|Double|Float|Boolean|ArrayList|HashMap|List|Map|Set)\b/g, '<span class="hl-type">$1</span>');
-            return text;
+            result = result.replace(/\b(String|Integer|Double|Float|Boolean|ArrayList|HashMap|List|Map|Set)\b/g, '<span class="hl-type">$1</span>');
+            return result;
         }
         
         highlightCSharp(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
             // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;)/g, '<span class="hl-string">$1</span>');
             // Interpolated strings
-            text = text.replace(/\$"[^"]*"/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/\$&quot;[^&]*&quot;/g, '<span class="hl-string">$&</span>');
             // Keywords
-            text = text.replace(/\b(public|private|protected|internal|class|interface|struct|enum|abstract|sealed|static|void|int|char|bool|float|double|decimal|long|short|byte|string|if|else|for|foreach|while|do|switch|case|break|continue|return|try|catch|finally|throw|using|namespace|new|this|base|null|true|false|var|async|await|override|virtual|const|readonly)\b/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/\b(public|private|protected|internal|class|interface|struct|enum|abstract|sealed|static|void|int|char|bool|float|double|decimal|long|short|byte|string|if|else|for|foreach|while|do|switch|case|break|continue|return|try|catch|finally|throw|using|namespace|new|this|base|null|true|false|var|async|await|override|virtual|const|readonly)\b/g, '<span class="hl-keyword">$1</span>');
             // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[fFmMdD]?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b\d+(\.\d+)?[fFmMdD]?\b/g, '<span class="hl-number">$&</span>');
             // Types
-            text = text.replace(/\b(String|Int32|Double|Float|Boolean|List|Dictionary|Task)\b/g, '<span class="hl-type">$1</span>');
-            return text;
+            result = result.replace(/\b(String|Int32|Double|Float|Boolean|List|Dictionary|Task)\b/g, '<span class="hl-type">$1</span>');
+            return result;
         }
         
         highlightGo(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
             // Strings
-            text = text.replace(/(['"`])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;|`[^`]*`)/g, '<span class="hl-string">$1</span>');
             // Keywords
-            text = text.replace(/\b(package|import|func|var|const|type|struct|interface|map|chan|if|else|for|range|switch|case|break|continue|return|go|defer|select|fallthrough|default|nil|true|false)\b/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/\b(package|import|func|var|const|type|struct|interface|map|chan|if|else|for|range|switch|case|break|continue|return|go|defer|select|fallthrough|default|nil|true|false)\b/g, '<span class="hl-keyword">$1</span>');
             // Types
-            text = text.replace(/\b(bool|string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|complex64|complex128|byte|rune|error)\b/g, '<span class="hl-type">$1</span>');
+            result = result.replace(/\b(bool|string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|complex64|complex128|byte|rune|error)\b/g, '<span class="hl-type">$1</span>');
             // Numbers
-            text = text.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
             // Functions
-            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
-            return text;
+            result = result.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
+            return result;
         }
         
         highlightShell(text) {
@@ -1300,36 +1327,40 @@
         }
         
         highlightRust(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
             // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;)/g, '<span class="hl-string">$1</span>');
             // Keywords
-            text = text.replace(/\b(fn|let|mut|const|if|else|match|for|while|loop|break|continue|return|use|mod|pub|struct|enum|trait|impl|self|Self|super|crate|async|await|move|ref|dyn|static|extern|unsafe|where|as|in|type|impl|trait)\b/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/\b(fn|let|mut|const|if|else|match|for|while|loop|break|continue|return|use|mod|pub|struct|enum|trait|impl|self|Self|super|crate|async|await|move|ref|dyn|static|extern|unsafe|where|as|in|type|impl|trait)\b/g, '<span class="hl-keyword">$1</span>');
             // Types
-            text = text.replace(/\b(bool|char|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize|f32|f64|str|String|Vec|Option|Result|Box|Rc|Arc|HashMap|HashSet)\b/g, '<span class="hl-type">$1</span>');
+            result = result.replace(/\b(bool|char|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize|f32|f64|str|String|Vec|Option|Result|Box|Rc|Arc|HashMap|HashSet)\b/g, '<span class="hl-type">$1</span>');
             // Lifetimes
-            text = text.replace(/'[a-z][a-z0-9_]*/g, '<span class="hl-type">$&</span>');
+            result = result.replace(/&#39;[a-z][a-z0-9_]*/g, '<span class="hl-type">$&</span>');
             // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[iu]?(8|16|32|64|128|size)?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b\d+(\.\d+)?[iu]?(8|16|32|64|128|size)?\b/g, '<span class="hl-number">$&</span>');
             // Macros
-            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)!/g, '<span class="hl-function">$1!</span>');
-            return text;
+            result = result.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)!/g, '<span class="hl-function">$1!</span>');
+            return result;
         }
         
         highlightJSON(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Property names
-            text = text.replace(/"([^"]+)"\s*:/g, '<span class="hl-property">"$1"</span>:');
+            result = result.replace(/&quot;([^&]*)&quot;\s*:/g, '<span class="hl-property">&quot;$1&quot;</span>:');
             // String values
-            text = text.replace(/:[\s]*"([^"]*)"/g, ': <span class="hl-string">"$1"</span>');
+            result = result.replace(/:[\s]*&quot;([^&]*)&quot;/g, ': <span class="hl-string">&quot;$1&quot;</span>');
             // Numbers
-            text = text.replace(/\b-?\d+(\.\d+)?([eE][+-]?\d+)?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b-?\d+(\.\d+)?([eE][+-]?\d+)?\b/g, '<span class="hl-number">$&</span>');
             // Booleans and null
-            text = text.replace(/\b(true|false|null)\b/g, '<span class="hl-keyword">$1</span>');
-            return text;
+            result = result.replace(/\b(true|false|null)\b/g, '<span class="hl-keyword">$1</span>');
+            return result;
         }
         
         highlightYAML(text) {
@@ -1367,47 +1398,51 @@
         }
         
         highlightTOML(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
             // Section headers
-            text = text.replace(/^\[([\w.]+)\]/gm, '[<span class="hl-type">$1</span>]');
-            text = text.replace(/^\[\[([\w.]+)\]\]/gm, '[[<span class="hl-type">$1</span>]]');
+            result = result.replace(/^\[([\w.]+)\]/gm, '[<span class="hl-type">$1</span>]');
+            result = result.replace(/^\[\[([\w.]+)\]\]/gm, '[[<span class="hl-type">$1</span>]]');
             // Keys
-            text = text.replace(/^(\s*)([\w-]+)\s*=/gm, '$1<span class="hl-property">$2</span> =');
+            result = result.replace(/^(\s*)([\w-]+)\s*=/gm, '$1<span class="hl-property">$2</span> =');
             // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;)/g, '<span class="hl-string">$1</span>');
             // Booleans
-            text = text.replace(/\b(true|false)\b/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/\b(true|false)\b/g, '<span class="hl-keyword">$1</span>');
             // Numbers
-            text = text.replace(/\b-?\d+(\.\d+)?([eE][+-]?\d+)?\b/g, '<span class="hl-number">$&</span>');
+            result = result.replace(/\b-?\d+(\.\d+)?([eE][+-]?\d+)?\b/g, '<span class="hl-number">$&</span>');
             // Dates
-            text = text.replace(/\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?/g, '<span class="hl-number">$&</span>');
-            return text;
+            result = result.replace(/\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?/g, '<span class="hl-number">$&</span>');
+            return result;
         }
         
         highlightMarkdown(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Code blocks first
-            text = text.replace(/```[\s\S]*?```/g, '<span class="hl-code">$&</span>');
+            result = result.replace(/```[\s\S]*?```/g, '<span class="hl-code">$&</span>');
             // Headers
-            text = text.replace(/^(#{1,6})\s+(.*)$/gm, '<span class="hl-heading">$1 $2</span>');
+            result = result.replace(/^(#{1,6})\s+(.*)$/gm, '<span class="hl-heading">$1 $2</span>');
             // Bold
-            text = text.replace(/\*\*([^*]+)\*\*/g, '<span class="hl-bold">**$1**</span>');
-            text = text.replace(/__([^_]+)__/g, '<span class="hl-bold">__$1__</span>');
+            result = result.replace(/\*\*([^*]+)\*\*/g, '<span class="hl-bold">**$1**</span>');
+            result = result.replace(/__([^_]+)__/g, '<span class="hl-bold">__$1__</span>');
             // Italic
-            text = text.replace(/\*([^*\s][^*]*)\*/g, '<span class="hl-italic">*$1*</span>');
-            text = text.replace(/_([^_\s][^_]*)_/g, '<span class="hl-italic">_$1_</span>');
+            result = result.replace(/\*([^*\s][^*]*)\*/g, '<span class="hl-italic">*$1*</span>');
+            result = result.replace(/_([^_\s][^_]*)_/g, '<span class="hl-italic">_$1_</span>');
             // Inline code
-            text = text.replace(/`([^`]+)`/g, '<span class="hl-code">`$1`</span>');
+            result = result.replace(/`([^`]+)`/g, '<span class="hl-code">`$1`</span>');
             // Links
-            text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '[<span class="hl-string">$1</span>](<span class="hl-attribute">$2</span>)');
+            result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '[<span class="hl-string">$1</span>](<span class="hl-attribute">$2</span>)');
             // Lists
-            text = text.replace(/^(\s*[*+-])\s/gm, '<span class="hl-operator">$1</span> ');
-            text = text.replace(/^(\s*\d+\.)\s/gm, '<span class="hl-operator">$1</span> ');
+            result = result.replace(/^(\s*[*+-])\s/gm, '<span class="hl-operator">$1</span> ');
+            result = result.replace(/^(\s*\d+\.)\s/gm, '<span class="hl-operator">$1</span> ');
             // Blockquotes - the > is already escaped to &gt;
-            text = text.replace(/^&gt;\s(.*)$/gm, '<span class="hl-comment">$&</span>');
-            return text;
+            result = result.replace(/^&gt;\s(.*)$/gm, '<span class="hl-comment">$&</span>');
+            return result;
         }
         
         highlightHTML(text) {
@@ -1530,42 +1565,46 @@
         }
         
         highlightCSS(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
             // Selectors
-            text = text.replace(/([.#]?[\w-:]+)(\s*,?\s*)(?={)/g, '<span class="hl-tag">$1</span>$2');
+            result = result.replace(/([.#]?[\w-:]+)(\s*,?\s*)(?={)/g, '<span class="hl-tag">$1</span>$2');
             // Properties
-            text = text.replace(/([\w-]+)\s*:/g, '<span class="hl-property">$1</span>:');
+            result = result.replace(/([\w-]+)\s*:/g, '<span class="hl-property">$1</span>:');
             // Values
-            text = text.replace(/:\s*([^;{}]+)/g, function(match, value) {
+            result = result.replace(/:\s*([^;{}]+)/g, function(match, value) {
                 // Highlight colors
                 value = value.replace(/(#[0-9a-fA-F]{3,8}|\b(?:rgb|rgba|hsl|hsla)\([^)]+\))/g, '<span class="hl-number">$1</span>');
                 // Highlight numbers with units
                 value = value.replace(/\b\d+(\.\d+)?(px|em|rem|%|vh|vw|deg|s|ms)?\b/g, '<span class="hl-number">$&</span>');
                 // Highlight strings
-                value = value.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+                value = value.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;)/g, '<span class="hl-string">$1</span>');
                 return ': ' + value;
             });
             // Important
-            text = text.replace(/!important/g, '<span class="hl-keyword">$&</span>');
-            return text;
+            result = result.replace(/!important/g, '<span class="hl-keyword">$&</span>');
+            return result;
         }
         
         highlightLaTeX(text) {
-            text = this.escapeHtml(text);
+            const escaped = this.escapeHtml(text);
+            let result = escaped;
+            
             // Comments
-            text = text.replace(/(%.*$)/gm, '<span class="hl-comment">$1</span>');
+            result = result.replace(/(%.*$)/gm, '<span class="hl-comment">$1</span>');
             // Commands
-            text = text.replace(/(\\[a-zA-Z]+)/g, '<span class="hl-keyword">$1</span>');
+            result = result.replace(/(\\[a-zA-Z]+)/g, '<span class="hl-keyword">$1</span>');
             // Math mode
-            text = text.replace(/(\$[^$]+\$|\$\$[\s\S]*?\$\$)/g, '<span class="hl-string">$1</span>');
+            result = result.replace(/(\$[^$]+\$|\$\$[\s\S]*?\$\$)/g, '<span class="hl-string">$1</span>');
             // Environments
-            text = text.replace(/(\\begin\{)(\w+)(\})/g, '$1<span class="hl-type">$2</span>$3');
-            text = text.replace(/(\\end\{)(\w+)(\})/g, '$1<span class="hl-type">$2</span>$3');
+            result = result.replace(/(\\begin\{)(\w+)(\})/g, '$1<span class="hl-type">$2</span>$3');
+            result = result.replace(/(\\end\{)(\w+)(\})/g, '$1<span class="hl-type">$2</span>$3');
             // Curly braces
-            text = text.replace(/[{}]/g, '<span class="hl-operator">$&</span>');
-            return text;
+            result = result.replace(/[{}]/g, '<span class="hl-operator">$&</span>');
+            return result;
         }
     }
 
