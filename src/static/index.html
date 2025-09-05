@@ -210,7 +210,9 @@
                     <span class="paste-meta">
                         <select id="paste-language" style="background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 2px 6px; border-radius: 4px; cursor: pointer;">
                             <option value="">Auto-detect</option>
+                            <option value="plaintext">Plain Text</option>
                             <option value="python">Python</option>
+                            <option value="shell">Shell/Bash</option>
                             <option value="cpp">C++</option>
                             <option value="c">C</option>
                             <option value="java">Java</option>
@@ -670,8 +672,12 @@
             const text = this.editor.value;
             let language = '';
             
+            // Shell/Bash
+            if (text.includes('#!/bin/bash') || text.includes('#!/bin/sh') || text.includes('#!/usr/bin/env') ||
+                (text.includes('echo ') && text.includes('$')) || text.includes('export ') || 
+                text.includes('source ') || text.includes('alias ')) language = 'shell';
             // Programming languages
-            if (text.includes('def ') || text.includes('import ') || text.includes('print(') || text.includes('if __name__')) language = 'python';
+            else if (text.includes('def ') || text.includes('import ') || text.includes('print(') || text.includes('if __name__')) language = 'python';
             else if (text.includes('#include') || text.includes('std::') || text.includes('cout') || text.includes('namespace')) language = 'cpp';
             else if (text.includes('#include') && !text.includes('std::') && (text.includes('printf') || text.includes('scanf'))) language = 'c';
             else if (text.includes('public class') || text.includes('public static void main') || text.includes('System.out')) language = 'java';
@@ -913,7 +919,9 @@
                 'json': 'json',
                 'yaml': 'yml',
                 'toml': 'toml',
-                'latex': 'tex'
+                'latex': 'tex',
+                'shell': 'sh',
+                'plaintext': 'txt'
             };
             if (langExtMap[lang]) {
                 ext = langExtMap[lang];
@@ -1029,7 +1037,7 @@
             const text = this.editor.value;
             const highlightLayer = document.getElementById('highlight-layer');
             
-            if (!lang || !text) {
+            if (!lang || !text || lang === 'plaintext') {
                 highlightLayer.innerHTML = this.escapeHtml(text);
                 return;
             }
@@ -1043,6 +1051,9 @@
                     break;
                 case 'javascript':
                     highlighted = this.highlightJavaScript(text);
+                    break;
+                case 'shell':
+                    highlighted = this.highlightShell(text);
                     break;
                 case 'cpp':
                     highlighted = this.highlightCpp(text);
@@ -1099,25 +1110,89 @@
             return div.innerHTML;
         }
         
+        // Safely highlight text - escapes HTML then applies highlighting
+        safeHighlight(text, highlightFn) {
+            // First escape all HTML
+            const escaped = this.escapeHtml(text);
+            
+            // Apply highlighting - but now we need to work with escaped entities
+            // The highlight function needs to match escaped patterns
+            return highlightFn.call(this, escaped);
+        }
+        
         highlightPython(text) {
-            text = this.escapeHtml(text);
-            // Comments first
-            text = text.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
+            // Build a list of all tokens with their positions to avoid overlapping replacements
+            const tokens = [];
+            
+            // Match all patterns and collect tokens
+            // Comments
+            text.replace(/(#.*$)/gm, (match, p1, offset) => {
+                tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-comment">${match}</span>`});
+                return match;
+            });
+            
             // Triple quoted strings
-            text = text.replace(/('''[\s\S]*?'''|"""[\s\S]*?""")/g, '<span class="hl-string">$1</span>');
+            text.replace(/('''[\s\S]*?'''|"""[\s\S]*?""")/g, (match, p1, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-string">${match}</span>`});
+                }
+                return match;
+            });
+            
             // Regular strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
+            text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, (match, p1, p2, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-string">${match}</span>`});
+                }
+                return match;
+            });
+            
             // Keywords
-            text = text.replace(/\b(def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, '<span class="hl-keyword">$1</span>');
+            text.replace(/\b(def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, (match, p1, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-keyword">${match}</span>`});
+                }
+                return match;
+            });
+            
             // Numbers
-            text = text.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+            text.replace(/\b\d+(\.\d+)?\b/g, (match, p1, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-number">${match}</span>`});
+                }
+                return match;
+            });
+            
             // Functions
-            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
-            return text;
+            text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, (match, p1, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + p1.length, html: `<span class="hl-function">${p1}</span>`});
+                }
+                return match;
+            });
+            
+            // Sort tokens by position
+            tokens.sort((a, b) => a.start - b.start);
+            
+            // Build the final result
+            let result = '';
+            let lastEnd = 0;
+            
+            for (const token of tokens) {
+                // Add text before token
+                result += text.substring(lastEnd, token.start);
+                // Add highlighted token
+                result += token.html;
+                lastEnd = token.end;
+            }
+            
+            // Add remaining text
+            result += text.substring(lastEnd);
+            
+            return result;
         }
         
         highlightJavaScript(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
             text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
@@ -1133,7 +1208,6 @@
         }
         
         highlightCpp(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
             text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
@@ -1151,7 +1225,6 @@
         }
         
         highlightC(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
             text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
@@ -1169,7 +1242,6 @@
         }
         
         highlightJava(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
             text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
@@ -1187,7 +1259,6 @@
         }
         
         highlightCSharp(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
             text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
@@ -1205,7 +1276,6 @@
         }
         
         highlightGo(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
             text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
@@ -1222,8 +1292,73 @@
             return text;
         }
         
+        highlightShell(text) {
+            // First escape HTML to prevent injection
+            const escaped = this.escapeHtml(text);
+            const tokens = [];
+            
+            // Comments
+            escaped.replace(/(#.*$)/gm, (match, p1, offset) => {
+                tokens.push({start: offset, end: offset + match.length, type: 'comment'});
+                return match;
+            });
+            
+            // Strings (single and double quotes)
+            escaped.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, (match, p1, p2, offset) => {
+                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
+                if (!overlaps) {
+                    tokens.push({start: offset, end: offset + match.length, type: 'string'});
+                }
+                return match;
+            });
+            
+            // Variables
+            escaped.replace(/\$[a-zA-Z_][a-zA-Z0-9_]*|\${[^}]+}/g, (match, offset) => {
+                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
+                if (!overlaps) {
+                    tokens.push({start: offset, end: offset + match.length, type: 'property'});
+                }
+                return match;
+            });
+            
+            // Keywords and built-in commands
+            escaped.replace(/\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|return|break|continue|exit|export|source|alias|echo|cd|ls|cp|mv|rm|mkdir|touch|cat|grep|sed|awk|find|chmod|chown|sudo|apt|yum|npm|pip|git|docker|kubectl)\b/g, (match, p1, offset) => {
+                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
+                if (!overlaps) {
+                    tokens.push({start: offset, end: offset + match.length, type: 'keyword'});
+                }
+                return match;
+            });
+            
+            // Operators
+            escaped.replace(/(&amp;&amp;|\|\||&lt;&lt;|&gt;&gt;|&amp;|\||;)/g, (match, p1, offset) => {
+                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
+                if (!overlaps) {
+                    tokens.push({start: offset, end: offset + match.length, type: 'operator'});
+                }
+                return match;
+            });
+            
+            // Sort tokens by position
+            tokens.sort((a, b) => a.start - b.start);
+            
+            // Build highlighted text
+            let highlighted = '';
+            let lastIndex = 0;
+            
+            for (const token of tokens) {
+                highlighted += escaped.substring(lastIndex, token.start);
+                const tokenText = escaped.substring(token.start, token.end);
+                const className = 'hl-' + token.type;
+                highlighted += `<span class="${className}">${tokenText}</span>`;
+                lastIndex = token.end;
+            }
+            
+            highlighted += escaped.substring(lastIndex);
+            return highlighted;
+        }
+        
         highlightRust(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
             text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
@@ -1243,7 +1378,6 @@
         }
         
         highlightJSON(text) {
-            text = this.escapeHtml(text);
             // Property names
             text = text.replace(/"([^"]+)"\s*:/g, '<span class="hl-property">"$1"</span>:');
             // String values
@@ -1290,7 +1424,6 @@
         }
         
         highlightTOML(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
             // Section headers
@@ -1310,7 +1443,6 @@
         }
         
         highlightMarkdown(text) {
-            text = this.escapeHtml(text);
             // Code blocks first
             text = text.replace(/```[\s\S]*?```/g, '<span class="hl-code">$&</span>');
             // Headers
@@ -1328,8 +1460,8 @@
             // Lists
             text = text.replace(/^(\s*[*+-])\s/gm, '<span class="hl-operator">$1</span> ');
             text = text.replace(/^(\s*\d+\.)\s/gm, '<span class="hl-operator">$1</span> ');
-            // Blockquotes - the > is already escaped to &gt;
-            text = text.replace(/^&gt;\s(.*)$/gm, '<span class="hl-comment">$&</span>');
+            // Blockquotes
+            text = text.replace(/^>\s(.*)$/gm, '<span class="hl-comment">$&</span>');
             return text;
         }
         
@@ -1453,7 +1585,6 @@
         }
         
         highlightCSS(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
             // Selectors
@@ -1476,7 +1607,6 @@
         }
         
         highlightLaTeX(text) {
-            text = this.escapeHtml(text);
             // Comments
             text = text.replace(/(%.*$)/gm, '<span class="hl-comment">$1</span>');
             // Commands
