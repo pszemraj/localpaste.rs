@@ -1121,24 +1121,74 @@
         }
         
         highlightPython(text) {
-            // Escape HTML first to prevent XSS
-            const escaped = this.escapeHtml(text);
+            // Build a list of all tokens with their positions to avoid overlapping replacements
+            const tokens = [];
             
-            // Now apply highlighting on escaped text
-            let result = escaped;
+            // Match all patterns and collect tokens
+            // Comments
+            text.replace(/(#.*$)/gm, (match, p1, offset) => {
+                tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-comment">${match}</span>`});
+                return match;
+            });
             
-            // Comments first
-            result = result.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
-            // Triple quoted strings - adjust for escaped quotes
-            result = result.replace(/(&#39;&#39;&#39;[\s\S]*?&#39;&#39;&#39;|&quot;&quot;&quot;[\s\S]*?&quot;&quot;&quot;)/g, '<span class="hl-string">$1</span>');
-            // Regular strings - match escaped quotes
-            result = result.replace(/(&#39;[^&#]*&#39;|&quot;[^&]*&quot;)/g, '<span class="hl-string">$1</span>');
+            // Triple quoted strings
+            text.replace(/('''[\s\S]*?'''|"""[\s\S]*?""")/g, (match, p1, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-string">${match}</span>`});
+                }
+                return match;
+            });
+            
+            // Regular strings
+            text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, (match, p1, p2, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-string">${match}</span>`});
+                }
+                return match;
+            });
+            
             // Keywords
-            result = result.replace(/\b(def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, '<span class="hl-keyword">$1</span>');
+            text.replace(/\b(def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, (match, p1, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-keyword">${match}</span>`});
+                }
+                return match;
+            });
+            
             // Numbers
-            result = result.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
+            text.replace(/\b\d+(\.\d+)?\b/g, (match, p1, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-number">${match}</span>`});
+                }
+                return match;
+            });
+            
             // Functions
-            result = result.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
+            text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, (match, p1, offset) => {
+                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
+                    tokens.push({start: offset, end: offset + p1.length, html: `<span class="hl-function">${p1}</span>`});
+                }
+                return match;
+            });
+            
+            // Sort tokens by position
+            tokens.sort((a, b) => a.start - b.start);
+            
+            // Build the final result
+            let result = '';
+            let lastEnd = 0;
+            
+            for (const token of tokens) {
+                // Add text before token
+                result += text.substring(lastEnd, token.start);
+                // Add highlighted token
+                result += token.html;
+                lastEnd = token.end;
+            }
+            
+            // Add remaining text
+            result += text.substring(lastEnd);
+            
             return result;
         }
         
