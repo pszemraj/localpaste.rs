@@ -40,24 +40,30 @@ impl AppState {
 pub fn create_app(state: AppState) -> Router {
     // Configure security headers
     let mut default_headers = HeaderMap::new();
-    default_headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
-    default_headers.insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
+    default_headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        "nosniff".parse().expect("Valid header value"),
+    );
+    default_headers.insert(
+        header::X_FRAME_OPTIONS,
+        "DENY".parse().expect("Valid header value"),
+    );
     default_headers.insert(
         header::CONTENT_SECURITY_POLICY,
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
             .parse()
-            .unwrap(),
+            .expect("Valid CSP header"),
     );
 
     // Configure CORS - only allow localhost origins
     let cors = CorsLayer::new()
         .allow_origin([
-            "http://localhost:3000".parse().unwrap(),
-            "http://localhost:3030".parse().unwrap(),
-            "http://localhost:8080".parse().unwrap(),
-            "http://127.0.0.1:3000".parse().unwrap(),
-            "http://127.0.0.1:3030".parse().unwrap(),
-            "http://127.0.0.1:8080".parse().unwrap(),
+            "http://localhost:3000".parse().expect("Valid origin URL"),
+            "http://localhost:3030".parse().expect("Valid origin URL"),
+            "http://localhost:8080".parse().expect("Valid origin URL"),
+            "http://127.0.0.1:3000".parse().expect("Valid origin URL"),
+            "http://127.0.0.1:3030".parse().expect("Valid origin URL"),
+            "http://127.0.0.1:8080".parse().expect("Valid origin URL"),
         ])
         .allow_methods([
             axum::http::Method::GET,
@@ -93,21 +99,21 @@ pub fn create_app(state: AppState) -> Router {
                     header::CONTENT_SECURITY_POLICY,
                     default_headers
                         .get(header::CONTENT_SECURITY_POLICY)
-                        .unwrap()
+                        .expect("CSP header was just inserted")
                         .clone(),
                 ))
                 .layer(SetResponseHeaderLayer::overriding(
                     header::X_CONTENT_TYPE_OPTIONS,
                     default_headers
                         .get(header::X_CONTENT_TYPE_OPTIONS)
-                        .unwrap()
+                        .expect("X-Content-Type-Options header was just inserted")
                         .clone(),
                 ))
                 .layer(SetResponseHeaderLayer::overriding(
                     header::X_FRAME_OPTIONS,
                     default_headers
                         .get(header::X_FRAME_OPTIONS)
-                        .unwrap()
+                        .expect("X-Frame-Options header was just inserted")
                         .clone(),
                 )),
         )

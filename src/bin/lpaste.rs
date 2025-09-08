@@ -102,8 +102,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!(
                     "Created: {} ({})",
-                    paste["name"].as_str().unwrap(),
-                    paste["id"].as_str().unwrap()
+                    paste["name"].as_str().unwrap_or("<unnamed>"),
+                    paste["id"].as_str().unwrap_or("<no-id>")
                 );
             }
         }
@@ -113,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .send()
                 .await?;
             let paste: Value = res.json().await?;
-            println!("{}", paste["content"].as_str().unwrap());
+            println!("{}", paste["content"].as_str().unwrap_or(""));
         }
         Commands::List { limit } => {
             let res = client
@@ -124,8 +124,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for p in pastes {
                 println!(
                     "{:<24} {:<30}",
-                    p["id"].as_str().unwrap(),
-                    p["name"].as_str().unwrap()
+                    p["id"].as_str().unwrap_or("<no-id>"),
+                    p["name"].as_str().unwrap_or("<unnamed>")
                 );
             }
         }
@@ -138,8 +138,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for p in pastes {
                 println!(
                     "{:<24} {:<30}",
-                    p["id"].as_str().unwrap(),
-                    p["name"].as_str().unwrap()
+                    p["id"].as_str().unwrap_or("<no-id>"),
+                    p["name"].as_str().unwrap_or("<unnamed>")
                 );
             }
         }

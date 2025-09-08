@@ -125,14 +125,18 @@ async fn main() -> anyhow::Result<()> {
     } else {
         CorsLayer::new()
             .allow_origin([
-                "http://localhost:3030".parse::<HeaderValue>().unwrap(),
-                "http://127.0.0.1:3030".parse::<HeaderValue>().unwrap(),
+                "http://localhost:3030"
+                    .parse::<HeaderValue>()
+                    .expect("Valid localhost origin"),
+                "http://127.0.0.1:3030"
+                    .parse::<HeaderValue>()
+                    .expect("Valid localhost origin"),
                 format!("http://localhost:{}", config.port)
                     .parse::<HeaderValue>()
-                    .unwrap(),
+                    .expect("Valid localhost origin"),
                 format!("http://127.0.0.1:{}", config.port)
                     .parse::<HeaderValue>()
-                    .unwrap(),
+                    .expect("Valid localhost origin"),
             ])
             .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
             .allow_headers(tower_http::cors::Any)

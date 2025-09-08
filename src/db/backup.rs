@@ -49,7 +49,7 @@ impl BackupManager {
     pub fn create_backup(&self, _db: &sled::Db) -> Result<String, AppError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("SystemTime before UNIX_EPOCH")
             .as_secs();
 
         let backup_path = self.db_path.with_extension(format!("backup.{}", timestamp));
