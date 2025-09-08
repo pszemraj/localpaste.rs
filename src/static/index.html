@@ -279,7 +279,7 @@
             window.app.highlighter = new module.SyntaxHighlighter();
         }
     }).catch(err => {
-        console.error('Failed to load modular syntax highlighter:', err);
+        console.error('Failed to load modular syntax highlighter:', err.message || err.toString(), err);
     });
     
     // Try to import virtual scrolling

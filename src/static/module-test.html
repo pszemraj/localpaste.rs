@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Module Test</title>
+    <style>
+        body { background: #1e1e1e; color: #fff; font-family: monospace; padding: 20px; }
+        .status { padding: 10px; margin: 5px 0; border-left: 3px solid #333; }
+        .success { border-color: #0f0; }
+        .error { border-color: #f00; }
+    </style>
+</head>
+<body>
+    <h1>Module Loading Test</h1>
+    <div id="results"></div>
+    
+    <script type="module">
+        const results = document.getElementById('results');
+        
+        function log(msg, success = true) {
+            const div = document.createElement('div');
+            div.className = `status ${success ? 'success' : 'error'}`;
+            div.textContent = msg;
+            results.appendChild(div);
+            console.log(msg);
+        }
+        
+        // Test 1: Load API Client
+        try {
+            const { ApiClient } = await import('/js/api/client.js');
+            const api = new ApiClient();
+            log('✓ API Client loaded successfully');
+        } catch (err) {
+            log(`✗ API Client failed: ${err.message}`, false);
+        }
+        
+        // Test 2: Load State Store
+        try {
+            const { Store } = await import('/js/state/store.js');
+            const store = new Store();
+            log('✓ State Store loaded successfully');
+        } catch (err) {
+            log(`✗ State Store failed: ${err.message}`, false);
+        }
+        
+        // Test 3: Load Syntax Highlighter
+        try {
+            const { SyntaxHighlighter } = await import('/js/syntax/highlighter.js');
+            const highlighter = new SyntaxHighlighter();
+            const test = highlighter.highlight('const x = 1;', 'javascript');
+            log('✓ Syntax Highlighter loaded and works');
+        } catch (err) {
+            log(`✗ Syntax Highlighter failed: ${err.message}`, false);
+        }
+        
+        // Test 4: Load Logger
+        try {
+            const { ConsoleReporter } = await import('/js/utils/logger.js');
+            const reporter = new ConsoleReporter();
+            log('✓ Logger loaded successfully');
+        } catch (err) {
+            log(`✗ Logger failed: ${err.message}`, false);
+        }
+        
+        // Test 5: Load Common Utils
+        try {
+            const utils = await import('/js/utils/common.js');
+            log('✓ Common Utils loaded successfully');
+        } catch (err) {
+            log(`✗ Common Utils failed: ${err.message}`, false);
+        }
+        
+        // Test 6: Load Editor Component
+        try {
+            const { Editor } = await import('/js/components/Editor.js');
+            log('✓ Editor Component loaded successfully');
+        } catch (err) {
+            log(`✗ Editor Component failed: ${err.message}`, false);
+        }
+        
+        // Test 7: Load Sidebar Component
+        try {
+            const { Sidebar } = await import('/js/components/Sidebar.js');
+            log('✓ Sidebar Component loaded successfully');
+        } catch (err) {
+            log(`✗ Sidebar Component failed: ${err.message}`, false);
+        }
+        
+        // Test 8: Load App Component
+        try {
+            const { App } = await import('/js/components/App.js');
+            log('✓ App Component loaded successfully');
+        } catch (err) {
+            log(`✗ App Component failed: ${err.message}`, false);
+        }
+    </script>
+</body>
+</html>

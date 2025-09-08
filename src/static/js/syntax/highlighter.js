@@ -1,5 +1,11 @@
-import { escapeHtml } from '../utils/dom.js';
-import { languages } from './languages.js';
+import { languages } from './language-patterns.js';
+
+// Use the escapeHtml from dom-helpers if available, otherwise define it
+const escapeHtml = (text) => {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+};
 
 /**
  * Syntax highlighter for code
