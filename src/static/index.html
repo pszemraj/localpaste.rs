@@ -298,17 +298,26 @@
     }).catch(err => {
         console.error('Failed to load modular editor:', err);
     });
+    
+    // Import common utilities
+    import('/js/utils/common.js').then(module => {
+        window.CommonUtils = module;
+        console.log('Common utilities loaded successfully');
+    }).catch(err => {
+        console.error('Failed to load common utilities:', err);
+    });
+    
+    // Import DOM utilities
+    import('/js/utils/dom-helpers.js').then(module => {
+        window.DOMUtils = module;
+        console.log('DOM utilities loaded successfully');
+    }).catch(err => {
+        console.error('Failed to load DOM utilities:', err);
+    });
     </script>
     
     <script>
-    // Unified Syntax Highlighter Class
-    function debounce(fn, ms) {
-        let timeout;
-        return function(...args) {
-            clearTimeout(timeout);
-            timeout = setTimeout(() => fn.apply(this, args), ms);
-        };
-    }
+    // Application code
     
     // Error boundary for catching and handling errors gracefully
     class ErrorBoundary {
@@ -357,7 +366,7 @@
             this.allLoadedPastes = []; // Keep track of all loaded pastes for virtual scrolling
             
             // Create debounced save function
-            this.debouncedSave = debounce(this.savePaste.bind(this), 1000);
+            this.debouncedSave = this.createDebouncedSave();
             
             console.log('LocalPaste.rs: Initializing...');
             this.init();
@@ -1465,9 +1474,26 @@
         }
         
         escapeHtml(text) {
+            // Use utility if available, otherwise fallback
+            if (window.CommonUtils && window.CommonUtils.escapeHtml) {
+                return window.CommonUtils.escapeHtml(text);
+            }
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+        
+        createDebouncedSave() {
+            // Use utility if available, otherwise fallback
+            if (window.CommonUtils && window.CommonUtils.debounce) {
+                return window.CommonUtils.debounce(this.savePaste.bind(this), 1000);
+            }
+            // Fallback implementation
+            let timeout;
+            return (...args) => {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => this.savePaste.apply(this, args), 1000);
+            };
         }
         
         // Safely highlight text - escapes HTML then applies highlighting
