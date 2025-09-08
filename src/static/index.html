@@ -315,6 +315,16 @@
         console.error('Failed to load DOM utilities:', err);
     });
     
+    // Import state store
+    import('/js/state/store.js').then(module => {
+        window.Store = module.Store;
+        window.StoreActions = module.actions;
+        window.ActionTypes = module.ActionTypes;
+        console.log('State store loaded successfully');
+    }).catch(err => {
+        console.error('Failed to load state store:', err);
+    });
+    
     // Import error handling utilities
     import('/js/utils/error-handler.js').then(module => {
         window.ErrorBoundary = module.ErrorBoundary;
@@ -330,6 +340,11 @@
     
     class LocalPaste {
         constructor() {
+            // Initialize store if available
+            this.store = window.Store ? new window.Store() : null;
+            this.actions = window.StoreActions || null;
+            
+            // Legacy state (will be migrated to store)
             this.currentPaste = null;
             this.pastes = [];
             this.folders = [];
@@ -350,8 +365,22 @@
             this.paginationController = null;
             this.allLoadedPastes = []; // Keep track of all loaded pastes for virtual scrolling
             
-            // Create debounced save function
-            this.debouncedSave = this.createDebouncedSave();
+            // Create debounced save function using utils if available
+            if (window.CommonUtils && window.CommonUtils.debounce) {
+                this.debouncedSave = window.CommonUtils.debounce(this.savePaste.bind(this), 1000);
+            } else {
+                // Fallback implementation
+                let timeout;
+                this.debouncedSave = (...args) => {
+                    clearTimeout(timeout);
+                    timeout = setTimeout(() => this.savePaste.apply(this, args), 1000);
+                };
+            }
+            
+            // Subscribe to store changes if available
+            if (this.store) {
+                this.setupStoreSubscriptions();
+            }
             
             console.log('LocalPaste.rs: Initializing...');
             this.init();
@@ -369,6 +398,52 @@
                 console.error('LocalPaste.rs: Init failed:', err);
                 this.setStatus('Error: ' + err.message);
             }
+        }
+        
+        setupStoreSubscriptions() {
+            if (!this.store) return;
+            
+            // Subscribe to state changes
+            this.store.subscribe((event) => {
+                const { action, state } = event.detail;
+                
+                // Update local state from store
+                if (action.type === window.ActionTypes.SET_PASTES) {
+                    this.pastes = this.store.getPastesArray();
+                    this.allLoadedPastes = [...this.pastes];
+                    this.renderTree();
+                }
+                
+                if (action.type === window.ActionTypes.SET_FOLDERS) {
+                    this.folders = this.store.getFoldersArray();
+                    this.renderTree();
+                }
+                
+                if (action.type === window.ActionTypes.SET_CURRENT_PASTE) {
+                    const paste = this.store.getCurrentPaste();
+                    if (paste && paste.id !== this.currentPaste?.id) {
+                        this.displayPaste(paste);
+                    }
+                }
+                
+                if (action.type === window.ActionTypes.TOGGLE_FOLDER) {
+                    this.expandedFolders = new Set(state.ui.expandedFolders);
+                    this.renderTree();
+                }
+                
+                if (action.type === window.ActionTypes.SET_SORT_ORDER) {
+                    this.sortOrder = state.ui.sortOrder;
+                    this.renderTree();
+                }
+                
+                if (action.type === window.ActionTypes.SET_STATUS) {
+                    // Update status display if needed
+                    const statusEl = document.getElementById('status');
+                    if (statusEl) {
+                        statusEl.textContent = state.ui.status;
+                    }
+                }
+            });
         }
         
         setupEditor() {
@@ -1119,17 +1194,30 @@
 
         async loadFolders() {
             try {
+                let folders;
                 if (this.api) {
-                    this.folders = await this.api.listFolders();
+                    folders = await this.api.listFolders();
                 } else {
                     // Fallback to direct fetch
                     const res = await fetch('/api/folders');
                     if (!res.ok) throw new Error('Failed to load folders');
-                    this.folders = await res.json();
+                    folders = await res.json();
+                }
+                
+                // Update store if available
+                if (this.store && this.actions) {
+                    this.store.dispatch(this.actions.setFolders(folders));
+                } else {
+                    // Fallback to direct state update
+                    this.folders = folders;
                 }
             } catch (err) {
                 console.error('Error loading folders:', err);
-                this.folders = [];
+                if (this.store && this.actions) {
+                    this.store.dispatch(this.actions.setFolders([]));
+                } else {
+                    this.folders = [];
+                }
             }
         }
 
@@ -1191,10 +1279,22 @@
                 const res = await fetch(url);
                 if (!res.ok) throw new Error('Failed to load pastes');
                 
-                this.pastes = await res.json();
+                const pastes = await res.json();
+                
+                // Update store if available
+                if (this.store && this.actions) {
+                    this.store.dispatch(this.actions.setPastes(pastes));
+                } else {
+                    // Fallback to direct state update
+                    this.pastes = pastes;
+                }
             } catch (err) {
                 console.error('Error loading pastes:', err);
-                this.pastes = [];
+                if (this.store && this.actions) {
+                    this.store.dispatch(this.actions.setPastes([]));
+                } else {
+                    this.pastes = [];
+                }
             }
         }
 
@@ -1471,9 +1571,9 @@
     document.addEventListener('DOMContentLoaded', () => {
         // Wait for modules to load
         const checkModules = setInterval(() => {
-            if (window.VirtualScroller && window.PaginationController && window.ModularSyntaxHighlighter) {
+            if (window.VirtualScroller && window.PaginationController && window.ModularSyntaxHighlighter && window.Store) {
                 clearInterval(checkModules);
-                console.log('All modules ready, starting app');
+                console.log('All modules ready, starting app with state store');
                 window.app = new LocalPaste();
                 // Set the highlighter since app was created after module loaded
                 if (!window.app.highlighter) {
