@@ -1409,14 +1409,25 @@
             const charCount = this.editor.value.length;
             document.getElementById('char-count').textContent = `${charCount} chars`;
             
+            // Warn about large pastes
+            if (charCount > 1000000) {  // 1MB
+                this.setStatus('Warning: Large paste may affect performance');
+            }
             
             // Update highlighting
             this.updateHighlighting();
             
-            // Auto-save
+            // Auto-save with stability check
+            const currentLength = this.editor.value.length;
             clearTimeout(this.saveTimeout);
             this.saveTimeout = setTimeout(() => {
-                this.savePaste();
+                // Only save if content length hasn't changed (stable)
+                if (this.editor.value.length === currentLength) {
+                    this.savePaste();
+                } else {
+                    // Content still changing, wait longer
+                    this.onEditorChange();
+                }
             }, 1000);
         }
 
