@@ -344,6 +344,9 @@
             // API client
             this.api = window.ApiClient ? new window.ApiClient() : null;
             
+            // State store
+            this.store = window.Store ? new window.Store() : null;
+            
             // Virtual scrolling setup
             this.useVirtualScrolling = true; // Enable virtual scrolling
             this.virtualScroller = null;
@@ -416,6 +419,18 @@
                 // Fall back to regular loading
                 await this.loadPastes();
                 this.renderTree();
+            }
+            
+            // Update store with loaded data
+            if (this.store && window.ActionTypes) {
+                this.store.dispatch({ 
+                    type: window.ActionTypes.SET_PASTES, 
+                    payload: this.pastes 
+                });
+                this.store.dispatch({ 
+                    type: window.ActionTypes.SET_FOLDERS, 
+                    payload: this.folders 
+                });
             }
             
             // Try to restore last opened paste
@@ -1228,6 +1243,18 @@
                 
                 this.currentPaste = paste;
                 this.updatePasteIdDisplay();
+                
+                // Update store
+                if (this.store && window.ActionTypes) {
+                    this.store.dispatch({
+                        type: window.ActionTypes.SET_CURRENT_PASTE,
+                        payload: paste.id
+                    });
+                    this.store.dispatch({
+                        type: window.ActionTypes.UPDATE_PASTE,
+                        payload: paste
+                    });
+                }
                 
                 // Remember this paste for next time
                 localStorage.setItem('lastOpenedPaste', id);
