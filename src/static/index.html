@@ -1074,13 +1074,11 @@
             if (!newName || newName === currentName) return;
             
             try {
-                const res = await fetch(`/api/folder/${folderId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: newName })
-                });
-                
-                if (!res.ok) throw new Error('Failed to rename folder');
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                await this.api.updateFolder(folderId, { name: newName });
                 
                 await this.loadData();
                 this.setStatus('Folder renamed');
@@ -1096,11 +1094,11 @@
             }
             
             try {
-                const res = await fetch(`/api/folder/${folderId}`, {
-                    method: 'DELETE'
-                });
-                
-                if (!res.ok) throw new Error('Failed to delete folder');
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                await this.api.deleteFolder(folderId);
                 
                 await this.loadData();
                 this.setStatus('Folder deleted, pastes moved to Unfiled');
