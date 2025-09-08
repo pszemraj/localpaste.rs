@@ -347,6 +347,9 @@
             // State store
             this.store = window.Store ? new window.Store() : null;
             
+            // Track event listeners for cleanup
+            this.eventListeners = [];
+            
             // Virtual scrolling setup
             this.useVirtualScrolling = true; // Enable virtual scrolling
             this.virtualScroller = null;
@@ -1498,6 +1501,35 @@
             // Use the unified highlighter
             const highlighted = this.highlighter.highlight(text, lang || '');
             highlightLayer.innerHTML = highlighted;
+        }
+        
+        // Helper to add event listeners with tracking
+        addEventListener(element, event, handler, options) {
+            element.addEventListener(event, handler, options);
+            this.eventListeners.push({ element, event, handler, options });
+        }
+        
+        // Clean up all event listeners
+        cleanup() {
+            console.log('Cleaning up LocalPaste event listeners...');
+            this.eventListeners.forEach(({ element, event, handler, options }) => {
+                try {
+                    element.removeEventListener(event, handler, options);
+                } catch (e) {
+                    console.warn('Failed to remove listener:', e);
+                }
+            });
+            this.eventListeners = [];
+            
+            // Clean up store subscription if exists
+            if (this.storeUnsubscribe) {
+                this.storeUnsubscribe();
+            }
+            
+            // Clean up virtual scroller if exists
+            if (this.virtualScroller && this.virtualScroller.destroy) {
+                this.virtualScroller.destroy();
+            }
         }
     }
 
