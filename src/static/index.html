@@ -1061,6 +1061,15 @@
                     throw new Error('API client not available');
                 }
                 const paste = await this.api.createPaste({ content: '' });
+                
+                // Update store
+                if (this.store && window.ActionTypes) {
+                    this.store.dispatch({
+                        type: window.ActionTypes.ADD_PASTE,
+                        payload: paste
+                    });
+                }
+                
                 await this.loadData();
                 await this.loadPaste(paste.id);
                 this.setStatus('New paste created');
@@ -1163,6 +1172,14 @@
                 }
                 this.currentPaste = await this.api.updatePaste(this.currentPaste.id, updates);
                 this.updatePasteIdDisplay();
+                
+                // Update store
+                if (this.store && window.ActionTypes) {
+                    this.store.dispatch({
+                        type: window.ActionTypes.UPDATE_PASTE,
+                        payload: this.currentPaste
+                    });
+                }
                 
                 // Show save indicator
                 const saveStatus = document.getElementById('save-status');
@@ -1340,6 +1357,14 @@
                 
                 // Only clear if deletion was successful
                 const deletedId = this.currentPaste.id;
+                
+                // Update store
+                if (this.store && window.ActionTypes) {
+                    this.store.dispatch({
+                        type: window.ActionTypes.DELETE_PASTE,
+                        payload: deletedId
+                    });
+                }
                 if (localStorage.getItem('lastOpenedPaste') === deletedId) {
                     localStorage.removeItem('lastOpenedPaste');
                 }
