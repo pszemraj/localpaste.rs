@@ -143,10 +143,10 @@
         z-index: 1;
     }
     
-    /* Syntax highlighting colors */
-    .hl-keyword { color: #ff79c6; font-weight: bold; }
+    /* Syntax highlighting - ONLY colors, no font changes */
+    .hl-keyword { color: #ff79c6; }
     .hl-string { color: #f1fa8c; }
-    .hl-comment { color: #6272a4; font-style: italic; }
+    .hl-comment { color: #6272a4; opacity: 0.8; } /* Use opacity instead of italic */
     .hl-number { color: #bd93f9; }
     .hl-function { color: #50fa7b; }
     .hl-type { color: #8be9fd; }
@@ -155,30 +155,15 @@
     .hl-tag { color: #ff79c6; }
     .hl-attribute { color: #50fa7b; }
     .hl-value { color: #f1fa8c; }
-    .hl-heading { color: #f1fa8c; font-weight: bold; font-size: 1.2em; }
-    .hl-bold { font-weight: bold; }
-    .hl-italic { font-style: italic; }
-    .hl-code { background: rgba(68, 71, 90, 0.8); padding: 2px 4px; border-radius: 3px; color: #50fa7b; }
-    .hl-code-block { 
-        display: block;
-        background: rgba(40, 42, 54, 0.8); 
-        border-left: 3px solid #50fa7b;
-        padding: 8px 12px;
-        margin: 4px 0;
-        color: #50fa7b; 
-        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-        white-space: pre;
-    }
-    .hl-link { color: #8be9fd; text-decoration: underline; }
-    .hl-list-marker { color: #ff79c6; font-weight: bold; }
-    .hl-blockquote { 
-        color: #8be9fd; 
-        font-style: italic;
-        display: block;
-        border-left: 2px solid #8be9fd;
-        padding-left: 8px;
-        opacity: 0.9;
-    }
+    /* Markdown highlighting - ONLY colors, NO layout changes */
+    .hl-heading { color: #f1fa8c; }
+    .hl-bold { color: inherit; } /* Just keep text color */
+    .hl-italic { color: inherit; } /* Just keep text color */
+    .hl-code { color: #50fa7b; } /* Just green text, no background */
+    .hl-code-block { color: #50fa7b; } /* Just green text for entire block */
+    .hl-link { color: #8be9fd; }
+    .hl-list-marker { color: #ff79c6; }
+    .hl-blockquote { color: #8be9fd; }
     
     .editor-container {
         position: relative;
@@ -262,7 +247,7 @@
             </header>
             <div id="editor-container" class="editor-container" style="position: relative;">
                 <div id="highlight-layer" class="highlight-layer"></div>
-                <textarea id="editor"></textarea>
+                <textarea id="editor" spellcheck="false"></textarea>
             </div>
             <footer class="status-bar">
                 <div class="status-left">
@@ -387,12 +372,10 @@
                         // Opening fence
                         inCodeBlock = true;
                         codeBlockFence = fence;
-                        result.push(`<div class="hl-code-block" spellcheck="false">`);
-                        result.push(this.escapeHtml(line));
+                        result.push(`<span class="hl-code-block">${this.escapeHtml(line)}</span>`);
                     } else if (fence.startsWith(codeBlockFence[0]) && fence.length >= codeBlockFence.length) {
                         // Closing fence
-                        result.push(this.escapeHtml(line));
-                        result.push('</div>');
+                        result.push(`<span class="hl-code-block">${this.escapeHtml(line)}</span>`);
                         inCodeBlock = false;
                         codeBlockFence = '';
                     } else {
@@ -400,8 +383,8 @@
                         result.push(this.escapeHtml(line));
                     }
                 } else if (inCodeBlock) {
-                    // Inside code block - just escape, no formatting
-                    result.push(this.escapeHtml(line));
+                    // Inside code block - wrap in span for coloring
+                    result.push(`<span class="hl-code-block">${this.escapeHtml(line)}</span>`);
                 } else {
                     // Outside code block - apply markdown formatting
                     let processed = line;
@@ -462,10 +445,7 @@
                 }
             }
             
-            // If still in code block at end, close it
-            if (inCodeBlock) {
-                result.push('</div>');
-            }
+            // No need to close anything since we're using spans
             
             return result.join('');
         }
