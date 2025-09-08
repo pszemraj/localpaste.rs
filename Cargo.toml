@@ -1,6 +1,6 @@
 [package]
 name = "localpaste"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 default-run = "localpaste"
 
@@ -20,12 +20,10 @@ required-features = ["cli"]
 [dependencies]
 # Web Framework
 axum = { version = "0.7", features = ["macros", "tracing"] }
-axum-extra = { version = "0.9", features = ["typed-header"] }
 tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "compression-gzip", "trace", "set-header"] }
 tokio = { version = "1.40", features = ["full"] }
 hyper = { version = "1.4", features = ["full"] }
-hyper-util = { version = "0.1" }
 
 # Database
 sled = "0.34"
@@ -39,7 +37,6 @@ bincode = "1.3"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
-once_cell = "1.19"
 anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"

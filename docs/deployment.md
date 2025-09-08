@@ -6,9 +6,30 @@
 # Start in background
 nohup ./localpaste > ~/.cache/localpaste/server.log 2>&1 &
 
-# Stop
+# Stop gracefully (preserves database integrity)
 pkill localpaste
 ```
+
+## Process Management
+
+### Stopping LocalPaste Safely
+
+```bash
+# Graceful shutdown (recommended - allows database cleanup)
+pkill -f localpaste
+pkill -f "cargo run"
+
+# Check if port is still in use
+lsof -i :3030
+
+# Full cleanup (if processes are stuck)
+pkill -f localpaste && pkill -f "cargo run" && sleep 2
+
+# ONLY if absolutely necessary (may leave database locks):
+# lsof -t -i :3030 | xargs kill -9 2>/dev/null
+```
+
+⚠️ **Important**: Avoid using `kill -9` as it prevents graceful shutdown and can leave database locks. See [dev.md](dev.md#database-lock-error) for recovery steps if locks occur.
 
 ## Linux (systemd)
 
