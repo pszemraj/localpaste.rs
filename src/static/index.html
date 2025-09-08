@@ -1035,16 +1035,11 @@
 
         async createNewPaste() {
             try {
-                const paste = this.api
-                    ? await this.api.createPaste({ content: '' })
-                    : await fetch('/api/paste', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ content: '' })
-                    }).then(res => {
-                        if (!res.ok) throw new Error('Failed to create paste');
-                        return res.json();
-                    });
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                const paste = await this.api.createPaste({ content: '' });
                 await this.loadData();
                 await this.loadPaste(paste.id);
                 this.setStatus('New paste created');
@@ -1060,13 +1055,11 @@
             if (!name) return;
             
             try {
-                const res = await fetch('/api/folder', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name })
-                });
-                
-                if (!res.ok) throw new Error('Failed to create folder');
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                const folder = await this.api.createFolder({ name });
                 
                 await this.loadData();
                 this.setStatus('Folder created');
@@ -1119,14 +1112,12 @@
 
         async loadFolders() {
             try {
-                if (this.api) {
-                    this.folders = await this.api.listFolders();
-                } else {
-                    // Fallback to direct fetch
-                    const res = await fetch('/api/folders');
-                    if (!res.ok) throw new Error('Failed to load folders');
-                    this.folders = await res.json();
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    this.folders = [];
+                    return;
                 }
+                this.folders = await this.api.listFolders();
             } catch (err) {
                 console.error('Error loading folders:', err);
                 this.folders = [];
