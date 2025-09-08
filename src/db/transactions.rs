@@ -1,90 +1,73 @@
 use crate::error::AppError;
-use crate::models::{folder::Folder, paste::Paste};
+use crate::models::paste::Paste;
 use sled::Transactional;
 
 /// Proper atomic transactions using Sled's transaction API
+/// 
+/// Note: These are example implementations showing how to use Sled's
+/// transaction API for truly atomic operations. Currently not used in
+/// production code but available for future migration.
 pub struct AtomicOps;
 
 impl AtomicOps {
-    /// Atomically create a paste using Sled transactions
-    pub fn create_paste(
+    /// Example: Atomically swap two paste IDs
+    /// This demonstrates a transaction that would be impossible without proper atomicity
+    #[allow(dead_code)]
+    pub fn swap_paste_ids(
         db: &sled::Db,
-        paste: &Paste,
+        id1: &str,
+        id2: &str,
     ) -> Result<(), AppError> {
         let paste_tree = db.open_tree("pastes")?;
         
-        // Use Sled's transaction API for atomicity
         (&paste_tree,).transaction(|(pastes,)| {
-            let key = paste.id.as_bytes();
-            let value = bincode::serialize(paste)
-                .map_err(|e| sled::transaction::ConflictableTransactionError::Abort(e))?;
-            pastes.insert(key, value)?;
+            let key1 = id1.as_bytes();
+            let key2 = id2.as_bytes();
+            
+            // Get both values
+            let val1 = pastes.get(key1)?;
+            let val2 = pastes.get(key2)?;
+            
+            // Swap them atomically
+            if let (Some(v1), Some(v2)) = (val1, val2) {
+                pastes.insert(key1, v2)?;
+                pastes.insert(key2, v1)?;
+            }
+            
             Ok(())
-        }).map_err(|e| AppError::DatabaseError(format!("Transaction failed: {}", e)))?;
+        }).map_err(|e: sled::transaction::TransactionError| AppError::DatabaseError(format!("Swap transaction failed: {}", e)))?;
         
         Ok(())
     }
     
-    /// Atomically update a paste
-    pub fn update_paste(
+    /// Example: Batch insert multiple pastes atomically
+    #[allow(dead_code)]
+    pub fn batch_insert_pastes(
         db: &sled::Db,
-        paste_id: &str,
-        updates: impl FnOnce(&mut Paste) -> Result<(), AppError>,
-    ) -> Result<Option<Paste>, AppError> {
+        pastes_to_insert: Vec<Paste>,
+    ) -> Result<(), AppError> {
         let paste_tree = db.open_tree("pastes")?;
         
-        let result = (&paste_tree,).transaction(|(pastes,)| {
-            let key = paste_id.as_bytes();
-            
-            match pastes.get(key)? {
-                Some(bytes) => {
-                    let mut paste: Paste = bincode::deserialize(&bytes)
-                        .map_err(|e| sled::transaction::ConflictableTransactionError::Abort(e))?;
-                    
-                    // Apply updates
-                    updates(&mut paste)
-                        .map_err(|e| sled::transaction::ConflictableTransactionError::Abort(e))?;
-                    
-                    paste.updated_at = chrono::Utc::now();
-                    
-                    let new_value = bincode::serialize(&paste)
-                        .map_err(|e| sled::transaction::ConflictableTransactionError::Abort(e))?;
-                    pastes.insert(key, new_value)?;
-                    
-                    Ok(Some(paste))
-                }
-                None => Ok(None)
+        // Serialize all pastes first (outside transaction for better error handling)
+        let serialized: Result<Vec<_>, _> = pastes_to_insert
+            .iter()
+            .map(|p| {
+                bincode::serialize(p)
+                    .map(|bytes| (p.id.as_bytes().to_vec(), bytes))
+            })
+            .collect();
+        
+        let serialized = serialized
+            .map_err(|e| AppError::DatabaseError(format!("Serialization failed: {}", e)))?;
+        
+        // Now do the atomic batch insert
+        (&paste_tree,).transaction(|(pastes,)| {
+            for (key, value) in &serialized {
+                pastes.insert(key.as_slice(), value.as_slice())?;
             }
-        }).map_err(|e| AppError::DatabaseError(format!("Update transaction failed: {}", e)))?;
-        
-        Ok(result)
-    }
-    
-    /// Atomically delete a paste
-    pub fn delete_paste(
-        db: &sled::Db,
-        paste_id: &str,
-    ) -> Result<bool, AppError> {
-        let paste_tree = db.open_tree("pastes")?;
-        
-        let deleted = (&paste_tree,).transaction(|(pastes,)| {
-            let key = paste_id.as_bytes();
-            Ok(pastes.remove(key)?.is_some())
-        }).map_err(|e| AppError::DatabaseError(format!("Delete transaction failed: {}", e)))?;
-        
-        Ok(deleted)
-    }
-    
-    /// Atomically move paste between folders (if we were still tracking counts)
-    /// Since we calculate counts on demand now, this is just a regular update
-    pub fn move_paste_to_folder(
-        db: &sled::Db,
-        paste_id: &str,
-        new_folder_id: Option<String>,
-    ) -> Result<Option<Paste>, AppError> {
-        Self::update_paste(db, paste_id, |paste| {
-            paste.folder_id = new_folder_id;
             Ok(())
-        })
+        }).map_err(|e: sled::transaction::TransactionError| AppError::DatabaseError(format!("Batch insert failed: {}", e)))?;
+        
+        Ok(())
     }
 }
