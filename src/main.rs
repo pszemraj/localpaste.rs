@@ -149,6 +149,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/folders", get(handlers::folder::list_folders))
         .route("/api/folder/:id", put(handlers::folder::update_folder))
         .route("/api/folder/:id", delete(handlers::folder::delete_folder))
+        .route("/api/log", post(handlers::log_client_error))
         .fallback(static_handler)
         .layer(
             ServiceBuilder::new()

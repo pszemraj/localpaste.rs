@@ -6,6 +6,11 @@ import { SyntaxHighlighter } from './syntax/highlighter.js';
 import { debounce } from './utils/debounce.js';
 import { ErrorBoundary } from './utils/errors.js';
 import { escapeHtml, $, $$ } from './utils/dom.js';
+import { ConsoleReporter, setupDebugMode, trace } from './utils/logger.js';
+
+// Initialize error reporting and debug mode
+const reporter = new ConsoleReporter();
+setupDebugMode();
 
 class LocalPaste {
     constructor() {
@@ -29,8 +34,11 @@ class LocalPaste {
 
     async init() {
         try {
+            console.info('🚀 LocalPaste initializing...');
+            
             // Wait for DOM to be ready
             if (document.readyState === 'loading') {
+                console.info('⏳ Waiting for DOM...');
                 await new Promise(resolve => {
                     document.addEventListener('DOMContentLoaded', resolve);
                 });
@@ -41,10 +49,19 @@ class LocalPaste {
                 throw new Error('Editor element not found');
             }
             
+            // Wrap API methods with trace in debug mode
+            if (window.DEBUG) {
+                this.api.createPaste = trace('api.createPaste', this.api.createPaste.bind(this.api));
+                this.api.getPaste = trace('api.getPaste', this.api.getPaste.bind(this.api));
+                this.api.updatePaste = trace('api.updatePaste', this.api.updatePaste.bind(this.api));
+                this.api.listPastes = trace('api.listPastes', this.api.listPastes.bind(this.api));
+                this.api.listFolders = trace('api.listFolders', this.api.listFolders.bind(this.api));
+            }
+            
             this.bindEvents();
             await this.loadFolders();
             await this.loadPastes();
-            console.log('LocalPaste.rs: Ready');
+            console.info('✅ LocalPaste ready');
         } catch (err) {
             console.error('Failed to initialize:', err);
             this.setStatus('Failed to initialize');

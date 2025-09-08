@@ -40,19 +40,19 @@ export class ApiClient {
 
     // Paste operations
     async createPaste(paste) {
-        return this.request('POST', '/api/pastes', paste);
+        return this.request('POST', '/api/paste', paste);
     }
 
     async getPaste(id) {
-        return this.request('GET', `/api/pastes/${id}`);
+        return this.request('GET', `/api/paste/${id}`);
     }
 
     async updatePaste(id, updates) {
-        return this.request('PUT', `/api/pastes/${id}`, updates);
+        return this.request('PUT', `/api/paste/${id}`, updates);
     }
 
     async deletePaste(id) {
-        return this.request('DELETE', `/api/pastes/${id}`);
+        return this.request('DELETE', `/api/paste/${id}`);
     }
 
     async listPastes(limit = 100, folderId = null) {
@@ -68,15 +68,25 @@ export class ApiClient {
         if (folderId) {
             params.append('folder_id', folderId);
         }
-        return this.request('GET', `/api/pastes/search?${params}`);
+        return this.request('GET', `/api/search?${params}`);
     }
 
     async duplicatePaste(id) {
-        return this.request('POST', `/api/pastes/${id}/duplicate`);
+        // TODO: Implement duplicate endpoint on server
+        // For now, get the paste and create a new one
+        const paste = await this.getPaste(id);
+        const newPaste = {
+            name: `${paste.name} (copy)`,
+            content: paste.content,
+            language: paste.language,
+            folder_id: paste.folder_id
+        };
+        return this.createPaste(newPaste);
     }
 
     async exportPaste(id, format) {
-        return this.request('GET', `/api/pastes/${id}/export?format=${format}`);
+        // TODO: Implement export endpoint on server
+        return this.request('GET', `/api/paste/${id}/export?format=${format}`);
     }
 
     // Folder operations
