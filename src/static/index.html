@@ -155,10 +155,30 @@
     .hl-tag { color: #ff79c6; }
     .hl-attribute { color: #50fa7b; }
     .hl-value { color: #f1fa8c; }
-    .hl-heading { color: #bd93f9; font-weight: bold; }
+    .hl-heading { color: #f1fa8c; font-weight: bold; font-size: 1.2em; }
     .hl-bold { font-weight: bold; }
     .hl-italic { font-style: italic; }
-    .hl-code { background: rgba(68, 71, 90, 0.5); padding: 2px 4px; border-radius: 3px; }
+    .hl-code { background: rgba(68, 71, 90, 0.8); padding: 2px 4px; border-radius: 3px; color: #50fa7b; }
+    .hl-code-block { 
+        display: block;
+        background: rgba(40, 42, 54, 0.8); 
+        border-left: 3px solid #50fa7b;
+        padding: 8px 12px;
+        margin: 4px 0;
+        color: #50fa7b; 
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        white-space: pre;
+    }
+    .hl-link { color: #8be9fd; text-decoration: underline; }
+    .hl-list-marker { color: #ff79c6; font-weight: bold; }
+    .hl-blockquote { 
+        color: #8be9fd; 
+        font-style: italic;
+        display: block;
+        border-left: 2px solid #8be9fd;
+        padding-left: 8px;
+        opacity: 0.9;
+    }
     
     .editor-container {
         position: relative;
@@ -213,6 +233,7 @@
                             <option value="plaintext">Plain Text</option>
                             <option value="python">Python</option>
                             <option value="shell">Shell/Bash</option>
+                            <option value="markdown">Markdown</option>
                             <option value="cpp">C++</option>
                             <option value="c">C</option>
                             <option value="java">Java</option>
@@ -297,6 +318,23 @@
         }
         
         addLanguagePatterns() {
+            // Markdown with enhanced code block support
+            this.languages.markdown = {
+                patterns: [
+                    { regex: /```[\s\S]*?```/g, type: 'code-block', special: true },
+                    { regex: /^#{1,6}\s+.*$/gm, type: 'heading' },
+                    { regex: /\*\*[^*]+\*\*/g, type: 'bold' },
+                    { regex: /__[^_]+__/g, type: 'bold' },
+                    { regex: /\*[^*\s][^*]*\*/g, type: 'italic' },
+                    { regex: /_[^_\s][^_]*_/g, type: 'italic' },
+                    { regex: /`[^`]+`/g, type: 'code' },
+                    { regex: /\[[^\]]+\]\([^)]+\)/g, type: 'link' },
+                    { regex: /^\s*[*+-]\s/gm, type: 'list-marker' },
+                    { regex: /^\s*\d+\.\s/gm, type: 'list-marker' },
+                    { regex: /^>\s.*$/gm, type: 'blockquote' }
+                ]
+            };
+            
             // Additional language patterns
             this.languages.cpp = {
                 patterns: [
@@ -319,9 +357,117 @@
                 return this.escapeHtml(text);
             }
             
+            // Special handling for markdown to process code blocks
+            if (language === 'markdown') {
+                return this.highlightMarkdown(text);
+            }
+            
             const patterns = this.languages[language].patterns;
             const tokens = this.tokenize(text, patterns);
             return this.renderTokens(text, tokens);
+        }
+        
+        highlightMarkdown(text) {
+            // Simple markdown highlighting - NO syntax highlighting inside code
+            const lines = text.split('\n');
+            const result = [];
+            let inCodeBlock = false;
+            let codeBlockFence = '';
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                
+                // Check for code block fence (opening or closing)
+                const fenceMatch = line.match(/^(\s{0,3})(```+|~~~+)(\w[\w+-]*)?(\s*)$/);
+                
+                if (fenceMatch) {
+                    const fence = fenceMatch[2];
+                    
+                    if (!inCodeBlock) {
+                        // Opening fence
+                        inCodeBlock = true;
+                        codeBlockFence = fence;
+                        result.push(`<div class="hl-code-block" spellcheck="false">`);
+                        result.push(this.escapeHtml(line));
+                    } else if (fence.startsWith(codeBlockFence[0]) && fence.length >= codeBlockFence.length) {
+                        // Closing fence
+                        result.push(this.escapeHtml(line));
+                        result.push('</div>');
+                        inCodeBlock = false;
+                        codeBlockFence = '';
+                    } else {
+                        // Inside code block, treat as code
+                        result.push(this.escapeHtml(line));
+                    }
+                } else if (inCodeBlock) {
+                    // Inside code block - just escape, no formatting
+                    result.push(this.escapeHtml(line));
+                } else {
+                    // Outside code block - apply markdown formatting
+                    let processed = line;
+                    
+                    // First handle inline code to protect it from other replacements
+                    const codeSegments = [];
+                    let codeIndex = 0;
+                    processed = processed.replace(/`([^`]+)`/g, (match, code) => {
+                        const placeholder = `__CODE_INLINE_${codeIndex}__`;
+                        codeSegments[codeIndex] = `<span class="hl-code">${this.escapeHtml(match)}</span>`;
+                        codeIndex++;
+                        return placeholder;
+                    });
+                    
+                    // Now escape HTML
+                    processed = this.escapeHtml(processed);
+                    
+                    // Headers (must be at line start)
+                    if (/^#{1,6}\s+/.test(line)) {
+                        processed = `<span class="hl-heading">${processed}</span>`;
+                    }
+                    // Blockquotes
+                    else if (/^>\s/.test(line)) {
+                        processed = `<span class="hl-blockquote">${processed}</span>`;
+                    }
+                    // List markers
+                    else if (/^(\s*)[*+-]\s/.test(line) || /^(\s*)\d+\.\s/.test(line)) {
+                        processed = processed.replace(/^(\s*)([*+-]|\d+\.)(\s)/, '$1<span class="hl-list-marker">$2</span>$3');
+                    }
+                    
+                    // Links [text](url)
+                    processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, 
+                        '<span class="hl-link">[$1]($2)</span>');
+                    
+                    // Bold **text** or __text__
+                    processed = processed.replace(/\*\*([^*]+)\*\*/g, 
+                        '<span class="hl-bold">**$1**</span>');
+                    processed = processed.replace(/__([^_]+)__/g, 
+                        '<span class="hl-bold">__$1__</span>');
+                    
+                    // Italic *text* or _text_ (avoid middle of words)
+                    processed = processed.replace(/(\s|^)\*([^*\s][^*]*)\*(\s|$)/g, 
+                        '$1<span class="hl-italic">*$2*</span>$3');
+                    processed = processed.replace(/(\s|^)_([^_\s][^_]*)_(\s|$)/g, 
+                        '$1<span class="hl-italic">_$2_</span>$3');
+                    
+                    // Restore inline code
+                    for (let j = 0; j < codeIndex; j++) {
+                        processed = processed.replace(`__CODE_INLINE_${j}__`, codeSegments[j]);
+                    }
+                    
+                    result.push(processed);
+                }
+                
+                // Add newline except for last line
+                if (i < lines.length - 1) {
+                    result.push('\n');
+                }
+            }
+            
+            // If still in code block at end, close it
+            if (inCodeBlock) {
+                result.push('</div>');
+            }
+            
+            return result.join('');
         }
         
         tokenize(text, patterns) {
