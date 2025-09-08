@@ -55,8 +55,8 @@ export class ApiClient {
         return this.request('DELETE', `/api/paste/${id}`);
     }
 
-    async listPastes(limit = 100, folderId = null) {
-        const params = new URLSearchParams({ limit });
+    async listPastes(limit = 100, offset = 0, folderId = null) {
+        const params = new URLSearchParams({ limit, offset });
         if (folderId) {
             params.append('folder_id', folderId);
         }
@@ -91,7 +91,7 @@ export class ApiClient {
 
     // Folder operations
     async createFolder(folder) {
-        return this.request('POST', '/api/folders', folder);
+        return this.request('POST', '/api/folder', folder);
     }
 
     async listFolders() {
@@ -99,10 +99,10 @@ export class ApiClient {
     }
 
     async updateFolder(id, updates) {
-        return this.request('PUT', `/api/folders/${id}`, updates);
+        return this.request('PUT', `/api/folder/${id}`, updates);
     }
 
     async deleteFolder(id) {
-        return this.request('DELETE', `/api/folders/${id}`);
+        return this.request('DELETE', `/api/folder/${id}`);
     }
 }

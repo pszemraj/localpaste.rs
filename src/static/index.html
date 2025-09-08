@@ -262,32 +262,20 @@
     <script type="module">
     // Import error reporting utilities and virtual scrolling
     import { ConsoleReporter, setupDebugMode } from '/js/utils/logger.js';
+    import { ApiClient } from '/js/api/client.js';
     
     const reporter = new ConsoleReporter();
     setupDebugMode();
+    
+    // Make API client available globally
+    window.ApiClient = ApiClient;
     
     // Try to import virtual scrolling
     import('/js/utils/virtual-scroll.js').then(module => {
         window.VirtualScroller = module.VirtualScroller;
         window.PaginationController = module.PaginationController;
-        // Send directly to server
-        fetch('/api/log', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                level: 'info',
-                message: 'Virtual scrolling modules loaded successfully'
-            })
-        });
     }).catch(err => {
-        fetch('/api/log', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                level: 'error',
-                message: `Failed to load virtual scrolling: ${err.message}`
-            })
-        });
+        console.error('Failed to load virtual scrolling:', err);
     });
     </script>
     
@@ -727,6 +715,9 @@
             this.expandedFolders = new Set(['unfiled']); // Start with unfiled expanded
             this.sortOrder = 'date-desc';
             this.highlighter = new SyntaxHighlighter(); // Initialize the highlighter
+            
+            // API client
+            this.api = window.ApiClient ? new window.ApiClient() : null;
             
             // Virtual scrolling setup
             this.useVirtualScrolling = true; // Enable virtual scrolling
@@ -1395,15 +1386,16 @@
 
         async createNewPaste() {
             try {
-                const res = await fetch('/api/paste', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: '' })
-                });
-                
-                if (!res.ok) throw new Error('Failed to create paste');
-                
-                const paste = await res.json();
+                const paste = this.api
+                    ? await this.api.createPaste({ content: '' })
+                    : await fetch('/api/paste', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: '' })
+                    }).then(res => {
+                        if (!res.ok) throw new Error('Failed to create paste');
+                        return res.json();
+                    });
                 await this.loadData();
                 await this.loadPaste(paste.id);
                 this.setStatus('New paste created');
@@ -1478,10 +1470,14 @@
 
         async loadFolders() {
             try {
-                const res = await fetch('/api/folders');
-                if (!res.ok) throw new Error('Failed to load folders');
-                
-                this.folders = await res.json();
+                if (this.api) {
+                    this.folders = await this.api.listFolders();
+                } else {
+                    // Fallback to direct fetch
+                    const res = await fetch('/api/folders');
+                    if (!res.ok) throw new Error('Failed to load folders');
+                    this.folders = await res.json();
+                }
             } catch (err) {
                 console.error('Error loading folders:', err);
                 this.folders = [];
@@ -1496,19 +1492,24 @@
                 const name = document.getElementById('paste-name').value || this.currentPaste.name;
                 const language = document.getElementById('paste-language').value || null;
                 
-                const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        content,
-                        name,
-                        language: language === '' ? null : language
-                    })
-                });
+                const updates = {
+                    content,
+                    name,
+                    language: language === '' ? null : language
+                };
                 
-                if (!res.ok) throw new Error('Failed to save');
-                
-                this.currentPaste = await res.json();
+                if (this.api) {
+                    this.currentPaste = await this.api.updatePaste(this.currentPaste.id, updates);
+                } else {
+                    // Fallback to direct fetch
+                    const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(updates)
+                    });
+                    if (!res.ok) throw new Error('Failed to save');
+                    this.currentPaste = await res.json();
+                }
                 this.updatePasteIdDisplay();
                 
                 // Show save indicator
@@ -1582,10 +1583,13 @@
 
         async loadPaste(id) {
             try {
-                const res = await fetch(`/api/paste/${id}`);
-                if (!res.ok) throw new Error('Failed to load paste');
+                const paste = this.api 
+                    ? await this.api.getPaste(id)
+                    : await fetch(`/api/paste/${id}`).then(res => {
+                        if (!res.ok) throw new Error('Failed to load paste');
+                        return res.json();
+                    });
                 
-                const paste = await res.json();
                 this.currentPaste = paste;
                 this.updatePasteIdDisplay();
                 
