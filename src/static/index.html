@@ -314,34 +314,19 @@
     }).catch(err => {
         console.error('Failed to load DOM utilities:', err);
     });
+    
+    // Import error handling utilities
+    import('/js/utils/error-handler.js').then(module => {
+        window.ErrorBoundary = module.ErrorBoundary;
+        window.ErrorHandler = module.ErrorHandler;
+        console.log('Error handling utilities loaded successfully');
+    }).catch(err => {
+        console.error('Failed to load error handling utilities:', err);
+    });
     </script>
     
     <script>
     // Application code
-    
-    // Error boundary for catching and handling errors gracefully
-    class ErrorBoundary {
-        constructor(container, fallback) {
-            this.container = container;
-            this.fallback = fallback || '<div class="error">An error occurred. Please refresh the page.</div>';
-        }
-
-        wrap(fn) {
-            return async (...args) => {
-                try {
-                    return await fn(...args);
-                } catch (error) {
-                    console.error('Error boundary caught:', error);
-                    // Only update container if it's a critical error
-                    if (error.critical) {
-                        this.container.innerHTML = this.fallback;
-                    }
-                    // Re-throw for debugging
-                    throw error;
-                }
-            };
-        }
-    }
     
     class LocalPaste {
         constructor() {
@@ -1354,7 +1339,15 @@
                 this.clearEditor();
                 this.updatePasteIdDisplay();
                 
-                await this.loadData();
+                // Reload data without trying to load the deleted paste
+                await this.loadPastes();
+                await this.loadFolders();
+                this.renderTree();
+                
+                // Load first available paste if any exist
+                if (this.pastes.length > 0) {
+                    await this.loadPaste(this.pastes[0].id);
+                }
                 
                 this.setStatus('Paste deleted');
             } catch (err) {
