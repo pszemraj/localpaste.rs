@@ -260,22 +260,33 @@
     </div>
 
     <script type="module">
-    // Import error reporting utilities and virtual scrolling
+    // Import error reporting utilities
     import { ConsoleReporter, setupDebugMode } from '/js/utils/logger.js';
     import { ApiClient } from '/js/api/client.js';
-    import { SyntaxHighlighter } from '/js/syntax/highlighter.js';
     
     const reporter = new ConsoleReporter();
     setupDebugMode();
     
-    // Make modules available globally
+    // Make API client available globally
     window.ApiClient = ApiClient;
-    window.ModularSyntaxHighlighter = SyntaxHighlighter;
+    
+    // Try to import syntax highlighter
+    import('/js/syntax/highlighter.js').then(module => {
+        window.ModularSyntaxHighlighter = module.SyntaxHighlighter;
+        console.log('Modular SyntaxHighlighter loaded successfully');
+        // Set highlighter on the app if it exists
+        if (window.app && !window.app.highlighter) {
+            window.app.highlighter = new module.SyntaxHighlighter();
+        }
+    }).catch(err => {
+        console.error('Failed to load modular syntax highlighter:', err);
+    });
     
     // Try to import virtual scrolling
     import('/js/utils/virtual-scroll.js').then(module => {
         window.VirtualScroller = module.VirtualScroller;
         window.PaginationController = module.PaginationController;
+        console.log('Virtual scrolling loaded successfully');
     }).catch(err => {
         console.error('Failed to load virtual scrolling:', err);
     });
@@ -283,398 +294,6 @@
     
     <script>
     // Unified Syntax Highlighter Class
-    class SyntaxHighlighter {
-        constructor() {
-            this.languages = {
-                python: {
-                    patterns: [
-                        { regex: /#.*$/gm, type: 'comment' },
-                        { regex: /"""[\s\S]*?"""|'''[\s\S]*?'''/g, type: 'string' },
-                        { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                        { regex: /\b(?:def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, type: 'keyword' },
-                        { regex: /\b\d+(?:\.\d+)?\b/g, type: 'number' },
-                        { regex: /\b([a-zA-Z_]\w*)\s*(?=\()/g, type: 'function', group: 1 }
-                    ]
-                },
-                javascript: {
-                    patterns: [
-                        { regex: /\/\/.*$/gm, type: 'comment' },
-                        { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                        { regex: /(['"`])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                        { regex: /\b(?:const|let|var|function|class|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|async|await|import|export|from|default|new|this|super|extends|static|typeof|instanceof|in|of|delete|void|yield|null|undefined|true|false)\b/g, type: 'keyword' },
-                        { regex: /\b\d+(?:\.\d+)?\b/g, type: 'number' },
-                        { regex: /\b([a-zA-Z_$][\w$]*)\s*(?=\()/g, type: 'function', group: 1 }
-                    ]
-                },
-                shell: {
-                    patterns: [
-                        { regex: /#.*$/gm, type: 'comment' },
-                        { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                        { regex: /\$[a-zA-Z_]\w*|\${[^}]+}/g, type: 'property' },
-                        { regex: /\b(?:if|then|else|elif|fi|for|while|do|done|case|esac|function|return|break|continue|exit|export|source|alias|echo|cd|ls|cp|mv|rm|mkdir|touch|cat|grep|sed|awk|find|chmod|chown|sudo|apt|yum|npm|pip|git|docker|kubectl)\b/g, type: 'keyword' }
-                    ]
-                },
-                plaintext: {
-                    patterns: []
-                }
-            };
-            
-            // Add more languages with same pattern structure
-            this.addLanguagePatterns();
-        }
-        
-        addLanguagePatterns() {
-            // Markdown with enhanced code block support
-            this.languages.markdown = {
-                patterns: [
-                    { regex: /```[\s\S]*?```/g, type: 'code-block', special: true },
-                    { regex: /^#{1,6}\s+.*$/gm, type: 'heading' },
-                    { regex: /\*\*[^*]+\*\*/g, type: 'bold' },
-                    { regex: /__[^_]+__/g, type: 'bold' },
-                    { regex: /\*[^*\s][^*]*\*/g, type: 'italic' },
-                    { regex: /_[^_\s][^_]*_/g, type: 'italic' },
-                    { regex: /`[^`]+`/g, type: 'code' },
-                    { regex: /\[[^\]]+\]\([^)]+\)/g, type: 'link' },
-                    { regex: /^\s*[*+-]\s/gm, type: 'list-marker' },
-                    { regex: /^\s*\d+\.\s/gm, type: 'list-marker' },
-                    { regex: /^>\s.*$/gm, type: 'blockquote' }
-                ]
-            };
-            
-            // Additional language patterns
-            this.languages.cpp = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:class|public|private|protected|virtual|override|namespace|using|if|else|for|while|do|switch|case|break|continue|return|try|catch|throw|new|delete|this|nullptr|const|static|inline|typedef|typename|template|auto|void|int|char|bool|float|double|long|short|unsigned|signed|struct|enum|union)\b/g, type: 'keyword' },
-                    { regex: /^#\s*\w+/gm, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?[fFlL]?\b/g, type: 'number' },
-                    { regex: /\b(?:std::\w+|string|vector|map|set|cout|cin|endl)\b/g, type: 'type' }
-                ]
-            };
-            
-            
-            this.languages.c = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:if|else|for|while|do|switch|case|break|continue|return|goto|typedef|struct|enum|union|const|static|extern|inline|sizeof|void|int|char|float|double|long|short|unsigned|signed|NULL)\b/g, type: 'keyword' },
-                    { regex: /^#\s*\w+/gm, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?[fFlL]?\b/g, type: 'number' },
-                    { regex: /\b([a-zA-Z_]\w*)\s*(?=\()/g, type: 'function', group: 1 }
-                ]
-            };
-            
-            this.languages.java = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:public|private|protected|class|interface|extends|implements|abstract|final|static|void|int|char|boolean|float|double|long|short|byte|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|throws|new|this|super|import|package|null|true|false)\b/g, type: 'keyword' },
-                    { regex: /@\w+/g, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?[fFlLdD]?\b/g, type: 'number' },
-                    { regex: /\b(?:String|Integer|Double|Float|Boolean|ArrayList|HashMap|List|Map|Set)\b/g, type: 'type' }
-                ]
-            };
-            
-            this.languages.csharp = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\$"[^"]*"/g, type: 'string' },
-                    { regex: /\b(?:public|private|protected|internal|class|interface|struct|enum|abstract|sealed|static|void|int|char|bool|float|double|decimal|long|short|byte|string|if|else|for|foreach|while|do|switch|case|break|continue|return|try|catch|finally|throw|using|namespace|new|this|base|null|true|false|var|async|await|override|virtual|const|readonly)\b/g, type: 'keyword' },
-                    { regex: /\b\d+(?:\.\d+)?[fFmMdD]?\b/g, type: 'number' },
-                    { regex: /\b(?:String|Int32|Double|Float|Boolean|List|Dictionary|Task)\b/g, type: 'type' }
-                ]
-            };
-            
-            this.languages.go = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"`])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:package|import|func|var|const|type|struct|interface|map|chan|if|else|for|range|switch|case|break|continue|return|go|defer|select|fallthrough|default|nil|true|false)\b/g, type: 'keyword' },
-                    { regex: /\b(?:bool|string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|complex64|complex128|byte|rune|error)\b/g, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?\b/g, type: 'number' },
-                    { regex: /\b([a-zA-Z_]\w*)\s*(?=\()/g, type: 'function', group: 1 }
-                ]
-            };
-            
-            this.languages.rust = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:fn|let|mut|const|if|else|match|for|while|loop|break|continue|return|use|mod|pub|struct|enum|trait|impl|self|Self|super|crate|async|await|move|ref|dyn|static|extern|unsafe|where|as|in|type)\b/g, type: 'keyword' },
-                    { regex: /\b(?:bool|char|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize|f32|f64|str|String|Vec|Option|Result|Box|Rc|Arc|HashMap|HashSet)\b/g, type: 'type' },
-                    { regex: /'[a-z]\w*/g, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?(?:[iu](?:8|16|32|64|128|size))?\b/g, type: 'number' },
-                    { regex: /\b([a-zA-Z_]\w*)!/g, type: 'function', group: 1 }
-                ]
-            };
-            
-            this.languages.html = this.languages.xml = {
-                patterns: [
-                    { regex: /<!--[\s\S]*?-->/g, type: 'comment' },
-                    { regex: /<(\/?[a-zA-Z][\w-]*)/g, type: 'tag', group: 1 },
-                    { regex: /\s([a-zA-Z][\w-]*)=/g, type: 'attribute', group: 1 },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' }
-                ]
-            };
-            
-            this.languages.css = {
-                patterns: [
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /([.#]?[\w-:]+)(?=\s*\{)/g, type: 'tag' },
-                    { regex: /([\w-]+)(?=\s*:)/g, type: 'property' },
-                    { regex: /#[0-9a-fA-F]{3,8}\b/g, type: 'number' },
-                    { regex: /\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|deg|s|ms)?\b/g, type: 'number' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /!important/g, type: 'keyword' }
-                ]
-            };
-            
-            this.languages.json = {
-                patterns: [
-                    { regex: /"([^"]+)"\s*:/g, type: 'property', group: 1, wrap: '"' },
-                    { regex: /:\s*"([^"]*)"/g, type: 'string', group: 1, wrap: '"' },
-                    { regex: /\b-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, type: 'number' },
-                    { regex: /\b(?:true|false|null)\b/g, type: 'keyword' }
-                ]
-            };
-            
-            this.languages.yaml = {
-                patterns: [
-                    { regex: /#.*$/gm, type: 'comment' },
-                    { regex: /^(\s*)([\w-]+):/gm, type: 'property', group: 2 },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:true|false|yes|no|null)\b/g, type: 'keyword' },
-                    { regex: /\b\d+(?:\.\d+)?\b/g, type: 'number' }
-                ]
-            };
-            
-            this.languages.toml = {
-                patterns: [
-                    { regex: /#.*$/gm, type: 'comment' },
-                    { regex: /^\[([\w.]+)\]/gm, type: 'type', group: 1 },
-                    { regex: /^\[\[([\w.]+)\]\]/gm, type: 'type', group: 1 },
-                    { regex: /^(\s*)([\w-]+)\s*=/gm, type: 'property', group: 2 },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:true|false)\b/g, type: 'keyword' },
-                    { regex: /\b-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, type: 'number' },
-                    { regex: /\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?/g, type: 'number' }
-                ]
-            };
-            
-            this.languages.latex = {
-                patterns: [
-                    { regex: /%.*$/gm, type: 'comment' },
-                    { regex: /\\[a-zA-Z]+/g, type: 'keyword' },
-                    { regex: /\$[^$]+\$|\$\$[\s\S]*?\$\$/g, type: 'string' },
-                    { regex: /\\begin\{(\w+)\}/g, type: 'type', group: 1 },
-                    { regex: /\\end\{(\w+)\}/g, type: 'type', group: 1 },
-                    { regex: /[{}]/g, type: 'operator' }
-                ]
-            };
-        }
-        
-        highlight(text, language) {
-            // Skip highlighting for large files to prevent freezing
-            if (text.length > 100000) {  // 100KB limit
-                console.log('File too large for syntax highlighting');
-                return this.escapeHtml(text);
-            }
-            
-            if (!language || language === 'plaintext' || !this.languages[language]) {
-                return this.escapeHtml(text);
-            }
-            
-            // Special handling for markdown to process code blocks
-            if (language === 'markdown') {
-                return this.highlightMarkdown(text);
-            }
-            
-            const patterns = this.languages[language].patterns;
-            const tokens = this.tokenize(text, patterns);
-            return this.renderTokens(text, tokens);
-        }
-        
-        highlightMarkdown(text) {
-            // Simple markdown highlighting - NO syntax highlighting inside code
-            const lines = text.split('\n');
-            const result = [];
-            let inCodeBlock = false;
-            let codeBlockFence = '';
-            
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                
-                // Check for code block fence (opening or closing)
-                const fenceMatch = line.match(/^(\s{0,3})(```+|~~~+)(\w[\w+-]*)?(\s*)$/);
-                
-                if (fenceMatch) {
-                    const fence = fenceMatch[2];
-                    
-                    if (!inCodeBlock) {
-                        // Opening fence
-                        inCodeBlock = true;
-                        codeBlockFence = fence;
-                        result.push(`<span class="hl-code-block">${this.escapeHtml(line)}</span>`);
-                    } else if (fence.startsWith(codeBlockFence[0]) && fence.length >= codeBlockFence.length) {
-                        // Closing fence
-                        result.push(`<span class="hl-code-block">${this.escapeHtml(line)}</span>`);
-                        inCodeBlock = false;
-                        codeBlockFence = '';
-                    } else {
-                        // Inside code block, treat as code
-                        result.push(this.escapeHtml(line));
-                    }
-                } else if (inCodeBlock) {
-                    // Inside code block - wrap in span for coloring
-                    result.push(`<span class="hl-code-block">${this.escapeHtml(line)}</span>`);
-                } else {
-                    // Outside code block - apply markdown formatting
-                    let processed = line;
-                    
-                    // First handle inline code to protect it from other replacements
-                    const codeSegments = [];
-                    let codeIndex = 0;
-                    processed = processed.replace(/`([^`]+)`/g, (match, code) => {
-                        const placeholder = `__CODE_INLINE_${codeIndex}__`;
-                        codeSegments[codeIndex] = `<span class="hl-code">${this.escapeHtml(match)}</span>`;
-                        codeIndex++;
-                        return placeholder;
-                    });
-                    
-                    // Now escape HTML
-                    processed = this.escapeHtml(processed);
-                    
-                    // Headers (must be at line start)
-                    if (/^#{1,6}\s+/.test(line)) {
-                        processed = `<span class="hl-heading">${processed}</span>`;
-                    }
-                    // Blockquotes
-                    else if (/^>\s/.test(line)) {
-                        processed = `<span class="hl-blockquote">${processed}</span>`;
-                    }
-                    // List markers
-                    else if (/^(\s*)[*+-]\s/.test(line) || /^(\s*)\d+\.\s/.test(line)) {
-                        processed = processed.replace(/^(\s*)([*+-]|\d+\.)(\s)/, '$1<span class="hl-list-marker">$2</span>$3');
-                    }
-                    
-                    // Links [text](url)
-                    processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, 
-                        '<span class="hl-link">[$1]($2)</span>');
-                    
-                    // Bold **text** or __text__
-                    processed = processed.replace(/\*\*([^*]+)\*\*/g, 
-                        '<span class="hl-bold">**$1**</span>');
-                    processed = processed.replace(/__([^_]+)__/g, 
-                        '<span class="hl-bold">__$1__</span>');
-                    
-                    // Italic *text* or _text_ (avoid middle of words)
-                    processed = processed.replace(/(\s|^)\*([^*\s][^*]*)\*(\s|$)/g, 
-                        '$1<span class="hl-italic">*$2*</span>$3');
-                    processed = processed.replace(/(\s|^)_([^_\s][^_]*)_(\s|$)/g, 
-                        '$1<span class="hl-italic">_$2_</span>$3');
-                    
-                    // Restore inline code
-                    for (let j = 0; j < codeIndex; j++) {
-                        processed = processed.replace(`__CODE_INLINE_${j}__`, codeSegments[j]);
-                    }
-                    
-                    result.push(processed);
-                }
-                
-                // Add newline except for last line
-                if (i < lines.length - 1) {
-                    result.push('\n');
-                }
-            }
-            
-            // No need to close anything since we're using spans
-            
-            return result.join('');
-        }
-        
-        tokenize(text, patterns) {
-            const tokens = [];
-            
-            for (const pattern of patterns) {
-                let match;
-                pattern.regex.lastIndex = 0;
-                
-                while ((match = pattern.regex.exec(text)) !== null) {
-                    const group = pattern.group || 0;
-                    const matchText = match[group];
-                    const fullMatch = match[0];
-                    
-                    let start = match.index;
-                    if (group > 0) {
-                        const groupIndex = fullMatch.indexOf(matchText);
-                        if (groupIndex !== -1) {
-                            start += groupIndex;
-                        }
-                    }
-                    
-                    tokens.push({
-                        start: start,
-                        end: start + matchText.length,
-                        type: pattern.type
-                    });
-                }
-            }
-            
-            return this.removeOverlaps(tokens);
-        }
-        
-        removeOverlaps(tokens) {
-            tokens.sort((a, b) => a.start - b.start || b.end - a.end);
-            const filtered = [];
-            let lastEnd = 0;
-            
-            for (const token of tokens) {
-                if (token.start >= lastEnd) {
-                    filtered.push(token);
-                    lastEnd = token.end;
-                }
-            }
-            
-            return filtered;
-        }
-        
-        renderTokens(text, tokens) {
-            let result = '';
-            let pos = 0;
-            
-            for (const token of tokens) {
-                if (pos < token.start) {
-                    result += this.escapeHtml(text.substring(pos, token.start));
-                }
-                
-                const tokenText = text.substring(token.start, token.end);
-                result += `<span class="hl-${token.type}">${this.escapeHtml(tokenText)}</span>`;
-                pos = token.end;
-            }
-            
-            if (pos < text.length) {
-                result += this.escapeHtml(text.substring(pos));
-            }
-            
-            return result;
-        }
-        
-        escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    }
-    
-    // Utility function for proper debouncing
     function debounce(fn, ms) {
         let timeout;
         return function(...args) {
@@ -716,7 +335,8 @@
             this.draggedPaste = null;
             this.expandedFolders = new Set(['unfiled']); // Start with unfiled expanded
             this.sortOrder = 'date-desc';
-            this.highlighter = new SyntaxHighlighter(); // Initialize the highlighter
+            // Syntax highlighter will be set when module loads
+            this.highlighter = null;
             
             // API client
             this.api = window.ApiClient ? new window.ApiClient() : null;
@@ -2289,10 +1909,14 @@
     document.addEventListener('DOMContentLoaded', () => {
         // Wait for modules to load
         const checkModules = setInterval(() => {
-            if (window.VirtualScroller && window.PaginationController) {
+            if (window.VirtualScroller && window.PaginationController && window.ModularSyntaxHighlighter) {
                 clearInterval(checkModules);
-                console.log('Modules ready, starting app with virtual scrolling');
+                console.log('All modules ready, starting app');
                 window.app = new LocalPaste();
+                // Set the highlighter since app was created after module loaded
+                if (!window.app.highlighter) {
+                    window.app.highlighter = new window.ModularSyntaxHighlighter();
+                }
             }
         }, 50);
         
@@ -2300,7 +1924,7 @@
         setTimeout(() => {
             if (!window.app) {
                 clearInterval(checkModules);
-                console.log('Starting app without virtual scrolling');
+                console.error('Some modules failed to load, app may have limited functionality');
                 window.app = new LocalPaste();
             }
         }, 1000);
