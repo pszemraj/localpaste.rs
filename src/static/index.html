@@ -460,6 +460,12 @@
         }
         
         highlight(text, language) {
+            // Skip highlighting for large files to prevent freezing
+            if (text.length > 100000) {  // 100KB limit
+                console.log('File too large for syntax highlighting');
+                return this.escapeHtml(text);
+            }
+            
             if (!language || language === 'plaintext' || !this.languages[language]) {
                 return this.escapeHtml(text);
             }
@@ -770,21 +776,10 @@
                 const actionsSpan = document.createElement('span');
                 actionsSpan.className = 'folder-actions';
                 actionsSpan.style.cssText = 'float: right; display: none;';
-                
-                const renameBtn = document.createElement('button');
-                renameBtn.className = 'folder-rename';
-                renameBtn.setAttribute('data-folder-id', folder.id);
-                renameBtn.title = 'Rename';
-                renameBtn.textContent = '✏️';
-                actionsSpan.appendChild(renameBtn);
-                
-                const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'folder-delete';
-                deleteBtn.setAttribute('data-folder-id', folder.id);
-                deleteBtn.title = 'Delete';
-                deleteBtn.textContent = '🗑️';
-                actionsSpan.appendChild(deleteBtn);
-                
+                actionsSpan.innerHTML = `
+                    <button class="folder-rename" data-folder-id="${folder.id}" title="Rename">✏️</button>
+                    <button class="folder-delete" data-folder-id="${folder.id}" title="Delete">🗑️</button>
+                `;
                 folderDiv.appendChild(actionsSpan);
                 
                 folderDiv.addEventListener('click', (e) => {
@@ -1354,9 +1349,11 @@
                     method: 'DELETE'
                 });
                 
-                if (!res.ok) throw new Error('Failed to delete');
+                if (!res.ok) {
+                    throw new Error('Failed to delete');
+                }
                 
-                // Clear from localStorage if it was the last opened
+                // Only clear if deletion was successful
                 const deletedId = this.currentPaste.id;
                 if (localStorage.getItem('lastOpenedPaste') === deletedId) {
                     localStorage.removeItem('lastOpenedPaste');
@@ -1371,7 +1368,7 @@
                 this.setStatus('Paste deleted');
             } catch (err) {
                 console.error('Error deleting:', err);
-                this.setStatus('Failed to delete');
+                this.setStatus('Failed to delete - paste still exists');
             }
         }
 
@@ -1385,10 +1382,17 @@
             // Update highlighting
             this.updateHighlighting();
             
-            // Auto-save
+            // Auto-save with stability check
+            const currentLength = this.editor.value.length;
             clearTimeout(this.saveTimeout);
             this.saveTimeout = setTimeout(() => {
-                this.savePaste();
+                // Only save if content length hasn't changed (stable)
+                if (this.editor.value.length === currentLength) {
+                    this.savePaste();
+                } else {
+                    // Content still changing, wait longer
+                    this.onEditorChange();
+                }
             }, 1000);
         }
 
