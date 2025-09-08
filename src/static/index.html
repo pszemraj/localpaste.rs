@@ -351,10 +351,22 @@
             this.allLoadedPastes = []; // Keep track of all loaded pastes for virtual scrolling
             
             // Create debounced save function
-            this.debouncedSave = this.createDebouncedSave();
+            this.debouncedSave = this.debounce(() => this.savePaste(), 1000);
             
             console.log('LocalPaste.rs: Initializing...');
             this.init();
+        }
+        
+        debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
         }
 
         async init() {
