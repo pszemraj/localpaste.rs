@@ -263,12 +263,14 @@
     // Import error reporting utilities and virtual scrolling
     import { ConsoleReporter, setupDebugMode } from '/js/utils/logger.js';
     import { ApiClient } from '/js/api/client.js';
+    import { SyntaxHighlighter } from '/js/syntax/highlighter.js';
     
     const reporter = new ConsoleReporter();
     setupDebugMode();
     
-    // Make API client available globally
+    // Make modules available globally
     window.ApiClient = ApiClient;
+    window.ModularSyntaxHighlighter = SyntaxHighlighter;
     
     // Try to import virtual scrolling
     import('/js/utils/virtual-scroll.js').then(module => {
