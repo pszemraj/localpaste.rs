@@ -4,12 +4,14 @@ use std::sync::Arc;
 
 pub struct FolderDb {
     tree: sled::Tree,
+    pastes_tree: sled::Tree,
 }
 
 impl FolderDb {
     pub fn new(db: Arc<Db>) -> Result<Self, AppError> {
         let tree = db.open_tree("folders")?;
-        Ok(Self { tree })
+        let pastes_tree = db.open_tree("pastes")?;
+        Ok(Self { tree, pastes_tree })
     }
 
     pub fn create(&self, folder: &Folder) -> Result<(), AppError> {
@@ -51,25 +53,31 @@ impl FolderDb {
         let mut folders = Vec::new();
         for item in self.tree.iter() {
             let (_, value) = item?;
-            let folder: Folder = bincode::deserialize(&value)?;
+            let mut folder: Folder = bincode::deserialize(&value)?;
+            // Calculate paste count on demand
+            folder.paste_count = self.get_paste_count(&folder.id)?;
             folders.push(folder);
         }
         folders.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(folders)
     }
 
-    pub fn update_count(&self, id: &str, delta: i32) -> Result<(), AppError> {
-        self.tree.fetch_and_update(id.as_bytes(), |old| {
-            old.and_then(|bytes| {
-                let mut folder: Folder = bincode::deserialize(bytes).ok()?;
-                if delta > 0 {
-                    folder.paste_count = folder.paste_count.saturating_add(delta as usize);
-                } else {
-                    folder.paste_count = folder.paste_count.saturating_sub((-delta) as usize);
-                }
-                bincode::serialize(&folder).ok()
-            })
-        })?;
+    /// Calculate paste count for a folder on demand
+    fn get_paste_count(&self, folder_id: &str) -> Result<usize, AppError> {
+        let mut count = 0;
+        for item in self.pastes_tree.iter() {
+            let (_, value) = item?;
+            let paste: crate::models::paste::Paste = bincode::deserialize(&value)?;
+            if paste.folder_id.as_ref() == Some(&folder_id.to_string()) {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    /// No-op: counts are calculated on demand now
+    pub fn update_count(&self, _id: &str, _delta: i32) -> Result<(), AppError> {
+        // This is now a no-op since we calculate counts on demand
         Ok(())
     }
 }

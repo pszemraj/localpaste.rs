@@ -1,6 +1,5 @@
 pub mod backup;
 pub mod folder;
-pub mod lock;
 pub mod paste;
 
 use crate::error::AppError;

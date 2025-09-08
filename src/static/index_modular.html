@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalPaste.rs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        :root {
+            --bg-primary: #1e1e1e;
+            --bg-secondary: #2d2d30;
+            --bg-hover: #3e3e42;
+            --text-primary: #cccccc;
+            --text-secondary: #969696;
+            --border: #464647;
+            --accent: #007acc;
+            --accent-hover: #1a85d0;
+            --danger: #f14c4c;
+            --success: #89d185;
+            --warning: #cca700;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Display', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 14px;
+            line-height: 1.6;
+            overflow: hidden;
+        }
+
+        #app {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        .sidebar {
+            width: 280px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .logo {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .logo h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .quick-actions {
+            padding: 12px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-primary, .btn-secondary, .btn-icon {
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .btn-icon {
+            padding: 6px;
+            background: transparent;
+            font-size: 16px;
+        }
+
+        .btn-icon:hover {
+            background: var(--bg-hover);
+        }
+
+        .btn-icon.danger:hover {
+            background: var(--danger);
+        }
+
+        .search-container {
+            padding: 0 12px 12px;
+        }
+
+        .search-container input {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        .editor-header {
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-secondary);
+        }
+
+        .paste-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .editor-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+        }
+
+        #editor {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100%;
+            padding: 16px 20px;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: transparent;
+            caret-color: var(--text-primary);
+            font-size: 13px;
+            line-height: 1.6;
+            resize: none;
+            font-family: inherit;
+            white-space: pre;
+            overflow: auto;
+            z-index: 2;
+        }
+
+        .highlight-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 16px 20px;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre;
+            overflow: auto;
+            pointer-events: none;
+            color: var(--text-primary);
+            z-index: 1;
+        }
+
+        .status-bar {
+            padding: 8px 20px;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .tree-view {
+            list-style: none;
+            padding: 0;
+        }
+
+        .folder-item {
+            margin-bottom: 2px;
+        }
+
+        .folder-header {
+            display: flex;
+            align-items: center;
+            padding: 6px 8px;
+            cursor: pointer;
+            user-select: none;
+            border-radius: 4px;
+        }
+
+        .folder-header:hover {
+            background: var(--bg-hover);
+        }
+
+        .folder-arrow {
+            width: 16px;
+            transition: transform 0.2s;
+            font-size: 10px;
+        }
+
+        .folder-arrow.expanded {
+            transform: rotate(90deg);
+        }
+
+        .folder-content {
+            display: none;
+            padding-left: 20px;
+        }
+
+        .folder-content.expanded {
+            display: block;
+        }
+
+        .paste-item {
+            padding: 6px 12px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin: 2px 0;
+        }
+
+        .paste-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .paste-item.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        .paste-name {
+            font-weight: 500;
+            font-size: 13px;
+        }
+
+        .paste-preview {
+            font-size: 11px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .paste-item.active .paste-preview {
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        /* Syntax highlighting classes */
+        .hl-comment { color: #608b4e; font-style: italic; }
+        .hl-string { color: #ce9178; }
+        .hl-keyword { color: #569cd6; }
+        .hl-number { color: #b5cea8; }
+        .hl-function { color: #dcdcaa; }
+        .hl-type { color: #4ec9b0; }
+        .hl-property { color: #9cdcfe; }
+        .hl-operator { color: #d4d4d4; }
+        .hl-tag { color: #569cd6; }
+        .hl-attribute { color: #9cdcfe; }
+        .hl-heading { color: #569cd6; font-weight: bold; }
+        .hl-bold { font-weight: bold; }
+        .hl-italic { font-style: italic; }
+        .hl-code { background: rgba(128, 128, 128, 0.1); padding: 2px 4px; border-radius: 3px; }
+        .hl-code-block { color: #ce9178; }
+        .hl-link { color: #3794ff; text-decoration: underline; }
+        .hl-list-marker { color: #569cd6; font-weight: bold; }
+        .hl-blockquote { color: #608b4e; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <aside class="sidebar">
+            <div class="logo"><h1>LocalPaste.rs</h1></div>
+            <div class="quick-actions">
+                <button id="new-paste-btn" class="btn-primary" title="New Paste (Ctrl+N)">+ New</button>
+                <button id="new-folder-btn" class="btn-secondary" title="New Folder">+ Folder</button>
+            </div>
+            <div class="search-container">
+                <input type="text" id="search-input" placeholder="Search... (Ctrl+F)" />
+                <button id="clear-search" style="display: none;">✕</button>
+            </div>
+            <div style="padding: 8px; margin-bottom: 8px;">
+                <select id="sort-order" style="width: 100%; background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;" title="Sort pastes">
+                    <option value="date-desc">⬇ Newest first</option>
+                    <option value="date-asc">⬆ Oldest first</option>
+                    <option value="name-asc">⬆ Name (A-Z)</option>
+                    <option value="name-desc">⬇ Name (Z-A)</option>
+                </select>
+            </div>
+            
+            <!-- Tree view for folders and pastes -->
+            <div id="paste-list" class="pastes" style="flex: 1; overflow-y: auto; padding: 0 8px;">
+                <!-- Tree will be rendered here -->
+            </div>
+        </aside>
+        <main class="main-content">
+            <header class="editor-header">
+                <div class="paste-info">
+                    <input type="text" id="paste-name" class="paste-name" placeholder="Paste name..." />
+                    <span class="paste-meta">
+                        <select id="paste-language" class="folder-select">
+                            <option value="">Auto-detect</option>
+                            <option value="plaintext">Plain Text</option>
+                            <option value="c">C</option>
+                            <option value="cpp">C++</option>
+                            <option value="csharp">C#</option>
+                            <option value="css">CSS</option>
+                            <option value="go">Go</option>
+                            <option value="html">HTML</option>
+                            <option value="java">Java</option>
+                            <option value="javascript">JavaScript</option>
+                            <option value="json">JSON</option>
+                            <option value="latex">LaTeX</option>
+                            <option value="markdown">Markdown</option>
+                            <option value="python">Python</option>
+                            <option value="rust">Rust</option>
+                            <option value="shell">Shell/Bash</option>
+                            <option value="toml">TOML</option>
+                            <option value="xml">XML</option>
+                            <option value="yaml">YAML</option>
+                        </select>
+                        <span id="char-count">0 chars</span>
+                        <span id="paste-id" style="display: none; cursor: pointer;"></span>
+                    </span>
+                </div>
+                <div class="editor-actions">
+                    <button id="duplicate-btn" class="btn-icon" title="Duplicate">📋</button>
+                    <button id="export-btn" class="btn-icon" title="Export">📤</button>
+                    <button id="download-btn" class="btn-icon" title="Download">💾</button>
+                    <button id="delete-btn" class="btn-icon danger" title="Delete">🗑️</button>
+                </div>
+            </header>
+            <div id="editor-container" class="editor-container">
+                <div id="highlight-layer" class="highlight-layer"></div>
+                <textarea id="editor" spellcheck="false" placeholder="Start typing or paste content..."></textarea>
+            </div>
+            <footer class="status-bar">
+                <div class="status-left">
+                    <span id="status-message"></span>
+                </div>
+                <div class="status-right">
+                    <span id="cursor-position">Ln 1, Col 1</span>
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <!-- Load the modular JavaScript -->
+    <script type="module" src="/js/main.js"></script>
+</body>
+</html>

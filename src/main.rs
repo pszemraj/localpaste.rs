@@ -63,10 +63,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if args.contains(&"--force-unlock".to_string()) {
-        tracing::warn!("Force unlock requested");
-        let lock_manager = crate::db::lock::LockManager::new(&config.db_path);
-        lock_manager.force_unlock()?;
-        tracing::info!("Lock removed successfully");
+        tracing::warn!("Force unlock is no longer needed - Sled handles its own locking");
     }
 
     if args.contains(&"--backup".to_string()) {
@@ -91,15 +88,23 @@ async fn main() -> anyhow::Result<()> {
 
     // Auto-backup on startup if explicitly enabled and database exists
     if config.auto_backup && std::path::Path::new(&config.db_path).exists() {
-        match crate::db::lock::LockManager::backup_database(&config.db_path) {
-            Ok(backup_path) if !backup_path.is_empty() => {
-                tracing::debug!("Auto-backup created at: {}", backup_path);
+        // Use BackupManager directly for auto-backup
+        let backup_manager = crate::db::backup::BackupManager::new(&config.db_path);
+        match sled::open(&config.db_path) {
+            Ok(db) => {
+                match backup_manager.create_backup(&db) {
+                    Ok(backup_path) => {
+                        tracing::debug!("Auto-backup created at: {}", backup_path);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create auto-backup: {}", e);
+                        // Continue anyway - backup failure shouldn't prevent startup
+                    }
+                }
             }
             Err(e) => {
-                tracing::warn!("Failed to create auto-backup: {}", e);
-                // Continue anyway - backup failure shouldn't prevent startup
+                tracing::warn!("Failed to open database for backup: {}", e);
             }
-            _ => {}
         }
     }
 
