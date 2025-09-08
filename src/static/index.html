@@ -446,9 +446,8 @@
                 pageSize: 50,
                 loadPage: async (page, pageSize) => {
                     const offset = page * pageSize;
-                    const res = await fetch(`/api/pastes?limit=${pageSize}&offset=${offset}`);
-                    if (!res.ok) throw new Error('Failed to load pastes');
-                    const pastes = await res.json();
+                    if (!this.api) throw new Error('API client not initialized');
+                    const pastes = await this.api.listPastes(pageSize, offset);
                     
                     // Update our paste tracking
                     for (const paste of pastes) {
@@ -897,13 +896,8 @@
 
         async movePasteToFolder(pasteId, folderId) {
             try {
-                const res = await fetch(`/api/paste/${pasteId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ folder_id: folderId })
-                });
-                
-                if (!res.ok) throw new Error('Failed to move paste');
+                if (!this.api) throw new Error('API client not initialized');
+                await this.api.updatePaste(pasteId, { folder_id: folderId });
                 
                 await this.loadData();
                 // Keep the current paste selected
@@ -1148,18 +1142,11 @@
                     language: language === '' ? null : language
                 };
                 
-                if (this.api) {
-                    this.currentPaste = await this.api.updatePaste(this.currentPaste.id, updates);
-                } else {
-                    // Fallback to direct fetch
-                    const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(updates)
-                    });
-                    if (!res.ok) throw new Error('Failed to save');
-                    this.currentPaste = await res.json();
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
                 }
+                this.currentPaste = await this.api.updatePaste(this.currentPaste.id, updates);
                 this.updatePasteIdDisplay();
                 
                 // Show save indicator
@@ -1233,12 +1220,11 @@
 
         async loadPaste(id) {
             try {
-                const paste = this.api 
-                    ? await this.api.getPaste(id)
-                    : await fetch(`/api/paste/${id}`).then(res => {
-                        if (!res.ok) throw new Error('Failed to load paste');
-                        return res.json();
-                    });
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                const paste = await this.api.getPaste(id);
                 
                 this.currentPaste = paste;
                 this.updatePasteIdDisplay();
@@ -1322,13 +1308,8 @@
             if (!confirm(`Delete "${this.currentPaste.name}"?`)) return;
             
             try {
-                const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
-                    method: 'DELETE'
-                });
-                
-                if (!res.ok) {
-                    throw new Error('Failed to delete');
-                }
+                if (!this.api) throw new Error('API client not initialized');
+                await this.api.deletePaste(this.currentPaste.id);
                 
                 // Only clear if deletion was successful
                 const deletedId = this.currentPaste.id;
