@@ -263,8 +263,6 @@
     // Unified Syntax Highlighter Class
     class SyntaxHighlighter {
         constructor() {
-            this.highlightTimeout = null;
-            this.compiledLanguages = {};
             this.languages = {
                 python: {
                     patterns: [
@@ -301,19 +299,6 @@
             
             // Add more languages with same pattern structure
             this.addLanguagePatterns();
-            // Pre-compile all regex patterns for performance
-            this.compilePatterns();
-        }
-        
-        compilePatterns() {
-            for (const [lang, config] of Object.entries(this.languages)) {
-                this.compiledLanguages[lang] = {
-                    patterns: config.patterns.map(p => ({
-                        ...p,
-                        regex: new RegExp(p.regex.source, p.regex.flags)
-                    }))
-                };
-            }
         }
         
         addLanguagePatterns() {
@@ -475,24 +460,18 @@
         }
         
         highlight(text, language) {
-            try {
-                if (!language || language === 'plaintext' || !this.languages[language]) {
-                    return this.escapeHtml(text);
-                }
-                
-                // Special handling for markdown to process code blocks
-                if (language === 'markdown') {
-                    return this.highlightMarkdown(text);
-                }
-                
-                // Use pre-compiled patterns for performance
-                const patterns = this.compiledLanguages[language].patterns;
-                const tokens = this.tokenize(text, patterns);
-                return this.renderTokens(text, tokens);
-            } catch (e) {
-                console.error(`Highlighting failed for ${language}:`, e);
-                return this.escapeHtml(text); // Fallback to plain text
+            if (!language || language === 'plaintext' || !this.languages[language]) {
+                return this.escapeHtml(text);
             }
+            
+            // Special handling for markdown to process code blocks
+            if (language === 'markdown') {
+                return this.highlightMarkdown(text);
+            }
+            
+            const patterns = this.languages[language].patterns;
+            const tokens = this.tokenize(text, patterns);
+            return this.renderTokens(text, tokens);
         }
         
         highlightMarkdown(text) {
@@ -601,12 +580,6 @@
                 pattern.regex.lastIndex = 0;
                 
                 while ((match = pattern.regex.exec(text)) !== null) {
-                    // Prevent infinite loops on zero-width matches
-                    if (match.index === pattern.regex.lastIndex) {
-                        pattern.regex.lastIndex++;
-                        continue;
-                    }
-                    
                     const group = pattern.group || 0;
                     const matchText = match[group];
                     const fullMatch = match[0];
@@ -798,21 +771,20 @@
                 actionsSpan.className = 'folder-actions';
                 actionsSpan.style.cssText = 'float: right; display: none;';
                 
-                // Create buttons safely to avoid XSS
                 const renameBtn = document.createElement('button');
                 renameBtn.className = 'folder-rename';
-                renameBtn.dataset.folderId = folder.id;
+                renameBtn.setAttribute('data-folder-id', folder.id);
                 renameBtn.title = 'Rename';
                 renameBtn.textContent = '✏️';
+                actionsSpan.appendChild(renameBtn);
                 
                 const deleteBtn = document.createElement('button');
                 deleteBtn.className = 'folder-delete';
-                deleteBtn.dataset.folderId = folder.id;
+                deleteBtn.setAttribute('data-folder-id', folder.id);
                 deleteBtn.title = 'Delete';
                 deleteBtn.textContent = '🗑️';
-                
-                actionsSpan.appendChild(renameBtn);
                 actionsSpan.appendChild(deleteBtn);
+                
                 folderDiv.appendChild(actionsSpan);
                 
                 folderDiv.addEventListener('click', (e) => {
@@ -1409,25 +1381,14 @@
             const charCount = this.editor.value.length;
             document.getElementById('char-count').textContent = `${charCount} chars`;
             
-            // Warn about large pastes
-            if (charCount > 1000000) {  // 1MB
-                this.setStatus('Warning: Large paste may affect performance');
-            }
             
             // Update highlighting
             this.updateHighlighting();
             
-            // Auto-save with stability check
-            const currentLength = this.editor.value.length;
+            // Auto-save
             clearTimeout(this.saveTimeout);
             this.saveTimeout = setTimeout(() => {
-                // Only save if content length hasn't changed (stable)
-                if (this.editor.value.length === currentLength) {
-                    this.savePaste();
-                } else {
-                    // Content still changing, wait longer
-                    this.onEditorChange();
-                }
+                this.savePaste();
             }, 1000);
         }
 
@@ -1479,18 +1440,9 @@
             const text = this.editor.value;
             const highlightLayer = document.getElementById('highlight-layer');
             
-            // Debounce for large files
-            if (text.length > 10000) {
-                clearTimeout(this.highlighter.highlightTimeout);
-                this.highlighter.highlightTimeout = setTimeout(() => {
-                    const highlighted = this.highlighter.highlight(text, lang || '');
-                    highlightLayer.innerHTML = highlighted;
-                }, 100);
-            } else {
-                // Use the unified highlighter
-                const highlighted = this.highlighter.highlight(text, lang || '');
-                highlightLayer.innerHTML = highlighted;
-            }
+            // Use the unified highlighter
+            const highlighted = this.highlighter.highlight(text, lang || '');
+            highlightLayer.innerHTML = highlighted;
         }
         
         escapeHtml(text) {
