@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod folder;
 pub mod paste;
+pub mod transactions;
 
 use crate::error::AppError;
 use sled::Db;
