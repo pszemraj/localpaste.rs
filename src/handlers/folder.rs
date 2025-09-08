@@ -38,7 +38,7 @@ pub async fn delete_folder(
     // Migrate ALL pastes in this folder to unfiled (None)
     // Keep migrating until no more pastes remain in the folder
     loop {
-        let pastes = state.db.pastes.list(100, Some(id.clone()))?;
+        let pastes = state.db.pastes.list(100, 0, Some(id.clone()))?;
         if pastes.is_empty() {
             break;
         }

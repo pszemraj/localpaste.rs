@@ -158,7 +158,8 @@ pub async fn list_pastes(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Vec<Paste>>, AppError> {
     let limit = query.limit.unwrap_or(50).min(100);
-    let pastes = state.db.pastes.list(limit, query.folder_id)?;
+    let offset = query.offset.unwrap_or(0);
+    let pastes = state.db.pastes.list(limit, offset, query.folder_id)?;
     Ok(Json(pastes))
 }
 

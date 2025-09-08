@@ -70,7 +70,12 @@ impl PasteDb {
         Ok(self.tree.remove(id.as_bytes())?.is_some())
     }
 
-    pub fn list(&self, limit: usize, folder_id: Option<String>) -> Result<Vec<Paste>, AppError> {
+    pub fn list(
+        &self,
+        limit: usize,
+        offset: usize,
+        folder_id: Option<String>,
+    ) -> Result<Vec<Paste>, AppError> {
         let mut pastes = Vec::new();
 
         // Collect all pastes (or filtered by folder)
@@ -89,10 +94,11 @@ impl PasteDb {
         // Sort by updated_at in descending order (newest first)
         pastes.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
 
-        // Truncate to limit
-        pastes.truncate(limit);
+        // Apply pagination
+        let start = offset.min(pastes.len());
+        let end = (start + limit).min(pastes.len());
 
-        Ok(pastes)
+        Ok(pastes[start..end].to_vec())
     }
 
     pub fn search(

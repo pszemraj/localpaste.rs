@@ -44,6 +44,7 @@ pub struct SearchQuery {
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
     pub folder_id: Option<String>,
 }
 
