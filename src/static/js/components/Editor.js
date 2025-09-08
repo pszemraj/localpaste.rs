@@ -11,6 +11,10 @@ export class Editor {
         this.textarea = null;
         this.highlightLayer = null;
         this.cleanup = null;
+        this.highlighter = null;
+        
+        // Initialize Web Worker highlighter if available
+        this.initHighlighter();
         
         // Use debounce from utils if available
         if (window.CommonUtils && window.CommonUtils.debounce) {
@@ -22,6 +26,31 @@ export class Editor {
                 clearTimeout(timeout);
                 timeout = setTimeout(() => this.save.apply(this, args), 1000);
             };
+        }
+    }
+
+    async initHighlighter() {
+        try {
+            // Try to use Web Worker highlighter first
+            const { WorkerHighlighter, DebouncedHighlighter } = await import('/js/syntax/worker-highlighter.js');
+            const workerHighlighter = new WorkerHighlighter();
+            this.highlighter = new DebouncedHighlighter(workerHighlighter, 150);
+            console.log('Web Worker highlighter initialized');
+        } catch (error) {
+            console.warn('Failed to load Web Worker highlighter, using fallback:', error);
+            // Fall back to regular highlighter
+            if (window.ModularSyntaxHighlighter) {
+                this.highlighter = {
+                    async highlight(element, text, language) {
+                        const highlighter = new window.ModularSyntaxHighlighter();
+                        const highlighted = highlighter.highlight(text, language);
+                        if (element.innerHTML !== undefined) {
+                            element.innerHTML = highlighted;
+                        }
+                        return highlighted;
+                    }
+                };
+            }
         }
     }
 
@@ -191,19 +220,28 @@ export class Editor {
         }
     }
 
-    updateHighlighting() {
+    async updateHighlighting() {
         if (!this.highlightLayer || !this.textarea) return;
 
         const lang = this.element.querySelector('#paste-language')?.value || '';
         const text = this.textarea.value;
 
-        // Use the modular highlighter if available
-        if (window.ModularSyntaxHighlighter) {
+        // Use Web Worker highlighter if available
+        if (this.highlighter) {
+            try {
+                await this.highlighter.highlight(this.highlightLayer, text, lang);
+            } catch (error) {
+                console.error('Highlighting failed:', error);
+                // Fallback to plain text
+                this.highlightLayer.innerHTML = this.escapeHtml(text);
+            }
+        } else if (window.ModularSyntaxHighlighter) {
+            // Fallback to main thread highlighter
             const highlighter = new window.ModularSyntaxHighlighter();
             const highlighted = highlighter.highlight(text, lang);
             this.highlightLayer.innerHTML = highlighted;
         } else {
-            // Fallback: no highlighting
+            // Final fallback: no highlighting
             this.highlightLayer.innerHTML = this.escapeHtml(text);
         }
     }
@@ -245,6 +283,17 @@ export class Editor {
         if (this.storeUnsubscribe) {
             this.storeUnsubscribe();
             this.storeUnsubscribe = null;
+        }
+        
+        // Clean up highlighter
+        if (this.highlighter) {
+            if (this.highlighter.clearAll) {
+                this.highlighter.clearAll();
+            }
+            if (this.highlighter.highlighter && this.highlighter.highlighter.terminate) {
+                this.highlighter.highlighter.terminate();
+            }
+            this.highlighter = null;
         }
         
         if (this.element) {
