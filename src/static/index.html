@@ -260,10 +260,35 @@
     </div>
 
     <script type="module">
-    // Import error reporting utilities
+    // Import error reporting utilities and virtual scrolling
     import { ConsoleReporter, setupDebugMode } from '/js/utils/logger.js';
+    
     const reporter = new ConsoleReporter();
     setupDebugMode();
+    
+    // Try to import virtual scrolling
+    import('/js/utils/virtual-scroll.js').then(module => {
+        window.VirtualScroller = module.VirtualScroller;
+        window.PaginationController = module.PaginationController;
+        // Send directly to server
+        fetch('/api/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                level: 'info',
+                message: 'Virtual scrolling modules loaded successfully'
+            })
+        });
+    }).catch(err => {
+        fetch('/api/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                level: 'error',
+                message: `Failed to load virtual scrolling: ${err.message}`
+            })
+        });
+    });
     </script>
     
     <script>
@@ -703,6 +728,12 @@
             this.sortOrder = 'date-desc';
             this.highlighter = new SyntaxHighlighter(); // Initialize the highlighter
             
+            // Virtual scrolling setup
+            this.useVirtualScrolling = true; // Enable virtual scrolling
+            this.virtualScroller = null;
+            this.paginationController = null;
+            this.allLoadedPastes = []; // Keep track of all loaded pastes for virtual scrolling
+            
             // Create debounced save function
             this.debouncedSave = debounce(this.savePaste.bind(this), 1000);
             
@@ -724,26 +755,249 @@
         }
 
         async loadData() {
-            await Promise.all([
-                this.loadFolders(),
-                this.loadPastes()
-            ]);
+            await this.loadFolders();
             
-            this.renderTree();
+            if (this.useVirtualScrolling && window.VirtualScroller && window.PaginationController) {
+                // Setup virtual scrolling
+                await this.setupVirtualScrolling();
+            } else {
+                // Fall back to regular loading
+                await this.loadPastes();
+                this.renderTree();
+            }
             
             // Try to restore last opened paste
             const lastPasteId = localStorage.getItem('lastOpenedPaste');
-            if (lastPasteId && this.pastes.find(p => p.id === lastPasteId)) {
-                await this.loadPaste(lastPasteId);
+            if (lastPasteId) {
+                const paste = this.useVirtualScrolling 
+                    ? this.allLoadedPastes.find(p => p.id === lastPasteId)
+                    : this.pastes.find(p => p.id === lastPasteId);
+                    
+                if (paste) {
+                    await this.loadPaste(lastPasteId);
+                }
             } else {
                 // Load first unfiled paste if available
-                const unfiledPastes = this.pastes.filter(p => !p.folder_id);
+                const pastes = this.useVirtualScrolling ? this.allLoadedPastes : this.pastes;
+                const unfiledPastes = pastes.filter(p => !p.folder_id);
                 if (unfiledPastes.length > 0) {
                     await this.loadPaste(unfiledPastes[0].id);
                 }
             }
         }
 
+        async setupVirtualScrolling() {
+            const container = document.getElementById('tree-view');
+            
+            // Setup pagination controller
+            this.paginationController = new window.PaginationController({
+                pageSize: 50,
+                loadPage: async (page, pageSize) => {
+                    const offset = page * pageSize;
+                    const res = await fetch(`/api/pastes?limit=${pageSize}&offset=${offset}`);
+                    if (!res.ok) throw new Error('Failed to load pastes');
+                    const pastes = await res.json();
+                    
+                    // Update our paste tracking
+                    for (const paste of pastes) {
+                        if (!this.allLoadedPastes.find(p => p.id === paste.id)) {
+                            this.allLoadedPastes.push(paste);
+                        }
+                    }
+                    
+                    return pastes;
+                },
+                onDataLoaded: (allPastes) => {
+                    this.pastes = allPastes; // Keep compatibility
+                    this.renderVirtualTree();
+                }
+            });
+            
+            // Load initial data
+            await this.paginationController.loadNextPage();
+            
+            // Check if we need to load more to fill the viewport
+            const containerHeight = container.clientHeight;
+            const estimatedItemHeight = 35;
+            const visibleCount = Math.ceil(containerHeight / estimatedItemHeight);
+            
+            while (this.paginationController.getItems().length < visibleCount * 2 && this.paginationController.hasMore) {
+                await this.paginationController.loadNextPage();
+            }
+        }
+        
+        renderVirtualTree() {
+            const container = document.getElementById('tree-view');
+            
+            // Build tree items for virtual scrolling
+            const treeItems = this.buildVirtualTreeItems();
+            
+            if (!this.virtualScroller) {
+                // Create virtual scroller
+                this.virtualScroller = new window.VirtualScroller({
+                    container: container,
+                    itemHeight: 35,
+                    items: treeItems,
+                    overscan: 5,
+                    renderItem: this.renderVirtualTreeItem.bind(this)
+                });
+            } else {
+                // Update items
+                this.virtualScroller.setItems(treeItems);
+            }
+        }
+        
+        buildVirtualTreeItems() {
+            const items = [];
+            const pastes = this.sortPastes(this.pastes);
+            
+            // Group pastes by folder
+            const unfiledPastes = pastes.filter(p => !p.folder_id);
+            const pastesByFolder = {};
+            
+            pastes.forEach(paste => {
+                if (paste.folder_id) {
+                    if (!pastesByFolder[paste.folder_id]) {
+                        pastesByFolder[paste.folder_id] = [];
+                    }
+                    pastesByFolder[paste.folder_id].push(paste);
+                }
+            });
+            
+            // Add unfiled section
+            if (unfiledPastes.length > 0 || this.folders.length === 0) {
+                items.push({
+                    type: 'folder',
+                    id: 'unfiled',
+                    name: 'Unfiled Pastes',
+                    count: unfiledPastes.length,
+                    expanded: this.expandedFolders.has('unfiled')
+                });
+                
+                if (this.expandedFolders.has('unfiled')) {
+                    unfiledPastes.forEach(paste => {
+                        items.push({
+                            type: 'paste',
+                            data: paste,
+                            folderId: 'unfiled'
+                        });
+                    });
+                }
+            }
+            
+            // Add folders
+            this.folders.forEach(folder => {
+                const folderPastes = pastesByFolder[folder.id] || [];
+                items.push({
+                    type: 'folder',
+                    id: folder.id,
+                    name: folder.name,
+                    count: folderPastes.length,
+                    expanded: this.expandedFolders.has(folder.id)
+                });
+                
+                if (this.expandedFolders.has(folder.id)) {
+                    folderPastes.forEach(paste => {
+                        items.push({
+                            type: 'paste',
+                            data: paste,
+                            folderId: folder.id
+                        });
+                    });
+                }
+            });
+            
+            return items;
+        }
+        
+        renderVirtualTreeItem(item, index) {
+            if (item.type === 'folder') {
+                return this.renderVirtualFolderItem(item);
+            } else {
+                return this.renderVirtualPasteItem(item);
+            }
+        }
+        
+        renderVirtualFolderItem(folder) {
+            const div = document.createElement('div');
+            div.className = 'tree-folder';
+            div.style.cssText = `
+                padding: 8px;
+                cursor: pointer;
+                font-weight: bold;
+                background: var(--folder-bg, #f5f5f5);
+                border-bottom: 1px solid var(--border-color, #e0e0e0);
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                height: 35px;
+            `;
+            
+            const toggle = document.createElement('span');
+            toggle.textContent = folder.expanded ? '▼' : '▶';
+            toggle.style.fontSize = '12px';
+            
+            const name = document.createElement('span');
+            name.textContent = folder.name;
+            
+            const count = document.createElement('span');
+            count.textContent = `(${folder.count})`;
+            count.style.color = '#666';
+            count.style.fontSize = '12px';
+            
+            div.appendChild(toggle);
+            div.appendChild(name);
+            div.appendChild(count);
+            
+            div.addEventListener('click', () => {
+                if (this.expandedFolders.has(folder.id)) {
+                    this.expandedFolders.delete(folder.id);
+                } else {
+                    this.expandedFolders.add(folder.id);
+                }
+                this.renderVirtualTree();
+            });
+            
+            return div;
+        }
+        
+        renderVirtualPasteItem(item) {
+            const paste = item.data;
+            const div = document.createElement('div');
+            const isActive = this.currentPaste && this.currentPaste.id === paste.id;
+            
+            div.className = `tree-paste ${isActive ? 'active' : ''}`;
+            div.style.cssText = `
+                padding: 6px 8px 6px 24px;
+                cursor: pointer;
+                border-bottom: 1px solid var(--border-color, #f0f0f0);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                height: 35px;
+                ${isActive ? 'background: var(--active-bg, #e3f2fd);' : ''}
+            `;
+            
+            const name = document.createElement('span');
+            name.textContent = paste.name || 'Untitled';
+            name.style.flexGrow = '1';
+            
+            const dateStr = new Date(paste.created_at).toLocaleDateString();
+            const date = document.createElement('span');
+            date.textContent = dateStr;
+            date.style.fontSize = '11px';
+            date.style.color = '#999';
+            
+            div.appendChild(name);
+            div.appendChild(date);
+            
+            div.addEventListener('click', () => {
+                this.loadPaste(paste.id);
+            });
+            
+            return div;
+        }
+        
         sortPastes(pastes) {
             const sorted = [...pastes];
             switch(this.sortOrder) {
@@ -1295,8 +1549,35 @@
         }
 
         async searchPastes(query) {
-            await this.loadPastes(query);
-            this.renderTree();
+            if (this.useVirtualScrolling) {
+                // Reset pagination and reload with search query
+                if (this.paginationController) {
+                    // Update the load function to include search
+                    this.paginationController = new window.PaginationController({
+                        pageSize: 50,
+                        loadPage: async (page, pageSize) => {
+                            const offset = page * pageSize;
+                            let url = `/api/pastes?limit=${pageSize}&offset=${offset}`;
+                            if (query) {
+                                url = `/api/search?q=${encodeURIComponent(query)}&limit=${pageSize}`;
+                            }
+                            const res = await fetch(url);
+                            if (!res.ok) throw new Error('Failed to load pastes');
+                            return await res.json();
+                        },
+                        onDataLoaded: (allPastes) => {
+                            this.pastes = allPastes;
+                            this.allLoadedPastes = allPastes;
+                            this.renderVirtualTree();
+                        }
+                    });
+                    
+                    await this.paginationController.loadNextPage();
+                }
+            } else {
+                await this.loadPastes(query);
+                this.renderTree();
+            }
         }
 
         async loadPaste(id) {
@@ -2000,7 +2281,23 @@
 
     // Start the app
     document.addEventListener('DOMContentLoaded', () => {
-        window.app = new LocalPaste();
+        // Wait for modules to load
+        const checkModules = setInterval(() => {
+            if (window.VirtualScroller && window.PaginationController) {
+                clearInterval(checkModules);
+                console.log('Modules ready, starting app with virtual scrolling');
+                window.app = new LocalPaste();
+            }
+        }, 50);
+        
+        // Fallback if modules don't load
+        setTimeout(() => {
+            if (!window.app) {
+                clearInterval(checkModules);
+                console.log('Starting app without virtual scrolling');
+                window.app = new LocalPaste();
+            }
+        }, 1000);
     });
     </script>
 </body>
