@@ -259,452 +259,125 @@
         </main>
     </div>
 
+    <script type="module">
+    // Import error reporting utilities
+    import { ConsoleReporter, setupDebugMode } from '/js/utils/logger.js';
+    import { ApiClient } from '/js/api/client.js';
+    
+    const reporter = new ConsoleReporter();
+    setupDebugMode();
+    
+    // Make API client available globally
+    window.ApiClient = ApiClient;
+    
+    // Try to import syntax highlighter
+    import('/js/syntax/highlighter.js').then(module => {
+        window.ModularSyntaxHighlighter = module.SyntaxHighlighter;
+        console.log('Modular SyntaxHighlighter loaded successfully');
+        // Set highlighter on the app if it exists
+        if (window.app && !window.app.highlighter) {
+            window.app.highlighter = new module.SyntaxHighlighter();
+        }
+    }).catch(err => {
+        console.error('Failed to load modular syntax highlighter:', err.message || err.toString(), err);
+    });
+    
+    // Try to import virtual scrolling
+    import('/js/utils/virtual-scroll.js').then(module => {
+        window.VirtualScroller = module.VirtualScroller;
+        window.PaginationController = module.PaginationController;
+        console.log('Virtual scrolling loaded successfully');
+    }).catch(err => {
+        console.error('Failed to load virtual scrolling:', err);
+    });
+    
+    // Import editor module
+    import('/js/editor/editor.js').then(module => {
+        window.ModularEditor = module.Editor;
+        console.log('Modular Editor loaded successfully');
+    }).catch(err => {
+        console.error('Failed to load modular editor:', err);
+    });
+    
+    // Import common utilities
+    import('/js/utils/common.js').then(module => {
+        window.CommonUtils = module;
+        console.log('Common utilities loaded successfully');
+    }).catch(err => {
+        console.error('Failed to load common utilities:', err);
+    });
+    
+    // Import DOM utilities
+    import('/js/utils/dom-helpers.js').then(module => {
+        window.DOMUtils = module;
+        console.log('DOM utilities loaded successfully');
+    }).catch(err => {
+        console.error('Failed to load DOM utilities:', err);
+    });
+    
+    // Import error handling utilities
+    import('/js/utils/error-handler.js').then(module => {
+        window.ErrorBoundary = module.ErrorBoundary;
+        window.ErrorHandler = module.ErrorHandler;
+        console.log('Error handling utilities loaded successfully');
+    }).catch(err => {
+        console.error('Failed to load error handling utilities:', err);
+    });
+    </script>
+    
     <script>
-    // Unified Syntax Highlighter Class
-    class SyntaxHighlighter {
-        constructor() {
-            this.languages = {
-                python: {
-                    patterns: [
-                        { regex: /#.*$/gm, type: 'comment' },
-                        { regex: /"""[\s\S]*?"""|'''[\s\S]*?'''/g, type: 'string' },
-                        { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                        { regex: /\b(?:def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, type: 'keyword' },
-                        { regex: /\b\d+(?:\.\d+)?\b/g, type: 'number' },
-                        { regex: /\b([a-zA-Z_]\w*)\s*(?=\()/g, type: 'function', group: 1 }
-                    ]
-                },
-                javascript: {
-                    patterns: [
-                        { regex: /\/\/.*$/gm, type: 'comment' },
-                        { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                        { regex: /(['"`])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                        { regex: /\b(?:const|let|var|function|class|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|async|await|import|export|from|default|new|this|super|extends|static|typeof|instanceof|in|of|delete|void|yield|null|undefined|true|false)\b/g, type: 'keyword' },
-                        { regex: /\b\d+(?:\.\d+)?\b/g, type: 'number' },
-                        { regex: /\b([a-zA-Z_$][\w$]*)\s*(?=\()/g, type: 'function', group: 1 }
-                    ]
-                },
-                shell: {
-                    patterns: [
-                        { regex: /#.*$/gm, type: 'comment' },
-                        { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                        { regex: /\$[a-zA-Z_]\w*|\${[^}]+}/g, type: 'property' },
-                        { regex: /\b(?:if|then|else|elif|fi|for|while|do|done|case|esac|function|return|break|continue|exit|export|source|alias|echo|cd|ls|cp|mv|rm|mkdir|touch|cat|grep|sed|awk|find|chmod|chown|sudo|apt|yum|npm|pip|git|docker|kubectl)\b/g, type: 'keyword' }
-                    ]
-                },
-                plaintext: {
-                    patterns: []
-                }
-            };
-            
-            // Add more languages with same pattern structure
-            this.addLanguagePatterns();
-        }
-        
-        addLanguagePatterns() {
-            // Markdown with enhanced code block support
-            this.languages.markdown = {
-                patterns: [
-                    { regex: /```[\s\S]*?```/g, type: 'code-block', special: true },
-                    { regex: /^#{1,6}\s+.*$/gm, type: 'heading' },
-                    { regex: /\*\*[^*]+\*\*/g, type: 'bold' },
-                    { regex: /__[^_]+__/g, type: 'bold' },
-                    { regex: /\*[^*\s][^*]*\*/g, type: 'italic' },
-                    { regex: /_[^_\s][^_]*_/g, type: 'italic' },
-                    { regex: /`[^`]+`/g, type: 'code' },
-                    { regex: /\[[^\]]+\]\([^)]+\)/g, type: 'link' },
-                    { regex: /^\s*[*+-]\s/gm, type: 'list-marker' },
-                    { regex: /^\s*\d+\.\s/gm, type: 'list-marker' },
-                    { regex: /^>\s.*$/gm, type: 'blockquote' }
-                ]
-            };
-            
-            // Additional language patterns
-            this.languages.cpp = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:class|public|private|protected|virtual|override|namespace|using|if|else|for|while|do|switch|case|break|continue|return|try|catch|throw|new|delete|this|nullptr|const|static|inline|typedef|typename|template|auto|void|int|char|bool|float|double|long|short|unsigned|signed|struct|enum|union)\b/g, type: 'keyword' },
-                    { regex: /^#\s*\w+/gm, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?[fFlL]?\b/g, type: 'number' },
-                    { regex: /\b(?:std::\w+|string|vector|map|set|cout|cin|endl)\b/g, type: 'type' }
-                ]
-            };
-            
-            
-            this.languages.c = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:if|else|for|while|do|switch|case|break|continue|return|goto|typedef|struct|enum|union|const|static|extern|inline|sizeof|void|int|char|float|double|long|short|unsigned|signed|NULL)\b/g, type: 'keyword' },
-                    { regex: /^#\s*\w+/gm, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?[fFlL]?\b/g, type: 'number' },
-                    { regex: /\b([a-zA-Z_]\w*)\s*(?=\()/g, type: 'function', group: 1 }
-                ]
-            };
-            
-            this.languages.java = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:public|private|protected|class|interface|extends|implements|abstract|final|static|void|int|char|boolean|float|double|long|short|byte|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|throws|new|this|super|import|package|null|true|false)\b/g, type: 'keyword' },
-                    { regex: /@\w+/g, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?[fFlLdD]?\b/g, type: 'number' },
-                    { regex: /\b(?:String|Integer|Double|Float|Boolean|ArrayList|HashMap|List|Map|Set)\b/g, type: 'type' }
-                ]
-            };
-            
-            this.languages.csharp = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\$"[^"]*"/g, type: 'string' },
-                    { regex: /\b(?:public|private|protected|internal|class|interface|struct|enum|abstract|sealed|static|void|int|char|bool|float|double|decimal|long|short|byte|string|if|else|for|foreach|while|do|switch|case|break|continue|return|try|catch|finally|throw|using|namespace|new|this|base|null|true|false|var|async|await|override|virtual|const|readonly)\b/g, type: 'keyword' },
-                    { regex: /\b\d+(?:\.\d+)?[fFmMdD]?\b/g, type: 'number' },
-                    { regex: /\b(?:String|Int32|Double|Float|Boolean|List|Dictionary|Task)\b/g, type: 'type' }
-                ]
-            };
-            
-            this.languages.go = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"`])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:package|import|func|var|const|type|struct|interface|map|chan|if|else|for|range|switch|case|break|continue|return|go|defer|select|fallthrough|default|nil|true|false)\b/g, type: 'keyword' },
-                    { regex: /\b(?:bool|string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|complex64|complex128|byte|rune|error)\b/g, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?\b/g, type: 'number' },
-                    { regex: /\b([a-zA-Z_]\w*)\s*(?=\()/g, type: 'function', group: 1 }
-                ]
-            };
-            
-            this.languages.rust = {
-                patterns: [
-                    { regex: /\/\/.*$/gm, type: 'comment' },
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:fn|let|mut|const|if|else|match|for|while|loop|break|continue|return|use|mod|pub|struct|enum|trait|impl|self|Self|super|crate|async|await|move|ref|dyn|static|extern|unsafe|where|as|in|type)\b/g, type: 'keyword' },
-                    { regex: /\b(?:bool|char|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize|f32|f64|str|String|Vec|Option|Result|Box|Rc|Arc|HashMap|HashSet)\b/g, type: 'type' },
-                    { regex: /'[a-z]\w*/g, type: 'type' },
-                    { regex: /\b\d+(?:\.\d+)?(?:[iu](?:8|16|32|64|128|size))?\b/g, type: 'number' },
-                    { regex: /\b([a-zA-Z_]\w*)!/g, type: 'function', group: 1 }
-                ]
-            };
-            
-            this.languages.html = this.languages.xml = {
-                patterns: [
-                    { regex: /<!--[\s\S]*?-->/g, type: 'comment' },
-                    { regex: /<(\/?[a-zA-Z][\w-]*)/g, type: 'tag', group: 1 },
-                    { regex: /\s([a-zA-Z][\w-]*)=/g, type: 'attribute', group: 1 },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' }
-                ]
-            };
-            
-            this.languages.css = {
-                patterns: [
-                    { regex: /\/\*[\s\S]*?\*\//g, type: 'comment' },
-                    { regex: /([.#]?[\w-:]+)(?=\s*\{)/g, type: 'tag' },
-                    { regex: /([\w-]+)(?=\s*:)/g, type: 'property' },
-                    { regex: /#[0-9a-fA-F]{3,8}\b/g, type: 'number' },
-                    { regex: /\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|deg|s|ms)?\b/g, type: 'number' },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /!important/g, type: 'keyword' }
-                ]
-            };
-            
-            this.languages.json = {
-                patterns: [
-                    { regex: /"([^"]+)"\s*:/g, type: 'property', group: 1, wrap: '"' },
-                    { regex: /:\s*"([^"]*)"/g, type: 'string', group: 1, wrap: '"' },
-                    { regex: /\b-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, type: 'number' },
-                    { regex: /\b(?:true|false|null)\b/g, type: 'keyword' }
-                ]
-            };
-            
-            this.languages.yaml = {
-                patterns: [
-                    { regex: /#.*$/gm, type: 'comment' },
-                    { regex: /^(\s*)([\w-]+):/gm, type: 'property', group: 2 },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:true|false|yes|no|null)\b/g, type: 'keyword' },
-                    { regex: /\b\d+(?:\.\d+)?\b/g, type: 'number' }
-                ]
-            };
-            
-            this.languages.toml = {
-                patterns: [
-                    { regex: /#.*$/gm, type: 'comment' },
-                    { regex: /^\[([\w.]+)\]/gm, type: 'type', group: 1 },
-                    { regex: /^\[\[([\w.]+)\]\]/gm, type: 'type', group: 1 },
-                    { regex: /^(\s*)([\w-]+)\s*=/gm, type: 'property', group: 2 },
-                    { regex: /(['"])(?:[^\\]|\\.)*?\1/g, type: 'string' },
-                    { regex: /\b(?:true|false)\b/g, type: 'keyword' },
-                    { regex: /\b-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, type: 'number' },
-                    { regex: /\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?/g, type: 'number' }
-                ]
-            };
-            
-            this.languages.latex = {
-                patterns: [
-                    { regex: /%.*$/gm, type: 'comment' },
-                    { regex: /\\[a-zA-Z]+/g, type: 'keyword' },
-                    { regex: /\$[^$]+\$|\$\$[\s\S]*?\$\$/g, type: 'string' },
-                    { regex: /\\begin\{(\w+)\}/g, type: 'type', group: 1 },
-                    { regex: /\\end\{(\w+)\}/g, type: 'type', group: 1 },
-                    { regex: /[{}]/g, type: 'operator' }
-                ]
-            };
-        }
-        
-        highlight(text, language) {
-            // Skip highlighting for large files to prevent freezing
-            if (text.length > 100000) {  // 100KB limit
-                console.log('File too large for syntax highlighting');
-                return this.escapeHtml(text);
-            }
-            
-            if (!language || language === 'plaintext' || !this.languages[language]) {
-                return this.escapeHtml(text);
-            }
-            
-            // Special handling for markdown to process code blocks
-            if (language === 'markdown') {
-                return this.highlightMarkdown(text);
-            }
-            
-            const patterns = this.languages[language].patterns;
-            const tokens = this.tokenize(text, patterns);
-            return this.renderTokens(text, tokens);
-        }
-        
-        highlightMarkdown(text) {
-            // Simple markdown highlighting - NO syntax highlighting inside code
-            const lines = text.split('\n');
-            const result = [];
-            let inCodeBlock = false;
-            let codeBlockFence = '';
-            
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                
-                // Check for code block fence (opening or closing)
-                const fenceMatch = line.match(/^(\s{0,3})(```+|~~~+)(\w[\w+-]*)?(\s*)$/);
-                
-                if (fenceMatch) {
-                    const fence = fenceMatch[2];
-                    
-                    if (!inCodeBlock) {
-                        // Opening fence
-                        inCodeBlock = true;
-                        codeBlockFence = fence;
-                        result.push(`<span class="hl-code-block">${this.escapeHtml(line)}</span>`);
-                    } else if (fence.startsWith(codeBlockFence[0]) && fence.length >= codeBlockFence.length) {
-                        // Closing fence
-                        result.push(`<span class="hl-code-block">${this.escapeHtml(line)}</span>`);
-                        inCodeBlock = false;
-                        codeBlockFence = '';
-                    } else {
-                        // Inside code block, treat as code
-                        result.push(this.escapeHtml(line));
-                    }
-                } else if (inCodeBlock) {
-                    // Inside code block - wrap in span for coloring
-                    result.push(`<span class="hl-code-block">${this.escapeHtml(line)}</span>`);
-                } else {
-                    // Outside code block - apply markdown formatting
-                    let processed = line;
-                    
-                    // First handle inline code to protect it from other replacements
-                    const codeSegments = [];
-                    let codeIndex = 0;
-                    processed = processed.replace(/`([^`]+)`/g, (match, code) => {
-                        const placeholder = `__CODE_INLINE_${codeIndex}__`;
-                        codeSegments[codeIndex] = `<span class="hl-code">${this.escapeHtml(match)}</span>`;
-                        codeIndex++;
-                        return placeholder;
-                    });
-                    
-                    // Now escape HTML
-                    processed = this.escapeHtml(processed);
-                    
-                    // Headers (must be at line start)
-                    if (/^#{1,6}\s+/.test(line)) {
-                        processed = `<span class="hl-heading">${processed}</span>`;
-                    }
-                    // Blockquotes
-                    else if (/^>\s/.test(line)) {
-                        processed = `<span class="hl-blockquote">${processed}</span>`;
-                    }
-                    // List markers
-                    else if (/^(\s*)[*+-]\s/.test(line) || /^(\s*)\d+\.\s/.test(line)) {
-                        processed = processed.replace(/^(\s*)([*+-]|\d+\.)(\s)/, '$1<span class="hl-list-marker">$2</span>$3');
-                    }
-                    
-                    // Links [text](url)
-                    processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, 
-                        '<span class="hl-link">[$1]($2)</span>');
-                    
-                    // Bold **text** or __text__
-                    processed = processed.replace(/\*\*([^*]+)\*\*/g, 
-                        '<span class="hl-bold">**$1**</span>');
-                    processed = processed.replace(/__([^_]+)__/g, 
-                        '<span class="hl-bold">__$1__</span>');
-                    
-                    // Italic *text* or _text_ (avoid middle of words)
-                    processed = processed.replace(/(\s|^)\*([^*\s][^*]*)\*(\s|$)/g, 
-                        '$1<span class="hl-italic">*$2*</span>$3');
-                    processed = processed.replace(/(\s|^)_([^_\s][^_]*)_(\s|$)/g, 
-                        '$1<span class="hl-italic">_$2_</span>$3');
-                    
-                    // Restore inline code
-                    for (let j = 0; j < codeIndex; j++) {
-                        processed = processed.replace(`__CODE_INLINE_${j}__`, codeSegments[j]);
-                    }
-                    
-                    result.push(processed);
-                }
-                
-                // Add newline except for last line
-                if (i < lines.length - 1) {
-                    result.push('\n');
-                }
-            }
-            
-            // No need to close anything since we're using spans
-            
-            return result.join('');
-        }
-        
-        tokenize(text, patterns) {
-            const tokens = [];
-            
-            for (const pattern of patterns) {
-                let match;
-                pattern.regex.lastIndex = 0;
-                
-                while ((match = pattern.regex.exec(text)) !== null) {
-                    const group = pattern.group || 0;
-                    const matchText = match[group];
-                    const fullMatch = match[0];
-                    
-                    let start = match.index;
-                    if (group > 0) {
-                        const groupIndex = fullMatch.indexOf(matchText);
-                        if (groupIndex !== -1) {
-                            start += groupIndex;
-                        }
-                    }
-                    
-                    tokens.push({
-                        start: start,
-                        end: start + matchText.length,
-                        type: pattern.type
-                    });
-                }
-            }
-            
-            return this.removeOverlaps(tokens);
-        }
-        
-        removeOverlaps(tokens) {
-            tokens.sort((a, b) => a.start - b.start || b.end - a.end);
-            const filtered = [];
-            let lastEnd = 0;
-            
-            for (const token of tokens) {
-                if (token.start >= lastEnd) {
-                    filtered.push(token);
-                    lastEnd = token.end;
-                }
-            }
-            
-            return filtered;
-        }
-        
-        renderTokens(text, tokens) {
-            let result = '';
-            let pos = 0;
-            
-            for (const token of tokens) {
-                if (pos < token.start) {
-                    result += this.escapeHtml(text.substring(pos, token.start));
-                }
-                
-                const tokenText = text.substring(token.start, token.end);
-                result += `<span class="hl-${token.type}">${this.escapeHtml(tokenText)}</span>`;
-                pos = token.end;
-            }
-            
-            if (pos < text.length) {
-                result += this.escapeHtml(text.substring(pos));
-            }
-            
-            return result;
-        }
-        
-        escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    }
-    
-    // Utility function for proper debouncing
-    function debounce(fn, ms) {
-        let timeout;
-        return function(...args) {
-            clearTimeout(timeout);
-            timeout = setTimeout(() => fn.apply(this, args), ms);
-        };
-    }
-    
-    // Error boundary for catching and handling errors gracefully
-    class ErrorBoundary {
-        constructor(container, fallback) {
-            this.container = container;
-            this.fallback = fallback || '<div class="error">An error occurred. Please refresh the page.</div>';
-        }
-
-        wrap(fn) {
-            return async (...args) => {
-                try {
-                    return await fn(...args);
-                } catch (error) {
-                    console.error('Error boundary caught:', error);
-                    // Only update container if it's a critical error
-                    if (error.critical) {
-                        this.container.innerHTML = this.fallback;
-                    }
-                    // Re-throw for debugging
-                    throw error;
-                }
-            };
-        }
-    }
+    // Application code
     
     class LocalPaste {
         constructor() {
             this.currentPaste = null;
             this.pastes = [];
             this.folders = [];
-            this.editor = document.getElementById('editor');
+            this.editorElement = document.getElementById('editor');
+            this.editor = null; // Will be initialized later
             this.draggedPaste = null;
             this.expandedFolders = new Set(['unfiled']); // Start with unfiled expanded
             this.sortOrder = 'date-desc';
-            this.highlighter = new SyntaxHighlighter(); // Initialize the highlighter
+            // Syntax highlighter will be set when module loads
+            this.highlighter = null;
+            
+            // API client
+            this.api = window.ApiClient ? new window.ApiClient() : null;
+            
+            // State store
+            this.store = window.Store ? new window.Store() : null;
+            
+            // Track event listeners for cleanup
+            this.eventListeners = [];
+            
+            // Virtual scrolling setup
+            this.useVirtualScrolling = true; // Enable virtual scrolling
+            this.virtualScroller = null;
+            this.paginationController = null;
+            this.allLoadedPastes = []; // Keep track of all loaded pastes for virtual scrolling
             
             // Create debounced save function
-            this.debouncedSave = debounce(this.savePaste.bind(this), 1000);
+            this.debouncedSave = this.debounce(() => this.savePaste(), 1000);
             
             console.log('LocalPaste.rs: Initializing...');
             this.init();
         }
+        
+        debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
 
         async init() {
             try {
+                this.setupEditor();
                 this.bindEvents();
                 await this.loadData();
                 this.updatePasteIdDisplay(); // Initialize ID display
@@ -715,28 +388,285 @@
                 this.setStatus('Error: ' + err.message);
             }
         }
+        
+        setupEditor() {
+            // Set up editor with modular version if available
+            if (window.ModularEditor) {
+                this.editor = new window.ModularEditor(this.editorElement, {
+                    highlightLayer: document.getElementById('highlight-layer'),
+                    onInput: (value) => {
+                        this.onEditorChange();
+                        const langSelect = document.getElementById('paste-language');
+                        if (!langSelect.value) {
+                            this.detectLanguage();
+                        }
+                    },
+                    onCursorChange: (position) => {
+                        this.updateCursorPosition(position);
+                    }
+                });
+                console.log('Using modular editor');
+            } else {
+                console.warn('Editor module not loaded, using basic editor');
+                this.editor = this.editorElement; // Fallback to direct element
+            }
+        }
 
         async loadData() {
-            await Promise.all([
-                this.loadFolders(),
-                this.loadPastes()
-            ]);
+            await this.loadFolders();
             
-            this.renderTree();
+            if (this.useVirtualScrolling && window.VirtualScroller && window.PaginationController) {
+                // Setup virtual scrolling
+                await this.setupVirtualScrolling();
+            } else {
+                // Fall back to regular loading
+                await this.loadPastes();
+                this.renderTree();
+            }
+            
+            // Update store with loaded data
+            if (this.store && window.ActionTypes) {
+                this.store.dispatch({ 
+                    type: window.ActionTypes.SET_PASTES, 
+                    payload: this.pastes 
+                });
+                this.store.dispatch({ 
+                    type: window.ActionTypes.SET_FOLDERS, 
+                    payload: this.folders 
+                });
+            }
             
             // Try to restore last opened paste
             const lastPasteId = localStorage.getItem('lastOpenedPaste');
-            if (lastPasteId && this.pastes.find(p => p.id === lastPasteId)) {
-                await this.loadPaste(lastPasteId);
+            if (lastPasteId) {
+                const paste = this.useVirtualScrolling 
+                    ? this.allLoadedPastes.find(p => p.id === lastPasteId)
+                    : this.pastes.find(p => p.id === lastPasteId);
+                    
+                if (paste) {
+                    await this.loadPaste(lastPasteId);
+                }
             } else {
                 // Load first unfiled paste if available
-                const unfiledPastes = this.pastes.filter(p => !p.folder_id);
+                const pastes = this.useVirtualScrolling ? this.allLoadedPastes : this.pastes;
+                const unfiledPastes = pastes.filter(p => !p.folder_id);
                 if (unfiledPastes.length > 0) {
                     await this.loadPaste(unfiledPastes[0].id);
                 }
             }
         }
 
+        async setupVirtualScrolling() {
+            const container = document.getElementById('tree-view');
+            
+            // Setup pagination controller
+            this.paginationController = new window.PaginationController({
+                pageSize: 50,
+                loadPage: async (page, pageSize) => {
+                    const offset = page * pageSize;
+                    if (!this.api) throw new Error('API client not initialized');
+                    const pastes = await this.api.listPastes(pageSize, offset);
+                    
+                    // Update our paste tracking
+                    for (const paste of pastes) {
+                        if (!this.allLoadedPastes.find(p => p.id === paste.id)) {
+                            this.allLoadedPastes.push(paste);
+                        }
+                    }
+                    
+                    return pastes;
+                },
+                onDataLoaded: (allPastes) => {
+                    this.pastes = allPastes; // Keep compatibility
+                    this.renderVirtualTree();
+                }
+            });
+            
+            // Load initial data
+            await this.paginationController.loadNextPage();
+            
+            // Check if we need to load more to fill the viewport
+            const containerHeight = container.clientHeight;
+            const estimatedItemHeight = 35;
+            const visibleCount = Math.ceil(containerHeight / estimatedItemHeight);
+            
+            while (this.paginationController.getItems().length < visibleCount * 2 && this.paginationController.hasMore) {
+                await this.paginationController.loadNextPage();
+            }
+        }
+        
+        renderVirtualTree() {
+            const container = document.getElementById('tree-view');
+            
+            // Build tree items for virtual scrolling
+            const treeItems = this.buildVirtualTreeItems();
+            
+            if (!this.virtualScroller) {
+                // Create virtual scroller
+                this.virtualScroller = new window.VirtualScroller({
+                    container: container,
+                    itemHeight: 35,
+                    items: treeItems,
+                    overscan: 5,
+                    renderItem: this.renderVirtualTreeItem.bind(this)
+                });
+            } else {
+                // Update items
+                this.virtualScroller.setItems(treeItems);
+            }
+        }
+        
+        buildVirtualTreeItems() {
+            const items = [];
+            const pastes = this.sortPastes(this.pastes);
+            
+            // Group pastes by folder
+            const unfiledPastes = pastes.filter(p => !p.folder_id);
+            const pastesByFolder = {};
+            
+            pastes.forEach(paste => {
+                if (paste.folder_id) {
+                    if (!pastesByFolder[paste.folder_id]) {
+                        pastesByFolder[paste.folder_id] = [];
+                    }
+                    pastesByFolder[paste.folder_id].push(paste);
+                }
+            });
+            
+            // Add unfiled section
+            if (unfiledPastes.length > 0 || this.folders.length === 0) {
+                items.push({
+                    type: 'folder',
+                    id: 'unfiled',
+                    name: 'Unfiled Pastes',
+                    count: unfiledPastes.length,
+                    expanded: this.expandedFolders.has('unfiled')
+                });
+                
+                if (this.expandedFolders.has('unfiled')) {
+                    unfiledPastes.forEach(paste => {
+                        items.push({
+                            type: 'paste',
+                            data: paste,
+                            folderId: 'unfiled'
+                        });
+                    });
+                }
+            }
+            
+            // Add folders
+            this.folders.forEach(folder => {
+                const folderPastes = pastesByFolder[folder.id] || [];
+                items.push({
+                    type: 'folder',
+                    id: folder.id,
+                    name: folder.name,
+                    count: folderPastes.length,
+                    expanded: this.expandedFolders.has(folder.id)
+                });
+                
+                if (this.expandedFolders.has(folder.id)) {
+                    folderPastes.forEach(paste => {
+                        items.push({
+                            type: 'paste',
+                            data: paste,
+                            folderId: folder.id
+                        });
+                    });
+                }
+            });
+            
+            return items;
+        }
+        
+        renderVirtualTreeItem(item, index) {
+            if (item.type === 'folder') {
+                return this.renderVirtualFolderItem(item);
+            } else {
+                return this.renderVirtualPasteItem(item);
+            }
+        }
+        
+        renderVirtualFolderItem(folder) {
+            const div = document.createElement('div');
+            div.className = 'tree-folder';
+            div.style.cssText = `
+                padding: 8px;
+                cursor: pointer;
+                font-weight: bold;
+                background: var(--folder-bg, #f5f5f5);
+                border-bottom: 1px solid var(--border-color, #e0e0e0);
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                height: 35px;
+            `;
+            
+            const toggle = document.createElement('span');
+            toggle.textContent = folder.expanded ? '▼' : '▶';
+            toggle.style.fontSize = '12px';
+            
+            const name = document.createElement('span');
+            name.textContent = folder.name;
+            
+            const count = document.createElement('span');
+            count.textContent = `(${folder.count})`;
+            count.style.color = '#666';
+            count.style.fontSize = '12px';
+            
+            div.appendChild(toggle);
+            div.appendChild(name);
+            div.appendChild(count);
+            
+            div.addEventListener('click', () => {
+                if (this.expandedFolders.has(folder.id)) {
+                    this.expandedFolders.delete(folder.id);
+                } else {
+                    this.expandedFolders.add(folder.id);
+                }
+                this.renderVirtualTree();
+            });
+            
+            return div;
+        }
+        
+        renderVirtualPasteItem(item) {
+            const paste = item.data;
+            const div = document.createElement('div');
+            const isActive = this.currentPaste && this.currentPaste.id === paste.id;
+            
+            div.className = `tree-paste ${isActive ? 'active' : ''}`;
+            div.style.cssText = `
+                padding: 6px 8px 6px 24px;
+                cursor: pointer;
+                border-bottom: 1px solid var(--border-color, #f0f0f0);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                height: 35px;
+                ${isActive ? 'background: var(--active-bg, #e3f2fd);' : ''}
+            `;
+            
+            const name = document.createElement('span');
+            name.textContent = paste.name || 'Untitled';
+            name.style.flexGrow = '1';
+            
+            const dateStr = new Date(paste.created_at).toLocaleDateString();
+            const date = document.createElement('span');
+            date.textContent = dateStr;
+            date.style.fontSize = '11px';
+            date.style.color = '#999';
+            
+            div.appendChild(name);
+            div.appendChild(date);
+            
+            div.addEventListener('click', () => {
+                this.loadPaste(paste.id);
+            });
+            
+            return div;
+        }
+        
         sortPastes(pastes) {
             const sorted = [...pastes];
             switch(this.sortOrder) {
@@ -984,13 +914,8 @@
 
         async movePasteToFolder(pasteId, folderId) {
             try {
-                const res = await fetch(`/api/paste/${pasteId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ folder_id: folderId })
-                });
-                
-                if (!res.ok) throw new Error('Failed to move paste');
+                if (!this.api) throw new Error('API client not initialized');
+                await this.api.updatePaste(pasteId, { folder_id: folderId });
                 
                 await this.loadData();
                 // Keep the current paste selected
@@ -1005,23 +930,23 @@
         }
 
         bindEvents() {
-            // Editor events
-            this.editor.addEventListener('input', () => {
-                this.onEditorChange(); // This already calls updateHighlighting
-                // Only detect language if auto-detect is selected
-                const langSelect = document.getElementById('paste-language');
-                if (!langSelect.value) {
-                    this.detectLanguage();
-                }
-                // REMOVED: this.updateHighlighting(); - Already called in onEditorChange
-            });
-            
-            // Sync scroll between editor and highlight layer
-            this.editor.addEventListener('scroll', () => {
-                document.getElementById('highlight-layer').scrollTop = this.editor.scrollTop;
-            });
-            this.editor.addEventListener('keyup', () => this.updateCursorPosition());
-            this.editor.addEventListener('click', () => this.updateCursorPosition());
+            // Editor events are now handled by the Editor module
+            // Only add events if using fallback (direct element)
+            if (this.editor === this.editorElement) {
+                this.editor.addEventListener('input', () => {
+                    this.onEditorChange();
+                    const langSelect = document.getElementById('paste-language');
+                    if (!langSelect.value) {
+                        this.detectLanguage();
+                    }
+                });
+                
+                this.editor.addEventListener('scroll', () => {
+                    document.getElementById('highlight-layer').scrollTop = this.editor.scrollTop;
+                });
+                this.editor.addEventListener('keyup', () => this.updateCursorPosition());
+                this.editor.addEventListener('click', () => this.updateCursorPosition());
+            }
             
             // New paste
             document.getElementById('new-paste').addEventListener('click', () => this.createNewPaste());
@@ -1102,7 +1027,7 @@
             const langSelect = document.getElementById('paste-language');
             if (langSelect.value) return;
             
-            const text = this.editor.value;
+            const text = this.getEditorValue();
             let language = '';
             
             // Shell/Bash
@@ -1134,19 +1059,24 @@
 
         async createNewPaste() {
             try {
-                const res = await fetch('/api/paste', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: '' })
-                });
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                const paste = await this.api.createPaste({ content: '' });
                 
-                if (!res.ok) throw new Error('Failed to create paste');
+                // Update store
+                if (this.store && window.ActionTypes) {
+                    this.store.dispatch({
+                        type: window.ActionTypes.ADD_PASTE,
+                        payload: paste
+                    });
+                }
                 
-                const paste = await res.json();
                 await this.loadData();
                 await this.loadPaste(paste.id);
                 this.setStatus('New paste created');
-                this.editor.focus();
+                this.focusEditor();
             } catch (err) {
                 console.error('Error creating paste:', err);
                 this.setStatus('Failed to create paste');
@@ -1158,13 +1088,11 @@
             if (!name) return;
             
             try {
-                const res = await fetch('/api/folder', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name })
-                });
-                
-                if (!res.ok) throw new Error('Failed to create folder');
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                const folder = await this.api.createFolder({ name });
                 
                 await this.loadData();
                 this.setStatus('Folder created');
@@ -1179,13 +1107,11 @@
             if (!newName || newName === currentName) return;
             
             try {
-                const res = await fetch(`/api/folder/${folderId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: newName })
-                });
-                
-                if (!res.ok) throw new Error('Failed to rename folder');
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                await this.api.updateFolder(folderId, { name: newName });
                 
                 await this.loadData();
                 this.setStatus('Folder renamed');
@@ -1201,11 +1127,11 @@
             }
             
             try {
-                const res = await fetch(`/api/folder/${folderId}`, {
-                    method: 'DELETE'
-                });
-                
-                if (!res.ok) throw new Error('Failed to delete folder');
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                await this.api.deleteFolder(folderId);
                 
                 await this.loadData();
                 this.setStatus('Folder deleted, pastes moved to Unfiled');
@@ -1217,10 +1143,12 @@
 
         async loadFolders() {
             try {
-                const res = await fetch('/api/folders');
-                if (!res.ok) throw new Error('Failed to load folders');
-                
-                this.folders = await res.json();
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    this.folders = [];
+                    return;
+                }
+                this.folders = await this.api.listFolders();
             } catch (err) {
                 console.error('Error loading folders:', err);
                 this.folders = [];
@@ -1231,24 +1159,30 @@
             if (!this.currentPaste) return;
             
             try {
-                const content = this.editor.value;
+                const content = this.getEditorValue();
                 const name = document.getElementById('paste-name').value || this.currentPaste.name;
                 const language = document.getElementById('paste-language').value || null;
                 
-                const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        content,
-                        name,
-                        language: language === '' ? null : language
-                    })
-                });
+                const updates = {
+                    content,
+                    name,
+                    language: language === '' ? null : language
+                };
                 
-                if (!res.ok) throw new Error('Failed to save');
-                
-                this.currentPaste = await res.json();
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                this.currentPaste = await this.api.updatePaste(this.currentPaste.id, updates);
                 this.updatePasteIdDisplay();
+                
+                // Update store
+                if (this.store && window.ActionTypes) {
+                    this.store.dispatch({
+                        type: window.ActionTypes.UPDATE_PASTE,
+                        payload: this.currentPaste
+                    });
+                }
                 
                 // Show save indicator
                 const saveStatus = document.getElementById('save-status');
@@ -1288,24 +1222,65 @@
         }
 
         async searchPastes(query) {
-            await this.loadPastes(query);
-            this.renderTree();
+            if (this.useVirtualScrolling) {
+                // Reset pagination and reload with search query
+                if (this.paginationController) {
+                    // Update the load function to include search
+                    this.paginationController = new window.PaginationController({
+                        pageSize: 50,
+                        loadPage: async (page, pageSize) => {
+                            const offset = page * pageSize;
+                            let url = `/api/pastes?limit=${pageSize}&offset=${offset}`;
+                            if (query) {
+                                url = `/api/search?q=${encodeURIComponent(query)}&limit=${pageSize}`;
+                            }
+                            const res = await fetch(url);
+                            if (!res.ok) throw new Error('Failed to load pastes');
+                            return await res.json();
+                        },
+                        onDataLoaded: (allPastes) => {
+                            this.pastes = allPastes;
+                            this.allLoadedPastes = allPastes;
+                            this.renderVirtualTree();
+                        }
+                    });
+                    
+                    await this.paginationController.loadNextPage();
+                }
+            } else {
+                await this.loadPastes(query);
+                this.renderTree();
+            }
         }
 
         async loadPaste(id) {
             try {
-                const res = await fetch(`/api/paste/${id}`);
-                if (!res.ok) throw new Error('Failed to load paste');
+                if (!this.api) {
+                    console.error('API client not initialized');
+                    throw new Error('API client not available');
+                }
+                const paste = await this.api.getPaste(id);
                 
-                const paste = await res.json();
                 this.currentPaste = paste;
                 this.updatePasteIdDisplay();
+                
+                // Update store
+                if (this.store && window.ActionTypes) {
+                    this.store.dispatch({
+                        type: window.ActionTypes.SET_CURRENT_PASTE,
+                        payload: paste.id
+                    });
+                    this.store.dispatch({
+                        type: window.ActionTypes.UPDATE_PASTE,
+                        payload: paste
+                    });
+                }
                 
                 // Remember this paste for next time
                 localStorage.setItem('lastOpenedPaste', id);
                 
                 // Update editor
-                this.editor.value = paste.content;
+                this.setEditorValue(paste.content);
                 
                 // Update UI
                 document.getElementById('paste-name').value = paste.name;
@@ -1361,7 +1336,7 @@
             }
             
             // Create blob and download
-            const blob = new Blob([this.editor.value], { type: 'text/plain' });
+            const blob = new Blob([this.getEditorValue()], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -1380,25 +1355,36 @@
             if (!confirm(`Delete "${this.currentPaste.name}"?`)) return;
             
             try {
-                const res = await fetch(`/api/paste/${this.currentPaste.id}`, {
-                    method: 'DELETE'
-                });
-                
-                if (!res.ok) {
-                    throw new Error('Failed to delete');
-                }
+                if (!this.api) throw new Error('API client not initialized');
+                await this.api.deletePaste(this.currentPaste.id);
                 
                 // Only clear if deletion was successful
                 const deletedId = this.currentPaste.id;
+                
+                // Update store
+                if (this.store && window.ActionTypes) {
+                    this.store.dispatch({
+                        type: window.ActionTypes.DELETE_PASTE,
+                        payload: deletedId
+                    });
+                }
                 if (localStorage.getItem('lastOpenedPaste') === deletedId) {
                     localStorage.removeItem('lastOpenedPaste');
                 }
                 
                 this.currentPaste = null;
-                this.editor.value = '';
+                this.clearEditor();
                 this.updatePasteIdDisplay();
                 
-                await this.loadData();
+                // Reload data without trying to load the deleted paste
+                await this.loadPastes();
+                await this.loadFolders();
+                this.renderTree();
+                
+                // Load first available paste if any exist
+                if (this.pastes.length > 0) {
+                    await this.loadPaste(this.pastes[0].id);
+                }
                 
                 this.setStatus('Paste deleted');
             } catch (err) {
@@ -1410,7 +1396,7 @@
         onEditorChange() {
             if (!this.currentPaste) return;
             
-            const charCount = this.editor.value.length;
+            const charCount = this.getEditorCharCount();
             document.getElementById('char-count').textContent = `${charCount} chars`;
             
             // Update highlighting
@@ -1420,14 +1406,58 @@
             this.debouncedSave();
         }
 
-        updateCursorPosition() {
-            const pos = this.editor.selectionStart;
-            const text = this.editor.value.substring(0, pos);
-            const lines = text.split('\n');
-            const line = lines.length;
-            const col = lines[lines.length - 1].length + 1;
-            
-            document.getElementById('cursor-position').textContent = `Ln ${line}, Col ${col}`;
+        updateCursorPosition(position) {
+            // If position is provided by editor module
+            if (position) {
+                document.getElementById('cursor-position').textContent = `Ln ${position.line}, Col ${position.col}`;
+            } else if (this.editor === this.editorElement) {
+                // Fallback for direct element
+                const pos = this.editor.selectionStart;
+                const text = this.editor.value.substring(0, pos);
+                const lines = text.split('\n');
+                const line = lines.length;
+                const col = lines[lines.length - 1].length + 1;
+                document.getElementById('cursor-position').textContent = `Ln ${line}, Col ${col}`;
+            }
+        }
+        
+        // Helper methods for editor operations
+        getEditorValue() {
+            if (this.editor && this.editor.getValue) {
+                return this.editor.getValue();
+            }
+            return this.editor.value;
+        }
+        
+        setEditorValue(value) {
+            if (this.editor && this.editor.setValue) {
+                this.editor.setValue(value);
+            } else {
+                this.editor.value = value;
+            }
+        }
+        
+        clearEditor() {
+            if (this.editor && this.editor.clear) {
+                this.editor.clear();
+            } else {
+                this.editor.value = '';
+            }
+        }
+        
+        focusEditor() {
+            if (this.editor && this.editor.focus) {
+                this.editor.focus();
+            } else {
+                this.editor.focus();
+            }
+        }
+        
+        getEditorCharCount() {
+            if (this.editor && this.editor.getCharCount) {
+                return this.editor.getCharCount();
+            }
+            return this.editor.value.length;
         }
 
         updatePasteIdDisplay() {
@@ -1465,7 +1495,7 @@
         
         updateHighlighting() {
             const lang = document.getElementById('paste-language').value;
-            const text = this.editor.value;
+            const text = this.getEditorValue();
             const highlightLayer = document.getElementById('highlight-layer');
             
             // Use the unified highlighter
@@ -1473,527 +1503,59 @@
             highlightLayer.innerHTML = highlighted;
         }
         
-        escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+        // Helper to add event listeners with tracking
+        addEventListener(element, event, handler, options) {
+            element.addEventListener(event, handler, options);
+            this.eventListeners.push({ element, event, handler, options });
         }
         
-        // Safely highlight text - escapes HTML then applies highlighting
-        safeHighlight(text, highlightFn) {
-            // First escape all HTML
-            const escaped = this.escapeHtml(text);
-            
-            // Apply highlighting - but now we need to work with escaped entities
-            // The highlight function needs to match escaped patterns
-            return highlightFn.call(this, escaped);
-        }
-        
-        highlightPython(text) {
-            // Build a list of all tokens with their positions to avoid overlapping replacements
-            const tokens = [];
-            
-            // Match all patterns and collect tokens
-            // Comments
-            text.replace(/(#.*$)/gm, (match, p1, offset) => {
-                tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-comment">${match}</span>`});
-                return match;
-            });
-            
-            // Triple quoted strings
-            text.replace(/('''[\s\S]*?'''|"""[\s\S]*?""")/g, (match, p1, offset) => {
-                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
-                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-string">${match}</span>`});
+        // Clean up all event listeners
+        cleanup() {
+            console.log('Cleaning up LocalPaste event listeners...');
+            this.eventListeners.forEach(({ element, event, handler, options }) => {
+                try {
+                    element.removeEventListener(event, handler, options);
+                } catch (e) {
+                    console.warn('Failed to remove listener:', e);
                 }
-                return match;
             });
+            this.eventListeners = [];
             
-            // Regular strings
-            text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, (match, p1, p2, offset) => {
-                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
-                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-string">${match}</span>`});
-                }
-                return match;
-            });
-            
-            // Keywords
-            text.replace(/\b(def|class|import|from|as|if|elif|else|for|while|break|continue|return|try|except|finally|with|lambda|pass|raise|yield|assert|del|global|nonlocal|in|is|not|and|or|True|False|None|self|async|await)\b/g, (match, p1, offset) => {
-                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
-                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-keyword">${match}</span>`});
-                }
-                return match;
-            });
-            
-            // Numbers
-            text.replace(/\b\d+(\.\d+)?\b/g, (match, p1, offset) => {
-                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
-                    tokens.push({start: offset, end: offset + match.length, html: `<span class="hl-number">${match}</span>`});
-                }
-                return match;
-            });
-            
-            // Functions
-            text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, (match, p1, offset) => {
-                if (!tokens.some(t => offset >= t.start && offset < t.end)) {
-                    tokens.push({start: offset, end: offset + p1.length, html: `<span class="hl-function">${p1}</span>`});
-                }
-                return match;
-            });
-            
-            // Sort tokens by position
-            tokens.sort((a, b) => a.start - b.start);
-            
-            // Build the final result
-            let result = '';
-            let lastEnd = 0;
-            
-            for (const token of tokens) {
-                // Add text before token
-                result += text.substring(lastEnd, token.start);
-                // Add highlighted token
-                result += token.html;
-                lastEnd = token.end;
+            // Clean up store subscription if exists
+            if (this.storeUnsubscribe) {
+                this.storeUnsubscribe();
             }
             
-            // Add remaining text
-            result += text.substring(lastEnd);
-            
-            return result;
-        }
-        
-        highlightJavaScript(text) {
-            // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-            // Strings
-            text = text.replace(/(['"`])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-            // Keywords
-            text = text.replace(/\b(const|let|var|function|class|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|async|await|import|export|from|default|new|this|super|extends|static|typeof|instanceof|in|of|delete|void|yield|null|undefined|true|false)\b/g, '<span class="hl-keyword">$1</span>');
-            // Numbers
-            text = text.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
-            // Functions
-            text = text.replace(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
-            return text;
-        }
-        
-        highlightCpp(text) {
-            // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-            // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-            // Keywords
-            text = text.replace(/\b(class|public|private|protected|virtual|override|namespace|using|if|else|for|while|do|switch|case|break|continue|return|try|catch|throw|new|delete|this|nullptr|const|static|inline|typedef|typename|template|auto|void|int|char|bool|float|double|long|short|unsigned|signed|struct|enum|union)\b/g, '<span class="hl-keyword">$1</span>');
-            // Preprocessor
-            text = text.replace(/^#\s*\w+/gm, '<span class="hl-type">$&</span>');
-            // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[fFlL]?\b/g, '<span class="hl-number">$&</span>');
-            // STL types
-            text = text.replace(/\b(std::\w+|string|vector|map|set|cout|cin|endl)\b/g, '<span class="hl-type">$1</span>');
-            return text;
-        }
-        
-        highlightC(text) {
-            // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-            // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-            // Keywords
-            text = text.replace(/\b(if|else|for|while|do|switch|case|break|continue|return|goto|typedef|struct|enum|union|const|static|extern|inline|sizeof|void|int|char|float|double|long|short|unsigned|signed|NULL)\b/g, '<span class="hl-keyword">$1</span>');
-            // Preprocessor
-            text = text.replace(/^#\s*\w+/gm, '<span class="hl-type">$&</span>');
-            // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[fFlL]?\b/g, '<span class="hl-number">$&</span>');
-            // Functions
-            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
-            return text;
-        }
-        
-        highlightJava(text) {
-            // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-            // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-            // Keywords
-            text = text.replace(/\b(public|private|protected|class|interface|extends|implements|abstract|final|static|void|int|char|boolean|float|double|long|short|byte|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|throws|new|this|super|import|package|null|true|false)\b/g, '<span class="hl-keyword">$1</span>');
-            // Annotations
-            text = text.replace(/@\w+/g, '<span class="hl-type">$&</span>');
-            // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[fFlLdD]?\b/g, '<span class="hl-number">$&</span>');
-            // Types
-            text = text.replace(/\b(String|Integer|Double|Float|Boolean|ArrayList|HashMap|List|Map|Set)\b/g, '<span class="hl-type">$1</span>');
-            return text;
-        }
-        
-        highlightCSharp(text) {
-            // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-            // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-            // Interpolated strings
-            text = text.replace(/\$"[^"]*"/g, '<span class="hl-string">$&</span>');
-            // Keywords
-            text = text.replace(/\b(public|private|protected|internal|class|interface|struct|enum|abstract|sealed|static|void|int|char|bool|float|double|decimal|long|short|byte|string|if|else|for|foreach|while|do|switch|case|break|continue|return|try|catch|finally|throw|using|namespace|new|this|base|null|true|false|var|async|await|override|virtual|const|readonly)\b/g, '<span class="hl-keyword">$1</span>');
-            // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[fFmMdD]?\b/g, '<span class="hl-number">$&</span>');
-            // Types
-            text = text.replace(/\b(String|Int32|Double|Float|Boolean|List|Dictionary|Task)\b/g, '<span class="hl-type">$1</span>');
-            return text;
-        }
-        
-        highlightGo(text) {
-            // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-            // Strings
-            text = text.replace(/(['"`])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-            // Keywords
-            text = text.replace(/\b(package|import|func|var|const|type|struct|interface|map|chan|if|else|for|range|switch|case|break|continue|return|go|defer|select|fallthrough|default|nil|true|false)\b/g, '<span class="hl-keyword">$1</span>');
-            // Types
-            text = text.replace(/\b(bool|string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|complex64|complex128|byte|rune|error)\b/g, '<span class="hl-type">$1</span>');
-            // Numbers
-            text = text.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
-            // Functions
-            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g, '<span class="hl-function">$1</span>');
-            return text;
-        }
-        
-        highlightShell(text) {
-            // First escape HTML to prevent injection
-            const escaped = this.escapeHtml(text);
-            const tokens = [];
-            
-            // Comments
-            escaped.replace(/(#.*$)/gm, (match, p1, offset) => {
-                tokens.push({start: offset, end: offset + match.length, type: 'comment'});
-                return match;
-            });
-            
-            // Strings (single and double quotes)
-            escaped.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, (match, p1, p2, offset) => {
-                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
-                if (!overlaps) {
-                    tokens.push({start: offset, end: offset + match.length, type: 'string'});
-                }
-                return match;
-            });
-            
-            // Variables
-            escaped.replace(/\$[a-zA-Z_][a-zA-Z0-9_]*|\${[^}]+}/g, (match, offset) => {
-                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
-                if (!overlaps) {
-                    tokens.push({start: offset, end: offset + match.length, type: 'property'});
-                }
-                return match;
-            });
-            
-            // Keywords and built-in commands
-            escaped.replace(/\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|return|break|continue|exit|export|source|alias|echo|cd|ls|cp|mv|rm|mkdir|touch|cat|grep|sed|awk|find|chmod|chown|sudo|apt|yum|npm|pip|git|docker|kubectl)\b/g, (match, p1, offset) => {
-                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
-                if (!overlaps) {
-                    tokens.push({start: offset, end: offset + match.length, type: 'keyword'});
-                }
-                return match;
-            });
-            
-            // Operators
-            escaped.replace(/(&amp;&amp;|\|\||&lt;&lt;|&gt;&gt;|&amp;|\||;)/g, (match, p1, offset) => {
-                const overlaps = tokens.some(t => offset >= t.start && offset < t.end);
-                if (!overlaps) {
-                    tokens.push({start: offset, end: offset + match.length, type: 'operator'});
-                }
-                return match;
-            });
-            
-            // Sort tokens by position
-            tokens.sort((a, b) => a.start - b.start);
-            
-            // Build highlighted text
-            let highlighted = '';
-            let lastIndex = 0;
-            
-            for (const token of tokens) {
-                highlighted += escaped.substring(lastIndex, token.start);
-                const tokenText = escaped.substring(token.start, token.end);
-                const className = 'hl-' + token.type;
-                highlighted += `<span class="${className}">${tokenText}</span>`;
-                lastIndex = token.end;
+            // Clean up virtual scroller if exists
+            if (this.virtualScroller && this.virtualScroller.destroy) {
+                this.virtualScroller.destroy();
             }
-            
-            highlighted += escaped.substring(lastIndex);
-            return highlighted;
-        }
-        
-        highlightRust(text) {
-            // Comments
-            text = text.replace(/(\/\/.*$)/gm, '<span class="hl-comment">$1</span>');
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-            // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-            // Keywords
-            text = text.replace(/\b(fn|let|mut|const|if|else|match|for|while|loop|break|continue|return|use|mod|pub|struct|enum|trait|impl|self|Self|super|crate|async|await|move|ref|dyn|static|extern|unsafe|where|as|in|type|impl|trait)\b/g, '<span class="hl-keyword">$1</span>');
-            // Types
-            text = text.replace(/\b(bool|char|i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize|f32|f64|str|String|Vec|Option|Result|Box|Rc|Arc|HashMap|HashSet)\b/g, '<span class="hl-type">$1</span>');
-            // Lifetimes
-            text = text.replace(/'[a-z][a-z0-9_]*/g, '<span class="hl-type">$&</span>');
-            // Numbers
-            text = text.replace(/\b\d+(\.\d+)?[iu]?(8|16|32|64|128|size)?\b/g, '<span class="hl-number">$&</span>');
-            // Macros
-            text = text.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)!/g, '<span class="hl-function">$1!</span>');
-            return text;
-        }
-        
-        highlightJSON(text) {
-            // Property names
-            text = text.replace(/"([^"]+)"\s*:/g, '<span class="hl-property">"$1"</span>:');
-            // String values
-            text = text.replace(/:[\s]*"([^"]*)"/g, ': <span class="hl-string">"$1"</span>');
-            // Numbers
-            text = text.replace(/\b-?\d+(\.\d+)?([eE][+-]?\d+)?\b/g, '<span class="hl-number">$&</span>');
-            // Booleans and null
-            text = text.replace(/\b(true|false|null)\b/g, '<span class="hl-keyword">$1</span>');
-            return text;
-        }
-        
-        highlightYAML(text) {
-            // Don't escape first - work with raw text
-            let result = '';
-            let inString = false;
-            let inComment = false;
-            
-            const lines = text.split('\n');
-            for (let line of lines) {
-                let processedLine = '';
-                inComment = false;
-                
-                // Check for comment
-                const commentIndex = line.indexOf('#');
-                if (commentIndex !== -1 && !inString) {
-                    processedLine = this.escapeHtml(line.substring(0, commentIndex));
-                    processedLine += '<span class="hl-comment">' + this.escapeHtml(line.substring(commentIndex)) + '</span>';
-                } else {
-                    // Simple key highlighting
-                    const match = line.match(/^(\s*)([\w-]+):(.*)/);
-                    if (match) {
-                        processedLine = this.escapeHtml(match[1]) + '<span class="hl-property">' + this.escapeHtml(match[2]) + '</span>:' + this.escapeHtml(match[3]);
-                    } else {
-                        processedLine = this.escapeHtml(line);
-                    }
-                    // Highlight booleans and numbers in the value part
-                    processedLine = processedLine.replace(/\b(true|false|yes|no|null)\b/g, '<span class="hl-keyword">$1</span>');
-                    processedLine = processedLine.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-number">$&</span>');
-                }
-                
-                result += processedLine + '\n';
-            }
-            return result;
-        }
-        
-        highlightTOML(text) {
-            // Comments
-            text = text.replace(/(#.*$)/gm, '<span class="hl-comment">$1</span>');
-            // Section headers
-            text = text.replace(/^\[([\w.]+)\]/gm, '[<span class="hl-type">$1</span>]');
-            text = text.replace(/^\[\[([\w.]+)\]\]/gm, '[[<span class="hl-type">$1</span>]]');
-            // Keys
-            text = text.replace(/^(\s*)([\w-]+)\s*=/gm, '$1<span class="hl-property">$2</span> =');
-            // Strings
-            text = text.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-            // Booleans
-            text = text.replace(/\b(true|false)\b/g, '<span class="hl-keyword">$1</span>');
-            // Numbers
-            text = text.replace(/\b-?\d+(\.\d+)?([eE][+-]?\d+)?\b/g, '<span class="hl-number">$&</span>');
-            // Dates
-            text = text.replace(/\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?/g, '<span class="hl-number">$&</span>');
-            return text;
-        }
-        
-        highlightMarkdown(text) {
-            // Code blocks first
-            text = text.replace(/```[\s\S]*?```/g, '<span class="hl-code">$&</span>');
-            // Headers
-            text = text.replace(/^(#{1,6})\s+(.*)$/gm, '<span class="hl-heading">$1 $2</span>');
-            // Bold
-            text = text.replace(/\*\*([^*]+)\*\*/g, '<span class="hl-bold">**$1**</span>');
-            text = text.replace(/__([^_]+)__/g, '<span class="hl-bold">__$1__</span>');
-            // Italic
-            text = text.replace(/\*([^*\s][^*]*)\*/g, '<span class="hl-italic">*$1*</span>');
-            text = text.replace(/_([^_\s][^_]*)_/g, '<span class="hl-italic">_$1_</span>');
-            // Inline code
-            text = text.replace(/`([^`]+)`/g, '<span class="hl-code">`$1`</span>');
-            // Links
-            text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '[<span class="hl-string">$1</span>](<span class="hl-attribute">$2</span>)');
-            // Lists
-            text = text.replace(/^(\s*[*+-])\s/gm, '<span class="hl-operator">$1</span> ');
-            text = text.replace(/^(\s*\d+\.)\s/gm, '<span class="hl-operator">$1</span> ');
-            // Blockquotes
-            text = text.replace(/^>\s(.*)$/gm, '<span class="hl-comment">$&</span>');
-            return text;
-        }
-        
-        highlightHTML(text) {
-            // Process character by character to avoid entity issues
-            let result = '';
-            let inTag = false;
-            let inString = false;
-            let inComment = false;
-            let stringChar = '';
-            let buffer = '';
-            
-            for (let i = 0; i < text.length; i++) {
-                const char = text[i];
-                const next = text[i + 1];
-                const prev = text[i - 1];
-                
-                // Check for comment start
-                if (!inComment && !inString && char === '<' && text.substr(i, 4) === '<!--') {
-                    if (buffer) {
-                        result += this.escapeHtml(buffer);
-                        buffer = '';
-                    }
-                    inComment = true;
-                    result += '<span class="hl-comment">&lt;!--';
-                    i += 3;
-                    continue;
-                }
-                
-                // Check for comment end
-                if (inComment && char === '-' && text.substr(i, 3) === '-->') {
-                    result += '--&gt;</span>';
-                    inComment = false;
-                    i += 2;
-                    continue;
-                }
-                
-                // If in comment, just escape and add
-                if (inComment) {
-                    result += this.escapeHtml(char);
-                    continue;
-                }
-                
-                // Start of tag
-                if (!inTag && !inString && char === '<') {
-                    if (buffer) {
-                        result += this.escapeHtml(buffer);
-                        buffer = '';
-                    }
-                    inTag = true;
-                    result += '&lt;';
-                    continue;
-                }
-                
-                // End of tag
-                if (inTag && !inString && char === '>') {
-                    // Process the buffer as tag content
-                    if (buffer) {
-                        // Check if it's a closing tag
-                        if (buffer[0] === '/') {
-                            result += '/<span class="hl-tag">' + this.escapeHtml(buffer.substring(1)) + '</span>';
-                        } else {
-                            // Split tag name and attributes
-                            const spaceIndex = buffer.indexOf(' ');
-                            if (spaceIndex === -1) {
-                                // Just tag name
-                                result += '<span class="hl-tag">' + this.escapeHtml(buffer) + '</span>';
-                            } else {
-                                // Tag name and attributes
-                                const tagName = buffer.substring(0, spaceIndex);
-                                let attrs = buffer.substring(spaceIndex);
-                                result += '<span class="hl-tag">' + this.escapeHtml(tagName) + '</span>';
-                                
-                                // Simple attribute highlighting
-                                attrs = this.escapeHtml(attrs);
-                                // Highlight attribute names
-                                attrs = attrs.replace(/(\w+)=/g, '<span class="hl-attribute">$1</span>=');
-                                // Highlight strings
-                                attrs = attrs.replace(/="([^"]*)"/g, '="<span class="hl-string">$1</span>"');
-                                attrs = attrs.replace(/='([^']*)'/g, '=\'<span class="hl-string">$1</span>\'');
-                                result += attrs;
-                            }
-                        }
-                        buffer = '';
-                    }
-                    result += '&gt;';
-                    inTag = false;
-                    continue;
-                }
-                
-                // String handling in tags
-                if (inTag && !inString && (char === '"' || char === "'")) {
-                    inString = true;
-                    stringChar = char;
-                    buffer += char;
-                    continue;
-                }
-                
-                if (inTag && inString && char === stringChar && prev !== '\\') {
-                    inString = false;
-                    stringChar = '';
-                    buffer += char;
-                    continue;
-                }
-                
-                // Add to buffer
-                buffer += char;
-            }
-            
-            // Process remaining buffer
-            if (buffer) {
-                result += this.escapeHtml(buffer);
-            }
-            
-            return result;
-        }
-        
-        highlightXML(text) {
-            // Same as HTML
-            return this.highlightHTML(text);
-        }
-        
-        highlightCSS(text) {
-            // Comments
-            text = text.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-            // Selectors
-            text = text.replace(/([.#]?[\w-:]+)(\s*,?\s*)(?={)/g, '<span class="hl-tag">$1</span>$2');
-            // Properties
-            text = text.replace(/([\w-]+)\s*:/g, '<span class="hl-property">$1</span>:');
-            // Values
-            text = text.replace(/:\s*([^;{}]+)/g, function(match, value) {
-                // Highlight colors
-                value = value.replace(/(#[0-9a-fA-F]{3,8}|\b(?:rgb|rgba|hsl|hsla)\([^)]+\))/g, '<span class="hl-number">$1</span>');
-                // Highlight numbers with units
-                value = value.replace(/\b\d+(\.\d+)?(px|em|rem|%|vh|vw|deg|s|ms)?\b/g, '<span class="hl-number">$&</span>');
-                // Highlight strings
-                value = value.replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, '<span class="hl-string">$&</span>');
-                return ': ' + value;
-            });
-            // Important
-            text = text.replace(/!important/g, '<span class="hl-keyword">$&</span>');
-            return text;
-        }
-        
-        highlightLaTeX(text) {
-            // Comments
-            text = text.replace(/(%.*$)/gm, '<span class="hl-comment">$1</span>');
-            // Commands
-            text = text.replace(/(\\[a-zA-Z]+)/g, '<span class="hl-keyword">$1</span>');
-            // Math mode
-            text = text.replace(/(\$[^$]+\$|\$\$[\s\S]*?\$\$)/g, '<span class="hl-string">$1</span>');
-            // Environments
-            text = text.replace(/(\\begin\{)(\w+)(\})/g, '$1<span class="hl-type">$2</span>$3');
-            text = text.replace(/(\\end\{)(\w+)(\})/g, '$1<span class="hl-type">$2</span>$3');
-            // Curly braces
-            text = text.replace(/[{}]/g, '<span class="hl-operator">$&</span>');
-            return text;
         }
     }
 
     // Start the app
     document.addEventListener('DOMContentLoaded', () => {
-        window.app = new LocalPaste();
+        // Wait for modules to load
+        const checkModules = setInterval(() => {
+            if (window.VirtualScroller && window.PaginationController && window.ModularSyntaxHighlighter) {
+                clearInterval(checkModules);
+                console.log('All modules ready, starting app');
+                window.app = new LocalPaste();
+                // Set the highlighter since app was created after module loaded
+                if (!window.app.highlighter) {
+                    window.app.highlighter = new window.ModularSyntaxHighlighter();
+                }
+            }
+        }, 50);
+        
+        // Fallback if modules don't load
+        setTimeout(() => {
+            if (!window.app) {
+                clearInterval(checkModules);
+                console.error('Some modules failed to load, app may have limited functionality');
+                window.app = new LocalPaste();
+            }
+        }, 1000);
     });
     </script>
 </body>
