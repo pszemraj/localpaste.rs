@@ -180,4 +180,3 @@ pub fn generate_name() -> String {
     let noun = NOUNS[rng.gen_range(0..NOUNS.len())];
     format!("{}-{}", adj, noun)
 }
-

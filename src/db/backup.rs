@@ -63,6 +63,4 @@ impl BackupManager {
             Ok(String::new())
         }
     }
-
-
 }
