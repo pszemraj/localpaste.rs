@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalPaste.rs</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+    /* Tree view styles */
+    .tree-view {
+        padding: 0;
+        list-style: none;
+        user-select: none;
+    }
+    
+    .tree-item {
+        margin: 2px 0;
+    }
+    
+    .tree-folder {
+        font-weight: 600;
+        cursor: pointer;
+        padding: 6px 8px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        transition: all 0.2s;
+    }
+    
+    .tree-folder:hover {
+        background: var(--bg-tertiary);
+    }
+    
+    .tree-folder.drag-over {
+        background: rgba(229, 112, 0, 0.2);
+        border: 1px dashed var(--accent);
+    }
+    
+    .tree-folder-icon {
+        transition: transform 0.2s;
+        display: inline-block;
+    }
+    
+    .tree-folder.expanded .tree-folder-icon {
+        transform: rotate(90deg);
+    }
+    
+    .tree-contents {
+        margin-left: 20px;
+        display: none;
+        list-style: none;
+        padding: 0;
+    }
+    
+    .tree-folder.expanded + .tree-contents {
+        display: block;
+    }
+    
+    .folder-actions button {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        padding: 2px 4px;
+        font-size: 14px;
+        opacity: 0.7;
+        transition: opacity 0.2s;
+    }
+    
+    .folder-actions button:hover {
+        opacity: 1;
+    }
+    
+    .tree-paste {
+        padding: 4px 8px;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    
+    .tree-paste:hover {
+        background: var(--bg-tertiary);
+    }
+    
+    .tree-paste.active {
+        background: var(--accent);
+        color: white;
+    }
+    
+    .tree-paste.dragging {
+        opacity: 0.5;
+    }
+    
+    .paste-date {
+        font-size: 11px;
+        opacity: 0.6;
+        margin-left: auto;
+    }
+    
+    /* Auto-save indicator styles */
+    .editor-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-secondary);
+        font-size: 12px;
+    }
+    
+    #auto-save-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: var(--bg-secondary);
+        transition: all 0.3s;
+    }
+    
+    #auto-save-indicator.saving {
+        background: rgba(229, 112, 0, 0.2);
+        color: var(--accent);
+    }
+    
+    #auto-save-indicator.saved {
+        background: rgba(0, 200, 100, 0.2);
+        color: rgb(0, 200, 100);
+    }
+    
+    /* Highlight layer styles */
+    .highlight-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        pointer-events: none;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        font-size: 14px;
+        line-height: 1.5;
+        padding: 12px;
+        color: transparent;
+        z-index: 1;
+    }
+    
+    #editor {
+        position: relative;
+        z-index: 2;
+        background: transparent;
+        color: var(--text-primary);
+        caret-color: var(--accent);
+    }
+    
+    .editor-container {
+        position: relative;
+        background: var(--bg-secondary);
+    }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <aside class="sidebar">
+            <div class="logo"><h1>LocalPaste.rs</h1></div>
+            <div class="quick-actions">
+                <button id="new-paste-btn" class="btn-primary" title="New Paste (Ctrl+N)">+ New</button>
+                <button id="new-folder-btn" class="btn-secondary" title="New Folder">+ Folder</button>
+            </div>
+            <div id="search-container" class="search-container">
+                <!-- SearchBar component will mount here -->
+            </div>
+            <div style="padding: 8px; margin-bottom: 8px;">
+                <select id="sort-order" style="width: 100%; background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;" title="Sort pastes">
+                    <option value="date-desc">⬇ Newest first</option>
+                    <option value="date-asc">⬆ Oldest first</option>
+                    <option value="name-asc">⬆ Name (A-Z)</option>
+                    <option value="name-desc">⬇ Name (Z-A)</option>
+                </select>
+            </div>
+            
+            <!-- Single tree view for everything -->
+            <div class="pastes" style="flex: 1; overflow-y: auto; padding: 0 8px;">
+                <ul id="file-tree" class="tree-view">
+                    <!-- TreeView component will mount here -->
+                </ul>
+            </div>
+        </aside>
+        <main class="main-content">
+            <div id="editor-container">
+                <!-- Editor component will mount here -->
+            </div>
+            <footer id="status-bar" class="status-bar">
+                <!-- StatusBar component will mount here -->
+            </footer>
+        </main>
+    </div>
+    
+    <!-- Settings modal placeholder -->
+    <div id="settings-modal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <h2>Settings</h2>
+            <button id="settings-close">Close</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { LocalPaste } from '/js/LocalPaste.js';
+        
+        // Initialize the application
+        window.addEventListener('DOMContentLoaded', async () => {
+            console.log('🚀 Starting LocalPaste (Modular Version)...');
+            
+            try {
+                const app = new LocalPaste();
+                await app.init();
+                
+                // Make app available globally for debugging
+                window.app = app;
+                
+                console.log('✅ LocalPaste initialized successfully');
+            } catch (error) {
+                console.error('❌ Failed to initialize LocalPaste:', error);
+                document.getElementById('app').innerHTML = `
+                    <div style="padding: 20px; color: red;">
+                        <h2>Failed to initialize LocalPaste</h2>
+                        <pre>${error.message}</pre>
+                        <p>Check the console for more details.</p>
+                    </div>
+                `;
+            }
+        });
+        
+        // Add keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Ctrl+N - New paste
+            if (e.ctrlKey && e.key === 'n') {
+                e.preventDefault();
+                document.getElementById('new-paste-btn')?.click();
+            }
+            
+            // Ctrl+K - Focus search
+            if (e.ctrlKey && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('search-input')?.focus();
+            }
+            
+            // Ctrl+D - Delete current paste
+            if (e.ctrlKey && e.key === 'd') {
+                e.preventDefault();
+                if (window.app?.components?.editor?.currentPasteId) {
+                    window.app.deletePaste(window.app.components.editor.currentPasteId);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
