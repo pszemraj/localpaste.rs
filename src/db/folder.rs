@@ -12,6 +12,10 @@ impl FolderDb {
         Ok(Self { tree })
     }
 
+    pub(crate) fn tree(&self) -> &sled::Tree {
+        &self.tree
+    }
+
     pub fn create(&self, folder: &Folder) -> Result<(), AppError> {
         let key = folder.id.as_bytes();
         let value = bincode::serialize(folder)?;
@@ -56,20 +60,5 @@ impl FolderDb {
         }
         folders.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(folders)
-    }
-
-    pub fn update_count(&self, id: &str, delta: i32) -> Result<(), AppError> {
-        self.tree.fetch_and_update(id.as_bytes(), |old| {
-            old.and_then(|bytes| {
-                let mut folder: Folder = bincode::deserialize(bytes).ok()?;
-                if delta > 0 {
-                    folder.paste_count = folder.paste_count.saturating_add(delta as usize);
-                } else {
-                    folder.paste_count = folder.paste_count.saturating_sub((-delta) as usize);
-                }
-                bincode::serialize(&folder).ok()
-            })
-        })?;
-        Ok(())
     }
 }

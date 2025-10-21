@@ -12,6 +12,10 @@ impl PasteDb {
         Ok(Self { tree })
     }
 
+    pub(crate) fn tree(&self) -> &sled::Tree {
+        &self.tree
+    }
+
     pub fn create(&self, paste: &Paste) -> Result<(), AppError> {
         let key = paste.id.as_bytes();
         let value = bincode::serialize(paste)?;
@@ -31,31 +35,7 @@ impl PasteDb {
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
             old.and_then(|bytes| {
                 let mut paste: Paste = bincode::deserialize(bytes).ok()?;
-
-                if let Some(content) = &update.content {
-                    paste.content = content.clone();
-                    paste.is_markdown =
-                        paste.content.contains("```") || paste.content.contains('#');
-                }
-                if let Some(name) = &update.name {
-                    paste.name = name.clone();
-                }
-                if update.language.is_some() {
-                    paste.language = update.language.clone();
-                }
-                // Normalize folder_id: empty string becomes None
-                if let Some(ref fid) = update.folder_id {
-                    paste.folder_id = if fid.is_empty() {
-                        None
-                    } else {
-                        Some(fid.clone())
-                    };
-                }
-                if let Some(tags) = &update.tags {
-                    paste.tags = tags.clone();
-                }
-
-                paste.updated_at = chrono::Utc::now();
+                apply_update(&mut paste, &update);
                 bincode::serialize(&paste).ok()
             })
         })?;

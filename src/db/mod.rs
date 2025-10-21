@@ -3,8 +3,20 @@ pub mod folder;
 pub mod lock;
 pub mod paste;
 
-use crate::error::AppError;
-use sled::Db;
+use crate::{
+    error::AppError,
+    models::{
+        folder::Folder,
+        paste::{apply_update, Paste, UpdatePasteRequest},
+    },
+};
+use sled::{
+    transaction::{
+        ConflictableTransactionError, ConflictableTransactionResult, TransactionError,
+        TransactionResult, Transactional, TransactionalTree,
+    },
+    Db, IVec,
+};
 use std::sync::Arc;
 
 /// Check if a LocalPaste process is already running
@@ -35,30 +47,29 @@ pub struct Database {
 #[cfg(test)]
 mod tests;
 
-/// Transaction-like operations for atomic updates across trees
-/// Since sled transactions require single tree, we use careful ordering
-/// and rollback logic to maintain consistency
+/// Helper operations that need to touch multiple trees atomically.
 pub struct TransactionOps;
 
 impl TransactionOps {
     /// Atomically create a paste and update folder count
     pub fn create_paste_with_folder(
         db: &Database,
-        paste: &crate::models::paste::Paste,
+        paste: &Paste,
         folder_id: &str,
     ) -> Result<(), AppError> {
-        // First update folder count atomically
-        db.folders.update_count(folder_id, 1)?;
+        let folders_tree = db.folders.tree();
+        let pastes_tree = db.pastes.tree();
 
-        // Then create paste - if this fails, rollback folder count
-        if let Err(e) = db.pastes.create(paste) {
-            // Best effort rollback - log but don't fail if rollback fails
-            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
-                tracing::error!("Failed to rollback folder count: {}", rollback_err);
-            }
-            return Err(e);
-        }
+        let tx = (folders_tree, pastes_tree).transaction(|(folders, pastes)| {
+            change_folder_count(folders, folder_id, 1)?;
 
+            let value =
+                bincode::serialize(paste).map_err(|e| abort(AppError::Serialization(e)))?;
+            pastes.insert(paste.id.as_bytes(), value)?;
+            Ok(())
+        });
+
+        tx_result(tx)?;
         Ok(())
     }
 
@@ -68,80 +79,105 @@ impl TransactionOps {
         paste_id: &str,
         folder_id: &str,
     ) -> Result<bool, AppError> {
-        // Delete paste first
-        let deleted = db.pastes.delete(paste_id)?;
+        let pastes_tree = db.pastes.tree();
+        let folders_tree = db.folders.tree();
 
-        if deleted {
-            // Update folder count - if this fails, log but continue
-            // (paste is already deleted, better to have incorrect count than fail)
-            if let Err(e) = db.folders.update_count(folder_id, -1) {
-                tracing::error!("Failed to update folder count after paste deletion: {}", e);
+        let tx = (pastes_tree, folders_tree).transaction(|(pastes, folders)| {
+            match pastes.remove(paste_id.as_bytes())? {
+                Some(_) => {
+                    change_folder_count(folders, folder_id, -1)?;
+                    Ok(true)
+                }
+                None => Ok(false),
             }
-        }
+        });
 
-        Ok(deleted)
+        tx_result(tx)
     }
 
     /// Atomically move a paste between folders
     pub fn move_paste_between_folders(
         db: &Database,
         paste_id: &str,
-        old_folder_id: Option<&str>,
-        new_folder_id: Option<&str>,
-        update_req: crate::models::paste::UpdatePasteRequest,
-    ) -> Result<Option<crate::models::paste::Paste>, AppError> {
-        // If folder is changing, update counts first
-        if old_folder_id != new_folder_id {
-            // Decrement old folder count
-            if let Some(old_id) = old_folder_id {
-                db.folders.update_count(old_id, -1)?;
-            }
+        update_req: UpdatePasteRequest,
+    ) -> Result<Option<Paste>, AppError> {
+        let folders_tree = db.folders.tree();
+        let pastes_tree = db.pastes.tree();
 
-            // Increment new folder count
-            if let Some(new_id) = new_folder_id {
-                if let Err(e) = db.folders.update_count(new_id, 1) {
-                    // Rollback old folder count change
-                    if let Some(old_id) = old_folder_id {
-                        if let Err(rollback_err) = db.folders.update_count(old_id, 1) {
-                            tracing::error!(
-                                "Failed to rollback old folder count: {}",
-                                rollback_err
-                            );
-                        }
-                    }
-                    return Err(e);
+        let tx = (folders_tree, pastes_tree).transaction(|(folders, pastes)| {
+            let existing: IVec = match pastes.get(paste_id.as_bytes())? {
+                Some(bytes) => bytes,
+                None => return Ok(None),
+            };
+
+            let mut paste: Paste =
+                bincode::deserialize(&existing).map_err(|e| abort(AppError::Serialization(e)))?;
+
+            let previous_folder = paste.folder_id.clone();
+            apply_update(&mut paste, &update_req);
+            let updated_folder = paste.folder_id.clone();
+
+            if previous_folder != updated_folder {
+                if let Some(old_id) = previous_folder.as_deref() {
+                    change_folder_count(folders, old_id, -1)?;
+                }
+                if let Some(new_id) = updated_folder.as_deref() {
+                    change_folder_count(folders, new_id, 1)?;
                 }
             }
 
-            // Update paste - if this fails, rollback both folder counts
-            match db.pastes.update(paste_id, update_req) {
-                Ok(result) => Ok(result),
-                Err(e) => {
-                    // Rollback folder count changes
-                    if let Some(old_id) = old_folder_id {
-                        if let Err(rollback_err) = db.folders.update_count(old_id, 1) {
-                            tracing::error!(
-                                "Failed to rollback old folder count: {}",
-                                rollback_err
-                            );
-                        }
-                    }
-                    if let Some(new_id) = new_folder_id {
-                        if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
-                            tracing::error!(
-                                "Failed to rollback new folder count: {}",
-                                rollback_err
-                            );
-                        }
-                    }
-                    Err(e)
-                }
-            }
-        } else {
-            // No folder change, just update paste
-            db.pastes.update(paste_id, update_req)
-        }
+            let value =
+                bincode::serialize(&paste).map_err(|e| abort(AppError::Serialization(e)))?;
+            pastes.insert(paste_id.as_bytes(), value)?;
+
+            Ok(Some(paste))
+        });
+
+        tx_result(tx)
     }
+}
+
+fn tx_result<T>(res: TransactionResult<T, AppError>) -> Result<T, AppError> {
+    match res {
+        Ok(value) => Ok(value),
+        Err(TransactionError::Abort(err)) => Err(err),
+        Err(TransactionError::Storage(err)) => Err(AppError::from(err)),
+    }
+}
+
+fn abort(err: AppError) -> ConflictableTransactionError<AppError> {
+    ConflictableTransactionError::Abort(err)
+}
+
+fn change_folder_count(
+    folders: &TransactionalTree,
+    folder_id: &str,
+    delta: i32,
+) -> ConflictableTransactionResult<(), AppError> {
+    if delta == 0 {
+        return Ok(());
+    }
+
+    let key = folder_id.as_bytes();
+    let value = folders
+        .get(key)?
+        .ok_or_else(|| abort(AppError::NotFound))?;
+
+    let mut folder: Folder =
+        bincode::deserialize(&value).map_err(|e| abort(AppError::Serialization(e)))?;
+
+    if delta > 0 {
+        folder.paste_count = folder.paste_count.saturating_add(delta as usize);
+    } else {
+        folder.paste_count = folder
+            .paste_count
+            .saturating_sub((-delta) as usize);
+    }
+
+    let serialized =
+        bincode::serialize(&folder).map_err(|e| abort(AppError::Serialization(e)))?;
+    folders.insert(key, serialized)?;
+    Ok(())
 }
 
 impl Database {
