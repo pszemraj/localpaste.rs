@@ -4,6 +4,8 @@ pub mod error;
 pub mod handlers;
 pub mod models;
 pub mod naming;
+#[cfg(feature = "gui")]
+pub mod gui;
 
 pub use config::Config;
 pub use db::Database;

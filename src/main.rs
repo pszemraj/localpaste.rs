@@ -1,11 +1,9 @@
 use axum::{
     extract::DefaultBodyLimit,
-    http::{header, HeaderValue, Method, StatusCode, Uri},
-    response::{Html, IntoResponse, Response},
+    http::{header, HeaderValue, Method},
     routing::{delete, get, post, put},
     Router,
 };
-use rust_embed::RustEmbed;
 use std::{net::SocketAddr, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::{
@@ -22,10 +20,6 @@ mod models;
 mod naming;
 
 use crate::{config::Config, db::Database};
-
-#[derive(RustEmbed)]
-#[folder = "src/static/"]
-struct Assets;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -144,7 +138,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/folders", get(handlers::folder::list_folders))
         .route("/api/folder/:id", put(handlers::folder::update_folder))
         .route("/api/folder/:id", delete(handlers::folder::delete_folder))
-        .fallback(static_handler)
         .layer(
             ServiceBuilder::new()
                 // Request body size limit
@@ -230,25 +223,3 @@ async fn shutdown_signal(db: Arc<Database>) {
     }
 }
 
-async fn static_handler(uri: Uri) -> impl IntoResponse {
-    let path = uri.path().trim_start_matches('/');
-
-    if path.is_empty() {
-        return serve_asset("index.html");
-    }
-
-    serve_asset(path)
-}
-
-fn serve_asset(path: &str) -> Response {
-    match Assets::get(path) {
-        Some(content) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-        }
-        None => match Assets::get("index.html") {
-            Some(content) => Html(content.data).into_response(),
-            None => (StatusCode::NOT_FOUND, "Not found").into_response(),
-        },
-    }
-}
