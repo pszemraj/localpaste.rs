@@ -148,9 +148,7 @@ async fn test_folder_lifecycle() {
     assert_eq!(delete_response.status_code(), StatusCode::OK);
 
     // The nested paste should now be unfiled
-    let moved_response = server
-        .get(&format!("/api/paste/{}", child_paste_id))
-        .await;
+    let moved_response = server.get(&format!("/api/paste/{}", child_paste_id)).await;
     assert_eq!(moved_response.status_code(), StatusCode::OK);
     let moved: serde_json::Value = moved_response.json();
     assert!(moved["folder_id"].is_null());

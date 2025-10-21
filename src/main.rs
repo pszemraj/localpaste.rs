@@ -1,8 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use localpaste::{
-    config::Config, db::Database, serve_router, AppState,
-};
+use localpaste::{config::Config, db::Database, serve_router, AppState};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -49,9 +47,7 @@ async fn main() -> anyhow::Result<()> {
 
     let allow_public = std::env::var("ALLOW_PUBLIC_ACCESS").is_ok();
     if allow_public {
-        tracing::warn!(
-            "Public access enabled - server will accept requests from any origin"
-        );
+        tracing::warn!("Public access enabled - server will accept requests from any origin");
     }
 
     let bind_addr = resolve_bind_address(&config);
@@ -66,13 +62,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("LocalPaste running at http://{}", bind_addr);
 
     let db = state.db.clone();
-    serve_router(
-        listener,
-        state,
-        allow_public,
-        shutdown_signal(db),
-    )
-    .await?;
+    serve_router(listener, state, allow_public, shutdown_signal(db)).await?;
 
     Ok(())
 }

@@ -20,9 +20,7 @@ use crate::{
     error::AppError,
     models::folder::Folder,
     models::paste::{Paste, UpdatePasteRequest},
-    naming,
-    serve_router,
-    AppState,
+    naming, serve_router, AppState,
 };
 
 const COLOR_BG_PRIMARY: Color32 = Color32::from_rgb(0x0d, 0x11, 0x17);
@@ -152,10 +150,7 @@ impl LocalPasteApp {
     pub fn initialise() -> Result<Self, AppError> {
         let config = Config::from_env();
         let database = Database::new(&config.db_path)?;
-        println!(
-            "[localpaste-gui] opened database at {}",
-            config.db_path
-        );
+        println!("[localpaste-gui] opened database at {}", config.db_path);
 
         let state = AppState::new(config.clone(), database);
         let db = state.db.clone();
@@ -265,10 +260,9 @@ impl LocalPasteApp {
             TextStyle::Heading,
             FontId::new(24.0, FontFamily::Proportional),
         );
-        style.text_styles.insert(
-            TextStyle::Body,
-            FontId::new(16.0, FontFamily::Proportional),
-        );
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::new(16.0, FontFamily::Proportional));
         style.text_styles.insert(
             TextStyle::Button,
             FontId::new(15.0, FontFamily::Proportional),
@@ -310,10 +304,7 @@ impl LocalPasteApp {
                 }
             }
             Err(err) => {
-                println!(
-                    "[localpaste-gui] failed to reload pastes: {}",
-                    err
-                );
+                println!("[localpaste-gui] failed to reload pastes: {}", err);
                 self.push_status(
                     StatusLevel::Error,
                     format!("Failed to load pastes: {}", err),
@@ -335,10 +326,7 @@ impl LocalPasteApp {
                 self.rebuild_folder_index();
             }
             Err(err) => {
-                println!(
-                    "[localpaste-gui] failed to reload folders: {}",
-                    err
-                );
+                println!("[localpaste-gui] failed to reload folders: {}", err);
                 self.push_status(
                     StatusLevel::Error,
                     format!("Failed to load folders: {}", err),
@@ -420,8 +408,7 @@ impl LocalPasteApp {
 
     fn folder_name_exists(&self, parent: Option<&str>, name: &str) -> bool {
         self.folders.iter().any(|folder| {
-            folder.parent_id.as_deref() == parent
-                && folder.name.eq_ignore_ascii_case(name)
+            folder.parent_id.as_deref() == parent && folder.name.eq_ignore_ascii_case(name)
         })
     }
 
@@ -434,8 +421,7 @@ impl LocalPasteApp {
         let parent_ref = dialog.parent_id.as_deref();
         if let Some(parent_id) = parent_ref {
             if self.find_folder(parent_id).is_none() {
-                dialog.error =
-                    Some("Selected parent folder no longer exists.".to_string());
+                dialog.error = Some("Selected parent folder no longer exists.".to_string());
                 return false;
             }
         }
@@ -456,10 +442,7 @@ impl LocalPasteApp {
                 let new_id = folder.id.clone();
                 self.reload_folders("after create folder");
                 self.folder_focus = Some(new_id.clone());
-                self.push_status(
-                    StatusLevel::Info,
-                    format!("Created folder \"{}\"", trimmed),
-                );
+                self.push_status(StatusLevel::Info, format!("Created folder \"{}\"", trimmed));
                 true
             }
             Err(err) => {
@@ -485,11 +468,7 @@ impl LocalPasteApp {
         }
     }
 
-    fn render_folder_tree(
-        &mut self,
-        ui: &mut egui::Ui,
-        pending_select: &mut Option<String>,
-    ) {
+    fn render_folder_tree(&mut self, ui: &mut egui::Ui, pending_select: &mut Option<String>) {
         let unfiled_count = self.count_pastes_in(None);
         let unfiled_selected = self.folder_focus.is_none();
         let unfiled_label = if unfiled_selected {
@@ -543,11 +522,7 @@ impl LocalPasteApp {
                     .default_open(default_open)
                     .show(ui, |ui| {
                         ui.indent(format!("folder-indent-{}", folder.id), |ui| {
-                            self.render_paste_entries(
-                                ui,
-                                Some(folder.id.as_str()),
-                                pending_select,
-                            );
+                            self.render_paste_entries(ui, Some(folder.id.as_str()), pending_select);
                             self.render_folder_children(
                                 ui,
                                 Some(folder.id.as_str()),
@@ -581,11 +556,7 @@ impl LocalPasteApp {
             } else {
                 "No pastes yet"
             };
-            ui.label(
-                RichText::new(message)
-                    .size(11.0)
-                    .color(COLOR_TEXT_MUTED),
-            );
+            ui.label(RichText::new(message).size(11.0).color(COLOR_TEXT_MUTED));
             return;
         }
 
@@ -666,10 +637,7 @@ impl LocalPasteApp {
                 self.push_status(StatusLevel::Info, "New paste ready".to_string());
             }
             Err(err) => {
-                println!(
-                    "[localpaste-gui] failed to create paste: {}",
-                    err
-                );
+                println!("[localpaste-gui] failed to create paste: {}", err);
                 self.push_status(
                     StatusLevel::Error,
                     format!("Failed to create paste: {}", err),
@@ -716,10 +684,7 @@ impl LocalPasteApp {
                         err
                     );
                 }
-                self.push_status(
-                    StatusLevel::Info,
-                    format!("Created {}", paste.name),
-                );
+                self.push_status(StatusLevel::Info, format!("Created {}", paste.name));
                 self.editor.apply_paste(paste.clone());
                 self.selected_id = Some(paste.id.clone());
                 self.folder_focus = paste.folder_id.clone();
@@ -727,14 +692,8 @@ impl LocalPasteApp {
                 self.reload_folders("after create");
             }
             Err(err) => {
-                println!(
-                    "[localpaste-gui] failed to create paste: {}",
-                    err
-                );
-                self.push_status(
-                    StatusLevel::Error,
-                    format!("Save failed: {}", err),
-                );
+                println!("[localpaste-gui] failed to create paste: {}", err);
+                self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
             }
         }
     }
@@ -743,10 +702,7 @@ impl LocalPasteApp {
         let previous = match self.db.pastes.get(&id) {
             Ok(Some(paste)) => paste,
             Ok(None) => {
-                self.push_status(
-                    StatusLevel::Error,
-                    "Paste disappeared before saving".into(),
-                );
+                self.push_status(StatusLevel::Error, "Paste disappeared before saving".into());
                 self.reload_pastes("missing on update");
                 return;
             }
@@ -755,19 +711,12 @@ impl LocalPasteApp {
                     "[localpaste-gui] failed to read paste {} before update: {}",
                     id, err
                 );
-                self.push_status(
-                    StatusLevel::Error,
-                    format!("Save failed: {}", err),
-                );
+                self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
                 return;
             }
         };
 
-        let folder_value = self
-            .editor
-            .folder_id
-            .clone()
-            .unwrap_or_default();
+        let folder_value = self.editor.folder_id.clone().unwrap_or_default();
         let update = UpdatePasteRequest {
             content: Some(self.editor.content.clone()),
             name: Some(self.editor.name.clone()),
@@ -776,9 +725,7 @@ impl LocalPasteApp {
             tags: Some(self.editor.tags.clone()),
         };
 
-        let result = if previous.folder_id.as_deref()
-            != self.editor.folder_id.as_deref()
-        {
+        let result = if previous.folder_id.as_deref() != self.editor.folder_id.as_deref() {
             let new_folder = if folder_value.is_empty() {
                 None
             } else {
@@ -816,26 +763,14 @@ impl LocalPasteApp {
                 self.push_status(StatusLevel::Info, "Saved changes".into());
             }
             Ok(None) => {
-                println!(
-                    "[localpaste-gui] paste {} vanished during update",
-                    id
-                );
-                self.push_status(
-                    StatusLevel::Error,
-                    "Paste disappeared before saving".into(),
-                );
+                println!("[localpaste-gui] paste {} vanished during update", id);
+                self.push_status(StatusLevel::Error, "Paste disappeared before saving".into());
                 self.reload_pastes("missing on update");
                 self.reload_folders("missing on update");
             }
             Err(err) => {
-                println!(
-                    "[localpaste-gui] failed to update paste {}: {}",
-                    id, err
-                );
-                self.push_status(
-                    StatusLevel::Error,
-                    format!("Save failed: {}", err),
-                );
+                println!("[localpaste-gui] failed to update paste {}: {}", id, err);
+                self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
             }
         }
     }
@@ -860,22 +795,13 @@ impl LocalPasteApp {
                     self.reload_folders("after delete");
                 }
                 Ok(false) => {
-                    self.push_status(
-                        StatusLevel::Error,
-                        "Paste was already deleted".into(),
-                    );
+                    self.push_status(StatusLevel::Error, "Paste was already deleted".into());
                     self.reload_pastes("stale delete");
                     self.reload_folders("stale delete");
                 }
                 Err(err) => {
-                    println!(
-                        "[localpaste-gui] failed to delete paste {}: {}",
-                        id, err
-                    );
-                    self.push_status(
-                        StatusLevel::Error,
-                        format!("Delete failed: {}", err),
-                    );
+                    println!("[localpaste-gui] failed to delete paste {}: {}", id, err);
+                    self.push_status(StatusLevel::Error, format!("Delete failed: {}", err));
                 }
             }
         }
@@ -1047,22 +973,19 @@ impl eframe::App for LocalPasteApp {
 
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
-                        let paste_btn = egui::Button::new(
-                            RichText::new("+ New Paste").color(Color32::WHITE),
-                        )
-                        .fill(COLOR_ACCENT)
-                        .min_size(egui::vec2(ui.available_width() * 0.5, 36.0));
+                        let paste_btn =
+                            egui::Button::new(RichText::new("+ New Paste").color(Color32::WHITE))
+                                .fill(COLOR_ACCENT)
+                                .min_size(egui::vec2(ui.available_width() * 0.5, 36.0));
                         if ui.add(paste_btn).clicked() {
                             self.create_new_paste();
                         }
-                        let folder_btn = egui::Button::new(
-                            RichText::new("+ New Folder").color(Color32::WHITE),
-                        )
-                        .fill(COLOR_ACCENT_HOVER)
-                        .min_size(egui::vec2(ui.available_width(), 36.0));
+                        let folder_btn =
+                            egui::Button::new(RichText::new("+ New Folder").color(Color32::WHITE))
+                                .fill(COLOR_ACCENT_HOVER)
+                                .min_size(egui::vec2(ui.available_width(), 36.0));
                         if ui.add(folder_btn).clicked() {
-                            self.folder_dialog =
-                                Some(FolderDialog::new(self.folder_focus.clone()));
+                            self.folder_dialog = Some(FolderDialog::new(self.folder_focus.clone()));
                         }
                     });
 
@@ -1083,11 +1006,7 @@ impl eframe::App for LocalPasteApp {
                     ui.add_space(12.0);
                     ui.add(egui::Separator::default());
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("BROWSER")
-                            .size(11.0)
-                            .color(COLOR_TEXT_MUTED),
-                    );
+                    ui.label(RichText::new("BROWSER").size(11.0).color(COLOR_TEXT_MUTED));
                     ui.add_space(4.0);
 
                     egui::ScrollArea::vertical()
@@ -1112,13 +1031,10 @@ impl eframe::App for LocalPasteApp {
                 ui.horizontal(|ui| {
                     if let Some(status) = &self.status {
                         ui.label(
-                            RichText::new(&status.text)
-                                .color(Self::status_color(status.level)),
+                            RichText::new(&status.text).color(Self::status_color(status.level)),
                         );
                     } else if self.editor.dirty {
-                        ui.label(
-                            RichText::new("Unsaved changes").color(COLOR_ACCENT),
-                        );
+                        ui.label(RichText::new("Unsaved changes").color(COLOR_ACCENT));
                     } else {
                         ui.label(RichText::new("Ready").color(COLOR_TEXT_MUTED));
                     }
@@ -1133,9 +1049,7 @@ impl eframe::App for LocalPasteApp {
                             .language
                             .clone()
                             .unwrap_or_else(|| "auto".to_string());
-                        ui.label(
-                            RichText::new(language_label).color(COLOR_TEXT_MUTED),
-                        );
+                        ui.label(RichText::new(language_label).color(COLOR_TEXT_MUTED));
                     });
                 });
             });
@@ -1176,11 +1090,7 @@ impl eframe::App for LocalPasteApp {
 
                         ui.add_space(20.0);
                         ui.vertical(|ui| {
-                            ui.label(
-                                RichText::new("Language")
-                                    .size(12.0)
-                                    .color(COLOR_TEXT_MUTED),
-                            );
+                            ui.label(RichText::new("Language").size(12.0).color(COLOR_TEXT_MUTED));
                             egui::ComboBox::from_id_salt("language_select")
                                 .selected_text(
                                     self.editor
@@ -1191,11 +1101,7 @@ impl eframe::App for LocalPasteApp {
                                 .show_ui(ui, |ui| {
                                     ui.set_min_width(160.0);
                                     if ui
-                                        .selectable_value(
-                                            &mut self.editor.language,
-                                            None,
-                                            "auto",
-                                        )
+                                        .selectable_value(&mut self.editor.language, None, "auto")
                                         .clicked()
                                     {
                                         self.editor.mark_dirty();
@@ -1218,11 +1124,7 @@ impl eframe::App for LocalPasteApp {
 
                         ui.add_space(20.0);
                         ui.vertical(|ui| {
-                            ui.label(
-                                RichText::new("Folder")
-                                    .size(12.0)
-                                    .color(COLOR_TEXT_MUTED),
-                            );
+                            ui.label(RichText::new("Folder").size(12.0).color(COLOR_TEXT_MUTED));
                             let current_label = self
                                 .editor
                                 .folder_id
@@ -1274,8 +1176,7 @@ impl eframe::App for LocalPasteApp {
                         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                             if self.editor.paste_id.is_some() {
                                 let delete_btn = egui::Button::new(
-                                    RichText::new("Delete")
-                                        .color(Color32::WHITE),
+                                    RichText::new("Delete").color(Color32::WHITE),
                                 )
                                 .fill(COLOR_DANGER)
                                 .min_size(egui::vec2(110.0, 36.0));
@@ -1284,11 +1185,10 @@ impl eframe::App for LocalPasteApp {
                                 }
                             }
 
-                            let save_btn = egui::Button::new(
-                                RichText::new("Save").color(Color32::WHITE),
-                            )
-                            .fill(COLOR_ACCENT)
-                            .min_size(egui::vec2(110.0, 36.0));
+                            let save_btn =
+                                egui::Button::new(RichText::new("Save").color(Color32::WHITE))
+                                    .fill(COLOR_ACCENT)
+                                    .min_size(egui::vec2(110.0, 36.0));
                             if ui.add(save_btn).clicked() {
                                 self.save_current_paste();
                             }
@@ -1330,14 +1230,13 @@ impl eframe::App for LocalPasteApp {
                                     job.wrap.max_width = wrap_width;
                                     ui.fonts_mut(|f| f.layout_job(job))
                                 };
-                            let editor =
-                                egui::TextEdit::multiline(&mut self.editor.content)
-                                    .code_editor()
-                                    .frame(false)
-                                    .background_color(COLOR_BG_PRIMARY)
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(32)
-                                    .layouter(&mut layouter);
+                            let editor = egui::TextEdit::multiline(&mut self.editor.content)
+                                .code_editor()
+                                .frame(false)
+                                .background_color(COLOR_BG_PRIMARY)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(32)
+                                .layouter(&mut layouter);
 
                             let response = ui.add(editor);
                             if self.editor.needs_focus {
@@ -1374,9 +1273,7 @@ impl eframe::App for LocalPasteApp {
                         dialog.error = None;
                     }
                     ui.add_space(10.0);
-                    ui.label(
-                        RichText::new("Parent").size(12.0).color(COLOR_TEXT_MUTED),
-                    );
+                    ui.label(RichText::new("Parent").size(12.0).color(COLOR_TEXT_MUTED));
                     let parent_label = dialog
                         .parent_id
                         .as_deref()
@@ -1524,8 +1421,18 @@ struct LanguageSet;
 impl LanguageSet {
     fn all() -> [&'static str; 12] {
         [
-            "plain", "rust", "python", "javascript", "typescript", "go", "java", "c",
-            "cpp", "sql", "shell", "markdown",
+            "plain",
+            "rust",
+            "python",
+            "javascript",
+            "typescript",
+            "go",
+            "java",
+            "c",
+            "cpp",
+            "sql",
+            "shell",
+            "markdown",
         ]
     }
 }
