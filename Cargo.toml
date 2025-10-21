@@ -66,3 +66,13 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[profile.dev]
+# Faster edit-compile iterations while keeping the binary responsive.
+# Dependencies stay unoptimised (default opt-level=0) but the local crate is
+# built with some optimisation so we can `cargo run` without switching profiles.
+debug = true
+incremental = true
+
+[profile.dev.package.localpaste]
+opt-level = 2

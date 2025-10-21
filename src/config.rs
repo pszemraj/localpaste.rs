@@ -15,19 +15,29 @@ pub struct Config {
 /// Expand tilde (~) in paths to the user's home directory
 fn expand_tilde(path: String) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = env::var("HOME") {
-            return format!("{}/{}", home, rest);
+        if let Some(home) = detect_home_dir() {
+            return home.join(rest).to_string_lossy().to_string();
         }
     }
     path
+}
+
+fn detect_home_dir() -> Option<PathBuf> {
+    env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| env::var("USERPROFILE").ok().map(PathBuf::from))
+        .or_else(|| env::var("HOMEDRIVE")
+            .ok()
+            .and_then(|drive| env::var("HOMEPATH").ok().map(|path| PathBuf::from(format!("{}{}", drive, path)))))
 }
 
 impl Config {
     pub fn from_env() -> Self {
         Self {
             db_path: env::var("DB_PATH").map(expand_tilde).unwrap_or_else(|_| {
-                let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-                let cache_dir = PathBuf::from(home).join(".cache").join("localpaste");
+                let cache_root = detect_home_dir().unwrap_or_else(|| PathBuf::from("."));
+                let cache_dir = cache_root.join(".cache").join("localpaste");
                 cache_dir.join("db").to_string_lossy().to_string()
             }),
             port: env::var("PORT")
