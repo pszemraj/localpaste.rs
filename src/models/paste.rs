@@ -230,7 +230,7 @@ fn looks_like_yaml(text: &str) -> bool {
 
 fn looks_like_toml(text: &str) -> bool {
     let mut section_headers = 0;
-    let mut assignments = 0;
+    let mut simple_assignments = 0;
 
     for line in text.lines().take(40) {
         let trimmed = line.trim();
@@ -240,12 +240,35 @@ fn looks_like_toml(text: &str) -> bool {
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             section_headers += 1;
         }
-        if trimmed.contains('=') && trimmed.split('=').next().map(|s| !s.trim().is_empty()).unwrap_or(false) {
-            assignments += 1;
+        if let Some(idx) = trimmed.find('=') {
+            let key = trimmed[..idx].trim();
+            let value = trimmed[idx + 1..].trim();
+
+            if !key.is_empty()
+                && !key.contains(' ')
+                && !key.contains('\t')
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                && !value.starts_with('=')
+                && !value.starts_with('>')
+                && !value.starts_with('<')
+            {
+                simple_assignments += 1;
+            }
         }
     }
 
-    section_headers >= 1 && assignments >= 1 || assignments >= 3
+    let lowered = text.to_lowercase();
+    let has_python_markers = lowered.contains("def ")
+        || lowered.contains("class ")
+        || lowered.contains("import ")
+        || lowered.contains(" from ")
+        || lowered.contains(" lambda ");
+
+    if has_python_markers {
+        return false;
+    }
+
+    (section_headers >= 1 && simple_assignments >= 1) || simple_assignments >= 3
 }
 
 fn looks_like_markdown(text: &str) -> bool {

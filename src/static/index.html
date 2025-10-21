@@ -6,6 +6,7 @@
     <title>LocalPaste.rs</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/vendor/prism/prism-tomorrow.min.css">
     <style>
     /* Tree view styles */
     .tree-view {
@@ -108,11 +109,20 @@
         font-style: italic;
     }
     
+    .editor-container {
+        position: relative;
+        flex: 1;
+        overflow: hidden;
+        background: var(--bg-primary);
+    }
+
     #editor {
+        position: absolute;
+        inset: 0;
         width: 100%;
         height: 100%;
         background: transparent;
-        color: var(--text-primary);
+        color: transparent;
         caret-color: var(--text-primary);
         border: none;
         outline: none;
@@ -122,14 +132,42 @@
         line-height: 1.5;
         padding: 20px;
         box-sizing: border-box;
+        white-space: pre-wrap;
+        overflow: auto;
+        tab-size: 4;
     }
     
     #editor:focus {
         outline: none;
     }
-    
-    .editor-container {
-        position: relative;
+
+    #editor::selection {
+        background: rgba(229, 112, 0, 0.25);
+        color: transparent;
+    }
+
+    .editor-highlight {
+        position: absolute;
+        inset: 0;
+        margin: 0;
+        padding: 20px;
+        overflow: auto;
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 14px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: normal;
+        background: transparent;
+        color: var(--text-primary);
+        pointer-events: none;
+        box-sizing: border-box;
+        tab-size: 4;
+    }
+
+    .editor-highlight code {
+        display: block;
+        min-height: 100%;
+    }
         background: var(--bg-primary);
     }
     
@@ -157,10 +195,10 @@
             </div>
             <div style="padding: 8px; margin-bottom: 8px;">
                 <select id="sort-order" style="width: 100%; background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;" title="Sort pastes">
-                    <option value="date-desc">⬇ Newest first</option>
-                    <option value="date-asc">⬆ Oldest first</option>
-                    <option value="name-asc">⬆ Name (A-Z)</option>
-                    <option value="name-desc">⬇ Name (Z-A)</option>
+                    <option value="date-desc">&#x2B07; Newest first</option>
+                    <option value="date-asc">&#x2B06; Oldest first</option>
+                    <option value="name-asc">&#x2B06; Name (A-Z)</option>
+                    <option value="name-desc">&#x2B07; Name (Z-A)</option>
                 </select>
             </div>
             
@@ -196,18 +234,18 @@
                             <option value="toml">TOML</option>
                             <option value="xml">XML</option>
                             <option value="yaml">YAML</option>
-                        </select> • 
-                        <span id="paste-date">just now</span> • 
-                        <span id="char-count">0 chars</span> • 
-                        <span id="save-status" class="auto-saved" style="display: none;">✓ saved</span>
-                    </span>
+                        </select> &bull; 
+                        <span id="paste-date">just now</span> &bull; 
+                        <span id="char-count">0 chars</span> &bull; 
+                        <span id="save-status" class="auto-saved" style="display: none;">&#10003; saved</span>
                 </div>
                 <div class="editor-actions">
-                    <button id="download-paste" class="btn-icon" title="Download as file">💾</button>
-                    <button id="delete-paste" class="btn-icon danger" title="Delete (Ctrl+D)">🗑️</button>
+                    <button id="download-paste" class="btn-icon" title="Download as file">&#128190;</button>
+                    <button id="delete-paste" class="btn-icon danger" title="Delete (Ctrl+D)">&#128465;</button>
                 </div>
             </header>
-            <div id="editor-container" class="editor-container" style="position: relative;">
+            <div id="editor-container" class="editor-container">
+                <pre id="editor-highlight" class="editor-highlight" aria-hidden="true"><code id="highlight-content" class="language-plain"></code></pre>
                 <textarea id="editor" spellcheck="false"></textarea>
             </div>
             <footer class="status-bar">
@@ -221,6 +259,26 @@
         </main>
     </div>
 
+    <script src="/vendor/prism/prism.min.js"></script>
+    <script src="/vendor/prism/components/prism-clike.min.js"></script>
+    <script src="/vendor/prism/components/prism-markup.min.js"></script>
+    <script src="/vendor/prism/components/prism-markup-templating.min.js"></script>
+    <script src="/vendor/prism/components/prism-javascript.min.js"></script>
+    <script src="/vendor/prism/components/prism-typescript.min.js"></script>
+    <script src="/vendor/prism/components/prism-json.min.js"></script>
+    <script src="/vendor/prism/components/prism-python.min.js"></script>
+    <script src="/vendor/prism/components/prism-rust.min.js"></script>
+    <script src="/vendor/prism/components/prism-go.min.js"></script>
+    <script src="/vendor/prism/components/prism-bash.min.js"></script>
+    <script src="/vendor/prism/components/prism-markdown.min.js"></script>
+    <script src="/vendor/prism/components/prism-yaml.min.js"></script>
+    <script src="/vendor/prism/components/prism-toml.min.js"></script>
+    <script src="/vendor/prism/components/prism-latex.min.js"></script>
+    <script src="/vendor/prism/components/prism-java.min.js"></script>
+    <script src="/vendor/prism/components/prism-c.min.js"></script>
+    <script src="/vendor/prism/components/prism-cpp.min.js"></script>
+    <script src="/vendor/prism/components/prism-csharp.min.js"></script>
+    <script src="/vendor/prism/components/prism-css.min.js"></script>
     <script>
     class LocalPaste {
         constructor() {
@@ -228,15 +286,140 @@
             this.pastes = [];
             this.folders = [];
             this.editor = document.getElementById('editor');
+            this.highlightWrapper = document.getElementById('editor-highlight');
+            this.highlightElement = document.getElementById('highlight-content');
+            this.currentHighlightLanguage = 'plain';
+            this.highlightFrame = null;
             this.saveTimeout = null;
             this.saveQueue = Promise.resolve();
             this.saveVersion = 0;
             this.draggedPaste = null;
             this.expandedFolders = new Set(['unfiled']); // Start with unfiled expanded
             this.sortOrder = 'date-desc';
+
+            this.bindEditorEvents();
             
             console.log('LocalPaste.rs: Initializing...');
             this.init();
+        }
+
+        bindEditorEvents() {
+            if (!this.editor) {
+                console.error('Editor element not found');
+                return;
+            }
+
+            this.editor.addEventListener('input', () => {
+                this.onEditorChange();
+                this.scheduleHighlight();
+            });
+
+            this.editor.addEventListener('scroll', () => this.syncHighlightScroll());
+            this.editor.addEventListener('keyup', () => this.updateCursorPosition());
+            this.editor.addEventListener('click', () => this.updateCursorPosition());
+
+            this.updateCursorPosition();
+            this.updateCharCount();
+            this.renderHighlight(true);
+        }
+
+        getEditorContent() {
+            return this.editor ? this.editor.value : '';
+        }
+
+        setEditorContent(value) {
+            if (!this.editor) return;
+
+            this.editor.value = value;
+            this.renderHighlight(true);
+            this.syncHighlightScroll();
+        }
+
+        applyEditorLanguage(language) {
+            this.currentHighlightLanguage = this.getPrismLanguage(language);
+            if (this.highlightElement) {
+                this.highlightElement.className = `language-${this.currentHighlightLanguage}`;
+            }
+            this.scheduleHighlight(true);
+        }
+
+        getPrismLanguage(language) {
+            const map = {
+                'rust': 'rust',
+                'python': 'python',
+                'javascript': 'javascript',
+                'typescript': 'typescript',
+                'json': 'json',
+                'c': 'c',
+                'cpp': 'cpp',
+                'csharp': 'csharp',
+                'java': 'java',
+                'go': 'go',
+                'shell': 'bash',
+                'markdown': 'markdown',
+                'html': 'markup',
+                'css': 'css',
+                'xml': 'markup',
+                'yaml': 'yaml',
+                'toml': 'toml',
+                'latex': 'latex',
+                'plaintext': 'plain'
+            };
+
+            if (!language) {
+                return 'plain';
+            }
+
+            return map[language] || 'plain';
+        }
+
+        scheduleHighlight(force = false) {
+            if (!this.highlightElement) return;
+
+            if (force) {
+                this.renderHighlight(true);
+                return;
+            }
+
+            if (this.highlightFrame) {
+                cancelAnimationFrame(this.highlightFrame);
+            }
+
+            this.highlightFrame = requestAnimationFrame(() => {
+                this.renderHighlight();
+                this.highlightFrame = null;
+            });
+        }
+
+        renderHighlight(force = false) {
+            if (!this.highlightElement) return;
+
+            const code = this.getEditorContent().replace(/\r\n/g, '\n');
+
+            if (!window.Prism || !Prism.languages) {
+                this.highlightElement.textContent = code;
+                this.syncHighlightScroll();
+                return;
+            }
+
+            const langKey = this.currentHighlightLanguage || 'plain';
+            const grammar = Prism.languages[langKey] || Prism.languages.plain;
+            const highlighted = Prism.highlight(code, grammar, langKey);
+            // Preserve trailing newline so the caret has space on last line
+            const needsTrailing = code.endsWith('\n') ? '\n' : '';
+            this.highlightElement.innerHTML = highlighted + needsTrailing;
+            this.syncHighlightScroll();
+        }
+
+        syncHighlightScroll() {
+            if (!this.editor || !this.highlightWrapper) return;
+            this.highlightWrapper.scrollTop = this.editor.scrollTop;
+            this.highlightWrapper.scrollLeft = this.editor.scrollLeft;
+        }
+
+        updateCharCount() {
+            const charCount = this.getEditorContent().length;
+            document.getElementById('char-count').textContent = `${charCount} chars`;
         }
 
         async init() {
@@ -426,8 +609,8 @@
                 }
                 
                 unfiledDiv.innerHTML = `
-                    <span class="tree-folder-icon">▶</span>
-                    📄 Unfiled
+                    <span class="tree-folder-icon">&#9656;</span>
+                    &#128196; Unfiled
                     <span style="opacity: 0.6; font-size: 12px; margin-left: 4px;">(${unfiledPastes.length})</span>
                 `;
                 
@@ -541,17 +724,6 @@
         }
 
         bindEvents() {
-            // Editor events
-            this.editor.addEventListener('input', () => {
-                this.onEditorChange();
-            });
-            
-            this.editor.addEventListener('scroll', () => {
-                this.updateCursorPosition();
-            });
-            this.editor.addEventListener('keyup', () => this.updateCursorPosition());
-            this.editor.addEventListener('click', () => this.updateCursorPosition());
-            
             // New paste
             document.getElementById('new-paste').addEventListener('click', () => this.createNewPaste());
             
@@ -604,6 +776,7 @@
                     const version = ++this.saveVersion;
                     this.enqueueSave(version);
                 }
+                this.applyEditorLanguage(langSelect.value || null);
             });
             
             // Keyboard shortcuts
@@ -728,7 +901,7 @@
             const languageField = document.getElementById('paste-language');
 
             const snapshot = {
-                content: this.editor.value,
+                content: this.getEditorContent(),
                 name: nameField.value,
                 language: languageField.value
             };
@@ -759,7 +932,7 @@
             if (!this.currentPaste) return;
             
             try {
-                const content = snapshot?.content ?? this.editor.value;
+                const content = snapshot?.content ?? this.getEditorContent();
                 const rawName = snapshot?.name ?? document.getElementById('paste-name').value;
                 const name = rawName || this.currentPaste.name;
                 const rawLanguage = snapshot?.language;
@@ -784,8 +957,9 @@
                 this.updatePasteIdDisplay();
                 document.getElementById('paste-name').value = this.currentPaste.name;
                 document.getElementById('paste-language').value = this.currentPaste.language || '';
+                this.applyEditorLanguage(this.currentPaste.language || null);
                 document.getElementById('paste-date').textContent = new Date(this.currentPaste.updated_at).toLocaleString();
-                document.getElementById('char-count').textContent = `${this.currentPaste.content.length} chars`;
+                this.updateCharCount();
                 
                 // Show save indicator
                 const saveStatus = document.getElementById('save-status');
@@ -845,13 +1019,14 @@
                 localStorage.setItem('lastOpenedPaste', id);
                 
                 // Update editor
-                this.editor.value = paste.content;
+                this.setEditorContent(paste.content);
                 
                 // Update UI
                 document.getElementById('paste-name').value = paste.name;
                 document.getElementById('paste-language').value = paste.language || '';
+                this.applyEditorLanguage(paste.language || null);
                 document.getElementById('paste-date').textContent = new Date(paste.updated_at).toLocaleString();
-                document.getElementById('char-count').textContent = `${paste.content.length} chars`;
+                this.updateCharCount();
                 
                 this.renderTree();
                 this.updateCursorPosition();
@@ -895,7 +1070,7 @@
             }
             
             // Create blob and download
-            const blob = new Blob([this.editor.value], { type: 'text/plain' });
+            const blob = new Blob([this.getEditorContent()], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -929,7 +1104,9 @@
                 }
                 
                 this.currentPaste = null;
-                this.editor.value = '';
+                this.setEditorContent('');
+                this.updateCharCount();
+
                 clearTimeout(this.saveTimeout);
                 this.saveVersion = 0;
                 this.saveQueue = Promise.resolve();
@@ -946,10 +1123,9 @@
 
         onEditorChange() {
             if (!this.currentPaste) return;
-            
-            const charCount = this.editor.value.length;
-            document.getElementById('char-count').textContent = `${charCount} chars`;
-            
+
+            this.updateCharCount();
+
             clearTimeout(this.saveTimeout);
             const version = ++this.saveVersion;
             this.saveTimeout = setTimeout(() => {
@@ -958,6 +1134,11 @@
         }
 
         updateCursorPosition() {
+            if (!this.editor) {
+                document.getElementById('cursor-position').textContent = 'Ln 1, Col 1';
+                return;
+            }
+
             const pos = this.editor.selectionStart;
             const text = this.editor.value.substring(0, pos);
             const lines = text.split('\n');
@@ -1009,7 +1190,3 @@
     </script>
 </body>
 </html>
-
-
-
-
