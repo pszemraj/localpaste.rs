@@ -1,13 +1,16 @@
 #![cfg(feature = "gui")]
 
+use std::sync::Arc;
+
 use eframe::egui;
-use localpaste::gui::LocalPasteApp;
+use localpaste::gui::{self, LocalPasteApp};
 
 fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
-            .with_title("LocalPaste Desktop"),
+            .with_title("LocalPaste Desktop")
+            .with_icon(Arc::new(gui::app_icon())),
         ..Default::default()
     };
 

@@ -1,5 +1,7 @@
 use std::{
-    sync::Arc,
+    net::SocketAddr,
+    sync::{mpsc, Arc},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -9,11 +11,15 @@ use eframe::egui::{
 };
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 
+use tokio::sync::oneshot;
+
 use crate::{
     config::Config,
     db::Database,
     error::AppError,
     models::paste::{Paste, UpdatePasteRequest},
+    serve_router,
+    AppState,
 };
 
 const COLOR_BG_PRIMARY: Color32 = Color32::from_rgb(0x0d, 0x11, 0x17);
@@ -27,16 +33,110 @@ const COLOR_ACCENT_HOVER: Color32 = Color32::from_rgb(0xCE, 0x42, 0x2B);
 const COLOR_DANGER: Color32 = Color32::from_rgb(0xF8, 0x51, 0x49);
 const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 
+const ICON_SIZE: usize = 96;
+
+pub fn app_icon() -> egui::IconData {
+    fn write_pixel(rgba: &mut [u8], x: usize, y: usize, color: [u8; 4]) {
+        if x >= ICON_SIZE || y >= ICON_SIZE {
+            return;
+        }
+        let idx = (y * ICON_SIZE + x) * 4;
+        rgba[idx..idx + 4].copy_from_slice(&color);
+    }
+
+    let mut rgba = vec![0u8; ICON_SIZE * ICON_SIZE * 4];
+    let bg = COLOR_BG_PRIMARY.to_array();
+    for y in 0..ICON_SIZE {
+        for x in 0..ICON_SIZE {
+            write_pixel(&mut rgba, x, y, bg);
+        }
+    }
+
+    let frame = COLOR_BORDER.to_array();
+    let frame_thickness = 4;
+    for x in 0..ICON_SIZE {
+        for t in 0..frame_thickness {
+            write_pixel(&mut rgba, x, t, frame);
+            write_pixel(&mut rgba, x, ICON_SIZE - 1 - t, frame);
+        }
+    }
+    for y in 0..ICON_SIZE {
+        for t in 0..frame_thickness {
+            write_pixel(&mut rgba, t, y, frame);
+            write_pixel(&mut rgba, ICON_SIZE - 1 - t, y, frame);
+        }
+    }
+
+    let accent = COLOR_ACCENT.to_array();
+    let highlight = COLOR_TEXT_PRIMARY.to_array();
+    let shadow = COLOR_ACCENT_HOVER.to_array();
+
+    // Stylized "L"
+    let l_x = ICON_SIZE / 6;
+    for y in ICON_SIZE / 4..ICON_SIZE - ICON_SIZE / 6 {
+        for dx in 0..3 {
+            write_pixel(&mut rgba, l_x + dx, y, accent);
+        }
+    }
+    for x in l_x..=ICON_SIZE / 2 {
+        for dy in 0..3 {
+            write_pixel(&mut rgba, x, ICON_SIZE - ICON_SIZE / 6 + dy, accent);
+        }
+    }
+
+    // Stylized "P"
+    let p_x = ICON_SIZE / 2 + ICON_SIZE / 12;
+    let p_top = ICON_SIZE / 4;
+    let p_bottom = ICON_SIZE - ICON_SIZE / 6;
+    for y in p_top..p_bottom {
+        for dx in 0..3 {
+            write_pixel(&mut rgba, p_x + dx, y, accent);
+        }
+    }
+    let loop_height = (p_bottom - p_top) / 2;
+    for x in p_x..p_x + ICON_SIZE / 4 {
+        for dy in 0..3 {
+            write_pixel(&mut rgba, x, p_top + loop_height + dy, accent);
+        }
+    }
+    for y in p_top..=p_top + loop_height {
+        for dx in 0..3 {
+            write_pixel(&mut rgba, p_x + ICON_SIZE / 4 - dx, y, accent);
+        }
+    }
+
+    // Highlight seam
+    for offset in 0..ICON_SIZE / 2 {
+        let x = ICON_SIZE / 6 + offset;
+        let y = ICON_SIZE / 6 + offset / 2;
+        write_pixel(&mut rgba, x, y, highlight);
+    }
+
+    // Accent shadow
+    for offset in 0..ICON_SIZE / 3 {
+        let x = ICON_SIZE / 2 + offset;
+        let y = ICON_SIZE - ICON_SIZE / 4 + offset / 4;
+        write_pixel(&mut rgba, x, y, shadow);
+    }
+
+    egui::IconData {
+        rgba,
+        width: ICON_SIZE as u32,
+        height: ICON_SIZE as u32,
+    }
+}
+
 /// Primary egui application state.
 pub struct LocalPasteApp {
     db: Arc<Database>,
-    config: Config,
+    config: Arc<Config>,
     pastes: Vec<Paste>,
     selected_id: Option<String>,
     editor: EditorState,
     status: Option<StatusMessage>,
     theme: CodeTheme,
     style_applied: bool,
+    _server: ServerHandle,
 }
 
 impl LocalPasteApp {
@@ -49,15 +149,25 @@ impl LocalPasteApp {
             config.db_path
         );
 
+        let state = AppState::new(config.clone(), database);
+        let db = state.db.clone();
+        let config_arc = state.config.clone();
+        let allow_public = std::env::var("ALLOW_PUBLIC_ACCESS").is_ok();
+        if allow_public {
+            println!("[localpaste-gui] public access enabled (CORS allow-all)");
+        }
+        let server = ServerHandle::start(state.clone(), allow_public)?;
+
         let mut app = Self {
-            db: Arc::new(database),
-            config,
+            db,
+            config: config_arc,
             pastes: Vec::new(),
             selected_id: None,
             editor: EditorState::default(),
             status: None,
             theme: CodeTheme::from_style(&egui::Style::default()),
             style_applied: false,
+            _server: server,
         };
 
         app.reload_pastes("startup");
@@ -374,6 +484,107 @@ impl LocalPasteApp {
             StatusLevel::Error => COLOR_DANGER,
         }
     }
+}
+
+struct ServerHandle {
+    shutdown: Option<oneshot::Sender<()>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl ServerHandle {
+    fn start(state: AppState, allow_public: bool) -> Result<Self, AppError> {
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let thread = thread::Builder::new()
+            .name("localpaste-server".into())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(err) => {
+                        let _ = ready_tx.send(Err(format!("failed to start runtime: {}", err)));
+                        return;
+                    }
+                };
+
+                let bind_addr = resolve_bind_address(&state.config);
+                let listener = match rt.block_on(tokio::net::TcpListener::bind(bind_addr)) {
+                    Ok(listener) => {
+                        let _ = ready_tx.send(Ok(bind_addr));
+                        listener
+                    }
+                    Err(err) => {
+                        let _ =
+                            ready_tx.send(Err(format!("failed to bind server socket: {}", err)));
+                        return;
+                    }
+                };
+
+                let shutdown = async {
+                    let _ = shutdown_rx.await;
+                };
+
+                if let Err(err) = rt.block_on(serve_router(
+                    listener,
+                    state.clone(),
+                    allow_public,
+                    shutdown,
+                )) {
+                    eprintln!("[localpaste-gui] server error: {}", err);
+                }
+
+                if let Err(err) = state.db.flush() {
+                    eprintln!("[localpaste-gui] failed to flush database: {}", err);
+                }
+            })
+            .map_err(|err| AppError::DatabaseError(format!("failed to spawn server: {}", err)))?;
+
+        match ready_rx.recv() {
+            Ok(Ok(addr)) => {
+                if !addr.ip().is_loopback() {
+                    println!(
+                        "[localpaste-gui] warning: binding to non-localhost address {}",
+                        addr
+                    );
+                }
+                println!("[localpaste-gui] API listening on http://{}", addr);
+                Ok(Self {
+                    shutdown: Some(shutdown_tx),
+                    thread: Some(thread),
+                })
+            }
+            Ok(Err(message)) => {
+                let _ = shutdown_tx.send(());
+                let _ = thread.join();
+                Err(AppError::DatabaseError(message))
+            }
+            Err(_) => {
+                let _ = shutdown_tx.send(());
+                let _ = thread.join();
+                Err(AppError::Internal)
+            }
+        }
+    }
+}
+
+impl Drop for ServerHandle {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn resolve_bind_address(config: &Config) -> SocketAddr {
+    std::env::var("BIND")
+        .ok()
+        .and_then(|s| s.parse::<SocketAddr>().ok())
+        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], config.port)))
 }
 
 impl eframe::App for LocalPasteApp {

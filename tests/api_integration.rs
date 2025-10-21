@@ -18,7 +18,7 @@ async fn setup_test_server() -> (TestServer, TempDir) {
 
     let db = Database::new(&config.db_path).unwrap();
     let state = AppState::new(config, db);
-    let app = create_app(state);
+    let app = create_app(state, false);
 
     let server = TestServer::new(app).unwrap();
     (server, temp_dir)

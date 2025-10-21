@@ -21,6 +21,7 @@ use hyper::HeaderMap;
 use std::sync::Arc;
 use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, set_header::SetResponseHeaderLayer,
+    trace::TraceLayer,
 };
 
 #[derive(Clone)]
@@ -39,7 +40,7 @@ impl AppState {
 }
 
 /// Create the application router with all routes and middleware
-pub fn create_app(state: AppState) -> Router {
+pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
     // Configure security headers
     let mut default_headers = HeaderMap::new();
     default_headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
@@ -51,23 +52,32 @@ pub fn create_app(state: AppState) -> Router {
             .unwrap(),
     );
 
-    // Configure CORS - only allow localhost origins
-    let cors = CorsLayer::new()
-        .allow_origin([
-            "http://localhost:3000".parse().unwrap(),
-            "http://localhost:3030".parse().unwrap(),
-            "http://localhost:8080".parse().unwrap(),
-            "http://127.0.0.1:3000".parse().unwrap(),
-            "http://127.0.0.1:3030".parse().unwrap(),
-            "http://127.0.0.1:8080".parse().unwrap(),
-        ])
-        .allow_methods([
-            axum::http::Method::GET,
-            axum::http::Method::POST,
-            axum::http::Method::PUT,
-            axum::http::Method::DELETE,
-        ])
-        .allow_headers([header::CONTENT_TYPE, header::ACCEPT]);
+    // Configure CORS - optionally allow public access
+    let cors = if allow_public_access {
+        CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::PUT,
+                axum::http::Method::DELETE,
+            ])
+            .allow_headers(tower_http::cors::Any)
+    } else {
+        let port = state.config.port;
+        CorsLayer::new()
+            .allow_origin([
+                format!("http://localhost:{}", port).parse().unwrap(),
+                format!("http://127.0.0.1:{}", port).parse().unwrap(),
+            ])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::PUT,
+                axum::http::Method::DELETE,
+            ])
+            .allow_headers([header::CONTENT_TYPE, header::ACCEPT])
+    };
 
     Router::new()
         // API routes
@@ -89,6 +99,7 @@ pub fn create_app(state: AppState) -> Router {
         .layer(
             tower::ServiceBuilder::new()
                 .layer(DefaultBodyLimit::max(state.config.max_paste_size))
+                .layer(TraceLayer::new_for_http())
                 .layer(CompressionLayer::new())
                 .layer(cors)
                 .layer(SetResponseHeaderLayer::overriding(
@@ -113,4 +124,19 @@ pub fn create_app(state: AppState) -> Router {
                         .clone(),
                 )),
         )
+}
+
+use std::future::Future;
+
+/// Run the Axum server with graceful shutdown support.
+pub async fn serve_router(
+    listener: tokio::net::TcpListener,
+    state: AppState,
+    allow_public_access: bool,
+    shutdown_signal: impl Future<Output = ()> + Send + 'static,
+) -> Result<(), std::io::Error> {
+    let app = create_app(state, allow_public_access);
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal)
+        .await
 }
