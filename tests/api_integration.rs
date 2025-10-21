@@ -110,10 +110,56 @@ async fn test_folder_lifecycle() {
     let updated: serde_json::Value = update_response.json();
     assert_eq!(updated["name"], "Updated Folder");
 
-    // Delete folder
-    let delete_response = server.delete(&format!("/api/folder/{}", folder_id)).await;
+    // Create a nested subfolder
+    let child_response = server
+        .post("/api/folder")
+        .json(&json!({
+            "name": "Child Folder",
+            "parent_id": folder_id
+        }))
+        .await;
 
+    assert_eq!(child_response.status_code(), StatusCode::OK);
+    let child: serde_json::Value = child_response.json();
+    let child_id = child["id"].as_str().unwrap();
+    assert_eq!(child["parent_id"], folder_id);
+
+    // Verify both folders appear
+    let updated_list_response = server.get("/api/folders").await;
+    assert_eq!(updated_list_response.status_code(), StatusCode::OK);
+    let updated_folders: Vec<serde_json::Value> = updated_list_response.json();
+    assert_eq!(updated_folders.len(), 2);
+
+    // Create a paste inside the child folder
+    let child_paste_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "Nested content",
+            "name": "nested-paste",
+            "folder_id": child_id
+        }))
+        .await;
+    assert_eq!(child_paste_response.status_code(), StatusCode::OK);
+    let child_paste: serde_json::Value = child_paste_response.json();
+    let child_paste_id = child_paste["id"].as_str().unwrap();
+
+    // Delete the parent folder (should cascade)
+    let delete_response = server.delete(&format!("/api/folder/{}", folder_id)).await;
     assert_eq!(delete_response.status_code(), StatusCode::OK);
+
+    // The nested paste should now be unfiled
+    let moved_response = server
+        .get(&format!("/api/paste/{}", child_paste_id))
+        .await;
+    assert_eq!(moved_response.status_code(), StatusCode::OK);
+    let moved: serde_json::Value = moved_response.json();
+    assert!(moved["folder_id"].is_null());
+
+    // No folders should remain
+    let remaining_response = server.get("/api/folders").await;
+    assert_eq!(remaining_response.status_code(), StatusCode::OK);
+    let remaining: Vec<serde_json::Value> = remaining_response.json();
+    assert!(remaining.is_empty());
 }
 
 #[tokio::test]

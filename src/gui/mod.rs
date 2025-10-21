@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     sync::{mpsc, Arc},
     thread,
@@ -6,8 +7,8 @@ use std::{
 };
 
 use eframe::egui::{
-    self, style::WidgetVisuals, Color32, CornerRadius, FontFamily, FontId, Frame, Layout, Margin,
-    RichText, Stroke, TextStyle, Visuals,
+    self, style::WidgetVisuals, CollapsingHeader, Color32, CornerRadius, FontFamily, FontId, Frame,
+    Layout, Margin, RichText, Stroke, TextStyle, Visuals,
 };
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 
@@ -15,9 +16,11 @@ use tokio::sync::oneshot;
 
 use crate::{
     config::Config,
-    db::Database,
+    db::{Database, TransactionOps},
     error::AppError,
+    models::folder::Folder,
     models::paste::{Paste, UpdatePasteRequest},
+    naming,
     serve_router,
     AppState,
 };
@@ -131,11 +134,16 @@ pub struct LocalPasteApp {
     db: Arc<Database>,
     config: Arc<Config>,
     pastes: Vec<Paste>,
+    folders: Vec<Folder>,
+    paste_index: HashMap<String, usize>,
+    folder_index: HashMap<String, usize>,
     selected_id: Option<String>,
+    folder_focus: Option<String>,
     editor: EditorState,
     status: Option<StatusMessage>,
     theme: CodeTheme,
     style_applied: bool,
+    folder_dialog: Option<FolderDialog>,
     _server: ServerHandle,
 }
 
@@ -162,15 +170,21 @@ impl LocalPasteApp {
             db,
             config: config_arc,
             pastes: Vec::new(),
+            folders: Vec::new(),
+            paste_index: HashMap::new(),
+            folder_index: HashMap::new(),
             selected_id: None,
+            folder_focus: None,
             editor: EditorState::default(),
             status: None,
             theme: CodeTheme::from_style(&egui::Style::default()),
             style_applied: false,
+            folder_dialog: None,
             _server: server,
         };
 
         app.reload_pastes("startup");
+        app.reload_folders("startup");
 
         Ok(app)
     }
@@ -283,6 +297,7 @@ impl LocalPasteApp {
                 );
                 loaded.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
                 self.pastes = loaded;
+                self.rebuild_paste_index();
 
                 if let Some(selected) = self
                     .selected_id
@@ -291,7 +306,7 @@ impl LocalPasteApp {
                 {
                     self.select_paste(selected, false);
                 } else if self.pastes.is_empty() {
-                    self.editor = EditorState::new_unsaved();
+                    self.editor = EditorState::new_unsaved(self.folder_focus.clone());
                 }
             }
             Err(err) => {
@@ -307,6 +322,153 @@ impl LocalPasteApp {
         }
     }
 
+    fn reload_folders(&mut self, reason: &str) {
+        match self.db.folders.list() {
+            Ok(mut loaded) => {
+                println!(
+                    "[localpaste-gui] refreshed {} folders ({})",
+                    loaded.len(),
+                    reason
+                );
+                loaded.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                self.folders = loaded;
+                self.rebuild_folder_index();
+            }
+            Err(err) => {
+                println!(
+                    "[localpaste-gui] failed to reload folders: {}",
+                    err
+                );
+                self.push_status(
+                    StatusLevel::Error,
+                    format!("Failed to load folders: {}", err),
+                );
+            }
+        }
+    }
+
+    fn rebuild_paste_index(&mut self) {
+        self.paste_index.clear();
+        for (idx, paste) in self.pastes.iter().enumerate() {
+            self.paste_index.insert(paste.id.clone(), idx);
+        }
+    }
+
+    fn rebuild_folder_index(&mut self) {
+        self.folder_index.clear();
+        for (idx, folder) in self.folders.iter().enumerate() {
+            self.folder_index.insert(folder.id.clone(), idx);
+        }
+        if let Some(focus) = self.folder_focus.clone() {
+            if !self.folder_index.contains_key(&focus) {
+                self.folder_focus = None;
+            }
+        }
+    }
+
+    fn find_paste(&self, id: &str) -> Option<&Paste> {
+        self.paste_index
+            .get(id)
+            .and_then(|idx| self.pastes.get(*idx))
+    }
+
+    fn find_folder(&self, id: &str) -> Option<&Folder> {
+        self.folder_index
+            .get(id)
+            .and_then(|idx| self.folders.get(*idx))
+    }
+
+    fn folder_path(&self, id: &str) -> String {
+        let mut segments = Vec::new();
+        let mut current = Some(id.to_string());
+        let mut guard = 0;
+        while let Some(curr) = current {
+            if let Some(folder) = self.find_folder(&curr) {
+                segments.push(folder.name.clone());
+                current = folder.parent_id.clone();
+            } else {
+                break;
+            }
+            guard += 1;
+            if guard > 64 {
+                break;
+            }
+        }
+        if segments.is_empty() {
+            return "Unfiled".to_string();
+        }
+        segments.reverse();
+        segments.join(" / ")
+    }
+
+    fn count_pastes_in(&self, folder_id: Option<&str>) -> usize {
+        self.pastes
+            .iter()
+            .filter(|p| p.folder_id.as_deref() == folder_id)
+            .count()
+    }
+
+    fn folder_choices(&self) -> Vec<(String, String)> {
+        let mut items = self
+            .folders
+            .iter()
+            .map(|folder| (folder.id.clone(), self.folder_path(&folder.id)))
+            .collect::<Vec<_>>();
+        items.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+        items
+    }
+
+    fn folder_name_exists(&self, parent: Option<&str>, name: &str) -> bool {
+        self.folders.iter().any(|folder| {
+            folder.parent_id.as_deref() == parent
+                && folder.name.eq_ignore_ascii_case(name)
+        })
+    }
+
+    fn try_create_folder(&mut self, dialog: &mut FolderDialog) -> bool {
+        let trimmed = dialog.name.trim();
+        if trimmed.is_empty() {
+            dialog.error = Some("Folder name cannot be empty".to_string());
+            return false;
+        }
+        let parent_ref = dialog.parent_id.as_deref();
+        if let Some(parent_id) = parent_ref {
+            if self.find_folder(parent_id).is_none() {
+                dialog.error =
+                    Some("Selected parent folder no longer exists.".to_string());
+                return false;
+            }
+        }
+        if self.folder_name_exists(parent_ref, trimmed) {
+            dialog.error = Some("A folder with that name already exists here.".to_string());
+            return false;
+        }
+
+        let mut folder = Folder::with_parent(trimmed.to_string(), dialog.parent_id.clone());
+        match self.db.folders.create(&folder) {
+            Ok(_) => {
+                if let Err(err) = self.db.flush() {
+                    println!(
+                        "[localpaste-gui] warning: flush failed after folder create: {}",
+                        err
+                    );
+                }
+                let new_id = folder.id.clone();
+                self.reload_folders("after create folder");
+                self.folder_focus = Some(new_id.clone());
+                self.push_status(
+                    StatusLevel::Info,
+                    format!("Created folder \"{}\"", trimmed),
+                );
+                true
+            }
+            Err(err) => {
+                dialog.error = Some(err.to_string());
+                false
+            }
+        }
+    }
+
     fn select_paste(&mut self, id: String, announce: bool) {
         if announce {
             println!("[localpaste-gui] selecting paste {}", id);
@@ -314,6 +476,7 @@ impl LocalPasteApp {
         if let Some(paste) = self.pastes.iter().find(|p| p.id == id) {
             self.editor.apply_paste(paste.clone());
             self.selected_id = Some(paste.id.clone());
+            self.folder_focus = paste.folder_id.clone();
         } else if announce {
             self.push_status(
                 StatusLevel::Error,
@@ -322,11 +485,197 @@ impl LocalPasteApp {
         }
     }
 
+    fn render_folder_tree(
+        &mut self,
+        ui: &mut egui::Ui,
+        pending_select: &mut Option<String>,
+    ) {
+        let unfiled_count = self.count_pastes_in(None);
+        let unfiled_selected = self.folder_focus.is_none();
+        let unfiled_label = if unfiled_selected {
+            RichText::new(format!("📁 Unfiled ({})", unfiled_count)).color(COLOR_ACCENT)
+        } else {
+            RichText::new(format!("📁 Unfiled ({})", unfiled_count)).color(COLOR_TEXT_PRIMARY)
+        };
+
+        let unfiled = CollapsingHeader::new(unfiled_label)
+            .id_source("folder-unfiled")
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.indent("unfiled-list", |ui| {
+                    self.render_paste_entries(ui, None, pending_select);
+                });
+            });
+        if unfiled.header_response.clicked() {
+            self.folder_focus = None;
+        }
+
+        self.render_folder_children(ui, None, pending_select);
+    }
+
+    fn render_folder_children(
+        &mut self,
+        ui: &mut egui::Ui,
+        parent: Option<&str>,
+        pending_select: &mut Option<String>,
+    ) {
+        let child_ids: Vec<String> = self
+            .folders
+            .iter()
+            .filter(|folder| folder.parent_id.as_deref() == parent)
+            .map(|folder| folder.id.clone())
+            .collect();
+
+        for folder_id in child_ids {
+            if let Some(folder) = self.find_folder(folder_id.as_str()).cloned() {
+                let paste_count = self.count_pastes_in(Some(folder.id.as_str()));
+                let is_selected = self.folder_focus.as_deref() == Some(folder.id.as_str());
+                let label = if is_selected {
+                    RichText::new(format!("📁 {} ({})", folder.name, paste_count))
+                        .color(COLOR_ACCENT)
+                } else {
+                    RichText::new(format!("📁 {} ({})", folder.name, paste_count))
+                        .color(COLOR_TEXT_PRIMARY)
+                };
+                let default_open = is_selected || folder.parent_id.is_none();
+                let collapse = CollapsingHeader::new(label)
+                    .id_source(format!("folder-{}", folder.id))
+                    .default_open(default_open)
+                    .show(ui, |ui| {
+                        ui.indent(format!("folder-indent-{}", folder.id), |ui| {
+                            self.render_paste_entries(
+                                ui,
+                                Some(folder.id.as_str()),
+                                pending_select,
+                            );
+                            self.render_folder_children(
+                                ui,
+                                Some(folder.id.as_str()),
+                                pending_select,
+                            );
+                        });
+                    });
+                if collapse.header_response.clicked() {
+                    self.folder_focus = Some(folder.id.clone());
+                }
+            }
+        }
+    }
+
+    fn render_paste_entries(
+        &mut self,
+        ui: &mut egui::Ui,
+        folder_id: Option<&str>,
+        pending_select: &mut Option<String>,
+    ) {
+        let entries: Vec<String> = self
+            .pastes
+            .iter()
+            .filter(|paste| paste.folder_id.as_deref() == folder_id)
+            .map(|paste| paste.id.clone())
+            .collect();
+
+        if entries.is_empty() {
+            let message = if folder_id.is_some() {
+                "Empty folder"
+            } else {
+                "No pastes yet"
+            };
+            ui.label(
+                RichText::new(message)
+                    .size(11.0)
+                    .color(COLOR_TEXT_MUTED),
+            );
+            return;
+        }
+
+        for paste_id in entries {
+            if let Some(paste) = self.find_paste(paste_id.as_str()) {
+                let selected = self
+                    .selected_id
+                    .as_ref()
+                    .map(|id| id == &paste.id)
+                    .unwrap_or(false);
+                let short_id: String = paste.id.chars().take(8).collect();
+                let label_text = format!("{} · {}", paste.name, short_id);
+                let label = if selected {
+                    RichText::new(label_text).color(COLOR_ACCENT)
+                } else {
+                    RichText::new(label_text).color(COLOR_TEXT_PRIMARY)
+                };
+                let response = ui.selectable_label(selected, label);
+                if response.clicked() {
+                    *pending_select = Some(paste.id.clone());
+                }
+            }
+        }
+    }
+
+    fn handle_auto_save(&mut self, ctx: &egui::Context) {
+        if !self.editor.dirty {
+            return;
+        }
+        if self.editor.name.trim().is_empty() {
+            return;
+        }
+        if let Some(last) = self.editor.last_modified {
+            let interval = Duration::from_millis(self.config.auto_save_interval);
+            let elapsed = last.elapsed();
+            if elapsed >= interval {
+                self.save_current_paste();
+                ctx.request_repaint_after(Duration::from_millis(250));
+            } else {
+                ctx.request_repaint_after(interval - elapsed);
+            }
+        }
+    }
+
     fn create_new_paste(&mut self) {
-        self.editor = EditorState::new_unsaved();
-        self.selected_id = None;
-        println!("[localpaste-gui] ready for new unsaved paste");
-        self.push_status(StatusLevel::Info, "New paste ready".to_string());
+        let mut paste = Paste::new(String::new(), naming::generate_name());
+        if let Some(language) = self.editor.language.clone() {
+            paste.language = Some(language);
+        }
+        if let Some(folder_id) = self.folder_focus.clone() {
+            paste.folder_id = Some(folder_id);
+        }
+        paste.tags = self.editor.tags.clone();
+
+        let result = if let Some(ref folder_id) = paste.folder_id {
+            TransactionOps::create_paste_with_folder(&self.db, &paste, folder_id)
+        } else {
+            self.db.pastes.create(&paste)
+        };
+
+        match result {
+            Ok(_) => {
+                if let Err(err) = self.db.flush() {
+                    println!(
+                        "[localpaste-gui] warning: flush failed after create: {}",
+                        err
+                    );
+                }
+                println!(
+                    "[localpaste-gui] created paste {} with folder {:?}",
+                    paste.id, paste.folder_id
+                );
+                self.editor.apply_paste(paste.clone());
+                self.selected_id = Some(paste.id.clone());
+                self.folder_focus = paste.folder_id.clone();
+                self.reload_pastes("after create");
+                self.reload_folders("after create paste");
+                self.push_status(StatusLevel::Info, "New paste ready".to_string());
+            }
+            Err(err) => {
+                println!(
+                    "[localpaste-gui] failed to create paste: {}",
+                    err
+                );
+                self.push_status(
+                    StatusLevel::Error,
+                    format!("Failed to create paste: {}", err),
+                );
+            }
+        }
     }
 
     fn save_current_paste(&mut self) {
@@ -346,8 +695,15 @@ impl LocalPasteApp {
         let mut paste = Paste::new(self.editor.content.clone(), self.editor.name.clone());
         paste.language = self.editor.language.clone();
         paste.tags = self.editor.tags.clone();
+        paste.folder_id = self.editor.folder_id.clone();
 
-        match self.db.pastes.create(&paste) {
+        let result = if let Some(ref folder_id) = paste.folder_id {
+            TransactionOps::create_paste_with_folder(&self.db, &paste, folder_id)
+        } else {
+            self.db.pastes.create(&paste)
+        };
+
+        match result {
             Ok(_) => {
                 println!(
                     "[localpaste-gui] created paste {} ({} chars)",
@@ -366,7 +722,9 @@ impl LocalPasteApp {
                 );
                 self.editor.apply_paste(paste.clone());
                 self.selected_id = Some(paste.id.clone());
+                self.folder_focus = paste.folder_id.clone();
                 self.reload_pastes("after create");
+                self.reload_folders("after create");
             }
             Err(err) => {
                 println!(
@@ -382,15 +740,62 @@ impl LocalPasteApp {
     }
 
     fn update_existing_paste(&mut self, id: String) {
+        let previous = match self.db.pastes.get(&id) {
+            Ok(Some(paste)) => paste,
+            Ok(None) => {
+                self.push_status(
+                    StatusLevel::Error,
+                    "Paste disappeared before saving".into(),
+                );
+                self.reload_pastes("missing on update");
+                return;
+            }
+            Err(err) => {
+                println!(
+                    "[localpaste-gui] failed to read paste {} before update: {}",
+                    id, err
+                );
+                self.push_status(
+                    StatusLevel::Error,
+                    format!("Save failed: {}", err),
+                );
+                return;
+            }
+        };
+
+        let folder_value = self
+            .editor
+            .folder_id
+            .clone()
+            .unwrap_or_default();
         let update = UpdatePasteRequest {
             content: Some(self.editor.content.clone()),
             name: Some(self.editor.name.clone()),
             language: self.editor.language.clone(),
-            folder_id: None,
+            folder_id: Some(folder_value.clone()),
             tags: Some(self.editor.tags.clone()),
         };
 
-        match self.db.pastes.update(&id, update) {
+        let result = if previous.folder_id.as_deref()
+            != self.editor.folder_id.as_deref()
+        {
+            let new_folder = if folder_value.is_empty() {
+                None
+            } else {
+                Some(folder_value.as_str())
+            };
+            TransactionOps::move_paste_between_folders(
+                &self.db,
+                &id,
+                previous.folder_id.as_deref(),
+                new_folder,
+                update.clone(),
+            )
+        } else {
+            self.db.pastes.update(&id, update.clone())
+        };
+
+        match result {
             Ok(Some(updated)) => {
                 println!(
                     "[localpaste-gui] updated paste {} ({} chars)",
@@ -406,6 +811,8 @@ impl LocalPasteApp {
                 self.editor.apply_paste(updated.clone());
                 self.selected_id = Some(updated.id.clone());
                 self.reload_pastes("after update");
+                self.reload_folders("after update");
+                self.folder_focus = updated.folder_id.clone();
                 self.push_status(StatusLevel::Info, "Saved changes".into());
             }
             Ok(None) => {
@@ -418,6 +825,7 @@ impl LocalPasteApp {
                     "Paste disappeared before saving".into(),
                 );
                 self.reload_pastes("missing on update");
+                self.reload_folders("missing on update");
             }
             Err(err) => {
                 println!(
@@ -445,8 +853,11 @@ impl LocalPasteApp {
                     }
                     self.push_status(StatusLevel::Info, "Deleted paste".into());
                     self.selected_id = None;
-                    self.create_new_paste();
+                    self.editor = EditorState::default();
+                    self.editor.needs_focus = true;
+                    self.folder_focus = None;
                     self.reload_pastes("after delete");
+                    self.reload_folders("after delete");
                 }
                 Ok(false) => {
                     self.push_status(
@@ -454,6 +865,7 @@ impl LocalPasteApp {
                         "Paste was already deleted".into(),
                     );
                     self.reload_pastes("stale delete");
+                    self.reload_folders("stale delete");
                 }
                 Err(err) => {
                     println!(
@@ -633,52 +1045,55 @@ impl eframe::App for LocalPasteApp {
                             .color(COLOR_TEXT_MUTED),
                     );
 
-                    ui.add_space(16.0);
-                    let new_btn = egui::Button::new(
-                        RichText::new("+ New Paste").color(Color32::WHITE),
-                    )
-                    .fill(COLOR_ACCENT)
-                    .min_size(egui::vec2(ui.available_width(), 38.0));
-                    if ui.add(new_btn).clicked() {
-                        self.create_new_paste();
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        let paste_btn = egui::Button::new(
+                            RichText::new("+ New Paste").color(Color32::WHITE),
+                        )
+                        .fill(COLOR_ACCENT)
+                        .min_size(egui::vec2(ui.available_width() * 0.5, 36.0));
+                        if ui.add(paste_btn).clicked() {
+                            self.create_new_paste();
+                        }
+                        let folder_btn = egui::Button::new(
+                            RichText::new("+ New Folder").color(Color32::WHITE),
+                        )
+                        .fill(COLOR_ACCENT_HOVER)
+                        .min_size(egui::vec2(ui.available_width(), 36.0));
+                        if ui.add(folder_btn).clicked() {
+                            self.folder_dialog =
+                                Some(FolderDialog::new(self.folder_focus.clone()));
+                        }
+                    });
+
+                    if let Some(focus) = self.folder_focus.clone() {
+                        if let Some(path) = self
+                            .find_folder(focus.as_str())
+                            .map(|_| self.folder_path(&focus))
+                        {
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new(format!("Selected folder: {}", path))
+                                    .size(12.0)
+                                    .color(COLOR_TEXT_MUTED),
+                            );
+                        }
                     }
 
                     ui.add_space(12.0);
                     ui.add(egui::Separator::default());
-
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new("RECENT PASTES")
+                        RichText::new("BROWSER")
                             .size(11.0)
                             .color(COLOR_TEXT_MUTED),
                     );
-
                     ui.add_space(4.0);
+
                     egui::ScrollArea::vertical()
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            for paste in &self.pastes {
-                                let selected = self
-                                    .selected_id
-                                    .as_ref()
-                                    .map(|id| id == &paste.id)
-                                    .unwrap_or(false);
-                                let short_id: String =
-                                    paste.id.chars().take(8).collect();
-                                let label_text =
-                                    format!("{} - {}", paste.name, short_id);
-                                let label = if selected {
-                                    RichText::new(label_text).color(COLOR_ACCENT)
-                                } else {
-                                    RichText::new(label_text)
-                                        .color(COLOR_TEXT_PRIMARY)
-                                };
-                                let response =
-                                    ui.selectable_label(selected, label);
-                                if response.clicked() {
-                                    pending_select = Some(paste.id.clone());
-                                }
-                            }
+                            self.render_folder_tree(ui, &mut pending_select);
                         });
                 });
             });
@@ -755,7 +1170,7 @@ impl eframe::App for LocalPasteApp {
                                     .background_color(COLOR_BG_TERTIARY),
                             );
                             if response.changed() {
-                                self.editor.dirty = true;
+                                self.editor.mark_dirty();
                             }
                         });
 
@@ -783,7 +1198,7 @@ impl eframe::App for LocalPasteApp {
                                         )
                                         .clicked()
                                     {
-                                        self.editor.dirty = true;
+                                        self.editor.mark_dirty();
                                     }
                                     ui.separator();
                                     for option in LanguageSet::all().iter() {
@@ -795,7 +1210,62 @@ impl eframe::App for LocalPasteApp {
                                             )
                                             .clicked()
                                         {
-                                            self.editor.dirty = true;
+                                            self.editor.mark_dirty();
+                                        }
+                                    }
+                                });
+                        });
+
+                        ui.add_space(20.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new("Folder")
+                                    .size(12.0)
+                                    .color(COLOR_TEXT_MUTED),
+                            );
+                            let current_label = self
+                                .editor
+                                .folder_id
+                                .as_deref()
+                                .and_then(|id| self.find_folder(id))
+                                .map(|_| {
+                                    self.editor
+                                        .folder_id
+                                        .as_deref()
+                                        .map(|id| self.folder_path(id))
+                                        .unwrap_or_else(|| "Unfiled".to_string())
+                                })
+                                .unwrap_or_else(|| "Unfiled".to_string());
+                            egui::ComboBox::from_id_salt("folder_select")
+                                .selected_text(current_label)
+                                .show_ui(ui, |ui| {
+                                    ui.set_min_width(180.0);
+                                    if ui
+                                        .selectable_value(
+                                            &mut self.editor.folder_id,
+                                            None,
+                                            "Unfiled",
+                                        )
+                                        .clicked()
+                                    {
+                                        self.folder_focus = None;
+                                        self.editor.mark_dirty();
+                                    }
+                                    let choices = self.folder_choices();
+                                    if !choices.is_empty() {
+                                        ui.separator();
+                                    }
+                                    for (id, label) in choices {
+                                        if ui
+                                            .selectable_value(
+                                                &mut self.editor.folder_id,
+                                                Some(id.clone()),
+                                                label,
+                                            )
+                                            .clicked()
+                                        {
+                                            self.folder_focus = Some(id);
+                                            self.editor.mark_dirty();
                                         }
                                     }
                                 });
@@ -863,7 +1333,6 @@ impl eframe::App for LocalPasteApp {
                             let editor =
                                 egui::TextEdit::multiline(&mut self.editor.content)
                                     .code_editor()
-                                    .lock_focus(true)
                                     .frame(false)
                                     .background_color(COLOR_BG_PRIMARY)
                                     .desired_width(f32::INFINITY)
@@ -871,35 +1340,133 @@ impl eframe::App for LocalPasteApp {
                                     .layouter(&mut layouter);
 
                             let response = ui.add(editor);
+                            if self.editor.needs_focus {
+                                if !response.has_focus() {
+                                    response.request_focus();
+                                }
+                                self.editor.needs_focus = false;
+                            }
                             if response.changed() {
-                                self.editor.dirty = true;
+                                self.editor.mark_dirty();
                             }
                         });
                 });
             });
+        if let Some(mut dialog) = self.folder_dialog.take() {
+            let mut open = true;
+            let mut keep_dialog = true;
+            egui::Window::new("Create Folder")
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new("Choose a name and parent for the folder.")
+                            .color(COLOR_TEXT_MUTED),
+                    );
+                    ui.add_space(8.0);
+                    let name_response = ui.add(
+                        egui::TextEdit::singleline(&mut dialog.name)
+                            .desired_width(260.0)
+                            .hint_text("Folder name"),
+                    );
+                    if name_response.changed() {
+                        dialog.error = None;
+                    }
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new("Parent").size(12.0).color(COLOR_TEXT_MUTED),
+                    );
+                    let parent_label = dialog
+                        .parent_id
+                        .as_deref()
+                        .and_then(|id| self.find_folder(id).map(|_| self.folder_path(id)))
+                        .unwrap_or_else(|| "Unfiled".to_string());
+                    egui::ComboBox::from_id_salt("folder_dialog_parent")
+                        .selected_text(parent_label)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_value(&mut dialog.parent_id, None, "Unfiled")
+                                .clicked()
+                            {
+                                dialog.error = None;
+                            }
+                            let choices = self.folder_choices();
+                            for (id, label) in choices {
+                                if ui
+                                    .selectable_value(
+                                        &mut dialog.parent_id,
+                                        Some(id.clone()),
+                                        label,
+                                    )
+                                    .clicked()
+                                {
+                                    dialog.error = None;
+                                }
+                            }
+                        });
+                    if let Some(error) = &dialog.error {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(error).color(COLOR_DANGER));
+                    }
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            keep_dialog = false;
+                        }
+                        let create_btn = ui.add_enabled(
+                            !dialog.name.trim().is_empty(),
+                            egui::Button::new("Create"),
+                        );
+                        if create_btn.clicked() {
+                            if self.try_create_folder(&mut dialog) {
+                                keep_dialog = false;
+                            }
+                        }
+                    });
+                });
+            if open && keep_dialog {
+                self.folder_dialog = Some(dialog);
+            }
+        }
+        self.handle_auto_save(ctx);
     }
 }
 
-#[derive(Default)]
+struct FolderDialog {
+    name: String,
+    parent_id: Option<String>,
+    error: Option<String>,
+}
+
+impl FolderDialog {
+    fn new(parent_id: Option<String>) -> Self {
+        Self {
+            name: String::new(),
+            parent_id,
+            error: None,
+        }
+    }
+}
+
 struct EditorState {
     paste_id: Option<String>,
     name: String,
     content: String,
     language: Option<String>,
+    folder_id: Option<String>,
     tags: Vec<String>,
     dirty: bool,
+    last_modified: Option<Instant>,
+    needs_focus: bool,
 }
 
 impl EditorState {
-    fn new_unsaved() -> Self {
-        Self {
-            paste_id: None,
-            name: "untitled".to_string(),
-            content: String::new(),
-            language: None,
-            tags: Vec::new(),
-            dirty: true,
-        }
+    fn new_unsaved(folder_id: Option<String>) -> Self {
+        let mut state = Self::default();
+        state.folder_id = folder_id;
+        state.needs_focus = true;
+        state
     }
 
     fn apply_paste(&mut self, paste: Paste) {
@@ -907,8 +1474,36 @@ impl EditorState {
         self.name = paste.name;
         self.content = paste.content;
         self.language = paste.language;
+        self.folder_id = paste.folder_id;
         self.tags = paste.tags;
+        self.mark_pristine();
+        self.needs_focus = true;
+    }
+
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+        self.last_modified = Some(Instant::now());
+    }
+
+    fn mark_pristine(&mut self) {
         self.dirty = false;
+        self.last_modified = None;
+    }
+}
+
+impl Default for EditorState {
+    fn default() -> Self {
+        Self {
+            paste_id: None,
+            name: "untitled".to_string(),
+            content: String::new(),
+            language: None,
+            folder_id: None,
+            tags: Vec::new(),
+            dirty: false,
+            last_modified: None,
+            needs_focus: false,
+        }
     }
 }
 

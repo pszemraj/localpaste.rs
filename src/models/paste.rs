@@ -24,7 +24,7 @@ pub struct CreatePasteRequest {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct UpdatePasteRequest {
     pub content: Option<String>,
     pub name: Option<String>,

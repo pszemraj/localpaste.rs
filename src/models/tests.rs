@@ -84,14 +84,17 @@ mod model_tests {
         assert_eq!(folder.name, name);
         assert!(!folder.id.is_empty());
         assert_eq!(folder.paste_count, 0);
+        assert!(folder.parent_id.is_none());
     }
 
     #[test]
     fn test_folder_request() {
         let req = folder::CreateFolderRequest {
             name: "Test Folder".to_string(),
+            parent_id: None,
         };
 
         assert_eq!(req.name, "Test Folder");
+        assert!(req.parent_id.is_none());
     }
 }
