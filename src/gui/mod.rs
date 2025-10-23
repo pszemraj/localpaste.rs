@@ -10,8 +10,6 @@ use eframe::egui::{
     self, style::WidgetVisuals, CollapsingHeader, Color32, CornerRadius, FontFamily, FontId, Frame,
     Layout, Margin, RichText, Stroke, TextStyle, Visuals,
 };
-use egui_extras::syntax_highlighting::{self, CodeTheme};
-
 use tokio::sync::oneshot;
 
 use crate::{
@@ -139,7 +137,6 @@ pub struct LocalPasteApp {
     folder_focus: Option<String>,
     editor: EditorState,
     status: Option<StatusMessage>,
-    theme: CodeTheme,
     style_applied: bool,
     folder_dialog: Option<FolderDialog>,
     _server: ServerHandle,
@@ -172,7 +169,6 @@ impl LocalPasteApp {
             folder_focus: None,
             editor: EditorState::default(),
             status: None,
-            theme: CodeTheme::from_style(&egui::Style::default()),
             style_applied: false,
             folder_dialog: None,
             _server: server,
@@ -277,7 +273,6 @@ impl LocalPasteApp {
         );
 
         ctx.set_style(style.clone());
-        self.theme = CodeTheme::from_style(&style);
         self.style_applied = true;
     }
 
@@ -1165,50 +1160,46 @@ impl eframe::App for LocalPasteApp {
                     ..Default::default()
                 }
                 .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("editor_scroll")
-                        .auto_shrink([false; 2])
-                        .show(ui, |ui| {
-                            let language = self
-                                .editor
-                                .language
-                                .clone()
-                                .unwrap_or_else(|| "plain".into());
-                            let theme = self.theme.clone();
-                            let mut layouter =
-                                move |ui: &egui::Ui,
-                                      text: &dyn egui::TextBuffer,
-                                      wrap_width: f32| {
-                                    let source = text.as_str();
-                                    let mut job = syntax_highlighting::highlight(
-                                        ui.ctx(),
-                                        ui.style(),
-                                        &theme,
-                                        &language,
-                                        source,
-                                    );
-                                    job.wrap.max_width = wrap_width;
-                                    ui.fonts_mut(|f| f.layout_job(job))
-                                };
-                            let editor = egui::TextEdit::multiline(&mut self.editor.content)
-                                .code_editor()
-                                .frame(false)
-                                .background_color(COLOR_BG_PRIMARY)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(32)
-                                .layouter(&mut layouter);
-
-                            let response = ui.add(editor);
-                            if self.editor.needs_focus {
-                                if !response.has_focus() {
-                                    response.request_focus();
-                                }
-                                self.editor.needs_focus = false;
-                            }
-                            if response.changed() {
-                                self.editor.mark_dirty();
-                            }
+                    let available = ui.available_size();
+                    let text_style = TextStyle::Monospace;
+                    let row_height = ui.text_style_height(&text_style).max(14.0);
+                    let rows = (available.y / row_height).floor().max(12.0) as usize;
+                    let editor = egui::TextEdit::multiline(&mut self.editor.content)
+                        .font(text_style)
+                        .desired_width(available.x)
+                        .desired_rows(rows)
+                        .wrap_mode(egui::TextWrapMode::Extend)
+                        .frame(false)
+                        .layouter(&mut |ui: &egui::Ui,
+                                        text: &dyn egui::TextBuffer,
+                                        wrap_width: f32| {
+                            let mut job = egui::text::LayoutJob::simple(
+                                text.as_str().to_owned(),
+                                FontId::monospace(row_height),
+                                COLOR_TEXT_PRIMARY,
+                                wrap_width,
+                            );
+                            job.wrap.max_width = wrap_width;
+                            ui.fonts_mut(|f| f.layout_job(job))
                         });
+
+                    let response = ui.add_sized(available, editor);
+                    if self.editor.needs_focus {
+                        if !response.has_focus() {
+                            response.request_focus();
+                        }
+                        self.editor.needs_focus = false;
+                    }
+                    if response.changed() {
+                        #[cfg(debug_assertions)]
+                        {
+                            println!(
+                                "[localpaste-gui] editor changed ({} chars)",
+                                self.editor.content.len()
+                            );
+                        }
+                        self.editor.mark_dirty();
+                    }
                 });
             });
         if let Some(mut dialog) = self.folder_dialog.take() {
