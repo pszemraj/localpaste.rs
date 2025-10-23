@@ -430,7 +430,7 @@ impl LocalPasteApp {
             return false;
         }
 
-        let mut folder = Folder::with_parent(trimmed.to_string(), dialog.parent_id.clone());
+        let folder = Folder::with_parent(trimmed.to_string(), dialog.parent_id.clone());
         match self.db.folders.create(&folder) {
             Ok(_) => {
                 if let Err(err) = self.db.flush() {
@@ -472,13 +472,13 @@ impl LocalPasteApp {
         let unfiled_count = self.count_pastes_in(None);
         let unfiled_selected = self.folder_focus.is_none();
         let unfiled_label = if unfiled_selected {
-            RichText::new(format!("📁 Unfiled ({})", unfiled_count)).color(COLOR_ACCENT)
+            RichText::new(format!("Unfiled ({})", unfiled_count)).color(COLOR_ACCENT)
         } else {
-            RichText::new(format!("📁 Unfiled ({})", unfiled_count)).color(COLOR_TEXT_PRIMARY)
+            RichText::new(format!("Unfiled ({})", unfiled_count)).color(COLOR_TEXT_PRIMARY)
         };
 
         let unfiled = CollapsingHeader::new(unfiled_label)
-            .id_source("folder-unfiled")
+            .id_salt("folder-unfiled")
             .default_open(true)
             .show(ui, |ui| {
                 ui.indent("unfiled-list", |ui| {
@@ -510,15 +510,14 @@ impl LocalPasteApp {
                 let paste_count = self.count_pastes_in(Some(folder.id.as_str()));
                 let is_selected = self.folder_focus.as_deref() == Some(folder.id.as_str());
                 let label = if is_selected {
-                    RichText::new(format!("📁 {} ({})", folder.name, paste_count))
-                        .color(COLOR_ACCENT)
+                    RichText::new(format!("{} ({})", folder.name, paste_count)).color(COLOR_ACCENT)
                 } else {
-                    RichText::new(format!("📁 {} ({})", folder.name, paste_count))
+                    RichText::new(format!("{} ({})", folder.name, paste_count))
                         .color(COLOR_TEXT_PRIMARY)
                 };
                 let default_open = is_selected || folder.parent_id.is_none();
                 let collapse = CollapsingHeader::new(label)
-                    .id_source(format!("folder-{}", folder.id))
+                    .id_salt(format!("folder-{}", folder.id))
                     .default_open(default_open)
                     .show(ui, |ui| {
                         ui.indent(format!("folder-indent-{}", folder.id), |ui| {
@@ -602,48 +601,11 @@ impl LocalPasteApp {
     }
 
     fn create_new_paste(&mut self) {
-        let mut paste = Paste::new(String::new(), naming::generate_name());
-        if let Some(language) = self.editor.language.clone() {
-            paste.language = Some(language);
-        }
-        if let Some(folder_id) = self.folder_focus.clone() {
-            paste.folder_id = Some(folder_id);
-        }
-        paste.tags = self.editor.tags.clone();
-
-        let result = if let Some(ref folder_id) = paste.folder_id {
-            TransactionOps::create_paste_with_folder(&self.db, &paste, folder_id)
-        } else {
-            self.db.pastes.create(&paste)
-        };
-
-        match result {
-            Ok(_) => {
-                if let Err(err) = self.db.flush() {
-                    println!(
-                        "[localpaste-gui] warning: flush failed after create: {}",
-                        err
-                    );
-                }
-                println!(
-                    "[localpaste-gui] created paste {} with folder {:?}",
-                    paste.id, paste.folder_id
-                );
-                self.editor.apply_paste(paste.clone());
-                self.selected_id = Some(paste.id.clone());
-                self.folder_focus = paste.folder_id.clone();
-                self.reload_pastes("after create");
-                self.reload_folders("after create paste");
-                self.push_status(StatusLevel::Info, "New paste ready".to_string());
-            }
-            Err(err) => {
-                println!("[localpaste-gui] failed to create paste: {}", err);
-                self.push_status(
-                    StatusLevel::Error,
-                    format!("Failed to create paste: {}", err),
-                );
-            }
-        }
+        let folder = self.folder_focus.clone();
+        self.editor = EditorState::new_unsaved(folder.clone());
+        self.folder_focus = folder;
+        self.selected_id = None;
+        self.push_status(StatusLevel::Info, "New paste ready".to_string());
     }
 
     fn save_current_paste(&mut self) {
@@ -788,9 +750,7 @@ impl LocalPasteApp {
                     }
                     self.push_status(StatusLevel::Info, "Deleted paste".into());
                     self.selected_id = None;
-                    self.editor = EditorState::default();
-                    self.editor.needs_focus = true;
-                    self.folder_focus = None;
+                    self.editor = EditorState::new_unsaved(self.folder_focus.clone());
                     self.reload_pastes("after delete");
                     self.reload_folders("after delete");
                 }
@@ -1361,7 +1321,12 @@ struct EditorState {
 impl EditorState {
     fn new_unsaved(folder_id: Option<String>) -> Self {
         let mut state = Self::default();
+        state.name = naming::generate_name();
         state.folder_id = folder_id;
+        state.language = None;
+        state.tags.clear();
+        state.dirty = false;
+        state.last_modified = None;
         state.needs_focus = true;
         state
     }
