@@ -1,11 +1,30 @@
 #![cfg(feature = "gui")]
 
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 
 use eframe::egui;
 use localpaste::gui::{self, LocalPasteApp};
+use tracing::error;
+use tracing_subscriber::EnvFilter;
+
+fn init_tracing() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let env_filter = EnvFilter::try_from_default_env()
+            .or_else(|_| EnvFilter::try_new("localpaste=warn,localpaste::gui=warn"))
+            .unwrap();
+
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_target(false)
+            .compact()
+            .init();
+    });
+}
 
 fn main() {
+    init_tracing();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
@@ -17,7 +36,7 @@ fn main() {
     let app = match LocalPasteApp::initialise() {
         Ok(app) => app,
         Err(err) => {
-            eprintln!("[localpaste-gui] initialise error: {err}");
+            error!("initialise error: {err}");
             std::process::exit(1);
         }
     };
@@ -27,7 +46,7 @@ fn main() {
         options,
         Box::new(move |_cc| Ok(Box::new(app))),
     ) {
-        eprintln!("[localpaste-gui] runtime error: {err}");
+        error!("runtime error: {err}");
         std::process::exit(1);
     }
 }

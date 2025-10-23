@@ -10,7 +10,9 @@ use eframe::egui::{
     self, style::WidgetVisuals, CollapsingHeader, Color32, CornerRadius, FontFamily, FontId, Frame,
     Layout, Margin, RichText, Stroke, TextStyle, Visuals,
 };
+use egui_extras::syntax_highlighting::{self, CodeTheme};
 use tokio::sync::oneshot;
+use tracing::{debug, error, info, warn};
 
 use crate::{
     config::Config,
@@ -137,6 +139,7 @@ pub struct LocalPasteApp {
     folder_focus: Option<String>,
     editor: EditorState,
     status: Option<StatusMessage>,
+    theme: CodeTheme,
     style_applied: bool,
     folder_dialog: Option<FolderDialog>,
     _server: ServerHandle,
@@ -147,14 +150,14 @@ impl LocalPasteApp {
     pub fn initialise() -> Result<Self, AppError> {
         let config = Config::from_env();
         let database = Database::new(&config.db_path)?;
-        println!("[localpaste-gui] opened database at {}", config.db_path);
+        info!("opened database at {}", config.db_path);
 
         let state = AppState::new(config.clone(), database);
         let db = state.db.clone();
         let config_arc = state.config.clone();
         let allow_public = std::env::var("ALLOW_PUBLIC_ACCESS").is_ok();
         if allow_public {
-            println!("[localpaste-gui] public access enabled (CORS allow-all)");
+            info!("public access enabled (CORS allow-all)");
         }
         let server = ServerHandle::start(state.clone(), allow_public)?;
 
@@ -169,6 +172,7 @@ impl LocalPasteApp {
             folder_focus: None,
             editor: EditorState::default(),
             status: None,
+            theme: CodeTheme::from_style(&egui::Style::default()),
             style_applied: false,
             folder_dialog: None,
             _server: server,
@@ -273,17 +277,14 @@ impl LocalPasteApp {
         );
 
         ctx.set_style(style.clone());
+        self.theme = CodeTheme::from_style(&style);
         self.style_applied = true;
     }
 
     fn reload_pastes(&mut self, reason: &str) {
         match self.db.pastes.list(512, None) {
             Ok(mut loaded) => {
-                println!(
-                    "[localpaste-gui] refreshed {} pastes ({})",
-                    loaded.len(),
-                    reason
-                );
+                info!("refreshed {} pastes ({})", loaded.len(), reason);
                 loaded.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
                 self.pastes = loaded;
                 self.rebuild_paste_index();
@@ -299,7 +300,7 @@ impl LocalPasteApp {
                 }
             }
             Err(err) => {
-                println!("[localpaste-gui] failed to reload pastes: {}", err);
+                error!("failed to reload pastes: {}", err);
                 self.push_status(
                     StatusLevel::Error,
                     format!("Failed to load pastes: {}", err),
@@ -311,17 +312,13 @@ impl LocalPasteApp {
     fn reload_folders(&mut self, reason: &str) {
         match self.db.folders.list() {
             Ok(mut loaded) => {
-                println!(
-                    "[localpaste-gui] refreshed {} folders ({})",
-                    loaded.len(),
-                    reason
-                );
+                info!("refreshed {} folders ({})", loaded.len(), reason);
                 loaded.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
                 self.folders = loaded;
                 self.rebuild_folder_index();
             }
             Err(err) => {
-                println!("[localpaste-gui] failed to reload folders: {}", err);
+                error!("failed to reload folders: {}", err);
                 self.push_status(
                     StatusLevel::Error,
                     format!("Failed to load folders: {}", err),
@@ -429,10 +426,7 @@ impl LocalPasteApp {
         match self.db.folders.create(&folder) {
             Ok(_) => {
                 if let Err(err) = self.db.flush() {
-                    println!(
-                        "[localpaste-gui] warning: flush failed after folder create: {}",
-                        err
-                    );
+                    warn!("flush failed after folder create: {}", err);
                 }
                 let new_id = folder.id.clone();
                 self.reload_folders("after create folder");
@@ -449,7 +443,7 @@ impl LocalPasteApp {
 
     fn select_paste(&mut self, id: String, announce: bool) {
         if announce {
-            println!("[localpaste-gui] selecting paste {}", id);
+            debug!("selecting paste {}", id);
         }
         if let Some(paste) = self.pastes.iter().find(|p| p.id == id) {
             self.editor.apply_paste(paste.clone());
@@ -630,16 +624,9 @@ impl LocalPasteApp {
 
         match result {
             Ok(_) => {
-                println!(
-                    "[localpaste-gui] created paste {} ({} chars)",
-                    paste.id,
-                    paste.content.len()
-                );
+                info!("created paste {} ({} chars)", paste.id, paste.content.len());
                 if let Err(err) = self.db.flush() {
-                    println!(
-                        "[localpaste-gui] warning: flush failed after create: {}",
-                        err
-                    );
+                    warn!("flush failed after create: {}", err);
                 }
                 self.push_status(StatusLevel::Info, format!("Created {}", paste.name));
                 self.editor.apply_paste(paste.clone());
@@ -649,7 +636,7 @@ impl LocalPasteApp {
                 self.reload_folders("after create");
             }
             Err(err) => {
-                println!("[localpaste-gui] failed to create paste: {}", err);
+                error!("failed to create paste: {}", err);
                 self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
             }
         }
@@ -664,10 +651,7 @@ impl LocalPasteApp {
                 return;
             }
             Err(err) => {
-                println!(
-                    "[localpaste-gui] failed to read paste {} before update: {}",
-                    id, err
-                );
+                error!("failed to read paste {} before update: {}", id, err);
                 self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
                 return;
             }
@@ -701,16 +685,9 @@ impl LocalPasteApp {
 
         match result {
             Ok(Some(updated)) => {
-                println!(
-                    "[localpaste-gui] updated paste {} ({} chars)",
-                    id,
-                    self.editor.content.len()
-                );
+                info!("updated paste {} ({} chars)", id, self.editor.content.len());
                 if let Err(err) = self.db.flush() {
-                    println!(
-                        "[localpaste-gui] warning: flush failed after update: {}",
-                        err
-                    );
+                    warn!("flush failed after update: {}", err);
                 }
                 self.editor.apply_paste(updated.clone());
                 self.selected_id = Some(updated.id.clone());
@@ -720,13 +697,13 @@ impl LocalPasteApp {
                 self.push_status(StatusLevel::Info, "Saved changes".into());
             }
             Ok(None) => {
-                println!("[localpaste-gui] paste {} vanished during update", id);
+                warn!("paste {} vanished during update", id);
                 self.push_status(StatusLevel::Error, "Paste disappeared before saving".into());
                 self.reload_pastes("missing on update");
                 self.reload_folders("missing on update");
             }
             Err(err) => {
-                println!("[localpaste-gui] failed to update paste {}: {}", id, err);
+                error!("failed to update paste {}: {}", id, err);
                 self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
             }
         }
@@ -734,14 +711,11 @@ impl LocalPasteApp {
 
     fn delete_selected(&mut self) {
         if let Some(id) = self.selected_id.clone() {
-            println!("[localpaste-gui] deleting paste {}", id);
+            debug!("deleting paste {}", id);
             match self.db.pastes.delete(&id) {
                 Ok(true) => {
                     if let Err(err) = self.db.flush() {
-                        println!(
-                            "[localpaste-gui] warning: flush failed after delete: {}",
-                            err
-                        );
+                        warn!("flush failed after delete: {}", err);
                     }
                     self.push_status(StatusLevel::Info, "Deleted paste".into());
                     self.selected_id = None;
@@ -755,7 +729,7 @@ impl LocalPasteApp {
                     self.reload_folders("stale delete");
                 }
                 Err(err) => {
-                    println!("[localpaste-gui] failed to delete paste {}: {}", id, err);
+                    error!("failed to delete paste {}: {}", id, err);
                     self.push_status(StatusLevel::Error, format!("Delete failed: {}", err));
                 }
             }
@@ -768,7 +742,7 @@ impl LocalPasteApp {
             level,
             expires_at: Instant::now() + Duration::from_secs(4),
         });
-        println!("[localpaste-gui] status: {}", message);
+        debug!("status: {}", message);
     }
 
     fn status_color(level: StatusLevel) -> Color32 {
@@ -825,11 +799,11 @@ impl ServerHandle {
                     allow_public,
                     shutdown,
                 )) {
-                    eprintln!("[localpaste-gui] server error: {}", err);
+                    error!("server error: {}", err);
                 }
 
                 if let Err(err) = state.db.flush() {
-                    eprintln!("[localpaste-gui] failed to flush database: {}", err);
+                    error!("failed to flush database: {}", err);
                 }
             })
             .map_err(|err| AppError::DatabaseError(format!("failed to spawn server: {}", err)))?;
@@ -837,12 +811,9 @@ impl ServerHandle {
         match ready_rx.recv() {
             Ok(Ok(addr)) => {
                 if !addr.ip().is_loopback() {
-                    println!(
-                        "[localpaste-gui] warning: binding to non-localhost address {}",
-                        addr
-                    );
+                    warn!("binding to non-localhost address {}", addr);
                 }
-                println!("[localpaste-gui] API listening on http://{}", addr);
+                info!("API listening on http://{}", addr);
                 Ok(Self {
                     shutdown: Some(shutdown_tx),
                     thread: Some(thread),
@@ -1165,11 +1136,33 @@ impl eframe::App for LocalPasteApp {
                         .id_salt("editor_scroll")
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
+                            let language = self
+                                .editor
+                                .language
+                                .clone()
+                                .unwrap_or_else(|| "plain".into());
+                            let theme = self.theme.clone();
+                            let mut layouter =
+                                move |ui: &egui::Ui,
+                                      text: &dyn egui::TextBuffer,
+                                      wrap_width: f32| {
+                                    let mut job = syntax_highlighting::highlight(
+                                        ui.ctx(),
+                                        ui.style(),
+                                        &theme,
+                                        text.as_str(),
+                                        &language,
+                                    );
+                                    job.wrap.max_width = wrap_width;
+                                    ui.fonts_mut(|f| f.layout_job(job))
+                                };
+
                             let editor = egui::TextEdit::multiline(&mut self.editor.content)
                                 .font(text_style)
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(32)
-                                .frame(false);
+                                .frame(false)
+                                .layouter(&mut layouter);
 
                             let response = ui.add(editor);
                             if self.editor.needs_focus {
@@ -1181,10 +1174,7 @@ impl eframe::App for LocalPasteApp {
                             if response.changed() {
                                 #[cfg(debug_assertions)]
                                 {
-                                    println!(
-                                        "[localpaste-gui] editor changed ({} chars)",
-                                        self.editor.content.len()
-                                    );
+                                    debug!("editor changed ({} chars)", self.editor.content.len());
                                 }
                                 self.editor.mark_dirty();
                             }
