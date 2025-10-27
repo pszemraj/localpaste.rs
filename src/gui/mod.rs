@@ -1208,8 +1208,8 @@ impl eframe::App for LocalPasteApp {
                                 move |ui: &egui::Ui,
                                       text: &dyn egui::TextBuffer,
                                       wrap_width: f32| {
-                                    let syntax_id = highlight_token
-                                        .unwrap_or_else(|| highlight_language.as_str());
+                                    let syntax_id =
+                                        highlight_token.unwrap_or(highlight_language.as_str());
                                     let mut job = syntax_highlighting::highlight(
                                         ui.ctx(),
                                         ui.style(),
