@@ -1,5 +1,6 @@
 use std::{
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
+    fs,
     hash::{Hash, Hasher},
     net::SocketAddr,
     sync::{mpsc, Arc},
@@ -12,6 +13,7 @@ use eframe::egui::{
     Layout, Margin, RichText, Stroke, TextStyle, Visuals,
 };
 use egui_extras::syntax_highlighting::{self, CodeTheme};
+use rfd::FileDialog;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
@@ -37,6 +39,39 @@ const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 
 const ICON_SIZE: usize = 96;
 const MAX_HIGHLIGHT_CACHE_ENTRIES: usize = 8;
+const AUTO_DETECT_MIN_CHARS: usize = 64;
+const AUTO_DETECT_MIN_LINES: usize = 3;
+
+fn sanitize_filename(name: &str) -> String {
+    let mut sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    sanitized = sanitized.trim_matches('_').to_string();
+    if sanitized.is_empty() {
+        "paste".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn default_export_filename(name: &str, extension: &str) -> String {
+    let mut stem = sanitize_filename(name);
+    if stem.len() > 64 {
+        stem.truncate(64);
+    }
+    if stem.ends_with(&format!(".{}", extension)) {
+        stem
+    } else {
+        format!("{stem}.{extension}")
+    }
+}
 
 pub fn app_icon() -> egui::IconData {
     fn write_pixel(rgba: &mut [u8], x: usize, y: usize, color: [u8; 4]) {
@@ -447,6 +482,50 @@ impl LocalPasteApp {
         }
     }
 
+    fn ensure_language_selection(&mut self) {
+        if self.editor.manual_language_override {
+            return;
+        }
+
+        let trimmed = self.editor.content.trim();
+        let char_count = trimmed.chars().count();
+        let line_count = trimmed.lines().count();
+
+        if char_count < AUTO_DETECT_MIN_CHARS && line_count < AUTO_DETECT_MIN_LINES {
+            if self.editor.language.is_some() {
+                self.editor.language = None;
+                self.editor.auto_detect_cache = None;
+                self.invalidate_highlight_cache();
+            }
+            return;
+        }
+
+        let mut hasher = DefaultHasher::new();
+        self.editor.content.hash(&mut hasher);
+        let content_hash = hasher.finish();
+
+        if let Some((cached_hash, cached_lang)) = &self.editor.auto_detect_cache {
+            if *cached_hash == content_hash {
+                if self.editor.language.as_deref() != Some(cached_lang) {
+                    self.editor.language = Some(cached_lang.clone());
+                    self.invalidate_highlight_cache();
+                }
+                return;
+            }
+        }
+
+        let detected = crate::models::paste::detect_language(&self.editor.content)
+            .unwrap_or_else(|| "plain".to_string());
+
+        self.editor.auto_detect_cache = Some((content_hash, detected.clone()));
+        self.editor.manual_language_override = false;
+
+        if self.editor.language.as_deref() != Some(detected.as_str()) {
+            self.editor.language = Some(detected);
+            self.invalidate_highlight_cache();
+        }
+    }
+
     fn try_create_folder(&mut self, dialog: &mut FolderDialog) -> bool {
         let trimmed = dialog.name.trim();
         if trimmed.is_empty() {
@@ -598,8 +677,11 @@ impl LocalPasteApp {
                     .as_ref()
                     .map(|id| id == &paste.id)
                     .unwrap_or(false);
-                let short_id: String = paste.id.chars().take(8).collect();
-                let label_text = format!("{} · {}", paste.name, short_id);
+                let label_text = if paste.name.trim().is_empty() {
+                    paste.id.chars().take(8).collect()
+                } else {
+                    paste.name.clone()
+                };
                 let label = if selected {
                     RichText::new(label_text).color(COLOR_ACCENT)
                 } else {
@@ -653,6 +735,37 @@ impl LocalPasteApp {
             self.update_existing_paste(id.clone());
         } else {
             self.persist_new_paste();
+        }
+    }
+
+    fn export_current_paste(&mut self) {
+        if self.editor.content.is_empty() {
+            self.push_status(StatusLevel::Info, "Nothing to export".into());
+            return;
+        }
+
+        let language = self
+            .editor
+            .language
+            .clone()
+            .unwrap_or_else(|| "plain".to_string());
+        let extension = LanguageSet::extension(language.as_str());
+        let default_name = default_export_filename(&self.editor.name, extension);
+
+        let dialog = FileDialog::new().set_file_name(default_name);
+        let dialog = if let Some(label) = LanguageSet::label(language.as_str()) {
+            dialog.add_filter(label, &[extension])
+        } else {
+            dialog.add_filter("Export", &[extension])
+        };
+
+        if let Some(path) = dialog.save_file() {
+            match fs::write(&path, &self.editor.content) {
+                Ok(_) => {
+                    self.push_status(StatusLevel::Info, format!("Exported to {}", path.display()))
+                }
+                Err(err) => self.push_status(StatusLevel::Error, format!("Export failed: {}", err)),
+            }
         }
     }
 
@@ -947,6 +1060,7 @@ fn resolve_bind_address(config: &Config) -> SocketAddr {
 impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ensure_style(ctx);
+        self.ensure_language_selection();
 
         ctx.input(|input| {
             if input.modifiers.command && input.key_pressed(egui::Key::S) {
@@ -1047,29 +1161,33 @@ impl eframe::App for LocalPasteApp {
                 ..Default::default()
             })
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if let Some(status) = &self.status {
-                        ui.label(
-                            RichText::new(&status.text).color(Self::status_color(status.level)),
-                        );
-                    } else if self.editor.dirty {
-                        ui.label(RichText::new("Unsaved changes").color(COLOR_ACCENT));
-                    } else {
-                        ui.label(RichText::new("Ready").color(COLOR_TEXT_MUTED));
-                    }
+                ui.columns(3, |columns| {
+                    columns[0].vertical(|ui| {
+                        if let Some(status) = &self.status {
+                            ui.label(
+                                RichText::new(&status.text).color(Self::status_color(status.level)),
+                            );
+                        } else if self.editor.dirty {
+                            ui.label(RichText::new("Unsaved changes").color(COLOR_ACCENT));
+                        } else {
+                            ui.label(RichText::new("Ready").color(COLOR_TEXT_MUTED));
+                        }
+                    });
 
-                    ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                    columns[1].with_layout(
+                        Layout::centered_and_justified(egui::Direction::LeftToRight),
+                        |ui| {
+                            let id_label =
+                                self.editor.paste_id.as_deref().unwrap_or("unsaved draft");
+                            ui.label(RichText::new(id_label).monospace().color(COLOR_TEXT_MUTED));
+                        },
+                    );
+
+                    columns[2].with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                        let char_count = self.editor.content.chars().count();
                         ui.label(
-                            RichText::new(format!("{} chars", self.editor.content.len()))
-                                .color(COLOR_TEXT_MUTED),
+                            RichText::new(format!("{char_count} chars")).color(COLOR_TEXT_MUTED),
                         );
-                        let language_label = self
-                            .editor
-                            .language
-                            .as_deref()
-                            .and_then(LanguageSet::label)
-                            .unwrap_or("Auto");
-                        ui.label(RichText::new(language_label).color(COLOR_TEXT_MUTED));
                     });
                 });
             });
@@ -1104,7 +1222,7 @@ impl eframe::App for LocalPasteApp {
                                     .background_color(COLOR_BG_TERTIARY),
                             );
                             if response.changed() {
-                                self.mark_editor_dirty();
+                                self.editor.mark_dirty();
                             }
                         });
 
@@ -1125,6 +1243,7 @@ impl eframe::App for LocalPasteApp {
                                         .selectable_value(&mut self.editor.language, None, "Auto")
                                         .clicked()
                                     {
+                                        self.editor.manual_language_override = false;
                                         self.mark_editor_dirty();
                                     }
                                     ui.separator();
@@ -1137,6 +1256,7 @@ impl eframe::App for LocalPasteApp {
                                             )
                                             .clicked()
                                         {
+                                            self.editor.manual_language_override = true;
                                             self.mark_editor_dirty();
                                         }
                                     }
@@ -1206,12 +1326,12 @@ impl eframe::App for LocalPasteApp {
                                 }
                             }
 
-                            let save_btn =
-                                egui::Button::new(RichText::new("Save").color(Color32::WHITE))
+                            let export_btn =
+                                egui::Button::new(RichText::new("Export").color(Color32::WHITE))
                                     .fill(COLOR_ACCENT)
                                     .min_size(egui::vec2(110.0, 36.0));
-                            if ui.add(save_btn).clicked() {
-                                self.save_current_paste();
+                            if ui.add(export_btn).clicked() {
+                                self.export_current_paste();
                             }
                         });
                     });
@@ -1231,37 +1351,11 @@ impl eframe::App for LocalPasteApp {
                         .id_salt("editor_scroll")
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            let highlight_language = if let Some(lang) =
-                                self.editor.language.clone()
-                            {
-                                lang
-                            } else {
-                                let mut hasher = DefaultHasher::new();
-                                self.editor.content.hash(&mut hasher);
-                                let content_hash = hasher.finish();
-                                if let Some((cached_hash, cached_lang)) =
-                                    &self.editor.auto_detect_cache
-                                {
-                                    if *cached_hash == content_hash {
-                                        cached_lang.clone()
-                                    } else {
-                                        let detected = crate::models::paste::detect_language(
-                                            &self.editor.content,
-                                        )
-                                        .unwrap_or_else(|| "plain".to_string());
-                                        self.editor.auto_detect_cache =
-                                            Some((content_hash, detected.clone()));
-                                        detected
-                                    }
-                                } else {
-                                    let detected =
-                                        crate::models::paste::detect_language(&self.editor.content)
-                                            .unwrap_or_else(|| "plain".to_string());
-                                    self.editor.auto_detect_cache =
-                                        Some((content_hash, detected.clone()));
-                                    detected
-                                }
-                            };
+                            let highlight_language = self
+                                .editor
+                                .language
+                                .clone()
+                                .unwrap_or_else(|| "plain".to_string());
                             let syntax_token =
                                 LanguageSet::highlight_token(highlight_language.as_str())
                                     .unwrap_or(highlight_language.as_str())
@@ -1283,16 +1377,16 @@ impl eframe::App for LocalPasteApp {
                                     ui.style(),
                                     &theme,
                                     self.editor.content.as_str(),
-                                        syntax_token.as_str(),
-                                    );
-                                    job.wrap.max_width = f32::INFINITY;
-                                    let job = Arc::new(job);
-                                    self.highlight_cache
-                                        .insert(highlight_key.clone(), job.clone());
-                                    self.touch_highlight_entry(&highlight_key);
-                                    self.prune_highlight_cache();
-                                    job
-                                };
+                                    syntax_token.as_str(),
+                                );
+                                job.wrap.max_width = f32::INFINITY;
+                                let job = Arc::new(job);
+                                self.highlight_cache
+                                    .insert(highlight_key.clone(), job.clone());
+                                self.touch_highlight_entry(&highlight_key);
+                                self.prune_highlight_cache();
+                                job
+                            };
                             self.editor.highlight_cache_key = Some(highlight_key);
                             let mut layouter =
                                 move |ui: &egui::Ui,
@@ -1452,6 +1546,7 @@ struct EditorState {
     needs_focus: bool,
     highlight_cache_key: Option<HighlightKey>,
     auto_detect_cache: Option<(u64, String)>,
+    manual_language_override: bool,
 }
 
 impl EditorState {
@@ -1471,6 +1566,7 @@ impl EditorState {
         self.language = paste.language;
         self.folder_id = paste.folder_id;
         self.tags = paste.tags;
+        self.manual_language_override = self.language.is_some();
         self.mark_pristine();
         self.needs_focus = true;
         self.highlight_cache_key = None;
@@ -1502,6 +1598,7 @@ impl Default for EditorState {
             needs_focus: false,
             highlight_cache_key: None,
             auto_detect_cache: None,
+            manual_language_override: false,
         }
     }
 }
@@ -1523,6 +1620,7 @@ struct LanguageOption {
     id: &'static str,
     label: &'static str,
     highlight: Option<&'static str>,
+    extension: &'static str,
 }
 
 struct LanguageSet;
@@ -1534,101 +1632,121 @@ impl LanguageSet {
                 id: "plain",
                 label: "Plain Text",
                 highlight: None,
+                extension: "txt",
             },
             LanguageOption {
                 id: "c",
                 label: "C",
                 highlight: Some("c"),
+                extension: "c",
             },
             LanguageOption {
                 id: "cpp",
                 label: "C++",
                 highlight: Some("cpp"),
+                extension: "cpp",
             },
             LanguageOption {
                 id: "csharp",
                 label: "C#",
                 highlight: Some("cs"),
+                extension: "cs",
             },
             LanguageOption {
                 id: "css",
                 label: "CSS",
                 highlight: Some("css"),
+                extension: "css",
             },
             LanguageOption {
                 id: "go",
                 label: "Go",
                 highlight: Some("go"),
+                extension: "go",
             },
             LanguageOption {
                 id: "html",
                 label: "HTML",
                 highlight: Some("html"),
+                extension: "html",
             },
             LanguageOption {
                 id: "java",
                 label: "Java",
                 highlight: Some("java"),
+                extension: "java",
             },
             LanguageOption {
                 id: "javascript",
                 label: "JavaScript",
                 highlight: Some("js"),
+                extension: "js",
             },
             LanguageOption {
                 id: "json",
                 label: "JSON",
                 highlight: Some("json"),
+                extension: "json",
             },
             LanguageOption {
                 id: "latex",
                 label: "LaTeX",
                 highlight: Some("tex"),
+                extension: "tex",
             },
             LanguageOption {
                 id: "markdown",
                 label: "Markdown",
                 highlight: Some("md"),
+                extension: "md",
             },
             LanguageOption {
                 id: "python",
                 label: "Python",
                 highlight: Some("py"),
+                extension: "py",
             },
             LanguageOption {
                 id: "rust",
                 label: "Rust",
                 highlight: Some("rs"),
+                extension: "rs",
             },
             LanguageOption {
                 id: "shell",
                 label: "Shell / Bash",
                 highlight: Some("sh"),
+                extension: "sh",
             },
             LanguageOption {
                 id: "sql",
                 label: "SQL",
                 highlight: Some("sql"),
+                extension: "sql",
             },
             LanguageOption {
                 id: "toml",
                 label: "TOML",
                 highlight: Some("toml"),
+                extension: "toml",
             },
             LanguageOption {
                 id: "typescript",
                 label: "TypeScript",
                 highlight: Some("ts"),
+                extension: "ts",
             },
             LanguageOption {
                 id: "xml",
                 label: "XML",
                 highlight: Some("xml"),
+                extension: "xml",
             },
             LanguageOption {
                 id: "yaml",
                 label: "YAML",
                 highlight: Some("yml"),
+                extension: "yml",
             },
         ];
         OPTIONS
@@ -1645,6 +1763,14 @@ impl LanguageSet {
             .iter()
             .find(|opt| opt.id == id)
             .and_then(|opt| opt.highlight)
+    }
+
+    fn extension(id: &str) -> &'static str {
+        Self::options()
+            .iter()
+            .find(|opt| opt.id == id)
+            .map(|opt| opt.extension)
+            .unwrap_or("txt")
     }
 }
 
