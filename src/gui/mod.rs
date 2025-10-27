@@ -159,7 +159,12 @@ impl LocalPasteApp {
         if allow_public {
             info!("public access enabled (CORS allow-all)");
         }
-        let server = ServerHandle::start(state.clone(), allow_public)?;
+        let server = if std::env::var("LOCALPASTE_GUI_DISABLE_SERVER").is_ok() {
+            info!("API background server disabled via LOCALPASTE_GUI_DISABLE_SERVER");
+            ServerHandle::noop()
+        } else {
+            ServerHandle::start(state.clone(), allow_public)?
+        };
 
         let mut app = Self {
             db,
@@ -802,6 +807,13 @@ struct ServerHandle {
 }
 
 impl ServerHandle {
+    fn noop() -> Self {
+        Self {
+            shutdown: None,
+            thread: None,
+        }
+    }
+
     fn start(state: AppState, allow_public: bool) -> Result<Self, AppError> {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -1016,8 +1028,9 @@ impl eframe::App for LocalPasteApp {
                         let language_label = self
                             .editor
                             .language
-                            .clone()
-                            .unwrap_or_else(|| "auto".to_string());
+                            .as_deref()
+                            .and_then(LanguageSet::label)
+                            .unwrap_or("Auto");
                         ui.label(RichText::new(language_label).color(COLOR_TEXT_MUTED));
                     });
                 });
@@ -1060,28 +1073,29 @@ impl eframe::App for LocalPasteApp {
                         ui.add_space(20.0);
                         ui.vertical(|ui| {
                             ui.label(RichText::new("Language").size(12.0).color(COLOR_TEXT_MUTED));
+                            let current_language_label = self
+                                .editor
+                                .language
+                                .as_deref()
+                                .and_then(LanguageSet::label)
+                                .unwrap_or("Auto");
                             egui::ComboBox::from_id_salt("language_select")
-                                .selected_text(
-                                    self.editor
-                                        .language
-                                        .clone()
-                                        .unwrap_or_else(|| "auto".into()),
-                                )
+                                .selected_text(current_language_label)
                                 .show_ui(ui, |ui| {
                                     ui.set_min_width(160.0);
                                     if ui
-                                        .selectable_value(&mut self.editor.language, None, "auto")
+                                        .selectable_value(&mut self.editor.language, None, "Auto")
                                         .clicked()
                                     {
                                         self.editor.mark_dirty();
                                     }
                                     ui.separator();
-                                    for option in LanguageSet::all().iter() {
+                                    for option in LanguageSet::options() {
                                         if ui
                                             .selectable_value(
                                                 &mut self.editor.language,
-                                                Some(option.to_string()),
-                                                *option,
+                                                Some(option.id.to_string()),
+                                                option.label,
                                             )
                                             .clicked()
                                         {
@@ -1184,17 +1198,20 @@ impl eframe::App for LocalPasteApp {
                                 .language
                                 .clone()
                                 .unwrap_or_else(|| "plain".into());
+                            let highlight_token = LanguageSet::highlight_token(language.as_str());
                             let theme = self.theme.clone();
                             let mut layouter =
                                 move |ui: &egui::Ui,
                                       text: &dyn egui::TextBuffer,
                                       wrap_width: f32| {
+                                    let syntax_id =
+                                        highlight_token.unwrap_or_else(|| language.as_str());
                                     let mut job = syntax_highlighting::highlight(
                                         ui.ctx(),
                                         ui.style(),
                                         &theme,
                                         text.as_str(),
-                                        &language,
+                                        syntax_id,
                                     );
                                     job.wrap.max_width = wrap_width;
                                     ui.fonts_mut(|f| f.layout_job(job))
@@ -1389,24 +1406,93 @@ enum StatusLevel {
     Error,
 }
 
+#[derive(Clone, Copy)]
+struct LanguageOption {
+    id: &'static str,
+    label: &'static str,
+    highlight: Option<&'static str>,
+}
+
 struct LanguageSet;
 
 impl LanguageSet {
-    fn all() -> [&'static str; 12] {
-        [
-            "plain",
-            "rust",
-            "python",
-            "javascript",
-            "typescript",
-            "go",
-            "java",
-            "c",
-            "cpp",
-            "sql",
-            "shell",
-            "markdown",
-        ]
+    fn options() -> &'static [LanguageOption] {
+        const OPTIONS: &[LanguageOption] = &[
+            LanguageOption {
+                id: "plain",
+                label: "Plain Text",
+                highlight: None,
+            },
+            LanguageOption {
+                id: "rust",
+                label: "Rust",
+                highlight: Some("rs"),
+            },
+            LanguageOption {
+                id: "python",
+                label: "Python",
+                highlight: Some("py"),
+            },
+            LanguageOption {
+                id: "javascript",
+                label: "JavaScript",
+                highlight: Some("js"),
+            },
+            LanguageOption {
+                id: "typescript",
+                label: "TypeScript",
+                highlight: Some("ts"),
+            },
+            LanguageOption {
+                id: "go",
+                label: "Go",
+                highlight: Some("go"),
+            },
+            LanguageOption {
+                id: "java",
+                label: "Java",
+                highlight: Some("java"),
+            },
+            LanguageOption {
+                id: "c",
+                label: "C",
+                highlight: Some("c"),
+            },
+            LanguageOption {
+                id: "cpp",
+                label: "C++",
+                highlight: Some("cpp"),
+            },
+            LanguageOption {
+                id: "sql",
+                label: "SQL",
+                highlight: Some("sql"),
+            },
+            LanguageOption {
+                id: "shell",
+                label: "Shell",
+                highlight: Some("sh"),
+            },
+            LanguageOption {
+                id: "markdown",
+                label: "Markdown",
+                highlight: Some("md"),
+            },
+        ];
+        OPTIONS
+    }
+
+    fn label(id: &str) -> Option<&'static str> {
+        Self::options()
+            .iter()
+            .find_map(|opt| if opt.id == id { Some(opt.label) } else { None })
+    }
+
+    fn highlight_token(id: &str) -> Option<&'static str> {
+        Self::options()
+            .iter()
+            .find(|opt| opt.id == id)
+            .and_then(|opt| opt.highlight)
     }
 }
 
@@ -1422,12 +1508,14 @@ mod tests {
         std::env::set_var("DB_PATH", db_path.to_string_lossy().to_string());
         std::env::set_var("MAX_PASTE_SIZE", max_size.to_string());
         std::env::set_var("BIND", "127.0.0.1:0");
+        std::env::set_var("LOCALPASTE_GUI_DISABLE_SERVER", "1");
 
         let app = LocalPasteApp::initialise().expect("app init");
 
         std::env::remove_var("BIND");
         std::env::remove_var("MAX_PASTE_SIZE");
         std::env::remove_var("DB_PATH");
+        std::env::remove_var("LOCALPASTE_GUI_DISABLE_SERVER");
 
         (app, temp)
     }
@@ -1435,6 +1523,7 @@ mod tests {
     #[test]
     fn validate_editor_blocks_oversize_content() {
         let (mut app, _guard) = init_app(16);
+        assert_eq!(app.config.max_paste_size, 16);
         app.editor.name = "large".to_string();
         app.editor.content = "x".repeat(32);
 
