@@ -1193,19 +1193,23 @@ impl eframe::App for LocalPasteApp {
                         .id_salt("editor_scroll")
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            let language = self
+                            let highlight_language = self
                                 .editor
                                 .language
                                 .clone()
-                                .unwrap_or_else(|| "plain".into());
-                            let highlight_token = LanguageSet::highlight_token(language.as_str());
+                                .or_else(|| {
+                                    crate::models::paste::detect_language(&self.editor.content)
+                                })
+                                .unwrap_or_else(|| "plain".to_string());
+                            let highlight_token =
+                                LanguageSet::highlight_token(highlight_language.as_str());
                             let theme = self.theme.clone();
                             let mut layouter =
                                 move |ui: &egui::Ui,
                                       text: &dyn egui::TextBuffer,
                                       wrap_width: f32| {
-                                    let syntax_id =
-                                        highlight_token.unwrap_or_else(|| language.as_str());
+                                    let syntax_id = highlight_token
+                                        .unwrap_or_else(|| highlight_language.as_str());
                                     let mut job = syntax_highlighting::highlight(
                                         ui.ctx(),
                                         ui.style(),
@@ -1424,36 +1428,6 @@ impl LanguageSet {
                 highlight: None,
             },
             LanguageOption {
-                id: "rust",
-                label: "Rust",
-                highlight: Some("rs"),
-            },
-            LanguageOption {
-                id: "python",
-                label: "Python",
-                highlight: Some("py"),
-            },
-            LanguageOption {
-                id: "javascript",
-                label: "JavaScript",
-                highlight: Some("js"),
-            },
-            LanguageOption {
-                id: "typescript",
-                label: "TypeScript",
-                highlight: Some("ts"),
-            },
-            LanguageOption {
-                id: "go",
-                label: "Go",
-                highlight: Some("go"),
-            },
-            LanguageOption {
-                id: "java",
-                label: "Java",
-                highlight: Some("java"),
-            },
-            LanguageOption {
                 id: "c",
                 label: "C",
                 highlight: Some("c"),
@@ -1464,19 +1438,89 @@ impl LanguageSet {
                 highlight: Some("cpp"),
             },
             LanguageOption {
-                id: "sql",
-                label: "SQL",
-                highlight: Some("sql"),
+                id: "csharp",
+                label: "C#",
+                highlight: Some("cs"),
             },
             LanguageOption {
-                id: "shell",
-                label: "Shell",
-                highlight: Some("sh"),
+                id: "css",
+                label: "CSS",
+                highlight: Some("css"),
+            },
+            LanguageOption {
+                id: "go",
+                label: "Go",
+                highlight: Some("go"),
+            },
+            LanguageOption {
+                id: "html",
+                label: "HTML",
+                highlight: Some("html"),
+            },
+            LanguageOption {
+                id: "java",
+                label: "Java",
+                highlight: Some("java"),
+            },
+            LanguageOption {
+                id: "javascript",
+                label: "JavaScript",
+                highlight: Some("js"),
+            },
+            LanguageOption {
+                id: "json",
+                label: "JSON",
+                highlight: Some("json"),
+            },
+            LanguageOption {
+                id: "latex",
+                label: "LaTeX",
+                highlight: Some("tex"),
             },
             LanguageOption {
                 id: "markdown",
                 label: "Markdown",
                 highlight: Some("md"),
+            },
+            LanguageOption {
+                id: "python",
+                label: "Python",
+                highlight: Some("py"),
+            },
+            LanguageOption {
+                id: "rust",
+                label: "Rust",
+                highlight: Some("rs"),
+            },
+            LanguageOption {
+                id: "shell",
+                label: "Shell / Bash",
+                highlight: Some("sh"),
+            },
+            LanguageOption {
+                id: "sql",
+                label: "SQL",
+                highlight: Some("sql"),
+            },
+            LanguageOption {
+                id: "toml",
+                label: "TOML",
+                highlight: Some("toml"),
+            },
+            LanguageOption {
+                id: "typescript",
+                label: "TypeScript",
+                highlight: Some("ts"),
+            },
+            LanguageOption {
+                id: "xml",
+                label: "XML",
+                highlight: Some("xml"),
+            },
+            LanguageOption {
+                id: "yaml",
+                label: "YAML",
+                highlight: Some("yml"),
             },
         ];
         OPTIONS
