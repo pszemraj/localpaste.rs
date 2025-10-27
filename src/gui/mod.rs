@@ -191,7 +191,7 @@ impl LocalPasteApp {
 
         let mut style = (*ctx.style()).clone();
         style.visuals = Visuals::dark();
-        style.visuals.override_text_color = Some(COLOR_TEXT_PRIMARY);
+        style.visuals.override_text_color = None;
         style.visuals.window_fill = COLOR_BG_PRIMARY;
         style.visuals.panel_fill = COLOR_BG_SECONDARY;
         style.visuals.extreme_bg_color = COLOR_BG_PRIMARY;
