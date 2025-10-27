@@ -602,12 +602,55 @@ impl LocalPasteApp {
             self.push_status(StatusLevel::Error, "Name cannot be empty".into());
             return;
         }
+        if !self.validate_editor_state() {
+            return;
+        }
 
         if let Some(id) = &self.editor.paste_id {
             self.update_existing_paste(id.clone());
         } else {
             self.persist_new_paste();
         }
+    }
+
+    fn validate_editor_state(&mut self) -> bool {
+        let content_len = self.editor.content.len();
+        if content_len > self.config.max_paste_size {
+            self.push_status(
+                StatusLevel::Error,
+                format!(
+                    "Paste is {} bytes; limit is {} bytes",
+                    content_len, self.config.max_paste_size
+                ),
+            );
+            return false;
+        }
+
+        if let Some(ref folder_id) = self.editor.folder_id {
+            match self.db.folders.get(folder_id.as_str()) {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    self.push_status(
+                        StatusLevel::Error,
+                        "Selected folder no longer exists".to_string(),
+                    );
+                    self.folder_focus = None;
+                    self.editor.folder_id = None;
+                    self.reload_folders("folder missing before save");
+                    return false;
+                }
+                Err(err) => {
+                    error!("failed to verify folder {} before save: {}", folder_id, err);
+                    self.push_status(
+                        StatusLevel::Error,
+                        "Failed to verify selected folder".to_string(),
+                    );
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     fn persist_new_paste(&mut self) {
@@ -1364,5 +1407,62 @@ impl LanguageSet {
             "shell",
             "markdown",
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn init_app(max_size: usize) -> (LocalPasteApp, TempDir) {
+        let temp = TempDir::new().expect("temp dir");
+        let db_path = temp.path().join("db");
+
+        std::env::set_var("DB_PATH", db_path.to_string_lossy().to_string());
+        std::env::set_var("MAX_PASTE_SIZE", max_size.to_string());
+        std::env::set_var("BIND", "127.0.0.1:0");
+
+        let app = LocalPasteApp::initialise().expect("app init");
+
+        std::env::remove_var("BIND");
+        std::env::remove_var("MAX_PASTE_SIZE");
+        std::env::remove_var("DB_PATH");
+
+        (app, temp)
+    }
+
+    #[test]
+    fn validate_editor_blocks_oversize_content() {
+        let (mut app, _guard) = init_app(16);
+        app.editor.name = "large".to_string();
+        app.editor.content = "x".repeat(32);
+
+        assert!(
+            !app.validate_editor_state(),
+            "oversize paste should be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_editor_rejects_missing_folder() {
+        let (mut app, _guard) = init_app(1024);
+        app.editor.name = "orphan".to_string();
+        app.editor.content = "ok".to_string();
+        app.editor.folder_id = Some("missing-folder".to_string());
+        app.folder_focus = app.editor.folder_id.clone();
+
+        assert!(
+            !app.validate_editor_state(),
+            "missing folder should cause validation failure"
+        );
+        assert!(
+            app.editor.folder_id.is_none(),
+            "editor folder_id should be cleared when folder is missing"
+        );
+        assert!(
+            app.folder_focus.is_none(),
+            "folder_focus should reset when validation clears folder"
+        );
     }
 }
