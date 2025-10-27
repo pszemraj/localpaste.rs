@@ -10,23 +10,31 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 
 ## Features
 
-- **Self-Contained** - Zero runtime dependencies, just run and go
-- **Language Detection** - Auto-detects programming language
-- **Auto-Save** - Changes save automatically after 1 second
-- **Folder Organization** - Drag & drop pastes into folders
-- **Semantic Naming** - Auto-generates memorable names (e.g., "mythic-ruby")
-- **Fast Search** - Search through all your pastes instantly
-- **Keyboard Shortcuts** - Ctrl+N (new), Ctrl+K (search), Ctrl+D (delete)
-- **Dark Theme** - Native dark theme with Rust-themed colors
+- **Native Desktop App** – egui-based editor with palette-matched theming
+- **Automatic Language Detection** – cached detection + offline syntax highlighting
+- **Auto-Save** – debounce to disk; manual export for sharing
+- **Semantic Naming** – auto-generates memorable names (e.g., “mythic-ruby”)
+- **Folder Organization** – nested folders with drag & drop
+- **Keyboard Shortcuts** – Ctrl+N (new), Ctrl+K (search), Ctrl+D (delete)
+- **Zero Runtime Dependencies** – single binary, embedded Sled database
 
 ## Quick Start
 
-LocalPaste.rs provides two ways to interact with your pastes:
+LocalPaste.rs provides multiple ways to interact with your pastes:
 
-- `localpaste` - The web server with UI (main application)
-- `lpaste` - Command-line interface for terminal usage
+- `localpaste-gui` – Native egui desktop application (primary experience)
+- `localpaste` – Axum HTTP API + legacy browser UI
+- `lpaste` – Command-line interface for terminal usage
 
-### Run the Server
+### Run the Desktop App
+
+```bash
+cargo run --bin localpaste-gui --features gui --release
+```
+
+The compiled binary `target/release/localpaste-gui` can be launched directly.
+
+### Run the Web Server / API
 
 ```bash
 # Run with cargo (development)
@@ -37,11 +45,11 @@ cargo build --release
 ./target/release/localpaste
 ```
 
-Open <http://localhost:3030> in your browser.
+Open <http://localhost:3030> in your browser to use the legacy UI.
 
 ## CLI Usage
 
-The CLI tool (`lpaste`) interacts with the running server:
+The CLI tool (`lpaste`) interacts with the running server (or the desktop app, which hosts the same API locally):
 
 ```bash
 # Build the CLI binary
@@ -83,7 +91,7 @@ For advanced configuration and security settings, see [docs/security.md](docs/se
 
 ## Running as a Background Service
 
-LocalPaste can run automatically in the background. See [docs/deployment.md](docs/deployment.md) for:
+LocalPaste can run automatically in the background. See [docs/deployment.md](docs/deployment.md) for headless/server instructions:
 
 - systemd (Linux)
 - launchd (macOS)
@@ -94,14 +102,15 @@ LocalPaste can run automatically in the background. See [docs/deployment.md](doc
 
 ## Development
 
-See [docs/dev.md](docs/dev.md) for development documentation.
+See [docs/dev.md](docs/dev.md) for development documentation, including desktop build steps.
 
 ## Architecture
 
 - **Backend**: Axum web framework with Sled embedded database
-- **Frontend**: Vanilla JavaScript with custom syntax highlighting
+- **Desktop Frontend**: egui/eframe (Rust native) with cached syntax highlighting
+- **Web Frontend**: Legacy static assets (optional, served by `localpaste`)
 - **Storage**: Embedded Sled database (no external DB required)
-- **Deployment**: Single binary with embedded static assets
+- **Deployment**: Per-platform binaries, GUI behind `--features gui`
 
 ## License
 

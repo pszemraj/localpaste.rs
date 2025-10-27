@@ -1,5 +1,7 @@
 # Running LocalPaste as a Background Service
 
+> These instructions apply to the headless localpaste server. The desktop GUI (localpaste-gui) is intended to be launched manually.
+
 ## Quick Start
 
 ```bash
