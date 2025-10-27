@@ -1,5 +1,6 @@
 use std::{
-    collections::HashMap,
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::{Hash, Hasher},
     net::SocketAddr,
     sync::{mpsc, Arc},
     thread,
@@ -142,6 +143,7 @@ pub struct LocalPasteApp {
     theme: CodeTheme,
     style_applied: bool,
     folder_dialog: Option<FolderDialog>,
+    highlight_cache: HashMap<HighlightKey, Arc<egui::text::LayoutJob>>,
     _server: ServerHandle,
 }
 
@@ -180,6 +182,7 @@ impl LocalPasteApp {
             theme: CodeTheme::from_style(&egui::Style::default()),
             style_applied: false,
             folder_dialog: None,
+            highlight_cache: HashMap::new(),
             _server: server,
         };
 
@@ -407,6 +410,18 @@ impl LocalPasteApp {
         self.folders.iter().any(|folder| {
             folder.parent_id.as_deref() == parent && folder.name.eq_ignore_ascii_case(name)
         })
+    }
+
+    fn invalidate_highlight_cache(&mut self) {
+        if let Some(key) = self.editor.highlight_cache_key.take() {
+            self.highlight_cache.remove(&key);
+        }
+    }
+
+    fn mark_editor_dirty(&mut self) {
+        self.invalidate_highlight_cache();
+        self.editor.mark_dirty();
+        self.editor.auto_detect_cache = None;
     }
 
     fn try_create_folder(&mut self, dialog: &mut FolderDialog) -> bool {
@@ -1066,7 +1081,7 @@ impl eframe::App for LocalPasteApp {
                                     .background_color(COLOR_BG_TERTIARY),
                             );
                             if response.changed() {
-                                self.editor.mark_dirty();
+                                self.mark_editor_dirty();
                             }
                         });
 
@@ -1087,7 +1102,7 @@ impl eframe::App for LocalPasteApp {
                                         .selectable_value(&mut self.editor.language, None, "Auto")
                                         .clicked()
                                     {
-                                        self.editor.mark_dirty();
+                                        self.mark_editor_dirty();
                                     }
                                     ui.separator();
                                     for option in LanguageSet::options() {
@@ -1099,7 +1114,7 @@ impl eframe::App for LocalPasteApp {
                                             )
                                             .clicked()
                                         {
-                                            self.editor.mark_dirty();
+                                            self.mark_editor_dirty();
                                         }
                                     }
                                 });
@@ -1134,7 +1149,7 @@ impl eframe::App for LocalPasteApp {
                                         .clicked()
                                     {
                                         self.folder_focus = None;
-                                        self.editor.mark_dirty();
+                                        self.mark_editor_dirty();
                                     }
                                     let choices = self.folder_choices();
                                     if !choices.is_empty() {
@@ -1150,7 +1165,7 @@ impl eframe::App for LocalPasteApp {
                                             .clicked()
                                         {
                                             self.folder_focus = Some(id);
-                                            self.editor.mark_dirty();
+                                            self.mark_editor_dirty();
                                         }
                                     }
                                 });
@@ -1193,30 +1208,70 @@ impl eframe::App for LocalPasteApp {
                         .id_salt("editor_scroll")
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            let highlight_language = self
-                                .editor
-                                .language
-                                .clone()
-                                .or_else(|| {
-                                    crate::models::paste::detect_language(&self.editor.content)
-                                })
-                                .unwrap_or_else(|| "plain".to_string());
-                            let highlight_token =
-                                LanguageSet::highlight_token(highlight_language.as_str());
+                            let highlight_language = if let Some(lang) =
+                                self.editor.language.clone()
+                            {
+                                lang
+                            } else {
+                                let mut hasher = DefaultHasher::new();
+                                self.editor.content.hash(&mut hasher);
+                                let content_hash = hasher.finish();
+                                if let Some((cached_hash, cached_lang)) =
+                                    &self.editor.auto_detect_cache
+                                {
+                                    if *cached_hash == content_hash {
+                                        cached_lang.clone()
+                                    } else {
+                                        let detected = crate::models::paste::detect_language(
+                                            &self.editor.content,
+                                        )
+                                        .unwrap_or_else(|| "plain".to_string());
+                                        self.editor.auto_detect_cache =
+                                            Some((content_hash, detected.clone()));
+                                        detected
+                                    }
+                                } else {
+                                    let detected =
+                                        crate::models::paste::detect_language(&self.editor.content)
+                                            .unwrap_or_else(|| "plain".to_string());
+                                    self.editor.auto_detect_cache =
+                                        Some((content_hash, detected.clone()));
+                                    detected
+                                }
+                            };
+                            let syntax_token =
+                                LanguageSet::highlight_token(highlight_language.as_str())
+                                    .unwrap_or(highlight_language.as_str())
+                                    .to_string();
+                            let highlight_key = HighlightKey::new(
+                                self.editor.paste_id.as_deref(),
+                                &syntax_token,
+                                &self.editor.content,
+                            );
                             let theme = self.theme.clone();
-                            let mut layouter =
-                                move |ui: &egui::Ui,
-                                      text: &dyn egui::TextBuffer,
-                                      wrap_width: f32| {
-                                    let syntax_id =
-                                        highlight_token.unwrap_or(highlight_language.as_str());
+                            let highlight_job =
+                                if let Some(job) = self.highlight_cache.get(&highlight_key) {
+                                    job.clone()
+                                } else {
                                     let mut job = syntax_highlighting::highlight(
                                         ui.ctx(),
                                         ui.style(),
                                         &theme,
-                                        text.as_str(),
-                                        syntax_id,
+                                        self.editor.content.as_str(),
+                                        syntax_token.as_str(),
                                     );
+                                    job.wrap.max_width = f32::INFINITY;
+                                    let job = Arc::new(job);
+                                    self.highlight_cache
+                                        .insert(highlight_key.clone(), job.clone());
+                                    job
+                                };
+                            self.editor.highlight_cache_key = Some(highlight_key);
+                            let mut layouter =
+                                move |ui: &egui::Ui,
+                                      _text: &dyn egui::TextBuffer,
+                                      wrap_width: f32| {
+                                    let mut job = (*highlight_job).clone();
                                     job.wrap.max_width = wrap_width;
                                     ui.fonts_mut(|f| f.layout_job(job))
                                 };
@@ -1240,7 +1295,7 @@ impl eframe::App for LocalPasteApp {
                                 {
                                     debug!("editor changed ({} chars)", self.editor.content.len());
                                 }
-                                self.editor.mark_dirty();
+                                self.mark_editor_dirty();
                             }
                         });
                 });
@@ -1338,6 +1393,26 @@ impl FolderDialog {
     }
 }
 
+#[derive(Clone, Hash, Eq, PartialEq)]
+struct HighlightKey {
+    paste_id: Option<String>,
+    content_hash: u64,
+    language: String,
+}
+
+impl HighlightKey {
+    fn new(paste_id: Option<&str>, language: &str, content: &str) -> Self {
+        let mut hasher = DefaultHasher::new();
+        language.hash(&mut hasher);
+        content.hash(&mut hasher);
+        Self {
+            paste_id: paste_id.map(|id| id.to_string()),
+            content_hash: hasher.finish(),
+            language: language.to_string(),
+        }
+    }
+}
+
 struct EditorState {
     paste_id: Option<String>,
     name: String,
@@ -1348,6 +1423,8 @@ struct EditorState {
     dirty: bool,
     last_modified: Option<Instant>,
     needs_focus: bool,
+    highlight_cache_key: Option<HighlightKey>,
+    auto_detect_cache: Option<(u64, String)>,
 }
 
 impl EditorState {
@@ -1369,6 +1446,8 @@ impl EditorState {
         self.tags = paste.tags;
         self.mark_pristine();
         self.needs_focus = true;
+        self.highlight_cache_key = None;
+        self.auto_detect_cache = None;
     }
 
     fn mark_dirty(&mut self) {
@@ -1394,6 +1473,8 @@ impl Default for EditorState {
             dirty: false,
             last_modified: None,
             needs_focus: false,
+            highlight_cache_key: None,
+            auto_detect_cache: None,
         }
     }
 }
