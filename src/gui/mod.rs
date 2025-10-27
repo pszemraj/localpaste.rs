@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
     hash::{Hash, Hasher},
     net::SocketAddr,
     sync::{mpsc, Arc},
@@ -36,6 +36,7 @@ const COLOR_DANGER: Color32 = Color32::from_rgb(0xF8, 0x51, 0x49);
 const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 
 const ICON_SIZE: usize = 96;
+const MAX_HIGHLIGHT_CACHE_ENTRIES: usize = 8;
 
 pub fn app_icon() -> egui::IconData {
     fn write_pixel(rgba: &mut [u8], x: usize, y: usize, color: [u8; 4]) {
@@ -144,6 +145,7 @@ pub struct LocalPasteApp {
     style_applied: bool,
     folder_dialog: Option<FolderDialog>,
     highlight_cache: HashMap<HighlightKey, Arc<egui::text::LayoutJob>>,
+    highlight_cache_order: VecDeque<HighlightKey>,
     _server: ServerHandle,
 }
 
@@ -183,6 +185,7 @@ impl LocalPasteApp {
             style_applied: false,
             folder_dialog: None,
             highlight_cache: HashMap::new(),
+            highlight_cache_order: VecDeque::new(),
             _server: server,
         };
 
@@ -415,6 +418,7 @@ impl LocalPasteApp {
     fn invalidate_highlight_cache(&mut self) {
         if let Some(key) = self.editor.highlight_cache_key.take() {
             self.highlight_cache.remove(&key);
+            self.highlight_cache_order.retain(|k| k != &key);
         }
     }
 
@@ -422,6 +426,25 @@ impl LocalPasteApp {
         self.invalidate_highlight_cache();
         self.editor.mark_dirty();
         self.editor.auto_detect_cache = None;
+    }
+
+    fn touch_highlight_entry(&mut self, key: &HighlightKey) {
+        self.highlight_cache_order.retain(|k| k != key);
+        self.highlight_cache_order.push_back(key.clone());
+    }
+
+    fn prune_highlight_cache(&mut self) {
+        while self.highlight_cache_order.len() > MAX_HIGHLIGHT_CACHE_ENTRIES {
+            if let Some(old_key) = self.highlight_cache_order.pop_front() {
+                if self.editor.highlight_cache_key.as_ref() == Some(&old_key) {
+                    self.highlight_cache_order.push_back(old_key);
+                    continue;
+                }
+                self.highlight_cache.remove(&old_key);
+            } else {
+                break;
+            }
+        }
     }
 
     fn try_create_folder(&mut self, dialog: &mut FolderDialog) -> bool {
@@ -1249,21 +1272,25 @@ impl eframe::App for LocalPasteApp {
                                 &self.editor.content,
                             );
                             let theme = self.theme.clone();
-                            let highlight_job =
-                                if let Some(job) = self.highlight_cache.get(&highlight_key) {
-                                    job.clone()
-                                } else {
-                                    let mut job = syntax_highlighting::highlight(
-                                        ui.ctx(),
-                                        ui.style(),
-                                        &theme,
-                                        self.editor.content.as_str(),
+                            let highlight_job = if let Some(job) =
+                                self.highlight_cache.get(&highlight_key).cloned()
+                            {
+                                self.touch_highlight_entry(&highlight_key);
+                                job
+                            } else {
+                                let mut job = syntax_highlighting::highlight(
+                                    ui.ctx(),
+                                    ui.style(),
+                                    &theme,
+                                    self.editor.content.as_str(),
                                         syntax_token.as_str(),
                                     );
                                     job.wrap.max_width = f32::INFINITY;
                                     let job = Arc::new(job);
                                     self.highlight_cache
                                         .insert(highlight_key.clone(), job.clone());
+                                    self.touch_highlight_entry(&highlight_key);
+                                    self.prune_highlight_cache();
                                     job
                                 };
                             self.editor.highlight_cache_key = Some(highlight_key);
@@ -1635,7 +1662,21 @@ mod tests {
         std::env::set_var("BIND", "127.0.0.1:0");
         std::env::set_var("LOCALPASTE_GUI_DISABLE_SERVER", "1");
 
-        let app = LocalPasteApp::initialise().expect("app init");
+        let mut app = None;
+        for _ in 0..3 {
+            match LocalPasteApp::initialise() {
+                Ok(instance) => {
+                    app = Some(instance);
+                    break;
+                }
+                Err(AppError::DatabaseError(msg)) if msg.contains("locked") => {
+                    let _ = std::fs::remove_dir_all(&db_path);
+                    continue;
+                }
+                Err(other) => panic!("app init failed: {other}"),
+            }
+        }
+        let app = app.expect("app init");
 
         std::env::remove_var("BIND");
         std::env::remove_var("MAX_PASTE_SIZE");
