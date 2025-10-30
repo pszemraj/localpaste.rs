@@ -182,6 +182,7 @@ pub struct LocalPasteApp {
     highlight_cache: HashMap<HighlightKey, Arc<egui::text::LayoutJob>>,
     highlight_cache_order: VecDeque<HighlightKey>,
     _server: ServerHandle,
+    profile_highlight: bool,
 }
 
 impl LocalPasteApp {
@@ -205,6 +206,10 @@ impl LocalPasteApp {
             ServerHandle::start(state.clone(), allow_public)?
         };
 
+        let profile_highlight = std::env::var("LOCALPASTE_PROFILE_HIGHLIGHT")
+            .map(|v| v != "0")
+            .unwrap_or(false);
+
         let mut app = Self {
             db,
             config: config_arc,
@@ -222,6 +227,7 @@ impl LocalPasteApp {
             highlight_cache: HashMap::new(),
             highlight_cache_order: VecDeque::new(),
             _server: server,
+            profile_highlight,
         };
 
         app.reload_pastes("startup");
@@ -1366,9 +1372,14 @@ impl eframe::App for LocalPasteApp {
                                 &self.editor.content,
                             );
                             let theme = self.theme.clone();
+                            let highlight_start = self
+                                .profile_highlight
+                                .then_some((Instant::now(), self.editor.content.len()));
+                            let mut highlight_cached = false;
                             let highlight_job = if let Some(job) =
                                 self.highlight_cache.get(&highlight_key).cloned()
                             {
+                                highlight_cached = true;
                                 self.touch_highlight_entry(&highlight_key);
                                 job
                             } else {
@@ -1387,6 +1398,17 @@ impl eframe::App for LocalPasteApp {
                                 self.prune_highlight_cache();
                                 job
                             };
+                            if let Some((started, content_len)) = highlight_start {
+                                let elapsed = started.elapsed();
+                                debug!(
+                                    "highlight_job duration_ms={:.3} cached={} chars={} lang={} paste_id={}",
+                                    elapsed.as_secs_f64() * 1_000.0,
+                                    highlight_cached,
+                                    content_len,
+                                    syntax_token,
+                                    self.editor.paste_id.as_deref().unwrap_or("unsaved")
+                                );
+                            }
                             self.editor.highlight_cache_key = Some(highlight_key);
                             let mut layouter =
                                 move |ui: &egui::Ui,
@@ -1404,7 +1426,17 @@ impl eframe::App for LocalPasteApp {
                                 .frame(false)
                                 .layouter(&mut layouter);
 
+                            let layout_start =
+                                self.profile_highlight.then_some((Instant::now(), ui.id()));
                             let response = ui.add(editor);
+                            if let Some((started, _)) = layout_start {
+                                let elapsed = started.elapsed();
+                                debug!(
+                                    "text_edit_layout duration_ms={:.3} chars={}",
+                                    elapsed.as_secs_f64() * 1_000.0,
+                                    self.editor.content.len()
+                                );
+                            }
                             if self.editor.needs_focus {
                                 if !response.has_focus() {
                                     response.request_focus();
