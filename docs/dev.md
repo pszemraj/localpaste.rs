@@ -54,7 +54,10 @@ RESTful endpoints:
 - `GET /api/search?q=` - Search pastes
 - `POST /api/folder` - Create folder
 - `GET /api/folders` - List folders
+- `PUT /api/folder/:id` - Update folder (rename or re-parent; rejects cycles)
 - `DELETE /api/folder/:id` - Delete folder
+
+Folder operations enforce tree integrity: the API returns `400 Bad Request` if a move would introduce a cycle in the hierarchy.
 
 ## Development Workflow
 

@@ -14,7 +14,7 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 - **Automatic Language Detection** - cached detection + offline syntax highlighting
 - **Auto-Save** - debounce to disk; manual export for sharing
 - **Semantic Naming** - auto-generates memorable names (e.g., "mythic-ruby")
-- **Folder Organization** - nested folders with drag & drop
+- **Folder Organization** - nested folders with drag & drop and cycle-safe parenting
 - **Keyboard Shortcuts** - Ctrl+N (new), Ctrl+K (search), Ctrl+D (delete)
 - **Zero Runtime Dependencies** - single binary, embedded Sled database
 
