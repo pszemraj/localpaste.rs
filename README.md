@@ -29,10 +29,10 @@ LocalPaste.rs provides multiple ways to interact with your pastes:
 ### Run the Desktop App
 
 ```bash
-cargo run --bin localpaste-gui --features gui --release
+cargo run --bin localpaste-gui --features="gui"
 ```
 
-The compiled binary `target/release/localpaste-gui` can be launched directly.
+Add `--release` once you’re ready to ship or benchmark; during development the command above starts the latest GUI build immediately.
 
 ### Run the Web Server / API
 

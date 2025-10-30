@@ -83,7 +83,8 @@ cargo build --release --bin lpaste
 
 ```bash
 # Run the desktop app
-cargo run --bin localpaste-gui --features gui --release
+cargo run --bin localpaste-gui --features="gui"
+# (append --release when you need an optimized build)
 
 # Run the server/API (legacy web UI)
 cargo run --bin localpaste --release
