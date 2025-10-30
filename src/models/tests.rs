@@ -52,6 +52,66 @@ mod model_tests {
     }
 
     #[test]
+    fn test_paste_detect_language_csharp() {
+        let paste = paste::Paste::new(
+            "using System;\nnamespace Demo {\n    public class Program {\n        public static void Main(string[] args) {\n            Console.WriteLine(\"hi\");\n        }\n    }\n}"
+                .to_string(),
+            "csharp".to_string(),
+        );
+        assert_eq!(paste.language, Some("csharp".to_string()));
+    }
+
+    #[test]
+    fn test_paste_detect_language_html() {
+        let paste = paste::Paste::new(
+            "<!DOCTYPE html>\n<html>\n  <body>\n    <h1>Hello</h1>\n  </body>\n</html>".to_string(),
+            "html".to_string(),
+        );
+        assert_eq!(paste.language, Some("html".to_string()));
+    }
+
+    #[test]
+    fn test_paste_detect_language_css() {
+        let paste = paste::Paste::new(
+            "body {\n  color: #333;\n  margin: 0;\n}".to_string(),
+            "css".to_string(),
+        );
+        assert_eq!(paste.language, Some("css".to_string()));
+    }
+
+    #[test]
+    fn test_paste_detect_language_shell() {
+        let paste = paste::Paste::new(
+            "#!/bin/bash\nname=$1\necho \"Hello ${name}\"".to_string(),
+            "shell".to_string(),
+        );
+        assert_eq!(paste.language, Some("shell".to_string()));
+    }
+
+    #[test]
+    fn test_paste_detect_language_toml() {
+        let paste = paste::Paste::new(
+            "[tool]\nname = \"demo\"\nversion = \"0.1.0\"".to_string(),
+            "toml".to_string(),
+        );
+        assert_eq!(paste.language, Some("toml".to_string()));
+    }
+
+    #[test]
+    fn test_paste_detect_language_yaml() {
+        let paste = paste::Paste::new(
+            "name: demo\nservices:\n  - web\n  - worker".to_string(),
+            "yaml".to_string(),
+        );
+        assert_eq!(paste.language, Some("yaml".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_plain_text() {
+        assert_eq!(paste::detect_language("just some words"), None);
+    }
+
+    #[test]
     fn test_paste_request_validation() {
         let valid_req = paste::CreatePasteRequest {
             content: "test".to_string(),
@@ -84,14 +144,17 @@ mod model_tests {
         assert_eq!(folder.name, name);
         assert!(!folder.id.is_empty());
         assert_eq!(folder.paste_count, 0);
+        assert!(folder.parent_id.is_none());
     }
 
     #[test]
     fn test_folder_request() {
         let req = folder::CreateFolderRequest {
             name: "Test Folder".to_string(),
+            parent_id: None,
         };
 
         assert_eq!(req.name, "Test Folder");
+        assert!(req.parent_id.is_none());
     }
 }

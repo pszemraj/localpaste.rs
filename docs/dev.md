@@ -2,31 +2,24 @@
 
 ## Project Structure
 
-```
+`
 localpaste.rs/
+├── Cargo.toml
 ├── src/
-│   ├── main.rs           # Application entry point
-│   ├── config.rs         # Configuration management
-│   ├── error.rs          # Error types
-│   ├── naming/           # Semantic name generation
-│   ├── models/           # Data models
-│   │   ├── paste.rs      # Paste model and requests
-│   │   └── folder.rs     # Folder model
-│   ├── db/               # Database layer
-│   │   ├── paste.rs      # Paste CRUD operations
-│   │   └── folder.rs     # Folder CRUD operations
-│   ├── handlers/         # HTTP handlers
-│   │   ├── paste.rs      # Paste endpoints
-│   │   └── folder.rs     # Folder endpoints
-│   ├── static/           # Frontend assets (embedded)
-│   │   ├── index.html    # Main UI
-│   │   └── css/          # Styles
-│   └── bin/
-│       └── lpaste.rs     # CLI tool
-├── ~/.cache/localpaste/  # Runtime data (user cache directory)
-│   └── db/               # Sled database files
-└── target/               # Build artifacts (git-ignored)
-```
+│   ├── bin/
+│   │   ├── localpaste.rs       # HTTP API / legacy web server
+│   │   ├── localpaste-gui.rs   # Native egui desktop launcher
+│   │   └── lpaste.rs           # CLI client
+│   ├── gui/
+│   │   └── mod.rs              # egui widgets / layout
+│   ├── handlers/               # HTTP handlers
+│   ├── models/                 # Data models
+│   ├── db/                     # Database layer (sled)
+│   └── naming/                 # Semantic name generation
+├── docs/                       # Project documentation
+├── assets/                     # Screenshots / design references
+└── target/                     # Build artifacts (git-ignored)
+`
 
 ## Key Design Decisions
 
@@ -44,10 +37,10 @@ localpaste.rs/
 
 ### Frontend Architecture
 
-- Vanilla JavaScript (no framework dependencies)
-- Language detection for syntax awareness
-- Drag & drop for folder organization
-- Auto-save with debouncing
+- Native egui 0.33 application (src/gui/mod.rs)
+- Cached language detection + syntect highlighting
+- Drag & drop folder organization in sidebar
+- Auto-save with debouncing and manual export support
 
 ### API Design
 
@@ -86,24 +79,27 @@ cargo build --release --bin lpaste
 ### Running Locally
 
 ```bash
-# Run the server (main application)
+# Run the desktop app
+cargo run --bin localpaste-gui --features gui --release
+
+# Run the server/API (legacy web UI)
 cargo run --bin localpaste --release
 
-# Run with auto-reload (requires cargo-watch)
+# Run with auto-reload (server)
 cargo install cargo-watch
 cargo watch -x "run --bin localpaste"
 
 # Run with debug logging
 RUST_LOG=debug cargo run --bin localpaste
 
-# Run tests
-cargo test
+# Run tests (include GUI when necessary)
+cargo test --features gui
 
 # Format code
 cargo fmt
 
-# Lint
-cargo clippy
+# Lint (all targets)
+cargo clippy --all-targets --all-features
 ```
 
 ### Building for Production

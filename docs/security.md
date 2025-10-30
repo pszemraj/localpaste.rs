@@ -2,7 +2,7 @@
 
 ## Default Security Settings
 
-LocalPaste.rs is designed for local use and comes with secure defaults:
+LocalPaste.rs is designed for local use and comes with secure defaults. The desktop app (localpaste-gui) embeds the same HTTP API, so these recommendations apply there as well:
 
 - **Localhost-only binding**: Server binds to `127.0.0.1` by default
 - **CORS restrictions**: Only accepts requests from localhost origins

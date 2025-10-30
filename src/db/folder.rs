@@ -28,11 +28,25 @@ impl FolderDb {
             .transpose()?)
     }
 
-    pub fn update(&self, id: &str, name: String) -> Result<Option<Folder>, AppError> {
+    pub fn update(
+        &self,
+        id: &str,
+        name: String,
+        parent_id: Option<String>,
+    ) -> Result<Option<Folder>, AppError> {
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
+            let name = name.clone();
+            let parent_id = parent_id.clone();
             old.and_then(|bytes| {
                 let mut folder: Folder = bincode::deserialize(bytes).ok()?;
                 folder.name = name.clone();
+                if let Some(ref pid) = parent_id {
+                    folder.parent_id = if pid.is_empty() {
+                        None
+                    } else {
+                        Some(pid.clone())
+                    };
+                }
                 bincode::serialize(&folder).ok()
             })
         })?;
