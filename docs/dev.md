@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-`
+```text
 localpaste.rs/
 ├── Cargo.toml
 ├── src/
@@ -19,7 +19,7 @@ localpaste.rs/
 ├── docs/                       # Project documentation
 ├── assets/                     # Screenshots / design references
 └── target/                     # Build artifacts (git-ignored)
-`
+```
 
 ## Key Design Decisions
 
