@@ -13,3 +13,4 @@
   - `text_edit_layout`: the time spent laying out the multiline editor per frame and the current character count.
 - These hooks are meant to guide the upcoming virtualized editor work; remove or downgrade them once we have a replacement metrics story.
 \n## Virtualized Editor\n- Detailed plan in docs/virtual-editor-plan.md; current focus is chunked highlighting + per-line layout cache before tackling full viewport editing.
+- Highlight recompute now debounced (75ms) and reuses prior galley; profile flag logs run durations.

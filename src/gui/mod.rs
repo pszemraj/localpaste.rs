@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
+    collections::{hash_map::DefaultHasher, HashMap},
     fs,
     hash::{Hash, Hasher},
     net::SocketAddr,
@@ -38,9 +38,9 @@ const COLOR_DANGER: Color32 = Color32::from_rgb(0xF8, 0x51, 0x49);
 const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 
 const ICON_SIZE: usize = 96;
-const MAX_HIGHLIGHT_CACHE_ENTRIES: usize = 8;
 const AUTO_DETECT_MIN_CHARS: usize = 64;
 const AUTO_DETECT_MIN_LINES: usize = 3;
+const HIGHLIGHT_RECOMPUTE_DELAY: Duration = Duration::from_millis(75);
 
 fn sanitize_filename(name: &str) -> String {
     let mut sanitized: String = name
@@ -179,8 +179,6 @@ pub struct LocalPasteApp {
     theme: CodeTheme,
     style_applied: bool,
     folder_dialog: Option<FolderDialog>,
-    highlight_cache: HashMap<HighlightKey, Arc<egui::text::LayoutJob>>,
-    highlight_cache_order: VecDeque<HighlightKey>,
     _server: ServerHandle,
     profile_highlight: bool,
 }
@@ -224,8 +222,6 @@ impl LocalPasteApp {
             theme: CodeTheme::from_style(&egui::Style::default()),
             style_applied: false,
             folder_dialog: None,
-            highlight_cache: HashMap::new(),
-            highlight_cache_order: VecDeque::new(),
             _server: server,
             profile_highlight,
         };
@@ -456,35 +452,73 @@ impl LocalPasteApp {
         })
     }
 
-    fn invalidate_highlight_cache(&mut self) {
-        if let Some(key) = self.editor.highlight_cache_key.take() {
-            self.highlight_cache.remove(&key);
-            self.highlight_cache_order.retain(|k| k != &key);
-        }
-    }
-
     fn mark_editor_dirty(&mut self) {
-        self.invalidate_highlight_cache();
         self.editor.mark_dirty();
         self.editor.auto_detect_cache = None;
+        self.editor.request_highlight_update();
     }
 
-    fn touch_highlight_entry(&mut self, key: &HighlightKey) {
-        self.highlight_cache_order.retain(|k| k != key);
-        self.highlight_cache_order.push_back(key.clone());
-    }
+    fn ensure_highlight_job(
+        &mut self,
+        ctx: &egui::Context,
+        style: &egui::Style,
+        theme: &CodeTheme,
+        language: &str,
+    ) -> Arc<egui::text::LayoutJob> {
+        let now = Instant::now();
+        let mut should_recompute = self.editor.highlight_job.is_none();
 
-    fn prune_highlight_cache(&mut self) {
-        while self.highlight_cache_order.len() > MAX_HIGHLIGHT_CACHE_ENTRIES {
-            if let Some(old_key) = self.highlight_cache_order.pop_front() {
-                if self.editor.highlight_cache_key.as_ref() == Some(&old_key) {
-                    self.highlight_cache_order.push_back(old_key);
-                    continue;
+        if !should_recompute {
+            if let Some(pending_since) = self.editor.highlight_pending_since {
+                if now.duration_since(pending_since) >= HIGHLIGHT_RECOMPUTE_DELAY {
+                    should_recompute = true;
                 }
-                self.highlight_cache.remove(&old_key);
-            } else {
-                break;
             }
+        }
+
+        if should_recompute {
+            let started = self
+                .profile_highlight
+                .then_some((Instant::now(), self.editor.content.len()));
+
+            let mut job = syntax_highlighting::highlight(
+                ctx,
+                style,
+                theme,
+                self.editor.content.as_str(),
+                language,
+            );
+            job.wrap.max_width = f32::INFINITY;
+            let job = Arc::new(job);
+            if let Some((began, content_len)) = started {
+                let elapsed = began.elapsed();
+                debug!(
+                    "highlight_job duration_ms={:.3} chars={} lang={} paste_id={}",
+                    elapsed.as_secs_f64() * 1_000.0,
+                    content_len,
+                    language,
+                    self.editor.paste_id.as_deref().unwrap_or("unsaved"),
+                );
+            }
+
+            self.editor.highlight_job = Some(job.clone());
+            self.editor.highlight_pending_since = None;
+            self.editor.highlight_last_recompute = Some(now);
+            job
+        } else if let Some(job) = self.editor.highlight_job.as_ref() {
+            job.clone()
+        } else {
+            let mut job = syntax_highlighting::highlight(
+                ctx,
+                style,
+                theme,
+                self.editor.content.as_str(),
+                language,
+            );
+            job.wrap.max_width = f32::INFINITY;
+            let arc = Arc::new(job);
+            self.editor.highlight_job = Some(arc.clone());
+            arc
         }
     }
 
@@ -501,7 +535,7 @@ impl LocalPasteApp {
             if self.editor.language.is_some() {
                 self.editor.language = None;
                 self.editor.auto_detect_cache = None;
-                self.invalidate_highlight_cache();
+                self.editor.request_highlight_update();
             }
             return;
         }
@@ -514,7 +548,7 @@ impl LocalPasteApp {
             if *cached_hash == content_hash {
                 if self.editor.language.as_deref() != Some(cached_lang) {
                     self.editor.language = Some(cached_lang.clone());
-                    self.invalidate_highlight_cache();
+                    self.editor.request_highlight_update();
                 }
                 return;
             }
@@ -528,7 +562,7 @@ impl LocalPasteApp {
 
         if self.editor.language.as_deref() != Some(detected.as_str()) {
             self.editor.language = Some(detected);
-            self.invalidate_highlight_cache();
+            self.editor.request_highlight_update();
         }
     }
 
@@ -1366,50 +1400,13 @@ impl eframe::App for LocalPasteApp {
                                 LanguageSet::highlight_token(highlight_language.as_str())
                                     .unwrap_or(highlight_language.as_str())
                                     .to_string();
-                            let highlight_key = HighlightKey::new(
-                                self.editor.paste_id.as_deref(),
-                                &syntax_token,
-                                &self.editor.content,
-                            );
                             let theme = self.theme.clone();
-                            let highlight_start = self
-                                .profile_highlight
-                                .then_some((Instant::now(), self.editor.content.len()));
-                            let mut highlight_cached = false;
-                            let highlight_job = if let Some(job) =
-                                self.highlight_cache.get(&highlight_key).cloned()
-                            {
-                                highlight_cached = true;
-                                self.touch_highlight_entry(&highlight_key);
-                                job
-                            } else {
-                                let mut job = syntax_highlighting::highlight(
-                                    ui.ctx(),
-                                    ui.style(),
-                                    &theme,
-                                    self.editor.content.as_str(),
-                                    syntax_token.as_str(),
-                                );
-                                job.wrap.max_width = f32::INFINITY;
-                                let job = Arc::new(job);
-                                self.highlight_cache
-                                    .insert(highlight_key.clone(), job.clone());
-                                self.touch_highlight_entry(&highlight_key);
-                                self.prune_highlight_cache();
-                                job
-                            };
-                            if let Some((started, content_len)) = highlight_start {
-                                let elapsed = started.elapsed();
-                                debug!(
-                                    "highlight_job duration_ms={:.3} cached={} chars={} lang={} paste_id={}",
-                                    elapsed.as_secs_f64() * 1_000.0,
-                                    highlight_cached,
-                                    content_len,
-                                    syntax_token,
-                                    self.editor.paste_id.as_deref().unwrap_or("unsaved")
-                                );
-                            }
-                            self.editor.highlight_cache_key = Some(highlight_key);
+                            let highlight_job = self.ensure_highlight_job(
+                                ui.ctx(),
+                                ui.style(),
+                                &theme,
+                                syntax_token.as_str(),
+                            );
                             let mut layouter =
                                 move |ui: &egui::Ui,
                                       _text: &dyn egui::TextBuffer,
@@ -1546,26 +1543,6 @@ impl FolderDialog {
     }
 }
 
-#[derive(Clone, Hash, Eq, PartialEq)]
-struct HighlightKey {
-    paste_id: Option<String>,
-    content_hash: u64,
-    language: String,
-}
-
-impl HighlightKey {
-    fn new(paste_id: Option<&str>, language: &str, content: &str) -> Self {
-        let mut hasher = DefaultHasher::new();
-        language.hash(&mut hasher);
-        content.hash(&mut hasher);
-        Self {
-            paste_id: paste_id.map(|id| id.to_string()),
-            content_hash: hasher.finish(),
-            language: language.to_string(),
-        }
-    }
-}
-
 struct EditorState {
     paste_id: Option<String>,
     name: String,
@@ -1576,9 +1553,11 @@ struct EditorState {
     dirty: bool,
     last_modified: Option<Instant>,
     needs_focus: bool,
-    highlight_cache_key: Option<HighlightKey>,
     auto_detect_cache: Option<(u64, String)>,
     manual_language_override: bool,
+    highlight_job: Option<Arc<egui::text::LayoutJob>>,
+    highlight_pending_since: Option<Instant>,
+    highlight_last_recompute: Option<Instant>,
 }
 
 impl EditorState {
@@ -1601,8 +1580,10 @@ impl EditorState {
         self.manual_language_override = self.language.is_some();
         self.mark_pristine();
         self.needs_focus = true;
-        self.highlight_cache_key = None;
         self.auto_detect_cache = None;
+        self.highlight_job = None;
+        self.highlight_pending_since = Some(Instant::now());
+        self.highlight_last_recompute = None;
     }
 
     fn mark_dirty(&mut self) {
@@ -1613,6 +1594,10 @@ impl EditorState {
     fn mark_pristine(&mut self) {
         self.dirty = false;
         self.last_modified = None;
+    }
+
+    fn request_highlight_update(&mut self) {
+        self.highlight_pending_since = Some(Instant::now());
     }
 }
 
@@ -1628,9 +1613,11 @@ impl Default for EditorState {
             dirty: false,
             last_modified: None,
             needs_focus: false,
-            highlight_cache_key: None,
             auto_detect_cache: None,
             manual_language_override: false,
+            highlight_job: None,
+            highlight_pending_since: Some(Instant::now()),
+            highlight_last_recompute: None,
         }
     }
 }
