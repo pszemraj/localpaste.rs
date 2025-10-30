@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use std::collections::{HashMap, HashSet};
 
 pub async fn create_folder(
     State(state): State<AppState>,
@@ -32,17 +33,37 @@ pub async fn update_folder(
     Path(id): Path<String>,
     Json(req): Json<UpdateFolderRequest>,
 ) -> Result<Json<Folder>, AppError> {
+    let folders = if req
+        .parent_id
+        .as_ref()
+        .map(|parent_id| !parent_id.is_empty())
+        .unwrap_or(false)
+    {
+        Some(state.db.folders.list()?)
+    } else {
+        None
+    };
+
     if let Some(ref parent_id) = req.parent_id {
         if parent_id == &id {
             return Err(AppError::BadRequest(
                 "Folder cannot be its own parent".to_string(),
             ));
         }
-        if !parent_id.is_empty() && state.db.folders.get(parent_id)?.is_none() {
-            return Err(AppError::BadRequest(format!(
-                "Parent folder with id '{}' does not exist",
-                parent_id
-            )));
+        if !parent_id.is_empty() {
+            let folders = folders.as_ref().unwrap();
+            if folders.iter().all(|f| f.id != *parent_id) {
+                return Err(AppError::BadRequest(format!(
+                    "Parent folder with id '{}' does not exist",
+                    parent_id
+                )));
+            }
+
+            if introduces_cycle(folders, &id, parent_id) {
+                return Err(AppError::BadRequest(
+                    "Updating folder would create a cycle".to_string(),
+                ));
+            }
         }
     }
 
@@ -66,7 +87,11 @@ pub async fn delete_folder(
     // Collect descendants (depth-first) so pastes can be migrated before deletion
     let mut to_visit = vec![id.clone()];
     let mut delete_order = Vec::new();
+    let mut visited = HashSet::new();
     while let Some(current) = to_visit.pop() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
         delete_order.push(current.clone());
         for child in folders
             .iter()
@@ -103,4 +128,22 @@ pub async fn delete_folder(
     }
 
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+fn introduces_cycle(folders: &[Folder], folder_id: &str, new_parent_id: &str) -> bool {
+    let parent_map: HashMap<&str, Option<&str>> = folders
+        .iter()
+        .map(|f| (f.id.as_str(), f.parent_id.as_deref()))
+        .collect();
+    let mut current = Some(new_parent_id);
+    let mut visited = HashSet::new();
+
+    while let Some(curr) = current {
+        if !visited.insert(curr) || curr == folder_id {
+            return true;
+        }
+        current = parent_map.get(curr).copied().flatten();
+    }
+
+    false
 }

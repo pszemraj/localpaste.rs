@@ -1,6 +1,6 @@
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use localpaste::{create_app, AppState, Config, Database};
+use localpaste::{create_app, models::folder::Folder, AppState, Config, Database};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -316,4 +316,90 @@ async fn test_folder_deletion_migrates_pastes() {
     assert_eq!(get_paste.status_code(), StatusCode::OK);
     let migrated_paste: serde_json::Value = get_paste.json();
     assert_eq!(migrated_paste["folder_id"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn test_update_folder_rejects_cycle() {
+    let (server, _temp) = setup_test_server().await;
+
+    // Create parent folder
+    let parent_response = server
+        .post("/api/folder")
+        .json(&json!({
+            "name": "Parent"
+        }))
+        .await;
+    assert_eq!(parent_response.status_code(), StatusCode::OK);
+    let parent: serde_json::Value = parent_response.json();
+    let parent_id = parent["id"].as_str().unwrap();
+
+    // Create child folder
+    let child_response = server
+        .post("/api/folder")
+        .json(&json!({
+            "name": "Child",
+            "parent_id": parent_id
+        }))
+        .await;
+    assert_eq!(child_response.status_code(), StatusCode::OK);
+    let child: serde_json::Value = child_response.json();
+    let child_id = child["id"].as_str().unwrap();
+
+    // Attempt to set the parent folder's parent to its child (would create a cycle)
+    let cycle_response = server
+        .put(&format!("/api/folder/{}", parent_id))
+        .json(&json!({
+            "name": "Parent",
+            "parent_id": child_id
+        }))
+        .await;
+
+    assert_eq!(cycle_response.status_code(), StatusCode::BAD_REQUEST);
+
+    // Ensure the parent folder still has no parent
+    let folders_response = server.get("/api/folders").await;
+    assert_eq!(folders_response.status_code(), StatusCode::OK);
+    let folders: Vec<serde_json::Value> = folders_response.json();
+    let parent_entry = folders.iter().find(|f| f["id"] == parent_id).unwrap();
+    assert!(parent_entry["parent_id"].is_null());
+}
+
+#[tokio::test]
+async fn test_delete_folder_with_cycle_completes() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("cycle.db");
+
+    let config = Config {
+        port: 0,
+        db_path: db_path.to_str().unwrap().to_string(),
+        max_paste_size: 10_000_000,
+        auto_save_interval: 2000,
+        auto_backup: false,
+    };
+
+    let db = Database::new(&config.db_path).unwrap();
+    let state = AppState::new(config, db);
+    let setup_state = state.clone();
+
+    let root = Folder::with_parent("Root".to_string(), None);
+    let child = Folder::with_parent("Child".to_string(), Some(root.id.clone()));
+
+    setup_state.db.folders.create(&root).unwrap();
+    setup_state.db.folders.create(&child).unwrap();
+    setup_state
+        .db
+        .folders
+        .update(&root.id, root.name.clone(), Some(child.id.clone()))
+        .unwrap();
+
+    let app = create_app(state, false);
+    let server = TestServer::new(app).unwrap();
+
+    let delete_response = server.delete(&format!("/api/folder/{}", root.id)).await;
+    assert_eq!(delete_response.status_code(), StatusCode::OK);
+
+    let folders_response = server.get("/api/folders").await;
+    assert_eq!(folders_response.status_code(), StatusCode::OK);
+    let folders: Vec<serde_json::Value> = folders_response.json();
+    assert!(folders.is_empty());
 }
