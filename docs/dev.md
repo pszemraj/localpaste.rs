@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-`
+```text
 localpaste.rs/
 ├── Cargo.toml
 ├── src/
@@ -19,7 +19,7 @@ localpaste.rs/
 ├── docs/                       # Project documentation
 ├── assets/                     # Screenshots / design references
 └── target/                     # Build artifacts (git-ignored)
-`
+```
 
 ## Key Design Decisions
 
@@ -54,7 +54,10 @@ RESTful endpoints:
 - `GET /api/search?q=` - Search pastes
 - `POST /api/folder` - Create folder
 - `GET /api/folders` - List folders
+- `PUT /api/folder/:id` - Update folder (rename or re-parent; rejects cycles)
 - `DELETE /api/folder/:id` - Delete folder
+
+Folder operations enforce tree integrity: the API returns `400 Bad Request` if a move would introduce a cycle in the hierarchy.
 
 ## Development Workflow
 
@@ -80,7 +83,8 @@ cargo build --release --bin lpaste
 
 ```bash
 # Run the desktop app
-cargo run --bin localpaste-gui --features gui --release
+cargo run --bin localpaste-gui --features="gui"
+# (append --release when you need an optimized build)
 
 # Run the server/API (legacy web UI)
 cargo run --bin localpaste --release

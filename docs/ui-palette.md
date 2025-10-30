@@ -16,4 +16,4 @@ These canonical values are applied inside `src/gui/mod.rs` and should be reused 
 | `COLOR_DANGER`         | `#F85149` | Destructive actions        |
 | `COLOR_BORDER`         | `#30363D` | Divider strokes            |
 
-The screenshot at `assets/ui.png` shows the original layout these colors came from.
+The screenshot at `assets/ui.jpg` shows the original layout these colors came from.
