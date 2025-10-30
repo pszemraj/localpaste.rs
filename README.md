@@ -4,27 +4,27 @@
 
 A fast, localhost-only pastebin with a modern editor, built in Rust.
 
-![LocalPaste Screenshot](assets/ui.png)
+![LocalPaste Screenshot](assets/ui.jpg)
 
 ---
 
 ## Features
 
-- **Native Desktop App** – egui-based editor with palette-matched theming
-- **Automatic Language Detection** – cached detection + offline syntax highlighting
-- **Auto-Save** – debounce to disk; manual export for sharing
-- **Semantic Naming** – auto-generates memorable names (e.g., “mythic-ruby”)
-- **Folder Organization** – nested folders with drag & drop
-- **Keyboard Shortcuts** – Ctrl+N (new), Ctrl+K (search), Ctrl+D (delete)
-- **Zero Runtime Dependencies** – single binary, embedded Sled database
+- **Native Desktop App** - egui-based editor with palette-matched theming
+- **Automatic Language Detection** - cached detection + offline syntax highlighting
+- **Auto-Save** - debounce to disk; manual export for sharing
+- **Semantic Naming** - auto-generates memorable names (e.g., "mythic-ruby")
+- **Folder Organization** - nested folders with drag & drop
+- **Keyboard Shortcuts** - Ctrl+N (new), Ctrl+K (search), Ctrl+D (delete)
+- **Zero Runtime Dependencies** - single binary, embedded Sled database
 
 ## Quick Start
 
 LocalPaste.rs provides multiple ways to interact with your pastes:
 
-- `localpaste-gui` – Native egui desktop application (primary experience)
-- `localpaste` – Axum HTTP API + legacy browser UI
-- `lpaste` – Command-line interface for terminal usage
+- `localpaste-gui` - Native egui desktop application (primary experience)
+- `localpaste` - Axum HTTP API + legacy browser UI
+- `lpaste` - Command-line interface for terminal usage
 
 ### Run the Desktop App
 
