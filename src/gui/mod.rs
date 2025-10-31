@@ -606,6 +606,51 @@ impl LayoutCache {
         );
         galley
     }
+
+    fn chunk_visuals(
+        &self,
+        ui: &egui::Ui,
+        wrap_width: f32,
+        highlight: &HighlightData,
+    ) -> ChunkVisualList {
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let key = LayoutCacheKey::new(wrap_width, pixels_per_point);
+        let mut inner = self.inner.borrow_mut();
+
+        inner.sync_chunks(highlight);
+
+        let mut visuals = Vec::with_capacity(highlight.chunks.len());
+        let mut accumulated = 0.0f32;
+
+        for (index, chunk) in highlight.chunks.iter().enumerate() {
+            let galley = inner.chunk_galley(ui, index, chunk, key);
+            let height = galley.rect.height();
+            visuals.push(ChunkVisual {
+                index,
+                top: accumulated,
+                height,
+                galley,
+            });
+            accumulated += height;
+        }
+
+        ChunkVisualList {
+            total_height: accumulated,
+            chunks: visuals,
+        }
+    }
+}
+
+struct ChunkVisual {
+    index: usize,
+    top: f32,
+    height: f32,
+    galley: Arc<egui::text::Galley>,
+}
+
+struct ChunkVisualList {
+    total_height: f32,
+    chunks: Vec<ChunkVisual>,
 }
 
 #[derive(Clone)]
@@ -1499,6 +1544,59 @@ impl LocalPasteApp {
                     top_offset += height;
                 }
             });
+    }
+
+    fn render_virtual_preview(
+        &self,
+        ui: &mut egui::Ui,
+        highlight_data: Rc<HighlightData>,
+        layout_cache: LayoutCache,
+    ) {
+        let available_width = ui.available_width();
+        let visuals = layout_cache.chunk_visuals(ui, available_width, highlight_data.as_ref());
+
+        let total_height = visuals.total_height.max(1.0);
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(available_width, total_height),
+            egui::Sense::hover(),
+        );
+        let clip = ui.clip_rect();
+        let painter = ui.painter_at(rect);
+
+        for (i, visual) in visuals.chunks.iter().enumerate() {
+            let top = rect.min.y + visual.top;
+            let bottom = top + visual.height;
+            if bottom < clip.min.y || top > clip.max.y {
+                continue;
+            }
+
+            painter.galley(
+                egui::pos2(rect.min.x, top),
+                visual.galley.clone(),
+                Color32::WHITE,
+            );
+
+            if self.profile_highlight {
+                let label = format!("chunk {} • {:.1}px", visual.index, visual.height);
+                painter.text(
+                    egui::pos2(rect.min.x + 8.0, top + 4.0),
+                    egui::Align2::LEFT_TOP,
+                    label,
+                    FontId::new(10.0, FontFamily::Monospace),
+                    COLOR_TEXT_MUTED,
+                );
+            }
+
+            if i + 1 != visuals.chunks.len() {
+                painter.line_segment(
+                    [
+                        egui::pos2(rect.min.x, bottom),
+                        egui::pos2(rect.max.x, bottom),
+                    ],
+                    Stroke::new(0.5, COLOR_BORDER),
+                );
+            }
+        }
     }
 
     fn ensure_language_selection(&mut self) {
