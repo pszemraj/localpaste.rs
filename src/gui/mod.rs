@@ -13,7 +13,7 @@ use std::{
 
 use eframe::egui::{
     self, style::WidgetVisuals, CollapsingHeader, Color32, CornerRadius, FontFamily, FontId, Frame,
-    Layout, Margin, RichText, Stroke, TextStyle, Visuals,
+    Layout, Margin, Popup, RichText, Stroke, TextStyle, Visuals,
 };
 use egui_extras::syntax_highlighting::SyntectSettings;
 use rfd::FileDialog;
@@ -465,7 +465,7 @@ impl LayoutCache {
             .chunks
             .iter()
             .enumerate()
-            .map(|(idx, chunk)| inner.chunk_galley(ui, idx, chunk, key))
+            .map(|(idx, chunk)| inner.chunk_layout(ui, idx, chunk, key).galley)
             .collect::<Vec<_>>();
 
         let mut job = (*highlight.job).clone();
@@ -489,51 +489,12 @@ impl LayoutCache {
         );
         galley
     }
-
-    fn chunk_visuals(
-        &self,
-        ui: &egui::Ui,
-        wrap_width: f32,
-        highlight: &HighlightData,
-    ) -> ChunkVisualList {
-        let pixels_per_point = ui.ctx().pixels_per_point();
-        let key = LayoutCacheKey::new(wrap_width, pixels_per_point);
-        let mut inner = self.inner.borrow_mut();
-
-        inner.sync_chunks(highlight);
-
-        let mut visuals = Vec::with_capacity(highlight.chunks.len());
-        let mut accumulated = 0.0f32;
-
-        for (index, chunk) in highlight.chunks.iter().enumerate() {
-            let galley = inner.chunk_galley(ui, index, chunk, key);
-            let height = galley.rect.height();
-            visuals.push(ChunkVisual {
-                index,
-                top: accumulated,
-                height,
-                galley,
-            });
-            accumulated += height;
-        }
-
-        ChunkVisualList {
-            total_height: accumulated,
-            chunks: visuals,
-        }
-    }
 }
 
-struct ChunkVisual {
-    index: usize,
-    top: f32,
-    height: f32,
+#[derive(Clone)]
+struct CachedChunkLayout {
     galley: Arc<egui::text::Galley>,
-}
-
-struct ChunkVisualList {
-    total_height: f32,
-    chunks: Vec<ChunkVisual>,
+    height: f32,
 }
 
 #[derive(Default)]
@@ -565,16 +526,16 @@ impl LayoutCacheInner {
         }
     }
 
-    fn chunk_galley(
+    fn chunk_layout(
         &mut self,
         ui: &egui::Ui,
         index: usize,
         chunk: &HighlightChunk,
         key: LayoutCacheKey,
-    ) -> Arc<egui::text::Galley> {
+    ) -> CachedChunkLayout {
         let entry = &mut self.chunks[index];
-        if let Some(galley) = entry.layouts.get(&key) {
-            return galley.clone();
+        if let Some(layout) = entry.layouts.get(&key) {
+            return layout.clone();
         }
 
         let mut job = chunk.layout_job.clone();
@@ -584,15 +545,19 @@ impl LayoutCacheInner {
             f32::INFINITY
         };
         let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-        entry.layouts.insert(key, galley.clone());
-        galley
+        let layout = CachedChunkLayout {
+            galley: galley.clone(),
+            height: galley.rect.height(),
+        };
+        entry.layouts.insert(key, layout.clone());
+        layout
     }
 }
 
 #[derive(Default)]
 struct ChunkLayoutEntry {
     version: u64,
-    layouts: HashMap<LayoutCacheKey, Arc<egui::text::Galley>>,
+    layouts: HashMap<LayoutCacheKey, CachedChunkLayout>,
 }
 
 #[derive(Clone)]
@@ -1105,51 +1070,73 @@ impl LocalPasteApp {
         highlight_data: Rc<HighlightData>,
         layout_cache: LayoutCache,
     ) {
-        let available_width = ui.available_width();
-        let visuals = layout_cache.chunk_visuals(ui, available_width, highlight_data.as_ref());
+        egui::ScrollArea::vertical()
+            .id_salt("virtual_preview_scroll")
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                let available_width = ui.available_width();
+                let pixels_per_point = ui.ctx().pixels_per_point();
+                let key = LayoutCacheKey::new(available_width, pixels_per_point);
 
-        let total_height = visuals.total_height.max(1.0);
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(available_width, total_height),
-            egui::Sense::hover(),
-        );
-        let clip = ui.clip_rect();
-        let painter = ui.painter_at(rect);
+                let mut inner = layout_cache.inner.borrow_mut();
+                inner.sync_chunks(highlight_data.as_ref());
 
-        for (i, visual) in visuals.chunks.iter().enumerate() {
-            let top = rect.min.y + visual.top;
-            let bottom = top + visual.height;
-            if bottom < clip.min.y || top > clip.max.y {
-                continue;
-            }
+                let mut heights = Vec::with_capacity(highlight_data.chunks.len());
+                let mut total_height = 0.0f32;
 
-            painter.galley(
-                egui::pos2(rect.min.x, top),
-                visual.galley.clone(),
-                Color32::WHITE,
-            );
+                for (idx, chunk) in highlight_data.chunks.iter().enumerate() {
+                    let layout = inner.chunk_layout(ui, idx, chunk, key);
+                    heights.push(layout.height);
+                    total_height += layout.height;
+                }
 
-            if self.profile_highlight {
-                let label = format!("chunk {} • {:.1}px", visual.index, visual.height);
-                painter.text(
-                    egui::pos2(rect.min.x + 8.0, top + 4.0),
-                    egui::Align2::LEFT_TOP,
-                    label,
-                    FontId::new(10.0, FontFamily::Monospace),
-                    COLOR_TEXT_MUTED,
+                let total_height = total_height.max(1.0);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(available_width, total_height),
+                    egui::Sense::hover(),
                 );
-            }
+                let clip = ui.clip_rect();
+                let painter = ui.painter_at(rect);
 
-            if i + 1 != visuals.chunks.len() {
-                painter.line_segment(
-                    [
-                        egui::pos2(rect.min.x, bottom),
-                        egui::pos2(rect.max.x, bottom),
-                    ],
-                    Stroke::new(0.5, COLOR_BORDER),
-                );
-            }
-        }
+                let mut top_offset = 0.0f32;
+                for (idx, chunk) in highlight_data.chunks.iter().enumerate() {
+                    let height = heights[idx];
+                    let abs_top = rect.min.y + top_offset;
+                    let abs_bottom = abs_top + height;
+
+                    if abs_bottom >= clip.min.y && abs_top <= clip.max.y {
+                        let layout = inner.chunk_layout(ui, idx, chunk, key);
+                        painter.galley(
+                            egui::pos2(rect.min.x, abs_top),
+                            layout.galley.clone(),
+                            Color32::WHITE,
+                        );
+
+                        if self.profile_highlight {
+                            let label = format!("chunk {} • {:.1}px", idx, height);
+                            painter.text(
+                                egui::pos2(rect.min.x + 8.0, abs_top + 4.0),
+                                egui::Align2::LEFT_TOP,
+                                label,
+                                FontId::new(10.0, FontFamily::Monospace),
+                                COLOR_TEXT_MUTED,
+                            );
+                        }
+
+                        if idx + 1 != highlight_data.chunks.len() {
+                            painter.line_segment(
+                                [
+                                    egui::pos2(rect.min.x, abs_bottom),
+                                    egui::pos2(rect.max.x, abs_bottom),
+                                ],
+                                Stroke::new(0.5, COLOR_BORDER),
+                            );
+                        }
+                    }
+
+                    top_offset += height;
+                }
+            });
     }
 
     fn ensure_language_selection(&mut self) {
@@ -1909,6 +1896,52 @@ impl eframe::App for LocalPasteApp {
                                 .selected_text(current_language_label)
                                 .show_ui(ui, |ui| {
                                     ui.set_min_width(160.0);
+                                    let popup_open = Popup::is_id_open(ui.ctx(), ui.id());
+                                    let typed_letter = if popup_open {
+                                        ui.ctx().input(|input| {
+                                            input.events.iter().rev().find_map(|event| {
+                                                if let egui::Event::Text(text) = event {
+                                                    text.chars().next()
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                    .and_then(|c| {
+                                        let lower = c.to_ascii_lowercase();
+                                        if lower.is_ascii_alphabetic() {
+                                            Some(lower)
+                                        } else {
+                                            None
+                                        }
+                                    });
+
+                                    let mut auto_scroll_target: Option<&'static str> = None;
+                                    if let Some(letter) = typed_letter {
+                                        if let Some(option) =
+                                            LanguageSet::options().iter().find(|opt| {
+                                                opt.label
+                                                    .chars()
+                                                    .next()
+                                                    .map(|c| c.to_ascii_lowercase())
+                                                    == Some(letter)
+                                            })
+                                        {
+                                            if self.editor.language.as_deref() != Some(option.id) {
+                                                self.editor.language = Some(option.id.to_string());
+                                                self.editor.manual_language_override = true;
+                                                self.editor.reset_highlight_state();
+                                                self.mark_editor_dirty();
+                                            } else {
+                                                self.editor.manual_language_override = true;
+                                            }
+                                            auto_scroll_target = Some(option.id);
+                                        }
+                                    }
+
                                     if ui
                                         .selectable_value(&mut self.editor.language, None, "Auto")
                                         .clicked()
@@ -1930,6 +1963,9 @@ impl eframe::App for LocalPasteApp {
                                             self.editor.manual_language_override = true;
                                             self.editor.reset_highlight_state();
                                             self.mark_editor_dirty();
+                                        }
+                                        if Some(option.id) == auto_scroll_target {
+                                            ui.scroll_to_cursor(Some(egui::Align::Center));
                                         }
                                     }
                                 });
