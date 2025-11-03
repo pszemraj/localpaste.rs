@@ -427,6 +427,40 @@ fn hash_str(text: &str) -> u64 {
     hasher.finish()
 }
 
+fn key_to_ascii_letter(key: egui::Key) -> Option<char> {
+    use egui::Key::*;
+    let ch = match key {
+        A => 'a',
+        B => 'b',
+        C => 'c',
+        D => 'd',
+        E => 'e',
+        F => 'f',
+        G => 'g',
+        H => 'h',
+        I => 'i',
+        J => 'j',
+        K => 'k',
+        L => 'l',
+        M => 'm',
+        N => 'n',
+        O => 'o',
+        P => 'p',
+        Q => 'q',
+        R => 'r',
+        S => 's',
+        T => 't',
+        U => 'u',
+        V => 'v',
+        W => 'w',
+        X => 'x',
+        Y => 'y',
+        Z => 'z',
+        _ => return None,
+    };
+    Some(ch)
+}
+
 #[derive(Clone, Default)]
 struct LayoutCache {
     inner: Rc<RefCell<LayoutCacheInner>>,
@@ -1896,28 +1930,38 @@ impl eframe::App for LocalPasteApp {
                                 .selected_text(current_language_label)
                                 .show_ui(ui, |ui| {
                                     ui.set_min_width(160.0);
-                                    let popup_open = Popup::is_id_open(ui.ctx(), ui.id());
+                                    let popup_open = Popup::is_any_open(ui.ctx());
                                     let typed_letter = if popup_open {
                                         ui.ctx().input(|input| {
-                                            input.events.iter().rev().find_map(|event| {
-                                                if let egui::Event::Text(text) = event {
-                                                    text.chars().next()
-                                                } else {
-                                                    None
-                                                }
-                                            })
+                                            input.events.iter().rev().find_map(
+                                                |event| match event {
+                                                    egui::Event::Text(text) => text
+                                                        .chars()
+                                                        .rev()
+                                                        .find(|c| c.is_ascii_alphabetic())
+                                                        .map(|c| c.to_ascii_lowercase()),
+                                                    egui::Event::Key {
+                                                        key,
+                                                        pressed,
+                                                        repeat,
+                                                        modifiers,
+                                                        ..
+                                                    } if *pressed
+                                                        && !*repeat
+                                                        && !modifiers.alt
+                                                        && !modifiers.ctrl
+                                                        && !modifiers.command
+                                                        && !modifiers.mac_cmd =>
+                                                    {
+                                                        key_to_ascii_letter(*key)
+                                                    }
+                                                    _ => None,
+                                                },
+                                            )
                                         })
                                     } else {
                                         None
-                                    }
-                                    .and_then(|c| {
-                                        let lower = c.to_ascii_lowercase();
-                                        if lower.is_ascii_alphabetic() {
-                                            Some(lower)
-                                        } else {
-                                            None
-                                        }
-                                    });
+                                    };
 
                                     let mut auto_scroll_target: Option<&'static str> = None;
                                     if let Some(letter) = typed_letter {
