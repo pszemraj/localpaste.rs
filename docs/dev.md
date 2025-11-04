@@ -41,6 +41,15 @@ localpaste.rs/
 - Cached language detection + syntect highlighting
 - Folder management via dialogs with cycle-safe parenting rules
 - Auto-save with debouncing and manual export support
+- Incremental in-memory paste index keeps the sidebar responsive without requerying sled
+- Large pastes (above ~256KB) fall back to a plain renderer so highlight work stays bounded
+
+### GUI Shortcuts
+
+- `Ctrl/Cmd+N` New paste
+- `Ctrl/Cmd+S` Save current paste
+- `Ctrl/Cmd+Delete` Delete selected paste
+- `Ctrl/Cmd+F` or `Ctrl/Cmd+K` Focus the paste filter in the sidebar
 
 ### API Design
 

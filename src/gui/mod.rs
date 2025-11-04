@@ -51,6 +51,7 @@ const AUTO_DETECT_MIN_CHARS: usize = 64;
 const AUTO_DETECT_MIN_LINES: usize = 3;
 const HIGHLIGHT_RECOMPUTE_DELAY: Duration = Duration::from_millis(75);
 const HIGHLIGHT_CHUNK_SIZE: usize = 4 * 1024;
+const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SyntectState {
@@ -87,6 +88,7 @@ struct HighlightData {
     job: Arc<egui::text::LayoutJob>,
     chunks: Vec<HighlightChunk>,
     line_offsets: Vec<usize>,
+    plain: bool,
 }
 
 struct ChunkBuildInput<'a> {
@@ -266,6 +268,60 @@ impl HighlightCache {
             job: Arc::new(job),
             chunks,
             line_offsets,
+            plain: false,
+        };
+        let rc = Rc::new(data);
+        self.data = Some(rc.clone());
+        rc
+    }
+
+    fn plain_text(&mut self, theme: &HighlightTheme, text: &str) -> Rc<HighlightData> {
+        let settings = Arc::clone(&self.settings);
+        let syntect_theme = settings
+            .ts
+            .themes
+            .get(theme.syntect_theme_key())
+            .cloned()
+            .unwrap_or_else(|| {
+                settings
+                    .ts
+                    .themes
+                    .values()
+                    .next()
+                    .cloned()
+                    .expect("syntect theme set must contain at least one entry")
+            });
+        let syntax = settings.ps.find_syntax_plain_text();
+        let state = SyntectState::initial(syntax, &syntect_theme);
+        let color = if theme.is_dark() {
+            Color32::LIGHT_GRAY
+        } else {
+            Color32::DARK_GRAY
+        };
+        let mut layout_job = egui::text::LayoutJob::simple(
+            text.to_owned(),
+            theme.font_id().clone(),
+            color,
+            f32::INFINITY,
+        );
+        layout_job.wrap.max_width = f32::INFINITY;
+        self.next_chunk_version = self.next_chunk_version.wrapping_add(1);
+        let chunk = HighlightChunk {
+            index: 0,
+            version: self.next_chunk_version,
+            range: 0..text.len(),
+            text_hash: hash_str(text),
+            state_before: state.clone(),
+            state_after: state,
+            layout_job: layout_job.clone(),
+        };
+        self.revision = self.revision.wrapping_add(1);
+        let data = HighlightData {
+            revision: self.revision,
+            job: Arc::new(layout_job),
+            chunks: vec![chunk],
+            line_offsets: compute_line_offsets(text),
+            plain: true,
         };
         let rc = Rc::new(data);
         self.data = Some(rc.clone());
@@ -761,6 +817,9 @@ pub struct LocalPasteApp {
     folder_index: HashMap<String, usize>,
     selected_id: Option<String>,
     folder_focus: Option<String>,
+    filter_query: String,
+    filter_query_lower: String,
+    filter_focus_requested: bool,
     editor: EditorState,
     status: Option<StatusMessage>,
     highlight_theme: HighlightTheme,
@@ -808,6 +867,9 @@ impl LocalPasteApp {
             folder_index: HashMap::new(),
             selected_id: None,
             folder_focus: None,
+            filter_query: String::new(),
+            filter_query_lower: String::new(),
+            filter_focus_requested: false,
             editor: EditorState::default(),
             status: None,
             highlight_theme: HighlightTheme::from_style(&egui::Style::default()),
@@ -820,6 +882,7 @@ impl LocalPasteApp {
 
         app.reload_pastes("startup");
         app.reload_folders("startup");
+        app.update_filter_cache();
 
         Ok(app)
     }
@@ -938,6 +1001,9 @@ impl LocalPasteApp {
                 } else if self.pastes.is_empty() {
                     self.editor = EditorState::new_unsaved(self.folder_focus.clone());
                 }
+                if self.has_active_filter() {
+                    self.ensure_selection_after_filter();
+                }
             }
             Err(err) => {
                 error!("failed to reload pastes: {}", err);
@@ -986,6 +1052,102 @@ impl LocalPasteApp {
         }
     }
 
+    fn has_active_filter(&self) -> bool {
+        !self.filter_query_lower.is_empty()
+    }
+
+    fn update_filter_cache(&mut self) {
+        self.filter_query_lower = self.filter_query.to_ascii_lowercase();
+    }
+
+    fn matches_filter(&self, paste: &Paste) -> bool {
+        if self.filter_query_lower.is_empty() {
+            return true;
+        }
+        let needle = self.filter_query_lower.as_str();
+        Self::contains_case_insensitive(&paste.name, needle)
+            || paste
+                .tags
+                .iter()
+                .any(|tag| Self::contains_case_insensitive(tag, needle))
+            || paste
+                .language
+                .as_deref()
+                .map(|lang| Self::contains_case_insensitive(lang, needle))
+                .unwrap_or(false)
+            || Self::contains_case_insensitive(paste.id.as_str(), needle)
+    }
+
+    fn contains_case_insensitive(text: &str, needle: &str) -> bool {
+        if needle.is_empty() {
+            return true;
+        }
+        if text.len() < needle.len() {
+            return text.to_ascii_lowercase().contains(needle);
+        }
+        text.to_ascii_lowercase().contains(needle)
+    }
+
+    fn ensure_selection_after_filter(&mut self) {
+        if self.selected_id.is_some() {
+            if let Some(selected) = self.selected_id.clone() {
+                if self
+                    .find_paste(selected.as_str())
+                    .map(|paste| self.matches_filter(paste))
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+            }
+        }
+
+        if let Some(next) = self
+            .pastes
+            .iter()
+            .filter(|paste| self.matches_filter(paste))
+            .next()
+            .cloned()
+        {
+            self.select_paste(next.id, false);
+        } else {
+            self.selected_id = None;
+            self.editor = EditorState::new_unsaved(self.folder_focus.clone());
+        }
+    }
+
+    fn integrate_paste(&mut self, paste: Paste) {
+        let paste_id = paste.id.clone();
+        self.pastes.retain(|p| p.id != paste_id);
+        self.pastes.push(paste);
+        self.pastes.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
+        self.rebuild_paste_index();
+        if let Some(idx) = self.paste_index.get(&paste_id).copied() {
+            if self.selected_id.as_deref() == Some(paste_id.as_str()) {
+                if let Some(updated) = self.pastes.get(idx) {
+                    self.editor.apply_paste(updated.clone());
+                }
+            }
+        }
+        self.ensure_selection_after_filter();
+    }
+
+    fn remove_paste_by_id(&mut self, paste_id: &str) -> bool {
+        let original_len = self.pastes.len();
+        self.pastes.retain(|paste| paste.id != paste_id);
+        if self.pastes.len() != original_len {
+            self.rebuild_paste_index();
+        }
+        if self.selected_id.as_deref() == Some(paste_id) {
+            self.selected_id = None;
+        }
+        self.ensure_selection_after_filter();
+        self.selected_id.is_some()
+    }
+
+    fn focus_filter(&mut self) {
+        self.filter_focus_requested = true;
+    }
+
     fn find_paste(&self, id: &str) -> Option<&Paste> {
         self.paste_index
             .get(id)
@@ -1028,6 +1190,14 @@ impl LocalPasteApp {
             .count()
     }
 
+    fn count_filtered_pastes_in(&self, folder_id: Option<&str>) -> usize {
+        self.pastes
+            .iter()
+            .filter(|p| p.folder_id.as_deref() == folder_id)
+            .filter(|p| self.matches_filter(p))
+            .count()
+    }
+
     fn folder_choices(&self) -> Vec<(String, String)> {
         let mut items = self
             .folders
@@ -1056,6 +1226,37 @@ impl LocalPasteApp {
         language: &str,
     ) -> Rc<HighlightData> {
         let now = Instant::now();
+        let content_len = self.editor.content.len();
+
+        if content_len >= HIGHLIGHT_PLAIN_THRESHOLD {
+            if !self.editor.plain_highlight_mode {
+                self.editor.plain_highlight_mode = true;
+                self.editor.highlight_cache.clear();
+            }
+            if let Some(existing) = self
+                .editor
+                .highlight_cache
+                .current()
+                .filter(|data| data.plain)
+            {
+                self.editor.line_offsets = existing.line_offsets.clone();
+                return existing;
+            }
+            let data = self
+                .editor
+                .highlight_cache
+                .plain_text(theme, self.editor.content.as_str());
+            self.editor.highlight_pending_since = None;
+            self.editor.highlight_last_recompute = Some(now);
+            self.editor.line_offsets = data.line_offsets.clone();
+            return data;
+        }
+
+        if self.editor.plain_highlight_mode {
+            self.editor.plain_highlight_mode = false;
+            self.editor.highlight_cache.clear();
+        }
+
         let mut should_recompute = self.editor.highlight_cache.current().is_none();
 
         if !should_recompute {
@@ -1069,18 +1270,18 @@ impl LocalPasteApp {
         if should_recompute {
             let started = self
                 .profile_highlight
-                .then_some((Instant::now(), self.editor.content.len()));
+                .then_some((Instant::now(), content_len));
             let data = self.editor.highlight_cache.recompute(
                 theme,
                 language,
                 self.editor.content.as_str(),
             );
-            if let Some((began, content_len)) = started {
+            if let Some((began, chars)) = started {
                 let elapsed = began.elapsed();
                 debug!(
                     "highlight_job duration_ms={:.3} chars={} lang={} paste_id={} chunks={}",
                     elapsed.as_secs_f64() * 1_000.0,
-                    content_len,
+                    chars,
                     language,
                     self.editor.paste_id.as_deref().unwrap_or("unsaved"),
                     data.chunks.len(),
@@ -1091,10 +1292,13 @@ impl LocalPasteApp {
             self.editor.line_offsets = data.line_offsets.clone();
             data
         } else {
-            self.editor
+            let data = self
+                .editor
                 .highlight_cache
                 .current()
-                .expect("highlight data available when clean")
+                .expect("highlight data available when clean");
+            self.editor.line_offsets = data.line_offsets.clone();
+            data
         }
     }
 
@@ -1272,11 +1476,17 @@ impl LocalPasteApp {
 
     fn render_folder_tree(&mut self, ui: &mut egui::Ui, pending_select: &mut Option<String>) {
         let unfiled_count = self.count_pastes_in(None);
+        let unfiled_filtered = self.count_filtered_pastes_in(None);
+        let unfiled_caption = if self.has_active_filter() && unfiled_filtered != unfiled_count {
+            format!("Unfiled ({}/{})", unfiled_filtered, unfiled_count)
+        } else {
+            format!("Unfiled ({})", unfiled_count)
+        };
         let unfiled_selected = self.folder_focus.is_none();
         let unfiled_label = if unfiled_selected {
-            RichText::new(format!("Unfiled ({})", unfiled_count)).color(COLOR_ACCENT)
+            RichText::new(unfiled_caption.clone()).color(COLOR_ACCENT)
         } else {
-            RichText::new(format!("Unfiled ({})", unfiled_count)).color(COLOR_TEXT_PRIMARY)
+            RichText::new(unfiled_caption).color(COLOR_TEXT_PRIMARY)
         };
 
         let unfiled = CollapsingHeader::new(unfiled_label)
@@ -1310,12 +1520,17 @@ impl LocalPasteApp {
         for folder_id in child_ids {
             if let Some(folder) = self.find_folder(folder_id.as_str()).cloned() {
                 let paste_count = self.count_pastes_in(Some(folder.id.as_str()));
+                let filtered_count = self.count_filtered_pastes_in(Some(folder.id.as_str()));
+                let label_text = if self.has_active_filter() && filtered_count != paste_count {
+                    format!("{} ({}/{})", folder.name, filtered_count, paste_count)
+                } else {
+                    format!("{} ({})", folder.name, paste_count)
+                };
                 let is_selected = self.folder_focus.as_deref() == Some(folder.id.as_str());
                 let label = if is_selected {
-                    RichText::new(format!("{} ({})", folder.name, paste_count)).color(COLOR_ACCENT)
+                    RichText::new(label_text.clone()).color(COLOR_ACCENT)
                 } else {
-                    RichText::new(format!("{} ({})", folder.name, paste_count))
-                        .color(COLOR_TEXT_PRIMARY)
+                    RichText::new(label_text).color(COLOR_TEXT_PRIMARY)
                 };
                 let default_open = is_selected || folder.parent_id.is_none();
                 let collapse = CollapsingHeader::new(label)
@@ -1348,11 +1563,14 @@ impl LocalPasteApp {
             .pastes
             .iter()
             .filter(|paste| paste.folder_id.as_deref() == folder_id)
+            .filter(|paste| self.matches_filter(paste))
             .map(|paste| paste.id.clone())
             .collect();
 
         if entries.is_empty() {
-            let message = if folder_id.is_some() {
+            let message = if self.has_active_filter() {
+                "No matches"
+            } else if folder_id.is_some() {
                 "Empty folder"
             } else {
                 "No pastes yet"
@@ -1522,8 +1740,7 @@ impl LocalPasteApp {
                 self.editor.apply_paste(paste.clone());
                 self.selected_id = Some(paste.id.clone());
                 self.folder_focus = paste.folder_id.clone();
-                self.reload_pastes("after create");
-                self.reload_folders("after create");
+                self.integrate_paste(paste);
             }
             Err(err) => {
                 error!("failed to create paste: {}", err);
@@ -1581,9 +1798,8 @@ impl LocalPasteApp {
                 }
                 self.editor.apply_paste(updated.clone());
                 self.selected_id = Some(updated.id.clone());
-                self.reload_pastes("after update");
-                self.reload_folders("after update");
                 self.folder_focus = updated.folder_id.clone();
+                self.integrate_paste(updated);
                 self.push_status(StatusLevel::Info, "Saved changes".into());
             }
             Ok(None) => {
@@ -1608,10 +1824,10 @@ impl LocalPasteApp {
                         warn!("flush failed after delete: {}", err);
                     }
                     self.push_status(StatusLevel::Info, "Deleted paste".into());
-                    self.selected_id = None;
-                    self.editor = EditorState::new_unsaved(self.folder_focus.clone());
-                    self.reload_pastes("after delete");
-                    self.reload_folders("after delete");
+                    let has_selection = self.remove_paste_by_id(&id);
+                    if !has_selection {
+                        self.editor = EditorState::new_unsaved(self.folder_focus.clone());
+                    }
                 }
                 Ok(false) => {
                     self.push_status(StatusLevel::Error, "Paste was already deleted".into());
@@ -1763,6 +1979,12 @@ impl eframe::App for LocalPasteApp {
             if input.modifiers.command && input.key_pressed(egui::Key::Delete) {
                 self.delete_selected();
             }
+            if input.modifiers.command && input.key_pressed(egui::Key::F) {
+                self.focus_filter();
+            }
+            if input.modifiers.command && input.key_pressed(egui::Key::K) {
+                self.focus_filter();
+            }
         });
 
         if let Some(status) = &self.status {
@@ -1796,6 +2018,34 @@ impl eframe::App for LocalPasteApp {
                     );
 
                     ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.filter_query)
+                                .hint_text("Filter pastes…")
+                                .desired_width(f32::INFINITY),
+                        );
+                        if self.filter_focus_requested {
+                            response.request_focus();
+                            self.filter_focus_requested = false;
+                        }
+                        if response.changed() {
+                            self.update_filter_cache();
+                            self.ensure_selection_after_filter();
+                        }
+                        if !self.filter_query.is_empty() {
+                            if ui
+                                .add(egui::Button::new("✕").small().frame(false))
+                                .on_hover_text("Clear filter")
+                                .clicked()
+                            {
+                                self.filter_query.clear();
+                                self.update_filter_cache();
+                                self.ensure_selection_after_filter();
+                            }
+                        }
+                    });
+                    ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         let paste_btn =
                             egui::Button::new(RichText::new("+ New Paste").color(Color32::WHITE))
@@ -1868,9 +2118,20 @@ impl eframe::App for LocalPasteApp {
                     columns[1].with_layout(
                         Layout::centered_and_justified(egui::Direction::LeftToRight),
                         |ui| {
-                            let id_label =
-                                self.editor.paste_id.as_deref().unwrap_or("unsaved draft");
-                            ui.label(RichText::new(id_label).monospace().color(COLOR_TEXT_MUTED));
+                            ui.vertical(|ui| {
+                                let id_label =
+                                    self.editor.paste_id.as_deref().unwrap_or("unsaved draft");
+                                ui.label(
+                                    RichText::new(id_label).monospace().color(COLOR_TEXT_MUTED),
+                                );
+                                if self.editor.plain_highlight_mode {
+                                    ui.label(
+                                        RichText::new("Highlighting trimmed for large paste")
+                                            .size(11.0)
+                                            .color(COLOR_TEXT_MUTED),
+                                    );
+                                }
+                            });
                         },
                     );
 
@@ -2284,6 +2545,7 @@ struct EditorState {
     highlight_pending_since: Option<Instant>,
     highlight_last_recompute: Option<Instant>,
     line_offsets: Vec<usize>,
+    plain_highlight_mode: bool,
 }
 
 impl EditorState {
@@ -2307,6 +2569,7 @@ impl EditorState {
         self.mark_pristine();
         self.needs_focus = true;
         self.auto_detect_cache = None;
+        self.plain_highlight_mode = false;
         self.reset_highlight_state();
         self.line_offsets = compute_line_offsets(&self.content);
     }
@@ -2332,6 +2595,7 @@ impl EditorState {
         self.highlight_last_recompute = None;
         self.line_offsets.clear();
         self.line_offsets.push(0);
+        self.plain_highlight_mode = false;
     }
 }
 
@@ -2354,6 +2618,7 @@ impl Default for EditorState {
             highlight_pending_since: Some(Instant::now()),
             highlight_last_recompute: None,
             line_offsets: vec![0],
+            plain_highlight_mode: false,
         }
     }
 }
