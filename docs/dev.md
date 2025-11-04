@@ -4,29 +4,29 @@
 
 ```text
 localpaste.rs/
-├── Cargo.toml
-├── src/
-│   ├── bin/
-│   │   ├── localpaste.rs       # HTTP API / legacy web server
-│   │   ├── localpaste-gui.rs   # Native egui desktop launcher
-│   │   └── lpaste.rs           # CLI client
-│   ├── gui/
-│   │   └── mod.rs              # egui widgets / layout
-│   ├── handlers/               # HTTP handlers
-│   ├── models/                 # Data models
-│   ├── db/                     # Database layer (sled)
-│   └── naming/                 # Semantic name generation
-├── docs/                       # Project documentation
-├── assets/                     # Screenshots / design references
-└── target/                     # Build artifacts (git-ignored)
+|-- Cargo.toml
+|-- src/
+|   |-- bin/
+|   |   |-- localpaste-gui.rs   # Native egui desktop launcher
+|   |   `-- lpaste.rs           # CLI client (requires `cli` feature)
+|   |-- gui/                    # egui widgets / layout
+|   |-- handlers/               # HTTP handlers
+|   |-- models/                 # Data models
+|   |-- db/                     # Database layer (sled)
+|   `-- naming/                 # Semantic name generation
+|-- src/main.rs                 # HTTP API / headless server
+|-- docs/                       # Project documentation
+|-- assets/                     # Screenshots / design references
+`-- target/                     # Build artifacts (git-ignored)
 ```
+
 
 ## Key Design Decisions
 
 ### Single Binary Distribution
 
-- All static assets are embedded using `rust-embed`
 - No external dependencies at runtime
+- Desktop app embeds the API server in-process
 - Database is embedded (Sled)
 
 ### Database Choice
@@ -39,7 +39,7 @@ localpaste.rs/
 
 - Native egui 0.33 application (src/gui/mod.rs)
 - Cached language detection + syntect highlighting
-- Drag & drop folder organization in sidebar
+- Folder management via dialogs with cycle-safe parenting rules
 - Auto-save with debouncing and manual export support
 
 ### API Design
@@ -66,7 +66,7 @@ Folder operations enforce tree integrity: the API returns `400 Bad Request` if a
 The project contains two binaries:
 
 - `localpaste` - The web server (default binary)
-- `lpaste` - CLI tool for interacting with the server
+- `lpaste` - CLI tool for interacting with the server (enable the `cli` feature)
 
 ```bash
 # Build both binaries
@@ -76,7 +76,7 @@ cargo build --release
 cargo build --release --bin localpaste
 
 # Build only the CLI
-cargo build --release --bin lpaste
+cargo build --release --bin lpaste --features cli
 ```
 
 ### Running Locally
@@ -86,7 +86,7 @@ cargo build --release --bin lpaste
 cargo run --bin localpaste-gui --features="gui"
 # (append --release when you need an optimized build)
 
-# Run the server/API (legacy web UI)
+# Run the server/API (JSON endpoints)
 cargo run --bin localpaste --release
 
 # Run with auto-reload (server)
@@ -109,21 +109,31 @@ cargo clippy --all-targets --all-features
 ### Building for Production
 
 ```bash
-# Optimized build (both binaries)
+# Optimized server build
 cargo build --release
 
-# Strip symbols for smaller binaries
+# Include the CLI binary
+cargo build --release --features cli
+
+# Include the desktop GUI
+cargo build --release --bin localpaste-gui --features gui
+
+# Strip symbols for smaller binaries (build required first)
 strip target/release/localpaste
 strip target/release/lpaste
+strip target/release/localpaste-gui
 
 # Check binary sizes
-du -h target/release/localpaste target/release/lpaste
+du -h target/release/localpaste target/release/lpaste target/release/localpaste-gui
 ```
 
 ### Using the CLI Tool
 
 ```bash
-# The CLI tool should be built and run from the binary, not cargo run
+# Build with the CLI feature before running
+cargo build --release --features cli --bin lpaste
+
+# The CLI tool should be run from the compiled binary
 ./target/release/lpaste --help
 
 # Examples
@@ -138,12 +148,12 @@ echo "test" | ./target/release/lpaste new
    - Add model in `src/models/`
    - Add database operations in `src/db/`
    - Add handler in `src/handlers/`
-   - Register route in `src/main.rs`
+   - Register route in `src/lib.rs`
 
 2. **Frontend Changes**
-   - Edit `src/static/index.html`
-   - Rebuild with `cargo build --release`
-   - Assets are embedded automatically
+   - Update egui components in `src/gui/`
+   - Run `cargo run --bin localpaste-gui --features gui` to iterate
+   - Refresh screenshots in `assets/` if the UI changes
 
 3. **Database Migrations**
    - Sled handles schema evolution automatically
