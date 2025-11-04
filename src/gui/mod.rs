@@ -2255,6 +2255,34 @@ impl eframe::App for LocalPasteApp {
                     self.render_filter_bar(ui);
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.filter_query)
+                                .hint_text("Filter pastes…")
+                                .desired_width(f32::INFINITY),
+                        );
+                        if self.filter_focus_requested {
+                            response.request_focus();
+                            self.filter_focus_requested = false;
+                        }
+                        if response.changed() {
+                            self.update_filter_cache();
+                            self.ensure_selection_after_filter();
+                        }
+                        if !self.filter_query.is_empty() {
+                            if ui
+                                .add(egui::Button::new("✕").small().frame(false))
+                                .on_hover_text("Clear filter")
+                                .clicked()
+                            {
+                                self.filter_query.clear();
+                                self.update_filter_cache();
+                                self.ensure_selection_after_filter();
+                            }
+                        }
+                    });
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
                         let paste_btn =
                             egui::Button::new(RichText::new("+ New Paste").color(Color32::WHITE))
                                 .fill(COLOR_ACCENT)
