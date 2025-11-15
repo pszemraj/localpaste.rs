@@ -6,7 +6,7 @@ LocalPaste.rs is designed for local use and comes with secure defaults. The desk
 
 - **Localhost-only binding**: Server binds to `127.0.0.1` by default
 - **CORS restrictions**: Only accepts requests from localhost origins
-- **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
+- **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options
 - **Request size limits**: Enforced at transport layer (default: 10MB)
 - **Graceful shutdown**: Database flush on exit to prevent data loss
 
@@ -26,7 +26,8 @@ The following headers are automatically set:
 - `Content-Security-Policy`: Restricts resource loading to same-origin
 - `X-Content-Type-Options: nosniff`: Prevents MIME-type sniffing
 - `X-Frame-Options: DENY`: Prevents clickjacking
-- `Referrer-Policy: no-referrer`: Prevents referrer leakage
+
+To add a referrer policy, configure your reverse proxy or extend the Axum middleware layer.
 
 ## Public Exposure (Not Recommended)
 

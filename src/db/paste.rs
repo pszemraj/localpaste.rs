@@ -1,4 +1,6 @@
 use crate::{error::AppError, models::paste::*};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use sled::Db;
 use std::sync::Arc;
 
@@ -20,17 +22,16 @@ impl PasteDb {
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Paste>, AppError> {
-        Ok(self
-            .tree
-            .get(id.as_bytes())?
-            .map(|v| bincode::deserialize(&v))
-            .transpose()?)
+        match self.tree.get(id.as_bytes())? {
+            Some(value) => Ok(Some(deserialize_paste(&value)?)),
+            None => Ok(None),
+        }
     }
 
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
             old.and_then(|bytes| {
-                let mut paste: Paste = bincode::deserialize(bytes).ok()?;
+                let mut paste = deserialize_paste(bytes).ok()?;
 
                 if let Some(content) = &update.content {
                     paste.content = content.clone();
@@ -42,6 +43,9 @@ impl PasteDb {
                 }
                 if update.language.is_some() {
                     paste.language = update.language.clone();
+                }
+                if let Some(is_manual) = update.language_is_manual {
+                    paste.language_is_manual = is_manual;
                 }
                 // Normalize folder_id: empty string becomes None
                 if let Some(ref fid) = update.folder_id {
@@ -76,7 +80,7 @@ impl PasteDb {
         // Collect all pastes (or filtered by folder)
         for item in self.tree.iter() {
             let (_, value) = item?;
-            let paste: Paste = bincode::deserialize(&value)?;
+            let paste = deserialize_paste(&value)?;
 
             if let Some(ref fid) = folder_id {
                 if paste.folder_id.as_ref() != Some(fid) {
@@ -107,7 +111,7 @@ impl PasteDb {
 
         for item in self.tree.iter() {
             let (_, value) = item?;
-            let paste: Paste = bincode::deserialize(&value)?;
+            let paste = deserialize_paste(&value)?;
 
             // Apply folder filter
             if let Some(ref fid) = folder_id {
@@ -149,5 +153,43 @@ impl PasteDb {
             .take(limit)
             .map(|(_, paste)| paste)
             .collect())
+    }
+}
+
+fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
+    bincode::deserialize::<Paste>(bytes).or_else(|err| {
+        bincode::deserialize::<LegacyPaste>(bytes)
+            .map(Paste::from)
+            .map_err(|_| err)
+    })
+}
+
+#[derive(Serialize, Deserialize)]
+struct LegacyPaste {
+    id: String,
+    name: String,
+    content: String,
+    language: Option<String>,
+    folder_id: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    tags: Vec<String>,
+    is_markdown: bool,
+}
+
+impl From<LegacyPaste> for Paste {
+    fn from(old: LegacyPaste) -> Self {
+        Self {
+            id: old.id,
+            name: old.name,
+            content: old.content,
+            language: old.language.clone(),
+            language_is_manual: old.language.is_some(),
+            folder_id: old.folder_id,
+            created_at: old.created_at,
+            updated_at: old.updated_at,
+            tags: old.tags,
+            is_markdown: old.is_markdown,
+        }
     }
 }

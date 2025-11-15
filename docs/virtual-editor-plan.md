@@ -86,4 +86,16 @@ Suggestion:
 
 - Prioritize chunked highlighting and per-line layout cache (Milestones 1 & 2) to relieve current bottlenecks without retooling the entire editor.
 - Draft API/structure for read-only virtualized view so we can begin milestone 3 in parallel when ready.
-\n### Milestone 1 & 2 Detail\n- Maintain a line index in EditorState (vector of char offsets) recomputed on edits.\n- Introduce a HighlightChunkCache (map: chunk_id -> {start_byte, text_hash, layout_job, syntax_state_after}).\n- When text changes, only invalidate chunks intersecting the edited byte range.\n- Build the full LayoutJob by concatenating cached per-chunk layout jobs before handing it to the existing TextEdit layouter.\n- Parallel change: store a per-line galley cache (line index + wrap-sensitive layout) so we can reuse layout for the same line if wrap width unchanged; fallback to recompute for lines in edited chunks.\n- Logging hooks (already in place via LOCALPASTE_PROFILE_HIGHLIGHT) will help verify chunk cache hit rate and highlight/layout timing.
+
+### Milestone 1 & 2 Detail
+- Maintain a line index in EditorState (vector of char offsets) recomputed on edits.
+- Introduce a HighlightChunkCache (map: chunk_id -> {start_byte, text_hash, layout_job, syntax_state_after}).
+- When text changes, only invalidate chunks intersecting the edited byte range.
+- Build the full LayoutJob by concatenating cached per-chunk layout jobs before handing it to the existing TextEdit layouter.
+- Parallel change: store a per-line galley cache (line index + wrap-sensitive layout) so we can reuse layout for the same line if wrap width unchanged; fallback to recompute for lines in edited chunks.
+- Logging hooks (already in place via LOCALPASTE_PROFILE_HIGHLIGHT) will help verify chunk cache hit rate and highlight/layout timing.
+
+## Progress
+
+- Chunked highlight caching plus chunk galley reuse now power the existing TextEdit workflow, delivering Milestones 1 & 2.
+- Set `LOCALPASTE_VIRTUAL_PREVIEW=1` to render a read-only chunk-virtualized preview that exercises the new caches before replacing the editable widget.

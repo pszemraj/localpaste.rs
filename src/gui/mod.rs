@@ -1,8 +1,11 @@
 use std::{
+    cell::RefCell,
     collections::{hash_map::DefaultHasher, HashMap},
     fs,
     hash::{Hash, Hasher},
     net::SocketAddr,
+    ops::Range,
+    rc::Rc,
     sync::{mpsc, Arc},
     thread,
     time::{Duration, Instant},
@@ -10,10 +13,16 @@ use std::{
 
 use eframe::egui::{
     self, style::WidgetVisuals, CollapsingHeader, Color32, CornerRadius, FontFamily, FontId, Frame,
-    Layout, Margin, RichText, Stroke, TextStyle, Visuals,
+    Layout, Margin, Popup, RichText, Stroke, TextStyle, Visuals,
 };
-use egui_extras::syntax_highlighting::{self, CodeTheme};
+use egui_extras::syntax_highlighting::SyntectSettings;
 use rfd::FileDialog;
+use syntect::{
+    easy::HighlightLines,
+    highlighting::{FontStyle, HighlightState as SyntectHighlightState},
+    parsing::{ParseState as SyntectParseState, SyntaxReference},
+    util::LinesWithEndings,
+};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
@@ -41,6 +50,667 @@ const ICON_SIZE: usize = 96;
 const AUTO_DETECT_MIN_CHARS: usize = 64;
 const AUTO_DETECT_MIN_LINES: usize = 3;
 const HIGHLIGHT_RECOMPUTE_DELAY: Duration = Duration::from_millis(75);
+const HIGHLIGHT_CHUNK_SIZE: usize = 4 * 1024;
+const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SyntectState {
+    highlight: SyntectHighlightState,
+    parse: SyntectParseState,
+}
+
+impl SyntectState {
+    fn initial(syntax: &SyntaxReference, theme: &syntect::highlighting::Theme) -> Self {
+        let initial = HighlightLines::new(syntax, theme);
+        let (highlight, parse) = initial.state();
+        Self { highlight, parse }
+    }
+
+    fn to_highlighter<'a>(&self, theme: &'a syntect::highlighting::Theme) -> HighlightLines<'a> {
+        HighlightLines::from_state(theme, self.highlight.clone(), self.parse.clone())
+    }
+}
+
+#[derive(Clone)]
+struct HighlightChunk {
+    index: usize,
+    version: u64,
+    range: Range<usize>,
+    text_hash: u64,
+    state_before: SyntectState,
+    state_after: SyntectState,
+    layout_job: egui::text::LayoutJob,
+}
+
+#[derive(Clone)]
+struct HighlightData {
+    revision: u64,
+    job: Arc<egui::text::LayoutJob>,
+    chunks: Vec<HighlightChunk>,
+    line_offsets: Vec<usize>,
+    plain: bool,
+}
+
+struct ChunkBuildInput<'a> {
+    settings: &'a SyntectSettings,
+    syntect_theme: &'a syntect::highlighting::Theme,
+    highlight_theme: &'a HighlightTheme,
+    index: usize,
+    range: Range<usize>,
+    text: &'a str,
+    text_hash: u64,
+    state_before: SyntectState,
+}
+
+#[derive(Clone)]
+struct HighlightTheme {
+    font_id: egui::FontId,
+    syntect_theme_key: &'static str,
+    dark_mode: bool,
+}
+
+impl HighlightTheme {
+    fn from_style(style: &egui::Style) -> Self {
+        let font_id = style
+            .override_font_id
+            .clone()
+            .unwrap_or_else(|| TextStyle::Monospace.resolve(style));
+        let dark_mode = style.visuals.dark_mode;
+        let syntect_theme_key = if dark_mode {
+            "base16-mocha.dark"
+        } else {
+            "Solarized (light)"
+        };
+        Self {
+            font_id,
+            syntect_theme_key,
+            dark_mode,
+        }
+    }
+
+    fn font_id(&self) -> &egui::FontId {
+        &self.font_id
+    }
+
+    fn syntect_theme_key(&self) -> &'static str {
+        self.syntect_theme_key
+    }
+
+    fn is_dark(&self) -> bool {
+        self.dark_mode
+    }
+}
+
+struct HighlightCache {
+    settings: Arc<SyntectSettings>,
+    chunk_size: usize,
+    revision: u64,
+    next_chunk_version: u64,
+    data: Option<Rc<HighlightData>>,
+}
+
+impl Default for HighlightCache {
+    fn default() -> Self {
+        Self {
+            settings: Arc::new(SyntectSettings::default()),
+            chunk_size: HIGHLIGHT_CHUNK_SIZE,
+            revision: 0,
+            next_chunk_version: 0,
+            data: None,
+        }
+    }
+}
+
+impl HighlightCache {
+    fn clear(&mut self) {
+        self.data = None;
+        self.next_chunk_version = 0;
+    }
+
+    fn current(&self) -> Option<Rc<HighlightData>> {
+        self.data.clone()
+    }
+
+    fn recompute(
+        &mut self,
+        theme: &HighlightTheme,
+        language: &str,
+        text: &str,
+    ) -> Rc<HighlightData> {
+        let settings = Arc::clone(&self.settings);
+        let syntax = settings
+            .ps
+            .find_syntax_by_name(language)
+            .or_else(|| settings.ps.find_syntax_by_extension(language))
+            .unwrap_or_else(|| settings.ps.find_syntax_plain_text());
+        let syntect_theme = settings
+            .ts
+            .themes
+            .get(theme.syntect_theme_key())
+            .cloned()
+            .unwrap_or_else(|| {
+                settings
+                    .ts
+                    .themes
+                    .values()
+                    .next()
+                    .cloned()
+                    .expect("syntect theme set must contain at least one entry")
+            });
+        let line_offsets = compute_line_offsets(text);
+        let chunk_ranges = compute_chunk_ranges(text, self.chunk_size);
+        let mut current_state = SyntectState::initial(syntax, &syntect_theme);
+
+        let previous = self.data.clone();
+        let mut aggregates = Vec::new();
+        let mut chunks = Vec::with_capacity(chunk_ranges.len());
+
+        for (index, range) in chunk_ranges.into_iter().enumerate() {
+            let chunk_text = &text[range.clone()];
+            let chunk_hash = hash_str(chunk_text);
+
+            let reused = previous
+                .as_ref()
+                .and_then(|data| data.chunks.get(index))
+                .filter(|chunk| {
+                    chunk.text_hash == chunk_hash && chunk.state_before == current_state
+                })
+                .cloned();
+
+            let mut chunk = if let Some(mut existing) = reused {
+                existing.range = range.clone();
+                existing.state_before = current_state.clone();
+                existing
+            } else {
+                self.build_chunk(ChunkBuildInput {
+                    settings: settings.as_ref(),
+                    syntect_theme: &syntect_theme,
+                    highlight_theme: theme,
+                    index,
+                    range: range.clone(),
+                    text: chunk_text,
+                    text_hash: chunk_hash,
+                    state_before: current_state.clone(),
+                })
+            };
+
+            current_state = chunk.state_after.clone();
+
+            aggregates.extend(
+                chunk
+                    .layout_job
+                    .sections
+                    .iter()
+                    .cloned()
+                    .map(|mut section| {
+                        section.byte_range.start += chunk.range.start;
+                        section.byte_range.end += chunk.range.start;
+                        section
+                    }),
+            );
+
+            chunk.index = index;
+            chunk.range = range;
+            chunk.text_hash = chunk_hash;
+            chunks.push(chunk);
+        }
+
+        let mut job = egui::text::LayoutJob {
+            text: text.to_owned(),
+            sections: aggregates,
+            ..Default::default()
+        };
+        job.wrap.max_width = f32::INFINITY;
+
+        self.revision = self.revision.wrapping_add(1);
+        let data = HighlightData {
+            revision: self.revision,
+            job: Arc::new(job),
+            chunks,
+            line_offsets,
+            plain: false,
+        };
+        let rc = Rc::new(data);
+        self.data = Some(rc.clone());
+        rc
+    }
+
+    fn plain_text(&mut self, theme: &HighlightTheme, text: &str) -> Rc<HighlightData> {
+        let settings = Arc::clone(&self.settings);
+        let syntect_theme = settings
+            .ts
+            .themes
+            .get(theme.syntect_theme_key())
+            .cloned()
+            .unwrap_or_else(|| {
+                settings
+                    .ts
+                    .themes
+                    .values()
+                    .next()
+                    .cloned()
+                    .expect("syntect theme set must contain at least one entry")
+            });
+        let syntax = settings.ps.find_syntax_plain_text();
+        let state = SyntectState::initial(syntax, &syntect_theme);
+        let color = if theme.is_dark() {
+            Color32::LIGHT_GRAY
+        } else {
+            Color32::DARK_GRAY
+        };
+        let mut layout_job = egui::text::LayoutJob::simple(
+            text.to_owned(),
+            theme.font_id().clone(),
+            color,
+            f32::INFINITY,
+        );
+        layout_job.wrap.max_width = f32::INFINITY;
+        self.next_chunk_version = self.next_chunk_version.wrapping_add(1);
+        let chunk = HighlightChunk {
+            index: 0,
+            version: self.next_chunk_version,
+            range: 0..text.len(),
+            text_hash: hash_str(text),
+            state_before: state.clone(),
+            state_after: state,
+            layout_job: layout_job.clone(),
+        };
+        self.revision = self.revision.wrapping_add(1);
+        let data = HighlightData {
+            revision: self.revision,
+            job: Arc::new(layout_job),
+            chunks: vec![chunk],
+            line_offsets: compute_line_offsets(text),
+            plain: true,
+        };
+        let rc = Rc::new(data);
+        self.data = Some(rc.clone());
+        rc
+    }
+    fn build_chunk(&mut self, input: ChunkBuildInput<'_>) -> HighlightChunk {
+        let mut highlighter = input.state_before.to_highlighter(input.syntect_theme);
+        let mut sections = Vec::new();
+        let mut failed = false;
+
+        for line in LinesWithEndings::from(input.text) {
+            match highlighter.highlight_line(line, &input.settings.ps) {
+                Ok(spans) => {
+                    for (style, span) in spans {
+                        if span.is_empty() {
+                            continue;
+                        }
+                        sections.push(layout_section_from_style(
+                            input.highlight_theme,
+                            input.text,
+                            span,
+                            &style,
+                        ));
+                    }
+                }
+                Err(_) => {
+                    failed = true;
+                    break;
+                }
+            }
+        }
+
+        let (highlight_state, parse_state) = highlighter.state();
+        let state_after = SyntectState {
+            highlight: highlight_state,
+            parse: parse_state,
+        };
+
+        let layout_job = if failed {
+            egui::text::LayoutJob::simple(
+                input.text.to_owned(),
+                input.highlight_theme.font_id().clone(),
+                if input.highlight_theme.is_dark() {
+                    Color32::LIGHT_GRAY
+                } else {
+                    Color32::DARK_GRAY
+                },
+                f32::INFINITY,
+            )
+        } else {
+            egui::text::LayoutJob {
+                text: input.text.to_owned(),
+                sections,
+                wrap: egui::text::TextWrapping {
+                    max_width: f32::INFINITY,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        };
+
+        self.next_chunk_version = self.next_chunk_version.wrapping_add(1);
+        HighlightChunk {
+            index: input.index,
+            version: self.next_chunk_version,
+            range: input.range,
+            text_hash: input.text_hash,
+            state_before: input.state_before,
+            state_after,
+            layout_job,
+        }
+    }
+}
+
+fn layout_section_from_style(
+    theme: &HighlightTheme,
+    chunk_text: &str,
+    span: &str,
+    style: &syntect::highlighting::Style,
+) -> egui::text::LayoutSection {
+    let fg = style.foreground;
+    let color = Color32::from_rgb(fg.r, fg.g, fg.b);
+    let italics = style.font_style.contains(FontStyle::ITALIC);
+    let underline = style.font_style.contains(FontStyle::UNDERLINE);
+    egui::text::LayoutSection {
+        leading_space: 0.0,
+        byte_range: byte_range_in(chunk_text, span),
+        format: egui::text::TextFormat {
+            font_id: theme.font_id().clone(),
+            color,
+            italics,
+            underline: if underline {
+                Stroke::new(1.0, color)
+            } else {
+                Stroke::NONE
+            },
+            ..Default::default()
+        },
+    }
+}
+
+fn compute_chunk_ranges(text: &str, chunk_size: usize) -> Vec<Range<usize>> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    fn prev_char_boundary(text: &str, mut index: usize) -> usize {
+        if index >= text.len() {
+            return text.len();
+        }
+        while index > 0 && !text.is_char_boundary(index) {
+            index -= 1;
+        }
+        index
+    }
+
+    fn next_char_boundary(text: &str, mut index: usize) -> usize {
+        if index >= text.len() {
+            return text.len();
+        }
+        while index < text.len() && !text.is_char_boundary(index) {
+            index += 1;
+        }
+        index
+    }
+
+    let total = text.len();
+    let mut ranges = Vec::new();
+    let mut start = 0;
+
+    while start < total {
+        let mut end = prev_char_boundary(text, (start + chunk_size).min(total));
+
+        if end < total {
+            if let Some(last_newline) = text[start..end].rfind('\n') {
+                end = start + last_newline + 1;
+            } else if let Some(next_newline) = text[end..].find('\n') {
+                end += next_newline + 1;
+            } else {
+                end = total;
+            }
+        }
+
+        if end == start {
+            end = (start + chunk_size).min(total);
+            if end == start {
+                end = total;
+            }
+        }
+
+        if end <= start {
+            end = next_char_boundary(text, (start + chunk_size).min(total));
+            if end <= start {
+                end = total;
+            }
+        }
+
+        ranges.push(start..end);
+        start = end;
+    }
+
+    ranges
+}
+
+fn compute_line_offsets(text: &str) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(text.lines().count() + 1);
+    offsets.push(0);
+    let mut count = 0;
+    for ch in text.chars() {
+        count += 1;
+        if ch == '\n' {
+            offsets.push(count);
+        }
+    }
+    offsets
+}
+
+fn byte_range_in(whole: &str, part: &str) -> Range<usize> {
+    let start = part.as_ptr() as usize - whole.as_ptr() as usize;
+    start..start + part.len()
+}
+
+fn hash_str(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn key_to_ascii_letter(key: egui::Key) -> Option<char> {
+    use egui::Key::*;
+    let ch = match key {
+        A => 'a',
+        B => 'b',
+        C => 'c',
+        D => 'd',
+        E => 'e',
+        F => 'f',
+        G => 'g',
+        H => 'h',
+        I => 'i',
+        J => 'j',
+        K => 'k',
+        L => 'l',
+        M => 'm',
+        N => 'n',
+        O => 'o',
+        P => 'p',
+        Q => 'q',
+        R => 'r',
+        S => 's',
+        T => 't',
+        U => 'u',
+        V => 'v',
+        W => 'w',
+        X => 'x',
+        Y => 'y',
+        Z => 'z',
+        _ => return None,
+    };
+    Some(ch)
+}
+
+#[derive(Clone, Default)]
+struct LayoutCache {
+    inner: Rc<RefCell<LayoutCacheInner>>,
+}
+
+impl LayoutCache {
+    fn reset(&self) {
+        self.inner.borrow_mut().reset();
+    }
+
+    fn layout(
+        &self,
+        ui: &egui::Ui,
+        wrap_width: f32,
+        highlight: &HighlightData,
+    ) -> Arc<egui::text::Galley> {
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let key = LayoutCacheKey::new(wrap_width, pixels_per_point);
+        let mut inner = self.inner.borrow_mut();
+
+        inner.sync_chunks(highlight);
+        inner
+            .combined
+            .retain(|_, cached| cached.revision == highlight.revision);
+
+        if let Some(galley) = inner
+            .combined
+            .get(&key)
+            .filter(|cached| cached.revision == highlight.revision)
+            .map(|cached| cached.galley.clone())
+        {
+            return galley;
+        }
+
+        let chunk_galleys = highlight
+            .chunks
+            .iter()
+            .enumerate()
+            .map(|(idx, chunk)| inner.chunk_layout(ui, idx, chunk, key).galley)
+            .collect::<Vec<_>>();
+
+        let mut job = (*highlight.job).clone();
+        job.wrap.max_width = if wrap_width.is_finite() {
+            wrap_width
+        } else {
+            f32::INFINITY
+        };
+        let job = Arc::new(job);
+        let galley = Arc::new(egui::text::Galley::concat(
+            job,
+            &chunk_galleys,
+            pixels_per_point,
+        ));
+        inner.combined.insert(
+            key,
+            CachedCombinedGalley {
+                revision: highlight.revision,
+                galley: galley.clone(),
+            },
+        );
+        galley
+    }
+}
+
+#[derive(Clone)]
+struct CachedChunkLayout {
+    galley: Arc<egui::text::Galley>,
+    height: f32,
+}
+
+#[derive(Default)]
+struct LayoutCacheInner {
+    last_chunk_count: usize,
+    chunks: Vec<ChunkLayoutEntry>,
+    combined: HashMap<LayoutCacheKey, CachedCombinedGalley>,
+}
+
+impl LayoutCacheInner {
+    fn reset(&mut self) {
+        self.last_chunk_count = 0;
+        self.chunks.clear();
+        self.combined.clear();
+    }
+
+    fn sync_chunks(&mut self, highlight: &HighlightData) {
+        if self.last_chunk_count != highlight.chunks.len() {
+            self.chunks
+                .resize_with(highlight.chunks.len(), ChunkLayoutEntry::default);
+            self.last_chunk_count = highlight.chunks.len();
+        }
+
+        for (entry, chunk) in self.chunks.iter_mut().zip(highlight.chunks.iter()) {
+            if entry.version != chunk.version {
+                entry.version = chunk.version;
+                entry.layouts.clear();
+            }
+        }
+    }
+
+    fn chunk_layout(
+        &mut self,
+        ui: &egui::Ui,
+        index: usize,
+        chunk: &HighlightChunk,
+        key: LayoutCacheKey,
+    ) -> CachedChunkLayout {
+        let entry = &mut self.chunks[index];
+        if let Some(layout) = entry.layouts.get(&key) {
+            return layout.clone();
+        }
+
+        let mut job = chunk.layout_job.clone();
+        job.wrap.max_width = if key.wrap_width().is_finite() {
+            key.wrap_width()
+        } else {
+            f32::INFINITY
+        };
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        let layout = CachedChunkLayout {
+            galley: galley.clone(),
+            height: galley.rect.height(),
+        };
+        entry.layouts.insert(key, layout.clone());
+        layout
+    }
+}
+
+#[derive(Default)]
+struct ChunkLayoutEntry {
+    version: u64,
+    layouts: HashMap<LayoutCacheKey, CachedChunkLayout>,
+}
+
+#[derive(Clone)]
+struct CachedCombinedGalley {
+    revision: u64,
+    galley: Arc<egui::text::Galley>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct LayoutCacheKey {
+    wrap_bits: u32,
+    pixels_per_point_bits: u32,
+}
+
+impl LayoutCacheKey {
+    fn new(wrap_width: f32, pixels_per_point: f32) -> Self {
+        let wrap = if wrap_width.is_finite() {
+            wrap_width
+        } else {
+            f32::INFINITY
+        };
+        let ppp = if pixels_per_point.is_finite() {
+            pixels_per_point
+        } else {
+            1.0
+        };
+        Self {
+            wrap_bits: wrap.to_bits(),
+            pixels_per_point_bits: ppp.to_bits(),
+        }
+    }
+
+    fn wrap_width(self) -> f32 {
+        f32::from_bits(self.wrap_bits)
+    }
+}
 
 fn sanitize_filename(name: &str) -> String {
     let mut sanitized: String = name
@@ -174,13 +844,21 @@ pub struct LocalPasteApp {
     folder_index: HashMap<String, usize>,
     selected_id: Option<String>,
     folder_focus: Option<String>,
+    filter_counts: HashMap<String, usize>,
+    filter_unfiled: usize,
+    filter_query: String,
+    filter_query_lower: String,
+    filter_focus_requested: bool,
     editor: EditorState,
     status: Option<StatusMessage>,
-    theme: CodeTheme,
+    highlight_theme: HighlightTheme,
+    virtual_preview_enabled: bool,
     style_applied: bool,
     folder_dialog: Option<FolderDialog>,
     _server: ServerHandle,
     profile_highlight: bool,
+    editor_focused: bool,
+    auto_save_blocked: bool,
 }
 
 impl LocalPasteApp {
@@ -207,6 +885,9 @@ impl LocalPasteApp {
         let profile_highlight = std::env::var("LOCALPASTE_PROFILE_HIGHLIGHT")
             .map(|v| v != "0")
             .unwrap_or(false);
+        let virtual_preview_enabled = std::env::var("LOCALPASTE_VIRTUAL_PREVIEW")
+            .map(|v| v != "0")
+            .unwrap_or(false);
 
         let mut app = Self {
             db,
@@ -217,17 +898,26 @@ impl LocalPasteApp {
             folder_index: HashMap::new(),
             selected_id: None,
             folder_focus: None,
+            filter_counts: HashMap::new(),
+            filter_unfiled: 0,
+            filter_query: String::new(),
+            filter_query_lower: String::new(),
+            filter_focus_requested: false,
             editor: EditorState::default(),
             status: None,
-            theme: CodeTheme::from_style(&egui::Style::default()),
+            highlight_theme: HighlightTheme::from_style(&egui::Style::default()),
+            virtual_preview_enabled,
             style_applied: false,
             folder_dialog: None,
             _server: server,
             profile_highlight,
+            editor_focused: false,
+            auto_save_blocked: false,
         };
 
         app.reload_pastes("startup");
         app.reload_folders("startup");
+        app.update_filter_cache();
 
         Ok(app)
     }
@@ -325,7 +1015,7 @@ impl LocalPasteApp {
         );
 
         ctx.set_style(style.clone());
-        self.theme = CodeTheme::from_style(&style);
+        self.highlight_theme = HighlightTheme::from_style(&style);
         self.style_applied = true;
     }
 
@@ -336,6 +1026,7 @@ impl LocalPasteApp {
                 loaded.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
                 self.pastes = loaded;
                 self.rebuild_paste_index();
+                self.refresh_filter_counts();
 
                 if let Some(selected) = self
                     .selected_id
@@ -345,6 +1036,9 @@ impl LocalPasteApp {
                     self.select_paste(selected, false);
                 } else if self.pastes.is_empty() {
                     self.editor = EditorState::new_unsaved(self.folder_focus.clone());
+                }
+                if self.has_active_filter() {
+                    self.ensure_selection_after_filter();
                 }
             }
             Err(err) => {
@@ -394,6 +1088,129 @@ impl LocalPasteApp {
         }
     }
 
+    fn has_active_filter(&self) -> bool {
+        !self.filter_query_lower.is_empty()
+    }
+
+    fn update_filter_cache(&mut self) {
+        self.filter_query_lower = self.filter_query.to_ascii_lowercase();
+        self.refresh_filter_counts();
+    }
+
+    fn refresh_filter_counts(&mut self) {
+        self.filter_counts.clear();
+        self.filter_unfiled = 0;
+        if self.filter_query_lower.is_empty() {
+            return;
+        }
+
+        for paste in &self.pastes {
+            if self.matches_filter(paste) {
+                if let Some(folder) = &paste.folder_id {
+                    *self.filter_counts.entry(folder.clone()).or_insert(0) += 1;
+                } else {
+                    self.filter_unfiled += 1;
+                }
+            }
+        }
+    }
+
+    fn matches_filter(&self, paste: &Paste) -> bool {
+        if self.filter_query_lower.is_empty() {
+            return true;
+        }
+        let needle = self.filter_query_lower.as_str();
+        Self::contains_case_insensitive(&paste.name, needle)
+            || paste
+                .tags
+                .iter()
+                .any(|tag| Self::contains_case_insensitive(tag, needle))
+            || paste
+                .language
+                .as_deref()
+                .map(|lang| Self::contains_case_insensitive(lang, needle))
+                .unwrap_or(false)
+            || Self::contains_case_insensitive(paste.id.as_str(), needle)
+    }
+
+    fn contains_case_insensitive(text: &str, needle: &str) -> bool {
+        if needle.is_empty() {
+            return true;
+        }
+        if text.len() < needle.len() {
+            return text.to_ascii_lowercase().contains(needle);
+        }
+        text.to_ascii_lowercase().contains(needle)
+    }
+
+    fn ensure_selection_after_filter(&mut self) {
+        if self.selected_id.is_some() {
+            if let Some(selected) = self.selected_id.clone() {
+                if self
+                    .find_paste(selected.as_str())
+                    .map(|paste| self.matches_filter(paste))
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+            }
+        }
+
+        if let Some(next) = self
+            .pastes
+            .iter()
+            .find(|paste| self.matches_filter(paste))
+            .cloned()
+        {
+            let next_id = next.id.clone();
+            let selected_changed = self.selected_id.as_deref() != Some(next_id.as_str());
+            self.select_paste(next_id, false);
+            if selected_changed {
+                self.editor.needs_focus = false;
+            }
+        } else {
+            self.selected_id = None;
+            self.editor = EditorState::new_unsaved(self.folder_focus.clone());
+            self.editor.needs_focus = false;
+        }
+    }
+
+    fn integrate_paste(&mut self, paste: Paste) {
+        let paste_id = paste.id.clone();
+        self.pastes.retain(|p| p.id != paste_id);
+        self.pastes.push(paste);
+        self.pastes.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
+        self.rebuild_paste_index();
+        if let Some(idx) = self.paste_index.get(&paste_id).copied() {
+            let editor_is_current = self.editor.paste_id.as_deref() == Some(paste_id.as_str());
+            if self.selected_id.as_deref() == Some(paste_id.as_str()) && !editor_is_current {
+                if let Some(updated) = self.pastes.get(idx) {
+                    self.editor.apply_paste(updated.clone());
+                }
+            }
+        }
+        self.refresh_filter_counts();
+        self.ensure_selection_after_filter();
+    }
+
+    fn remove_paste_by_id(&mut self, paste_id: &str) -> bool {
+        let original_len = self.pastes.len();
+        self.pastes.retain(|paste| paste.id != paste_id);
+        if self.pastes.len() != original_len {
+            self.rebuild_paste_index();
+        }
+        if self.selected_id.as_deref() == Some(paste_id) {
+            self.selected_id = None;
+        }
+        self.refresh_filter_counts();
+        self.ensure_selection_after_filter();
+        self.selected_id.is_some()
+    }
+
+    fn focus_filter(&mut self) {
+        self.filter_focus_requested = true;
+    }
+
     fn find_paste(&self, id: &str) -> Option<&Paste> {
         self.paste_index
             .get(id)
@@ -436,6 +1253,17 @@ impl LocalPasteApp {
             .count()
     }
 
+    fn count_filtered_pastes_in(&self, folder_id: Option<&str>) -> usize {
+        if self.filter_query_lower.is_empty() {
+            return self.count_pastes_in(folder_id);
+        }
+
+        match folder_id {
+            Some(id) => self.filter_counts.get(id).copied().unwrap_or(0),
+            None => self.filter_unfiled,
+        }
+    }
+
     fn folder_choices(&self) -> Vec<(String, String)> {
         let mut items = self
             .folders
@@ -456,17 +1284,52 @@ impl LocalPasteApp {
         self.editor.mark_dirty();
         self.editor.auto_detect_cache = None;
         self.editor.request_highlight_update();
+        self.editor.highlight_pending_since = Some(Instant::now());
+        self.auto_save_blocked = false;
     }
 
-    fn ensure_highlight_job(
+    fn ensure_highlight_data(
         &mut self,
-        ctx: &egui::Context,
-        style: &egui::Style,
-        theme: &CodeTheme,
+        theme: &HighlightTheme,
         language: &str,
-    ) -> Arc<egui::text::LayoutJob> {
+    ) -> Rc<HighlightData> {
         let now = Instant::now();
-        let mut should_recompute = self.editor.highlight_job.is_none();
+        let content_len = self.editor.content.len();
+
+        if content_len >= HIGHLIGHT_PLAIN_THRESHOLD {
+            if !self.editor.plain_highlight_mode {
+                self.editor.plain_highlight_mode = true;
+                self.editor.highlight_cache.clear();
+            }
+            if let Some(existing) = self
+                .editor
+                .highlight_cache
+                .current()
+                .filter(|data| data.plain)
+            {
+                // Plain-mode needs manual invalidation from mark_editor_dirty.
+                if self.editor.highlight_pending_since.is_none() {
+                    self.editor.line_offsets = existing.line_offsets.clone();
+                    return existing;
+                }
+            }
+            let data = self
+                .editor
+                .highlight_cache
+                .plain_text(theme, self.editor.content.as_str());
+            self.editor.layout_cache.reset();
+            self.editor.highlight_pending_since = None;
+            self.editor.highlight_last_recompute = Some(now);
+            self.editor.line_offsets = data.line_offsets.clone();
+            return data;
+        }
+
+        if self.editor.plain_highlight_mode {
+            self.editor.plain_highlight_mode = false;
+            self.editor.highlight_cache.clear();
+        }
+
+        let mut should_recompute = self.editor.highlight_cache.current().is_none();
 
         if !should_recompute {
             if let Some(pending_since) = self.editor.highlight_pending_since {
@@ -479,47 +1342,163 @@ impl LocalPasteApp {
         if should_recompute {
             let started = self
                 .profile_highlight
-                .then_some((Instant::now(), self.editor.content.len()));
-
-            let mut job = syntax_highlighting::highlight(
-                ctx,
-                style,
+                .then_some((Instant::now(), content_len));
+            let data = self.editor.highlight_cache.recompute(
                 theme,
-                self.editor.content.as_str(),
                 language,
+                self.editor.content.as_str(),
             );
-            job.wrap.max_width = f32::INFINITY;
-            let job = Arc::new(job);
-            if let Some((began, content_len)) = started {
+            self.editor.layout_cache.reset();
+            if let Some((began, chars)) = started {
                 let elapsed = began.elapsed();
                 debug!(
-                    "highlight_job duration_ms={:.3} chars={} lang={} paste_id={}",
+                    "highlight_job duration_ms={:.3} chars={} lang={} paste_id={} chunks={}",
                     elapsed.as_secs_f64() * 1_000.0,
-                    content_len,
+                    chars,
                     language,
                     self.editor.paste_id.as_deref().unwrap_or("unsaved"),
+                    data.chunks.len(),
                 );
             }
-
-            self.editor.highlight_job = Some(job.clone());
             self.editor.highlight_pending_since = None;
             self.editor.highlight_last_recompute = Some(now);
-            job
-        } else if let Some(job) = self.editor.highlight_job.as_ref() {
-            job.clone()
+            self.editor.line_offsets = data.line_offsets.clone();
+            data
         } else {
-            let mut job = syntax_highlighting::highlight(
-                ctx,
-                style,
-                theme,
-                self.editor.content.as_str(),
-                language,
-            );
-            job.wrap.max_width = f32::INFINITY;
-            let arc = Arc::new(job);
-            self.editor.highlight_job = Some(arc.clone());
-            arc
+            let data = self
+                .editor
+                .highlight_cache
+                .current()
+                .expect("highlight data available when clean");
+            self.editor.line_offsets = data.line_offsets.clone();
+            data
         }
+    }
+    fn render_filter_bar(&mut self, ui: &mut egui::Ui) {
+        let total_width = ui.available_width().max(60.0);
+        let row_height = ui.spacing().interact_size.y;
+        let item_spacing = ui.spacing().item_spacing.x;
+        let show_clear = !self.filter_query.is_empty();
+        let reserved_for_clear = if show_clear {
+            row_height + item_spacing
+        } else {
+            0.0
+        };
+        let text_width = (total_width - reserved_for_clear).max(60.0);
+
+        ui.allocate_ui_with_layout(
+            egui::vec2(total_width, row_height),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                let response = ui
+                    .add_sized(
+                        [text_width, row_height],
+                        egui::TextEdit::singleline(&mut self.filter_query)
+                            .hint_text("Filter pastes…"),
+                    )
+                    .on_hover_text("Type to filter pastes");
+
+                if self.filter_focus_requested {
+                    response.request_focus();
+                    self.filter_focus_requested = false;
+                }
+
+                if response.changed() {
+                    self.update_filter_cache();
+                    self.ensure_selection_after_filter();
+                }
+
+                let remaining = total_width - text_width;
+                if show_clear && remaining >= row_height + item_spacing {
+                    let clear_resp = ui
+                        .add_sized(
+                            [row_height, row_height],
+                            egui::Button::new("✕").frame(false),
+                        )
+                        .on_hover_text("Clear filter");
+                    if clear_resp.clicked() {
+                        self.filter_query.clear();
+                        self.update_filter_cache();
+                        self.ensure_selection_after_filter();
+                    }
+                }
+            },
+        );
+    }
+
+    fn render_virtual_preview(
+        &self,
+        ui: &mut egui::Ui,
+        highlight_data: Rc<HighlightData>,
+        layout_cache: LayoutCache,
+    ) {
+        egui::ScrollArea::vertical()
+            .id_salt("virtual_preview_scroll")
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                let available_width = ui.available_width();
+                let pixels_per_point = ui.ctx().pixels_per_point();
+                let key = LayoutCacheKey::new(available_width, pixels_per_point);
+
+                let mut inner = layout_cache.inner.borrow_mut();
+                inner.sync_chunks(highlight_data.as_ref());
+
+                let mut heights = Vec::with_capacity(highlight_data.chunks.len());
+                let mut total_height = 0.0f32;
+
+                for (idx, chunk) in highlight_data.chunks.iter().enumerate() {
+                    let layout = inner.chunk_layout(ui, idx, chunk, key);
+                    heights.push(layout.height);
+                    total_height += layout.height;
+                }
+
+                let total_height = total_height.max(1.0);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(available_width, total_height),
+                    egui::Sense::hover(),
+                );
+                let clip = ui.clip_rect();
+                let painter = ui.painter_at(rect);
+
+                let mut top_offset = 0.0f32;
+                for (idx, chunk) in highlight_data.chunks.iter().enumerate() {
+                    let height = heights[idx];
+                    let abs_top = rect.min.y + top_offset;
+                    let abs_bottom = abs_top + height;
+
+                    if abs_bottom >= clip.min.y && abs_top <= clip.max.y {
+                        let layout = inner.chunk_layout(ui, idx, chunk, key);
+                        painter.galley(
+                            egui::pos2(rect.min.x, abs_top),
+                            layout.galley.clone(),
+                            Color32::WHITE,
+                        );
+
+                        if self.profile_highlight {
+                            let label = format!("chunk {} • {:.1}px", idx, height);
+                            painter.text(
+                                egui::pos2(rect.min.x + 8.0, abs_top + 4.0),
+                                egui::Align2::LEFT_TOP,
+                                label,
+                                FontId::new(10.0, FontFamily::Monospace),
+                                COLOR_TEXT_MUTED,
+                            );
+                        }
+
+                        if idx + 1 != highlight_data.chunks.len() {
+                            painter.line_segment(
+                                [
+                                    egui::pos2(rect.min.x, abs_bottom),
+                                    egui::pos2(rect.max.x, abs_bottom),
+                                ],
+                                Stroke::new(0.5, COLOR_BORDER),
+                            );
+                        }
+                    }
+
+                    top_offset += height;
+                }
+            });
     }
 
     fn ensure_language_selection(&mut self) {
@@ -535,7 +1514,7 @@ impl LocalPasteApp {
             if self.editor.language.is_some() {
                 self.editor.language = None;
                 self.editor.auto_detect_cache = None;
-                self.editor.request_highlight_update();
+                self.editor.reset_highlight_state();
             }
             return;
         }
@@ -548,7 +1527,7 @@ impl LocalPasteApp {
             if *cached_hash == content_hash {
                 if self.editor.language.as_deref() != Some(cached_lang) {
                     self.editor.language = Some(cached_lang.clone());
-                    self.editor.request_highlight_update();
+                    self.editor.reset_highlight_state();
                 }
                 return;
             }
@@ -562,7 +1541,7 @@ impl LocalPasteApp {
 
         if self.editor.language.as_deref() != Some(detected.as_str()) {
             self.editor.language = Some(detected);
-            self.editor.request_highlight_update();
+            self.editor.reset_highlight_state();
         }
     }
 
@@ -621,11 +1600,17 @@ impl LocalPasteApp {
 
     fn render_folder_tree(&mut self, ui: &mut egui::Ui, pending_select: &mut Option<String>) {
         let unfiled_count = self.count_pastes_in(None);
+        let unfiled_filtered = self.count_filtered_pastes_in(None);
+        let unfiled_caption = if self.has_active_filter() && unfiled_filtered != unfiled_count {
+            format!("Unfiled ({}/{})", unfiled_filtered, unfiled_count)
+        } else {
+            format!("Unfiled ({})", unfiled_count)
+        };
         let unfiled_selected = self.folder_focus.is_none();
         let unfiled_label = if unfiled_selected {
-            RichText::new(format!("Unfiled ({})", unfiled_count)).color(COLOR_ACCENT)
+            RichText::new(unfiled_caption.clone()).color(COLOR_ACCENT)
         } else {
-            RichText::new(format!("Unfiled ({})", unfiled_count)).color(COLOR_TEXT_PRIMARY)
+            RichText::new(unfiled_caption).color(COLOR_TEXT_PRIMARY)
         };
 
         let unfiled = CollapsingHeader::new(unfiled_label)
@@ -659,12 +1644,17 @@ impl LocalPasteApp {
         for folder_id in child_ids {
             if let Some(folder) = self.find_folder(folder_id.as_str()).cloned() {
                 let paste_count = self.count_pastes_in(Some(folder.id.as_str()));
+                let filtered_count = self.count_filtered_pastes_in(Some(folder.id.as_str()));
+                let label_text = if self.has_active_filter() && filtered_count != paste_count {
+                    format!("{} ({}/{})", folder.name, filtered_count, paste_count)
+                } else {
+                    format!("{} ({})", folder.name, paste_count)
+                };
                 let is_selected = self.folder_focus.as_deref() == Some(folder.id.as_str());
                 let label = if is_selected {
-                    RichText::new(format!("{} ({})", folder.name, paste_count)).color(COLOR_ACCENT)
+                    RichText::new(label_text.clone()).color(COLOR_ACCENT)
                 } else {
-                    RichText::new(format!("{} ({})", folder.name, paste_count))
-                        .color(COLOR_TEXT_PRIMARY)
+                    RichText::new(label_text).color(COLOR_TEXT_PRIMARY)
                 };
                 let default_open = is_selected || folder.parent_id.is_none();
                 let collapse = CollapsingHeader::new(label)
@@ -697,11 +1687,14 @@ impl LocalPasteApp {
             .pastes
             .iter()
             .filter(|paste| paste.folder_id.as_deref() == folder_id)
+            .filter(|paste| self.matches_filter(paste))
             .map(|paste| paste.id.clone())
             .collect();
 
         if entries.is_empty() {
-            let message = if folder_id.is_some() {
+            let message = if self.has_active_filter() {
+                "No matches"
+            } else if folder_id.is_some() {
                 "Empty folder"
             } else {
                 "No pastes yet"
@@ -739,6 +1732,9 @@ impl LocalPasteApp {
         if !self.editor.dirty {
             return;
         }
+        if self.auto_save_blocked {
+            return;
+        }
         if self.editor.name.trim().is_empty() {
             return;
         }
@@ -768,8 +1764,10 @@ impl LocalPasteApp {
             return;
         }
         if !self.validate_editor_state() {
+            self.auto_save_blocked = true;
             return;
         }
+        self.auto_save_blocked = false;
 
         if let Some(id) = &self.editor.paste_id {
             self.update_existing_paste(id.clone());
@@ -799,12 +1797,18 @@ impl LocalPasteApp {
             dialog.add_filter("Export", &[extension])
         };
 
-        if let Some(path) = dialog.save_file() {
-            match fs::write(&path, &self.editor.content) {
+        match dialog.save_file() {
+            Some(path) => match fs::write(&path, &self.editor.content) {
                 Ok(_) => {
                     self.push_status(StatusLevel::Info, format!("Exported to {}", path.display()))
                 }
-                Err(err) => self.push_status(StatusLevel::Error, format!("Export failed: {}", err)),
+                Err(err) => self.push_status(
+                    StatusLevel::Error,
+                    format!("Export failed ({}): {}", path.display(), err),
+                ),
+            },
+            None => {
+                self.push_status(StatusLevel::Info, "Export cancelled".into());
             }
         }
     }
@@ -852,6 +1856,7 @@ impl LocalPasteApp {
     fn persist_new_paste(&mut self) {
         let mut paste = Paste::new(self.editor.content.clone(), self.editor.name.clone());
         paste.language = self.editor.language.clone();
+        paste.language_is_manual = self.editor.manual_language_override;
         paste.tags = self.editor.tags.clone();
         paste.folder_id = self.editor.folder_id.clone();
 
@@ -868,14 +1873,14 @@ impl LocalPasteApp {
                     warn!("flush failed after create: {}", err);
                 }
                 self.push_status(StatusLevel::Info, format!("Created {}", paste.name));
-                self.editor.apply_paste(paste.clone());
+                self.editor.sync_after_save(&paste);
                 self.selected_id = Some(paste.id.clone());
                 self.folder_focus = paste.folder_id.clone();
-                self.reload_pastes("after create");
-                self.reload_folders("after create");
+                self.integrate_paste(paste);
             }
             Err(err) => {
                 error!("failed to create paste: {}", err);
+                self.auto_save_blocked = true;
                 self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
             }
         }
@@ -896,21 +1901,29 @@ impl LocalPasteApp {
             }
         };
 
-        let folder_value = self.editor.folder_id.clone().unwrap_or_default();
+        let folder_value = self.editor.folder_id.clone();
+        let folder_changed = previous.folder_id.as_deref() != self.editor.folder_id.as_deref();
+        let folder_update = match (&folder_value, folder_changed) {
+            (Some(id), _) => Some(id.clone()),
+            (None, true) => Some(String::new()),
+            (None, false) => None,
+        };
+        let language_update = match (&self.editor.language, self.editor.manual_language_override) {
+            (Some(lang), manual) => Some((Some(lang.clone()), manual)),
+            (None, true) => Some((None, true)), // explicit clear to Auto
+            (None, false) => None,
+        };
         let update = UpdatePasteRequest {
             content: Some(self.editor.content.clone()),
             name: Some(self.editor.name.clone()),
-            language: self.editor.language.clone(),
-            folder_id: Some(folder_value.clone()),
+            language: language_update.as_ref().and_then(|(lang, _)| lang.clone()),
+            language_is_manual: language_update.map(|(_, manual)| manual),
+            folder_id: folder_update.clone(),
             tags: Some(self.editor.tags.clone()),
         };
 
-        let result = if previous.folder_id.as_deref() != self.editor.folder_id.as_deref() {
-            let new_folder = if folder_value.is_empty() {
-                None
-            } else {
-                Some(folder_value.as_str())
-            };
+        let result = if folder_changed {
+            let new_folder = self.editor.folder_id.as_deref();
             TransactionOps::move_paste_between_folders(
                 &self.db,
                 &id,
@@ -928,11 +1941,10 @@ impl LocalPasteApp {
                 if let Err(err) = self.db.flush() {
                     warn!("flush failed after update: {}", err);
                 }
-                self.editor.apply_paste(updated.clone());
+                self.editor.sync_after_save(&updated);
                 self.selected_id = Some(updated.id.clone());
-                self.reload_pastes("after update");
-                self.reload_folders("after update");
                 self.folder_focus = updated.folder_id.clone();
+                self.integrate_paste(updated);
                 self.push_status(StatusLevel::Info, "Saved changes".into());
             }
             Ok(None) => {
@@ -943,6 +1955,7 @@ impl LocalPasteApp {
             }
             Err(err) => {
                 error!("failed to update paste {}: {}", id, err);
+                self.auto_save_blocked = true;
                 self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
             }
         }
@@ -957,10 +1970,10 @@ impl LocalPasteApp {
                         warn!("flush failed after delete: {}", err);
                     }
                     self.push_status(StatusLevel::Info, "Deleted paste".into());
-                    self.selected_id = None;
-                    self.editor = EditorState::new_unsaved(self.folder_focus.clone());
-                    self.reload_pastes("after delete");
-                    self.reload_folders("after delete");
+                    let has_selection = self.remove_paste_by_id(&id);
+                    if !has_selection {
+                        self.editor = EditorState::new_unsaved(self.folder_focus.clone());
+                    }
                 }
                 Ok(false) => {
                     self.push_status(StatusLevel::Error, "Paste was already deleted".into());
@@ -1054,6 +2067,8 @@ impl ServerHandle {
             })
             .map_err(|err| AppError::DatabaseError(format!("failed to spawn server: {}", err)))?;
 
+        let mut thread_handle = Some(thread);
+
         match ready_rx.recv() {
             Ok(Ok(addr)) => {
                 if !addr.ip().is_loopback() {
@@ -1062,17 +2077,21 @@ impl ServerHandle {
                 info!("API listening on http://{}", addr);
                 Ok(Self {
                     shutdown: Some(shutdown_tx),
-                    thread: Some(thread),
+                    thread: thread_handle.take(),
                 })
             }
             Ok(Err(message)) => {
                 let _ = shutdown_tx.send(());
-                let _ = thread.join();
+                if let Some(handle) = thread_handle.take() {
+                    let _ = handle.join();
+                }
                 Err(AppError::DatabaseError(message))
             }
             Err(_) => {
                 let _ = shutdown_tx.send(());
-                let _ = thread.join();
+                if let Some(handle) = thread_handle.take() {
+                    let _ = handle.join();
+                }
                 Err(AppError::Internal)
             }
         }
@@ -1101,6 +2120,7 @@ impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ensure_style(ctx);
         self.ensure_language_selection();
+        let editor_was_focused = self.editor_focused;
 
         ctx.input(|input| {
             if input.modifiers.command && input.key_pressed(egui::Key::S) {
@@ -1111,6 +2131,12 @@ impl eframe::App for LocalPasteApp {
             }
             if input.modifiers.command && input.key_pressed(egui::Key::Delete) {
                 self.delete_selected();
+            }
+            if input.modifiers.command && input.key_pressed(egui::Key::F) && !editor_was_focused {
+                self.focus_filter();
+            }
+            if input.modifiers.command && input.key_pressed(egui::Key::K) && !editor_was_focused {
+                self.focus_filter();
             }
         });
 
@@ -1145,6 +2171,8 @@ impl eframe::App for LocalPasteApp {
                     );
 
                     ui.add_space(14.0);
+                    self.render_filter_bar(ui);
+                    ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         let paste_btn =
                             egui::Button::new(RichText::new("+ New Paste").color(Color32::WHITE))
@@ -1217,9 +2245,20 @@ impl eframe::App for LocalPasteApp {
                     columns[1].with_layout(
                         Layout::centered_and_justified(egui::Direction::LeftToRight),
                         |ui| {
-                            let id_label =
-                                self.editor.paste_id.as_deref().unwrap_or("unsaved draft");
-                            ui.label(RichText::new(id_label).monospace().color(COLOR_TEXT_MUTED));
+                            ui.vertical(|ui| {
+                                let id_label =
+                                    self.editor.paste_id.as_deref().unwrap_or("unsaved draft");
+                                ui.label(
+                                    RichText::new(id_label).monospace().color(COLOR_TEXT_MUTED),
+                                );
+                                if self.editor.plain_highlight_mode {
+                                    ui.label(
+                                        RichText::new("Highlighting trimmed for large paste")
+                                            .size(11.0)
+                                            .color(COLOR_TEXT_MUTED),
+                                    );
+                                }
+                            });
                         },
                     );
 
@@ -1275,15 +2314,73 @@ impl eframe::App for LocalPasteApp {
                                 .as_deref()
                                 .and_then(LanguageSet::label)
                                 .unwrap_or("Auto");
+                            let combo_id = ui.id().with("language_select");
                             egui::ComboBox::from_id_salt("language_select")
                                 .selected_text(current_language_label)
                                 .show_ui(ui, |ui| {
                                     ui.set_min_width(160.0);
+                                    let popup_open = Popup::is_id_open(ui.ctx(), combo_id);
+                                    let typed_letter = if popup_open {
+                                        ui.ctx().input(|input| {
+                                            input.events.iter().rev().find_map(
+                                                |event| match event {
+                                                    egui::Event::Text(text) => text
+                                                        .chars()
+                                                        .rev()
+                                                        .find(|c| c.is_ascii_alphabetic())
+                                                        .map(|c| c.to_ascii_lowercase()),
+                                                    egui::Event::Key {
+                                                        key,
+                                                        pressed,
+                                                        repeat,
+                                                        modifiers,
+                                                        ..
+                                                    } if *pressed
+                                                        && !*repeat
+                                                        && !modifiers.alt
+                                                        && !modifiers.ctrl
+                                                        && !modifiers.command
+                                                        && !modifiers.mac_cmd =>
+                                                    {
+                                                        key_to_ascii_letter(*key)
+                                                    }
+                                                    _ => None,
+                                                },
+                                            )
+                                        })
+                                    } else {
+                                        None
+                                    };
+
+                                    let mut auto_scroll_target: Option<&'static str> = None;
+                                    if let Some(letter) = typed_letter {
+                                        if let Some(option) =
+                                            LanguageSet::options().iter().find(|opt| {
+                                                opt.label
+                                                    .chars()
+                                                    .next()
+                                                    .map(|c| c.to_ascii_lowercase())
+                                                    == Some(letter)
+                                            })
+                                        {
+                                            if self.editor.language.as_deref() != Some(option.id) {
+                                                self.editor.language = Some(option.id.to_string());
+                                                self.editor.manual_language_override = true;
+                                                self.editor.reset_highlight_state();
+                                                self.mark_editor_dirty();
+                                            } else {
+                                                self.editor.manual_language_override = true;
+                                            }
+                                            auto_scroll_target = Some(option.id);
+                                        }
+                                    }
+
                                     if ui
                                         .selectable_value(&mut self.editor.language, None, "Auto")
                                         .clicked()
                                     {
                                         self.editor.manual_language_override = false;
+                                        self.editor.reset_highlight_state();
                                         self.mark_editor_dirty();
                                     }
                                     ui.separator();
@@ -1297,7 +2394,11 @@ impl eframe::App for LocalPasteApp {
                                             .clicked()
                                         {
                                             self.editor.manual_language_override = true;
+                                            self.editor.reset_highlight_state();
                                             self.mark_editor_dirty();
+                                        }
+                                        if Some(option.id) == auto_scroll_target {
+                                            ui.scroll_to_cursor(Some(egui::Align::Center));
                                         }
                                     }
                                 });
@@ -1387,33 +2488,33 @@ impl eframe::App for LocalPasteApp {
                 }
                 .show(ui, |ui| {
                     let text_style = TextStyle::Monospace;
+                    let highlight_language = self
+                        .editor
+                        .language
+                        .clone()
+                        .unwrap_or_else(|| "plain".to_string());
+                    let syntax_token = LanguageSet::highlight_token(highlight_language.as_str())
+                        .unwrap_or(highlight_language.as_str())
+                        .to_string();
+                    let highlight_theme = self.highlight_theme.clone();
+                    let highlight_data =
+                        self.ensure_highlight_data(&highlight_theme, syntax_token.as_str());
+                    let layout_cache = self.editor.layout_cache.clone();
+                    let highlight_for_layout = highlight_data.clone();
+                    let layout_cache_for_layout = layout_cache.clone();
                     egui::ScrollArea::vertical()
                         .id_salt("editor_scroll")
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            let highlight_language = self
-                                .editor
-                                .language
-                                .clone()
-                                .unwrap_or_else(|| "plain".to_string());
-                            let syntax_token =
-                                LanguageSet::highlight_token(highlight_language.as_str())
-                                    .unwrap_or(highlight_language.as_str())
-                                    .to_string();
-                            let theme = self.theme.clone();
-                            let highlight_job = self.ensure_highlight_job(
-                                ui.ctx(),
-                                ui.style(),
-                                &theme,
-                                syntax_token.as_str(),
-                            );
                             let mut layouter =
                                 move |ui: &egui::Ui,
                                       _text: &dyn egui::TextBuffer,
                                       wrap_width: f32| {
-                                    let mut job = (*highlight_job).clone();
-                                    job.wrap.max_width = wrap_width;
-                                    ui.fonts_mut(|f| f.layout_job(job))
+                                    layout_cache_for_layout.layout(
+                                        ui,
+                                        wrap_width,
+                                        highlight_for_layout.as_ref(),
+                                    )
                                 };
 
                             let editor = egui::TextEdit::multiline(&mut self.editor.content)
@@ -1426,12 +2527,14 @@ impl eframe::App for LocalPasteApp {
                             let layout_start =
                                 self.profile_highlight.then_some((Instant::now(), ui.id()));
                             let response = ui.add(editor);
+                            self.editor_focused = response.has_focus();
                             if let Some((started, _)) = layout_start {
                                 let elapsed = started.elapsed();
                                 debug!(
-                                    "text_edit_layout duration_ms={:.3} chars={}",
+                                    "text_edit_layout duration_ms={:.3} chars={} chunks={}",
                                     elapsed.as_secs_f64() * 1_000.0,
-                                    self.editor.content.len()
+                                    self.editor.content.len(),
+                                    highlight_data.chunks.len()
                                 );
                             }
                             if self.editor.needs_focus {
@@ -1448,6 +2551,17 @@ impl eframe::App for LocalPasteApp {
                                 self.mark_editor_dirty();
                             }
                         });
+
+                    if self.virtual_preview_enabled {
+                        ui.add_space(16.0);
+                        ui.label(
+                            RichText::new("Virtualized Preview (read-only)")
+                                .color(COLOR_TEXT_MUTED)
+                                .size(12.0),
+                        );
+                        ui.add_space(4.0);
+                        self.render_virtual_preview(ui, highlight_data, layout_cache);
+                    }
                 });
             });
         if let Some(mut dialog) = self.folder_dialog.take() {
@@ -1555,9 +2669,12 @@ struct EditorState {
     needs_focus: bool,
     auto_detect_cache: Option<(u64, String)>,
     manual_language_override: bool,
-    highlight_job: Option<Arc<egui::text::LayoutJob>>,
+    highlight_cache: HighlightCache,
+    layout_cache: LayoutCache,
     highlight_pending_since: Option<Instant>,
     highlight_last_recompute: Option<Instant>,
+    line_offsets: Vec<usize>,
+    plain_highlight_mode: bool,
 }
 
 impl EditorState {
@@ -1575,15 +2692,27 @@ impl EditorState {
         self.name = paste.name;
         self.content = paste.content;
         self.language = paste.language;
+        self.manual_language_override = paste.language_is_manual;
         self.folder_id = paste.folder_id;
         self.tags = paste.tags;
-        self.manual_language_override = self.language.is_some();
         self.mark_pristine();
         self.needs_focus = true;
         self.auto_detect_cache = None;
-        self.highlight_job = None;
-        self.highlight_pending_since = Some(Instant::now());
-        self.highlight_last_recompute = None;
+        self.plain_highlight_mode = false;
+        self.reset_highlight_state();
+        self.line_offsets = compute_line_offsets(&self.content);
+    }
+
+    fn sync_after_save(&mut self, paste: &Paste) {
+        self.paste_id = Some(paste.id.clone());
+        self.name = paste.name.clone();
+        self.folder_id = paste.folder_id.clone();
+        self.tags = paste.tags.clone();
+        self.language = paste.language.clone();
+        self.manual_language_override = paste.language_is_manual;
+        self.auto_detect_cache = None;
+        self.mark_pristine();
+        self.needs_focus = false;
     }
 
     fn mark_dirty(&mut self) {
@@ -1598,6 +2727,16 @@ impl EditorState {
 
     fn request_highlight_update(&mut self) {
         self.highlight_pending_since = Some(Instant::now());
+    }
+
+    fn reset_highlight_state(&mut self) {
+        self.highlight_cache.clear();
+        self.layout_cache.reset();
+        self.highlight_pending_since = Some(Instant::now());
+        self.highlight_last_recompute = None;
+        self.line_offsets.clear();
+        self.line_offsets.push(0);
+        self.plain_highlight_mode = false;
     }
 }
 
@@ -1615,9 +2754,12 @@ impl Default for EditorState {
             needs_focus: false,
             auto_detect_cache: None,
             manual_language_override: false,
-            highlight_job: None,
+            highlight_cache: HighlightCache::default(),
+            layout_cache: LayoutCache::default(),
             highlight_pending_since: Some(Instant::now()),
             highlight_last_recompute: None,
+            line_offsets: vec![0],
+            plain_highlight_mode: false,
         }
     }
 }
@@ -1796,9 +2938,14 @@ impl LanguageSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::{App as _, Frame};
+    use std::sync::Mutex;
     use tempfile::TempDir;
 
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
     fn init_app(max_size: usize) -> (LocalPasteApp, TempDir) {
+        let _env_guard = TEST_MUTEX.lock().expect("test mutex poisoned");
         let temp = TempDir::new().expect("temp dir");
         let db_path = temp.path().join("db");
 
@@ -1864,5 +3011,85 @@ mod tests {
             app.folder_focus.is_none(),
             "folder_focus should reset when validation clears folder"
         );
+    }
+
+    #[test]
+    fn editor_sync_after_save_preserves_focus_and_content() {
+        let (mut app, _guard) = init_app(1024);
+        app.editor.content = "hello world".to_string();
+        app.editor.dirty = true;
+        app.editor.needs_focus = true;
+        let mut paste = Paste::new(app.editor.content.clone(), app.editor.name.clone());
+        paste.id = "existing".to_string();
+        paste.name = "server-name".to_string();
+        paste.folder_id = Some("folder".to_string());
+        paste.tags.push("tag".to_string());
+        paste.language = Some("rust".to_string());
+
+        app.editor.sync_after_save(&paste);
+
+        assert_eq!(app.editor.content, "hello world");
+        assert_eq!(app.editor.name, "server-name");
+        assert_eq!(app.editor.paste_id.as_deref(), Some("existing"));
+        assert_eq!(app.editor.folder_id, paste.folder_id);
+        assert_eq!(app.editor.tags, paste.tags);
+        assert_eq!(app.editor.language, paste.language);
+        assert!(!app.editor.dirty);
+        assert!(!app.editor.needs_focus);
+    }
+
+    #[test]
+    fn filter_bar_handles_tiny_width() {
+        let (mut app, _guard) = init_app(1024);
+        app.filter_query = "beans".to_string();
+        app.filter_focus_requested = true;
+        app.update_filter_cache();
+
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(12.0, 120.0),
+            )),
+            ..Default::default()
+        };
+        ctx.begin_pass(input);
+        egui::SidePanel::left("filter_test")
+            .exact_width(12.0)
+            .show(&ctx, |ui| {
+                app.render_filter_bar(ui);
+            });
+        let _ = ctx.end_pass();
+        assert!(
+            !app.filter_focus_requested,
+            "rendering should clear pending focus request"
+        );
+
+        app.filter_query.clear();
+        app.update_filter_cache();
+        let input2 = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(4.0, 120.0),
+            )),
+            ..Default::default()
+        };
+        ctx.begin_pass(input2);
+        egui::SidePanel::left("filter_test_small")
+            .exact_width(4.0)
+            .show(&ctx, |ui| {
+                app.render_filter_bar(ui);
+            });
+        let _ = ctx.end_pass();
+    }
+
+    #[test]
+    fn gui_update_smoke_runs_once() {
+        let (mut app, _guard) = init_app(1024);
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default());
+        let mut frame = Frame::_new_kittest();
+        app.update(&ctx, &mut frame);
+        let _ = ctx.end_pass();
     }
 }

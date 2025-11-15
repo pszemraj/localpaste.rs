@@ -14,16 +14,16 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 - **Automatic Language Detection** - cached detection + offline syntax highlighting
 - **Auto-Save** - debounce to disk; manual export for sharing
 - **Semantic Naming** - auto-generates memorable names (e.g., "mythic-ruby")
-- **Folder Organization** - nested folders with drag & drop and cycle-safe parenting
-- **Keyboard Shortcuts** - Ctrl+N (new), Ctrl+K (search), Ctrl+D (delete)
+- **Folder Organization** - nested folders with context dialogs and cycle-safe parenting
+- **Keyboard Shortcuts** - Ctrl/Cmd+S (save), Ctrl/Cmd+N (new), Ctrl/Cmd+Delete (delete), Ctrl/Cmd+F or Ctrl/Cmd+K (filter)
 - **Zero Runtime Dependencies** - single binary, embedded Sled database
 
 ## Quick Start
 
 LocalPaste.rs provides multiple ways to interact with your pastes:
 
-- `localpaste-gui` - Native egui desktop application (primary experience)
-- `localpaste` - Axum HTTP API + legacy browser UI
+- `localpaste-gui` - Native egui desktop application (primary experience, bundles the API)
+- `localpaste` - Axum HTTP API server (headless, JSON only)
 - `lpaste` - Command-line interface for terminal usage
 
 ### Run the Desktop App
@@ -45,15 +45,15 @@ cargo build --release
 ./target/release/localpaste
 ```
 
-Open <http://localhost:3030> in your browser to use the legacy UI.
+The server exposes a JSON API on <http://localhost:3030>. Use the CLI or your own tooling to interact with it.
 
 ## CLI Usage
 
 The CLI tool (`lpaste`) interacts with the running server (or the desktop app, which hosts the same API locally):
 
 ```bash
-# Build the CLI binary
-cargo build --release --bin lpaste
+# Build the CLI binary (requires the `cli` feature)
+cargo build --release --bin lpaste --features cli
 
 # List all pastes
 ./target/release/lpaste list
