@@ -2607,6 +2607,7 @@ impl EditorState {
 
     fn sync_after_save(&mut self, paste: &Paste) {
         self.paste_id = Some(paste.id.clone());
+        self.name = paste.name.clone();
         self.folder_id = paste.folder_id.clone();
         self.tags = paste.tags.clone();
         self.language = paste.language.clone();
@@ -2922,6 +2923,7 @@ mod tests {
         app.editor.needs_focus = true;
         let mut paste = Paste::new(app.editor.content.clone(), app.editor.name.clone());
         paste.id = "existing".to_string();
+        paste.name = "server-name".to_string();
         paste.folder_id = Some("folder".to_string());
         paste.tags.push("tag".to_string());
         paste.language = Some("rust".to_string());
@@ -2929,6 +2931,7 @@ mod tests {
         app.editor.sync_after_save(&paste);
 
         assert_eq!(app.editor.content, "hello world");
+        assert_eq!(app.editor.name, "server-name");
         assert_eq!(app.editor.paste_id.as_deref(), Some("existing"));
         assert_eq!(app.editor.folder_id, paste.folder_id);
         assert_eq!(app.editor.tags, paste.tags);
