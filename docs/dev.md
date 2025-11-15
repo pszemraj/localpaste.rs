@@ -51,6 +51,10 @@ localpaste.rs/
 - `Ctrl/Cmd+Delete` Delete selected paste
 - `Ctrl/Cmd+F` or `Ctrl/Cmd+K` Focus the paste filter in the sidebar
 
+### Known Issues
+
+- The egui text editor caret can “flash” to the start of the next line, especially on macOS, when typing in the middle of a large paste. This is cosmetic but distracting; root cause suspected in the highlight/layout invalidation path. Track and fix in a follow-up branch.
+
 ### API Design
 
 RESTful endpoints:

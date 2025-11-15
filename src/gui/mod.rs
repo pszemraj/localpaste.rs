@@ -2838,6 +2838,7 @@ impl LanguageSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::{App as _, Frame};
     use std::sync::Mutex;
     use tempfile::TempDir;
 
@@ -2977,6 +2978,16 @@ mod tests {
             .show(&ctx, |ui| {
                 app.render_filter_bar(ui);
             });
+        let _ = ctx.end_pass();
+    }
+
+    #[test]
+    fn gui_update_smoke_runs_once() {
+        let (mut app, _guard) = init_app(1024);
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default());
+        let mut frame = Frame::_new_kittest();
+        app.update(&ctx, &mut frame);
         let _ = ctx.end_pass();
     }
 }
