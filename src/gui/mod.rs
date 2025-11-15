@@ -1908,11 +1908,16 @@ impl LocalPasteApp {
             (None, true) => Some(String::new()),
             (None, false) => None,
         };
+        let language_update = match (&self.editor.language, self.editor.manual_language_override) {
+            (Some(lang), manual) => Some((Some(lang.clone()), manual)),
+            (None, true) => Some((None, true)), // explicit clear to Auto
+            (None, false) => None,
+        };
         let update = UpdatePasteRequest {
             content: Some(self.editor.content.clone()),
             name: Some(self.editor.name.clone()),
-            language: self.editor.language.clone(),
-            language_is_manual: Some(self.editor.manual_language_override),
+            language: language_update.as_ref().and_then(|(lang, _)| lang.clone()),
+            language_is_manual: language_update.map(|(_, manual)| manual),
             folder_id: folder_update.clone(),
             tags: Some(self.editor.tags.clone()),
         };
@@ -2309,11 +2314,12 @@ impl eframe::App for LocalPasteApp {
                                 .as_deref()
                                 .and_then(LanguageSet::label)
                                 .unwrap_or("Auto");
+                            let combo_id = ui.id().with("language_select");
                             egui::ComboBox::from_id_salt("language_select")
                                 .selected_text(current_language_label)
                                 .show_ui(ui, |ui| {
                                     ui.set_min_width(160.0);
-                                    let popup_open = Popup::is_any_open(ui.ctx());
+                                    let popup_open = Popup::is_id_open(ui.ctx(), combo_id);
                                     let typed_letter = if popup_open {
                                         ui.ctx().input(|input| {
                                             input.events.iter().rev().find_map(
