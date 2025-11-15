@@ -1104,8 +1104,7 @@ impl LocalPasteApp {
         if let Some(next) = self
             .pastes
             .iter()
-            .filter(|paste| self.matches_filter(paste))
-            .next()
+            .find(|paste| self.matches_filter(paste))
             .cloned()
         {
             let next_id = next.id.clone();
@@ -1794,7 +1793,7 @@ impl LocalPasteApp {
                     warn!("flush failed after create: {}", err);
                 }
                 self.push_status(StatusLevel::Info, format!("Created {}", paste.name));
-                self.editor.apply_paste(paste.clone());
+                self.editor.sync_after_save(&paste);
                 self.selected_id = Some(paste.id.clone());
                 self.folder_focus = paste.folder_id.clone();
                 self.integrate_paste(paste);
@@ -1853,7 +1852,7 @@ impl LocalPasteApp {
                 if let Err(err) = self.db.flush() {
                     warn!("flush failed after update: {}", err);
                 }
-                self.editor.apply_paste(updated.clone());
+                self.editor.sync_after_save(&updated);
                 self.selected_id = Some(updated.id.clone());
                 self.folder_focus = updated.folder_id.clone();
                 self.integrate_paste(updated);
@@ -2605,6 +2604,17 @@ impl EditorState {
         self.line_offsets = compute_line_offsets(&self.content);
     }
 
+    fn sync_after_save(&mut self, paste: &Paste) {
+        self.paste_id = Some(paste.id.clone());
+        self.folder_id = paste.folder_id.clone();
+        self.tags = paste.tags.clone();
+        self.language = paste.language.clone();
+        self.manual_language_override = self.language.is_some();
+        self.auto_detect_cache = None;
+        self.mark_pristine();
+        self.needs_focus = false;
+    }
+
     fn mark_dirty(&mut self) {
         self.dirty = true;
         self.last_modified = Some(Instant::now());
@@ -2903,6 +2913,29 @@ mod tests {
     }
 
     #[test]
+    fn editor_sync_after_save_preserves_focus_and_content() {
+        let (mut app, _guard) = init_app(1024);
+        app.editor.content = "hello world".to_string();
+        app.editor.dirty = true;
+        app.editor.needs_focus = true;
+        let mut paste = Paste::new(app.editor.content.clone(), app.editor.name.clone());
+        paste.id = "existing".to_string();
+        paste.folder_id = Some("folder".to_string());
+        paste.tags.push("tag".to_string());
+        paste.language = Some("rust".to_string());
+
+        app.editor.sync_after_save(&paste);
+
+        assert_eq!(app.editor.content, "hello world");
+        assert_eq!(app.editor.paste_id.as_deref(), Some("existing"));
+        assert_eq!(app.editor.folder_id, paste.folder_id);
+        assert_eq!(app.editor.tags, paste.tags);
+        assert_eq!(app.editor.language, paste.language);
+        assert!(!app.editor.dirty);
+        assert!(!app.editor.needs_focus);
+    }
+
+    #[test]
     fn filter_bar_handles_tiny_width() {
         let (mut app, _guard) = init_app(1024);
         app.filter_query = "beans".to_string();
@@ -2910,11 +2943,13 @@ mod tests {
         app.update_filter_cache();
 
         let ctx = egui::Context::default();
-        let mut input = egui::RawInput::default();
-        input.screen_rect = Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(12.0, 120.0),
-        ));
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(12.0, 120.0),
+            )),
+            ..Default::default()
+        };
         ctx.begin_pass(input);
         egui::SidePanel::left("filter_test")
             .exact_width(12.0)
@@ -2929,11 +2964,13 @@ mod tests {
 
         app.filter_query.clear();
         app.update_filter_cache();
-        let mut input2 = egui::RawInput::default();
-        input2.screen_rect = Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(4.0, 120.0),
-        ));
+        let input2 = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(4.0, 120.0),
+            )),
+            ..Default::default()
+        };
         ctx.begin_pass(input2);
         egui::SidePanel::left("filter_test_small")
             .exact_width(4.0)
