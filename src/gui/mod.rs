@@ -1766,12 +1766,18 @@ impl LocalPasteApp {
             dialog.add_filter("Export", &[extension])
         };
 
-        if let Some(path) = dialog.save_file() {
-            match fs::write(&path, &self.editor.content) {
+        match dialog.save_file() {
+            Some(path) => match fs::write(&path, &self.editor.content) {
                 Ok(_) => {
                     self.push_status(StatusLevel::Info, format!("Exported to {}", path.display()))
                 }
-                Err(err) => self.push_status(StatusLevel::Error, format!("Export failed: {}", err)),
+                Err(err) => self.push_status(
+                    StatusLevel::Error,
+                    format!("Export failed ({}): {}", path.display(), err),
+                ),
+            },
+            None => {
+                self.push_status(StatusLevel::Info, "Export cancelled".into());
             }
         }
     }
@@ -2021,6 +2027,8 @@ impl ServerHandle {
             })
             .map_err(|err| AppError::DatabaseError(format!("failed to spawn server: {}", err)))?;
 
+        let mut thread_handle = Some(thread);
+
         match ready_rx.recv() {
             Ok(Ok(addr)) => {
                 if !addr.ip().is_loopback() {
@@ -2029,17 +2037,21 @@ impl ServerHandle {
                 info!("API listening on http://{}", addr);
                 Ok(Self {
                     shutdown: Some(shutdown_tx),
-                    thread: Some(thread),
+                    thread: thread_handle.take(),
                 })
             }
             Ok(Err(message)) => {
                 let _ = shutdown_tx.send(());
-                let _ = thread.join();
+                if let Some(handle) = thread_handle.take() {
+                    let _ = handle.join();
+                }
                 Err(AppError::DatabaseError(message))
             }
             Err(_) => {
                 let _ = shutdown_tx.send(());
-                let _ = thread.join();
+                if let Some(handle) = thread_handle.take() {
+                    let _ = handle.join();
+                }
                 Err(AppError::Internal)
             }
         }
