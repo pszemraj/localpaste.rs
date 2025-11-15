@@ -1108,10 +1108,16 @@ impl LocalPasteApp {
             .next()
             .cloned()
         {
-            self.select_paste(next.id, false);
+            let next_id = next.id.clone();
+            let selected_changed = self.selected_id.as_deref() != Some(next_id.as_str());
+            self.select_paste(next_id, false);
+            if selected_changed {
+                self.editor.needs_focus = false;
+            }
         } else {
             self.selected_id = None;
             self.editor = EditorState::new_unsaved(self.folder_focus.clone());
+            self.editor.needs_focus = false;
         }
     }
 
@@ -1300,6 +1306,57 @@ impl LocalPasteApp {
             self.editor.line_offsets = data.line_offsets.clone();
             data
         }
+    }
+    fn render_filter_bar(&mut self, ui: &mut egui::Ui) {
+        let total_width = ui.available_width().max(60.0);
+        let row_height = ui.spacing().interact_size.y;
+        let item_spacing = ui.spacing().item_spacing.x;
+        let show_clear = !self.filter_query.is_empty();
+        let reserved_for_clear = if show_clear {
+            row_height + item_spacing
+        } else {
+            0.0
+        };
+        let text_width = (total_width - reserved_for_clear).max(60.0);
+
+        ui.allocate_ui_with_layout(
+            egui::vec2(total_width, row_height),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                let response = ui
+                    .add_sized(
+                        [text_width, row_height],
+                        egui::TextEdit::singleline(&mut self.filter_query)
+                            .hint_text("Filter pastes…"),
+                    )
+                    .on_hover_text("Type to filter pastes");
+
+                if self.filter_focus_requested {
+                    response.request_focus();
+                    self.filter_focus_requested = false;
+                }
+
+                if response.changed() {
+                    self.update_filter_cache();
+                    self.ensure_selection_after_filter();
+                }
+
+                let remaining = total_width - text_width;
+                if show_clear && remaining >= row_height + item_spacing {
+                    let clear_resp = ui
+                        .add_sized(
+                            [row_height, row_height],
+                            egui::Button::new("✕").frame(false),
+                        )
+                        .on_hover_text("Clear filter");
+                    if clear_resp.clicked() {
+                        self.filter_query.clear();
+                        self.update_filter_cache();
+                        self.ensure_selection_after_filter();
+                    }
+                }
+            },
+        );
     }
 
     fn render_virtual_preview(
@@ -2018,33 +2075,7 @@ impl eframe::App for LocalPasteApp {
                     );
 
                     ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.filter_query)
-                                .hint_text("Filter pastes…")
-                                .desired_width(f32::INFINITY),
-                        );
-                        if self.filter_focus_requested {
-                            response.request_focus();
-                            self.filter_focus_requested = false;
-                        }
-                        if response.changed() {
-                            self.update_filter_cache();
-                            self.ensure_selection_after_filter();
-                        }
-                        if !self.filter_query.is_empty() {
-                            if ui
-                                .add(egui::Button::new("✕").small().frame(false))
-                                .on_hover_text("Clear filter")
-                                .clicked()
-                            {
-                                self.filter_query.clear();
-                                self.update_filter_cache();
-                                self.ensure_selection_after_filter();
-                            }
-                        }
-                    });
+                    self.render_filter_bar(ui);
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         let paste_btn =
@@ -2797,9 +2828,13 @@ impl LanguageSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use tempfile::TempDir;
 
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
     fn init_app(max_size: usize) -> (LocalPasteApp, TempDir) {
+        let _env_guard = TEST_MUTEX.lock().expect("test mutex poisoned");
         let temp = TempDir::new().expect("temp dir");
         let db_path = temp.path().join("db");
 
@@ -2865,5 +2900,46 @@ mod tests {
             app.folder_focus.is_none(),
             "folder_focus should reset when validation clears folder"
         );
+    }
+
+    #[test]
+    fn filter_bar_handles_tiny_width() {
+        let (mut app, _guard) = init_app(1024);
+        app.filter_query = "beans".to_string();
+        app.filter_focus_requested = true;
+        app.update_filter_cache();
+
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        input.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(12.0, 120.0),
+        ));
+        ctx.begin_pass(input);
+        egui::SidePanel::left("filter_test")
+            .exact_width(12.0)
+            .show(&ctx, |ui| {
+                app.render_filter_bar(ui);
+            });
+        let _ = ctx.end_pass();
+        assert!(
+            !app.filter_focus_requested,
+            "rendering should clear pending focus request"
+        );
+
+        app.filter_query.clear();
+        app.update_filter_cache();
+        let mut input2 = egui::RawInput::default();
+        input2.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(4.0, 120.0),
+        ));
+        ctx.begin_pass(input2);
+        egui::SidePanel::left("filter_test_small")
+            .exact_width(4.0)
+            .show(&ctx, |ui| {
+                app.render_filter_bar(ui);
+            });
+        let _ = ctx.end_pass();
     }
 }
