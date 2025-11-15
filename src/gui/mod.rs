@@ -1257,6 +1257,7 @@ impl LocalPasteApp {
         self.editor.mark_dirty();
         self.editor.auto_detect_cache = None;
         self.editor.request_highlight_update();
+        self.editor.highlight_pending_since = Some(Instant::now());
         self.auto_save_blocked = false;
     }
 
@@ -1279,8 +1280,11 @@ impl LocalPasteApp {
                 .current()
                 .filter(|data| data.plain)
             {
-                self.editor.line_offsets = existing.line_offsets.clone();
-                return existing;
+                // Plain-mode needs manual invalidation from mark_editor_dirty.
+                if self.editor.highlight_pending_since.is_none() {
+                    self.editor.line_offsets = existing.line_offsets.clone();
+                    return existing;
+                }
             }
             let data = self
                 .editor
