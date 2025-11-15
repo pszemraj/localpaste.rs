@@ -1127,7 +1127,8 @@ impl LocalPasteApp {
         self.pastes.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
         self.rebuild_paste_index();
         if let Some(idx) = self.paste_index.get(&paste_id).copied() {
-            if self.selected_id.as_deref() == Some(paste_id.as_str()) {
+            let editor_is_current = self.editor.paste_id.as_deref() == Some(paste_id.as_str());
+            if self.selected_id.as_deref() == Some(paste_id.as_str()) && !editor_is_current {
                 if let Some(updated) = self.pastes.get(idx) {
                     self.editor.apply_paste(updated.clone());
                 }
