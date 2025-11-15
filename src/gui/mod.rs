@@ -817,6 +817,8 @@ pub struct LocalPasteApp {
     folder_index: HashMap<String, usize>,
     selected_id: Option<String>,
     folder_focus: Option<String>,
+    filter_counts: HashMap<String, usize>,
+    filter_unfiled: usize,
     filter_query: String,
     filter_query_lower: String,
     filter_focus_requested: bool,
@@ -828,6 +830,8 @@ pub struct LocalPasteApp {
     folder_dialog: Option<FolderDialog>,
     _server: ServerHandle,
     profile_highlight: bool,
+    editor_focused: bool,
+    auto_save_blocked: bool,
 }
 
 impl LocalPasteApp {
@@ -867,6 +871,8 @@ impl LocalPasteApp {
             folder_index: HashMap::new(),
             selected_id: None,
             folder_focus: None,
+            filter_counts: HashMap::new(),
+            filter_unfiled: 0,
             filter_query: String::new(),
             filter_query_lower: String::new(),
             filter_focus_requested: false,
@@ -878,6 +884,8 @@ impl LocalPasteApp {
             folder_dialog: None,
             _server: server,
             profile_highlight,
+            editor_focused: false,
+            auto_save_blocked: false,
         };
 
         app.reload_pastes("startup");
@@ -991,6 +999,7 @@ impl LocalPasteApp {
                 loaded.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
                 self.pastes = loaded;
                 self.rebuild_paste_index();
+                self.refresh_filter_counts();
 
                 if let Some(selected) = self
                     .selected_id
@@ -1058,6 +1067,25 @@ impl LocalPasteApp {
 
     fn update_filter_cache(&mut self) {
         self.filter_query_lower = self.filter_query.to_ascii_lowercase();
+        self.refresh_filter_counts();
+    }
+
+    fn refresh_filter_counts(&mut self) {
+        self.filter_counts.clear();
+        self.filter_unfiled = 0;
+        if self.filter_query_lower.is_empty() {
+            return;
+        }
+
+        for paste in &self.pastes {
+            if self.matches_filter(paste) {
+                if let Some(folder) = &paste.folder_id {
+                    *self.filter_counts.entry(folder.clone()).or_insert(0) += 1;
+                } else {
+                    self.filter_unfiled += 1;
+                }
+            }
+        }
     }
 
     fn matches_filter(&self, paste: &Paste) -> bool {
@@ -1134,6 +1162,7 @@ impl LocalPasteApp {
                 }
             }
         }
+        self.refresh_filter_counts();
         self.ensure_selection_after_filter();
     }
 
@@ -1146,6 +1175,7 @@ impl LocalPasteApp {
         if self.selected_id.as_deref() == Some(paste_id) {
             self.selected_id = None;
         }
+        self.refresh_filter_counts();
         self.ensure_selection_after_filter();
         self.selected_id.is_some()
     }
@@ -1197,11 +1227,14 @@ impl LocalPasteApp {
     }
 
     fn count_filtered_pastes_in(&self, folder_id: Option<&str>) -> usize {
-        self.pastes
-            .iter()
-            .filter(|p| p.folder_id.as_deref() == folder_id)
-            .filter(|p| self.matches_filter(p))
-            .count()
+        if self.filter_query_lower.is_empty() {
+            return self.count_pastes_in(folder_id);
+        }
+
+        match folder_id {
+            Some(id) => self.filter_counts.get(id).copied().unwrap_or(0),
+            None => self.filter_unfiled,
+        }
     }
 
     fn folder_choices(&self) -> Vec<(String, String)> {
@@ -1224,6 +1257,7 @@ impl LocalPasteApp {
         self.editor.mark_dirty();
         self.editor.auto_detect_cache = None;
         self.editor.request_highlight_update();
+        self.auto_save_blocked = false;
     }
 
     fn ensure_highlight_data(
@@ -1252,6 +1286,7 @@ impl LocalPasteApp {
                 .editor
                 .highlight_cache
                 .plain_text(theme, self.editor.content.as_str());
+            self.editor.layout_cache.reset();
             self.editor.highlight_pending_since = None;
             self.editor.highlight_last_recompute = Some(now);
             self.editor.line_offsets = data.line_offsets.clone();
@@ -1282,6 +1317,7 @@ impl LocalPasteApp {
                 language,
                 self.editor.content.as_str(),
             );
+            self.editor.layout_cache.reset();
             if let Some((began, chars)) = started {
                 let elapsed = began.elapsed();
                 debug!(
@@ -1665,6 +1701,9 @@ impl LocalPasteApp {
         if !self.editor.dirty {
             return;
         }
+        if self.auto_save_blocked {
+            return;
+        }
         if self.editor.name.trim().is_empty() {
             return;
         }
@@ -1694,8 +1733,10 @@ impl LocalPasteApp {
             return;
         }
         if !self.validate_editor_state() {
+            self.auto_save_blocked = true;
             return;
         }
+        self.auto_save_blocked = false;
 
         if let Some(id) = &self.editor.paste_id {
             self.update_existing_paste(id.clone());
@@ -1801,6 +1842,7 @@ impl LocalPasteApp {
             }
             Err(err) => {
                 error!("failed to create paste: {}", err);
+                self.auto_save_blocked = true;
                 self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
             }
         }
@@ -1867,6 +1909,7 @@ impl LocalPasteApp {
             }
             Err(err) => {
                 error!("failed to update paste {}: {}", id, err);
+                self.auto_save_blocked = true;
                 self.push_status(StatusLevel::Error, format!("Save failed: {}", err));
             }
         }
@@ -2025,6 +2068,7 @@ impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ensure_style(ctx);
         self.ensure_language_selection();
+        self.editor_focused = false;
 
         ctx.input(|input| {
             if input.modifiers.command && input.key_pressed(egui::Key::S) {
@@ -2036,10 +2080,10 @@ impl eframe::App for LocalPasteApp {
             if input.modifiers.command && input.key_pressed(egui::Key::Delete) {
                 self.delete_selected();
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::F) {
+            if input.modifiers.command && input.key_pressed(egui::Key::F) && !self.editor_focused {
                 self.focus_filter();
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::K) {
+            if input.modifiers.command && input.key_pressed(egui::Key::K) && !self.editor_focused {
                 self.focus_filter();
             }
         });
@@ -2430,6 +2474,7 @@ impl eframe::App for LocalPasteApp {
                             let layout_start =
                                 self.profile_highlight.then_some((Instant::now(), ui.id()));
                             let response = ui.add(editor);
+                            self.editor_focused = response.has_focus();
                             if let Some((started, _)) = layout_start {
                                 let elapsed = started.elapsed();
                                 debug!(
