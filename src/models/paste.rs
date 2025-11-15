@@ -8,6 +8,8 @@ pub struct Paste {
     pub name: String,
     pub content: String,
     pub language: Option<String>,
+    #[serde(default)]
+    pub language_is_manual: bool,
     pub folder_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -19,6 +21,7 @@ pub struct Paste {
 pub struct CreatePasteRequest {
     pub content: String,
     pub language: Option<String>,
+    pub language_is_manual: Option<bool>,
     pub folder_id: Option<String>,
     pub tags: Option<Vec<String>>,
     pub name: Option<String>,
@@ -29,6 +32,7 @@ pub struct UpdatePasteRequest {
     pub content: Option<String>,
     pub name: Option<String>,
     pub language: Option<String>,
+    pub language_is_manual: Option<bool>,
     pub folder_id: Option<String>,
     pub tags: Option<Vec<String>>,
 }
@@ -55,6 +59,7 @@ impl Paste {
             name,
             content: content.clone(),
             language: detect_language(&content),
+            language_is_manual: false,
             folder_id: None,
             created_at: now,
             updated_at: now,

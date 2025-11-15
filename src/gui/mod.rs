@@ -405,7 +405,7 @@ fn layout_section_from_style(
     let fg = style.foreground;
     let color = Color32::from_rgb(fg.r, fg.g, fg.b);
     let italics = style.font_style.contains(FontStyle::ITALIC);
-    let underline = style.font_style.contains(FontStyle::ITALIC);
+    let underline = style.font_style.contains(FontStyle::UNDERLINE);
     egui::text::LayoutSection {
         leading_space: 0.0,
         byte_range: byte_range_in(chunk_text, span),
@@ -428,12 +428,32 @@ fn compute_chunk_ranges(text: &str, chunk_size: usize) -> Vec<Range<usize>> {
         return Vec::new();
     }
 
+    fn prev_char_boundary(text: &str, mut index: usize) -> usize {
+        if index >= text.len() {
+            return text.len();
+        }
+        while index > 0 && !text.is_char_boundary(index) {
+            index -= 1;
+        }
+        index
+    }
+
+    fn next_char_boundary(text: &str, mut index: usize) -> usize {
+        if index >= text.len() {
+            return text.len();
+        }
+        while index < text.len() && !text.is_char_boundary(index) {
+            index += 1;
+        }
+        index
+    }
+
     let total = text.len();
     let mut ranges = Vec::new();
     let mut start = 0;
 
     while start < total {
-        let mut end = (start + chunk_size).min(total);
+        let mut end = prev_char_boundary(text, (start + chunk_size).min(total));
 
         if end < total {
             if let Some(last_newline) = text[start..end].rfind('\n') {
@@ -448,6 +468,13 @@ fn compute_chunk_ranges(text: &str, chunk_size: usize) -> Vec<Range<usize>> {
         if end == start {
             end = (start + chunk_size).min(total);
             if end == start {
+                end = total;
+            }
+        }
+
+        if end <= start {
+            end = next_char_boundary(text, (start + chunk_size).min(total));
+            if end <= start {
                 end = total;
             }
         }
@@ -1829,6 +1856,7 @@ impl LocalPasteApp {
     fn persist_new_paste(&mut self) {
         let mut paste = Paste::new(self.editor.content.clone(), self.editor.name.clone());
         paste.language = self.editor.language.clone();
+        paste.language_is_manual = self.editor.manual_language_override;
         paste.tags = self.editor.tags.clone();
         paste.folder_id = self.editor.folder_id.clone();
 
@@ -1873,21 +1901,24 @@ impl LocalPasteApp {
             }
         };
 
-        let folder_value = self.editor.folder_id.clone().unwrap_or_default();
+        let folder_value = self.editor.folder_id.clone();
+        let folder_changed = previous.folder_id.as_deref() != self.editor.folder_id.as_deref();
+        let folder_update = match (&folder_value, folder_changed) {
+            (Some(id), _) => Some(id.clone()),
+            (None, true) => Some(String::new()),
+            (None, false) => None,
+        };
         let update = UpdatePasteRequest {
             content: Some(self.editor.content.clone()),
             name: Some(self.editor.name.clone()),
             language: self.editor.language.clone(),
-            folder_id: Some(folder_value.clone()),
+            language_is_manual: Some(self.editor.manual_language_override),
+            folder_id: folder_update.clone(),
             tags: Some(self.editor.tags.clone()),
         };
 
-        let result = if previous.folder_id.as_deref() != self.editor.folder_id.as_deref() {
-            let new_folder = if folder_value.is_empty() {
-                None
-            } else {
-                Some(folder_value.as_str())
-            };
+        let result = if folder_changed {
+            let new_folder = self.editor.folder_id.as_deref();
             TransactionOps::move_paste_between_folders(
                 &self.db,
                 &id,
@@ -2084,7 +2115,7 @@ impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ensure_style(ctx);
         self.ensure_language_selection();
-        self.editor_focused = false;
+        let editor_was_focused = self.editor_focused;
 
         ctx.input(|input| {
             if input.modifiers.command && input.key_pressed(egui::Key::S) {
@@ -2096,10 +2127,10 @@ impl eframe::App for LocalPasteApp {
             if input.modifiers.command && input.key_pressed(egui::Key::Delete) {
                 self.delete_selected();
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::F) && !self.editor_focused {
+            if input.modifiers.command && input.key_pressed(egui::Key::F) && !editor_was_focused {
                 self.focus_filter();
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::K) && !self.editor_focused {
+            if input.modifiers.command && input.key_pressed(egui::Key::K) && !editor_was_focused {
                 self.focus_filter();
             }
         });
@@ -2655,9 +2686,9 @@ impl EditorState {
         self.name = paste.name;
         self.content = paste.content;
         self.language = paste.language;
+        self.manual_language_override = paste.language_is_manual;
         self.folder_id = paste.folder_id;
         self.tags = paste.tags;
-        self.manual_language_override = self.language.is_some();
         self.mark_pristine();
         self.needs_focus = true;
         self.auto_detect_cache = None;
@@ -2672,7 +2703,7 @@ impl EditorState {
         self.folder_id = paste.folder_id.clone();
         self.tags = paste.tags.clone();
         self.language = paste.language.clone();
-        self.manual_language_override = self.language.is_some();
+        self.manual_language_override = paste.language_is_manual;
         self.auto_detect_cache = None;
         self.mark_pristine();
         self.needs_focus = false;

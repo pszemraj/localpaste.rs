@@ -33,6 +33,7 @@ pub async fn create_paste(
 
     let name = req.name.unwrap_or_else(naming::generate_name);
     let mut paste = Paste::new(req.content, name);
+    let language_is_manual = req.language_is_manual;
 
     if let Some(ref folder_id) = req.folder_id {
         paste.folder_id = Some(folder_id.clone());
@@ -44,6 +45,9 @@ pub async fn create_paste(
 
     if let Some(language) = req.language {
         paste.language = Some(language);
+        paste.language_is_manual = language_is_manual.unwrap_or(true);
+    } else if let Some(is_manual) = language_is_manual {
+        paste.language_is_manual = is_manual;
     }
 
     // Use transaction-like operation for atomic folder count update

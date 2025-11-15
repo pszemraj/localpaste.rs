@@ -117,6 +117,7 @@ mod model_tests {
             content: "test".to_string(),
             name: Some("test-paste".to_string()),
             language: Some("rust".to_string()),
+            language_is_manual: Some(true),
             folder_id: None,
             tags: None,
         };

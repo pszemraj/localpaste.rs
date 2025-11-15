@@ -117,6 +117,7 @@ pub async fn delete_folder(
                     content: None,
                     name: None,
                     language: None,
+                    language_is_manual: None,
                     folder_id: Some(String::new()), // Normalized to None
                     tags: None,
                 };

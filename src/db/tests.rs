@@ -48,6 +48,7 @@ mod db_tests {
             content: Some("Updated".to_string()),
             name: Some("updated-name".to_string()),
             language: None,
+            language_is_manual: None,
             folder_id: None,
             tags: None,
         };
