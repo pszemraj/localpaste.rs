@@ -28,3 +28,6 @@ data/
 .env.local
 *.local.ron
 .cargo/config.toml
+
+# Local CLI smoke-test artifacts
+scratch/cli-test.info
