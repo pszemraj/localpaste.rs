@@ -1,3 +1,5 @@
+//! Database integration tests.
+
 #[cfg(test)]
 mod db_tests {
     use super::super::*;

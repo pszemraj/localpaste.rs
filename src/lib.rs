@@ -1,10 +1,19 @@
+//! Core library wiring for LocalPaste: config, storage, and HTTP routing.
+
+/// Configuration loading and defaults.
 pub mod config;
+/// Database access layer and transactions.
 pub mod db;
+/// Application error types and HTTP mapping.
 pub mod error;
 #[cfg(feature = "gui")]
+/// egui desktop UI (feature-gated).
 pub mod gui;
+/// HTTP handlers for paste and folder endpoints.
 pub mod handlers;
+/// Data models for API and persistence.
 pub mod models;
+/// Paste naming helpers.
 pub mod naming;
 
 pub use config::Config;
@@ -24,6 +33,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+/// Shared state passed to HTTP handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub db: std::sync::Arc<Database>,
@@ -31,6 +41,14 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Construct shared application state.
+    ///
+    /// # Arguments
+    /// - `config`: Loaded configuration.
+    /// - `db`: Open database handle.
+    ///
+    /// # Returns
+    /// A new [`AppState`].
     pub fn new(config: Config, db: Database) -> Self {
         Self {
             db: Arc::new(db),
@@ -39,7 +57,17 @@ impl AppState {
     }
 }
 
-/// Create the application router with all routes and middleware
+/// Create the application router with all routes and middleware.
+///
+/// # Arguments
+/// - `state`: Shared application state.
+/// - `allow_public_access`: Whether to allow cross-origin requests from any origin.
+///
+/// # Returns
+/// Configured `axum::Router`.
+///
+/// # Panics
+/// Panics if static header values fail to parse (should not happen).
 pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
     // Configure security headers
     let mut default_headers = HeaderMap::new();
@@ -129,6 +157,18 @@ pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
 use std::future::Future;
 
 /// Run the Axum server with graceful shutdown support.
+///
+/// # Arguments
+/// - `listener`: Bound TCP listener for the server.
+/// - `state`: Shared application state.
+/// - `allow_public_access`: Whether to allow cross-origin requests from any origin.
+/// - `shutdown_signal`: Future that resolves when shutdown should start.
+///
+/// # Returns
+/// `Ok(())` when the server exits cleanly.
+///
+/// # Errors
+/// Returns any I/O error produced by `axum::serve`.
 pub async fn serve_router(
     listener: tokio::net::TcpListener,
     state: AppState,

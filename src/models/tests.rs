@@ -1,3 +1,5 @@
+//! Model-level unit tests.
+
 #[cfg(test)]
 mod model_tests {
     use super::super::*;

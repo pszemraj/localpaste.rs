@@ -1,3 +1,5 @@
+//! Command-line client for the LocalPaste API.
+
 #[cfg(feature = "cli")]
 use clap::{CommandFactory, Parser, Subcommand};
 #[cfg(feature = "cli")]

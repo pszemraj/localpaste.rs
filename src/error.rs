@@ -1,3 +1,5 @@
+//! Application error types and HTTP response mapping.
+
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -6,6 +8,7 @@ use axum::{
 use serde_json::json;
 use thiserror::Error;
 
+/// Top-level application error type.
 #[derive(Error, Debug)]
 pub enum AppError {
     #[error("Database error: {0}")]
@@ -24,7 +27,6 @@ pub enum AppError {
     BadRequest(String),
 
     #[error("Internal server error")]
-    #[allow(dead_code)]
     Internal,
 }
 

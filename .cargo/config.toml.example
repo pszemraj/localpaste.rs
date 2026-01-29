@@ -1,0 +1,24 @@
+# cargo config - copy this as .cargo/config.toml and edit
+
+# Parallelism - update to your total cores for dev builds
+[build]
+jobs = 8
+
+# Fast linker configuration (optional - comment out if linkers not installed)
+# Install lld on Linux: sudo apt install lld clang
+# Install zld on macOS: brew install zld
+
+# Uncomment these if you have the fast linkers installed:
+
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# [target.x86_64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/zld"]
+
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/bin/zld"]
+
+# [target.x86_64-pc-windows-msvc]
+# linker = "rust-lld.exe"

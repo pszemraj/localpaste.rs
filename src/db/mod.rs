@@ -1,6 +1,12 @@
+//! Database layer and transactional helpers for LocalPaste.
+
+/// Backup utilities.
 pub mod backup;
+/// Folder storage helpers.
 pub mod folder;
+/// Lock handling helpers.
 pub mod lock;
+/// Paste storage helpers.
 pub mod paste;
 
 use crate::error::AppError;
@@ -26,6 +32,7 @@ fn is_localpaste_running() -> bool {
     false
 }
 
+/// Database handle with access to underlying sled trees.
 pub struct Database {
     pub db: Arc<Db>,
     pub pastes: paste::PasteDb,
@@ -35,13 +42,25 @@ pub struct Database {
 #[cfg(test)]
 mod tests;
 
-/// Transaction-like operations for atomic updates across trees
-/// Since sled transactions require single tree, we use careful ordering
-/// and rollback logic to maintain consistency
+/// Transaction-like operations for atomic updates across trees.
+///
+/// Sled transactions are limited to a single tree, so we use careful ordering
+/// and rollback logic to maintain consistency across trees.
 pub struct TransactionOps;
 
 impl TransactionOps {
     /// Atomically create a paste and update folder count
+    ///
+    /// # Arguments
+    /// - `db`: Database handle.
+    /// - `paste`: Paste to insert.
+    /// - `folder_id`: Folder that will contain the paste.
+    ///
+    /// # Returns
+    /// `Ok(())` on success.
+    ///
+    /// # Errors
+    /// Propagates storage errors from paste or folder updates.
     pub fn create_paste_with_folder(
         db: &Database,
         paste: &crate::models::paste::Paste,
@@ -63,6 +82,17 @@ impl TransactionOps {
     }
 
     /// Atomically delete a paste and update folder count
+    ///
+    /// # Arguments
+    /// - `db`: Database handle.
+    /// - `paste_id`: Paste identifier to delete.
+    /// - `folder_id`: Folder containing the paste.
+    ///
+    /// # Returns
+    /// `Ok(true)` if a paste was deleted, `Ok(false)` if not found.
+    ///
+    /// # Errors
+    /// Propagates storage errors from the paste tree.
     pub fn delete_paste_with_folder(
         db: &Database,
         paste_id: &str,
@@ -83,6 +113,19 @@ impl TransactionOps {
     }
 
     /// Atomically move a paste between folders
+    ///
+    /// # Arguments
+    /// - `db`: Database handle.
+    /// - `paste_id`: Paste identifier to update.
+    /// - `old_folder_id`: Existing folder id, if any.
+    /// - `new_folder_id`: Destination folder id, if any.
+    /// - `update_req`: Update payload to apply to the paste.
+    ///
+    /// # Returns
+    /// Updated paste if it existed.
+    ///
+    /// # Errors
+    /// Propagates storage errors from paste or folder updates.
     pub fn move_paste_between_folders(
         db: &Database,
         paste_id: &str,
@@ -145,6 +188,13 @@ impl TransactionOps {
 }
 
 impl Database {
+    /// Open the database and initialize trees.
+    ///
+    /// # Returns
+    /// A fully initialized [`Database`].
+    ///
+    /// # Errors
+    /// Returns an error if sled cannot open the database or trees.
     pub fn new(path: &str) -> Result<Self, AppError> {
         // Ensure the data directory exists
         if let Some(parent) = std::path::Path::new(path).parent() {
@@ -197,15 +247,13 @@ impl Database {
         })
     }
 
-    /// Get database checksum for verification
-    #[allow(dead_code)]
-    pub fn checksum(&self) -> Result<u32, AppError> {
-        self.db
-            .checksum()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to compute checksum: {}", e)))
-    }
-
-    /// Flush all pending writes to disk
+    /// Flush all pending writes to disk.
+    ///
+    /// # Returns
+    /// `Ok(())` after all pending writes are flushed.
+    ///
+    /// # Errors
+    /// Returns an error if sled fails to flush.
     pub fn flush(&self) -> Result<(), AppError> {
         self.db.flush()?;
         Ok(())

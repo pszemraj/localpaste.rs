@@ -1,4 +1,5 @@
 #![cfg(feature = "gui")]
+//! Desktop GUI entrypoint for LocalPaste.
 
 use std::sync::{Arc, Once};
 
