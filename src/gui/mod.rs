@@ -1456,7 +1456,7 @@ impl LocalPasteApp {
                 .editor
                 .highlight_cache
                 .plain_text(theme, self.editor.content.as_str());
-            self.editor.layout_cache.reset();
+            // Don't reset layout_cache - sync_chunks handles incremental updates
             self.editor.highlight_pending_since = None;
             self.editor.highlight_last_recompute = Some(now);
             self.editor.line_offsets = data.line_offsets.clone();
@@ -1490,7 +1490,7 @@ impl LocalPasteApp {
                 language,
                 self.editor.content.as_str(),
             );
-            self.editor.layout_cache.reset();
+            // Don't reset layout_cache - sync_chunks handles incremental updates
             if let Some((began, chars)) = started {
                 let elapsed = began.elapsed();
                 debug!(
