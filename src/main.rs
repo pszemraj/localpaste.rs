@@ -86,12 +86,11 @@ fn print_help() {
 
 fn run_backup(config: &Config) -> anyhow::Result<()> {
     if std::path::Path::new(&config.db_path).exists() {
-        if let Ok(temp_db) = Database::new(&config.db_path) {
-            temp_db.flush().ok();
-        }
+        let temp_db = Database::new(&config.db_path)?;
+        temp_db.flush().ok();
 
         let backup_manager = localpaste::db::backup::BackupManager::new(&config.db_path);
-        let backup_path = backup_manager.create_backup(&sled::open(&config.db_path)?)?;
+        let backup_path = backup_manager.create_backup(temp_db.db.as_ref())?;
         println!("✅ Database backed up to: {}", backup_path);
     } else {
         println!("ℹ️  No existing database to backup");

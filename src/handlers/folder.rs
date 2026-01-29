@@ -1,6 +1,8 @@
 //! Folder HTTP handlers.
 
-use crate::{error::AppError, models::folder::*, models::paste::UpdatePasteRequest, AppState};
+use crate::{
+    error::HttpError, models::folder::*, models::paste::UpdatePasteRequest, AppError, AppState,
+};
 use axum::{
     extract::{Path, State},
     Json,
@@ -21,13 +23,14 @@ use std::collections::{HashMap, HashSet};
 pub async fn create_folder(
     State(state): State<AppState>,
     Json(req): Json<CreateFolderRequest>,
-) -> Result<Json<Folder>, AppError> {
+) -> Result<Json<Folder>, HttpError> {
     if let Some(ref parent_id) = req.parent_id {
         if state.db.folders.get(parent_id)?.is_none() {
             return Err(AppError::BadRequest(format!(
                 "Parent folder with id '{}' does not exist",
                 parent_id
-            )));
+            ))
+            .into());
         }
     }
 
@@ -43,7 +46,7 @@ pub async fn create_folder(
 ///
 /// # Errors
 /// Returns an error if listing fails.
-pub async fn list_folders(State(state): State<AppState>) -> Result<Json<Vec<Folder>>, AppError> {
+pub async fn list_folders(State(state): State<AppState>) -> Result<Json<Vec<Folder>>, HttpError> {
     let folders = state.db.folders.list()?;
     Ok(Json(folders))
 }
@@ -67,7 +70,7 @@ pub async fn update_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateFolderRequest>,
-) -> Result<Json<Folder>, AppError> {
+) -> Result<Json<Folder>, HttpError> {
     let folders = if req
         .parent_id
         .as_ref()
@@ -81,9 +84,7 @@ pub async fn update_folder(
 
     if let Some(ref parent_id) = req.parent_id {
         if parent_id == &id {
-            return Err(AppError::BadRequest(
-                "Folder cannot be its own parent".to_string(),
-            ));
+            return Err(AppError::BadRequest("Folder cannot be its own parent".to_string()).into());
         }
         if !parent_id.is_empty() {
             let folders = folders.as_ref().unwrap();
@@ -91,13 +92,15 @@ pub async fn update_folder(
                 return Err(AppError::BadRequest(format!(
                     "Parent folder with id '{}' does not exist",
                     parent_id
-                )));
+                ))
+                .into());
             }
 
             if introduces_cycle(folders, &id, parent_id) {
                 return Err(AppError::BadRequest(
                     "Updating folder would create a cycle".to_string(),
-                ));
+                )
+                .into());
             }
         }
     }
@@ -107,7 +110,7 @@ pub async fn update_folder(
         .folders
         .update(&id, req.name, req.parent_id)?
         .map(Json)
-        .ok_or(AppError::NotFound)
+        .ok_or_else(|| AppError::NotFound.into())
 }
 
 /// Delete a folder and migrate its pastes to unfiled.
@@ -124,10 +127,10 @@ pub async fn update_folder(
 pub async fn delete_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<serde_json::Value>, HttpError> {
     let folders = state.db.folders.list()?;
     if !folders.iter().any(|f| f.id == id) {
-        return Err(AppError::NotFound);
+        return Err(AppError::NotFound.into());
     }
 
     // Collect descendants (depth-first) so pastes can be migrated before deletion

@@ -1,6 +1,6 @@
 //! Paste HTTP handlers.
 
-use crate::{error::AppError, models::paste::*, naming, AppState};
+use crate::{error::HttpError, models::paste::*, naming, AppError, AppState};
 use axum::{
     extract::{Path, Query, State},
     Json,
@@ -20,13 +20,14 @@ use axum::{
 pub async fn create_paste(
     State(state): State<AppState>,
     Json(mut req): Json<CreatePasteRequest>,
-) -> Result<Json<Paste>, AppError> {
+) -> Result<Json<Paste>, HttpError> {
     // Check paste size limit
     if req.content.len() > state.config.max_paste_size {
         return Err(AppError::BadRequest(format!(
             "Paste size exceeds maximum of {} bytes",
             state.config.max_paste_size
-        )));
+        ))
+        .into());
     }
 
     // Normalize empty string folder_id to None
@@ -39,7 +40,8 @@ pub async fn create_paste(
                 return Err(AppError::BadRequest(format!(
                     "Folder with id '{}' does not exist",
                     folder_id
-                )));
+                ))
+                .into());
             }
         }
     }
@@ -87,13 +89,13 @@ pub async fn create_paste(
 pub async fn get_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Paste>, AppError> {
+) -> Result<Json<Paste>, HttpError> {
     state
         .db
         .pastes
         .get(&id)?
         .map(Json)
-        .ok_or(AppError::NotFound)
+        .ok_or_else(|| AppError::NotFound.into())
 }
 
 /// Update an existing paste.
@@ -112,14 +114,15 @@ pub async fn update_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdatePasteRequest>,
-) -> Result<Json<Paste>, AppError> {
+) -> Result<Json<Paste>, HttpError> {
     // Check size limit if content is being updated
     if let Some(ref content) = req.content {
         if content.len() > state.config.max_paste_size {
             return Err(AppError::BadRequest(format!(
                 "Paste size exceeds maximum of {} bytes",
                 state.config.max_paste_size
-            )));
+            ))
+            .into());
         }
     }
 
@@ -131,7 +134,8 @@ pub async fn update_paste(
             return Err(AppError::BadRequest(format!(
                 "Folder with id '{}' does not exist",
                 folder_id
-            )));
+            ))
+            .into());
         }
     }
 
@@ -161,7 +165,7 @@ pub async fn update_paste(
             req,
         )?
         .map(Json)
-        .ok_or(AppError::NotFound)
+        .ok_or_else(|| AppError::NotFound.into())
     } else {
         // folder_id not changing, just update the paste
         state
@@ -169,7 +173,7 @@ pub async fn update_paste(
             .pastes
             .update(&id, req)?
             .map(Json)
-            .ok_or(AppError::NotFound)
+            .ok_or_else(|| AppError::NotFound.into())
     }
 }
 
@@ -187,7 +191,7 @@ pub async fn update_paste(
 pub async fn delete_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<serde_json::Value>, HttpError> {
     let paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
 
     // Use transaction-like operation for atomic folder count update
@@ -200,7 +204,7 @@ pub async fn delete_paste(
     if deleted {
         Ok(Json(serde_json::json!({ "success": true })))
     } else {
-        Err(AppError::NotFound)
+        Err(AppError::NotFound.into())
     }
 }
 
@@ -218,7 +222,7 @@ pub async fn delete_paste(
 pub async fn list_pastes(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
-) -> Result<Json<Vec<Paste>>, AppError> {
+) -> Result<Json<Vec<Paste>>, HttpError> {
     let limit = query.limit.unwrap_or(50).min(100);
     let pastes = state.db.pastes.list(limit, query.folder_id)?;
     Ok(Json(pastes))
@@ -238,7 +242,7 @@ pub async fn list_pastes(
 pub async fn search_pastes(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
-) -> Result<Json<Vec<Paste>>, AppError> {
+) -> Result<Json<Vec<Paste>>, HttpError> {
     let limit = query.limit.unwrap_or(50).min(100);
     let pastes = state
         .db

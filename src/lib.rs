@@ -1,24 +1,13 @@
 //! Core library wiring for LocalPaste: config, storage, and HTTP routing.
 
-/// Configuration loading and defaults.
-pub mod config;
-/// Database access layer and transactions.
-pub mod db;
-/// Application error types and HTTP mapping.
+/// HTTP error mapping for API handlers.
 pub mod error;
 #[cfg(feature = "gui")]
 /// egui desktop UI (feature-gated).
 pub mod gui;
 /// HTTP handlers for paste and folder endpoints.
 pub mod handlers;
-/// Data models for API and persistence.
-pub mod models;
-/// Paste naming helpers.
-pub mod naming;
-
-pub use config::Config;
-pub use db::Database;
-pub use error::AppError;
+pub use localpaste_core::{config, db, models, naming, AppError, Config, Database};
 
 use axum::{
     extract::DefaultBodyLimit,

@@ -2163,30 +2163,40 @@ dependencies = [
  "anyhow",
  "axum",
  "axum-test",
- "bincode",
- "chrono",
  "clap",
  "clap_complete",
  "eframe",
  "egui",
  "egui_extras",
  "hyper",
+ "localpaste_core",
  "puffin",
  "rand",
  "reqwest",
  "rfd",
- "serde",
  "serde_json",
- "sled",
  "syntect",
  "tempfile",
- "thiserror 1.0.69",
  "tokio",
  "tokio-test",
  "tower 0.4.13",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "localpaste_core"
+version = "0.3.1"
+dependencies = [
+ "bincode",
+ "chrono",
+ "rand",
+ "serde",
+ "sled",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
  "uuid",
 ]
 

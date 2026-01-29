@@ -1,46 +1,34 @@
-//! Application error types and HTTP response mapping.
+//! HTTP error wrapper for mapping core errors into API responses.
 
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
+pub use localpaste_core::AppError;
 use serde_json::json;
-use thiserror::Error;
 
-/// Top-level application error type.
-#[derive(Error, Debug)]
-pub enum AppError {
-    #[error("Database error: {0}")]
-    Database(#[from] sled::Error),
+/// HTTP-facing error type for Axum handlers.
+#[derive(Debug)]
+pub struct HttpError(pub AppError);
 
-    #[error("Database error: {0}")]
-    DatabaseError(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
-
-    #[error("Not found")]
-    NotFound,
-
-    #[error("Bad request: {0}")]
-    BadRequest(String),
-
-    #[error("Internal server error")]
-    Internal,
+impl From<AppError> for HttpError {
+    fn from(err: AppError) -> Self {
+        Self(err)
+    }
 }
 
-impl IntoResponse for AppError {
+impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
-        let (status, error_message) = match self {
+        let (status, error_message) = match &self.0 {
             AppError::NotFound => (StatusCode::NOT_FOUND, "Not found"),
-            AppError::BadRequest(ref msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
-            AppError::DatabaseError(ref msg) => {
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
+            AppError::DatabaseError(msg) => {
                 tracing::error!("Database error: {}", msg);
                 (StatusCode::INTERNAL_SERVER_ERROR, "Database error")
             }
-            _ => {
-                tracing::error!("Internal error: {:?}", self);
+            other => {
+                tracing::error!("Internal error: {:?}", other);
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
             }
         };
