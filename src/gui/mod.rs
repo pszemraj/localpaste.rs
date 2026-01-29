@@ -341,6 +341,8 @@ pub struct LocalPasteApp {
     auto_save_blocked: bool,
     #[cfg(feature = "debug-tools")]
     debug_state: DebugState,
+    #[cfg(feature = "profile")]
+    show_profiler: bool,
 }
 
 impl LocalPasteApp {
@@ -380,6 +382,13 @@ impl LocalPasteApp {
             eprintln!("[debug-tools] Toggle debug panel: Ctrl+Shift+D");
         }
 
+        #[cfg(feature = "profile")]
+        {
+            puffin::set_scopes_on(true);
+            eprintln!("[profile] Puffin profiler enabled");
+            eprintln!("[profile] Toggle profiler window: Ctrl+Shift+P");
+        }
+
         let mut app = Self {
             db,
             config: config_arc,
@@ -404,6 +413,8 @@ impl LocalPasteApp {
             auto_save_blocked: false,
             #[cfg(feature = "debug-tools")]
             debug_state: DebugState::default(),
+            #[cfg(feature = "profile")]
+            show_profiler: false,
         };
 
         app.reload_pastes("startup");
@@ -1493,9 +1504,16 @@ fn resolve_bind_address(config: &Config) -> SocketAddr {
 
 impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Start new profiler frame
+        #[cfg(feature = "profile")]
+        puffin::GlobalProfiler::lock().new_frame();
+
         // Record frame start time for debug-tools
         #[cfg(feature = "debug-tools")]
         let frame_start = Instant::now();
+
+        #[cfg(feature = "profile")]
+        puffin::profile_function!();
 
         self.ensure_style(ctx);
         self.ensure_language_selection();
@@ -1524,6 +1542,19 @@ impl eframe::App for LocalPasteApp {
                 eprintln!(
                     "[debug-tools] debug panel {}",
                     if self.debug_state.show_panel {
+                        "opened"
+                    } else {
+                        "closed"
+                    }
+                );
+            }
+            // Ctrl+Shift+P toggles profiler window
+            #[cfg(feature = "profile")]
+            if input.modifiers.command && input.modifiers.shift && input.key_pressed(egui::Key::P) {
+                self.show_profiler = !self.show_profiler;
+                eprintln!(
+                    "[profile] profiler window {}",
+                    if self.show_profiler {
                         "opened"
                     } else {
                         "closed"
@@ -2038,6 +2069,12 @@ impl eframe::App for LocalPasteApp {
             }
         }
 
+        // Render puffin profiler window if enabled
+        #[cfg(feature = "profile")]
+        if self.show_profiler {
+            puffin_egui::profiler_window(ctx);
+        }
+
         self.handle_auto_save(ctx);
     }
 }
@@ -2130,8 +2167,11 @@ impl LocalPasteApp {
                     ui.monospace(format!("{}", self.editor.dirty));
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Plain highlight mode:");
-                    ui.monospace(format!("{}", self.editor.plain_highlight_mode));
+                    ui.label("Plain highlight (>256KB):");
+                    ui.monospace(format!(
+                        "{}",
+                        self.editor.content.len() >= HIGHLIGHT_PLAIN_THRESHOLD
+                    ));
                 });
                 if let Some(lang) = &self.editor.language {
                     ui.horizontal(|ui| {
