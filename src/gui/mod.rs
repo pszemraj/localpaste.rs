@@ -1,13 +1,16 @@
 //! egui desktop UI for LocalPaste.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fs,
     net::SocketAddr,
     sync::{mpsc, Arc},
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(any(feature = "debug-tools", feature = "profile"))]
+use std::collections::VecDeque;
 
 use eframe::egui::{
     self, style::WidgetVisuals, CollapsingHeader, Color32, CornerRadius, FontFamily, FontId, Frame,
@@ -51,7 +54,7 @@ const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const SLOW_FRAME_THRESHOLD_MS: f32 = 16.0;
 
 /// Number of frame times to keep for rolling statistics.
-#[cfg(feature = "debug-tools")]
+#[cfg(any(feature = "debug-tools", feature = "profile"))]
 const FRAME_TIME_HISTORY_SIZE: usize = 100;
 
 /// Debug state for performance monitoring and diagnostics.
@@ -122,6 +125,42 @@ impl DebugState {
     /// Log operation timing to console.
     fn log_operation(&self, op: &str, ms: f32) {
         eprintln!("[debug-tools] {}: {:.2}ms", op, ms);
+    }
+}
+
+/// Profiling state for the in-app profiler panel.
+#[cfg(feature = "profile")]
+#[derive(Default)]
+struct ProfileState {
+    frame_times: VecDeque<f32>,
+    last_highlight_ms: Option<f32>,
+    last_save_ms: Option<f32>,
+}
+
+#[cfg(feature = "profile")]
+impl ProfileState {
+    fn record_frame_time(&mut self, ms: f32) {
+        if self.frame_times.len() >= FRAME_TIME_HISTORY_SIZE {
+            self.frame_times.pop_front();
+        }
+        self.frame_times.push_back(ms);
+    }
+
+    fn avg_frame_time(&self) -> f32 {
+        if self.frame_times.is_empty() {
+            return 0.0;
+        }
+        self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32
+    }
+
+    fn percentile_frame_time(&self, percentile: usize) -> f32 {
+        if self.frame_times.is_empty() {
+            return 0.0;
+        }
+        let mut sorted: Vec<f32> = self.frame_times.iter().copied().collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let index = ((percentile as f32 / 100.0) * (sorted.len() - 1) as f32).round() as usize;
+        sorted.get(index).copied().unwrap_or(0.0)
     }
 }
 
@@ -343,6 +382,8 @@ pub struct LocalPasteApp {
     debug_state: DebugState,
     #[cfg(feature = "profile")]
     show_profiler: bool,
+    #[cfg(feature = "profile")]
+    profile_state: ProfileState,
 }
 
 impl LocalPasteApp {
@@ -415,6 +456,8 @@ impl LocalPasteApp {
             debug_state: DebugState::default(),
             #[cfg(feature = "profile")]
             show_profiler: false,
+            #[cfg(feature = "profile")]
+            profile_state: ProfileState::default(),
         };
 
         app.reload_pastes("startup");
@@ -517,7 +560,6 @@ impl LocalPasteApp {
         );
 
         ctx.set_style(style.clone());
-        self.highlight_theme = HighlightTheme::from_style(&style);
         self.style_applied = true;
     }
 
@@ -799,8 +841,10 @@ impl LocalPasteApp {
 
     fn mark_editor_dirty(&mut self) {
         self.editor.mark_dirty();
-        // Set debounce timestamp for small-paste detection (if still Undetected)
-        self.editor.language_pending_since = Some(Instant::now());
+        // Set debounce timestamp for small-paste detection (only if still Undetected)
+        if self.editor.language_state == LanguageState::Undetected {
+            self.editor.language_pending_since = Some(Instant::now());
+        }
         // Update line offsets for navigation
         self.editor.line_offsets = compute_line_offsets(&self.editor.content);
         self.auto_save_blocked = false;
@@ -868,12 +912,13 @@ impl LocalPasteApp {
             return;
         }
 
-        // RULE 2: Skip if in plain text mode (very large paste >256KB)
-        if self.editor.plain_highlight_mode {
+        let content_len = self.editor.content.len();
+
+        // RULE 2: Very large content uses plain text; stop detection
+        if self.is_plain_highlight_mode() {
+            self.assign_plain_language();
             return;
         }
-
-        let content_len = self.editor.content.len();
 
         // RULE 3: Skip if content too small to detect
         if content_len < AUTO_DETECT_MIN_CHARS {
@@ -882,7 +927,7 @@ impl LocalPasteApp {
 
         // RULE 4: For large content (>=threshold), single-shot detect immediately
         if content_len >= AUTO_DETECT_THRESHOLD {
-            self.run_detection_once();
+            self.run_detection_once(true);
             return;
         }
 
@@ -893,11 +938,11 @@ impl LocalPasteApp {
             }
         }
 
-        self.run_detection_once();
+        self.run_detection_once(false);
     }
 
     /// Run language detection once and transition to AutoDetected state.
-    fn run_detection_once(&mut self) {
+    fn run_detection_once(&mut self, force_plain_on_miss: bool) {
         // Sample only the first MAX_DETECT_CHARS for detection
         let sample = if self.editor.content.len() > MAX_DETECT_CHARS {
             // Find a char boundary near MAX_DETECT_CHARS
@@ -913,11 +958,23 @@ impl LocalPasteApp {
         if let Some(detected) = crate::models::paste::detect_language(sample) {
             self.editor.language = Some(detected);
             self.editor.language_state = LanguageState::AutoDetected;
-            self.editor.reset_highlight_state();
+            self.editor.language_pending_since = None;
+        } else if force_plain_on_miss {
+            self.assign_plain_language();
         }
         // If detection fails (returns None), we stay in Undetected state
         // and will try again on next debounce cycle (for small pastes)
         // or never again (for large pastes, since they pass threshold check)
+    }
+
+    fn assign_plain_language(&mut self) {
+        self.editor.language = Some("plain".to_string());
+        self.editor.language_state = LanguageState::AutoDetected;
+        self.editor.language_pending_since = None;
+    }
+
+    fn is_plain_highlight_mode(&self) -> bool {
+        self.editor.content.len() >= HIGHLIGHT_PLAIN_THRESHOLD
     }
 
     fn try_create_folder(&mut self, dialog: &mut FolderDialog) -> bool {
@@ -1134,7 +1191,7 @@ impl LocalPasteApp {
     }
 
     fn save_current_paste(&mut self) {
-        #[cfg(feature = "debug-tools")]
+        #[cfg(any(feature = "debug-tools", feature = "profile"))]
         let start = Instant::now();
 
         if self.editor.name.trim().is_empty() {
@@ -1158,6 +1215,12 @@ impl LocalPasteApp {
             let ms = start.elapsed().as_secs_f32() * 1000.0;
             self.debug_state.last_save_ms = Some(ms);
             self.debug_state.log_operation("save", ms);
+        }
+
+        #[cfg(feature = "profile")]
+        {
+            let ms = start.elapsed().as_secs_f32() * 1000.0;
+            self.profile_state.last_save_ms = Some(ms);
         }
     }
 
@@ -1508,8 +1571,8 @@ impl eframe::App for LocalPasteApp {
         #[cfg(feature = "profile")]
         puffin::GlobalProfiler::lock().new_frame();
 
-        // Record frame start time for debug-tools
-        #[cfg(feature = "debug-tools")]
+        // Record frame start time for debug-tools / profiler
+        #[cfg(any(feature = "debug-tools", feature = "profile"))]
         let frame_start = Instant::now();
 
         #[cfg(feature = "profile")]
@@ -1674,7 +1737,7 @@ impl eframe::App for LocalPasteApp {
                                 ui.label(
                                     RichText::new(id_label).monospace().color(COLOR_TEXT_MUTED),
                                 );
-                                if self.editor.plain_highlight_mode {
+                                if self.is_plain_highlight_mode() {
                                     ui.label(
                                         RichText::new("Highlighting trimmed for large paste")
                                             .size(11.0)
@@ -1790,7 +1853,7 @@ impl eframe::App for LocalPasteApp {
                                                 self.editor.language = Some(option.id.to_string());
                                                 self.editor.language_state =
                                                     LanguageState::ManuallySet;
-                                                self.editor.reset_highlight_state();
+                                                self.editor.language_pending_since = None;
                                                 self.mark_editor_dirty();
                                             } else {
                                                 self.editor.language_state =
@@ -1806,7 +1869,7 @@ impl eframe::App for LocalPasteApp {
                                     {
                                         // Reset to Undetected allows re-detection
                                         self.editor.language_state = LanguageState::Undetected;
-                                        self.editor.reset_highlight_state();
+                                        self.editor.language_pending_since = Some(Instant::now());
                                         self.mark_editor_dirty();
                                     }
                                     ui.separator();
@@ -1820,7 +1883,7 @@ impl eframe::App for LocalPasteApp {
                                             .clicked()
                                         {
                                             self.editor.language_state = LanguageState::ManuallySet;
-                                            self.editor.reset_highlight_state();
+                                            self.editor.language_pending_since = None;
                                             self.mark_editor_dirty();
                                         }
                                         if Some(option.id) == auto_scroll_target {
@@ -1924,29 +1987,31 @@ impl eframe::App for LocalPasteApp {
                         .to_string();
 
                     // Use plain text for very large content to avoid perf issues
-                    let use_plain_mode = self.editor.content.len() >= HIGHLIGHT_PLAIN_THRESHOLD;
+                    let use_plain_mode = self.is_plain_highlight_mode();
                     let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
 
                     egui::ScrollArea::vertical()
                         .id_salt("editor_scroll")
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            let mut layouter = |ui: &egui::Ui, text: &str, wrap_width: f32| {
-                                let mut job = if use_plain_mode {
-                                    // Plain text for large files
-                                    egui::text::LayoutJob::simple(
-                                        text.to_owned(),
-                                        egui::FontId::monospace(14.0),
-                                        ui.visuals().text_color(),
-                                        wrap_width,
-                                    )
-                                } else {
-                                    // Syntax highlighted (memoized by egui_extras)
-                                    highlight(ui.ctx(), ui.style(), &theme, text, &syntax_token)
+                            let mut layouter =
+                                |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+                                    let text = text.as_str();
+                                    let mut job = if use_plain_mode {
+                                        // Plain text for large files
+                                        egui::text::LayoutJob::simple(
+                                            text.to_owned(),
+                                            egui::FontId::monospace(14.0),
+                                            ui.visuals().text_color(),
+                                            wrap_width,
+                                        )
+                                    } else {
+                                        // Syntax highlighted (memoized by egui_extras)
+                                        highlight(ui.ctx(), ui.style(), &theme, text, &syntax_token)
+                                    };
+                                    job.wrap.max_width = wrap_width;
+                                    ui.fonts_mut(|f| f.layout_job(job))
                                 };
-                                job.wrap.max_width = wrap_width;
-                                ui.fonts(|f| f.layout_job(job))
-                            };
 
                             let editor = egui::TextEdit::multiline(&mut self.editor.content)
                                 .font(text_style)
@@ -1961,11 +2026,20 @@ impl eframe::App for LocalPasteApp {
                             self.editor_focused = response.has_focus();
                             if let Some((started, _)) = layout_start {
                                 let elapsed = started.elapsed();
+                                let ms = elapsed.as_secs_f32() * 1000.0;
                                 debug!(
                                     "text_edit_layout duration_ms={:.3} chars={}",
                                     elapsed.as_secs_f64() * 1_000.0,
                                     self.editor.content.len()
                                 );
+                                #[cfg(feature = "debug-tools")]
+                                {
+                                    self.debug_state.last_highlight_ms = Some(ms);
+                                }
+                                #[cfg(feature = "profile")]
+                                {
+                                    self.profile_state.last_highlight_ms = Some(ms);
+                                }
                             }
                             if self.editor.needs_focus {
                                 if !response.has_focus() {
@@ -2056,23 +2130,25 @@ impl eframe::App for LocalPasteApp {
                 self.folder_dialog = Some(dialog);
             }
         }
+        #[cfg(any(feature = "debug-tools", feature = "profile"))]
+        let frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
+
         // Debug panel and frame timing (debug-tools feature)
         #[cfg(feature = "debug-tools")]
         {
-            // Record frame time
-            let frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
             self.debug_state.record_frame_time(frame_ms);
-
-            // Render debug panel window if visible
             if self.debug_state.show_panel {
                 self.render_debug_panel(ctx);
             }
         }
 
-        // Render puffin profiler window if enabled
+        // Manual profiler panel (profile feature)
         #[cfg(feature = "profile")]
-        if self.show_profiler {
-            puffin_egui::profiler_window(ctx);
+        {
+            self.profile_state.record_frame_time(frame_ms);
+            if self.show_profiler {
+                self.render_profiler_panel(ctx);
+            }
         }
 
         self.handle_auto_save(ctx);
@@ -2168,10 +2244,7 @@ impl LocalPasteApp {
                 });
                 ui.horizontal(|ui| {
                     ui.label("Plain highlight (>256KB):");
-                    ui.monospace(format!(
-                        "{}",
-                        self.editor.content.len() >= HIGHLIGHT_PLAIN_THRESHOLD
-                    ));
+                    ui.monospace(format!("{}", self.is_plain_highlight_mode()));
                 });
                 if let Some(lang) = &self.editor.language {
                     ui.horizontal(|ui| {
@@ -2183,6 +2256,64 @@ impl LocalPasteApp {
                 ui.add_space(12.0);
                 if ui.button("Close (Ctrl+Shift+D)").clicked() {
                     self.debug_state.show_panel = false;
+                }
+            });
+    }
+}
+
+#[cfg(feature = "profile")]
+impl LocalPasteApp {
+    fn render_profiler_panel(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Profiler")
+            .default_width(320.0)
+            .resizable(true)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                ui.heading("Frame Timing");
+                ui.separator();
+
+                let avg = self.profile_state.avg_frame_time();
+                let p95 = self.profile_state.percentile_frame_time(95);
+                let p99 = self.profile_state.percentile_frame_time(99);
+                let sample_count = self.profile_state.frame_times.len();
+
+                ui.horizontal(|ui| {
+                    ui.label("Samples:");
+                    ui.monospace(format!("{}", sample_count));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Avg:");
+                    ui.monospace(format!("{:.2} ms", avg));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("P95:");
+                    ui.monospace(format!("{:.2} ms", p95));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("P99:");
+                    ui.monospace(format!("{:.2} ms", p99));
+                });
+
+                ui.add_space(12.0);
+                ui.heading("Last Operation Timings");
+                ui.separator();
+
+                if let Some(ms) = self.profile_state.last_highlight_ms {
+                    ui.horizontal(|ui| {
+                        ui.label("Highlight:");
+                        ui.monospace(format!("{:.2} ms", ms));
+                    });
+                }
+                if let Some(ms) = self.profile_state.last_save_ms {
+                    ui.horizontal(|ui| {
+                        ui.label("Save:");
+                        ui.monospace(format!("{:.2} ms", ms));
+                    });
+                }
+
+                ui.add_space(12.0);
+                if ui.button("Close (Ctrl+Shift+P)").clicked() {
+                    self.show_profiler = false;
                 }
             });
     }
