@@ -1,13 +1,9 @@
 //! egui desktop UI for LocalPaste.
 
 use std::{
-    cell::RefCell,
-    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     fs,
-    hash::{Hash, Hasher},
     net::SocketAddr,
-    ops::Range,
-    rc::Rc,
     sync::{mpsc, Arc},
     thread,
     time::{Duration, Instant},
@@ -17,14 +13,8 @@ use eframe::egui::{
     self, style::WidgetVisuals, CollapsingHeader, Color32, CornerRadius, FontFamily, FontId, Frame,
     Layout, Margin, Popup, RichText, Stroke, TextStyle, Visuals,
 };
-use egui_extras::syntax_highlighting::SyntectSettings;
+use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use rfd::FileDialog;
-use syntect::{
-    easy::HighlightLines,
-    highlighting::{FontStyle, HighlightState as SyntectHighlightState},
-    parsing::{ParseState as SyntectParseState, SyntaxReference},
-    util::LinesWithEndings,
-};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
@@ -53,8 +43,7 @@ const AUTO_DETECT_MIN_CHARS: usize = 64;
 const AUTO_DETECT_THRESHOLD: usize = 512;
 const AUTO_DETECT_DEBOUNCE: Duration = Duration::from_millis(300);
 const MAX_DETECT_CHARS: usize = 10_000;
-const HIGHLIGHT_RECOMPUTE_DELAY: Duration = Duration::from_millis(75);
-const HIGHLIGHT_CHUNK_SIZE: usize = 4 * 1024;
+/// Content size threshold above which syntax highlighting is disabled.
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 
 /// Frame time threshold for "slow frame" warnings (16ms = ~60 FPS target).
@@ -151,439 +140,6 @@ enum LanguageState {
     ManuallySet,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SyntectState {
-    highlight: SyntectHighlightState,
-    parse: SyntectParseState,
-}
-
-impl SyntectState {
-    fn initial(syntax: &SyntaxReference, theme: &syntect::highlighting::Theme) -> Self {
-        let initial = HighlightLines::new(syntax, theme);
-        let (highlight, parse) = initial.state();
-        Self { highlight, parse }
-    }
-
-    fn to_highlighter<'a>(&self, theme: &'a syntect::highlighting::Theme) -> HighlightLines<'a> {
-        HighlightLines::from_state(theme, self.highlight.clone(), self.parse.clone())
-    }
-}
-
-#[derive(Clone)]
-struct HighlightChunk {
-    index: usize,
-    version: u64,
-    range: Range<usize>,
-    text_hash: u64,
-    state_before: SyntectState,
-    state_after: SyntectState,
-    layout_job: egui::text::LayoutJob,
-}
-
-#[derive(Clone)]
-struct HighlightData {
-    revision: u64,
-    job: Arc<egui::text::LayoutJob>,
-    chunks: Vec<HighlightChunk>,
-    line_offsets: Vec<usize>,
-    plain: bool,
-}
-
-struct ChunkBuildInput<'a> {
-    settings: &'a SyntectSettings,
-    syntect_theme: &'a syntect::highlighting::Theme,
-    highlight_theme: &'a HighlightTheme,
-    index: usize,
-    range: Range<usize>,
-    text: &'a str,
-    text_hash: u64,
-    state_before: SyntectState,
-}
-
-#[derive(Clone)]
-struct HighlightTheme {
-    font_id: egui::FontId,
-    syntect_theme_key: &'static str,
-    dark_mode: bool,
-}
-
-impl HighlightTheme {
-    fn from_style(style: &egui::Style) -> Self {
-        let font_id = style
-            .override_font_id
-            .clone()
-            .unwrap_or_else(|| TextStyle::Monospace.resolve(style));
-        let dark_mode = style.visuals.dark_mode;
-        let syntect_theme_key = if dark_mode {
-            "base16-mocha.dark"
-        } else {
-            "Solarized (light)"
-        };
-        Self {
-            font_id,
-            syntect_theme_key,
-            dark_mode,
-        }
-    }
-
-    fn font_id(&self) -> &egui::FontId {
-        &self.font_id
-    }
-
-    fn syntect_theme_key(&self) -> &'static str {
-        self.syntect_theme_key
-    }
-
-    fn is_dark(&self) -> bool {
-        self.dark_mode
-    }
-}
-
-struct HighlightCache {
-    settings: Arc<SyntectSettings>,
-    chunk_size: usize,
-    revision: u64,
-    next_chunk_version: u64,
-    data: Option<Rc<HighlightData>>,
-}
-
-impl Default for HighlightCache {
-    fn default() -> Self {
-        Self {
-            settings: Arc::new(SyntectSettings::default()),
-            chunk_size: HIGHLIGHT_CHUNK_SIZE,
-            revision: 0,
-            next_chunk_version: 0,
-            data: None,
-        }
-    }
-}
-
-impl HighlightCache {
-    fn clear(&mut self) {
-        self.data = None;
-        self.next_chunk_version = 0;
-    }
-
-    fn current(&self) -> Option<Rc<HighlightData>> {
-        self.data.clone()
-    }
-
-    fn recompute(
-        &mut self,
-        theme: &HighlightTheme,
-        language: &str,
-        text: &str,
-    ) -> Rc<HighlightData> {
-        let settings = Arc::clone(&self.settings);
-        let syntax = settings
-            .ps
-            .find_syntax_by_name(language)
-            .or_else(|| settings.ps.find_syntax_by_extension(language))
-            .unwrap_or_else(|| settings.ps.find_syntax_plain_text());
-        let syntect_theme = settings
-            .ts
-            .themes
-            .get(theme.syntect_theme_key())
-            .cloned()
-            .unwrap_or_else(|| {
-                settings
-                    .ts
-                    .themes
-                    .values()
-                    .next()
-                    .cloned()
-                    .expect("syntect theme set must contain at least one entry")
-            });
-        let line_offsets = compute_line_offsets(text);
-        let chunk_ranges = compute_chunk_ranges(text, self.chunk_size);
-        let mut current_state = SyntectState::initial(syntax, &syntect_theme);
-
-        let previous = self.data.clone();
-        let mut aggregates = Vec::new();
-        let mut chunks = Vec::with_capacity(chunk_ranges.len());
-
-        for (index, range) in chunk_ranges.into_iter().enumerate() {
-            let chunk_text = &text[range.clone()];
-            let chunk_hash = hash_str(chunk_text);
-
-            let reused = previous
-                .as_ref()
-                .and_then(|data| data.chunks.get(index))
-                .filter(|chunk| {
-                    chunk.text_hash == chunk_hash && chunk.state_before == current_state
-                })
-                .cloned();
-
-            let mut chunk = if let Some(mut existing) = reused {
-                existing.range = range.clone();
-                existing.state_before = current_state.clone();
-                existing
-            } else {
-                self.build_chunk(ChunkBuildInput {
-                    settings: settings.as_ref(),
-                    syntect_theme: &syntect_theme,
-                    highlight_theme: theme,
-                    index,
-                    range: range.clone(),
-                    text: chunk_text,
-                    text_hash: chunk_hash,
-                    state_before: current_state.clone(),
-                })
-            };
-
-            current_state = chunk.state_after.clone();
-
-            aggregates.extend(
-                chunk
-                    .layout_job
-                    .sections
-                    .iter()
-                    .cloned()
-                    .map(|mut section| {
-                        section.byte_range.start += chunk.range.start;
-                        section.byte_range.end += chunk.range.start;
-                        section
-                    }),
-            );
-
-            chunk.index = index;
-            chunk.range = range;
-            chunk.text_hash = chunk_hash;
-            chunks.push(chunk);
-        }
-
-        let mut job = egui::text::LayoutJob {
-            text: text.to_owned(),
-            sections: aggregates,
-            ..Default::default()
-        };
-        job.wrap.max_width = f32::INFINITY;
-
-        self.revision = self.revision.wrapping_add(1);
-        let data = HighlightData {
-            revision: self.revision,
-            job: Arc::new(job),
-            chunks,
-            line_offsets,
-            plain: false,
-        };
-        let rc = Rc::new(data);
-        self.data = Some(rc.clone());
-        rc
-    }
-
-    fn plain_text(&mut self, theme: &HighlightTheme, text: &str) -> Rc<HighlightData> {
-        let settings = Arc::clone(&self.settings);
-        let syntect_theme = settings
-            .ts
-            .themes
-            .get(theme.syntect_theme_key())
-            .cloned()
-            .unwrap_or_else(|| {
-                settings
-                    .ts
-                    .themes
-                    .values()
-                    .next()
-                    .cloned()
-                    .expect("syntect theme set must contain at least one entry")
-            });
-        let syntax = settings.ps.find_syntax_plain_text();
-        let state = SyntectState::initial(syntax, &syntect_theme);
-        let color = if theme.is_dark() {
-            Color32::LIGHT_GRAY
-        } else {
-            Color32::DARK_GRAY
-        };
-        let mut layout_job = egui::text::LayoutJob::simple(
-            text.to_owned(),
-            theme.font_id().clone(),
-            color,
-            f32::INFINITY,
-        );
-        layout_job.wrap.max_width = f32::INFINITY;
-        self.next_chunk_version = self.next_chunk_version.wrapping_add(1);
-        let chunk = HighlightChunk {
-            index: 0,
-            version: self.next_chunk_version,
-            range: 0..text.len(),
-            text_hash: hash_str(text),
-            state_before: state.clone(),
-            state_after: state,
-            layout_job: layout_job.clone(),
-        };
-        self.revision = self.revision.wrapping_add(1);
-        let data = HighlightData {
-            revision: self.revision,
-            job: Arc::new(layout_job),
-            chunks: vec![chunk],
-            line_offsets: compute_line_offsets(text),
-            plain: true,
-        };
-        let rc = Rc::new(data);
-        self.data = Some(rc.clone());
-        rc
-    }
-    fn build_chunk(&mut self, input: ChunkBuildInput<'_>) -> HighlightChunk {
-        let mut highlighter = input.state_before.to_highlighter(input.syntect_theme);
-        let mut sections = Vec::new();
-        let mut failed = false;
-
-        for line in LinesWithEndings::from(input.text) {
-            match highlighter.highlight_line(line, &input.settings.ps) {
-                Ok(spans) => {
-                    for (style, span) in spans {
-                        if span.is_empty() {
-                            continue;
-                        }
-                        sections.push(layout_section_from_style(
-                            input.highlight_theme,
-                            input.text,
-                            span,
-                            &style,
-                        ));
-                    }
-                }
-                Err(_) => {
-                    failed = true;
-                    break;
-                }
-            }
-        }
-
-        let (highlight_state, parse_state) = highlighter.state();
-        let state_after = SyntectState {
-            highlight: highlight_state,
-            parse: parse_state,
-        };
-
-        let layout_job = if failed {
-            egui::text::LayoutJob::simple(
-                input.text.to_owned(),
-                input.highlight_theme.font_id().clone(),
-                if input.highlight_theme.is_dark() {
-                    Color32::LIGHT_GRAY
-                } else {
-                    Color32::DARK_GRAY
-                },
-                f32::INFINITY,
-            )
-        } else {
-            egui::text::LayoutJob {
-                text: input.text.to_owned(),
-                sections,
-                wrap: egui::text::TextWrapping {
-                    max_width: f32::INFINITY,
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        };
-
-        self.next_chunk_version = self.next_chunk_version.wrapping_add(1);
-        HighlightChunk {
-            index: input.index,
-            version: self.next_chunk_version,
-            range: input.range,
-            text_hash: input.text_hash,
-            state_before: input.state_before,
-            state_after,
-            layout_job,
-        }
-    }
-}
-
-fn layout_section_from_style(
-    theme: &HighlightTheme,
-    chunk_text: &str,
-    span: &str,
-    style: &syntect::highlighting::Style,
-) -> egui::text::LayoutSection {
-    let fg = style.foreground;
-    let color = Color32::from_rgb(fg.r, fg.g, fg.b);
-    let italics = style.font_style.contains(FontStyle::ITALIC);
-    let underline = style.font_style.contains(FontStyle::UNDERLINE);
-    egui::text::LayoutSection {
-        leading_space: 0.0,
-        byte_range: byte_range_in(chunk_text, span),
-        format: egui::text::TextFormat {
-            font_id: theme.font_id().clone(),
-            color,
-            italics,
-            underline: if underline {
-                Stroke::new(1.0, color)
-            } else {
-                Stroke::NONE
-            },
-            ..Default::default()
-        },
-    }
-}
-
-fn compute_chunk_ranges(text: &str, chunk_size: usize) -> Vec<Range<usize>> {
-    if text.is_empty() {
-        return Vec::new();
-    }
-
-    fn prev_char_boundary(text: &str, mut index: usize) -> usize {
-        if index >= text.len() {
-            return text.len();
-        }
-        while index > 0 && !text.is_char_boundary(index) {
-            index -= 1;
-        }
-        index
-    }
-
-    fn next_char_boundary(text: &str, mut index: usize) -> usize {
-        if index >= text.len() {
-            return text.len();
-        }
-        while index < text.len() && !text.is_char_boundary(index) {
-            index += 1;
-        }
-        index
-    }
-
-    let total = text.len();
-    let mut ranges = Vec::new();
-    let mut start = 0;
-
-    while start < total {
-        let mut end = prev_char_boundary(text, (start + chunk_size).min(total));
-
-        if end < total {
-            if let Some(last_newline) = text[start..end].rfind('\n') {
-                end = start + last_newline + 1;
-            } else if let Some(next_newline) = text[end..].find('\n') {
-                end += next_newline + 1;
-            } else {
-                end = total;
-            }
-        }
-
-        if end == start {
-            end = (start + chunk_size).min(total);
-            if end == start {
-                end = total;
-            }
-        }
-
-        if end <= start {
-            end = next_char_boundary(text, (start + chunk_size).min(total));
-            if end <= start {
-                end = total;
-            }
-        }
-
-        ranges.push(start..end);
-        start = end;
-    }
-
-    ranges
-}
-
 fn compute_line_offsets(text: &str) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(text.lines().count() + 1);
     offsets.push(0);
@@ -595,17 +151,6 @@ fn compute_line_offsets(text: &str) -> Vec<usize> {
         }
     }
     offsets
-}
-
-fn byte_range_in(whole: &str, part: &str) -> Range<usize> {
-    let start = part.as_ptr() as usize - whole.as_ptr() as usize;
-    start..start + part.len()
-}
-
-fn hash_str(text: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
-    hasher.finish()
 }
 
 fn key_to_ascii_letter(key: egui::Key) -> Option<char> {
@@ -640,193 +185,6 @@ fn key_to_ascii_letter(key: egui::Key) -> Option<char> {
         _ => return None,
     };
     Some(ch)
-}
-
-#[derive(Clone, Default)]
-struct LayoutCache {
-    inner: Rc<RefCell<LayoutCacheInner>>,
-}
-
-impl LayoutCache {
-    fn reset(&self) {
-        self.inner.borrow_mut().reset();
-    }
-
-    fn layout(
-        &self,
-        ui: &egui::Ui,
-        wrap_width: f32,
-        highlight: &HighlightData,
-    ) -> Arc<egui::text::Galley> {
-        let pixels_per_point = ui.ctx().pixels_per_point();
-        let key = LayoutCacheKey::new(wrap_width, pixels_per_point);
-        let mut inner = self.inner.borrow_mut();
-
-        inner.sync_chunks(highlight);
-        inner
-            .combined
-            .retain(|_, cached| cached.revision == highlight.revision);
-
-        if let Some(galley) = inner
-            .combined
-            .get(&key)
-            .filter(|cached| cached.revision == highlight.revision)
-            .map(|cached| cached.galley.clone())
-        {
-            return galley;
-        }
-
-        let chunk_galleys = highlight
-            .chunks
-            .iter()
-            .enumerate()
-            .map(|(idx, chunk)| inner.chunk_layout(ui, idx, chunk, key).galley)
-            .collect::<Vec<_>>();
-
-        let mut job = (*highlight.job).clone();
-        job.wrap.max_width = if wrap_width.is_finite() {
-            wrap_width
-        } else {
-            f32::INFINITY
-        };
-        let job = Arc::new(job);
-        let galley = Arc::new(egui::text::Galley::concat(
-            job,
-            &chunk_galleys,
-            pixels_per_point,
-        ));
-        inner.combined.insert(
-            key,
-            CachedCombinedGalley {
-                revision: highlight.revision,
-                galley: galley.clone(),
-            },
-        );
-        galley
-    }
-
-    /// Plain layout fallback for when cached highlight data doesn't match current text.
-    /// This ensures cursor positioning is always correct, even during the highlight
-    /// debounce window when the cached data may be stale.
-    fn layout_plain(&self, ui: &egui::Ui, wrap_width: f32, text: &str) -> Arc<egui::text::Galley> {
-        let font_id = egui::FontId::monospace(14.0);
-        let color = ui.visuals().text_color();
-        let job = egui::text::LayoutJob::simple(
-            text.to_owned(),
-            font_id,
-            color,
-            if wrap_width.is_finite() {
-                wrap_width
-            } else {
-                f32::INFINITY
-            },
-        );
-        ui.fonts(|fonts| Arc::new(fonts.layout_job(job)))
-    }
-}
-
-#[derive(Clone)]
-struct CachedChunkLayout {
-    galley: Arc<egui::text::Galley>,
-    height: f32,
-}
-
-#[derive(Default)]
-struct LayoutCacheInner {
-    last_chunk_count: usize,
-    chunks: Vec<ChunkLayoutEntry>,
-    combined: HashMap<LayoutCacheKey, CachedCombinedGalley>,
-}
-
-impl LayoutCacheInner {
-    fn reset(&mut self) {
-        self.last_chunk_count = 0;
-        self.chunks.clear();
-        self.combined.clear();
-    }
-
-    fn sync_chunks(&mut self, highlight: &HighlightData) {
-        if self.last_chunk_count != highlight.chunks.len() {
-            self.chunks
-                .resize_with(highlight.chunks.len(), ChunkLayoutEntry::default);
-            self.last_chunk_count = highlight.chunks.len();
-        }
-
-        for (entry, chunk) in self.chunks.iter_mut().zip(highlight.chunks.iter()) {
-            if entry.version != chunk.version {
-                entry.version = chunk.version;
-                entry.layouts.clear();
-            }
-        }
-    }
-
-    fn chunk_layout(
-        &mut self,
-        ui: &egui::Ui,
-        index: usize,
-        chunk: &HighlightChunk,
-        key: LayoutCacheKey,
-    ) -> CachedChunkLayout {
-        let entry = &mut self.chunks[index];
-        if let Some(layout) = entry.layouts.get(&key) {
-            return layout.clone();
-        }
-
-        let mut job = chunk.layout_job.clone();
-        job.wrap.max_width = if key.wrap_width().is_finite() {
-            key.wrap_width()
-        } else {
-            f32::INFINITY
-        };
-        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-        let layout = CachedChunkLayout {
-            galley: galley.clone(),
-            height: galley.rect.height(),
-        };
-        entry.layouts.insert(key, layout.clone());
-        layout
-    }
-}
-
-#[derive(Default)]
-struct ChunkLayoutEntry {
-    version: u64,
-    layouts: HashMap<LayoutCacheKey, CachedChunkLayout>,
-}
-
-#[derive(Clone)]
-struct CachedCombinedGalley {
-    revision: u64,
-    galley: Arc<egui::text::Galley>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct LayoutCacheKey {
-    wrap_bits: u32,
-    pixels_per_point_bits: u32,
-}
-
-impl LayoutCacheKey {
-    fn new(wrap_width: f32, pixels_per_point: f32) -> Self {
-        let wrap = if wrap_width.is_finite() {
-            wrap_width
-        } else {
-            f32::INFINITY
-        };
-        let ppp = if pixels_per_point.is_finite() {
-            pixels_per_point
-        } else {
-            1.0
-        };
-        Self {
-            wrap_bits: wrap.to_bits(),
-            pixels_per_point_bits: ppp.to_bits(),
-        }
-    }
-
-    fn wrap_width(self) -> f32 {
-        f32::from_bits(self.wrap_bits)
-    }
 }
 
 fn sanitize_filename(name: &str) -> String {
@@ -975,8 +333,6 @@ pub struct LocalPasteApp {
     filter_focus_requested: bool,
     editor: EditorState,
     status: Option<StatusMessage>,
-    highlight_theme: HighlightTheme,
-    virtual_preview_enabled: bool,
     style_applied: bool,
     folder_dialog: Option<FolderDialog>,
     _server: ServerHandle,
@@ -1017,9 +373,6 @@ impl LocalPasteApp {
         let profile_highlight = std::env::var("LOCALPASTE_PROFILE_HIGHLIGHT")
             .map(|v| v != "0")
             .unwrap_or(false);
-        let virtual_preview_enabled = std::env::var("LOCALPASTE_VIRTUAL_PREVIEW")
-            .map(|v| v != "0")
-            .unwrap_or(false);
 
         #[cfg(feature = "debug-tools")]
         {
@@ -1043,8 +396,6 @@ impl LocalPasteApp {
             filter_focus_requested: false,
             editor: EditorState::default(),
             status: None,
-            highlight_theme: HighlightTheme::from_style(&egui::Style::default()),
-            virtual_preview_enabled,
             style_applied: false,
             folder_dialog: None,
             _server: server,
@@ -1439,108 +790,11 @@ impl LocalPasteApp {
         self.editor.mark_dirty();
         // Set debounce timestamp for small-paste detection (if still Undetected)
         self.editor.language_pending_since = Some(Instant::now());
-        self.editor.request_highlight_update();
-        self.editor.highlight_pending_since = Some(Instant::now());
+        // Update line offsets for navigation
+        self.editor.line_offsets = compute_line_offsets(&self.editor.content);
         self.auto_save_blocked = false;
     }
 
-    fn ensure_highlight_data(
-        &mut self,
-        theme: &HighlightTheme,
-        language: &str,
-    ) -> Rc<HighlightData> {
-        let now = Instant::now();
-        let content_len = self.editor.content.len();
-
-        if content_len >= HIGHLIGHT_PLAIN_THRESHOLD {
-            if !self.editor.plain_highlight_mode {
-                self.editor.plain_highlight_mode = true;
-                self.editor.highlight_cache.clear();
-            }
-            if let Some(existing) = self
-                .editor
-                .highlight_cache
-                .current()
-                .filter(|data| data.plain)
-            {
-                // Plain-mode needs manual invalidation from mark_editor_dirty.
-                if self.editor.highlight_pending_since.is_none() {
-                    self.editor.line_offsets = existing.line_offsets.clone();
-                    return existing;
-                }
-            }
-            let data = self
-                .editor
-                .highlight_cache
-                .plain_text(theme, self.editor.content.as_str());
-            // Don't reset layout_cache - sync_chunks handles incremental updates
-            self.editor.highlight_pending_since = None;
-            self.editor.highlight_last_recompute = Some(now);
-            self.editor.line_offsets = data.line_offsets.clone();
-            return data;
-        }
-
-        if self.editor.plain_highlight_mode {
-            self.editor.plain_highlight_mode = false;
-            self.editor.highlight_cache.clear();
-        }
-
-        let mut should_recompute = self.editor.highlight_cache.current().is_none();
-
-        if !should_recompute {
-            if let Some(pending_since) = self.editor.highlight_pending_since {
-                if now.duration_since(pending_since) >= HIGHLIGHT_RECOMPUTE_DELAY {
-                    should_recompute = true;
-                }
-            }
-        }
-
-        if should_recompute {
-            let started = self
-                .profile_highlight
-                .then_some((Instant::now(), content_len));
-            #[cfg(feature = "debug-tools")]
-            let debug_start = Instant::now();
-
-            let data = self.editor.highlight_cache.recompute(
-                theme,
-                language,
-                self.editor.content.as_str(),
-            );
-            // Don't reset layout_cache - sync_chunks handles incremental updates
-            if let Some((began, chars)) = started {
-                let elapsed = began.elapsed();
-                debug!(
-                    "highlight_job duration_ms={:.3} chars={} lang={} paste_id={} chunks={}",
-                    elapsed.as_secs_f64() * 1_000.0,
-                    chars,
-                    language,
-                    self.editor.paste_id.as_deref().unwrap_or("unsaved"),
-                    data.chunks.len(),
-                );
-            }
-
-            #[cfg(feature = "debug-tools")]
-            {
-                let ms = debug_start.elapsed().as_secs_f32() * 1000.0;
-                self.debug_state.last_highlight_ms = Some(ms);
-                self.debug_state.log_operation("highlight", ms);
-            }
-
-            self.editor.highlight_pending_since = None;
-            self.editor.highlight_last_recompute = Some(now);
-            self.editor.line_offsets = data.line_offsets.clone();
-            data
-        } else {
-            let data = self
-                .editor
-                .highlight_cache
-                .current()
-                .expect("highlight data available when clean");
-            self.editor.line_offsets = data.line_offsets.clone();
-            data
-        }
-    }
     fn render_filter_bar(&mut self, ui: &mut egui::Ui) {
         let total_width = ui.available_width().max(60.0);
         let row_height = ui.spacing().interact_size.y;
@@ -1591,81 +845,6 @@ impl LocalPasteApp {
                 }
             },
         );
-    }
-
-    fn render_virtual_preview(
-        &self,
-        ui: &mut egui::Ui,
-        highlight_data: Rc<HighlightData>,
-        layout_cache: LayoutCache,
-    ) {
-        egui::ScrollArea::vertical()
-            .id_salt("virtual_preview_scroll")
-            .auto_shrink([false; 2])
-            .show(ui, |ui| {
-                let available_width = ui.available_width();
-                let pixels_per_point = ui.ctx().pixels_per_point();
-                let key = LayoutCacheKey::new(available_width, pixels_per_point);
-
-                let mut inner = layout_cache.inner.borrow_mut();
-                inner.sync_chunks(highlight_data.as_ref());
-
-                let mut heights = Vec::with_capacity(highlight_data.chunks.len());
-                let mut total_height = 0.0f32;
-
-                for (idx, chunk) in highlight_data.chunks.iter().enumerate() {
-                    let layout = inner.chunk_layout(ui, idx, chunk, key);
-                    heights.push(layout.height);
-                    total_height += layout.height;
-                }
-
-                let total_height = total_height.max(1.0);
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(available_width, total_height),
-                    egui::Sense::hover(),
-                );
-                let clip = ui.clip_rect();
-                let painter = ui.painter_at(rect);
-
-                let mut top_offset = 0.0f32;
-                for (idx, chunk) in highlight_data.chunks.iter().enumerate() {
-                    let height = heights[idx];
-                    let abs_top = rect.min.y + top_offset;
-                    let abs_bottom = abs_top + height;
-
-                    if abs_bottom >= clip.min.y && abs_top <= clip.max.y {
-                        let layout = inner.chunk_layout(ui, idx, chunk, key);
-                        painter.galley(
-                            egui::pos2(rect.min.x, abs_top),
-                            layout.galley.clone(),
-                            Color32::WHITE,
-                        );
-
-                        if self.profile_highlight {
-                            let label = format!("chunk {} • {:.1}px", idx, height);
-                            painter.text(
-                                egui::pos2(rect.min.x + 8.0, abs_top + 4.0),
-                                egui::Align2::LEFT_TOP,
-                                label,
-                                FontId::new(10.0, FontFamily::Monospace),
-                                COLOR_TEXT_MUTED,
-                            );
-                        }
-
-                        if idx + 1 != highlight_data.chunks.len() {
-                            painter.line_segment(
-                                [
-                                    egui::pos2(rect.min.x, abs_bottom),
-                                    egui::pos2(rect.max.x, abs_bottom),
-                                ],
-                                Stroke::new(0.5, COLOR_BORDER),
-                            );
-                        }
-                    }
-
-                    top_offset += height;
-                }
-            });
     }
 
     /// Single-shot language detection with debouncing for typing scenarios.
@@ -2712,35 +1891,31 @@ impl eframe::App for LocalPasteApp {
                     let syntax_token = LanguageSet::highlight_token(highlight_language.as_str())
                         .unwrap_or(highlight_language.as_str())
                         .to_string();
-                    let highlight_theme = self.highlight_theme.clone();
-                    let highlight_data =
-                        self.ensure_highlight_data(&highlight_theme, syntax_token.as_str());
-                    let layout_cache = self.editor.layout_cache.clone();
-                    let highlight_for_layout = highlight_data.clone();
-                    let layout_cache_for_layout = layout_cache.clone();
+
+                    // Use plain text for very large content to avoid perf issues
+                    let use_plain_mode = self.editor.content.len() >= HIGHLIGHT_PLAIN_THRESHOLD;
+                    let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
+
                     egui::ScrollArea::vertical()
                         .id_salt("editor_scroll")
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            let mut layouter =
-                                move |ui: &egui::Ui,
-                                      text: &dyn egui::TextBuffer,
-                                      wrap_width: f32| {
-                                    let actual = text.as_str();
-                                    // Verify highlight data matches actual text to prevent
-                                    // cursor desync during highlight debounce window
-                                    if highlight_for_layout.job.text == actual {
-                                        layout_cache_for_layout.layout(
-                                            ui,
-                                            wrap_width,
-                                            highlight_for_layout.as_ref(),
-                                        )
-                                    } else {
-                                        // Text mismatch: fall back to plain layout for
-                                        // correct cursor positioning
-                                        layout_cache_for_layout.layout_plain(ui, wrap_width, actual)
-                                    }
+                            let mut layouter = |ui: &egui::Ui, text: &str, wrap_width: f32| {
+                                let mut job = if use_plain_mode {
+                                    // Plain text for large files
+                                    egui::text::LayoutJob::simple(
+                                        text.to_owned(),
+                                        egui::FontId::monospace(14.0),
+                                        ui.visuals().text_color(),
+                                        wrap_width,
+                                    )
+                                } else {
+                                    // Syntax highlighted (memoized by egui_extras)
+                                    highlight(ui.ctx(), ui.style(), &theme, text, &syntax_token)
                                 };
+                                job.wrap.max_width = wrap_width;
+                                ui.fonts(|f| f.layout_job(job))
+                            };
 
                             let editor = egui::TextEdit::multiline(&mut self.editor.content)
                                 .font(text_style)
@@ -2756,10 +1931,9 @@ impl eframe::App for LocalPasteApp {
                             if let Some((started, _)) = layout_start {
                                 let elapsed = started.elapsed();
                                 debug!(
-                                    "text_edit_layout duration_ms={:.3} chars={} chunks={}",
+                                    "text_edit_layout duration_ms={:.3} chars={}",
                                     elapsed.as_secs_f64() * 1_000.0,
-                                    self.editor.content.len(),
-                                    highlight_data.chunks.len()
+                                    self.editor.content.len()
                                 );
                             }
                             if self.editor.needs_focus {
@@ -2776,17 +1950,6 @@ impl eframe::App for LocalPasteApp {
                                 self.mark_editor_dirty();
                             }
                         });
-
-                    if self.virtual_preview_enabled {
-                        ui.add_space(16.0);
-                        ui.label(
-                            RichText::new("Virtualized Preview (read-only)")
-                                .color(COLOR_TEXT_MUTED)
-                                .size(12.0),
-                        );
-                        ui.add_space(4.0);
-                        self.render_virtual_preview(ui, highlight_data, layout_cache);
-                    }
                 });
             });
         if let Some(mut dialog) = self.folder_dialog.take() {
@@ -3013,12 +2176,7 @@ struct EditorState {
     dirty: bool,
     last_modified: Option<Instant>,
     needs_focus: bool,
-    highlight_cache: HighlightCache,
-    layout_cache: LayoutCache,
-    highlight_pending_since: Option<Instant>,
-    highlight_last_recompute: Option<Instant>,
     line_offsets: Vec<usize>,
-    plain_highlight_mode: bool,
 }
 
 impl EditorState {
@@ -3046,8 +2204,6 @@ impl EditorState {
         self.tags = paste.tags;
         self.mark_pristine();
         self.needs_focus = true;
-        self.plain_highlight_mode = false;
-        self.reset_highlight_state();
         self.line_offsets = compute_line_offsets(&self.content);
     }
 
@@ -3075,20 +2231,6 @@ impl EditorState {
         self.dirty = false;
         self.last_modified = None;
     }
-
-    fn request_highlight_update(&mut self) {
-        self.highlight_pending_since = Some(Instant::now());
-    }
-
-    fn reset_highlight_state(&mut self) {
-        self.highlight_cache.clear();
-        self.layout_cache.reset();
-        self.highlight_pending_since = Some(Instant::now());
-        self.highlight_last_recompute = None;
-        self.line_offsets.clear();
-        self.line_offsets.push(0);
-        self.plain_highlight_mode = false;
-    }
 }
 
 impl Default for EditorState {
@@ -3105,12 +2247,7 @@ impl Default for EditorState {
             dirty: false,
             last_modified: None,
             needs_focus: false,
-            highlight_cache: HighlightCache::default(),
-            layout_cache: LayoutCache::default(),
-            highlight_pending_since: Some(Instant::now()),
-            highlight_last_recompute: None,
             line_offsets: vec![0],
-            plain_highlight_mode: false,
         }
     }
 }
