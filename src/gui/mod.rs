@@ -2026,6 +2026,7 @@ impl eframe::App for LocalPasteApp {
                             self.editor_focused = response.has_focus();
                             if let Some((started, _)) = layout_start {
                                 let elapsed = started.elapsed();
+                                #[cfg(any(feature = "debug-tools", feature = "profile"))]
                                 let ms = elapsed.as_secs_f32() * 1000.0;
                                 debug!(
                                     "text_edit_layout duration_ms={:.3} chars={}",
