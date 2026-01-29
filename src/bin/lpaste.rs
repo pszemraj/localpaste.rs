@@ -8,6 +8,8 @@ use clap_complete::{generate, Shell};
 use serde_json::Value;
 #[cfg(feature = "cli")]
 use std::io::{self, Read};
+#[cfg(feature = "cli")]
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "cli")]
 #[derive(Parser)]
@@ -25,6 +27,10 @@ struct Cli {
     /// Output in JSON format
     #[arg(short, long, global = true)]
     json: bool,
+
+    /// Print timing for API requests
+    #[arg(long, global = true)]
+    timing: bool,
 
     /// Request timeout in seconds
     #[arg(short = 't', long, default_value = "30")]
@@ -65,14 +71,48 @@ enum Commands {
 }
 
 #[cfg(feature = "cli")]
+fn log_timing(timing: bool, label: &str, duration: Duration) {
+    if timing {
+        eprintln!(
+            "[timing] {}: {:.1} ms",
+            label,
+            duration.as_secs_f64() * 1000.0
+        );
+    }
+}
+
+#[cfg(feature = "cli")]
+fn log_timing_parts(timing: bool, label: &str, request: Duration, parse: Option<Duration>) {
+    if !timing {
+        return;
+    }
+    if let Some(parse) = parse {
+        let total = request + parse;
+        eprintln!(
+            "[timing] {}: request {:.1} ms, parse {:.1} ms, total {:.1} ms",
+            label,
+            request.as_secs_f64() * 1000.0,
+            parse.as_secs_f64() * 1000.0,
+            total.as_secs_f64() * 1000.0
+        );
+    } else {
+        log_timing(timing, label, request);
+    }
+}
+
+#[cfg(feature = "cli")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(cli.timeout))
         .build()?;
+    let timing = cli.timing;
+    let json = cli.json;
+    let server = cli.server;
+    let command = cli.command;
 
-    match cli.command {
+    match command {
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             let name = cmd.get_name().to_string();
@@ -93,13 +133,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 body["name"] = n.into();
             }
 
+            let request_start = Instant::now();
             let res = client
-                .post(format!("{}/api/paste", cli.server))
+                .post(format!("{}/api/paste", server))
                 .json(&body)
                 .send()
                 .await?;
+            let request_elapsed = request_start.elapsed();
+
+            let parse_start = Instant::now();
             let paste: Value = res.json().await?;
-            if cli.json {
+            let parse_elapsed = parse_start.elapsed();
+
+            log_timing_parts(timing, "new", request_elapsed, Some(parse_elapsed));
+            if json {
                 println!("{}", serde_json::to_string_pretty(&paste)?);
             } else {
                 println!(
@@ -110,19 +157,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Get { id } => {
+            let request_start = Instant::now();
             let res = client
-                .get(format!("{}/api/paste/{}", cli.server, id))
+                .get(format!("{}/api/paste/{}", server, id))
                 .send()
                 .await?;
+            let request_elapsed = request_start.elapsed();
+
+            let parse_start = Instant::now();
             let paste: Value = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+
+            log_timing_parts(timing, "get", request_elapsed, Some(parse_elapsed));
             println!("{}", paste["content"].as_str().unwrap());
         }
         Commands::List { limit } => {
+            let request_start = Instant::now();
             let res = client
-                .get(format!("{}/api/pastes?limit={}", cli.server, limit))
+                .get(format!("{}/api/pastes?limit={}", server, limit))
                 .send()
                 .await?;
+            let request_elapsed = request_start.elapsed();
+
+            let parse_start = Instant::now();
             let pastes: Vec<Value> = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+
+            log_timing_parts(timing, "list", request_elapsed, Some(parse_elapsed));
             for p in pastes {
                 println!(
                     "{:<24} {:<30}",
@@ -132,11 +193,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Search { query } => {
+            let request_start = Instant::now();
             let res = client
-                .get(format!("{}/api/search?q={}", cli.server, query))
+                .get(format!("{}/api/search?q={}", server, query))
                 .send()
                 .await?;
+            let request_elapsed = request_start.elapsed();
+
+            let parse_start = Instant::now();
             let pastes: Vec<Value> = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+
+            log_timing_parts(timing, "search", request_elapsed, Some(parse_elapsed));
             for p in pastes {
                 println!(
                     "{:<24} {:<30}",
@@ -146,10 +214,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Delete { id } => {
+            let request_start = Instant::now();
             client
-                .delete(format!("{}/api/paste/{}", cli.server, id))
+                .delete(format!("{}/api/paste/{}", server, id))
                 .send()
                 .await?;
+            let request_elapsed = request_start.elapsed();
+            log_timing(timing, "delete", request_elapsed);
             println!("Deleted paste: {}", id);
         }
     }
