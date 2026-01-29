@@ -5,16 +5,23 @@
 ```text
 localpaste.rs/
 |-- Cargo.toml
+|-- crates/
+|   `-- localpaste_core/        # Config, storage, models, naming, core errors
+|       `-- src/
+|           |-- config.rs
+|           |-- db/
+|           |-- error.rs
+|           |-- models/
+|           `-- naming/
 |-- src/
 |   |-- bin/
 |   |   |-- localpaste-gui.rs   # Native egui desktop launcher
 |   |   `-- lpaste.rs           # CLI client (requires `cli` feature)
 |   |-- gui/                    # egui widgets / layout
 |   |-- handlers/               # HTTP handlers
-|   |-- models/                 # Data models
-|   |-- db/                     # Database layer (sled)
-|   `-- naming/                 # Semantic name generation
-|-- src/main.rs                 # HTTP API / headless server
+|   |-- error.rs                # HTTP error wrapper
+|   |-- lib.rs                  # Axum router + core re-exports
+|   `-- main.rs                 # HTTP API / headless server
 |-- docs/                       # Project documentation
 |-- assets/                     # Screenshots / design references
 `-- target/                     # Build artifacts (git-ignored)
@@ -85,6 +92,9 @@ The project contains two binaries:
 # Build both binaries
 cargo build --release
 
+# Build core library only
+cargo build -p localpaste_core
+
 # Build only the server
 cargo build --release --bin localpaste
 
@@ -111,6 +121,9 @@ RUST_LOG=debug cargo run --bin localpaste
 
 # Run tests (include GUI when necessary)
 cargo test --features gui
+
+# Run core tests only
+cargo test -p localpaste_core
 
 # Format code
 cargo fmt
@@ -158,8 +171,9 @@ echo "test" | ./target/release/lpaste new
 ### Adding New Features
 
 1. **Backend Changes**
-   - Add model in `src/models/`
-   - Add database operations in `src/db/`
+   - Add model in `crates/localpaste_core/src/models/`
+   - Add database operations in `crates/localpaste_core/src/db/`
+   - Add naming helpers in `crates/localpaste_core/src/naming/`
    - Add handler in `src/handlers/`
    - Register route in `src/lib.rs`
 
