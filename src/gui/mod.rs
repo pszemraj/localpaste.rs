@@ -704,6 +704,25 @@ impl LayoutCache {
         );
         galley
     }
+
+    /// Plain layout fallback for when cached highlight data doesn't match current text.
+    /// This ensures cursor positioning is always correct, even during the highlight
+    /// debounce window when the cached data may be stale.
+    fn layout_plain(&self, ui: &egui::Ui, wrap_width: f32, text: &str) -> Arc<egui::text::Galley> {
+        let font_id = egui::FontId::monospace(14.0);
+        let color = ui.visuals().text_color();
+        let job = egui::text::LayoutJob::simple(
+            text.to_owned(),
+            font_id,
+            color,
+            if wrap_width.is_finite() {
+                wrap_width
+            } else {
+                f32::INFINITY
+            },
+        );
+        ui.fonts(|fonts| Arc::new(fonts.layout_job(job)))
+    }
 }
 
 #[derive(Clone)]
@@ -2705,13 +2724,22 @@ impl eframe::App for LocalPasteApp {
                         .show(ui, |ui| {
                             let mut layouter =
                                 move |ui: &egui::Ui,
-                                      _text: &dyn egui::TextBuffer,
+                                      text: &dyn egui::TextBuffer,
                                       wrap_width: f32| {
-                                    layout_cache_for_layout.layout(
-                                        ui,
-                                        wrap_width,
-                                        highlight_for_layout.as_ref(),
-                                    )
+                                    let actual = text.as_str();
+                                    // Verify highlight data matches actual text to prevent
+                                    // cursor desync during highlight debounce window
+                                    if highlight_for_layout.job.text == actual {
+                                        layout_cache_for_layout.layout(
+                                            ui,
+                                            wrap_width,
+                                            highlight_for_layout.as_ref(),
+                                        )
+                                    } else {
+                                        // Text mismatch: fall back to plain layout for
+                                        // correct cursor positioning
+                                        layout_cache_for_layout.layout_plain(ui, wrap_width, actual)
+                                    }
                                 };
 
                             let editor = egui::TextEdit::multiline(&mut self.editor.content)
