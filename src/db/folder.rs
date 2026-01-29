@@ -43,7 +43,6 @@ impl FolderDb {
     ///
     /// # Errors
     /// Returns an error if the lookup fails.
-    #[allow(dead_code)]
     pub fn get(&self, id: &str) -> Result<Option<Folder>, AppError> {
         Ok(self
             .tree

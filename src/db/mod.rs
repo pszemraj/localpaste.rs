@@ -247,20 +247,6 @@ impl Database {
         })
     }
 
-    /// Get database checksum for verification
-    ///
-    /// # Returns
-    /// A checksum value from sled.
-    ///
-    /// # Errors
-    /// Returns an error if sled cannot compute a checksum.
-    #[allow(dead_code)]
-    pub fn checksum(&self) -> Result<u32, AppError> {
-        self.db
-            .checksum()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to compute checksum: {}", e)))
-    }
-
     /// Flush all pending writes to disk.
     ///
     /// # Returns

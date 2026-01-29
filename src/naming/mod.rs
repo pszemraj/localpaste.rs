@@ -196,7 +196,6 @@ pub fn generate_name() -> String {
 ///
 /// # Returns
 /// A name that does not collide according to `exists_check`.
-#[allow(dead_code)]
 pub fn generate_unique_name<F>(exists_check: F) -> String
 where
     F: Fn(&str) -> bool,
