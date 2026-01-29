@@ -101,6 +101,21 @@ fn log_timing_parts(timing: bool, label: &str, request: Duration, parse: Option<
 }
 
 #[cfg(feature = "cli")]
+fn normalize_server(server: String) -> String {
+    if let Ok(mut url) = reqwest::Url::parse(&server) {
+        if url.host_str() == Some("localhost") {
+            let _ = url.set_host(Some("127.0.0.1"));
+        }
+        let mut normalized = url.to_string();
+        while normalized.ends_with('/') {
+            normalized.pop();
+        }
+        return normalized;
+    }
+    server
+}
+
+#[cfg(feature = "cli")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -109,7 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let timing = cli.timing;
     let json = cli.json;
-    let server = cli.server;
+    let server = normalize_server(cli.server);
     let command = cli.command;
 
     match command {
