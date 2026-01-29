@@ -1,9 +1,22 @@
+//! Paste HTTP handlers.
+
 use crate::{error::AppError, models::paste::*, naming, AppState};
 use axum::{
     extract::{Path, Query, State},
     Json,
 };
 
+/// Create a new paste.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `req`: Paste creation payload.
+///
+/// # Returns
+/// The created paste as JSON.
+///
+/// # Errors
+/// Returns an error if validation or persistence fails.
 pub async fn create_paste(
     State(state): State<AppState>,
     Json(mut req): Json<CreatePasteRequest>,
@@ -60,6 +73,17 @@ pub async fn create_paste(
     Ok(Json(paste))
 }
 
+/// Fetch a paste by id.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `id`: Paste identifier from the path.
+///
+/// # Returns
+/// The paste as JSON.
+///
+/// # Errors
+/// Returns an error if the paste does not exist or lookup fails.
 pub async fn get_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -72,6 +96,18 @@ pub async fn get_paste(
         .ok_or(AppError::NotFound)
 }
 
+/// Update an existing paste.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `id`: Paste identifier from the path.
+/// - `req`: Paste update payload.
+///
+/// # Returns
+/// Updated paste as JSON.
+///
+/// # Errors
+/// Returns an error if validation or persistence fails.
 pub async fn update_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -137,6 +173,17 @@ pub async fn update_paste(
     }
 }
 
+/// Delete a paste by id.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `id`: Paste identifier from the path.
+///
+/// # Returns
+/// Success marker as JSON.
+///
+/// # Errors
+/// Returns an error if deletion fails.
 pub async fn delete_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -157,6 +204,17 @@ pub async fn delete_paste(
     }
 }
 
+/// List pastes with optional filters.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `query`: List query parameters.
+///
+/// # Returns
+/// Pastes as JSON.
+///
+/// # Errors
+/// Returns an error if listing fails.
 pub async fn list_pastes(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
@@ -166,6 +224,17 @@ pub async fn list_pastes(
     Ok(Json(pastes))
 }
 
+/// Search pastes by query.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `query`: Search query parameters.
+///
+/// # Returns
+/// Matching pastes as JSON.
+///
+/// # Errors
+/// Returns an error if search fails.
 pub async fn search_pastes(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,

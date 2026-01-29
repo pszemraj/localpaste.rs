@@ -1,7 +1,10 @@
+//! Configuration loading from environment variables.
+
 use serde::Deserialize;
 use std::env;
 use std::path::PathBuf;
 
+/// Runtime configuration for LocalPaste.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub db_path: String,
@@ -49,6 +52,10 @@ fn resolve_home_dir() -> Option<PathBuf> {
 }
 
 impl Config {
+    /// Load configuration from environment variables.
+    ///
+    /// # Returns
+    /// A populated [`Config`] with defaults applied when env vars are missing.
     pub fn from_env() -> Self {
         Self {
             db_path: env::var("DB_PATH").map(expand_tilde).unwrap_or_else(|_| {

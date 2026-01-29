@@ -1,7 +1,10 @@
+//! Paste-related data models and language detection.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Paste metadata stored in the database and returned by the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Paste {
     pub id: String,
@@ -17,6 +20,7 @@ pub struct Paste {
     pub is_markdown: bool,
 }
 
+/// Request payload for creating a paste.
 #[derive(Debug, Deserialize)]
 pub struct CreatePasteRequest {
     pub content: String,
@@ -27,6 +31,7 @@ pub struct CreatePasteRequest {
     pub name: Option<String>,
 }
 
+/// Request payload for updating a paste.
 #[derive(Debug, Deserialize, Clone)]
 pub struct UpdatePasteRequest {
     pub content: Option<String>,
@@ -37,6 +42,7 @@ pub struct UpdatePasteRequest {
     pub tags: Option<Vec<String>>,
 }
 
+/// Query parameters for searching pastes.
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub q: String,
@@ -45,6 +51,7 @@ pub struct SearchQuery {
     pub limit: Option<usize>,
 }
 
+/// Query parameters for listing pastes.
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
     pub limit: Option<usize>,
@@ -52,6 +59,14 @@ pub struct ListQuery {
 }
 
 impl Paste {
+    /// Create a new paste with inferred language and defaults.
+    ///
+    /// # Arguments
+    /// - `content`: Paste content.
+    /// - `name`: Paste display name.
+    ///
+    /// # Returns
+    /// A new [`Paste`] instance.
     pub fn new(content: String, name: String) -> Self {
         let now = Utc::now();
         Self {
@@ -69,6 +84,10 @@ impl Paste {
     }
 }
 
+/// Best-effort language detection based on simple heuristics.
+///
+/// # Returns
+/// Detected language identifier, or `None` if unknown.
 pub fn detect_language(content: &str) -> Option<String> {
     let trimmed = content.trim();
     if trimmed.is_empty() {

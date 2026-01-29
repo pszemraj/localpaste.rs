@@ -1,3 +1,5 @@
+//! Folder HTTP handlers.
+
 use crate::{error::AppError, models::folder::*, models::paste::UpdatePasteRequest, AppState};
 use axum::{
     extract::{Path, State},
@@ -5,6 +7,17 @@ use axum::{
 };
 use std::collections::{HashMap, HashSet};
 
+/// Create a new folder.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `req`: Folder creation payload.
+///
+/// # Returns
+/// The created folder as JSON.
+///
+/// # Errors
+/// Returns an error if validation or persistence fails.
 pub async fn create_folder(
     State(state): State<AppState>,
     Json(req): Json<CreateFolderRequest>,
@@ -23,11 +36,33 @@ pub async fn create_folder(
     Ok(Json(folder))
 }
 
+/// List all folders.
+///
+/// # Returns
+/// All folders as JSON.
+///
+/// # Errors
+/// Returns an error if listing fails.
 pub async fn list_folders(State(state): State<AppState>) -> Result<Json<Vec<Folder>>, AppError> {
     let folders = state.db.folders.list()?;
     Ok(Json(folders))
 }
 
+/// Update a folder's name or parent.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `id`: Folder identifier from the path.
+/// - `req`: Folder update payload.
+///
+/// # Returns
+/// Updated folder as JSON.
+///
+/// # Errors
+/// Returns an error if validation or persistence fails.
+///
+/// # Panics
+/// Does not intentionally panic; any panic indicates a logic bug.
 pub async fn update_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -75,6 +110,17 @@ pub async fn update_folder(
         .ok_or(AppError::NotFound)
 }
 
+/// Delete a folder and migrate its pastes to unfiled.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `id`: Folder identifier from the path.
+///
+/// # Returns
+/// Success marker as JSON.
+///
+/// # Errors
+/// Returns an error if deletion or migration fails.
 pub async fn delete_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,

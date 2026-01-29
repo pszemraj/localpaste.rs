@@ -1,3 +1,5 @@
+//! egui desktop UI for LocalPaste.
+
 use std::{
     cell::RefCell,
     collections::{hash_map::DefaultHasher, HashMap},
@@ -743,6 +745,13 @@ fn default_export_filename(name: &str, extension: &str) -> String {
     }
 }
 
+/// Build the application icon bitmap.
+///
+/// # Returns
+/// The icon pixel data for egui.
+///
+/// # Panics
+/// Does not intentionally panic.
 pub fn app_icon() -> egui::IconData {
     fn write_pixel(rgba: &mut [u8], x: usize, y: usize, color: [u8; 4]) {
         if x >= ICON_SIZE || y >= ICON_SIZE {
@@ -863,6 +872,12 @@ pub struct LocalPasteApp {
 
 impl LocalPasteApp {
     /// Construct the GUI application using shared backend components.
+    ///
+    /// # Returns
+    /// A fully initialized [`LocalPasteApp`].
+    ///
+    /// # Errors
+    /// Returns an error if configuration, database, or server initialization fails.
     pub fn initialise() -> Result<Self, AppError> {
         let config = Config::from_env();
         let database = Database::new(&config.db_path)?;

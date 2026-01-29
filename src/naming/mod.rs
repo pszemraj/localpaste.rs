@@ -1,3 +1,5 @@
+//! Utilities for generating human-friendly paste names.
+
 use rand::Rng;
 
 const ADJECTIVES: &[&str] = &[
@@ -174,6 +176,13 @@ const NOUNS: &[&str] = &[
     "flare",
 ];
 
+/// Generate a random adjective-noun name.
+///
+/// # Returns
+/// A randomly composed name.
+///
+/// # Panics
+/// Does not intentionally panic.
 pub fn generate_name() -> String {
     let mut rng = rand::thread_rng();
     let adj = ADJECTIVES[rng.gen_range(0..ADJECTIVES.len())];
@@ -181,8 +190,12 @@ pub fn generate_name() -> String {
     format!("{}-{}", adj, noun)
 }
 
-/// Generate a unique name, with collision handling
-/// Tries base name first, then appends random suffix if needed
+/// Generate a unique name, with collision handling.
+///
+/// Tries base name first, then appends a random suffix if needed.
+///
+/// # Returns
+/// A name that does not collide according to `exists_check`.
 #[allow(dead_code)]
 pub fn generate_unique_name<F>(exists_check: F) -> String
 where

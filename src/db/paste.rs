@@ -1,19 +1,36 @@
+//! Paste storage operations backed by sled.
+
 use crate::{error::AppError, models::paste::*};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sled::Db;
 use std::sync::Arc;
 
+/// Accessor for the `pastes` sled tree.
 pub struct PasteDb {
     tree: sled::Tree,
 }
 
 impl PasteDb {
+    /// Open the `pastes` tree.
+    ///
+    /// # Returns
+    /// A [`PasteDb`] bound to the `pastes` tree.
+    ///
+    /// # Errors
+    /// Returns an error if the tree cannot be opened.
     pub fn new(db: Arc<Db>) -> Result<Self, AppError> {
         let tree = db.open_tree("pastes")?;
         Ok(Self { tree })
     }
 
+    /// Insert a new paste.
+    ///
+    /// # Returns
+    /// `Ok(())` on success.
+    ///
+    /// # Errors
+    /// Returns an error if serialization or insertion fails.
     pub fn create(&self, paste: &Paste) -> Result<(), AppError> {
         let key = paste.id.as_bytes();
         let value = bincode::serialize(paste)?;
@@ -21,6 +38,13 @@ impl PasteDb {
         Ok(())
     }
 
+    /// Fetch a paste by id.
+    ///
+    /// # Returns
+    /// The paste if it exists.
+    ///
+    /// # Errors
+    /// Returns an error if the lookup fails.
     pub fn get(&self, id: &str) -> Result<Option<Paste>, AppError> {
         match self.tree.get(id.as_bytes())? {
             Some(value) => Ok(Some(deserialize_paste(&value)?)),
@@ -28,6 +52,17 @@ impl PasteDb {
         }
     }
 
+    /// Update a paste by id.
+    ///
+    /// # Arguments
+    /// - `id`: Paste identifier.
+    /// - `update`: Update payload to apply.
+    ///
+    /// # Returns
+    /// Updated paste if it exists.
+    ///
+    /// # Errors
+    /// Returns an error if the update fails.
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
             old.and_then(|bytes| {
@@ -70,10 +105,28 @@ impl PasteDb {
         }
     }
 
+    /// Delete a paste by id.
+    ///
+    /// # Returns
+    /// `true` if a paste was deleted.
+    ///
+    /// # Errors
+    /// Returns an error if deletion fails.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
         Ok(self.tree.remove(id.as_bytes())?.is_some())
     }
 
+    /// List pastes with an optional folder filter.
+    ///
+    /// # Arguments
+    /// - `limit`: Maximum number of pastes to return.
+    /// - `folder_id`: Optional folder id to filter by.
+    ///
+    /// # Returns
+    /// Pastes sorted by most recently updated.
+    ///
+    /// # Errors
+    /// Returns an error if iteration fails.
     pub fn list(&self, limit: usize, folder_id: Option<String>) -> Result<Vec<Paste>, AppError> {
         let mut pastes = Vec::new();
 
@@ -99,6 +152,19 @@ impl PasteDb {
         Ok(pastes)
     }
 
+    /// Search pastes by query with optional filters.
+    ///
+    /// # Arguments
+    /// - `query`: Search term.
+    /// - `limit`: Maximum number of results.
+    /// - `folder_id`: Optional folder filter.
+    /// - `language`: Optional language filter.
+    ///
+    /// # Returns
+    /// Matching pastes sorted by score.
+    ///
+    /// # Errors
+    /// Returns an error if iteration fails.
     pub fn search(
         &self,
         query: &str,

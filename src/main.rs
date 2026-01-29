@@ -1,3 +1,5 @@
+//! Headless API server entrypoint.
+
 use std::{net::SocketAddr, sync::Arc};
 
 use localpaste::{config::Config, db::Database, serve_router, AppState};

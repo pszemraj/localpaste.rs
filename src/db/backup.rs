@@ -1,3 +1,5 @@
+//! Backup and restore helpers for sled databases.
+
 use crate::error::AppError;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,14 +40,28 @@ pub struct BackupManager {
 }
 
 impl BackupManager {
+    /// Create a backup manager for the database path.
+    ///
+    /// # Returns
+    /// A new [`BackupManager`] bound to `db_path`.
     pub fn new(db_path: &str) -> Self {
         Self {
             db_path: PathBuf::from(db_path),
         }
     }
 
-    /// Create a backup by copying the database directory
-    /// Since sled's export/import is for version migrations, we'll use directory copy
+    /// Create a backup by copying the database directory.
+    ///
+    /// Since sled's export/import is for version migrations, we use directory copy.
+    ///
+    /// # Returns
+    /// The backup path, or an empty string if the database path does not exist.
+    ///
+    /// # Errors
+    /// Returns an error if copying files fails.
+    ///
+    /// # Panics
+    /// Panics if the system clock is before `UNIX_EPOCH`.
     pub fn create_backup(&self, _db: &sled::Db) -> Result<String, AppError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -64,7 +80,13 @@ impl BackupManager {
         }
     }
 
-    /// Restore from a backup directory
+    /// Restore from a backup directory.
+    ///
+    /// # Returns
+    /// `Ok(())` when the database has been restored.
+    ///
+    /// # Errors
+    /// Returns an error if deletion or copy fails.
     #[allow(dead_code)]
     pub fn restore_backup(&self, backup_dir: &str) -> Result<(), AppError> {
         // Simple directory copy restoration
@@ -80,7 +102,17 @@ impl BackupManager {
         Ok(())
     }
 
-    /// Verify database integrity using checksums
+    /// Verify database integrity using checksums.
+    ///
+    /// # Arguments
+    /// - `db1`: First database handle.
+    /// - `db2`: Second database handle.
+    ///
+    /// # Returns
+    /// `true` if checksums match.
+    ///
+    /// # Errors
+    /// Returns an error if a checksum cannot be computed.
     #[allow(dead_code)]
     pub fn verify_integrity(db1: &sled::Db, db2: &sled::Db) -> Result<bool, AppError> {
         let checksum1 = db1
@@ -94,7 +126,13 @@ impl BackupManager {
         Ok(checksum1 == checksum2)
     }
 
-    /// List available backups
+    /// List available backups.
+    ///
+    /// # Returns
+    /// A sorted list of backup paths.
+    ///
+    /// # Errors
+    /// Returns an error if the backup directory cannot be read.
     #[allow(dead_code)]
     pub fn list_backups(&self) -> Result<Vec<String>, AppError> {
         let parent = self.db_path.parent().unwrap_or(Path::new("."));
@@ -118,7 +156,16 @@ impl BackupManager {
         Ok(backups)
     }
 
-    /// Clean up old backups (keep last N backups)
+    /// Clean up old backups (keep last N backups).
+    ///
+    /// # Returns
+    /// `Ok(())` after cleanup completes.
+    ///
+    /// # Errors
+    /// Returns an error if removing backup files fails.
+    ///
+    /// # Panics
+    /// Does not intentionally panic; any panic would indicate a logic bug.
     #[allow(dead_code)]
     pub fn cleanup_old_backups(&self, keep_count: usize) -> Result<(), AppError> {
         let mut backups = self.list_backups()?;

@@ -1,3 +1,5 @@
+//! Utilities for handling sled lock files safely.
+
 use crate::error::AppError;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,12 +11,19 @@ pub struct LockManager {
 }
 
 impl LockManager {
+    /// Create a lock manager for a database path.
+    ///
+    /// # Returns
+    /// A new [`LockManager`] instance.
     pub fn new(db_path: &str) -> Self {
         let lock_path = PathBuf::from(format!("{}.lock", db_path));
         Self { lock_path }
     }
 
-    /// Check if a lock file exists and if it's stale
+    /// Check if a lock file exists and if it's stale.
+    ///
+    /// # Returns
+    /// Current lock status for the database.
     #[allow(dead_code)]
     pub fn check_lock(&self) -> LockStatus {
         if !self.lock_path.exists() {
@@ -45,7 +54,13 @@ impl LockManager {
         LockStatus::LockedUnknown
     }
 
-    /// Try to clean up a stale lock
+    /// Try to clean up a stale lock.
+    ///
+    /// # Returns
+    /// `Ok(())` if the lock is removed or not present.
+    ///
+    /// # Errors
+    /// Returns an error if the lock is held by another process or removal fails.
     #[allow(dead_code)]
     pub fn cleanup_stale_lock(&self) -> Result<(), AppError> {
         match self.check_lock() {
@@ -67,7 +82,13 @@ impl LockManager {
         }
     }
 
-    /// Force unlock (use with caution!)
+    /// Force unlock (use with caution!).
+    ///
+    /// # Returns
+    /// `Ok(())` if the lock file is removed or not present.
+    ///
+    /// # Errors
+    /// Returns an error if removal fails.
     pub fn force_unlock(&self) -> Result<(), AppError> {
         if self.lock_path.exists() {
             tracing::warn!("Force removing lock file: {:?}", self.lock_path);
@@ -78,7 +99,16 @@ impl LockManager {
         Ok(())
     }
 
-    /// Create a backup of the database before potentially destructive operations
+    /// Create a backup of the database before potentially destructive operations.
+    ///
+    /// # Returns
+    /// The backup path, or an empty string if the database path does not exist.
+    ///
+    /// # Errors
+    /// Returns an error if the backup copy fails.
+    ///
+    /// # Panics
+    /// Panics if the system clock is before `UNIX_EPOCH`.
     pub fn backup_database(db_path: &str) -> Result<String, AppError> {
         let db_path = Path::new(db_path);
         if !db_path.exists() {
@@ -106,6 +136,7 @@ impl LockManager {
     }
 }
 
+/// Current lock status for the database path.
 #[allow(dead_code)]
 pub enum LockStatus {
     Unlocked,
