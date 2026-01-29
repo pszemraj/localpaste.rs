@@ -1126,6 +1126,9 @@ impl LocalPasteApp {
     }
 
     fn reload_pastes(&mut self, reason: &str) {
+        #[cfg(feature = "debug-tools")]
+        let start = Instant::now();
+
         match self.db.pastes.list(512, None) {
             Ok(mut loaded) => {
                 info!("refreshed {} pastes ({})", loaded.len(), reason);
@@ -1154,6 +1157,18 @@ impl LocalPasteApp {
                     format!("Failed to load pastes: {}", err),
                 );
             }
+        }
+
+        #[cfg(feature = "debug-tools")]
+        {
+            let ms = start.elapsed().as_secs_f32() * 1000.0;
+            self.debug_state.last_reload_ms = Some(ms);
+            self.debug_state.log_operation("reload_pastes", ms);
+            eprintln!(
+                "[debug-tools] reload_pastes: {} pastes, {} folders",
+                self.pastes.len(),
+                self.folders.len()
+            );
         }
     }
 
@@ -1449,6 +1464,9 @@ impl LocalPasteApp {
             let started = self
                 .profile_highlight
                 .then_some((Instant::now(), content_len));
+            #[cfg(feature = "debug-tools")]
+            let debug_start = Instant::now();
+
             let data = self.editor.highlight_cache.recompute(
                 theme,
                 language,
@@ -1466,6 +1484,14 @@ impl LocalPasteApp {
                     data.chunks.len(),
                 );
             }
+
+            #[cfg(feature = "debug-tools")]
+            {
+                let ms = debug_start.elapsed().as_secs_f32() * 1000.0;
+                self.debug_state.last_highlight_ms = Some(ms);
+                self.debug_state.log_operation("highlight", ms);
+            }
+
             self.editor.highlight_pending_since = None;
             self.editor.highlight_last_recompute = Some(now);
             self.editor.line_offsets = data.line_offsets.clone();
@@ -1865,6 +1891,9 @@ impl LocalPasteApp {
     }
 
     fn save_current_paste(&mut self) {
+        #[cfg(feature = "debug-tools")]
+        let start = Instant::now();
+
         if self.editor.name.trim().is_empty() {
             self.push_status(StatusLevel::Error, "Name cannot be empty".into());
             return;
@@ -1879,6 +1908,13 @@ impl LocalPasteApp {
             self.update_existing_paste(id.clone());
         } else {
             self.persist_new_paste();
+        }
+
+        #[cfg(feature = "debug-tools")]
+        {
+            let ms = start.elapsed().as_secs_f32() * 1000.0;
+            self.debug_state.last_save_ms = Some(ms);
+            self.debug_state.log_operation("save", ms);
         }
     }
 
@@ -2224,6 +2260,10 @@ fn resolve_bind_address(config: &Config) -> SocketAddr {
 
 impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Record frame start time for debug-tools
+        #[cfg(feature = "debug-tools")]
+        let frame_start = Instant::now();
+
         self.ensure_style(ctx);
         self.ensure_language_selection();
         let editor_was_focused = self.editor_focused;
@@ -2756,7 +2796,126 @@ impl eframe::App for LocalPasteApp {
                 self.folder_dialog = Some(dialog);
             }
         }
+        // Debug panel and frame timing (debug-tools feature)
+        #[cfg(feature = "debug-tools")]
+        {
+            // Record frame time
+            let frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
+            self.debug_state.record_frame_time(frame_ms);
+
+            // Render debug panel window if visible
+            if self.debug_state.show_panel {
+                self.render_debug_panel(ctx);
+            }
+        }
+
         self.handle_auto_save(ctx);
+    }
+}
+
+#[cfg(feature = "debug-tools")]
+impl LocalPasteApp {
+    /// Render the debug panel window with performance metrics.
+    fn render_debug_panel(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Debug Tools")
+            .default_width(320.0)
+            .resizable(true)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                ui.heading("Frame Timing");
+                ui.separator();
+
+                let avg = self.debug_state.avg_frame_time();
+                let p95 = self.debug_state.p95_frame_time();
+                let p99 = self.debug_state.p99_frame_time();
+                let slow_count = self.debug_state.slow_frame_count;
+                let sample_count = self.debug_state.frame_times.len();
+
+                ui.horizontal(|ui| {
+                    ui.label("Samples:");
+                    ui.monospace(format!("{}", sample_count));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Avg:");
+                    ui.monospace(format!("{:.2} ms", avg));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("P95:");
+                    ui.monospace(format!("{:.2} ms", p95));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("P99:");
+                    ui.monospace(format!("{:.2} ms", p99));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Slow frames (>16ms):");
+                    ui.monospace(format!("{}", slow_count));
+                });
+
+                ui.add_space(12.0);
+                ui.heading("Data Counts");
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    ui.label("Pastes:");
+                    ui.monospace(format!("{}", self.pastes.len()));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Folders:");
+                    ui.monospace(format!("{}", self.folders.len()));
+                });
+
+                ui.add_space(12.0);
+                ui.heading("Last Operation Timings");
+                ui.separator();
+
+                if let Some(ms) = self.debug_state.last_reload_ms {
+                    ui.horizontal(|ui| {
+                        ui.label("Reload:");
+                        ui.monospace(format!("{:.2} ms", ms));
+                    });
+                }
+                if let Some(ms) = self.debug_state.last_save_ms {
+                    ui.horizontal(|ui| {
+                        ui.label("Save:");
+                        ui.monospace(format!("{:.2} ms", ms));
+                    });
+                }
+                if let Some(ms) = self.debug_state.last_highlight_ms {
+                    ui.horizontal(|ui| {
+                        ui.label("Highlight:");
+                        ui.monospace(format!("{:.2} ms", ms));
+                    });
+                }
+
+                ui.add_space(12.0);
+                ui.heading("Editor State");
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    ui.label("Content size:");
+                    ui.monospace(format!("{} bytes", self.editor.content.len()));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Dirty:");
+                    ui.monospace(format!("{}", self.editor.dirty));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Plain highlight mode:");
+                    ui.monospace(format!("{}", self.editor.plain_highlight_mode));
+                });
+                if let Some(lang) = &self.editor.language {
+                    ui.horizontal(|ui| {
+                        ui.label("Language:");
+                        ui.monospace(lang);
+                    });
+                }
+
+                ui.add_space(12.0);
+                if ui.button("Close (Ctrl+Shift+D)").clicked() {
+                    self.debug_state.show_panel = false;
+                }
+            });
     }
 }
 
