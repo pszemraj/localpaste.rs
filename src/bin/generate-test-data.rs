@@ -550,10 +550,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.clear {
         println!("Clearing existing data...");
-        // Delete all pastes
-        let pastes = db.pastes.list(10000, None)?;
-        for paste in &pastes {
-            db.pastes.delete(&paste.id)?;
+        // Delete all pastes (loop until empty to handle large datasets)
+        let mut deleted_pastes = 0usize;
+        loop {
+            let pastes = db.pastes.list(10000, None)?;
+            if pastes.is_empty() {
+                break;
+            }
+            for paste in &pastes {
+                db.pastes.delete(&paste.id)?;
+            }
+            deleted_pastes += pastes.len();
         }
         // Delete all folders
         let folders = db.folders.list()?;
@@ -563,7 +570,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         db.flush()?;
         println!(
             "Cleared {} pastes and {} folders",
-            pastes.len(),
+            deleted_pastes,
             folders.len()
         );
     }
