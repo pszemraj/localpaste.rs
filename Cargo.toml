@@ -63,11 +63,17 @@ axum-test = "16.4"
 default = ["gui"]
 cli = ["clap", "clap_complete", "reqwest"]
 gui = ["egui", "eframe", "egui_extras", "rfd", "syntect"]
+debug-tools = []
 
 [[bin]]
 name = "localpaste-gui"
 path = "src/bin/localpaste-gui.rs"
 required-features = ["gui"]
+
+[[bin]]
+name = "generate-test-data"
+path = "src/bin/generate-test-data.rs"
+required-features = ["cli"]
 
 [profile.dev]
 codegen-units = 16

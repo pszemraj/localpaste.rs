@@ -2,7 +2,7 @@
 
 use std::{
     cell::RefCell,
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
     fs,
     hash::{Hash, Hasher},
     net::SocketAddr,
@@ -54,6 +54,87 @@ const AUTO_DETECT_MIN_LINES: usize = 3;
 const HIGHLIGHT_RECOMPUTE_DELAY: Duration = Duration::from_millis(75);
 const HIGHLIGHT_CHUNK_SIZE: usize = 4 * 1024;
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
+
+/// Frame time threshold for "slow frame" warnings (16ms = ~60 FPS target).
+#[cfg(feature = "debug-tools")]
+const SLOW_FRAME_THRESHOLD_MS: f32 = 16.0;
+
+/// Number of frame times to keep for rolling statistics.
+#[cfg(feature = "debug-tools")]
+const FRAME_TIME_HISTORY_SIZE: usize = 100;
+
+/// Debug state for performance monitoring and diagnostics.
+#[cfg(feature = "debug-tools")]
+#[derive(Default)]
+struct DebugState {
+    /// Whether the debug panel window is visible.
+    show_panel: bool,
+    /// Rolling history of frame times in milliseconds.
+    frame_times: VecDeque<f32>,
+    /// Total slow frame count since startup.
+    slow_frame_count: u64,
+    /// Duration of the last paste reload operation in milliseconds.
+    last_reload_ms: Option<f32>,
+    /// Duration of the last save operation in milliseconds.
+    last_save_ms: Option<f32>,
+    /// Duration of the last highlight recompute in milliseconds.
+    last_highlight_ms: Option<f32>,
+    /// Instant when the last frame started (for delta calculation).
+    last_frame_start: Option<Instant>,
+}
+
+#[cfg(feature = "debug-tools")]
+impl DebugState {
+    /// Record a frame time and update slow frame counter.
+    fn record_frame_time(&mut self, ms: f32) {
+        if self.frame_times.len() >= FRAME_TIME_HISTORY_SIZE {
+            self.frame_times.pop_front();
+        }
+        self.frame_times.push_back(ms);
+
+        if ms > SLOW_FRAME_THRESHOLD_MS {
+            self.slow_frame_count += 1;
+            eprintln!(
+                "[debug-tools] slow frame: {:.2}ms (total slow: {})",
+                ms, self.slow_frame_count
+            );
+        }
+    }
+
+    /// Calculate average frame time from history.
+    fn avg_frame_time(&self) -> f32 {
+        if self.frame_times.is_empty() {
+            return 0.0;
+        }
+        self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32
+    }
+
+    /// Calculate P95 frame time (95th percentile).
+    fn p95_frame_time(&self) -> f32 {
+        self.percentile_frame_time(95)
+    }
+
+    /// Calculate P99 frame time (99th percentile).
+    fn p99_frame_time(&self) -> f32 {
+        self.percentile_frame_time(99)
+    }
+
+    /// Calculate a percentile frame time.
+    fn percentile_frame_time(&self, percentile: usize) -> f32 {
+        if self.frame_times.is_empty() {
+            return 0.0;
+        }
+        let mut sorted: Vec<f32> = self.frame_times.iter().copied().collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let index = ((percentile as f32 / 100.0) * (sorted.len() - 1) as f32).round() as usize;
+        sorted.get(index).copied().unwrap_or(0.0)
+    }
+
+    /// Log operation timing to console.
+    fn log_operation(&self, op: &str, ms: f32) {
+        eprintln!("[debug-tools] {}: {:.2}ms", op, ms);
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SyntectState {
@@ -868,6 +949,8 @@ pub struct LocalPasteApp {
     profile_highlight: bool,
     editor_focused: bool,
     auto_save_blocked: bool,
+    #[cfg(feature = "debug-tools")]
+    debug_state: DebugState,
 }
 
 impl LocalPasteApp {
@@ -904,6 +987,12 @@ impl LocalPasteApp {
             .map(|v| v != "0")
             .unwrap_or(false);
 
+        #[cfg(feature = "debug-tools")]
+        {
+            eprintln!("[debug-tools] LocalPaste debug mode enabled");
+            eprintln!("[debug-tools] Toggle debug panel: Ctrl+Shift+D");
+        }
+
         let mut app = Self {
             db,
             config: config_arc,
@@ -928,6 +1017,8 @@ impl LocalPasteApp {
             profile_highlight,
             editor_focused: false,
             auto_save_blocked: false,
+            #[cfg(feature = "debug-tools")]
+            debug_state: DebugState::default(),
         };
 
         app.reload_pastes("startup");
@@ -2152,6 +2243,19 @@ impl eframe::App for LocalPasteApp {
             }
             if input.modifiers.command && input.key_pressed(egui::Key::K) && !editor_was_focused {
                 self.focus_filter();
+            }
+            // Ctrl+Shift+D toggles debug panel
+            #[cfg(feature = "debug-tools")]
+            if input.modifiers.command && input.modifiers.shift && input.key_pressed(egui::Key::D) {
+                self.debug_state.show_panel = !self.debug_state.show_panel;
+                eprintln!(
+                    "[debug-tools] debug panel {}",
+                    if self.debug_state.show_panel {
+                        "opened"
+                    } else {
+                        "closed"
+                    }
+                );
             }
         });
 
