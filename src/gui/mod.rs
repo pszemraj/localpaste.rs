@@ -81,8 +81,6 @@ struct DebugState {
     last_save_ms: Option<f32>,
     /// Duration of the last highlight recompute in milliseconds.
     last_highlight_ms: Option<f32>,
-    /// Instant when the last frame started (for delta calculation).
-    last_frame_start: Option<Instant>,
 }
 
 #[cfg(feature = "debug-tools")]
