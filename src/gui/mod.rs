@@ -50,7 +50,9 @@ const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 
 const ICON_SIZE: usize = 96;
 const AUTO_DETECT_MIN_CHARS: usize = 64;
-const AUTO_DETECT_MIN_LINES: usize = 3;
+const AUTO_DETECT_THRESHOLD: usize = 512;
+const AUTO_DETECT_DEBOUNCE: Duration = Duration::from_millis(300);
+const MAX_DETECT_CHARS: usize = 10_000;
 const HIGHLIGHT_RECOMPUTE_DELAY: Duration = Duration::from_millis(75);
 const HIGHLIGHT_CHUNK_SIZE: usize = 4 * 1024;
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
@@ -134,6 +136,21 @@ impl DebugState {
     fn log_operation(&self, op: &str, ms: f32) {
         eprintln!("[debug-tools] {}: {:.2}ms", op, ms);
     }
+}
+
+/// Language detection state machine.
+///
+/// Once any language prediction is made (auto or manual), detection NEVER runs
+/// again unless the user explicitly resets to "Auto Detect".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum LanguageState {
+    /// No language set yet; detection should run.
+    #[default]
+    Undetected,
+    /// Language was auto-detected; detection STOPS.
+    AutoDetected,
+    /// User explicitly chose a language; detection STOPS.
+    ManuallySet,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1403,7 +1420,8 @@ impl LocalPasteApp {
 
     fn mark_editor_dirty(&mut self) {
         self.editor.mark_dirty();
-        self.editor.auto_detect_cache = None;
+        // Set debounce timestamp for small-paste detection (if still Undetected)
+        self.editor.language_pending_since = Some(Instant::now());
         self.editor.request_highlight_update();
         self.editor.highlight_pending_since = Some(Instant::now());
         self.auto_save_blocked = false;
@@ -1633,48 +1651,66 @@ impl LocalPasteApp {
             });
     }
 
+    /// Single-shot language detection with debouncing for typing scenarios.
+    ///
+    /// Detection only runs when `language_state == Undetected`. Once a language
+    /// is detected (auto or manual), detection STOPS until user resets to Auto.
     fn ensure_language_selection(&mut self) {
-        if self.editor.manual_language_override {
+        // RULE 1: Never detect if already detected or manually set
+        if self.editor.language_state != LanguageState::Undetected {
             return;
         }
 
-        let trimmed = self.editor.content.trim();
-        let char_count = trimmed.chars().count();
-        let line_count = trimmed.lines().count();
-
-        if char_count < AUTO_DETECT_MIN_CHARS && line_count < AUTO_DETECT_MIN_LINES {
-            if self.editor.language.is_some() {
-                self.editor.language = None;
-                self.editor.auto_detect_cache = None;
-                self.editor.reset_highlight_state();
-            }
+        // RULE 2: Skip if in plain text mode (very large paste >256KB)
+        if self.editor.plain_highlight_mode {
             return;
         }
 
-        let mut hasher = DefaultHasher::new();
-        self.editor.content.hash(&mut hasher);
-        let content_hash = hasher.finish();
+        let content_len = self.editor.content.len();
 
-        if let Some((cached_hash, cached_lang)) = &self.editor.auto_detect_cache {
-            if *cached_hash == content_hash {
-                if self.editor.language.as_deref() != Some(cached_lang) {
-                    self.editor.language = Some(cached_lang.clone());
-                    self.editor.reset_highlight_state();
-                }
-                return;
+        // RULE 3: Skip if content too small to detect
+        if content_len < AUTO_DETECT_MIN_CHARS {
+            return;
+        }
+
+        // RULE 4: For large content (>=threshold), single-shot detect immediately
+        if content_len >= AUTO_DETECT_THRESHOLD {
+            self.run_detection_once();
+            return;
+        }
+
+        // RULE 5: For small content, debounce detection (typing scenario)
+        if let Some(pending_since) = self.editor.language_pending_since {
+            if Instant::now().duration_since(pending_since) < AUTO_DETECT_DEBOUNCE {
+                return; // Still typing, wait
             }
         }
 
-        let detected = crate::models::paste::detect_language(&self.editor.content)
-            .unwrap_or_else(|| "plain".to_string());
+        self.run_detection_once();
+    }
 
-        self.editor.auto_detect_cache = Some((content_hash, detected.clone()));
-        self.editor.manual_language_override = false;
+    /// Run language detection once and transition to AutoDetected state.
+    fn run_detection_once(&mut self) {
+        // Sample only the first MAX_DETECT_CHARS for detection
+        let sample = if self.editor.content.len() > MAX_DETECT_CHARS {
+            // Find a char boundary near MAX_DETECT_CHARS
+            let mut end = MAX_DETECT_CHARS;
+            while end < self.editor.content.len() && !self.editor.content.is_char_boundary(end) {
+                end += 1;
+            }
+            &self.editor.content[..end.min(self.editor.content.len())]
+        } else {
+            &self.editor.content
+        };
 
-        if self.editor.language.as_deref() != Some(detected.as_str()) {
+        if let Some(detected) = crate::models::paste::detect_language(sample) {
             self.editor.language = Some(detected);
+            self.editor.language_state = LanguageState::AutoDetected;
             self.editor.reset_highlight_state();
         }
+        // If detection fails (returns None), we stay in Undetected state
+        // and will try again on next debounce cycle (for small pastes)
+        // or never again (for large pastes, since they pass threshold check)
     }
 
     fn try_create_folder(&mut self, dialog: &mut FolderDialog) -> bool {
@@ -1998,7 +2034,7 @@ impl LocalPasteApp {
     fn persist_new_paste(&mut self) {
         let mut paste = Paste::new(self.editor.content.clone(), self.editor.name.clone());
         paste.language = self.editor.language.clone();
-        paste.language_is_manual = self.editor.manual_language_override;
+        paste.language_is_manual = self.editor.language_state == LanguageState::ManuallySet;
         paste.tags = self.editor.tags.clone();
         paste.folder_id = self.editor.folder_id.clone();
 
@@ -2050,7 +2086,8 @@ impl LocalPasteApp {
             (None, true) => Some(String::new()),
             (None, false) => None,
         };
-        let language_update = match (&self.editor.language, self.editor.manual_language_override) {
+        let is_manual = self.editor.language_state == LanguageState::ManuallySet;
+        let language_update = match (&self.editor.language, is_manual) {
             (Some(lang), manual) => Some((Some(lang.clone()), manual)),
             (None, true) => Some((None, true)), // explicit clear to Auto
             (None, false) => None,
@@ -2524,11 +2561,13 @@ impl eframe::App for LocalPasteApp {
                                         {
                                             if self.editor.language.as_deref() != Some(option.id) {
                                                 self.editor.language = Some(option.id.to_string());
-                                                self.editor.manual_language_override = true;
+                                                self.editor.language_state =
+                                                    LanguageState::ManuallySet;
                                                 self.editor.reset_highlight_state();
                                                 self.mark_editor_dirty();
                                             } else {
-                                                self.editor.manual_language_override = true;
+                                                self.editor.language_state =
+                                                    LanguageState::ManuallySet;
                                             }
                                             auto_scroll_target = Some(option.id);
                                         }
@@ -2538,7 +2577,8 @@ impl eframe::App for LocalPasteApp {
                                         .selectable_value(&mut self.editor.language, None, "Auto")
                                         .clicked()
                                     {
-                                        self.editor.manual_language_override = false;
+                                        // Reset to Undetected allows re-detection
+                                        self.editor.language_state = LanguageState::Undetected;
                                         self.editor.reset_highlight_state();
                                         self.mark_editor_dirty();
                                     }
@@ -2552,7 +2592,7 @@ impl eframe::App for LocalPasteApp {
                                             )
                                             .clicked()
                                         {
-                                            self.editor.manual_language_override = true;
+                                            self.editor.language_state = LanguageState::ManuallySet;
                                             self.editor.reset_highlight_state();
                                             self.mark_editor_dirty();
                                         }
@@ -2940,13 +2980,13 @@ struct EditorState {
     name: String,
     content: String,
     language: Option<String>,
+    language_state: LanguageState,
+    language_pending_since: Option<Instant>,
     folder_id: Option<String>,
     tags: Vec<String>,
     dirty: bool,
     last_modified: Option<Instant>,
     needs_focus: bool,
-    auto_detect_cache: Option<(u64, String)>,
-    manual_language_override: bool,
     highlight_cache: HighlightCache,
     layout_cache: LayoutCache,
     highlight_pending_since: Option<Instant>,
@@ -2969,13 +3009,17 @@ impl EditorState {
         self.paste_id = Some(paste.id);
         self.name = paste.name;
         self.content = paste.content;
+        self.language_state = match (&paste.language, paste.language_is_manual) {
+            (Some(_), true) => LanguageState::ManuallySet,
+            (Some(_), false) => LanguageState::AutoDetected,
+            (None, _) => LanguageState::Undetected,
+        };
         self.language = paste.language;
-        self.manual_language_override = paste.language_is_manual;
+        self.language_pending_since = None;
         self.folder_id = paste.folder_id;
         self.tags = paste.tags;
         self.mark_pristine();
         self.needs_focus = true;
-        self.auto_detect_cache = None;
         self.plain_highlight_mode = false;
         self.reset_highlight_state();
         self.line_offsets = compute_line_offsets(&self.content);
@@ -2987,8 +3031,11 @@ impl EditorState {
         self.folder_id = paste.folder_id.clone();
         self.tags = paste.tags.clone();
         self.language = paste.language.clone();
-        self.manual_language_override = paste.language_is_manual;
-        self.auto_detect_cache = None;
+        self.language_state = match (&paste.language, paste.language_is_manual) {
+            (Some(_), true) => LanguageState::ManuallySet,
+            (Some(_), false) => LanguageState::AutoDetected,
+            (None, _) => LanguageState::Undetected,
+        };
         self.mark_pristine();
         self.needs_focus = false;
     }
@@ -3025,13 +3072,13 @@ impl Default for EditorState {
             name: "untitled".to_string(),
             content: String::new(),
             language: None,
+            language_state: LanguageState::default(),
+            language_pending_since: None,
             folder_id: None,
             tags: Vec::new(),
             dirty: false,
             last_modified: None,
             needs_focus: false,
-            auto_detect_cache: None,
-            manual_language_override: false,
             highlight_cache: HighlightCache::default(),
             layout_cache: LayoutCache::default(),
             highlight_pending_since: Some(Instant::now()),

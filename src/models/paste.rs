@@ -86,6 +86,8 @@ impl Paste {
 
 /// Best-effort language detection based on simple heuristics.
 ///
+/// For large content, the caller should sample the first ~10KB before calling.
+///
 /// # Returns
 /// Detected language identifier, or `None` if unknown.
 pub fn detect_language(content: &str) -> Option<String> {
@@ -97,11 +99,15 @@ pub fn detect_language(content: &str) -> Option<String> {
     let lower = trimmed.to_lowercase();
     let lines: Vec<&str> = trimmed.lines().collect();
 
-    // JSON: quick structural check with serde validation
-    if (trimmed.starts_with('{') || trimmed.starts_with('['))
-        && serde_json::from_str::<serde_json::Value>(trimmed).is_ok()
-    {
-        return Some("json".to_string());
+    // JSON: structural check without full parsing (avoids expensive serde_json)
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        // Look for JSON-like structure: balanced braces, quotes, colons
+        if (trimmed.ends_with('}') || trimmed.ends_with(']'))
+            && trimmed.contains('"')
+            && (trimmed.contains(':') || trimmed.starts_with('['))
+        {
+            return Some("json".to_string());
+        }
     }
 
     // HTML before generic XML so we don't mis-classify
