@@ -614,12 +614,6 @@ struct CachedChunkLayout {
     height: f32,
 }
 
-#[derive(Clone)]
-struct CachedChunkLayout {
-    galley: Arc<egui::text::Galley>,
-    height: f32,
-}
-
 #[derive(Default)]
 struct LayoutCacheInner {
     last_chunk_count: usize,
