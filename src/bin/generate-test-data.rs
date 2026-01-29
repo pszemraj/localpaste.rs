@@ -51,15 +51,12 @@ struct Args {
 /// Language templates with realistic code snippets.
 struct LanguageTemplate {
     id: &'static str,
-    #[allow(dead_code)]
-    extension: &'static str,
     samples: &'static [&'static str],
 }
 
 const LANGUAGES: &[LanguageTemplate] = &[
     LanguageTemplate {
         id: "rust",
-        extension: "rs",
         samples: &[
             r#"fn main() {
     println!("Hello, world!");
@@ -113,7 +110,6 @@ impl Default for Config {
     },
     LanguageTemplate {
         id: "python",
-        extension: "py",
         samples: &[
             r#"def hello_world():
     print("Hello, world!")
@@ -167,7 +163,6 @@ def filter_active(users: List[User]) -> List[User]:
     },
     LanguageTemplate {
         id: "javascript",
-        extension: "js",
         samples: &[
             r#"console.log("Hello, world!");
 "#,
@@ -225,7 +220,6 @@ module.exports = EventEmitter;
     },
     LanguageTemplate {
         id: "json",
-        extension: "json",
         samples: &[
             r#"{
     "name": "example",
@@ -271,7 +265,6 @@ module.exports = EventEmitter;
     },
     LanguageTemplate {
         id: "markdown",
-        extension: "md",
         samples: &[
             r#"# Hello World
 
@@ -322,7 +315,6 @@ MIT
     },
     LanguageTemplate {
         id: "plain",
-        extension: "txt",
         samples: &[
             "Just some plain text content.\n",
             "Meeting notes from 2024-01-15:\n\n- Discussed project timeline\n- Reviewed budget constraints\n- Assigned tasks to team members\n- Next meeting scheduled for Friday\n",
@@ -331,7 +323,6 @@ MIT
     },
     LanguageTemplate {
         id: "yaml",
-        extension: "yml",
         samples: &[
             "name: example\nversion: 1.0.0\n",
             r#"apiVersion: apps/v1
@@ -364,7 +355,6 @@ spec:
     },
     LanguageTemplate {
         id: "toml",
-        extension: "toml",
         samples: &[
             "[package]\nname = \"example\"\nversion = \"0.1.0\"\n",
             r#"[package]
@@ -393,7 +383,6 @@ path = "src/bin/cli.rs"
     },
     LanguageTemplate {
         id: "shell",
-        extension: "sh",
         samples: &[
             "#!/bin/bash\necho \"Hello, world!\"\n",
             r#"#!/bin/bash
@@ -435,7 +424,6 @@ main "$@"
     },
     LanguageTemplate {
         id: "sql",
-        extension: "sql",
         samples: &[
             "SELECT * FROM users;\n",
             r#"-- Create users table
