@@ -1,3 +1,5 @@
+//! Integration tests for the LocalPaste HTTP API.
+
 use axum::http::StatusCode;
 use axum_test::TestServer;
 use localpaste::{create_app, models::folder::Folder, AppState, Config, Database};
