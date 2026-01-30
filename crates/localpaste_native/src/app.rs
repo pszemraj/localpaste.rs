@@ -33,6 +33,8 @@ const COLOR_ACCENT_HOVER: Color32 = Color32::from_rgb(0xCE, 0x42, 0x2B);
 const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const FONT_0XPROTO: &str = "0xProto";
+const EDITOR_FONT_FAMILY: &str = "Editor";
+const EDITOR_TEXT_STYLE: &str = "Editor";
 
 impl LocalPasteApp {
     pub fn new() -> Result<Self, localpaste_core::AppError> {
@@ -71,11 +73,21 @@ impl LocalPasteApp {
             ))
             .into(),
         );
-        fonts
-            .families
-            .get_mut(&FontFamily::Monospace)
-            .expect("monospace family")
-            .insert(0, FONT_0XPROTO.to_string());
+        let editor_family = FontFamily::Name(EDITOR_FONT_FAMILY.into());
+        fonts.families.insert(
+            editor_family.clone(),
+            vec![
+                FONT_0XPROTO.to_string(),
+                "Hack".to_string(),
+                "Ubuntu-Light".to_string(),
+                "NotoEmoji-Regular".to_string(),
+                "emoji-icon-font".to_string(),
+            ],
+        );
+        let editor_font_ready = fonts.font_data.contains_key(FONT_0XPROTO);
+        if !editor_font_ready {
+            warn!("0xProto font missing; falling back to monospace in editor");
+        }
         ctx.set_fonts(fonts);
 
         let mut style = (*ctx.style()).clone();
@@ -155,6 +167,17 @@ impl LocalPasteApp {
         style.text_styles.insert(
             TextStyle::Monospace,
             FontId::new(15.0, FontFamily::Monospace),
+        );
+        style.text_styles.insert(
+            TextStyle::Name(EDITOR_TEXT_STYLE.into()),
+            FontId::new(
+                15.0,
+                if editor_font_ready {
+                    FontFamily::Name(EDITOR_FONT_FAMILY.into())
+                } else {
+                    FontFamily::Monospace
+                },
+            ),
         );
         style.text_styles.insert(
             TextStyle::Small,
@@ -336,7 +359,7 @@ impl eframe::App for LocalPasteApp {
                 ui.add_enabled(
                     false,
                     egui::TextEdit::multiline(&mut self.selected_content)
-                        .font(TextStyle::Monospace)
+                        .font(TextStyle::Name(EDITOR_TEXT_STYLE.into()))
                         .desired_width(f32::INFINITY)
                         .desired_rows(18),
                 );
