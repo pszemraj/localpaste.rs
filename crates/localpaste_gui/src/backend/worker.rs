@@ -27,7 +27,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
     let (evt_tx, evt_rx) = unbounded();
 
     thread::Builder::new()
-        .name("localpaste-native-backend".to_string())
+        .name("localpaste-gui-backend".to_string())
         .spawn(move || {
             for cmd in cmd_rx.iter() {
                 match cmd {
