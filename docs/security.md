@@ -16,7 +16,7 @@ LocalPaste.rs is designed for local use and comes with secure defaults. The desk
 
 | Variable              | Default          | Description                                      |
 | --------------------- | ---------------- | ------------------------------------------------ |
-| `BIND`                | `127.0.0.1:3030` | Server bind address. ⚠️ Use caution when changing |
+| `BIND`                | `127.0.0.1:38411` | Server bind address. ⚠️ Use caution when changing |
 | `ALLOW_PUBLIC_ACCESS` | disabled         | Enable CORS for all origins. ⚠️ Security risk     |
 
 ### Security Headers
@@ -37,7 +37,7 @@ If you need to expose LocalPaste publicly, follow these steps:
 
 ```bash
 # Bind to all interfaces
-export BIND=0.0.0.0:3030
+export BIND=0.0.0.0:38411
 
 # Allow cross-origin requests
 export ALLOW_PUBLIC_ACCESS=1
@@ -73,7 +73,7 @@ server {
     add_header X-XSS-Protection "1; mode=block" always;
 
     location / {
-        proxy_pass http://127.0.0.1:3030;
+        proxy_pass http://127.0.0.1:38411;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -116,7 +116,7 @@ server {
 
    ```bash
    # Allow only specific IPs (example with ufw)
-   ufw allow from 192.168.1.0/24 to any port 3030
+   ufw allow from 192.168.1.0/24 to any port 38411
    ```
 
 ## Threat Model

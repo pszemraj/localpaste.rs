@@ -66,7 +66,7 @@ impl Config {
             port: env::var("PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())
-                .unwrap_or(3030),
+                .unwrap_or(38411),
             max_paste_size: env::var("MAX_PASTE_SIZE")
                 .ok()
                 .and_then(|s| s.parse().ok())

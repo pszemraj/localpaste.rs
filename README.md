@@ -45,7 +45,7 @@ cargo build --release
 ./target/release/localpaste
 ```
 
-The server exposes a JSON API on <http://localhost:3030>. Use the CLI or your own tooling to interact with it.
+The server exposes a JSON API on <http://localhost:38411>. Use the CLI or your own tooling to interact with it.
 
 ## CLI Usage
 
@@ -81,7 +81,7 @@ cp .env.example .env
 
 Available environment variables:
 
-- `PORT` - Server port (default: 3030)
+- `PORT` - Server port (default: 38411)
 - `DB_PATH` - Database path (default: ~/.cache/localpaste/db)
 - `MAX_PASTE_SIZE` - Maximum paste size in bytes (default: 10MB)
 - `AUTO_BACKUP` - Enable automatic backups on startup (default: false)

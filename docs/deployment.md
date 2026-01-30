@@ -22,13 +22,13 @@ pkill -f localpaste
 pkill -f "cargo run"
 
 # Check if port is still in use
-lsof -i :3030
+lsof -i :38411
 
 # Full cleanup (if processes are stuck)
 pkill -f localpaste && pkill -f "cargo run" && sleep 2
 
 # ONLY if absolutely necessary (may leave database locks):
-# lsof -t -i :3030 | xargs kill -9 2>/dev/null
+# lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
 
 ⚠️ **Important**: Avoid using `kill -9` as it prevents graceful shutdown and can leave database locks. See [dev.md](dev.md#database-lock-error) for recovery steps if locks occur.
@@ -138,13 +138,13 @@ RUN cargo build --release
 
 FROM debian:bookworm-slim
 COPY --from=builder /app/target/release/localpaste /usr/local/bin/
-EXPOSE 3030
+EXPOSE 38411
 CMD ["localpaste"]
 ```
 
 ```bash
 docker build -t localpaste .
-docker run -d -p 127.0.0.1:3030:3030 -v localpaste-data:/data localpaste
+docker run -d -p 127.0.0.1:38411:38411 -v localpaste-data:/data localpaste
 ```
 
 ## Common Patterns
@@ -182,5 +182,5 @@ With cron:
 
 ```bash
 # Simple health check
-curl -f http://127.0.0.1:3030/api/pastes?limit=1 || echo "Service down"
+curl -f http://127.0.0.1:38411/api/pastes?limit=1 || echo "Service down"
 ```

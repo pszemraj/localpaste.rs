@@ -230,7 +230,7 @@ du -sh ~/.cache/localpaste/
 ls -la ~/.cache/localpaste/db.backup.*
 
 # Check database integrity (requires running server)
-curl http://localhost:3030/api/health  # (if implemented)
+curl http://localhost:38411/api/health  # (if implemented)
 ```
 
 ### Database Management
@@ -319,7 +319,7 @@ When you encounter: `Error: could not acquire lock on "/home/pszemraj/.cache/loc
 
 **Port Already in Use**
 
-- Check what's using port: `lsof -i :3030`
+- Check what's using port: `lsof -i :38411`
 - Change port: `PORT=3031 cargo run`
 
 ## Performance Optimization

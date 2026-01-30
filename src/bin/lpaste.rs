@@ -20,7 +20,7 @@ struct Cli {
         short,
         long,
         env = "LP_SERVER",
-        default_value = "http://localhost:3030"
+        default_value = "http://localhost:38411"
     )]
     server: String,
 
