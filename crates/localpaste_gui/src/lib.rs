@@ -13,7 +13,7 @@ use tracing_subscriber::EnvFilter;
 
 fn init_tracing() {
     let env_filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("localpaste=warn,localpaste_native=info"))
+        .or_else(|_| EnvFilter::try_new("localpaste=warn,localpaste_gui=info"))
         .unwrap();
 
     tracing_subscriber::fmt()

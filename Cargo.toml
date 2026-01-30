@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/localpaste_core", "crates/localpaste_native"]
+members = ["crates/localpaste_core", "crates/localpaste_gui"]
 resolver = "2"
 
 [package]
@@ -23,7 +23,7 @@ required-features = ["cli"]
 
 [dependencies]
 localpaste_core = { path = "crates/localpaste_core" }
-localpaste_native = { path = "crates/localpaste_native", optional = true }
+localpaste_gui = { path = "crates/localpaste_gui", optional = true }
 axum = { version = "0.7", features = ["macros", "tracing"] }
 tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.5", features = [
@@ -64,7 +64,7 @@ axum-test = "16.4"
 [features]
 default = ["gui"]
 cli = ["clap", "clap_complete", "reqwest"]
-gui = ["localpaste_native"]
+gui = ["localpaste_gui"]
 gui-legacy = ["egui", "eframe", "egui_extras", "rfd", "syntect"]
 debug-tools = []
 profile = ["puffin", "gui-legacy"]

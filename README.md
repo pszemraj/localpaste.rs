@@ -27,7 +27,7 @@ LocalPaste.rs provides multiple ways to interact with your pastes:
 
 - `localpaste-gui` - Native rewrite (primary desktop app)
 - `localpaste-gui-legacy` - Legacy egui desktop app (feature-complete reference)
-- `localpaste_native` - Workspace crate for direct rewrite development
+- `localpaste_gui` - Workspace crate for direct rewrite development
 - `localpaste` - Axum HTTP API server (headless, JSON only)
 - `lpaste` - Command-line interface for terminal usage
 
@@ -38,7 +38,7 @@ cargo run
 # or, explicitly:
 cargo run --bin localpaste-gui
 # or, for the workspace crate:
-cargo run -p localpaste_native
+cargo run -p localpaste_gui
 ```
 
 ### Run the Legacy Desktop App
@@ -136,7 +136,7 @@ See [docs/dev.md](docs/dev.md) for development documentation, including desktop 
 ## Architecture
 
 - **Core**: `localpaste_core` holds the storage model + domain logic
-- **Native rewrite**: `localpaste_native` (egui/eframe app, async worker)
+- **Native rewrite**: `localpaste_gui` (egui/eframe app, async worker)
 - **Legacy desktop**: `localpaste-gui-legacy` (existing egui UI, feature reference)
 - **Backend**: Axum web framework with Sled embedded database
 - **Storage**: Embedded Sled database (no external DB required)

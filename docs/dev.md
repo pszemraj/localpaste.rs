@@ -13,7 +13,7 @@ localpaste.rs/
 |   |       |-- error.rs
 |   |       |-- models/
 |   |       `-- naming/
-|   `-- localpaste_native/      # New egui rewrite (Phase 2+)
+|   `-- localpaste_gui/         # New egui rewrite (Phase 2+)
 |       `-- src/
 |           |-- app.rs
 |           `-- backend/
@@ -54,7 +54,7 @@ localpaste.rs/
 
 ### Frontend Architecture
 
-- **Rewrite (primary):** `crates/localpaste_native` (egui/eframe app with backend worker)
+- **Rewrite (primary):** `crates/localpaste_gui` (egui/eframe app with backend worker)
 - **Legacy GUI:** `src/gui/mod.rs` (feature-complete reference while rewrite lands)
 - Cached language detection + syntect highlighting (legacy)
 - Folder management via dialogs with cycle-safe parenting rules (legacy)
@@ -100,7 +100,7 @@ The project contains multiple binaries:
 - `lpaste` - CLI tool for interacting with the server (enable the `cli` feature)
 - `localpaste-gui` - Native rewrite (primary desktop app, feature `gui`)
 - `localpaste-gui-legacy` - Legacy egui desktop app (feature `gui-legacy`)
-- `localpaste_native` - Rewrite crate (workspace crate)
+- `localpaste_gui` - Rewrite crate (workspace crate)
 
 ```bash
 # Build both binaries
@@ -129,7 +129,7 @@ cargo run --bin localpaste-gui-legacy --features="gui-legacy"
 # (append --release when you need an optimized build)
 
 # Run the new native rewrite crate directly (Phase 2+)
-cargo run -p localpaste_native
+cargo run -p localpaste_gui
 
 # Run the server/API (JSON endpoints)
 cargo run --bin localpaste --release
@@ -148,7 +148,7 @@ cargo test --features gui-legacy
 cargo test -p localpaste_core
 
 # Run rewrite tests only
-cargo test -p localpaste_native
+cargo test -p localpaste_gui
 
 # Format code
 cargo fmt
@@ -207,7 +207,7 @@ echo "test" | ./target/release/lpaste new
    - Register route in `src/lib.rs`
 
 2. **Frontend Changes**
-   - Rewrite: update `crates/localpaste_native/` and run `cargo run --bin localpaste-gui`
+   - Rewrite: update `crates/localpaste_gui/` and run `cargo run --bin localpaste-gui`
    - Legacy: update egui components in `src/gui/` and run `cargo run --bin localpaste-gui-legacy --features gui-legacy`
    - Refresh screenshots in `assets/` if the UI changes
 

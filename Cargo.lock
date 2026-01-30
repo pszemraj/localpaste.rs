@@ -2544,7 +2544,7 @@ dependencies = [
  "egui_extras",
  "hyper",
  "localpaste_core",
- "localpaste_native",
+ "localpaste_gui",
  "puffin",
  "rand",
  "reqwest",
@@ -2576,7 +2576,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "localpaste_native"
+name = "localpaste_gui"
 version = "0.3.1"
 dependencies = [
  "crossbeam-channel",
