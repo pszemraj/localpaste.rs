@@ -2532,7 +2532,7 @@ checksum = "f5e54036fe321fd421e10d732f155734c4e4afd610dd556d9a82833ab3ee0bed"
 
 [[package]]
 name = "localpaste"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_core"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "chrono",
@@ -2577,7 +2577,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_gui"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "crossbeam-channel",
  "eframe",
