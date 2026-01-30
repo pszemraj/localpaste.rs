@@ -1,7 +1,9 @@
 //! Native egui app skeleton for the LocalPaste rewrite.
 
 use crate::backend::{spawn_backend, BackendHandle, CoreCmd, CoreEvent, PasteSummary};
-use eframe::egui;
+use eframe::egui::{
+    self, Color32, FontFamily, FontId, Margin, RichText, Stroke, TextStyle, Visuals,
+};
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
 use tracing::{info, warn};
@@ -14,7 +16,17 @@ pub struct LocalPasteApp {
     selected_content: String,
     db_path: String,
     status: Option<String>,
+    style_applied: bool,
 }
+
+const COLOR_BG_PRIMARY: Color32 = Color32::from_rgb(0x0d, 0x11, 0x17);
+const COLOR_BG_SECONDARY: Color32 = Color32::from_rgb(0x16, 0x1b, 0x22);
+const COLOR_BG_TERTIARY: Color32 = Color32::from_rgb(0x21, 0x26, 0x2d);
+const COLOR_TEXT_PRIMARY: Color32 = Color32::from_rgb(0xc9, 0xd1, 0xd9);
+const COLOR_TEXT_MUTED: Color32 = Color32::from_rgb(0x6e, 0x76, 0x81);
+const COLOR_ACCENT: Color32 = Color32::from_rgb(0xE5, 0x70, 0x00);
+const COLOR_ACCENT_HOVER: Color32 = Color32::from_rgb(0xCE, 0x42, 0x2B);
+const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 
 impl LocalPasteApp {
     pub fn new() -> Result<Self, localpaste_core::AppError> {
@@ -34,7 +46,57 @@ impl LocalPasteApp {
             selected_content: String::new(),
             db_path,
             status: None,
+            style_applied: false,
         })
+    }
+
+    fn ensure_style(&mut self, ctx: &egui::Context) {
+        if self.style_applied {
+            return;
+        }
+
+        let mut style = (*ctx.style()).clone();
+        style.visuals = Visuals::dark();
+        style.visuals.override_text_color = Some(COLOR_TEXT_PRIMARY);
+        style.visuals.window_fill = COLOR_BG_PRIMARY;
+        style.visuals.panel_fill = COLOR_BG_SECONDARY;
+        style.visuals.extreme_bg_color = COLOR_BG_PRIMARY;
+        style.visuals.faint_bg_color = COLOR_BG_TERTIARY;
+        style.visuals.window_stroke = Stroke::new(1.0, COLOR_BORDER);
+        style.visuals.hyperlink_color = COLOR_ACCENT;
+        style.visuals.selection.bg_fill = COLOR_ACCENT;
+        style.visuals.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+        style.visuals.widgets.inactive.bg_fill = COLOR_BG_TERTIARY;
+        style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, COLOR_BORDER);
+        style.visuals.widgets.hovered.bg_fill = COLOR_ACCENT_HOVER;
+        style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, COLOR_ACCENT_HOVER);
+        style.visuals.widgets.active.bg_fill = COLOR_ACCENT;
+        style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, COLOR_ACCENT);
+        style.visuals.text_edit_bg_color = Some(COLOR_BG_TERTIARY);
+
+        style.spacing.window_margin = Margin::same(12);
+        style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+        style.spacing.button_padding = egui::vec2(12.0, 6.0);
+        style.spacing.interact_size.y = 30.0;
+
+        style.text_styles.insert(
+            TextStyle::Heading,
+            FontId::new(22.0, FontFamily::Proportional),
+        );
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::new(15.0, FontFamily::Proportional));
+        style.text_styles.insert(
+            TextStyle::Monospace,
+            FontId::new(14.0, FontFamily::Monospace),
+        );
+        style.text_styles.insert(
+            TextStyle::Small,
+            FontId::new(12.0, FontFamily::Proportional),
+        );
+
+        ctx.set_style(style);
+        self.style_applied = true;
     }
 
     fn apply_event(&mut self, event: CoreEvent) {
@@ -100,6 +162,8 @@ impl LocalPasteApp {
 
 impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ensure_style(ctx);
+
         while let Ok(event) = self.backend.evt_rx.try_recv() {
             self.apply_event(event);
         }
@@ -129,20 +193,24 @@ impl eframe::App for LocalPasteApp {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading("LocalPaste Native");
+                    ui.heading(RichText::new("LocalPaste Native").color(COLOR_ACCENT));
                     ui.add_space(12.0);
                     if ui.button("Refresh").clicked() {
                         self.request_refresh();
                     }
                     ui.add_space(12.0);
-                    ui.label(egui::RichText::new(&self.db_path).monospace());
+                    ui.label(
+                        RichText::new(&self.db_path)
+                            .monospace()
+                            .color(COLOR_TEXT_MUTED),
+                    );
                 });
             });
 
         egui::SidePanel::left("sidebar")
             .default_width(260.0)
             .show(ctx, |ui| {
-                ui.heading(format!("Pastes ({})", self.pastes.len()));
+                ui.heading(RichText::new(format!("Pastes ({})", self.pastes.len())));
                 ui.add_space(8.0);
                 let mut pending_select: Option<String> = None;
                 let row_height = 28.0;
@@ -157,7 +225,10 @@ impl eframe::App for LocalPasteApp {
                                     Some(lang) => format!("{}  ({})", paste.name, lang),
                                     None => paste.name.clone(),
                                 };
-                                if ui.selectable_label(selected, label).clicked() {
+                                if ui
+                                    .selectable_label(selected, RichText::new(label))
+                                    .clicked()
+                                {
                                     pending_select = Some(paste.id.clone());
                                 }
                             }
@@ -169,7 +240,7 @@ impl eframe::App for LocalPasteApp {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Editor");
+            ui.heading(RichText::new("Editor").color(COLOR_TEXT_PRIMARY));
             ui.add_space(12.0);
 
             let selected_meta = self
@@ -179,13 +250,22 @@ impl eframe::App for LocalPasteApp {
 
             if let Some((name, language, id)) = selected_meta {
                 ui.horizontal(|ui| {
-                    ui.heading(name);
+                    ui.heading(RichText::new(name).color(COLOR_TEXT_PRIMARY));
                     ui.add_space(8.0);
                     if let Some(lang) = language {
-                        ui.label(format!("({})", lang));
+                        ui.label(
+                            RichText::new(format!("({})", lang))
+                                .color(COLOR_TEXT_MUTED)
+                                .small(),
+                        );
                     }
                 });
-                ui.label(egui::RichText::new(id).small().monospace());
+                ui.label(
+                    RichText::new(id)
+                        .small()
+                        .monospace()
+                        .color(COLOR_TEXT_MUTED),
+                );
                 ui.add_space(8.0);
                 ui.add_enabled(
                     false,
