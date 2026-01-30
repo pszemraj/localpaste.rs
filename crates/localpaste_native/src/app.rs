@@ -91,12 +91,38 @@ impl LocalPasteApp {
         self.selected_content.clear();
         let _ = self.backend.cmd_tx.send(CoreCmd::GetPaste { id });
     }
+
+    fn selected_index(&self) -> Option<usize> {
+        let id = self.selected_id.as_ref()?;
+        self.pastes.iter().position(|paste| paste.id == *id)
+    }
 }
 
 impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(event) = self.backend.evt_rx.try_recv() {
             self.apply_event(event);
+        }
+
+        if !ctx.wants_keyboard_input() && !self.pastes.is_empty() {
+            let mut direction: i32 = 0;
+            ctx.input(|input| {
+                if input.key_pressed(egui::Key::ArrowDown) {
+                    direction = 1;
+                } else if input.key_pressed(egui::Key::ArrowUp) {
+                    direction = -1;
+                }
+            });
+
+            if direction != 0 {
+                let current = self.selected_index().unwrap_or(0) as i32;
+                let max_index = (self.pastes.len() - 1) as i32;
+                let next = (current + direction).clamp(0, max_index) as usize;
+                if self.selected_index() != Some(next) {
+                    let next_id = self.pastes[next].id.clone();
+                    self.select_paste(next_id);
+                }
+            }
         }
 
         egui::TopBottomPanel::top("top")
@@ -119,18 +145,24 @@ impl eframe::App for LocalPasteApp {
                 ui.heading(format!("Pastes ({})", self.pastes.len()));
                 ui.add_space(8.0);
                 let mut pending_select: Option<String> = None;
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for paste in &self.pastes {
-                        let selected = self.selected_id.as_deref() == Some(paste.id.as_str());
-                        let label = match &paste.language {
-                            Some(lang) => format!("{}  ({})", paste.name, lang),
-                            None => paste.name.clone(),
-                        };
-                        if ui.selectable_label(selected, label).clicked() {
-                            pending_select = Some(paste.id.clone());
+                let row_height = 28.0;
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show_rows(ui, row_height, self.pastes.len(), |ui, range| {
+                        for idx in range {
+                            if let Some(paste) = self.pastes.get(idx) {
+                                let selected =
+                                    self.selected_id.as_deref() == Some(paste.id.as_str());
+                                let label = match &paste.language {
+                                    Some(lang) => format!("{}  ({})", paste.name, lang),
+                                    None => paste.name.clone(),
+                                };
+                                if ui.selectable_label(selected, label).clicked() {
+                                    pending_select = Some(paste.id.clone());
+                                }
+                            }
                         }
-                    }
-                });
+                    });
                 if let Some(id) = pending_select {
                     self.select_paste(id);
                 }
