@@ -63,11 +63,16 @@ impl LocalPasteApp {
                 }
             }
             CoreEvent::PasteMissing { id } => {
+                self.pastes.retain(|paste| paste.id != id);
                 if self.selected_id.as_deref() == Some(id.as_str()) {
+                    self.selected_id = None;
                     self.selected_paste = None;
                     self.selected_content.clear();
-                    self.status = Some("Selected paste no longer exists.".to_string());
+                    self.status = Some("Selected paste was deleted; list refreshed.".to_string());
+                } else {
+                    self.status = Some("Paste was deleted; list refreshed.".to_string());
                 }
+                self.request_refresh();
             }
             CoreEvent::Error { message } => {
                 warn!("backend error: {}", message);
@@ -170,5 +175,43 @@ impl eframe::App for LocalPasteApp {
                     ui.label(egui::RichText::new(status).color(egui::Color32::YELLOW));
                 }
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossbeam_channel::unbounded;
+
+    fn make_app() -> LocalPasteApp {
+        let (cmd_tx, _cmd_rx) = unbounded();
+        let (_evt_tx, evt_rx) = unbounded();
+        LocalPasteApp {
+            backend: BackendHandle { cmd_tx, evt_rx },
+            pastes: vec![PasteSummary {
+                id: "alpha".to_string(),
+                name: "Alpha".to_string(),
+                language: None,
+            }],
+            selected_id: Some("alpha".to_string()),
+            selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
+            selected_content: "content".to_string(),
+            db_path: "test".to_string(),
+            status: None,
+        }
+    }
+
+    #[test]
+    fn paste_missing_clears_selection_and_removes_list_entry() {
+        let mut app = make_app();
+        app.apply_event(CoreEvent::PasteMissing {
+            id: "alpha".to_string(),
+        });
+
+        assert!(app.pastes.is_empty());
+        assert!(app.selected_id.is_none());
+        assert!(app.selected_paste.is_none());
+        assert!(app.selected_content.is_empty());
+        assert!(app.status.is_some());
     }
 }
