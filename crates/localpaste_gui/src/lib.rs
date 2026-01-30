@@ -8,7 +8,6 @@ mod backend;
 
 use app::LocalPasteApp;
 use eframe::egui;
-use tracing::error;
 use tracing_subscriber::EnvFilter;
 
 fn init_tracing() {
@@ -34,10 +33,7 @@ fn init_tracing() {
 pub fn run() -> eframe::Result<()> {
     init_tracing();
 
-    let app = LocalPasteApp::new().map_err(|err| {
-        error!("failed to start native app: {}", err);
-        eframe::Error::AppCreation(Box::new(err))
-    })?;
+    let app = LocalPasteApp::new().map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

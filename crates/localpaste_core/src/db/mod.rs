@@ -26,9 +26,23 @@ fn is_localpaste_running() -> bool {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn is_localpaste_running() -> bool {
-    // On non-Unix, be conservative
+    use std::process::Command;
+
+    let output = Command::new("tasklist").arg("/FO").arg("CSV").output();
+    let Ok(output) = output else {
+        return false;
+    };
+
+    let haystack = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+    haystack.contains("localpaste.exe")
+        || haystack.contains("localpaste-gui.exe")
+        || haystack.contains("localpaste-gui-legacy.exe")
+}
+
+#[cfg(not(any(unix, windows)))]
+fn is_localpaste_running() -> bool {
     false
 }
 
@@ -212,28 +226,50 @@ impl Database {
                 if is_localpaste_running() {
                     return Err(AppError::DatabaseError(
                         "Another LocalPaste instance is already running.\n\
-                        Please close it first or wait for it to shut down."
+                        Please close it first, or set DB_PATH to use a different database location."
                             .to_string(),
                     ));
                 } else {
-                    // No LocalPaste running, probably a stale sled lock
-                    // Sled locks are in the DB directory itself
+                    let parent = std::path::Path::new(path)
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .display()
+                        .to_string();
+                    let (backup_cmd, remove_cmd, restore_cmd) = if cfg!(windows) {
+                        (
+                            format!(
+                                "Copy-Item -Recurse -Force \"{}\" \"{}.backup\"",
+                                path, path
+                            ),
+                            format!(
+                                "Remove-Item -Force \"{}\\*.lock\",\"{}\\db.lock\"",
+                                path, path
+                            ),
+                            format!(
+                                "Get-ChildItem \"{}\\*.backup.*\" | Sort-Object LastWriteTime | Select-Object -Last 1",
+                                parent
+                            ),
+                        )
+                    } else {
+                        (
+                            format!("cp -r {} {}.backup", path, path),
+                            format!("rm {}/*.lock {}/db.lock", path, path),
+                            format!("ls -la {}/*.backup.* | tail -1", parent),
+                        )
+                    };
+
                     return Err(AppError::DatabaseError(format!(
-                        "Database appears to be locked but no LocalPaste is running.\n\
-                        This can happen after a crash. To recover:\n\n\
-                        1. Make a backup: cp -r {} {}.backup\n\
-                        2. Remove lock files: rm {}/*.lock {}/db.lock\n\
+                        "Database appears to be locked.\n\
+                        Another process may still be using it, or a previous crash left a stale lock.\n\
+                        If you just started the localpaste server for CLI tests, stop it before starting the GUI,\n\
+                        or set DB_PATH to a different location.\n\n\
+                        To recover from a stale lock:\n\
+                        1. {}\n\
+                        2. {}\n\
                         3. Try starting again\n\n\
                         If that doesn't work, restore from auto-backup:\n\
-                        ls -la {}/*.backup.* | tail -1",
-                        path,
-                        path,
-                        path,
-                        path,
-                        std::path::Path::new(path)
-                            .parent()
-                            .unwrap_or(std::path::Path::new("."))
-                            .display()
+                        {}",
+                        backup_cmd, remove_cmd, restore_cmd
                     )));
                 }
             }
