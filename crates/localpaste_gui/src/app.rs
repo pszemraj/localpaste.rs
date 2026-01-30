@@ -28,7 +28,7 @@ pub struct LocalPasteApp {
     _server: EmbeddedServer,
     server_addr: SocketAddr,
     server_used_fallback: bool,
-    status: Option<String>,
+    status: Option<StatusMessage>,
     save_status: SaveStatus,
     last_edit_at: Option<Instant>,
     save_in_flight: bool,
@@ -54,9 +54,15 @@ const COLOR_ACCENT: Color32 = Color32::from_rgb(0xE5, 0x70, 0x00);
 const COLOR_ACCENT_HOVER: Color32 = Color32::from_rgb(0xCE, 0x42, 0x2B);
 const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+const STATUS_TTL: Duration = Duration::from_secs(5);
 const FONT_0XPROTO: &str = "0xProto";
 const EDITOR_FONT_FAMILY: &str = "Editor";
 const EDITOR_TEXT_STYLE: &str = "Editor";
+
+struct StatusMessage {
+    text: String,
+    expires_at: Instant,
+}
 
 impl LocalPasteApp {
     /// Construct a new app instance from the current environment config.
@@ -276,7 +282,7 @@ impl LocalPasteApp {
                 self.save_status = SaveStatus::Saved;
                 self.last_edit_at = None;
                 self.save_in_flight = false;
-                self.status = Some("Created new paste.".to_string());
+                self.set_status("Created new paste.");
             }
             CoreEvent::PasteSaved { paste } => {
                 if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
@@ -295,9 +301,9 @@ impl LocalPasteApp {
                 self.pastes.retain(|paste| paste.id != id);
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
-                    self.status = Some("Paste deleted.".to_string());
+                    self.set_status("Paste deleted.");
                 } else {
-                    self.status = Some("Paste deleted; list refreshed.".to_string());
+                    self.set_status("Paste deleted; list refreshed.");
                 }
                 self.request_refresh();
             }
@@ -305,15 +311,15 @@ impl LocalPasteApp {
                 self.pastes.retain(|paste| paste.id != id);
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
-                    self.status = Some("Selected paste was deleted; list refreshed.".to_string());
+                    self.set_status("Selected paste was deleted; list refreshed.");
                 } else {
-                    self.status = Some("Paste was deleted; list refreshed.".to_string());
+                    self.set_status("Paste was deleted; list refreshed.");
                 }
                 self.request_refresh();
             }
             CoreEvent::Error { message } => {
                 warn!("backend error: {}", message);
-                self.status = Some(message);
+                self.set_status(message);
                 if self.save_status == SaveStatus::Saving {
                     self.save_status = SaveStatus::Dirty;
                 }
@@ -350,6 +356,13 @@ impl LocalPasteApp {
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
+    }
+
+    fn set_status(&mut self, text: impl Into<String>) {
+        self.status = Some(StatusMessage {
+            text: text.into(),
+            expires_at: Instant::now() + STATUS_TTL,
+        });
     }
 
     fn create_new_paste(&mut self) {
@@ -403,6 +416,12 @@ impl LocalPasteApp {
 impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ensure_style(ctx);
+
+        if let Some(status) = &self.status {
+            if Instant::now() >= status.expires_at {
+                self.status = None;
+            }
+        }
 
         while let Ok(event) = self.backend.evt_rx.try_recv() {
             self.apply_event(event);
@@ -528,16 +547,24 @@ impl eframe::App for LocalPasteApp {
                 );
                 ui.add_space(8.0);
                 let editor_height = ui.available_height();
-                let response = ui.add_sized(
-                    [ui.available_width(), editor_height],
-                    egui::TextEdit::multiline(&mut self.selected_content)
-                        .font(TextStyle::Name(EDITOR_TEXT_STYLE.into()))
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(1)
-                        .lock_focus(true)
-                        .hint_text("Start typing..."),
-                );
-                if response.changed() {
+                let mut response = None;
+                egui::ScrollArea::vertical()
+                    .id_salt("editor_scroll")
+                    .max_height(editor_height)
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        let edit = ui.add(
+                            egui::TextEdit::multiline(&mut self.selected_content)
+                                .font(TextStyle::Name(EDITOR_TEXT_STYLE.into()))
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(1)
+                                .lock_focus(true)
+                                .hint_text("Start typing..."),
+                        );
+                        response = Some(edit);
+                    });
+                if response.map(|r| r.changed()).unwrap_or(false) {
                     self.mark_dirty();
                 }
             } else if self.selected_id.is_some() {
@@ -561,7 +588,7 @@ impl eframe::App for LocalPasteApp {
                         ui.separator();
                     }
                     if let Some(status) = &self.status {
-                        ui.label(egui::RichText::new(status).color(egui::Color32::YELLOW));
+                        ui.label(egui::RichText::new(&status.text).color(egui::Color32::YELLOW));
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -593,11 +620,15 @@ impl eframe::App for LocalPasteApp {
         if self.last_refresh_at.elapsed() >= AUTO_REFRESH_INTERVAL {
             self.request_refresh();
         }
-        let repaint_after = if self.save_status == SaveStatus::Dirty {
+        let mut repaint_after = if self.save_status == SaveStatus::Dirty {
             self.autosave_delay.min(AUTO_REFRESH_INTERVAL)
         } else {
             AUTO_REFRESH_INTERVAL
         };
+        if let Some(status) = &self.status {
+            let until = status.expires_at.saturating_duration_since(Instant::now());
+            repaint_after = repaint_after.min(until);
+        }
         ctx.request_repaint_after(repaint_after);
     }
 }
