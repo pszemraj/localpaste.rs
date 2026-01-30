@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/localpaste_core"]
+members = ["crates/localpaste_core", "crates/localpaste_native"]
 resolver = "2"
 
 [package]
