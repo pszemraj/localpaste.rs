@@ -411,19 +411,17 @@ impl LocalPasteApp {
             info!("API background server disabled via LOCALPASTE_GUI_DISABLE_SERVER");
             ServerHandle::noop()
         } else {
-            match ServerHandle::start(state.clone(), allow_public) {
-                Ok(handle) => handle,
-                Err(err) if is_addr_in_use_error(&err) => {
-                    warn!("API server not started (port in use). GUI will continue without it.");
-                    startup_status = Some(
-                        "API server not started (port in use). GUI still works; set BIND to choose a different port."
-                            .to_string(),
-                    );
-                    ServerHandle::noop()
-                }
-                Err(err) => return Err(err),
-            }
+            ServerHandle::start(state.clone(), allow_public)?
         };
+
+        if server.used_fallback {
+            if let Some(addr) = server.addr {
+                startup_status = Some(format!(
+                    "API running on http://{} (auto port because requested port is in use)",
+                    addr
+                ));
+            }
+        }
 
         let profile_highlight = std::env::var("LOCALPASTE_PROFILE_HIGHLIGHT")
             .map(|v| v != "0")
@@ -1470,24 +1468,11 @@ impl LocalPasteApp {
     }
 }
 
-fn is_addr_in_use_error(err: &AppError) -> bool {
-    match err {
-        AppError::DatabaseError(message) => {
-            let msg = message.to_ascii_lowercase();
-            msg.contains("failed to bind server socket")
-                && (msg.contains("address already in use")
-                    || msg.contains("address in use")
-                    || msg.contains("only one usage of each socket address")
-                    || msg.contains("os error 10048")
-                    || msg.contains("os error 98"))
-        }
-        _ => false,
-    }
-}
-
 struct ServerHandle {
     shutdown: Option<oneshot::Sender<()>>,
     thread: Option<thread::JoinHandle<()>>,
+    addr: Option<SocketAddr>,
+    used_fallback: bool,
 }
 
 impl ServerHandle {
@@ -1495,6 +1480,8 @@ impl ServerHandle {
         Self {
             shutdown: None,
             thread: None,
+            addr: None,
+            used_fallback: false,
         }
     }
 
@@ -1516,10 +1503,26 @@ impl ServerHandle {
                 };
 
                 let bind_addr = resolve_bind_address(&state.config);
+                let mut used_fallback = false;
                 let listener = match rt.block_on(tokio::net::TcpListener::bind(bind_addr)) {
-                    Ok(listener) => {
-                        let _ = ready_tx.send(Ok(bind_addr));
-                        listener
+                    Ok(listener) => listener,
+                    Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
+                        warn!(
+                            "API bind address {} is in use; falling back to an auto port",
+                            bind_addr
+                        );
+                        used_fallback = true;
+                        let fallback_addr = SocketAddr::new(bind_addr.ip(), 0);
+                        match rt.block_on(tokio::net::TcpListener::bind(fallback_addr)) {
+                            Ok(listener) => listener,
+                            Err(fallback_err) => {
+                                let _ = ready_tx.send(Err(format!(
+                                    "failed to bind server socket: {}",
+                                    fallback_err
+                                )));
+                                return;
+                            }
+                        }
                     }
                     Err(err) => {
                         let _ =
@@ -1527,6 +1530,9 @@ impl ServerHandle {
                         return;
                     }
                 };
+
+                let actual_addr = listener.local_addr().unwrap_or(bind_addr);
+                let _ = ready_tx.send(Ok((actual_addr, used_fallback)));
 
                 let shutdown = async {
                     let _ = shutdown_rx.await;
@@ -1550,7 +1556,7 @@ impl ServerHandle {
         let mut thread_handle = Some(thread);
 
         match ready_rx.recv() {
-            Ok(Ok(addr)) => {
+            Ok(Ok((addr, used_fallback))) => {
                 if !addr.ip().is_loopback() {
                     warn!("binding to non-localhost address {}", addr);
                 }
@@ -1558,6 +1564,8 @@ impl ServerHandle {
                 Ok(Self {
                     shutdown: Some(shutdown_tx),
                     thread: thread_handle.take(),
+                    addr: Some(addr),
+                    used_fallback,
                 })
             }
             Ok(Err(message)) => {
