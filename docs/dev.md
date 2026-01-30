@@ -6,13 +6,17 @@
 localpaste.rs/
 |-- Cargo.toml
 |-- crates/
-|   `-- localpaste_core/        # Config, storage, models, naming, core errors
+|   |-- localpaste_core/        # Config, storage, models, naming, core errors
+|   |   `-- src/
+|   |       |-- config.rs
+|   |       |-- db/
+|   |       |-- error.rs
+|   |       |-- models/
+|   |       `-- naming/
+|   `-- localpaste_native/      # New egui rewrite (Phase 2+)
 |       `-- src/
-|           |-- config.rs
-|           |-- db/
-|           |-- error.rs
-|           |-- models/
-|           `-- naming/
+|           |-- app.rs
+|           `-- backend/
 |-- src/
 |   |-- bin/
 |   |   |-- localpaste-gui.rs   # Native egui desktop launcher
@@ -83,10 +87,12 @@ Folder operations enforce tree integrity: the API returns `400 Bad Request` if a
 
 ### Building the Project
 
-The project contains two binaries:
+The project contains multiple binaries:
 
 - `localpaste` - The web server (default binary)
 - `lpaste` - CLI tool for interacting with the server (enable the `cli` feature)
+- `localpaste-gui` - Existing egui desktop app (feature `gui`)
+- `localpaste_native` - New egui rewrite (workspace crate)
 
 ```bash
 # Build both binaries
@@ -108,6 +114,9 @@ cargo build --release --bin lpaste --features cli
 # Run the desktop app
 cargo run --bin localpaste-gui --features="gui"
 # (append --release when you need an optimized build)
+
+# Run the new native rewrite (Phase 2+)
+cargo run -p localpaste_native
 
 # Run the server/API (JSON endpoints)
 cargo run --bin localpaste --release
@@ -184,7 +193,7 @@ echo "test" | ./target/release/lpaste new
 
 3. **Database Migrations**
    - Sled handles schema evolution automatically
-   - Add migration logic in `src/db/mod.rs` if needed
+   - Add migration logic in `crates/localpaste_core/src/db/mod.rs` if needed
 
 ## Code Style
 
