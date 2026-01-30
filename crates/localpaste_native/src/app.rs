@@ -10,6 +10,10 @@ use localpaste_core::{Config, Database};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
+/// Native egui application shell for the rewrite.
+///
+/// Owns the UI state and communicates with the background worker via channels so
+/// the `update` loop never blocks on database I/O.
 pub struct LocalPasteApp {
     backend: BackendHandle,
     pastes: Vec<PasteSummary>,
@@ -37,6 +41,17 @@ const EDITOR_FONT_FAMILY: &str = "Editor";
 const EDITOR_TEXT_STYLE: &str = "Editor";
 
 impl LocalPasteApp {
+    /// Construct a new app instance from the current environment config.
+    ///
+    /// Opens the embedded database, spawns the backend worker thread, and kicks
+    /// off the initial list request so the UI has data to render on first paint.
+    ///
+    /// # Returns
+    /// The initialized [`LocalPasteApp`] ready to be handed to `eframe`.
+    ///
+    /// # Errors
+    /// Returns an error if the database path is invalid or the underlying store
+    /// cannot be opened.
     pub fn new() -> Result<Self, localpaste_core::AppError> {
         let config = Config::from_env();
         let db_path = config.db_path.clone();

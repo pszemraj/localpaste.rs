@@ -1,3 +1,7 @@
+//! Native LocalPaste rewrite entry point.
+//!
+//! Sets up tracing, instantiates the egui app, and starts the eframe runtime.
+
 mod app;
 mod backend;
 

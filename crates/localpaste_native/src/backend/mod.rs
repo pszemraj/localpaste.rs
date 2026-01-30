@@ -1,3 +1,8 @@
+//! Backend worker wiring for the native rewrite.
+//!
+//! This module exposes the command/event protocol plus the worker spawn helper
+//! used by the egui UI thread.
+
 mod protocol;
 mod worker;
 

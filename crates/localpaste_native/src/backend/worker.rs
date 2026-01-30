@@ -6,11 +6,22 @@ use localpaste_core::Database;
 use std::thread;
 use tracing::error;
 
+/// Handle for sending commands to, and receiving events from, the backend worker.
 pub struct BackendHandle {
     pub cmd_tx: Sender<CoreCmd>,
     pub evt_rx: Receiver<CoreEvent>,
 }
 
+/// Spawn the backend worker thread that performs blocking database access.
+///
+/// All I/O stays off the UI thread; the worker replies with [`CoreEvent`] values
+/// that are polled each frame.
+///
+/// # Returns
+/// A [`BackendHandle`] containing the command sender and event receiver.
+///
+/// # Panics
+/// Panics if the worker thread cannot be spawned.
 pub fn spawn_backend(db: Database) -> BackendHandle {
     let (cmd_tx, cmd_rx) = unbounded();
     let (evt_tx, evt_rx) = unbounded();

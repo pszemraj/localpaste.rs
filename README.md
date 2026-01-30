@@ -8,31 +8,39 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 
 ---
 
-## Features
+## Features (Current State)
 
-- **Native Desktop App** - egui-based editor with palette-matched theming
-- **Automatic Language Detection** - cached detection + offline syntax highlighting
-- **Auto-Save** - debounce to disk; manual export for sharing
-- **Semantic Naming** - auto-generates memorable names (e.g., "mythic-ruby")
-- **Folder Organization** - nested folders with context dialogs and cycle-safe parenting
-- **Keyboard Shortcuts** - Ctrl/Cmd+S (save), Ctrl/Cmd+N (new), Ctrl/Cmd+Delete (delete), Ctrl/Cmd+F or Ctrl/Cmd+K (filter)
-- **Zero Runtime Dependencies** - single binary, embedded Sled database
+**Native rewrite (primary, in progress):**
+- **egui/eframe UI** with legacy palette + typography
+- **Async backend worker** to keep `App::update` free of blocking I/O
+- **Virtualized paste list + selection** (read-only editor pane for now)
+
+**Legacy GUI (feature-complete reference while rewrite lands):**
+- Auto-save + export, folders, language detection, shortcuts, theming
+
+**Shared backend:**
+- **Zero runtime dependencies** - single binary, embedded Sled database
 
 ## Quick Start
 
 LocalPaste.rs provides multiple ways to interact with your pastes:
 
-- `localpaste-gui` - Native egui desktop application (primary experience, bundles the API)
+- `localpaste_native` - Native rewrite (primary development target)
+- `localpaste-gui` - Legacy egui desktop application (feature-complete reference)
 - `localpaste` - Axum HTTP API server (headless, JSON only)
 - `lpaste` - Command-line interface for terminal usage
 
-### Run the Desktop App
+### Run the Native Rewrite (Primary)
+
+```bash
+cargo run -p localpaste_native
+```
+
+### Run the Legacy Desktop App
 
 ```bash
 cargo run --bin localpaste-gui --features="gui"
 ```
-
-Add `--release` once you’re ready to ship or benchmark; during development the command above starts the latest GUI build immediately.
 
 ### Run the Web Server / API
 
@@ -122,11 +130,12 @@ See [docs/dev.md](docs/dev.md) for development documentation, including desktop 
 
 ## Architecture
 
+- **Core**: `localpaste_core` holds the storage model + domain logic
+- **Native rewrite**: `localpaste_native` (egui/eframe app, async worker)
+- **Legacy desktop**: `localpaste-gui` (existing egui UI, feature reference)
 - **Backend**: Axum web framework with Sled embedded database
-- **Desktop Frontend**: egui/eframe (Rust native) with cached syntax highlighting
-- **Web Frontend**: Legacy static assets (optional, served by `localpaste`)
 - **Storage**: Embedded Sled database (no external DB required)
-- **Deployment**: Per-platform binaries, GUI behind `--features gui`
+- **Deployment**: Per-platform binaries; legacy GUI behind `--features gui`
 
 ## License
 
