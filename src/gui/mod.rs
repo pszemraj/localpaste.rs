@@ -406,11 +406,23 @@ impl LocalPasteApp {
         if allow_public {
             info!("public access enabled (CORS allow-all)");
         }
+        let mut startup_status: Option<String> = None;
         let server = if std::env::var("LOCALPASTE_GUI_DISABLE_SERVER").is_ok() {
             info!("API background server disabled via LOCALPASTE_GUI_DISABLE_SERVER");
             ServerHandle::noop()
         } else {
-            ServerHandle::start(state.clone(), allow_public)?
+            match ServerHandle::start(state.clone(), allow_public) {
+                Ok(handle) => handle,
+                Err(err) if is_addr_in_use_error(&err) => {
+                    warn!("API server not started (port in use). GUI will continue without it.");
+                    startup_status = Some(
+                        "API server not started (port in use). GUI still works; set BIND to choose a different port."
+                            .to_string(),
+                    );
+                    ServerHandle::noop()
+                }
+                Err(err) => return Err(err),
+            }
         };
 
         let profile_highlight = std::env::var("LOCALPASTE_PROFILE_HIGHLIGHT")
@@ -459,6 +471,10 @@ impl LocalPasteApp {
             #[cfg(feature = "profile")]
             profile_state: ProfileState::default(),
         };
+
+        if let Some(message) = startup_status {
+            app.push_status(StatusLevel::Info, message);
+        }
 
         app.reload_pastes("startup");
         app.reload_folders("startup");
@@ -1451,6 +1467,21 @@ impl LocalPasteApp {
             StatusLevel::Info => COLOR_ACCENT,
             StatusLevel::Error => COLOR_DANGER,
         }
+    }
+}
+
+fn is_addr_in_use_error(err: &AppError) -> bool {
+    match err {
+        AppError::DatabaseError(message) => {
+            let msg = message.to_ascii_lowercase();
+            msg.contains("failed to bind server socket")
+                && (msg.contains("address already in use")
+                    || msg.contains("address in use")
+                    || msg.contains("only one usage of each socket address")
+                    || msg.contains("os error 10048")
+                    || msg.contains("os error 98"))
+        }
+        _ => false,
     }
 }
 
