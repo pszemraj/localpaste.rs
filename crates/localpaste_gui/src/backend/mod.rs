@@ -98,4 +98,53 @@ mod tests {
 
         drop(backend);
     }
+
+    #[test]
+    fn backend_creates_updates_and_deletes_paste() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste {
+                content: "hello".to_string(),
+            })
+            .expect("send create");
+
+        let created_id = match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteCreated { paste } => {
+                assert_eq!(paste.content, "hello");
+                paste.id
+            }
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePaste {
+                id: created_id.clone(),
+                content: "updated".to_string(),
+            })
+            .expect("send update");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteSaved { paste } => {
+                assert_eq!(paste.id, created_id);
+                assert_eq!(paste.content, "updated");
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::DeletePaste {
+                id: created_id.clone(),
+            })
+            .expect("send delete");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteDeleted { id } => assert_eq!(id, created_id),
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
 }

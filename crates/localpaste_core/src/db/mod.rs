@@ -202,6 +202,38 @@ impl TransactionOps {
 }
 
 impl Database {
+    /// Build a database handle from an existing shared sled instance.
+    ///
+    /// This is used when multiple components in the same process need
+    /// independent helpers (trees) without reopening the database path.
+    ///
+    /// # Returns
+    /// A new [`Database`] wrapper that shares the underlying sled instance.
+    ///
+    /// # Errors
+    /// Returns an error if the required trees cannot be opened.
+    pub fn from_shared(db: Arc<Db>) -> Result<Self, AppError> {
+        Ok(Self {
+            pastes: paste::PasteDb::new(db.clone())?,
+            folders: folder::FolderDb::new(db.clone())?,
+            db,
+        })
+    }
+
+    /// Clone this handle for another subsystem in the same process.
+    ///
+    /// This avoids a second `sled::open` call (which would contend for the
+    /// filesystem lock) while still providing separate tree handles.
+    ///
+    /// # Returns
+    /// A new [`Database`] that shares the underlying sled instance.
+    ///
+    /// # Errors
+    /// Returns an error if tree initialization fails.
+    pub fn share(&self) -> Result<Self, AppError> {
+        Self::from_shared(self.db.clone())
+    }
+
     /// Open the database and initialize trees.
     ///
     /// # Returns

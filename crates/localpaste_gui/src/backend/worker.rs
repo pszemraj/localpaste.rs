@@ -2,7 +2,7 @@
 
 use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use localpaste_core::Database;
+use localpaste_core::{models::paste::UpdatePasteRequest, naming, Database};
 use std::thread;
 use tracing::error;
 
@@ -54,6 +54,59 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             error!("backend get failed: {}", err);
                             let _ = evt_tx.send(CoreEvent::Error {
                                 message: format!("Get failed: {}", err),
+                            });
+                        }
+                    },
+                    CoreCmd::CreatePaste { content } => {
+                        let name = naming::generate_name();
+                        let paste = localpaste_core::models::paste::Paste::new(content, name);
+                        match db.pastes.create(&paste) {
+                            Ok(()) => {
+                                let _ = evt_tx.send(CoreEvent::PasteCreated { paste });
+                            }
+                            Err(err) => {
+                                error!("backend create failed: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("Create failed: {}", err),
+                                });
+                            }
+                        }
+                    }
+                    CoreCmd::UpdatePaste { id, content } => {
+                        let update = UpdatePasteRequest {
+                            content: Some(content),
+                            name: None,
+                            language: None,
+                            language_is_manual: None,
+                            folder_id: None,
+                            tags: None,
+                        };
+                        match db.pastes.update(&id, update) {
+                            Ok(Some(paste)) => {
+                                let _ = evt_tx.send(CoreEvent::PasteSaved { paste });
+                            }
+                            Ok(None) => {
+                                let _ = evt_tx.send(CoreEvent::PasteMissing { id });
+                            }
+                            Err(err) => {
+                                error!("backend update failed: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("Update failed: {}", err),
+                                });
+                            }
+                        }
+                    }
+                    CoreCmd::DeletePaste { id } => match db.pastes.delete(&id) {
+                        Ok(true) => {
+                            let _ = evt_tx.send(CoreEvent::PasteDeleted { id });
+                        }
+                        Ok(false) => {
+                            let _ = evt_tx.send(CoreEvent::PasteMissing { id });
+                        }
+                        Err(err) => {
+                            error!("backend delete failed: {}", err);
+                            let _ = evt_tx.send(CoreEvent::Error {
+                                message: format!("Delete failed: {}", err),
                             });
                         }
                     },

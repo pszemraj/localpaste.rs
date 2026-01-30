@@ -1,5 +1,9 @@
 [workspace]
-members = ["crates/localpaste_core", "crates/localpaste_gui"]
+members = [
+    "crates/localpaste_core",
+    "crates/localpaste_gui",
+    "crates/localpaste_server",
+]
 resolver = "2"
 
 [package]
@@ -24,6 +28,7 @@ required-features = ["cli"]
 [dependencies]
 localpaste_core = { path = "crates/localpaste_core" }
 localpaste_gui = { path = "crates/localpaste_gui", optional = true }
+localpaste_server = { path = "crates/localpaste_server" }
 axum = { version = "0.7", features = ["macros", "tracing"] }
 tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.5", features = [

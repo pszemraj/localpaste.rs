@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 localpaste_core = { path = "../localpaste_core" }
+localpaste_server = { path = "../localpaste_server" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 crossbeam-channel = "0.5"
@@ -12,3 +13,5 @@ eframe = { version = "0.33", features = ["wgpu", "persistence"] }
 
 [dev-dependencies]
 tempfile = "3.8"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+serde_json = "1.0"

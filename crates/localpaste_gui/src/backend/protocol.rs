@@ -9,6 +9,12 @@ pub enum CoreCmd {
     ListAll { limit: usize },
     /// Load a single paste by id for display in the editor pane.
     GetPaste { id: String },
+    /// Create a new paste with the provided content.
+    CreatePaste { content: String },
+    /// Persist updated content for an existing paste.
+    UpdatePaste { id: String, content: String },
+    /// Delete a paste by id.
+    DeletePaste { id: String },
 }
 
 /// Events produced by the backend worker and polled by the UI thread.
@@ -18,6 +24,12 @@ pub enum CoreEvent {
     PasteList { items: Vec<PasteSummary> },
     /// Response containing the full paste payload requested by id.
     PasteLoaded { paste: Paste },
+    /// Response containing a newly created paste.
+    PasteCreated { paste: Paste },
+    /// Response confirming a paste was updated.
+    PasteSaved { paste: Paste },
+    /// Response confirming a paste was deleted.
+    PasteDeleted { id: String },
     /// The requested paste id no longer exists in the database.
     PasteMissing { id: String },
     /// A backend failure occurred (database error, etc).

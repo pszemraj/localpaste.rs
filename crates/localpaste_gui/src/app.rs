@@ -7,6 +7,9 @@ use eframe::egui::{
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
+use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
@@ -21,9 +24,24 @@ pub struct LocalPasteApp {
     selected_paste: Option<Paste>,
     selected_content: String,
     db_path: String,
+    locks: Arc<PasteLockManager>,
+    _server: EmbeddedServer,
+    server_addr: SocketAddr,
+    server_used_fallback: bool,
     status: Option<String>,
+    save_status: SaveStatus,
+    last_edit_at: Option<Instant>,
+    save_in_flight: bool,
+    autosave_delay: Duration,
     style_applied: bool,
     last_refresh_at: Instant,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum SaveStatus {
+    Saved,
+    Dirty,
+    Saving,
 }
 
 const COLOR_BG_PRIMARY: Color32 = Color32::from_rgb(0x0d, 0x11, 0x17);
@@ -55,8 +73,20 @@ impl LocalPasteApp {
     pub fn new() -> Result<Self, localpaste_core::AppError> {
         let config = Config::from_env();
         let db_path = config.db_path.clone();
+        let autosave_delay = Duration::from_millis(config.auto_save_interval);
         let db = Database::new(&config.db_path)?;
         info!("native GUI opened database at {}", config.db_path);
+
+        let locks = Arc::new(PasteLockManager::default());
+        let server_db = db.share()?;
+        let state = AppState::with_locks(config.clone(), server_db, locks.clone());
+        let allow_public = std::env::var("ALLOW_PUBLIC_ACCESS").is_ok();
+        if allow_public {
+            warn!("Public access enabled - server will accept requests from any origin");
+        }
+        let server = EmbeddedServer::start(state, allow_public)?;
+        let server_addr = server.addr();
+        let server_used_fallback = server.used_fallback();
 
         let backend = spawn_backend(db);
 
@@ -67,7 +97,15 @@ impl LocalPasteApp {
             selected_paste: None,
             selected_content: String::new(),
             db_path,
+            locks,
+            _server: server,
+            server_addr,
+            server_used_fallback,
             status: None,
+            save_status: SaveStatus::Saved,
+            last_edit_at: None,
+            save_in_flight: false,
+            autosave_delay,
             style_applied: false,
             last_refresh_at: Instant::now(),
         };
@@ -216,9 +254,7 @@ impl LocalPasteApp {
                     if let Some(first) = self.pastes.first() {
                         self.select_paste(first.id.clone());
                     } else {
-                        self.selected_id = None;
-                        self.selected_paste = None;
-                        self.selected_content.clear();
+                        self.clear_selection();
                     }
                 }
             }
@@ -226,14 +262,49 @@ impl LocalPasteApp {
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     self.selected_content = paste.content.clone();
                     self.selected_paste = Some(paste);
+                    self.save_status = SaveStatus::Saved;
+                    self.last_edit_at = None;
+                    self.save_in_flight = false;
                 }
+            }
+            CoreEvent::PasteCreated { paste } => {
+                let summary = PasteSummary::from_paste(&paste);
+                self.pastes.insert(0, summary);
+                self.select_paste(paste.id.clone());
+                self.selected_content = paste.content.clone();
+                self.selected_paste = Some(paste);
+                self.save_status = SaveStatus::Saved;
+                self.last_edit_at = None;
+                self.save_in_flight = false;
+                self.status = Some("Created new paste.".to_string());
+            }
+            CoreEvent::PasteSaved { paste } => {
+                if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
+                    *item = PasteSummary::from_paste(&paste);
+                }
+                if self.selected_id.as_deref() == Some(paste.id.as_str()) {
+                    let mut updated = paste;
+                    updated.content = self.selected_content.clone();
+                    self.selected_paste = Some(updated);
+                    self.save_status = SaveStatus::Saved;
+                    self.last_edit_at = None;
+                    self.save_in_flight = false;
+                }
+            }
+            CoreEvent::PasteDeleted { id } => {
+                self.pastes.retain(|paste| paste.id != id);
+                if self.selected_id.as_deref() == Some(id.as_str()) {
+                    self.clear_selection();
+                    self.status = Some("Paste deleted.".to_string());
+                } else {
+                    self.status = Some("Paste deleted; list refreshed.".to_string());
+                }
+                self.request_refresh();
             }
             CoreEvent::PasteMissing { id } => {
                 self.pastes.retain(|paste| paste.id != id);
                 if self.selected_id.as_deref() == Some(id.as_str()) {
-                    self.selected_id = None;
-                    self.selected_paste = None;
-                    self.selected_content.clear();
+                    self.clear_selection();
                     self.status = Some("Selected paste was deleted; list refreshed.".to_string());
                 } else {
                     self.status = Some("Paste was deleted; list refreshed.".to_string());
@@ -243,6 +314,10 @@ impl LocalPasteApp {
             CoreEvent::Error { message } => {
                 warn!("backend error: {}", message);
                 self.status = Some(message);
+                if self.save_status == SaveStatus::Saving {
+                    self.save_status = SaveStatus::Dirty;
+                }
+                self.save_in_flight = false;
             }
         }
     }
@@ -253,10 +328,70 @@ impl LocalPasteApp {
     }
 
     fn select_paste(&mut self, id: String) {
+        if let Some(prev) = self.selected_id.take() {
+            self.locks.unlock(&prev);
+        }
         self.selected_id = Some(id.clone());
+        self.locks.lock(&id);
         self.selected_paste = None;
         self.selected_content.clear();
+        self.save_status = SaveStatus::Saved;
+        self.last_edit_at = None;
+        self.save_in_flight = false;
         let _ = self.backend.cmd_tx.send(CoreCmd::GetPaste { id });
+    }
+
+    fn clear_selection(&mut self) {
+        if let Some(prev) = self.selected_id.take() {
+            self.locks.unlock(&prev);
+        }
+        self.selected_paste = None;
+        self.selected_content.clear();
+        self.save_status = SaveStatus::Saved;
+        self.last_edit_at = None;
+        self.save_in_flight = false;
+    }
+
+    fn create_new_paste(&mut self) {
+        let _ = self.backend.cmd_tx.send(CoreCmd::CreatePaste {
+            content: String::new(),
+        });
+    }
+
+    fn delete_selected(&mut self) {
+        if let Some(id) = self.selected_id.clone() {
+            self.locks.unlock(&id);
+            let _ = self.backend.cmd_tx.send(CoreCmd::DeletePaste { id });
+        }
+    }
+
+    fn mark_dirty(&mut self) {
+        if self.selected_id.is_some() {
+            self.save_status = SaveStatus::Dirty;
+            self.last_edit_at = Some(Instant::now());
+        }
+    }
+
+    fn maybe_autosave(&mut self) {
+        if self.save_in_flight || self.save_status != SaveStatus::Dirty {
+            return;
+        }
+        let Some(last_edit) = self.last_edit_at else {
+            return;
+        };
+        if last_edit.elapsed() < self.autosave_delay {
+            return;
+        }
+        let Some(id) = self.selected_id.clone() else {
+            return;
+        };
+        let content = self.selected_content.clone();
+        self.save_in_flight = true;
+        self.save_status = SaveStatus::Saving;
+        let _ = self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePaste { id, content });
     }
 
     fn selected_index(&self) -> Option<usize> {
@@ -272,6 +407,15 @@ impl eframe::App for LocalPasteApp {
         while let Ok(event) = self.backend.evt_rx.try_recv() {
             self.apply_event(event);
         }
+
+        ctx.input(|input| {
+            if input.modifiers.command && input.key_pressed(egui::Key::N) {
+                self.create_new_paste();
+            }
+            if input.modifiers.command && input.key_pressed(egui::Key::Delete) {
+                self.delete_selected();
+            }
+        });
 
         if !ctx.wants_keyboard_input() && !self.pastes.is_empty() {
             let mut direction: i32 = 0;
@@ -315,6 +459,18 @@ impl eframe::App for LocalPasteApp {
                     RichText::new(format!("Pastes ({})", self.pastes.len()))
                         .color(COLOR_TEXT_PRIMARY),
                 );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("+ New Paste").clicked() {
+                        self.create_new_paste();
+                    }
+                    if ui
+                        .add_enabled(self.selected_id.is_some(), egui::Button::new("Delete"))
+                        .clicked()
+                    {
+                        self.delete_selected();
+                    }
+                });
                 ui.add_space(8.0);
                 let mut pending_select: Option<String> = None;
                 let row_height = ui.spacing().interact_size.y;
@@ -371,13 +527,19 @@ impl eframe::App for LocalPasteApp {
                         .color(COLOR_TEXT_MUTED),
                 );
                 ui.add_space(8.0);
-                ui.add_enabled(
-                    false,
+                let editor_height = ui.available_height();
+                let response = ui.add_sized(
+                    [ui.available_width(), editor_height],
                     egui::TextEdit::multiline(&mut self.selected_content)
                         .font(TextStyle::Name(EDITOR_TEXT_STYLE.into()))
                         .desired_width(f32::INFINITY)
-                        .desired_rows(18),
+                        .desired_rows(1)
+                        .lock_focus(true)
+                        .hint_text("Start typing..."),
                 );
+                if response.changed() {
+                    self.mark_dirty();
+                }
             } else if self.selected_id.is_some() {
                 ui.label(RichText::new("Loading paste...").color(COLOR_TEXT_MUTED));
             } else {
@@ -388,15 +550,63 @@ impl eframe::App for LocalPasteApp {
         egui::TopBottomPanel::bottom("status")
             .resizable(false)
             .show(ctx, |ui| {
-                if let Some(status) = &self.status {
-                    ui.label(egui::RichText::new(status).color(egui::Color32::YELLOW));
-                }
+                ui.horizontal(|ui| {
+                    if self.selected_id.is_some() {
+                        let (label, color) = match self.save_status {
+                            SaveStatus::Saved => ("Saved", COLOR_TEXT_SECONDARY),
+                            SaveStatus::Dirty => ("Unsaved", egui::Color32::YELLOW),
+                            SaveStatus::Saving => ("Saving...", COLOR_TEXT_MUTED),
+                        };
+                        ui.label(egui::RichText::new(label).color(color));
+                        ui.separator();
+                    }
+                    if let Some(status) = &self.status {
+                        ui.label(egui::RichText::new(status).color(egui::Color32::YELLOW));
+                    }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let api_label = if self.server_used_fallback {
+                        format!("API: http://{} (auto)", self.server_addr)
+                    } else {
+                        format!("API: http://{}", self.server_addr)
+                    };
+                    ui.label(
+                        egui::RichText::new(api_label)
+                            .small()
+                            .color(COLOR_TEXT_SECONDARY),
+                    );
+                    if self.selected_id.is_some() {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} chars",
+                                self.selected_content.chars().count()
+                            ))
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
+                        );
+                    }
+                });
             });
 
+        self.maybe_autosave();
         if self.last_refresh_at.elapsed() >= AUTO_REFRESH_INTERVAL {
             self.request_refresh();
         }
-        ctx.request_repaint_after(AUTO_REFRESH_INTERVAL);
+        let repaint_after = if self.save_status == SaveStatus::Dirty {
+            self.autosave_delay.min(AUTO_REFRESH_INTERVAL)
+        } else {
+            AUTO_REFRESH_INTERVAL
+        };
+        ctx.request_repaint_after(repaint_after);
+    }
+}
+
+impl Drop for LocalPasteApp {
+    fn drop(&mut self) {
+        if let Some(id) = self.selected_id.take() {
+            self.locks.unlock(&id);
+        }
     }
 }
 
@@ -404,11 +614,35 @@ impl eframe::App for LocalPasteApp {
 mod tests {
     use super::*;
     use crossbeam_channel::unbounded;
+    use tempfile::TempDir;
 
-    fn make_app() -> LocalPasteApp {
+    struct TestHarness {
+        _dir: TempDir,
+        app: LocalPasteApp,
+    }
+
+    fn make_app() -> TestHarness {
         let (cmd_tx, _cmd_rx) = unbounded();
         let (_evt_tx, evt_rx) = unbounded();
-        LocalPasteApp {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        let db = Database::new(&db_path_str).expect("db");
+        let locks = Arc::new(PasteLockManager::default());
+        let server_db = db.share().expect("share db");
+        let config = Config {
+            db_path: db_path_str.clone(),
+            port: 0,
+            max_paste_size: 10 * 1024 * 1024,
+            auto_save_interval: 2000,
+            auto_backup: false,
+        };
+        let state = AppState::with_locks(config, server_db, locks.clone());
+        let server = EmbeddedServer::start(state, false).expect("server");
+        let server_addr = server.addr();
+        let server_used_fallback = server.used_fallback();
+
+        let app = LocalPasteApp {
             backend: BackendHandle { cmd_tx, evt_rx },
             pastes: vec![PasteSummary {
                 id: "alpha".to_string(),
@@ -418,43 +652,53 @@ mod tests {
             selected_id: Some("alpha".to_string()),
             selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
             selected_content: "content".to_string(),
-            db_path: "test".to_string(),
+            db_path: db_path_str,
+            locks,
+            _server: server,
+            server_addr,
+            server_used_fallback,
             status: None,
+            save_status: SaveStatus::Saved,
+            last_edit_at: None,
+            save_in_flight: false,
+            autosave_delay: Duration::from_millis(2000),
             style_applied: false,
             last_refresh_at: Instant::now(),
-        }
+        };
+
+        TestHarness { _dir: dir, app }
     }
 
     #[test]
     fn paste_missing_clears_selection_and_removes_list_entry() {
-        let mut app = make_app();
-        app.apply_event(CoreEvent::PasteMissing {
+        let mut harness = make_app();
+        harness.app.apply_event(CoreEvent::PasteMissing {
             id: "alpha".to_string(),
         });
 
-        assert!(app.pastes.is_empty());
-        assert!(app.selected_id.is_none());
-        assert!(app.selected_paste.is_none());
-        assert!(app.selected_content.is_empty());
-        assert!(app.status.is_some());
+        assert!(harness.app.pastes.is_empty());
+        assert!(harness.app.selected_id.is_none());
+        assert!(harness.app.selected_paste.is_none());
+        assert!(harness.app.selected_content.is_empty());
+        assert!(harness.app.status.is_some());
     }
 
     #[test]
     fn paste_missing_non_selected_removes_list_entry() {
-        let mut app = make_app();
-        app.pastes.push(PasteSummary {
+        let mut harness = make_app();
+        harness.app.pastes.push(PasteSummary {
             id: "beta".to_string(),
             name: "Beta".to_string(),
             language: None,
         });
 
-        app.apply_event(CoreEvent::PasteMissing {
+        harness.app.apply_event(CoreEvent::PasteMissing {
             id: "beta".to_string(),
         });
 
-        assert_eq!(app.pastes.len(), 1);
-        assert_eq!(app.pastes[0].id, "alpha");
-        assert_eq!(app.selected_id.as_deref(), Some("alpha"));
-        assert!(app.selected_paste.is_some());
+        assert_eq!(harness.app.pastes.len(), 1);
+        assert_eq!(harness.app.pastes[0].id, "alpha");
+        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+        assert!(harness.app.selected_paste.is_some());
     }
 }

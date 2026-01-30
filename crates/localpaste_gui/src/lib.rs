@@ -4,7 +4,8 @@
 //! without duplicating initialization logic.
 
 mod app;
-mod backend;
+/// Backend worker + protocol types used by the GUI and headless tests.
+pub mod backend;
 
 use app::LocalPasteApp;
 use eframe::egui;
