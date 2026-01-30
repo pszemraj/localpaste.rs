@@ -53,7 +53,7 @@ Interpretation:
 These metrics require a human run of the GUI:
 
 1) **Scroll FPS (10k snippets)**
-   - Run: `cargo run --bin localpaste-gui --features gui,debug-tools,profile`
+   - Run: `cargo run --bin localpaste-gui-legacy --features gui-legacy,debug-tools,profile`
    - Load the 10k dataset.
    - Scroll the sidebar list continuously for ~10 seconds.
    - Record: average FPS and any stutters.

@@ -25,8 +25,9 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 
 LocalPaste.rs provides multiple ways to interact with your pastes:
 
-- `localpaste_native` - Native rewrite (primary development target)
-- `localpaste-gui` - Legacy egui desktop application (feature-complete reference)
+- `localpaste-gui` - Native rewrite (primary desktop app)
+- `localpaste-gui-legacy` - Legacy egui desktop app (feature-complete reference)
+- `localpaste_native` - Workspace crate for direct rewrite development
 - `localpaste` - Axum HTTP API server (headless, JSON only)
 - `lpaste` - Command-line interface for terminal usage
 
@@ -35,13 +36,15 @@ LocalPaste.rs provides multiple ways to interact with your pastes:
 ```bash
 cargo run
 # or, explicitly:
+cargo run --bin localpaste-gui
+# or, for the workspace crate:
 cargo run -p localpaste_native
 ```
 
 ### Run the Legacy Desktop App
 
 ```bash
-cargo run --bin localpaste-gui --features="gui"
+cargo run --bin localpaste-gui-legacy --features="gui-legacy"
 ```
 
 ### Run the Web Server / API
@@ -59,7 +62,7 @@ The server exposes a JSON API on <http://localhost:38411>. Use the CLI or your o
 
 ## CLI Usage
 
-The CLI tool (`lpaste`) interacts with the running server (or the desktop app, which hosts the same API locally):
+The CLI tool (`lpaste`) interacts with the running server (or the legacy desktop app, which hosts the same API locally):
 
 ```bash
 # Build the CLI binary (requires the `cli` feature)
@@ -134,10 +137,10 @@ See [docs/dev.md](docs/dev.md) for development documentation, including desktop 
 
 - **Core**: `localpaste_core` holds the storage model + domain logic
 - **Native rewrite**: `localpaste_native` (egui/eframe app, async worker)
-- **Legacy desktop**: `localpaste-gui` (existing egui UI, feature reference)
+- **Legacy desktop**: `localpaste-gui-legacy` (existing egui UI, feature reference)
 - **Backend**: Axum web framework with Sled embedded database
 - **Storage**: Embedded Sled database (no external DB required)
-- **Deployment**: Per-platform binaries; legacy GUI behind `--features gui`
+- **Deployment**: Per-platform binaries; legacy GUI behind `--features gui-legacy`
 
 ## License
 

@@ -6,7 +6,7 @@ resolver = "2"
 name = "localpaste"
 version = "0.3.1"
 edition = "2021"
-default-run = "localpaste-native"
+default-run = "localpaste-gui"
 
 [lib]
 name = "localpaste"
@@ -62,12 +62,12 @@ tokio-test = "0.4"
 axum-test = "16.4"
 
 [features]
-default = ["native"]
+default = ["gui"]
 cli = ["clap", "clap_complete", "reqwest"]
-gui = ["egui", "eframe", "egui_extras", "rfd", "syntect"]
+gui = ["localpaste_native"]
+gui-legacy = ["egui", "eframe", "egui_extras", "rfd", "syntect"]
 debug-tools = []
-profile = ["puffin", "gui"]
-native = ["localpaste_native"]
+profile = ["puffin", "gui-legacy"]
 
 [[bin]]
 name = "localpaste-gui"
@@ -75,9 +75,9 @@ path = "src/bin/localpaste-gui.rs"
 required-features = ["gui"]
 
 [[bin]]
-name = "localpaste-native"
-path = "src/bin/localpaste-native.rs"
-required-features = ["native"]
+name = "localpaste-gui-legacy"
+path = "src/bin/localpaste-gui-legacy.rs"
+required-features = ["gui-legacy"]
 
 [[bin]]
 name = "generate-test-data"

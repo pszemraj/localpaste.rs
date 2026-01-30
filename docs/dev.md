@@ -19,9 +19,10 @@ localpaste.rs/
 |           `-- backend/
 |-- src/
 |   |-- bin/
-|   |   |-- localpaste-gui.rs   # Native egui desktop launcher
+|   |   |-- localpaste-gui.rs   # Primary desktop launcher (rewrite)
+|   |   |-- localpaste-gui-legacy.rs # Legacy desktop launcher (feature `gui-legacy`)
 |   |   `-- lpaste.rs           # CLI client (requires `cli` feature)
-|   |-- gui/                    # egui widgets / layout
+|   |-- gui/                    # Legacy egui widgets / layout
 |   |-- handlers/               # HTTP handlers
 |   |-- error.rs                # HTTP error wrapper
 |   |-- lib.rs                  # Axum router + core re-exports
@@ -53,12 +54,13 @@ localpaste.rs/
 
 ### Frontend Architecture
 
-- Native egui 0.33 application (src/gui/mod.rs)
-- Cached language detection + syntect highlighting
-- Folder management via dialogs with cycle-safe parenting rules
-- Auto-save with debouncing and manual export support
-- Incremental in-memory paste index keeps the sidebar responsive without requerying sled
-- Large pastes (above ~256KB) fall back to a plain renderer so highlight work stays bounded
+- **Rewrite (primary):** `crates/localpaste_native` (egui/eframe app with backend worker)
+- **Legacy GUI:** `src/gui/mod.rs` (feature-complete reference while rewrite lands)
+- Cached language detection + syntect highlighting (legacy)
+- Folder management via dialogs with cycle-safe parenting rules (legacy)
+- Auto-save with debouncing and manual export support (legacy)
+- Incremental in-memory paste index keeps the sidebar responsive without requerying sled (legacy)
+- Large pastes (above ~256KB) fall back to a plain renderer so highlight work stays bounded (legacy)
 
 ### GUI Shortcuts
 
@@ -96,8 +98,9 @@ The project contains multiple binaries:
 
 - `localpaste` - The web server (default binary)
 - `lpaste` - CLI tool for interacting with the server (enable the `cli` feature)
-- `localpaste-gui` - Existing egui desktop app (feature `gui`)
-- `localpaste_native` - New egui rewrite (workspace crate)
+- `localpaste-gui` - Native rewrite (primary desktop app, feature `gui`)
+- `localpaste-gui-legacy` - Legacy egui desktop app (feature `gui-legacy`)
+- `localpaste_native` - Rewrite crate (workspace crate)
 
 ```bash
 # Build both binaries
@@ -116,11 +119,16 @@ cargo build --release --bin lpaste --features cli
 ### Running Locally
 
 ```bash
-# Run the desktop app
-cargo run --bin localpaste-gui --features="gui"
+# Run the desktop app (rewrite)
+cargo run
+# or:
+cargo run --bin localpaste-gui
+
+# Run the legacy desktop app
+cargo run --bin localpaste-gui-legacy --features="gui-legacy"
 # (append --release when you need an optimized build)
 
-# Run the new native rewrite (Phase 2+)
+# Run the new native rewrite crate directly (Phase 2+)
 cargo run -p localpaste_native
 
 # Run the server/API (JSON endpoints)
@@ -133,11 +141,14 @@ cargo watch -x "run --bin localpaste"
 # Run with debug logging
 RUST_LOG=debug cargo run --bin localpaste
 
-# Run tests (include GUI when necessary)
-cargo test --features gui
+# Run tests (include legacy GUI when necessary)
+cargo test --features gui-legacy
 
 # Run core tests only
 cargo test -p localpaste_core
+
+# Run rewrite tests only
+cargo test -p localpaste_native
 
 # Format code
 cargo fmt
@@ -156,15 +167,19 @@ cargo build --release
 cargo build --release --features cli
 
 # Include the desktop GUI
-cargo build --release --bin localpaste-gui --features gui
+cargo build --release --bin localpaste-gui
+
+# Include the legacy desktop GUI
+cargo build --release --bin localpaste-gui-legacy --features gui-legacy
 
 # Strip symbols for smaller binaries (build required first)
 strip target/release/localpaste
 strip target/release/lpaste
 strip target/release/localpaste-gui
+strip target/release/localpaste-gui-legacy
 
 # Check binary sizes
-du -h target/release/localpaste target/release/lpaste target/release/localpaste-gui
+du -h target/release/localpaste target/release/lpaste target/release/localpaste-gui target/release/localpaste-gui-legacy
 ```
 
 ### Using the CLI Tool
@@ -192,8 +207,8 @@ echo "test" | ./target/release/lpaste new
    - Register route in `src/lib.rs`
 
 2. **Frontend Changes**
-   - Update egui components in `src/gui/`
-   - Run `cargo run --bin localpaste-gui --features gui` to iterate
+   - Rewrite: update `crates/localpaste_native/` and run `cargo run --bin localpaste-gui`
+   - Legacy: update egui components in `src/gui/` and run `cargo run --bin localpaste-gui-legacy --features gui-legacy`
    - Refresh screenshots in `assets/` if the UI changes
 
 3. **Database Migrations**
