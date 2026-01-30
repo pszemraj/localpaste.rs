@@ -2544,6 +2544,7 @@ dependencies = [
  "egui_extras",
  "hyper",
  "localpaste_core",
+ "localpaste_native",
  "puffin",
  "rand",
  "reqwest",
