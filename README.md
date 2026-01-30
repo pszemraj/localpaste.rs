@@ -87,6 +87,22 @@ Available environment variables:
 - `AUTO_BACKUP` - Enable automatic backups on startup (default: false)
 - `RUST_LOG` - Logging level (default: info)
 
+Override the port for a single session:
+
+PowerShell:
+```powershell
+$env:PORT = "38411"
+# or
+$env:BIND = "127.0.0.1:38411"
+```
+
+bash/zsh:
+```bash
+PORT=38411 cargo run --bin localpaste
+# or
+BIND=127.0.0.1:38411 cargo run --bin localpaste
+```
+
 For advanced configuration and security settings, see [docs/security.md](docs/security.md).
 
 ## Running as a Background Service

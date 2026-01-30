@@ -320,7 +320,14 @@ When you encounter: `Error: could not acquire lock on "/home/pszemraj/.cache/loc
 **Port Already in Use**
 
 - Check what's using port: `lsof -i :38411`
-- Change port: `PORT=3031 cargo run`
+- Change port (bash/zsh): `PORT=38411 cargo run`
+- Change port (PowerShell):
+
+```powershell
+$env:PORT = "38411"
+# or
+$env:BIND = "127.0.0.1:38411"
+```
 
 ## Performance Optimization
 
