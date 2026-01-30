@@ -14,3 +14,8 @@
 - These hooks are meant to guide the upcoming virtualized editor work; remove or downgrade them once we have a replacement metrics story.
 \n## Virtualized Editor\n- Detailed plan in docs/virtual-editor-plan.md; current focus is chunked highlighting + per-line layout cache before tackling full viewport editing.
 - Highlight recompute now debounced (75ms) and reuses prior galley; profile flag logs run durations.
+
+## Edit Locks
+
+- When a paste is open in the GUI, it is locked against API/CLI deletion.
+- Only the GUI instance editing the paste may delete it.

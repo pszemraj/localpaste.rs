@@ -2,11 +2,14 @@
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use localpaste::{create_app, models::folder::Folder, AppState, Config, Database};
+use localpaste::{
+    create_app, models::folder::Folder, AppState, Config, Database, PasteLockManager,
+};
 use serde_json::json;
+use std::sync::Arc;
 use tempfile::TempDir;
 
-async fn setup_test_server() -> (TestServer, TempDir) {
+async fn setup_test_server() -> (TestServer, TempDir, Arc<PasteLockManager>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.db");
 
@@ -19,16 +22,17 @@ async fn setup_test_server() -> (TestServer, TempDir) {
     };
 
     let db = Database::new(&config.db_path).unwrap();
-    let state = AppState::new(config, db);
+    let locks = Arc::new(PasteLockManager::default());
+    let state = AppState::with_locks(config, db, locks.clone());
     let app = create_app(state, false);
 
     let server = TestServer::new(app).unwrap();
-    (server, temp_dir)
+    (server, temp_dir, locks)
 }
 
 #[tokio::test]
 async fn test_paste_lifecycle() {
-    let (server, _temp) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server().await;
 
     // Create a paste
     let create_response = server
@@ -78,7 +82,7 @@ async fn test_paste_lifecycle() {
 
 #[tokio::test]
 async fn test_folder_lifecycle() {
-    let (server, _temp) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server().await;
 
     // Create a folder
     let create_response = server
@@ -164,7 +168,7 @@ async fn test_folder_lifecycle() {
 
 #[tokio::test]
 async fn test_paste_with_folder() {
-    let (server, _temp) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server().await;
 
     // Create a folder first
     let folder_response = server
@@ -204,7 +208,7 @@ async fn test_paste_with_folder() {
 
 #[tokio::test]
 async fn test_paste_search() {
-    let (server, _temp) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server().await;
 
     // Create multiple pastes
     server
@@ -246,7 +250,7 @@ async fn test_paste_search() {
 
 #[tokio::test]
 async fn test_max_paste_size_enforcement() {
-    let (server, _temp) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server().await;
 
     // Create a very large content string (11MB, exceeding the 10MB limit)
     let large_content = "x".repeat(11_000_000);
@@ -266,7 +270,7 @@ async fn test_max_paste_size_enforcement() {
 
 #[tokio::test]
 async fn test_invalid_folder_association() {
-    let (server, _temp) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server().await;
 
     // Try to create paste with non-existent folder
     let response = server
@@ -283,7 +287,7 @@ async fn test_invalid_folder_association() {
 
 #[tokio::test]
 async fn test_folder_deletion_migrates_pastes() {
-    let (server, _temp) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server().await;
 
     // Create folder
     let folder_response = server
@@ -322,7 +326,7 @@ async fn test_folder_deletion_migrates_pastes() {
 
 #[tokio::test]
 async fn test_update_folder_rejects_cycle() {
-    let (server, _temp) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server().await;
 
     // Create parent folder
     let parent_response = server
@@ -404,4 +408,34 @@ async fn test_delete_folder_with_cycle_completes() {
     assert_eq!(folders_response.status_code(), StatusCode::OK);
     let folders: Vec<serde_json::Value> = folders_response.json();
     assert!(folders.is_empty());
+}
+
+#[tokio::test]
+async fn test_delete_locked_paste_rejected() {
+    let (server, _temp, locks) = setup_test_server().await;
+
+    // Create a paste
+    let create_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "Locked content",
+            "name": "locked-paste"
+        }))
+        .await;
+
+    assert_eq!(create_response.status_code(), StatusCode::OK);
+    let paste: serde_json::Value = create_response.json();
+    let paste_id = paste["id"].as_str().unwrap().to_string();
+
+    // Lock it as if the GUI has it open.
+    locks.lock(&paste_id);
+
+    // Attempt delete through API
+    let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
+    assert_eq!(delete_response.status_code(), StatusCode::LOCKED);
+
+    // Unlock and delete should work
+    locks.unlock(&paste_id);
+    let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
+    assert_eq!(delete_response.status_code(), StatusCode::OK);
 }

@@ -7,7 +7,10 @@ pub mod error;
 pub mod gui;
 /// HTTP handlers for paste and folder endpoints.
 pub mod handlers;
+/// In-memory paste locks shared between GUI and API handlers.
+pub mod locks;
 pub use localpaste_core::{config, db, models, naming, AppError, Config, Database};
+pub use locks::PasteLockManager;
 
 use axum::{
     extract::DefaultBodyLimit,
@@ -27,6 +30,7 @@ use tower_http::{
 pub struct AppState {
     pub db: std::sync::Arc<Database>,
     pub config: std::sync::Arc<Config>,
+    pub locks: std::sync::Arc<PasteLockManager>,
 }
 
 impl AppState {
@@ -39,9 +43,16 @@ impl AppState {
     /// # Returns
     /// A new [`AppState`].
     pub fn new(config: Config, db: Database) -> Self {
+        let locks = Arc::new(PasteLockManager::default());
+        Self::with_locks(config, db, locks)
+    }
+
+    /// Construct shared application state with a pre-configured lock manager.
+    pub fn with_locks(config: Config, db: Database, locks: Arc<PasteLockManager>) -> Self {
         Self {
             db: Arc::new(db),
             config: Arc::new(config),
+            locks,
         }
     }
 }

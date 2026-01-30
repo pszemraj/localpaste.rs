@@ -19,6 +19,9 @@ pub enum AppError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Locked: {0}")]
+    Locked(String),
+
     #[error("Internal server error")]
     Internal,
 }

@@ -193,6 +193,9 @@ pub async fn delete_paste(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     let paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
+    if state.locks.is_locked(&id) {
+        return Err(AppError::Locked("Paste is currently open for editing.".to_string()).into());
+    }
 
     // Use transaction-like operation for atomic folder count update
     let deleted = if let Some(ref folder_id) = paste.folder_id {

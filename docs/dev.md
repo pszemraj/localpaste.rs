@@ -46,6 +46,11 @@ localpaste.rs/
 - No external database server required
 - Data stored in `~/.cache/localpaste/db/`
 
+### Edit Locks
+
+- When a paste is open in the GUI, it is locked against API/CLI deletion.
+- Only the GUI instance editing the paste may delete it.
+
 ### Frontend Architecture
 
 - Native egui 0.33 application (src/gui/mod.rs)

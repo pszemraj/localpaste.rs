@@ -25,6 +25,7 @@ use crate::{
     config::Config,
     db::{Database, TransactionOps},
     error::AppError,
+    locks::PasteLockManager,
     models::folder::Folder,
     models::paste::{Paste, UpdatePasteRequest},
     naming, serve_router, AppState,
@@ -359,6 +360,7 @@ pub fn app_icon() -> egui::IconData {
 pub struct LocalPasteApp {
     db: Arc<Database>,
     config: Arc<Config>,
+    locks: Arc<PasteLockManager>,
     pastes: Vec<Paste>,
     folders: Vec<Folder>,
     paste_index: HashMap<String, usize>,
@@ -402,6 +404,7 @@ impl LocalPasteApp {
         let state = AppState::new(config.clone(), database);
         let db = state.db.clone();
         let config_arc = state.config.clone();
+        let locks = state.locks.clone();
         let allow_public = std::env::var("ALLOW_PUBLIC_ACCESS").is_ok();
         if allow_public {
             info!("public access enabled (CORS allow-all)");
@@ -443,6 +446,7 @@ impl LocalPasteApp {
         let mut app = Self {
             db,
             config: config_arc,
+            locks,
             pastes: Vec::new(),
             folders: Vec::new(),
             paste_index: HashMap::new(),
@@ -1032,11 +1036,18 @@ impl LocalPasteApp {
         if announce {
             debug!("selecting paste {}", id);
         }
+        if let Some(current) = &self.selected_id {
+            if current != &id {
+                self.locks.unlock(current);
+            }
+        }
         if let Some(paste) = self.pastes.iter().find(|p| p.id == id) {
+            self.locks.lock(&paste.id);
             self.editor.apply_paste(paste.clone());
             self.selected_id = Some(paste.id.clone());
             self.folder_focus = paste.folder_id.clone();
         } else if announce {
+            self.locks.unlock(&id);
             self.push_status(
                 StatusLevel::Error,
                 format!("Paste {} is no longer available", id),
@@ -1200,7 +1211,9 @@ impl LocalPasteApp {
         let folder = self.folder_focus.clone();
         self.editor = EditorState::new_unsaved(folder.clone());
         self.folder_focus = folder;
-        self.selected_id = None;
+        if let Some(id) = self.selected_id.take() {
+            self.locks.unlock(&id);
+        }
         self.push_status(StatusLevel::Info, "New paste ready".to_string());
     }
 
@@ -1427,6 +1440,7 @@ impl LocalPasteApp {
     fn delete_selected(&mut self) {
         if let Some(id) = self.selected_id.clone() {
             debug!("deleting paste {}", id);
+            self.locks.unlock(&id);
             match self.db.pastes.delete(&id) {
                 Ok(true) => {
                     if let Err(err) = self.db.flush() {
@@ -1445,6 +1459,7 @@ impl LocalPasteApp {
                 }
                 Err(err) => {
                     error!("failed to delete paste {}: {}", id, err);
+                    self.locks.lock(&id);
                     self.push_status(StatusLevel::Error, format!("Delete failed: {}", err));
                 }
             }
