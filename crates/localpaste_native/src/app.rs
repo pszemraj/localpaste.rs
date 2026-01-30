@@ -298,7 +298,7 @@ impl eframe::App for LocalPasteApp {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading(RichText::new("LocalPaste Native").color(COLOR_ACCENT));
+                    ui.heading(RichText::new("LocalPaste.rs").color(COLOR_ACCENT));
                     ui.add_space(12.0);
                     ui.label(
                         RichText::new(&self.db_path)

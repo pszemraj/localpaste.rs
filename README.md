@@ -33,6 +33,8 @@ LocalPaste.rs provides multiple ways to interact with your pastes:
 ### Run the Native Rewrite (Primary)
 
 ```bash
+cargo run
+# or, explicitly:
 cargo run -p localpaste_native
 ```
 

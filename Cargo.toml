@@ -6,7 +6,7 @@ resolver = "2"
 name = "localpaste"
 version = "0.3.1"
 edition = "2021"
-default-run = "localpaste-gui"
+default-run = "localpaste-native"
 
 [lib]
 name = "localpaste"
@@ -23,6 +23,7 @@ required-features = ["cli"]
 
 [dependencies]
 localpaste_core = { path = "crates/localpaste_core" }
+localpaste_native = { path = "crates/localpaste_native", optional = true }
 axum = { version = "0.7", features = ["macros", "tracing"] }
 tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.5", features = [
@@ -61,16 +62,22 @@ tokio-test = "0.4"
 axum-test = "16.4"
 
 [features]
-default = ["gui"]
+default = ["native"]
 cli = ["clap", "clap_complete", "reqwest"]
 gui = ["egui", "eframe", "egui_extras", "rfd", "syntect"]
 debug-tools = []
 profile = ["puffin", "gui"]
+native = ["localpaste_native"]
 
 [[bin]]
 name = "localpaste-gui"
 path = "src/bin/localpaste-gui.rs"
 required-features = ["gui"]
+
+[[bin]]
+name = "localpaste-native"
+path = "src/bin/localpaste-native.rs"
+required-features = ["native"]
 
 [[bin]]
 name = "generate-test-data"
