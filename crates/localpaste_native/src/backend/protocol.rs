@@ -5,11 +5,14 @@ use localpaste_core::models::paste::Paste;
 #[derive(Debug)]
 pub enum CoreCmd {
     ListAll { limit: usize },
+    GetPaste { id: String },
 }
 
 #[derive(Debug)]
 pub enum CoreEvent {
     PasteList { items: Vec<PasteSummary> },
+    PasteLoaded { paste: Paste },
+    PasteMissing { id: String },
     Error { message: String },
 }
 

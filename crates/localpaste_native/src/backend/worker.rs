@@ -32,6 +32,20 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             });
                         }
                     },
+                    CoreCmd::GetPaste { id } => match db.pastes.get(&id) {
+                        Ok(Some(paste)) => {
+                            let _ = evt_tx.send(CoreEvent::PasteLoaded { paste });
+                        }
+                        Ok(None) => {
+                            let _ = evt_tx.send(CoreEvent::PasteMissing { id });
+                        }
+                        Err(err) => {
+                            error!("backend get failed: {}", err);
+                            let _ = evt_tx.send(CoreEvent::Error {
+                                message: format!("Get failed: {}", err),
+                            });
+                        }
+                    },
                 }
             }
         })
