@@ -214,4 +214,23 @@ mod tests {
         assert!(app.selected_content.is_empty());
         assert!(app.status.is_some());
     }
+
+    #[test]
+    fn paste_missing_non_selected_removes_list_entry() {
+        let mut app = make_app();
+        app.pastes.push(PasteSummary {
+            id: "beta".to_string(),
+            name: "Beta".to_string(),
+            language: None,
+        });
+
+        app.apply_event(CoreEvent::PasteMissing {
+            id: "beta".to_string(),
+        });
+
+        assert_eq!(app.pastes.len(), 1);
+        assert_eq!(app.pastes[0].id, "alpha");
+        assert_eq!(app.selected_id.as_deref(), Some("alpha"));
+        assert!(app.selected_paste.is_some());
+    }
 }
