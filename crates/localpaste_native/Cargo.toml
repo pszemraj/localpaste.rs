@@ -9,3 +9,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 crossbeam-channel = "0.5"
 eframe = { version = "0.33", default-features = false, features = ["wgpu", "persistence"] }
+
+[dev-dependencies]
+tempfile = "3.8"

@@ -2320,6 +2320,7 @@ dependencies = [
  "crossbeam-channel",
  "eframe",
  "localpaste_core",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
 ]
