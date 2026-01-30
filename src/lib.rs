@@ -3,6 +3,7 @@
 /// HTTP error mapping for API handlers.
 pub mod error;
 #[cfg(feature = "gui-legacy")]
+#[path = "../legacy/gui/mod.rs"]
 /// Legacy egui desktop UI (feature-gated).
 pub mod gui;
 /// HTTP handlers for paste and folder endpoints.

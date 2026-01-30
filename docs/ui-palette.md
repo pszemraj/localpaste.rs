@@ -1,7 +1,7 @@
 # LocalPaste Desktop Palette
 
 The native egui interface mirrors the tones used by the previous web UI.
-These canonical values are applied inside `src/gui/mod.rs` and should be reused for future widgets or theming tweaks.
+These canonical values are applied inside `legacy/gui/mod.rs` and should be reused for future widgets or theming tweaks.
 
 | Token                  | Hex       | Notes                      |
 | ---------------------- | --------- | -------------------------- |
@@ -16,7 +16,7 @@ These canonical values are applied inside `src/gui/mod.rs` and should be reused 
 | `COLOR_DANGER`         | `#F85149` | Destructive actions        |
 | `COLOR_BORDER`         | `#30363D` | Divider strokes            |
 
-These values are applied in `crates/localpaste_gui/src/app.rs` and preserved in `src/gui/mod.rs`
+These values are applied in `crates/localpaste_gui/src/app.rs` and preserved in `legacy/gui/mod.rs`
 for reference while the legacy GUI remains in the repo.
 
 ## Editor Font

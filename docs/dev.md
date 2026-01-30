@@ -20,9 +20,10 @@ localpaste.rs/
 |-- src/
 |   |-- bin/
 |   |   |-- localpaste-gui.rs   # Primary desktop launcher (rewrite)
-|   |   |-- localpaste-gui-legacy.rs # Legacy desktop launcher (feature `gui-legacy`)
 |   |   `-- lpaste.rs           # CLI client (requires `cli` feature)
+|-- legacy/
 |   |-- gui/                    # Legacy egui widgets / layout
+|   `-- bin/                    # Legacy desktop launcher
 |   |-- handlers/               # HTTP handlers
 |   |-- error.rs                # HTTP error wrapper
 |   |-- lib.rs                  # Axum router + core re-exports
@@ -55,7 +56,7 @@ localpaste.rs/
 ### Frontend Architecture
 
 - **Rewrite (primary):** `crates/localpaste_gui` (egui/eframe app with backend worker)
-- **Legacy GUI:** `src/gui/mod.rs` (feature-complete reference while rewrite lands)
+- **Legacy GUI:** `legacy/gui/mod.rs` (feature-complete reference while rewrite lands)
 - Cached language detection + syntect highlighting (legacy)
 - Folder management via dialogs with cycle-safe parenting rules (legacy)
 - Auto-save with debouncing and manual export support (legacy)
@@ -208,7 +209,7 @@ echo "test" | ./target/release/lpaste new
 
 2. **Frontend Changes**
    - Rewrite: update `crates/localpaste_gui/` and run `cargo run --bin localpaste-gui`
-   - Legacy: update egui components in `src/gui/` and run `cargo run --bin localpaste-gui-legacy --features gui-legacy`
+   - Legacy: update egui components in `legacy/gui/` and run `cargo run --bin localpaste-gui-legacy --features gui-legacy`
    - Refresh screenshots in `assets/` if the UI changes
 
 3. **Database Migrations**

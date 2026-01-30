@@ -76,7 +76,7 @@ required-features = ["gui"]
 
 [[bin]]
 name = "localpaste-gui-legacy"
-path = "src/bin/localpaste-gui-legacy.rs"
+path = "legacy/bin/localpaste-gui-legacy.rs"
 required-features = ["gui-legacy"]
 
 [[bin]]

@@ -1,6 +1,6 @@
 # Plan-Aligned Rewrite Checklist (Legacy Reference)
 
-This checklist tracks PLAN.md phases. The legacy GUI (`src/gui/mod.rs`) is reference-only.
+This checklist tracks PLAN.md phases. The legacy GUI (`legacy/gui/mod.rs`) is reference-only.
 Strict parity is NOT required - we only port or replace behaviors that match the plan and desired UX.
 
 Status key:
