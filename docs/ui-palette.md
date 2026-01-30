@@ -7,7 +7,7 @@ These canonical values are applied inside `src/gui/mod.rs` and should be reused 
 | ---------------------- | --------- | -------------------------- |
 | `COLOR_BG_PRIMARY`     | `#0D1117` | Window background          |
 | `COLOR_BG_SECONDARY`   | `#161B22` | Panels, status bar         |
-| `COLOR_BG_TERTIARY`    | `#21262D` | Editor frames, inputs      |
+| `COLOR_BG_TERTIARY`    | `#212629` | Editor frames, inputs      |
 | `COLOR_TEXT_PRIMARY`   | `#C9D1D9` | Body text                  |
 | `COLOR_TEXT_SECONDARY` | `#8B949E` | Secondary text             |
 | `COLOR_TEXT_MUTED`     | `#6E7681` | Labels / metadata          |
@@ -16,4 +16,10 @@ These canonical values are applied inside `src/gui/mod.rs` and should be reused 
 | `COLOR_DANGER`         | `#F85149` | Destructive actions        |
 | `COLOR_BORDER`         | `#30363D` | Divider strokes            |
 
-The screenshot at `assets/ui.jpg` shows the original layout these colors came from.
+These values are applied in `crates/localpaste_native/src/app.rs` and preserved in `src/gui/mod.rs`
+for reference while the legacy GUI remains in the repo.
+
+## Editor Font
+
+The native editor uses the 0xProto font (Regular NL) under the SIL Open Font License.
+Font files and license live at `assets/fonts/0xProto`.
