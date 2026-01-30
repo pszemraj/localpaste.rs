@@ -1532,6 +1532,14 @@ impl ServerHandle {
                 };
 
                 let actual_addr = listener.local_addr().unwrap_or(bind_addr);
+                if used_fallback {
+                    warn!(
+                        "API listening on http://{} (auto port; {} was in use)",
+                        actual_addr, bind_addr
+                    );
+                } else {
+                    info!("API listening on http://{}", actual_addr);
+                }
                 let _ = ready_tx.send(Ok((actual_addr, used_fallback)));
 
                 let shutdown = async {
@@ -1560,7 +1568,11 @@ impl ServerHandle {
                 if !addr.ip().is_loopback() {
                     warn!("binding to non-localhost address {}", addr);
                 }
-                info!("API listening on http://{}", addr);
+                if used_fallback {
+                    warn!("API listening on http://{} (auto port)", addr);
+                } else {
+                    info!("API listening on http://{}", addr);
+                }
                 Ok(Self {
                     shutdown: Some(shutdown_tx),
                     thread: thread_handle.take(),
