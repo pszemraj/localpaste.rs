@@ -54,25 +54,25 @@ Decision key:
 - [x] Native app launches (eframe)
 - [x] Backend thread + command/event channel
 - [x] List pastes (basic)
-- [x] Select -> async load content (read-only)
+- [x] Select -> async load content
 - [~] Missing paste handling (list refreshes; selection cleared)
 
 ## Phase 3: Fast List + Collections
 
-- [ ] Virtualized list (show_rows) for 10k items
+- [x] Virtualized list (show_rows) for 10k items
 - [ ] Smart collections sidebar (Recent, Pinned, By Language, etc.) [Replace]
-- [ ] Keyboard navigation (up/down, enter)
+- [x] Keyboard navigation (up/down, enter)
 
 ## Phase 4: Editor + Autosave
 
-- [ ] Editable multiline editor
-- [ ] Dirty state tracking + save indicator
-- [ ] Autosave debounce (UI non-blocking) [Replace]
+- [x] Editable multiline editor
+- [x] Dirty state tracking + save indicator
+- [x] Autosave debounce (UI non-blocking) [Replace]
 - [ ] Manual save (Ctrl/Cmd+S)
-- [ ] New paste (Ctrl/Cmd+N)
-- [ ] Delete selected (Ctrl/Cmd+Delete)
+- [x] New paste (Ctrl/Cmd+N)
+- [x] Delete selected (Ctrl/Cmd+Delete)
 - [ ] Export (file dialog + extension mapping)
-- [ ] Native GUI edit locks (open paste blocks API/CLI deletion)
+- [x] Native GUI edit locks (open paste blocks API/CLI deletion)
 
 ## Phase 5: Search + Command Palette
 
@@ -92,15 +92,15 @@ Decision key:
 
 ## Language + Highlighting
 
-- [ ] Auto-detect language on content
+- [~] Auto-detect language on content (core detects on create; rewrite does not re-run yet)
 - [ ] Manual language override + `language_is_manual`
-- [ ] Highlighting via `egui_extras` [Replace]
-- [ ] Large-paste fallback to plain text
-- [ ] Plain highlight threshold (aligned with perf budget)
+- [x] Highlighting via `egui_extras` [Replace]
+- [x] Large-paste fallback to plain text
+- [x] Plain highlight threshold (aligned with perf budget)
 
 ## Naming + Metadata
 
-- [ ] Auto-name generation on create
+- [~] Auto-name generation on create (random name today; planned content-derived)
 - [ ] Rename behavior (when/how) [Replace]
 - [ ] Tags edit + persistence
 

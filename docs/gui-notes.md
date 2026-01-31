@@ -7,13 +7,21 @@
 
 ## Highlight Profiling
 
-- Set `LOCALPASTE_PROFILE_HIGHLIGHT=1` before launching the GUI to log highlight and text layout timings via `tracing::debug!`.
+- **Legacy only**: set `LOCALPASTE_PROFILE_HIGHLIGHT=1` before launching the legacy GUI to log highlight and text layout timings via `tracing::debug!`.
 - Logged events:
   - `highlight_job`: duration, cache hit/miss, language token, paste id, character count.
   - `text_edit_layout`: the time spent laying out the multiline editor per frame and the current character count.
 - These hooks are meant to guide the upcoming virtualized editor work; remove or downgrade them once we have a replacement metrics story.
-\n## Virtualized Editor\n- Detailed plan in docs/virtual-editor-plan.md; current focus is chunked highlighting + per-line layout cache before tackling full viewport editing.
-- Highlight recompute now debounced (75ms) and reuses prior galley; profile flag logs run durations.
+
+## Virtualized Editor
+
+- Detailed plan in docs/virtual-editor-plan.md; current focus is chunked highlighting + per-line layout cache before tackling full viewport editing.
+- Legacy highlight recompute is debounced (75ms) and reuses prior galley; profile flag logs run durations.
+
+## Rewrite Highlighting
+
+- Rewrite uses `egui_extras::syntax_highlighting` with a plain-text fallback for large pastes (>=256KB).
+- Language hint is derived from paste language metadata; when missing, the editor falls back to plain text.
 
 ## Edit Locks
 

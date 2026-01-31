@@ -13,10 +13,16 @@ localpaste.rs/
 |   |       |-- error.rs
 |   |       |-- models/
 |   |       `-- naming/
-|   `-- localpaste_gui/         # New egui rewrite (Phase 2+)
+|   |-- localpaste_gui/         # New egui rewrite (Phase 2+)
+|   |   `-- src/
+|   |       |-- app.rs
+|   |       `-- backend/
+|   `-- localpaste_server/      # Axum API server (used by headless + GUI)
 |       `-- src/
-|           |-- app.rs
-|           `-- backend/
+|           |-- embedded.rs
+|           |-- handlers/
+|           |-- error.rs
+|           `-- locks.rs
 |-- src/
 |   |-- bin/
 |   |   |-- localpaste-gui.rs   # Primary desktop launcher (rewrite)
@@ -24,10 +30,6 @@ localpaste.rs/
 |-- legacy/
 |   |-- gui/                    # Legacy egui widgets / layout
 |   `-- bin/                    # Legacy desktop launcher
-|   |-- handlers/               # HTTP handlers
-|   |-- error.rs                # HTTP error wrapper
-|   |-- lib.rs                  # Axum router + core re-exports
-|   `-- main.rs                 # HTTP API / headless server
 |-- docs/                       # Project documentation
 |-- assets/                     # Screenshots / design references
 `-- target/                     # Build artifacts (git-ignored)
@@ -41,6 +43,7 @@ localpaste.rs/
 - No external dependencies at runtime
 - Desktop app embeds the API server in-process
 - Database is embedded (Sled)
+- Server binds to loopback unless `ALLOW_PUBLIC_ACCESS` is set
 
 ### Database Choice
 
@@ -57,11 +60,11 @@ localpaste.rs/
 
 - **Rewrite (primary):** `crates/localpaste_gui` (egui/eframe app with backend worker)
 - **Legacy GUI:** `legacy/gui/mod.rs` (feature-complete reference while rewrite lands)
-- Cached language detection + syntect highlighting (legacy)
+- Syntax highlighting via `egui_extras` in the rewrite
 - Folder management via dialogs with cycle-safe parenting rules (legacy)
 - Auto-save with debouncing and manual export support (legacy)
 - Incremental in-memory paste index keeps the sidebar responsive without requerying sled (legacy)
-- Large pastes (above ~256KB) fall back to a plain renderer so highlight work stays bounded (legacy)
+- Large pastes (above ~256KB) fall back to a plain renderer so highlight work stays bounded (rewrite + legacy)
 
 ### GUI Shortcuts
 
@@ -97,14 +100,14 @@ Folder operations enforce tree integrity: the API returns `400 Bad Request` if a
 
 The project contains multiple binaries:
 
-- `localpaste` - The web server (default binary)
+- `localpaste` - The web server (headless)
 - `lpaste` - CLI tool for interacting with the server (enable the `cli` feature)
 - `localpaste-gui` - Native rewrite (primary desktop app, feature `gui`)
 - `localpaste-gui-legacy` - Legacy egui desktop app (feature `gui-legacy`)
 - `localpaste_gui` - Rewrite crate (workspace crate)
 
 ```bash
-# Build both binaries
+# Build the primary GUI and server
 cargo build --release
 
 # Build core library only
@@ -204,8 +207,8 @@ echo "test" | ./target/release/lpaste new
    - Add model in `crates/localpaste_core/src/models/`
    - Add database operations in `crates/localpaste_core/src/db/`
    - Add naming helpers in `crates/localpaste_core/src/naming/`
-   - Add handler in `src/handlers/`
-   - Register route in `src/lib.rs`
+   - Add handler in `crates/localpaste_server/src/handlers/`
+   - Register route in `crates/localpaste_server/src/lib.rs`
 
 2. **Frontend Changes**
    - Rewrite: update `crates/localpaste_gui/` and run `cargo run --bin localpaste-gui`

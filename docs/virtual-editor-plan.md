@@ -1,6 +1,8 @@
 # Virtualized Editor Plan
 
-This document outlines the planned work for a virtualized editor that will replace the current `TextEdit` widget.
+This document outlines the planned work for a virtualized editor that would replace the current `TextEdit` widget.
+
+**Note:** The rewrite currently uses `egui_extras::syntax_highlighting` with a large‑paste fallback. The items below are future work (likely starting from the legacy/editor performance path) and are not yet implemented in the rewrite.
 
 ---
 

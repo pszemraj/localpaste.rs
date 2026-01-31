@@ -13,13 +13,16 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 **Native rewrite (primary, in progress):**
 - **egui/eframe UI** with legacy palette + typography
 - **Async backend worker** to keep `App::update` free of blocking I/O
-- **Virtualized paste list + selection** (read-only editor pane for now)
+- **Virtualized paste list + selection**
+- **Editable editor** with autosave + save status
+- **Syntax highlighting** via `egui_extras`, with large-paste fallback to plain text
 
 **Legacy GUI (feature-complete reference while rewrite lands):**
 - Auto-save + export, folders, language detection, shortcuts, theming
 
 **Shared backend:**
 - **Zero runtime dependencies** - single binary, embedded Sled database
+- **Embedded API server** in the rewrite (GUI + CLI can talk to the same local API)
 
 ## Quick Start
 
@@ -59,10 +62,11 @@ cargo build --release
 ```
 
 The server exposes a JSON API on <http://localhost:38411>. Use the CLI or your own tooling to interact with it.
+When the rewrite GUI is running, it also hosts this API locally (check the API address in the status bar).
 
 ## CLI Usage
 
-The CLI tool (`lpaste`) interacts with the running server (or the legacy desktop app, which hosts the same API locally):
+The CLI tool (`lpaste`) interacts with the running server (or the legacy desktop app, which hosts the same API locally). The rewrite GUI also embeds the API server, so you can point `lpaste` at its status-bar URL:
 
 ```bash
 # Build the CLI binary (requires the `cli` feature)
@@ -99,6 +103,7 @@ Available environment variables:
 - `MAX_PASTE_SIZE` - Maximum paste size in bytes (default: 10MB)
 - `AUTO_BACKUP` - Enable automatic backups on startup (default: false)
 - `RUST_LOG` - Logging level (default: info)
+- `ALLOW_PUBLIC_ACCESS` - Enable non-loopback binding + permissive CORS (default: off)
 
 Override the port for a single session:
 
@@ -115,6 +120,8 @@ PORT=38411 cargo run --bin localpaste
 # or
 BIND=127.0.0.1:38411 cargo run --bin localpaste
 ```
+
+Note: non-loopback `BIND` values are ignored unless `ALLOW_PUBLIC_ACCESS=1` is set.
 
 For advanced configuration and security settings, see [docs/security.md](docs/security.md).
 
@@ -136,9 +143,9 @@ See [docs/dev.md](docs/dev.md) for development documentation, including desktop 
 ## Architecture
 
 - **Core**: `localpaste_core` holds the storage model + domain logic
-- **Native rewrite**: `localpaste_gui` (egui/eframe app, async worker)
+- **Native rewrite**: `localpaste_gui` (egui/eframe app, async worker + embedded API)
 - **Legacy desktop**: `localpaste-gui-legacy` (existing egui UI, feature reference)
-- **Backend**: Axum web framework with Sled embedded database
+- **Backend**: `localpaste_server` (Axum web framework with Sled embedded database)
 - **Storage**: Embedded Sled database (no external DB required)
 - **Deployment**: Per-platform binaries; legacy GUI behind `--features gui-legacy`
 
