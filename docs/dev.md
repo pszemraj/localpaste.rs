@@ -68,10 +68,11 @@ localpaste.rs/
 
 ### GUI Shortcuts
 
-- `Ctrl/Cmd+N` New paste
+- `Ctrl/Cmd+N` New paste (focuses editor)
 - `Ctrl/Cmd+S` Save current paste
 - `Ctrl/Cmd+Delete` Delete selected paste
 - `Ctrl/Cmd+F` or `Ctrl/Cmd+K` Focus the paste filter in the sidebar
+- `Ctrl/Cmd+V` when no text input is focused creates a new paste from the clipboard and focuses the editor
 
 ### Known Issues
 

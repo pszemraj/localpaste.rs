@@ -16,6 +16,8 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 - **Virtualized paste list + selection**
 - **Editable editor** with autosave + save status
 - **Syntax highlighting** via `egui_extras`, with large-paste fallback to plain text
+- **Smart paste creation** when the app is focused and no text input is active (Ctrl/Cmd+V)
+- **Debounced highlighting** while typing for smoother edits
 
 **Legacy GUI (feature-complete reference while rewrite lands):**
 - Auto-save + export, folders, language detection, shortcuts, theming

@@ -34,7 +34,9 @@ pub struct LocalPasteApp {
     last_edit_at: Option<Instant>,
     save_in_flight: bool,
     autosave_delay: Duration,
+    focus_editor_next: bool,
     style_applied: bool,
+    window_checked: bool,
     last_refresh_at: Instant,
 }
 
@@ -59,7 +61,10 @@ const STATUS_TTL: Duration = Duration::from_secs(5);
 const FONT_0XPROTO: &str = "0xProto";
 const EDITOR_FONT_FAMILY: &str = "Editor";
 const EDITOR_TEXT_STYLE: &str = "Editor";
+pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 720.0];
+pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
+const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(150);
 
 struct StatusMessage {
     text: String,
@@ -86,6 +91,24 @@ fn syntect_language_hint(language: &str) -> String {
         "xml" => "xml".to_string(),
         "sql" => "sql".to_string(),
         _ => lang,
+    }
+}
+
+fn display_language_label(language: Option<&str>, is_large: bool) -> String {
+    if is_large {
+        return "plain".to_string();
+    }
+    let Some(raw) = language else {
+        return "auto".to_string();
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "auto".to_string();
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    match lowered.as_str() {
+        "plaintext" | "plain" | "text" | "txt" => "plain".to_string(),
+        _ => trimmed.to_string(),
     }
 }
 
@@ -137,7 +160,9 @@ impl LocalPasteApp {
             last_edit_at: None,
             save_in_flight: false,
             autosave_delay,
+            focus_editor_next: false,
             style_applied: false,
+            window_checked: false,
             last_refresh_at: Instant::now(),
         };
         app.request_refresh();
@@ -307,6 +332,7 @@ impl LocalPasteApp {
                 self.save_status = SaveStatus::Saved;
                 self.last_edit_at = None;
                 self.save_in_flight = false;
+                self.focus_editor_next = true;
                 self.set_status("Created new paste.");
             }
             CoreEvent::PasteSaved { paste } => {
@@ -391,9 +417,11 @@ impl LocalPasteApp {
     }
 
     fn create_new_paste(&mut self) {
-        let _ = self.backend.cmd_tx.send(CoreCmd::CreatePaste {
-            content: String::new(),
-        });
+        self.create_new_paste_with_content(String::new());
+    }
+
+    fn create_new_paste_with_content(&mut self, content: String) {
+        let _ = self.backend.cmd_tx.send(CoreCmd::CreatePaste { content });
     }
 
     fn delete_selected(&mut self) {
@@ -441,6 +469,20 @@ impl LocalPasteApp {
 impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ensure_style(ctx);
+        if !self.window_checked {
+            let min_size = egui::vec2(MIN_WINDOW_SIZE[0], MIN_WINDOW_SIZE[1]);
+            let current_size = ctx.input(|input| {
+                input
+                    .viewport()
+                    .inner_rect
+                    .map(|rect| rect.size())
+                    .unwrap_or(min_size)
+            });
+            if current_size.x < min_size.x || current_size.y < min_size.y {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(min_size));
+            }
+            self.window_checked = true;
+        }
 
         if let Some(status) = &self.status {
             if Instant::now() >= status.expires_at {
@@ -460,6 +502,22 @@ impl eframe::App for LocalPasteApp {
                 self.delete_selected();
             }
         });
+
+        let mut pasted_text: Option<String> = None;
+        ctx.input(|input| {
+            for event in &input.events {
+                if let egui::Event::Paste(text) = event {
+                    pasted_text = Some(text.clone());
+                }
+            }
+        });
+        if !ctx.wants_keyboard_input() {
+            if let Some(text) = pasted_text {
+                if !text.trim().is_empty() {
+                    self.create_new_paste_with_content(text);
+                }
+            }
+        }
 
         if !ctx.wants_keyboard_input() && !self.pastes.is_empty() {
             let mut direction: i32 = 0;
@@ -525,10 +583,11 @@ impl eframe::App for LocalPasteApp {
                             if let Some(paste) = self.pastes.get(idx) {
                                 let selected =
                                     self.selected_id.as_deref() == Some(paste.id.as_str());
-                                let label = match &paste.language {
-                                    Some(lang) => format!("{}  ({})", paste.name, lang),
-                                    None => paste.name.clone(),
-                                };
+                                let lang_label = display_language_label(
+                                    paste.language.as_deref(),
+                                    paste.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
+                                );
+                                let label = format!("{}  ({})", paste.name, lang_label);
                                 if ui
                                     .selectable_label(selected, RichText::new(label))
                                     .clicked()
@@ -553,16 +612,16 @@ impl eframe::App for LocalPasteApp {
                 .map(|paste| (paste.name.clone(), paste.language.clone(), paste.id.clone()));
 
             if let Some((name, language, id)) = selected_meta {
+                let is_large = self.selected_content.len() >= HIGHLIGHT_PLAIN_THRESHOLD;
+                let lang_label = display_language_label(language.as_deref(), is_large);
                 ui.horizontal(|ui| {
                     ui.heading(RichText::new(name).color(COLOR_TEXT_PRIMARY));
                     ui.add_space(8.0);
-                    if let Some(lang) = language.as_deref() {
-                        ui.label(
-                            RichText::new(format!("({})", lang))
-                                .color(COLOR_TEXT_MUTED)
-                                .small(),
-                        );
-                    }
+                    ui.label(
+                        RichText::new(format!("({})", lang_label))
+                            .color(COLOR_TEXT_MUTED)
+                            .small(),
+                    );
                 });
                 ui.label(
                     RichText::new(id)
@@ -578,17 +637,23 @@ impl eframe::App for LocalPasteApp {
                     .max_height(editor_height)
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
+                        ui.set_min_size(egui::vec2(ui.available_width(), editor_height));
                         let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
                         let editor_font = ui.style().text_styles.get(&editor_style).cloned();
                         let language_hint =
                             syntect_language_hint(language.as_deref().unwrap_or("text"));
-                        let use_plain = self.selected_content.len() >= HIGHLIGHT_PLAIN_THRESHOLD;
+                        let highlight_ready = self
+                            .last_edit_at
+                            .map(|last| last.elapsed() >= HIGHLIGHT_DEBOUNCE)
+                            .unwrap_or(true);
+                        let use_plain = is_large || !highlight_ready;
+                        let row_height = ui.text_style_height(&editor_style);
+                        let rows_that_fit = ((editor_height / row_height).ceil() as usize).max(1);
 
                         let edit = egui::TextEdit::multiline(&mut self.selected_content)
                             .font(editor_style)
                             .desired_width(f32::INFINITY)
-                            .desired_rows(1)
+                            .desired_rows(rows_that_fit)
                             .lock_focus(true)
                             .hint_text("Start typing...");
 
@@ -619,6 +684,10 @@ impl eframe::App for LocalPasteApp {
                                 };
                             ui.add(edit.layouter(&mut layouter))
                         };
+                        if self.focus_editor_next || edit.clicked() {
+                            edit.request_focus();
+                            self.focus_editor_next = false;
+                        }
                         response = Some(edit);
                     });
                 if response.map(|r| r.changed()).unwrap_or(false) {
@@ -736,6 +805,7 @@ mod tests {
                 id: "alpha".to_string(),
                 name: "Alpha".to_string(),
                 language: None,
+                content_len: 7,
             }],
             selected_id: Some("alpha".to_string()),
             selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
@@ -750,7 +820,9 @@ mod tests {
             last_edit_at: None,
             save_in_flight: false,
             autosave_delay: Duration::from_millis(2000),
+            focus_editor_next: false,
             style_applied: false,
+            window_checked: false,
             last_refresh_at: Instant::now(),
         };
 
@@ -778,6 +850,7 @@ mod tests {
             id: "beta".to_string(),
             name: "Beta".to_string(),
             language: None,
+            content_len: 4,
         });
 
         harness.app.apply_event(CoreEvent::PasteMissing {

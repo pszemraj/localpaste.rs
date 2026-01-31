@@ -21,7 +21,8 @@
 ## Rewrite Highlighting
 
 - Rewrite uses `egui_extras::syntax_highlighting` with a plain-text fallback for large pastes (>=256KB).
-- Language hint is derived from paste language metadata; when missing, the editor falls back to plain text.
+- Highlighting is debounced while typing (150ms) to avoid stutter; the editor renders as plain text until the user pauses.
+- Language hint is derived from paste language metadata; missing metadata is shown as `(auto)` in the list/header.
 
 ## Edit Locks
 

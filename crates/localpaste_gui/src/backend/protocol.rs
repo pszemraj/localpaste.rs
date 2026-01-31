@@ -42,6 +42,7 @@ pub struct PasteSummary {
     pub id: String,
     pub name: String,
     pub language: Option<String>,
+    pub content_len: usize,
 }
 
 impl PasteSummary {
@@ -54,6 +55,7 @@ impl PasteSummary {
             id: paste.id.clone(),
             name: paste.name.clone(),
             language: paste.language.clone(),
+            content_len: paste.content.len(),
         }
     }
 }
