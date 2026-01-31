@@ -11,6 +11,13 @@ use app::LocalPasteApp;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
+fn suppress_vulkan_loader_debug() {
+    if std::env::var("LOCALPASTE_KEEP_VK_DEBUG").is_ok() {
+        return;
+    }
+    std::env::remove_var("VK_LOADER_DEBUG");
+}
+
 fn init_tracing() {
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("localpaste=warn,localpaste_gui=info"))
@@ -32,6 +39,7 @@ fn init_tracing() {
 /// Propagates any `eframe` initialization or runtime error (including app
 /// creation failures when the database cannot be opened).
 pub fn run() -> eframe::Result<()> {
+    suppress_vulkan_loader_debug();
     init_tracing();
 
     let app = LocalPasteApp::new().map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;

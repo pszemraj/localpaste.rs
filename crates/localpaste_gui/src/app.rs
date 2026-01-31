@@ -66,6 +66,29 @@ struct StatusMessage {
     expires_at: Instant,
 }
 
+fn syntect_language_hint(language: &str) -> String {
+    let lang = language.trim().to_ascii_lowercase();
+    match lang.as_str() {
+        "python" => "py".to_string(),
+        "javascript" | "js" => "js".to_string(),
+        "typescript" | "ts" => "ts".to_string(),
+        "markdown" | "md" => "md".to_string(),
+        "csharp" | "cs" => "cs".to_string(),
+        "cpp" | "c++" => "cpp".to_string(),
+        "shell" | "bash" | "sh" => "sh".to_string(),
+        "plaintext" | "plain" | "text" => "txt".to_string(),
+        "yaml" | "yml" => "yaml".to_string(),
+        "toml" => "toml".to_string(),
+        "json" => "json".to_string(),
+        "rust" => "rs".to_string(),
+        "go" => "go".to_string(),
+        "html" => "html".to_string(),
+        "xml" => "xml".to_string(),
+        "sql" => "sql".to_string(),
+        _ => lang,
+    }
+}
+
 impl LocalPasteApp {
     /// Construct a new app instance from the current environment config.
     ///
@@ -559,7 +582,7 @@ impl eframe::App for LocalPasteApp {
                         let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
                         let editor_font = ui.style().text_styles.get(&editor_style).cloned();
                         let language_hint =
-                            language.as_deref().unwrap_or("text").to_ascii_lowercase();
+                            syntect_language_hint(language.as_deref().unwrap_or("text"));
                         let use_plain = self.selected_content.len() >= HIGHLIGHT_PLAIN_THRESHOLD;
 
                         let edit = egui::TextEdit::multiline(&mut self.selected_content)
@@ -583,7 +606,7 @@ impl eframe::App for LocalPasteApp {
                                         ui.style(),
                                         &theme,
                                         text,
-                                        &language_hint,
+                                        language_hint.as_str(),
                                     );
                                     job.wrap.max_width = wrap_width;
                                     if let Some(font_id) = &editor_font {
