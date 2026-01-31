@@ -55,7 +55,7 @@ Decision key:
 - [x] Backend thread + command/event channel
 - [x] List pastes (basic)
 - [x] Select -> async load content
-- [~] Missing paste handling (list refreshes; selection cleared)
+- [x] Missing paste handling (list refreshes; selection cleared)
 
 ## Phase 3: Fast List + Collections
 
@@ -70,6 +70,7 @@ Decision key:
 - [x] Autosave debounce (UI non-blocking) [Replace]
 - [ ] Manual save (Ctrl/Cmd+S)
 - [x] New paste (Ctrl/Cmd+N)
+- [x] Smart paste creation when unfocused (Ctrl/Cmd+V)
 - [x] Delete selected (Ctrl/Cmd+Delete)
 - [ ] Export (file dialog + extension mapping)
 - [x] Native GUI edit locks (open paste blocks API/CLI deletion)
@@ -97,6 +98,7 @@ Decision key:
 - [x] Highlighting via `egui_extras` [Replace]
 - [x] Large-paste fallback to plain text
 - [x] Plain highlight threshold (aligned with perf budget)
+- [x] Highlighting debounce while typing for performance
 
 ## Naming + Metadata
 
@@ -114,9 +116,9 @@ Decision key:
 
 ## UX + Theme
 
-- [ ] Native theme consistent with palette direction (dark + accent) [Replace]
-- [ ] Status toasts for actions/errors
-- [ ] Shortcut hints in UI (as needed)
+- [x] Native theme consistent with palette direction (dark + accent) [Replace]
+- [~] Status feedback (status bar; no toasts yet)
+- [~] Shortcut hints in UI (some implicit, no dedicated help surface)
 
 ---
 
