@@ -39,6 +39,7 @@ pub fn run() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 720.0])
+            .with_min_inner_size([900.0, 600.0])
             .with_title("LocalPaste.rs"),
         ..Default::default()
     };
