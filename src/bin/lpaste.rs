@@ -230,13 +230,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Delete { id } => {
             let request_start = Instant::now();
-            client
+            let res = client
                 .delete(format!("{}/api/paste/{}", server, id))
                 .send()
                 .await?;
             let request_elapsed = request_start.elapsed();
             log_timing(timing, "delete", request_elapsed);
-            println!("Deleted paste: {}", id);
+            if res.status().is_success() {
+                println!("Deleted paste: {}", id);
+            } else {
+                let status = res.status();
+                let body = res.text().await.unwrap_or_default();
+                let message = if body.trim().is_empty() {
+                    status
+                        .canonical_reason()
+                        .unwrap_or("Request failed")
+                        .to_string()
+                } else if let Ok(value) = serde_json::from_str::<Value>(&body) {
+                    value
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(body.as_str())
+                        .to_string()
+                } else {
+                    body
+                };
+
+                eprintln!("Delete failed ({}): {}", status, message);
+                std::process::exit(1);
+            }
         }
     }
 
