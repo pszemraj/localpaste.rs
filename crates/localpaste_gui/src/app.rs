@@ -5,6 +5,7 @@ use eframe::egui::{
     self, style::WidgetVisuals, Color32, CornerRadius, FontData, FontDefinitions, FontFamily,
     FontId, Margin, RichText, Stroke, TextStyle, Visuals,
 };
+use egui_extras::syntax_highlighting::{self, CodeTheme};
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
@@ -58,6 +59,7 @@ const STATUS_TTL: Duration = Duration::from_secs(5);
 const FONT_0XPROTO: &str = "0xProto";
 const EDITOR_FONT_FAMILY: &str = "Editor";
 const EDITOR_TEXT_STYLE: &str = "Editor";
+const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 
 struct StatusMessage {
     text: String,
@@ -531,7 +533,7 @@ impl eframe::App for LocalPasteApp {
                 ui.horizontal(|ui| {
                     ui.heading(RichText::new(name).color(COLOR_TEXT_PRIMARY));
                     ui.add_space(8.0);
-                    if let Some(lang) = language {
+                    if let Some(lang) = language.as_deref() {
                         ui.label(
                             RichText::new(format!("({})", lang))
                                 .color(COLOR_TEXT_MUTED)
@@ -554,14 +556,46 @@ impl eframe::App for LocalPasteApp {
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
-                        let edit = ui.add(
-                            egui::TextEdit::multiline(&mut self.selected_content)
-                                .font(TextStyle::Name(EDITOR_TEXT_STYLE.into()))
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(1)
-                                .lock_focus(true)
-                                .hint_text("Start typing..."),
-                        );
+                        let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
+                        let editor_font = ui.style().text_styles.get(&editor_style).cloned();
+                        let language_hint =
+                            language.as_deref().unwrap_or("text").to_ascii_lowercase();
+                        let use_plain = self.selected_content.len() >= HIGHLIGHT_PLAIN_THRESHOLD;
+
+                        let edit = egui::TextEdit::multiline(&mut self.selected_content)
+                            .font(editor_style)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(1)
+                            .lock_focus(true)
+                            .hint_text("Start typing...");
+
+                        let edit = if use_plain {
+                            ui.add(edit)
+                        } else {
+                            let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
+                            let mut layouter =
+                                move |ui: &egui::Ui,
+                                      text: &dyn egui::TextBuffer,
+                                      wrap_width: f32| {
+                                    let text = text.as_str();
+                                    let mut job = syntax_highlighting::highlight(
+                                        ui.ctx(),
+                                        ui.style(),
+                                        &theme,
+                                        text,
+                                        &language_hint,
+                                    );
+                                    job.wrap.max_width = wrap_width;
+                                    if let Some(font_id) = &editor_font {
+                                        for section in &mut job.sections {
+                                            section.format.font_id =
+                                                FontId::new(font_id.size, font_id.family.clone());
+                                        }
+                                    }
+                                    ui.fonts_mut(|f| f.layout_job(job))
+                                };
+                            ui.add(edit.layouter(&mut layouter))
+                        };
                         response = Some(edit);
                     });
                 if response.map(|r| r.changed()).unwrap_or(false) {

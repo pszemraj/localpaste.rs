@@ -16,8 +16,8 @@ LocalPaste.rs is designed for local use and comes with secure defaults. The lega
 
 | Variable              | Default          | Description                                      |
 | --------------------- | ---------------- | ------------------------------------------------ |
-| `BIND`                | `127.0.0.1:38411` | Server bind address. ⚠️ Use caution when changing |
-| `ALLOW_PUBLIC_ACCESS` | disabled         | Enable CORS for all origins. ⚠️ Security risk     |
+| `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback ignored unless `ALLOW_PUBLIC_ACCESS` is set) |
+| `ALLOW_PUBLIC_ACCESS` | disabled         | Enable CORS for all origins and allow non-loopback bind |
 
 ### Security Headers
 
@@ -36,10 +36,10 @@ If you need to expose LocalPaste publicly, follow these steps:
 ### 1. Enable Public Binding
 
 ```bash
-# Bind to all interfaces
+# Bind to all interfaces (requires ALLOW_PUBLIC_ACCESS)
 export BIND=0.0.0.0:38411
 
-# Allow cross-origin requests
+# Allow cross-origin requests and non-loopback bind
 export ALLOW_PUBLIC_ACCESS=1
 
 # Run the server

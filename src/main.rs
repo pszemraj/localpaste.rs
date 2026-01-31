@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Public access enabled - server will accept requests from any origin");
     }
 
-    let bind_addr = resolve_bind_address(&config);
+    let bind_addr = resolve_bind_address(&config, allow_public);
     if !bind_addr.ip().is_loopback() {
         tracing::warn!(
             "Binding to non-localhost address: {} - ensure proper security measures are in place",
@@ -98,11 +98,21 @@ fn run_backup(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn resolve_bind_address(config: &Config) -> SocketAddr {
-    std::env::var("BIND")
+fn resolve_bind_address(config: &Config, allow_public: bool) -> SocketAddr {
+    let requested = std::env::var("BIND")
         .ok()
         .and_then(|s| s.parse::<SocketAddr>().ok())
-        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], config.port)))
+        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], config.port)));
+
+    if allow_public || requested.ip().is_loopback() {
+        return requested;
+    }
+
+    tracing::warn!(
+        "Non-loopback bind {} requested without ALLOW_PUBLIC_ACCESS; forcing 127.0.0.1",
+        requested
+    );
+    SocketAddr::from(([127, 0, 0, 1], requested.port()))
 }
 
 async fn shutdown_signal(db: Arc<Database>) {

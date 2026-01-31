@@ -2583,6 +2583,7 @@ version = "0.4.0"
 dependencies = [
  "crossbeam-channel",
  "eframe",
+ "egui_extras",
  "localpaste_core",
  "localpaste_server",
  "reqwest",
