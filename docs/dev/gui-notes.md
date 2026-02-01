@@ -15,7 +15,7 @@
 
 ## Virtualized Editor
 
-- Detailed plan in docs/virtual-editor-plan.md; current focus is chunked highlighting + per-line layout cache before tackling full viewport editing.
+- Detailed plan in [virtual-editor-plan.md](virtual-editor-plan.md); current focus is chunked highlighting + per-line layout cache before tackling full viewport editing.
 - Legacy highlight recompute is debounced (75ms) and reuses prior galley; profile flag logs run durations.
 
 ## Rewrite Highlighting

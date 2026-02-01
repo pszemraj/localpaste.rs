@@ -8,11 +8,11 @@ This document outlines the planned work for a virtualized editor that would repl
 
 - [Virtualized Editor Plan](#virtualized-editor-plan)
   - [Current Editor Responsibilities](#current-editor-responsibilities)
-    - [Discovery](#discovery)
   - [Virtualization Goals](#virtualization-goals)
   - [Data Model Changes Needed](#data-model-changes-needed)
   - [Staged Milestones](#staged-milestones)
   - [Immediate Next Steps](#immediate-next-steps)
+  - [Progress](#progress)
 
 ---
 
@@ -90,6 +90,7 @@ Suggestion:
 - Draft API/structure for read-only virtualized view so we can begin milestone 3 in parallel when ready.
 
 ### Milestone 1 & 2 Detail
+
 - Maintain a line index in EditorState (vector of char offsets) recomputed on edits.
 - Introduce a HighlightChunkCache (map: chunk_id -> {start_byte, text_hash, layout_job, syntax_state_after}).
 - When text changes, only invalidate chunks intersecting the edited byte range.

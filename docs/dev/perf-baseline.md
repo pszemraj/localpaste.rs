@@ -18,6 +18,7 @@ cargo run -p localpaste_tools --bin generate-test-data -- --count 10000 --folder
 ```
 
 Notes:
+
 - Size distribution from generator: 10% small, 70% medium, 15% large, 5% very_large.
 - Folder count: 50.
 
@@ -46,6 +47,7 @@ Measured results (single run):
 - `delete`: request 2.4 ms
 
 Interpretation:
+
 - `list` and `search` are still O(n) over all pastes; expected to be higher at 10k.
 
 ## Manual GUI Baseline (Required)

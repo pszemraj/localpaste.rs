@@ -305,7 +305,7 @@ cp -r ~/.cache/localpaste/db.backup.TIMESTAMP ~/.cache/localpaste/db
 
 ### Common Issues
 
-**Database Lock Error**
+#### Database Lock Error
 
 ⚠️ **CRITICAL: Never delete the entire database directory to fix lock issues!**
 
@@ -386,7 +386,7 @@ $env:BIND = "127.0.0.1:38411"
 
 ## Security
 
-See [security.md](security.md) for detailed security configuration and best practices.
+See [security.md](../security.md) for detailed security configuration and best practices.
 
 ## Contributing
 

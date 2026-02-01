@@ -37,7 +37,7 @@ Decision key:
 
 ## Phase 0: Baseline & Guardrails
 
-- [x] Headless perf baseline documented (`docs/perf-baseline.md`)
+- [x] Headless perf baseline documented ([perf-baseline.md](perf-baseline.md))
 - [x] Test data generator supports full clear + large datasets
 - [x] Manual profiler panel (profile feature, no puffin_egui)
 - [x] CLI timing flag for API request baselines

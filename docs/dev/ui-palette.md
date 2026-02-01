@@ -1,6 +1,5 @@
 # LocalPaste Desktop Palette
 
-The native egui interface mirrors the tones used by the previous web UI.
 These canonical values are applied inside `legacy/gui/mod.rs` and should be reused for future widgets or theming tweaks.
 
 | Token                  | Hex       | Notes                      |
@@ -16,10 +15,10 @@ These canonical values are applied inside `legacy/gui/mod.rs` and should be reus
 | `COLOR_DANGER`         | `#F85149` | Destructive actions        |
 | `COLOR_BORDER`         | `#30363D` | Divider strokes            |
 
-These values are applied in `crates/localpaste_gui/src/app.rs` and preserved in `legacy/gui/mod.rs`
-for reference while the legacy GUI remains in the repo.
+These values are applied in `crates/localpaste_gui/src/app.rs` and preserved in `legacy/gui/mod.rs` for reference while the legacy GUI remains in the repo.
 
 ## Editor Font
 
-The native editor uses the 0xProto font (Regular NL) under the SIL Open Font License.
+The native editor uses [the 0xProto font](https://github.com/0xType/0xProto) (Regular NL) under the SIL Open Font License ([release 2.502](https://github.com/0xType/0xProto/releases/tag/2.502))
+
 Font files and license live at `assets/fonts/0xProto`.
