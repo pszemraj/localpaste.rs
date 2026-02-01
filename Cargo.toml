@@ -9,15 +9,15 @@ members = [
 resolver = "2"
 
 [profile.dev]
-codegen-units = 16
+codegen-units = 8
 incremental = true
 
 [profile.test]
-codegen-units = 16
+codegen-units = 8
 
 [profile.release]
 opt-level = "z"
 lto = true
-codegen-units = 12
+codegen-units = 8
 strip = true
 panic = "abort"
