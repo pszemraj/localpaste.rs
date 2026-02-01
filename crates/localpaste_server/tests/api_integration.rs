@@ -2,7 +2,7 @@
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use localpaste::{
+use localpaste_server::{
     create_app, models::folder::Folder, AppState, Config, Database, PasteLockManager,
 };
 use serde_json::json;

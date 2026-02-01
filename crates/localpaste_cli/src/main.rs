@@ -1,17 +1,11 @@
 //! Command-line client for the LocalPaste API.
 
-#[cfg(feature = "cli")]
 use clap::{CommandFactory, Parser, Subcommand};
-#[cfg(feature = "cli")]
 use clap_complete::{generate, Shell};
-#[cfg(feature = "cli")]
 use serde_json::Value;
-#[cfg(feature = "cli")]
 use std::io::{self, Read};
-#[cfg(feature = "cli")]
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "cli")]
 #[derive(Parser)]
 #[command(name = "lpaste", about = "LocalPaste CLI", version)]
 struct Cli {
@@ -40,7 +34,6 @@ struct Cli {
     command: Commands,
 }
 
-#[cfg(feature = "cli")]
 #[derive(Subcommand)]
 enum Commands {
     /// Generate shell completions
@@ -70,7 +63,6 @@ enum Commands {
     },
 }
 
-#[cfg(feature = "cli")]
 fn log_timing(timing: bool, label: &str, duration: Duration) {
     if timing {
         eprintln!(
@@ -81,7 +73,6 @@ fn log_timing(timing: bool, label: &str, duration: Duration) {
     }
 }
 
-#[cfg(feature = "cli")]
 fn log_timing_parts(timing: bool, label: &str, request: Duration, parse: Option<Duration>) {
     if !timing {
         return;
@@ -100,7 +91,6 @@ fn log_timing_parts(timing: bool, label: &str, request: Duration, parse: Option<
     }
 }
 
-#[cfg(feature = "cli")]
 fn normalize_server(server: String) -> String {
     if let Ok(mut url) = reqwest::Url::parse(&server) {
         if url.host_str() == Some("localhost") {
@@ -115,7 +105,6 @@ fn normalize_server(server: String) -> String {
     server
 }
 
-#[cfg(feature = "cli")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -263,10 +252,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-#[cfg(not(feature = "cli"))]
-fn main() {
-    eprintln!("lpaste CLI requires building with --features cli");
-    std::process::exit(1);
 }

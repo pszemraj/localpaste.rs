@@ -39,27 +39,29 @@ LocalPaste.rs provides multiple ways to interact with your pastes:
 ### Run the Native Rewrite (Primary)
 
 ```bash
-cargo run
-# or, explicitly:
-cargo run --bin localpaste-gui
-# or, for the workspace crate:
-cargo run -p localpaste_gui
+cargo run -p localpaste_gui --bin localpaste-gui
+```
+
+Install to your PATH (recommended):
+
+```bash
+cargo install --path crates/localpaste_gui --bin localpaste-gui
 ```
 
 ### Run the Legacy Desktop App
 
 ```bash
-cargo run --bin localpaste-gui-legacy --features="gui-legacy"
+cargo run -p localpaste_gui --bin localpaste-gui-legacy --features="gui-legacy"
 ```
 
 ### Run the Web Server / API
 
 ```bash
 # Run with cargo (development)
-cargo run --bin localpaste --release
+cargo run -p localpaste_server --bin localpaste --release
 
 # Or build and run the binary (production)
-cargo build --release
+cargo build -p localpaste_server --bin localpaste --release
 ./target/release/localpaste
 ```
 
@@ -71,8 +73,8 @@ When the rewrite GUI is running, it also hosts this API locally (check the API a
 The CLI tool (`lpaste`) interacts with the running server (or the legacy desktop app, which hosts the same API locally). The rewrite GUI also embeds the API server, so you can point `lpaste` at its status-bar URL:
 
 ```bash
-# Build the CLI binary (requires the `cli` feature)
-cargo build --release --bin lpaste --features cli
+# Build the CLI binary
+cargo build -p localpaste_cli --bin lpaste --release
 
 # List all pastes
 ./target/release/lpaste list
@@ -88,6 +90,12 @@ echo "Hello, World!" | ./target/release/lpaste new
 
 # Delete a paste
 ./target/release/lpaste delete <paste-id>
+```
+
+Install to your PATH:
+
+```bash
+cargo install --path crates/localpaste_cli --bin lpaste
 ```
 
 ## Configuration
@@ -118,9 +126,9 @@ $env:BIND = "127.0.0.1:38411"
 
 bash/zsh:
 ```bash
-PORT=38411 cargo run --bin localpaste
+PORT=38411 cargo run -p localpaste_server --bin localpaste
 # or
-BIND=127.0.0.1:38411 cargo run --bin localpaste
+BIND=127.0.0.1:38411 cargo run -p localpaste_server --bin localpaste
 ```
 
 Note: non-loopback `BIND` values are ignored unless `ALLOW_PUBLIC_ACCESS=1` is set.
@@ -148,6 +156,8 @@ See [docs/dev.md](docs/dev.md) for development documentation, including desktop 
 - **Native rewrite**: `localpaste_gui` (egui/eframe app, async worker + embedded API)
 - **Legacy desktop**: `localpaste-gui-legacy` (existing egui UI, feature reference)
 - **Backend**: `localpaste_server` (Axum web framework with Sled embedded database)
+- **CLI**: `localpaste_cli` (installs the `lpaste` binary)
+- **Tools**: `localpaste_tools` (generate synthetic datasets)
 - **Storage**: Embedded Sled database (no external DB required)
 - **Deployment**: Per-platform binaries; legacy GUI behind `--features gui-legacy`
 

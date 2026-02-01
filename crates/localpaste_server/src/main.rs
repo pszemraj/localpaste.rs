@@ -2,7 +2,7 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
-use localpaste::{config::Config, db::Database, serve_router, AppState};
+use localpaste_server::{config::Config, db::Database, serve_router, AppState};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
 
     if args.contains(&"--force-unlock".to_string()) {
         tracing::warn!("Force unlock requested");
-        let lock_manager = localpaste::db::lock::LockManager::new(&config.db_path);
+        let lock_manager = localpaste_server::db::lock::LockManager::new(&config.db_path);
         lock_manager.force_unlock()?;
         tracing::info!("Lock removed successfully");
     }
@@ -39,7 +39,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if config.auto_backup && std::path::Path::new(&config.db_path).exists() {
-        if let Err(err) = localpaste::db::lock::LockManager::backup_database(&config.db_path) {
+        if let Err(err) = localpaste_server::db::lock::LockManager::backup_database(&config.db_path)
+        {
             tracing::warn!("Failed to create auto-backup: {}", err);
         }
     }
@@ -89,7 +90,7 @@ fn run_backup(config: &Config) -> anyhow::Result<()> {
         let temp_db = Database::new(&config.db_path)?;
         temp_db.flush().ok();
 
-        let backup_manager = localpaste::db::backup::BackupManager::new(&config.db_path);
+        let backup_manager = localpaste_server::db::backup::BackupManager::new(&config.db_path);
         let backup_path = backup_manager.create_backup(temp_db.db.as_ref())?;
         println!("✅ Database backed up to: {}", backup_path);
     } else {

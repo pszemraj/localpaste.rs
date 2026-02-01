@@ -21,7 +21,7 @@ use rfd::FileDialog;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
-use crate::{
+use localpaste_server::{
     config::Config,
     db::{Database, TransactionOps},
     error::AppError,
@@ -973,7 +973,7 @@ impl LocalPasteApp {
             &self.editor.content
         };
 
-        if let Some(detected) = crate::models::paste::detect_language(sample) {
+        if let Some(detected) = localpaste_server::models::paste::detect_language(sample) {
             self.editor.language = Some(detected);
             self.editor.language_state = LanguageState::AutoDetected;
             self.editor.language_pending_since = None;

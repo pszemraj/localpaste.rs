@@ -17,19 +17,17 @@ localpaste.rs/
 |   |   `-- src/
 |   |       |-- app.rs
 |   |       `-- backend/
-|   `-- localpaste_server/      # Axum API server (used by headless + GUI)
-|       `-- src/
-|           |-- embedded.rs
-|           |-- handlers/
-|           |-- error.rs
-|           `-- locks.rs
-|-- src/
-|   |-- bin/
-|   |   |-- localpaste-gui.rs   # Primary desktop launcher (rewrite)
-|   |   `-- lpaste.rs           # CLI client (requires `cli` feature)
+|   |-- localpaste_server/      # Axum API server (used by headless + GUI)
+|   |   `-- src/
+|   |       |-- embedded.rs
+|   |       |-- handlers/
+|   |       |-- error.rs
+|   |       `-- locks.rs
+|   |-- localpaste_cli/         # Installs the lpaste CLI
+|   `-- localpaste_tools/       # Test-data generator (generate-test-data)
 |-- legacy/
 |   |-- gui/                    # Legacy egui widgets / layout
-|   `-- bin/                    # Legacy desktop launcher
+|   `-- bin/                    # Legacy desktop launcher (built via localpaste_gui)
 |-- docs/                       # Project documentation
 |-- assets/                     # Screenshots / design references
 `-- target/                     # Build artifacts (git-ignored)
@@ -102,58 +100,56 @@ Folder operations enforce tree integrity: the API returns `400 Bad Request` if a
 The project contains multiple binaries:
 
 - `localpaste` - The web server (headless)
-- `lpaste` - CLI tool for interacting with the server (enable the `cli` feature)
-- `localpaste-gui` - Native rewrite (primary desktop app, feature `gui`)
+- `lpaste` - CLI tool for interacting with the server
+- `localpaste-gui` - Native rewrite (primary desktop app)
 - `localpaste-gui-legacy` - Legacy egui desktop app (feature `gui-legacy`)
-- `localpaste_gui` - Rewrite crate (workspace crate)
+- `generate-test-data` - Synthetic dataset generator
 
 ```bash
-# Build the primary GUI and server
-cargo build --release
+# Build the primary GUI
+cargo build -p localpaste_gui --bin localpaste-gui --release
 
 # Build core library only
 cargo build -p localpaste_core
 
 # Build only the server
-cargo build --release --bin localpaste
+cargo build -p localpaste_server --bin localpaste --release
 
 # Build only the CLI
-cargo build --release --bin lpaste --features cli
+cargo build -p localpaste_cli --bin lpaste --release
 ```
 
 ### Running Locally
 
 ```bash
 # Run the desktop app (rewrite)
-cargo run
-# or:
-cargo run --bin localpaste-gui
+cargo run -p localpaste_gui --bin localpaste-gui
 
 # Run the legacy desktop app
-cargo run --bin localpaste-gui-legacy --features="gui-legacy"
+cargo run -p localpaste_gui --bin localpaste-gui-legacy --features="gui-legacy"
 # (append --release when you need an optimized build)
 
-# Run the new native rewrite crate directly (Phase 2+)
-cargo run -p localpaste_gui
-
 # Run the server/API (JSON endpoints)
-cargo run --bin localpaste --release
+cargo run -p localpaste_server --bin localpaste --release
 
 # Run with auto-reload (server)
 cargo install cargo-watch
-cargo watch -x "run --bin localpaste"
+cargo watch -x "run -p localpaste_server --bin localpaste"
 
 # Run with debug logging
-RUST_LOG=debug cargo run --bin localpaste
+RUST_LOG=debug cargo run -p localpaste_server --bin localpaste
 
 # Run tests (include legacy GUI when necessary)
-cargo test --features gui-legacy
+cargo test -p localpaste_gui --features gui-legacy
 
 # Run core tests only
 cargo test -p localpaste_core
 
 # Run rewrite tests only
 cargo test -p localpaste_gui
+
+# Run server tests (API integration)
+cargo test -p localpaste_server
 
 # Format code
 cargo fmt
@@ -162,20 +158,30 @@ cargo fmt
 cargo clippy --all-targets --all-features
 ```
 
+### Install to PATH (cargo install --path)
+
+```bash
+# GUI launcher
+cargo install --path crates/localpaste_gui --bin localpaste-gui
+
+# CLI client
+cargo install --path crates/localpaste_cli --bin lpaste
+```
+
 ### Building for Production
 
 ```bash
 # Optimized server build
-cargo build --release
+cargo build -p localpaste_server --bin localpaste --release
 
 # Include the CLI binary
-cargo build --release --features cli
+cargo build -p localpaste_cli --bin lpaste --release
 
 # Include the desktop GUI
-cargo build --release --bin localpaste-gui
+cargo build -p localpaste_gui --bin localpaste-gui --release
 
 # Include the legacy desktop GUI
-cargo build --release --bin localpaste-gui-legacy --features gui-legacy
+cargo build -p localpaste_gui --bin localpaste-gui-legacy --features gui-legacy --release
 
 # Strip symbols for smaller binaries (build required first)
 strip target/release/localpaste
@@ -190,8 +196,8 @@ du -h target/release/localpaste target/release/lpaste target/release/localpaste-
 ### Using the CLI Tool
 
 ```bash
-# Build with the CLI feature before running
-cargo build --release --features cli --bin lpaste
+# Build before running
+cargo build -p localpaste_cli --bin lpaste --release
 
 # The CLI tool should be run from the compiled binary
 ./target/release/lpaste --help
@@ -212,8 +218,8 @@ echo "test" | ./target/release/lpaste new
    - Register route in `crates/localpaste_server/src/lib.rs`
 
 2. **Frontend Changes**
-   - Rewrite: update `crates/localpaste_gui/` and run `cargo run --bin localpaste-gui`
-   - Legacy: update egui components in `legacy/gui/` and run `cargo run --bin localpaste-gui-legacy --features gui-legacy`
+   - Rewrite: update `crates/localpaste_gui/` and run `cargo run -p localpaste_gui --bin localpaste-gui`
+   - Legacy: update egui components in `legacy/gui/` and run `cargo run -p localpaste_gui --bin localpaste-gui-legacy --features gui-legacy`
    - Refresh screenshots in `assets/` if the UI changes
 
 3. **Database Migrations**
@@ -248,7 +254,7 @@ cargo bench
 ### Enable Debug Logging
 
 ```bash
-RUST_LOG=debug cargo run
+RUST_LOG=debug cargo run -p localpaste_gui --bin localpaste-gui
 ```
 
 ### Database Inspection
@@ -295,7 +301,7 @@ cp -r ~/.cache/localpaste/db.backup.TIMESTAMP ~/.cache/localpaste/db
 
 - Use `timeout` with caution - it can leave locks
 - Create backups before testing destructive operations
-- Use a separate DB_PATH for testing: `DB_PATH=/tmp/test-db cargo run`
+- Use a separate DB_PATH for testing: `DB_PATH=/tmp/test-db cargo run -p localpaste_server --bin localpaste`
 
 ### Common Issues
 
@@ -354,7 +360,7 @@ When you encounter: `Error: could not acquire lock on "/home/pszemraj/.cache/loc
 **Port Already in Use**
 
 - Check what's using port: `lsof -i :38411`
-- Change port (bash/zsh): `PORT=38411 cargo run`
+- Change port (bash/zsh): `PORT=38411 cargo run -p localpaste_server --bin localpaste`
 - Change port (PowerShell):
 
 ```powershell

@@ -7,20 +7,20 @@
 //!
 //! ```bash
 //! # Generate 1000 pastes (default)
-//! cargo run --bin generate-test-data --features cli
+//! cargo run -p localpaste_tools --bin generate-test-data
 //!
 //! # Generate 10k pastes with 50 folders
-//! cargo run --bin generate-test-data --features cli -- --count 10000 --folders 50
+//! cargo run -p localpaste_tools --bin generate-test-data -- --count 10000 --folders 50
 //!
 //! # Clear existing data first
-//! cargo run --bin generate-test-data --features cli -- --clear --count 5000
+//! cargo run -p localpaste_tools --bin generate-test-data -- --clear --count 5000
 //!
 //! # Use custom database path
-//! DB_PATH=/tmp/test-db cargo run --bin generate-test-data --features cli -- --count 100
+//! DB_PATH=/tmp/test-db cargo run -p localpaste_tools --bin generate-test-data -- --count 100
 //! ```
 
 use clap::Parser;
-use localpaste::{config::Config, db::Database, models::folder::Folder, models::paste::Paste};
+use localpaste_core::{config::Config, db::Database, models::folder::Folder, models::paste::Paste};
 use rand::prelude::*;
 use std::time::Instant;
 
@@ -617,7 +617,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let (content, language) = generate_content(&mut rng, size_category);
-        let name = localpaste::naming::generate_name();
+        let name = localpaste_core::naming::generate_name();
 
         let mut paste = Paste::new(content, name);
         paste.language = Some(language.to_string());

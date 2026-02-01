@@ -3,6 +3,15 @@ name = "localpaste_gui"
 version = "0.4.0"
 edition = "2021"
 
+[[bin]]
+name = "localpaste-gui"
+path = "src/main.rs"
+
+[[bin]]
+name = "localpaste-gui-legacy"
+path = "../../legacy/bin/localpaste-gui-legacy.rs"
+required-features = ["gui-legacy"]
+
 [dependencies]
 localpaste_core = { path = "../localpaste_core" }
 localpaste_server = { path = "../localpaste_server" }
@@ -11,6 +20,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 crossbeam-channel = "0.5"
 eframe = { version = "0.33", features = ["wgpu", "persistence"] }
 egui_extras = { version = "0.33", features = ["syntect"] }
+rfd = { version = "0.14", optional = true }
+puffin = { version = "0.19", optional = true }
+tokio = { version = "1.40", features = ["full"], optional = true }
+
+[features]
+default = []
+gui-legacy = ["rfd", "tokio"]
+debug-tools = []
+profile = ["puffin"]
 
 [dev-dependencies]
 tempfile = "3.8"

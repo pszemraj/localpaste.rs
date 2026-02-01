@@ -14,7 +14,7 @@ Generated with:
 
 ```
 DB_PATH=%TEMP%\localpaste-baseline
-cargo run --bin generate-test-data --features cli -- --count 10000 --folders 50
+cargo run -p localpaste_tools --bin generate-test-data -- --count 10000 --folders 50
 ```
 
 Notes:
@@ -53,7 +53,7 @@ Interpretation:
 These metrics require a human run of the GUI:
 
 1) **Scroll FPS (10k snippets)**
-   - Run: `cargo run --bin localpaste-gui-legacy --features gui-legacy,debug-tools,profile`
+   - Run: `cargo run -p localpaste_gui --bin localpaste-gui-legacy --features gui-legacy,debug-tools,profile`
    - Load the 10k dataset.
    - Scroll the sidebar list continuously for ~10 seconds.
    - Record: average FPS and any stutters.

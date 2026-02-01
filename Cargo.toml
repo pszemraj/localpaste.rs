@@ -1,93 +1,12 @@
 [workspace]
 members = [
     "crates/localpaste_core",
-    "crates/localpaste_gui",
     "crates/localpaste_server",
+    "crates/localpaste_gui",
+    "crates/localpaste_cli",
+    "crates/localpaste_tools",
 ]
 resolver = "2"
-
-[package]
-name = "localpaste"
-version = "0.4.0"
-edition = "2021"
-default-run = "localpaste-gui"
-
-[lib]
-name = "localpaste"
-path = "src/lib.rs"
-
-[[bin]]
-name = "localpaste"
-path = "src/main.rs"
-
-[[bin]]
-name = "lpaste"
-path = "src/bin/lpaste.rs"
-required-features = ["cli"]
-
-[dependencies]
-localpaste_core = { path = "crates/localpaste_core" }
-localpaste_gui = { path = "crates/localpaste_gui", optional = true }
-localpaste_server = { path = "crates/localpaste_server" }
-axum = { version = "0.7", features = ["macros", "tracing"] }
-tower = { version = "0.4", features = ["full"] }
-tower-http = { version = "0.5", features = [
-    "fs",
-    "cors",
-    "compression-gzip",
-    "trace",
-    "set-header",
-] }
-tokio = { version = "1.40", features = ["full"] }
-hyper = { version = "1.4", features = ["full"] }
-serde_json = "1.0"
-rand = "0.8"
-anyhow = "1.0"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-clap = { version = "4.5", features = ["derive", "env"], optional = true }
-clap_complete = { version = "4.5", optional = true }
-reqwest = { version = "0.12", features = ["json"], optional = true }
-# Desktop GUI (egui)
-eframe = { version = "0.33", default-features = false, features = [
-    "glow",
-], optional = true }
-egui = { version = "0.33", optional = true }
-egui_extras = { version = "0.33", features = ["syntect"], optional = true }
-rfd = { version = "0.14", optional = true }
-syntect = { version = "5.3", optional = true, default-features = false, features = [
-    "default-onig",
-] }
-# Profiling (optional)
-puffin = { version = "0.19", optional = true }
-
-[dev-dependencies]
-tempfile = "3.8"
-tokio-test = "0.4"
-axum-test = "16.4"
-
-[features]
-default = ["gui"]
-cli = ["clap", "clap_complete", "reqwest"]
-gui = ["localpaste_gui"]
-gui-legacy = ["egui", "eframe", "egui_extras", "rfd", "syntect"]
-debug-tools = []
-profile = ["puffin", "gui-legacy"]
-
-[[bin]]
-name = "localpaste-gui"
-path = "src/bin/localpaste-gui.rs"
-required-features = ["gui"]
-
-[[bin]]
-name = "localpaste-gui-legacy"
-path = "legacy/bin/localpaste-gui-legacy.rs"
-required-features = ["gui-legacy"]
-
-[[bin]]
-name = "generate-test-data"
-path = "src/bin/generate-test-data.rs"
-required-features = ["cli"]
 
 [profile.dev]
 codegen-units = 16
