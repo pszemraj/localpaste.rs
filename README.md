@@ -66,10 +66,10 @@ For background services and OS-specific setup, see [docs/deployment.md](docs/dep
 
 ## Documentation
 
-- [docs/README.md](docs/README.md) (table of contents)
-- [docs/security.md](docs/security.md)
-- [docs/deployment.md](docs/deployment.md)
-- [docs/dev](docs/dev)
+- [docs/README.md](docs/README.md) - docs table of contents
+- [docs/security.md](docs/security.md) - security defaults + public exposure notes
+- [docs/deployment.md](docs/deployment.md) - background service setup
+- [docs/dev](docs/dev) - dev notes and checklists
 
 ## License
 
