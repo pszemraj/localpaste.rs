@@ -20,6 +20,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 crossbeam-channel = "0.5"
 eframe = { version = "0.33", features = ["wgpu", "persistence"] }
 egui_extras = { version = "0.33", features = ["syntect"] }
+syntect = "5.3"
 rfd = { version = "0.14", optional = true }
 puffin = { version = "0.19", optional = true }
 tokio = { version = "1.40", features = ["full"], optional = true }

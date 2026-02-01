@@ -377,6 +377,13 @@ $env:BIND = "127.0.0.1:38411"
 - Gzip compression for HTTP responses
 - Embedded assets are compressed
 
+## Editor Performance TODOs (Rewrite)
+
+- Replace the editor buffer with `ropey::Rope` (or similar) to avoid O(n) shifts on mid-buffer edits.
+- Move syntax highlighting off the UI thread (background worker + swap-in results).
+- Add viewport-only rendering so only visible lines are laid out and painted.
+- Add convergence-based highlight invalidation (stop re-tokenizing once line state stabilizes).
+
 ## Security
 
 See [security.md](security.md) for detailed security configuration and best practices.

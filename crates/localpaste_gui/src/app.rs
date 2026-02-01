@@ -2,16 +2,23 @@
 
 use crate::backend::{spawn_backend, BackendHandle, CoreCmd, CoreEvent, PasteSummary};
 use eframe::egui::{
-    self, style::WidgetVisuals, Color32, CornerRadius, FontData, FontDefinitions, FontFamily,
-    FontId, Margin, RichText, Stroke, TextStyle, Visuals,
+    self,
+    style::WidgetVisuals,
+    text::{LayoutJob, LayoutSection, TextFormat},
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, RichText, Stroke,
+    TextStyle, Visuals,
 };
-use egui_extras::syntax_highlighting::{self, CodeTheme};
+use egui_extras::syntax_highlighting::CodeTheme;
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
+use std::any::TypeId;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use syntect::highlighting::{HighlightState, Highlighter, Style, ThemeSet};
+use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
+use syntect::util::LinesWithEndings;
 use tracing::{info, warn};
 
 /// Native egui application shell for the rewrite.
@@ -23,7 +30,9 @@ pub struct LocalPasteApp {
     pastes: Vec<PasteSummary>,
     selected_id: Option<String>,
     selected_paste: Option<Paste>,
-    selected_content: String,
+    selected_content: EditorBuffer,
+    editor_cache: EditorLayoutCache,
+    syntect: SyntectSettings,
     db_path: String,
     locks: Arc<PasteLockManager>,
     _server: EmbeddedServer,
@@ -65,6 +74,439 @@ pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 720.0];
 pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(150);
+const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
+const HIGHLIGHT_SLOW_MS: f32 = 14.0;
+const HIGHLIGHT_BACKOFF: Duration = Duration::from_millis(200);
+
+#[derive(Default)]
+struct EditorBuffer {
+    text: String,
+    revision: u64,
+}
+
+impl EditorBuffer {
+    fn new(text: String) -> Self {
+        Self { text, revision: 0 }
+    }
+
+    fn reset(&mut self, text: String) {
+        self.text = text;
+        self.revision = 0;
+    }
+
+    fn len(&self) -> usize {
+        self.text.len()
+    }
+
+    fn chars_len(&self) -> usize {
+        self.text.chars().count()
+    }
+
+    fn to_string(&self) -> String {
+        self.text.clone()
+    }
+}
+
+impl egui::TextBuffer for EditorBuffer {
+    fn is_mutable(&self) -> bool {
+        true
+    }
+
+    fn as_str(&self) -> &str {
+        self.text.as_str()
+    }
+
+    fn insert_text(&mut self, text: &str, char_index: usize) -> usize {
+        let inserted = <String as egui::TextBuffer>::insert_text(&mut self.text, text, char_index);
+        if inserted > 0 {
+            self.revision = self.revision.wrapping_add(1);
+        }
+        inserted
+    }
+
+    fn delete_char_range(&mut self, char_range: std::ops::Range<usize>) {
+        if char_range.start == char_range.end {
+            return;
+        }
+        <String as egui::TextBuffer>::delete_char_range(&mut self.text, char_range);
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    fn clear(&mut self) {
+        if self.text.is_empty() {
+            return;
+        }
+        self.text.clear();
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    fn replace_with(&mut self, text: &str) {
+        if self.text == text {
+            return;
+        }
+        self.text.clear();
+        self.text.push_str(text);
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    fn take(&mut self) -> String {
+        self.revision = self.revision.wrapping_add(1);
+        std::mem::take(&mut self.text)
+    }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+}
+
+#[derive(Default)]
+struct EditorLayoutCache {
+    revision: u64,
+    language_hint: String,
+    use_plain: bool,
+    wrap_width: f32,
+    font_id: Option<FontId>,
+    theme: Option<CodeTheme>,
+    pixels_per_point: f32,
+    galley: Option<Arc<egui::Galley>>,
+    highlight_cache: HighlightCache,
+    last_highlight_ms: Option<f32>,
+    highlight_backoff_until: Option<Instant>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct HighlightStateSnapshot {
+    parse: ParseState,
+    highlight: HighlightState,
+}
+
+#[derive(Clone)]
+struct HighlightLineCache {
+    hash: u64,
+    sections: Vec<LayoutSection>,
+    end_state: HighlightStateSnapshot,
+}
+
+#[derive(Default)]
+struct HighlightCache {
+    language_hint: String,
+    theme_key: String,
+    lines: Vec<HighlightLineCache>,
+}
+
+impl HighlightCache {
+    fn clear_if_mismatch(&mut self, language_hint: &str, theme_key: &str) {
+        if self.language_hint != language_hint || self.theme_key != theme_key {
+            self.language_hint = language_hint.to_string();
+            self.theme_key = theme_key.to_string();
+            self.lines.clear();
+        }
+    }
+}
+
+impl EditorLayoutCache {
+    fn layout(
+        &mut self,
+        ui: &egui::Ui,
+        text: &dyn egui::TextBuffer,
+        wrap_width: f32,
+        language_hint: &str,
+        use_plain: bool,
+        theme: Option<&CodeTheme>,
+        editor_font: &FontId,
+        syntect: &SyntectSettings,
+    ) -> Arc<egui::Galley> {
+        let Some(revision) = editor_buffer_revision(text) else {
+            return self.build_galley(
+                ui,
+                text.as_str(),
+                wrap_width,
+                language_hint,
+                use_plain,
+                theme,
+                editor_font,
+                syntect,
+            );
+        };
+
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let wrap_width = wrap_width.max(0.0).round();
+        let theme_value = if use_plain { None } else { theme.cloned() };
+
+        let cache_hit = self.galley.is_some()
+            && self.revision == revision
+            && self.use_plain == use_plain
+            && self.wrap_width == wrap_width
+            && self.pixels_per_point == pixels_per_point
+            && self.language_hint == language_hint
+            && self.font_id.as_ref() == Some(editor_font)
+            && self.theme == theme_value;
+
+        if cache_hit {
+            return self.galley.as_ref().expect("cached galley").clone();
+        }
+
+        let started = Instant::now();
+        let galley = self.build_galley(
+            ui,
+            text.as_str(),
+            wrap_width,
+            language_hint,
+            use_plain,
+            theme,
+            editor_font,
+            syntect,
+        );
+        if use_plain {
+            self.last_highlight_ms = None;
+        } else {
+            let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
+            self.last_highlight_ms = Some(elapsed_ms);
+            if elapsed_ms > HIGHLIGHT_SLOW_MS && text.as_str().len() >= HIGHLIGHT_DEBOUNCE_MIN_BYTES
+            {
+                self.highlight_backoff_until = Some(Instant::now() + HIGHLIGHT_BACKOFF);
+            } else {
+                self.highlight_backoff_until = None;
+            }
+        }
+
+        self.revision = revision;
+        self.use_plain = use_plain;
+        self.wrap_width = wrap_width;
+        self.pixels_per_point = pixels_per_point;
+        self.language_hint = language_hint.to_string();
+        self.font_id = Some(editor_font.clone());
+        self.theme = theme_value;
+        self.galley = Some(galley.clone());
+
+        galley
+    }
+
+    fn build_galley(
+        &mut self,
+        ui: &egui::Ui,
+        text: &str,
+        wrap_width: f32,
+        language_hint: &str,
+        use_plain: bool,
+        theme: Option<&CodeTheme>,
+        editor_font: &FontId,
+        syntect: &SyntectSettings,
+    ) -> Arc<egui::Galley> {
+        let mut job = if use_plain {
+            LayoutJob::simple(
+                text.to_owned(),
+                editor_font.clone(),
+                ui.visuals().text_color(),
+                wrap_width,
+            )
+        } else {
+            let theme = theme.expect("theme required for highlighted layout");
+            self.build_highlight_job(ui, text, language_hint, theme, editor_font, syntect)
+        };
+        job.wrap.max_width = wrap_width;
+        ui.fonts_mut(|f| f.layout_job(job))
+    }
+
+    fn build_highlight_job(
+        &mut self,
+        ui: &egui::Ui,
+        text: &str,
+        language_hint: &str,
+        theme: &CodeTheme,
+        editor_font: &FontId,
+        settings: &SyntectSettings,
+    ) -> LayoutJob {
+        let theme_key = syntect_theme_key(theme);
+        self.highlight_cache
+            .clear_if_mismatch(language_hint, theme_key);
+
+        let syntax = settings
+            .ps
+            .find_syntax_by_name(language_hint)
+            .or_else(|| settings.ps.find_syntax_by_extension(language_hint))
+            .unwrap_or_else(|| settings.ps.find_syntax_plain_text());
+        let theme = settings
+            .ts
+            .themes
+            .get(theme_key)
+            .unwrap_or_else(|| settings.ts.themes.values().next().expect("theme"));
+
+        let highlighter = Highlighter::new(theme);
+        let mut parse_state = ParseState::new(syntax);
+        let mut highlight_state = HighlightState::new(&highlighter, ScopeStack::new());
+        let default_state = HighlightStateSnapshot {
+            parse: parse_state.clone(),
+            highlight: highlight_state.clone(),
+        };
+        let old_lines = std::mem::take(&mut self.highlight_cache.lines);
+        let mut new_lines = Vec::with_capacity(old_lines.len().max(1));
+        let mut job = LayoutJob {
+            text: text.to_owned(),
+            ..Default::default()
+        };
+        let default_format = TextFormat {
+            font_id: editor_font.clone(),
+            color: ui.visuals().text_color(),
+            ..Default::default()
+        };
+        let mut line_start = 0usize;
+
+        for (idx, line) in LinesWithEndings::from(text).enumerate() {
+            let line_hash = hash_bytes(line.as_bytes());
+            let start_state_matches = if idx == 0 {
+                default_state.parse == parse_state && default_state.highlight == highlight_state
+            } else {
+                old_lines
+                    .get(idx - 1)
+                    .map(|line| {
+                        line.end_state.parse == parse_state
+                            && line.end_state.highlight == highlight_state
+                    })
+                    .unwrap_or(false)
+            };
+            if let Some(old_line) = old_lines.get(idx) {
+                if old_line.hash == line_hash && start_state_matches {
+                    append_sections(&mut job, &old_line.sections, line_start);
+                    parse_state = old_line.end_state.parse.clone();
+                    highlight_state = old_line.end_state.highlight.clone();
+                    new_lines.push(old_line.clone());
+                    line_start += line.len();
+                    continue;
+                }
+            }
+
+            match parse_state.parse_line(line, &settings.ps) {
+                Ok(ops) => {
+                    let mut sections = Vec::new();
+                    let iter = syntect::highlighting::RangedHighlightIterator::new(
+                        &mut highlight_state,
+                        &ops[..],
+                        line,
+                        &highlighter,
+                    );
+                    for (style, _token, range) in iter {
+                        if range.is_empty() {
+                            continue;
+                        }
+                        sections.push(LayoutSection {
+                            leading_space: 0.0,
+                            byte_range: range,
+                            format: syntect_style_to_format(style, editor_font),
+                        });
+                    }
+                    if sections.is_empty() && !line.is_empty() {
+                        sections.push(LayoutSection {
+                            leading_space: 0.0,
+                            byte_range: 0..line.len(),
+                            format: default_format.clone(),
+                        });
+                    }
+
+                    let end_state = HighlightStateSnapshot {
+                        parse: parse_state.clone(),
+                        highlight: highlight_state.clone(),
+                    };
+                    append_sections(&mut job, &sections, line_start);
+                    new_lines.push(HighlightLineCache {
+                        hash: line_hash,
+                        sections,
+                        end_state,
+                    });
+                }
+                Err(_) => {
+                    // Fallback to plain layout on parse errors.
+                    job = LayoutJob::simple(
+                        text.to_owned(),
+                        editor_font.clone(),
+                        ui.visuals().text_color(),
+                        f32::INFINITY,
+                    );
+                    new_lines.clear();
+                    break;
+                }
+            }
+
+            line_start += line.len();
+        }
+
+        self.highlight_cache.lines = new_lines;
+        job
+    }
+}
+
+fn editor_buffer_revision(text: &dyn egui::TextBuffer) -> Option<u64> {
+    if text.type_id() == TypeId::of::<EditorBuffer>() {
+        let ptr = text as *const dyn egui::TextBuffer as *const EditorBuffer;
+        // Safety: we only cast when the type id matches.
+        let buffer = unsafe { &*ptr };
+        Some(buffer.revision)
+    } else {
+        None
+    }
+}
+
+struct SyntectSettings {
+    ps: SyntaxSet,
+    ts: ThemeSet,
+}
+
+impl Default for SyntectSettings {
+    fn default() -> Self {
+        Self {
+            ps: SyntaxSet::load_defaults_newlines(),
+            ts: ThemeSet::load_defaults(),
+        }
+    }
+}
+
+fn syntect_theme_key(theme: &CodeTheme) -> &'static str {
+    if theme.is_dark() {
+        "base16-mocha.dark"
+    } else {
+        "Solarized (light)"
+    }
+}
+
+fn syntect_style_to_format(style: Style, editor_font: &FontId) -> TextFormat {
+    let color = Color32::from_rgb(style.foreground.r, style.foreground.g, style.foreground.b);
+    let italics = style
+        .font_style
+        .contains(syntect::highlighting::FontStyle::ITALIC);
+    let underline = style
+        .font_style
+        .contains(syntect::highlighting::FontStyle::UNDERLINE);
+    TextFormat {
+        font_id: editor_font.clone(),
+        color,
+        italics,
+        underline: if underline {
+            Stroke::new(1.0, color)
+        } else {
+            Stroke::NONE
+        },
+        ..Default::default()
+    }
+}
+
+fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usize) {
+    for section in sections {
+        let mut section = section.clone();
+        section.byte_range = (section.byte_range.start + offset)..(section.byte_range.end + offset);
+        job.sections.push(section);
+    }
+}
+
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+    let mut hash = FNV_OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
 
 struct StatusMessage {
     text: String,
@@ -149,7 +591,9 @@ impl LocalPasteApp {
             pastes: Vec::new(),
             selected_id: None,
             selected_paste: None,
-            selected_content: String::new(),
+            selected_content: EditorBuffer::new(String::new()),
+            editor_cache: EditorLayoutCache::default(),
+            syntect: SyntectSettings::default(),
             db_path,
             locks,
             _server: server,
@@ -316,7 +760,8 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteLoaded { paste } => {
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
-                    self.selected_content = paste.content.clone();
+                    self.selected_content.reset(paste.content.clone());
+                    self.editor_cache = EditorLayoutCache::default();
                     self.selected_paste = Some(paste);
                     self.save_status = SaveStatus::Saved;
                     self.last_edit_at = None;
@@ -327,7 +772,8 @@ impl LocalPasteApp {
                 let summary = PasteSummary::from_paste(&paste);
                 self.pastes.insert(0, summary);
                 self.select_paste(paste.id.clone());
-                self.selected_content = paste.content.clone();
+                self.selected_content.reset(paste.content.clone());
+                self.editor_cache = EditorLayoutCache::default();
                 self.selected_paste = Some(paste);
                 self.save_status = SaveStatus::Saved;
                 self.last_edit_at = None;
@@ -341,7 +787,7 @@ impl LocalPasteApp {
                 }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     let mut updated = paste;
-                    updated.content = self.selected_content.clone();
+                    updated.content = self.selected_content.to_string();
                     self.selected_paste = Some(updated);
                     self.save_status = SaveStatus::Saved;
                     self.last_edit_at = None;
@@ -391,7 +837,8 @@ impl LocalPasteApp {
         self.selected_id = Some(id.clone());
         self.locks.lock(&id);
         self.selected_paste = None;
-        self.selected_content.clear();
+        self.selected_content.reset(String::new());
+        self.editor_cache = EditorLayoutCache::default();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
@@ -403,7 +850,8 @@ impl LocalPasteApp {
             self.locks.unlock(&prev);
         }
         self.selected_paste = None;
-        self.selected_content.clear();
+        self.selected_content.reset(String::new());
+        self.editor_cache = EditorLayoutCache::default();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
@@ -451,7 +899,7 @@ impl LocalPasteApp {
         let Some(id) = self.selected_id.clone() else {
             return;
         };
-        let content = self.selected_content.clone();
+        let content = self.selected_content.to_string();
         self.save_in_flight = true;
         self.save_status = SaveStatus::Saving;
         let _ = self
@@ -639,14 +1087,29 @@ impl eframe::App for LocalPasteApp {
                     .show(ui, |ui| {
                         ui.set_min_size(egui::vec2(ui.available_width(), editor_height));
                         let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
-                        let editor_font = ui.style().text_styles.get(&editor_style).cloned();
+                        let editor_font = ui
+                            .style()
+                            .text_styles
+                            .get(&editor_style)
+                            .cloned()
+                            .unwrap_or_else(|| TextStyle::Monospace.resolve(ui.style()));
                         let language_hint =
                             syntect_language_hint(language.as_deref().unwrap_or("text"));
-                        let highlight_ready = self
+                        let debounce_active = self
                             .last_edit_at
-                            .map(|last| last.elapsed() >= HIGHLIGHT_DEBOUNCE)
-                            .unwrap_or(true);
-                        let use_plain = is_large || !highlight_ready;
+                            .map(|last| {
+                                self.selected_content.len() >= HIGHLIGHT_DEBOUNCE_MIN_BYTES
+                                    && last.elapsed() < HIGHLIGHT_DEBOUNCE
+                            })
+                            .unwrap_or(false);
+                        let backoff_active = self
+                            .editor_cache
+                            .highlight_backoff_until
+                            .map(|until| Instant::now() < until)
+                            .unwrap_or(false);
+                        let use_plain = is_large || debounce_active || backoff_active;
+                        let theme =
+                            (!use_plain).then(|| CodeTheme::from_memory(ui.ctx(), ui.style()));
                         let row_height = ui.text_style_height(&editor_style);
                         let rows_that_fit = ((editor_height / row_height).ceil() as usize).max(1);
 
@@ -657,33 +1120,23 @@ impl eframe::App for LocalPasteApp {
                             .lock_focus(true)
                             .hint_text("Start typing...");
 
-                        let edit = if use_plain {
-                            ui.add(edit)
-                        } else {
-                            let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
-                            let mut layouter =
-                                move |ui: &egui::Ui,
-                                      text: &dyn egui::TextBuffer,
-                                      wrap_width: f32| {
-                                    let text = text.as_str();
-                                    let mut job = syntax_highlighting::highlight(
-                                        ui.ctx(),
-                                        ui.style(),
-                                        &theme,
-                                        text,
-                                        language_hint.as_str(),
-                                    );
-                                    job.wrap.max_width = wrap_width;
-                                    if let Some(font_id) = &editor_font {
-                                        for section in &mut job.sections {
-                                            section.format.font_id =
-                                                FontId::new(font_id.size, font_id.family.clone());
-                                        }
-                                    }
-                                    ui.fonts_mut(|f| f.layout_job(job))
-                                };
-                            ui.add(edit.layouter(&mut layouter))
-                        };
+                        let mut editor_cache = std::mem::take(&mut self.editor_cache);
+                        let syntect = &self.syntect;
+                        let mut layouter =
+                            |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+                                editor_cache.layout(
+                                    ui,
+                                    text,
+                                    wrap_width,
+                                    language_hint.as_str(),
+                                    use_plain,
+                                    theme.as_ref(),
+                                    &editor_font,
+                                    syntect,
+                                )
+                            };
+                        let edit = ui.add(edit.layouter(&mut layouter));
+                        self.editor_cache = editor_cache;
                         if self.focus_editor_next || edit.clicked() {
                             edit.request_focus();
                             self.focus_editor_next = false;
@@ -733,7 +1186,7 @@ impl eframe::App for LocalPasteApp {
                         ui.label(
                             egui::RichText::new(format!(
                                 "{} chars",
-                                self.selected_content.chars().count()
+                                self.selected_content.chars_len()
                             ))
                             .small()
                             .color(COLOR_TEXT_MUTED),
@@ -771,6 +1224,7 @@ impl Drop for LocalPasteApp {
 mod tests {
     use super::*;
     use crossbeam_channel::unbounded;
+    use eframe::egui::TextBuffer;
     use tempfile::TempDir;
 
     struct TestHarness {
@@ -809,7 +1263,9 @@ mod tests {
             }],
             selected_id: Some("alpha".to_string()),
             selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
-            selected_content: "content".to_string(),
+            selected_content: EditorBuffer::new("content".to_string()),
+            editor_cache: EditorLayoutCache::default(),
+            syntect: SyntectSettings::default(),
             db_path: db_path_str,
             locks,
             _server: server,
@@ -839,7 +1295,7 @@ mod tests {
         assert!(harness.app.pastes.is_empty());
         assert!(harness.app.selected_id.is_none());
         assert!(harness.app.selected_paste.is_none());
-        assert!(harness.app.selected_content.is_empty());
+        assert_eq!(harness.app.selected_content.len(), 0);
         assert!(harness.app.status.is_some());
     }
 
@@ -861,5 +1317,83 @@ mod tests {
         assert_eq!(harness.app.pastes[0].id, "alpha");
         assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
         assert!(harness.app.selected_paste.is_some());
+    }
+
+    #[test]
+    fn highlight_cache_reuses_layout_when_unchanged() {
+        let mut cache = EditorLayoutCache::default();
+        let buffer = EditorBuffer::new("def foo():\n    return 1\n".to_string());
+        let syntect = SyntectSettings::default();
+
+        egui::__run_test_ctx(|ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let font = FontId::monospace(14.0);
+                let theme = CodeTheme::dark(14.0);
+                let _ = cache.layout(
+                    ui,
+                    &buffer,
+                    400.0,
+                    "py",
+                    false,
+                    Some(&theme),
+                    &font,
+                    &syntect,
+                );
+                let first_ms = cache.last_highlight_ms;
+                let line_count = LinesWithEndings::from(buffer.as_str()).count();
+                let _ = cache.layout(
+                    ui,
+                    &buffer,
+                    400.0,
+                    "py",
+                    false,
+                    Some(&theme),
+                    &font,
+                    &syntect,
+                );
+
+                assert_eq!(cache.last_highlight_ms, first_ms);
+                assert_eq!(cache.highlight_cache.lines.len(), line_count);
+            });
+        });
+    }
+
+    #[test]
+    fn highlight_cache_updates_after_line_edit() {
+        let mut cache = EditorLayoutCache::default();
+        let mut buffer = EditorBuffer::new("line1\nline2\nline3\n".to_string());
+        let syntect = SyntectSettings::default();
+
+        egui::__run_test_ctx(|ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let font = FontId::monospace(14.0);
+                let theme = CodeTheme::dark(14.0);
+                let _ = cache.layout(
+                    ui,
+                    &buffer,
+                    400.0,
+                    "py",
+                    false,
+                    Some(&theme),
+                    &font,
+                    &syntect,
+                );
+
+                buffer.insert_text("x", 0);
+
+                let _ = cache.layout(
+                    ui,
+                    &buffer,
+                    400.0,
+                    "py",
+                    false,
+                    Some(&theme),
+                    &font,
+                    &syntect,
+                );
+                let line_count = LinesWithEndings::from(buffer.as_str()).count();
+                assert_eq!(cache.highlight_cache.lines.len(), line_count);
+            });
+        });
     }
 }
