@@ -1,5 +1,18 @@
 # Security Configuration
 
+---
+
+- [Security Configuration](#security-configuration)
+  - [Default Security Settings](#default-security-settings)
+  - [Environment Variables](#environment-variables)
+  - [Public Exposure (Not Recommended)](#public-exposure-not-recommended)
+  - [Security Best Practices](#security-best-practices)
+  - [Threat Model](#threat-model)
+  - [Reporting Security Issues](#reporting-security-issues)
+  - [Compliance Notes](#compliance-notes)
+
+---
+
 ## Default Security Settings
 
 LocalPaste.rs is designed for local use and comes with secure defaults. The legacy desktop app (`localpaste-gui-legacy`) embeds the same HTTP API, so these recommendations apply there as well:
@@ -14,10 +27,10 @@ LocalPaste.rs is designed for local use and comes with secure defaults. The lega
 
 ### Network Configuration
 
-| Variable              | Default          | Description                                      |
-| --------------------- | ---------------- | ------------------------------------------------ |
+| Variable              | Default           | Description                                                                    |
+| --------------------- | ----------------- | ------------------------------------------------------------------------------ |
 | `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback ignored unless `ALLOW_PUBLIC_ACCESS` is set) |
-| `ALLOW_PUBLIC_ACCESS` | disabled         | Enable CORS for all origins and allow non-loopback bind |
+| `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind                        |
 
 ### Security Headers
 
