@@ -1,165 +1,75 @@
 # LocalPaste.rs
 
-![Status](https://img.shields.io/badge/status-active-success.svg?style=for-the-badge)
-
 A fast, localhost-only pastebin with a modern editor, built in Rust.
 
 ![LocalPaste Screenshot](assets/ui.jpg)
 
----
+## What it is
 
-## Features (Current State)
+LocalPaste is a local-first paste manager with:
 
-**Native rewrite (primary, in progress):**
-- **egui/eframe UI** with legacy palette + typography
-- **Async backend worker** to keep `App::update` free of blocking I/O
-- **Virtualized paste list + selection**
-- **Editable editor** with autosave + save status
-- **Syntax highlighting** via `egui_extras`, with large-paste fallback to plain text
-- **Smart paste creation** when the app is focused and no text input is active (Ctrl/Cmd+V)
-- **Debounced highlighting** while typing for smoother edits
+- Native GUI rewrite (primary desktop app)
+- Legacy GUI reference app (feature-complete)
+- Headless JSON API server + CLI
 
-**Legacy GUI (feature-complete reference while rewrite lands):**
-- Auto-save + export, folders, language detection, shortcuts, theming
+## Binaries
 
-**Shared backend:**
-- **Zero runtime dependencies** - single binary, embedded Sled database
-- **Embedded API server** in the rewrite (GUI + CLI can talk to the same local API)
+- `localpaste-gui` - native rewrite desktop app
+- `localpaste-gui-legacy` - legacy GUI reference
+- `localpaste` - headless API server
+- `lpaste` - CLI client
 
-## Quick Start
+## Quick start
 
-LocalPaste.rs provides multiple ways to interact with your pastes:
-
-- `localpaste-gui` - Native rewrite (primary desktop app)
-- `localpaste-gui-legacy` - Legacy egui desktop app (feature-complete reference)
-- `localpaste_gui` - Workspace crate for direct rewrite development
-- `localpaste` - Axum HTTP API server (headless, JSON only)
-- `lpaste` - Command-line interface for terminal usage
-
-### Run the Native Rewrite (Primary)
+### GUI
 
 ```bash
 cargo run -p localpaste_gui --bin localpaste-gui
 ```
 
-Install to your PATH (recommended):
+Install to your PATH:
 
 ```bash
 cargo install --path crates/localpaste_gui --bin localpaste-gui
 ```
 
-### Run the Legacy Desktop App
+### Server + CLI
 
 ```bash
-cargo run -p localpaste_gui --bin localpaste-gui-legacy --features="gui-legacy"
-```
-
-### Run the Web Server / API
-
-```bash
-# Run with cargo (development)
 cargo run -p localpaste_server --bin localpaste --release
-
-# Or build and run the binary (production)
-cargo build -p localpaste_server --bin localpaste --release
-./target/release/localpaste
 ```
 
-The server exposes a JSON API on <http://localhost:38411>. Use the CLI or your own tooling to interact with it.
-When the rewrite GUI is running, it also hosts this API locally (check the API address in the status bar).
-
-## CLI Usage
-
-The CLI tool (`lpaste`) interacts with the running server (or the legacy desktop app, which hosts the same API locally). The rewrite GUI also embeds the API server, so you can point `lpaste` at its status-bar URL:
+The server listens on `http://127.0.0.1:38411` by default.
 
 ```bash
-# Build the CLI binary
+# Build the CLI
 cargo build -p localpaste_cli --bin lpaste --release
 
-# List all pastes
+# Create a paste
+"Hello, World!" | ./target/release/lpaste new
+
+# List pastes
 ./target/release/lpaste list
-
-# Create a new paste
-echo "Hello, World!" | ./target/release/lpaste new
-
-# Get a specific paste
-./target/release/lpaste get <paste-id>
-
-# Search pastes
-./target/release/lpaste search "rust"
-
-# Delete a paste
-./target/release/lpaste delete <paste-id>
-```
-
-Install to your PATH:
-
-```bash
-cargo install --path crates/localpaste_cli --bin lpaste
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` to customize settings:
+Copy `.env.example` to `.env` for overrides:
 
 ```bash
 cp .env.example .env
 ```
 
-Available environment variables:
+For environment variables, security guidance, and public exposure notes, see [docs/security.md](docs/security.md).
 
-- `PORT` - Server port (default: 38411)
-- `DB_PATH` - Database path (default: ~/.cache/localpaste/db)
-- `MAX_PASTE_SIZE` - Maximum paste size in bytes (default: 10MB)
-- `AUTO_BACKUP` - Enable automatic backups on startup (default: false)
-- `RUST_LOG` - Logging level (default: info)
-- `ALLOW_PUBLIC_ACCESS` - Enable non-loopback binding + permissive CORS (default: off)
+For background services and OS-specific setup, see [docs/deployment.md](docs/deployment.md).
 
-Override the port for a single session:
+## Documentation
 
-PowerShell:
-```powershell
-$env:PORT = "38411"
-# or
-$env:BIND = "127.0.0.1:38411"
-```
-
-bash/zsh:
-```bash
-PORT=38411 cargo run -p localpaste_server --bin localpaste
-# or
-BIND=127.0.0.1:38411 cargo run -p localpaste_server --bin localpaste
-```
-
-Note: non-loopback `BIND` values are ignored unless `ALLOW_PUBLIC_ACCESS=1` is set.
-
-For advanced configuration and security settings, see [docs/security.md](docs/security.md).
-
-## Running as a Background Service
-
-LocalPaste can run automatically in the background. See [docs/deployment.md](docs/deployment.md) for headless/server instructions:
-
-- systemd (Linux)
-- launchd (macOS)
-- Task Scheduler (Windows)
-- Docker setup
-- Process managers (PM2, Supervisor)
-- Auto-restart scripts
-
-## Development
-
-See [docs/dev.md](docs/dev.md) for development documentation, including desktop build steps.
-
-## Architecture
-
-- **Core**: `localpaste_core` holds the storage model + domain logic
-- **Native rewrite**: `localpaste_gui` (egui/eframe app, async worker + embedded API)
-- **Legacy desktop**: `localpaste-gui-legacy` (existing egui UI, feature reference)
-- **Backend**: `localpaste_server` (Axum web framework with Sled embedded database)
-- **CLI**: `localpaste_cli` (installs the `lpaste` binary)
-- **Tools**: `localpaste_tools` (generate synthetic datasets)
-- **Storage**: Embedded Sled database (no external DB required)
-- **Deployment**: Per-platform binaries; legacy GUI behind `--features gui-legacy`
+- [docs/README.md](docs/README.md) (table of contents)
+- [docs/security.md](docs/security.md)
+- [docs/deployment.md](docs/deployment.md)
+- [docs/dev](docs/dev)
 
 ## License
 
