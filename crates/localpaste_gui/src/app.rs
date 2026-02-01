@@ -82,16 +82,23 @@ const HIGHLIGHT_BACKOFF: Duration = Duration::from_millis(200);
 struct EditorBuffer {
     text: String,
     revision: u64,
+    char_len: usize,
 }
 
 impl EditorBuffer {
     fn new(text: String) -> Self {
-        Self { text, revision: 0 }
+        let char_len = text.chars().count();
+        Self {
+            text,
+            revision: 0,
+            char_len,
+        }
     }
 
     fn reset(&mut self, text: String) {
         self.text = text;
         self.revision = 0;
+        self.char_len = self.text.chars().count();
     }
 
     fn len(&self) -> usize {
@@ -99,7 +106,7 @@ impl EditorBuffer {
     }
 
     fn chars_len(&self) -> usize {
-        self.text.chars().count()
+        self.char_len
     }
 
     fn to_string(&self) -> String {
@@ -120,6 +127,7 @@ impl egui::TextBuffer for EditorBuffer {
         let inserted = <String as egui::TextBuffer>::insert_text(&mut self.text, text, char_index);
         if inserted > 0 {
             self.revision = self.revision.wrapping_add(1);
+            self.char_len = self.char_len.saturating_add(inserted);
         }
         inserted
     }
@@ -128,8 +136,10 @@ impl egui::TextBuffer for EditorBuffer {
         if char_range.start == char_range.end {
             return;
         }
+        let removed = char_range.end.saturating_sub(char_range.start);
         <String as egui::TextBuffer>::delete_char_range(&mut self.text, char_range);
         self.revision = self.revision.wrapping_add(1);
+        self.char_len = self.char_len.saturating_sub(removed);
     }
 
     fn clear(&mut self) {
@@ -138,6 +148,7 @@ impl egui::TextBuffer for EditorBuffer {
         }
         self.text.clear();
         self.revision = self.revision.wrapping_add(1);
+        self.char_len = 0;
     }
 
     fn replace_with(&mut self, text: &str) {
@@ -147,10 +158,12 @@ impl egui::TextBuffer for EditorBuffer {
         self.text.clear();
         self.text.push_str(text);
         self.revision = self.revision.wrapping_add(1);
+        self.char_len = text.chars().count();
     }
 
     fn take(&mut self) -> String {
         self.revision = self.revision.wrapping_add(1);
+        self.char_len = 0;
         std::mem::take(&mut self.text)
     }
 
@@ -1095,10 +1108,16 @@ impl eframe::App for LocalPasteApp {
                             .unwrap_or_else(|| TextStyle::Monospace.resolve(ui.style()));
                         let language_hint =
                             syntect_language_hint(language.as_deref().unwrap_or("text"));
+                        let highlight_slow = self
+                            .editor_cache
+                            .last_highlight_ms
+                            .map(|ms| ms > HIGHLIGHT_SLOW_MS)
+                            .unwrap_or(false);
                         let debounce_active = self
                             .last_edit_at
                             .map(|last| {
                                 self.selected_content.len() >= HIGHLIGHT_DEBOUNCE_MIN_BYTES
+                                    && highlight_slow
                                     && last.elapsed() < HIGHLIGHT_DEBOUNCE
                             })
                             .unwrap_or(false);
@@ -1317,6 +1336,24 @@ mod tests {
         assert_eq!(harness.app.pastes[0].id, "alpha");
         assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
         assert!(harness.app.selected_paste.is_some());
+    }
+
+    #[test]
+    fn editor_buffer_tracks_char_len() {
+        let mut buffer = EditorBuffer::new("ab".to_string());
+        assert_eq!(buffer.chars_len(), 2);
+
+        buffer.insert_text("\u{00E9}", 1);
+        assert_eq!(buffer.chars_len(), 3);
+
+        buffer.delete_char_range(1..2);
+        assert_eq!(buffer.chars_len(), 2);
+
+        buffer.replace_with("xyz");
+        assert_eq!(buffer.chars_len(), 3);
+
+        buffer.clear();
+        assert_eq!(buffer.chars_len(), 0);
     }
 
     #[test]

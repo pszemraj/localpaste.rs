@@ -21,7 +21,7 @@
 ## Rewrite Highlighting
 
 - Rewrite uses syntect directly with a plain-text fallback for large pastes (>=256KB).
-- Highlighting is debounced while typing (150ms) for larger buffers (>=64KB) to avoid stutter; smaller buffers keep highlighting on.
+- Highlighting is debounced while typing (150ms) for larger buffers (>=64KB) only if the last highlight pass was slow (~14ms+); smaller buffers keep highlighting on.
 - Highlighting now caches per-line syntect parse/highlight state to reuse unchanged lines after edits.
 - A short backoff is applied if a highlight pass exceeds ~14ms so UI stays responsive.
 - Language hint is derived from paste language metadata; missing metadata is shown as `(auto)` in the list/header.
