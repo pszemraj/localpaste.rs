@@ -93,11 +93,11 @@ $env:DB_PATH = $TestDb
    - Edit at start/middle/end.
    - Expect: caret stays responsive, highlight stays on.
 
-2. **Debounce behavior (~100KB)**
+2. **Async highlight behavior (~100KB)**
    - Open `perf-100kb-python`.
    - Type quickly for 2-3 seconds.
-   - Expect: highlight stays on unless a slow pass was detected; if it drops,
-     it returns after ~150ms idle.
+   - Expect: highlight stays visible (no rapid on/off flicker). Colors may lag
+     briefly while typing, then refresh after ~150ms idle.
 
 3. **Large paste fallback**
    - Open `perf-300kb-rust`.
@@ -125,6 +125,12 @@ $env:DB_PATH = $TestDb
 
 ```powershell
 Remove-Item -Recurse -Force $TestDb
+```
+
+If PowerShell blocks the removal in your environment, use:
+
+```powershell
+cmd /c rmdir /s /q "$TestDb"
 ```
 
 ## Notes

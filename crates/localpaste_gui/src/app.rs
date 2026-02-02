@@ -14,7 +14,9 @@ use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
 use std::any::TypeId;
 use std::net::SocketAddr;
+use std::ops::Range;
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 use syntect::highlighting::{HighlightState, Highlighter, Style, ThemeSet};
 use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
@@ -32,6 +34,10 @@ pub struct LocalPasteApp {
     selected_paste: Option<Paste>,
     selected_content: EditorBuffer,
     editor_cache: EditorLayoutCache,
+    highlight_worker: HighlightWorker,
+    highlight_pending: Option<HighlightRequestMeta>,
+    highlight_render: Option<HighlightRender>,
+    highlight_version: u64,
     syntect: SyntectSettings,
     db_path: String,
     locks: Arc<PasteLockManager>,
@@ -101,6 +107,10 @@ impl EditorBuffer {
 
     fn len(&self) -> usize {
         self.text.len()
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
     }
 
     fn chars_len(&self) -> usize {
@@ -179,6 +189,7 @@ struct EditorLayoutCache {
     font_id: Option<FontId>,
     theme: Option<CodeTheme>,
     pixels_per_point: f32,
+    highlight_version: u64,
     galley: Option<Arc<egui::Galley>>,
     highlight_cache: HighlightCache,
     last_highlight_ms: Option<f32>,
@@ -223,6 +234,8 @@ impl EditorLayoutCache {
         language_hint: &str,
         use_plain: bool,
         theme: Option<&CodeTheme>,
+        highlight_render: Option<&HighlightRender>,
+        highlight_version: u64,
         editor_font: &FontId,
         syntect: &SyntectSettings,
     ) -> Arc<egui::Galley> {
@@ -234,6 +247,7 @@ impl EditorLayoutCache {
                 language_hint,
                 use_plain,
                 theme,
+                highlight_render,
                 editor_font,
                 syntect,
             );
@@ -250,7 +264,8 @@ impl EditorLayoutCache {
             && self.pixels_per_point == pixels_per_point
             && self.language_hint == language_hint
             && self.font_id.as_ref() == Some(editor_font)
-            && self.theme == theme_value;
+            && self.theme == theme_value
+            && self.highlight_version == highlight_version;
 
         if cache_hit {
             return self.galley.as_ref().expect("cached galley").clone();
@@ -264,6 +279,7 @@ impl EditorLayoutCache {
             language_hint,
             use_plain,
             theme,
+            highlight_render,
             editor_font,
             syntect,
         );
@@ -279,6 +295,7 @@ impl EditorLayoutCache {
         self.language_hint = language_hint.to_string();
         self.font_id = Some(editor_font.clone());
         self.theme = theme_value;
+        self.highlight_version = highlight_version;
         self.galley = Some(galley.clone());
 
         galley
@@ -292,6 +309,7 @@ impl EditorLayoutCache {
         language_hint: &str,
         use_plain: bool,
         theme: Option<&CodeTheme>,
+        highlight_render: Option<&HighlightRender>,
         editor_font: &FontId,
         syntect: &SyntectSettings,
     ) -> Arc<egui::Galley> {
@@ -302,6 +320,8 @@ impl EditorLayoutCache {
                 ui.visuals().text_color(),
                 wrap_width,
             )
+        } else if let Some(render) = highlight_render {
+            self.build_render_job(ui, text, render, editor_font)
         } else {
             let theme = theme.expect("theme required for highlighted layout");
             self.build_highlight_job(ui, text, language_hint, theme, editor_font, syntect)
@@ -435,6 +455,61 @@ impl EditorLayoutCache {
         self.highlight_cache.lines = new_lines;
         job
     }
+
+    fn build_render_job(
+        &self,
+        ui: &egui::Ui,
+        text: &str,
+        render: &HighlightRender,
+        editor_font: &FontId,
+    ) -> LayoutJob {
+        let mut job = LayoutJob {
+            text: text.to_owned(),
+            ..Default::default()
+        };
+        let default_format = TextFormat {
+            font_id: editor_font.clone(),
+            color: ui.visuals().text_color(),
+            ..Default::default()
+        };
+        let mut line_start = 0usize;
+
+        for line in &render.lines {
+            if line_start >= text.len() {
+                break;
+            }
+            if line.spans.is_empty() && line.len > 0 {
+                job.sections.push(LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: line_start..(line_start + line.len).min(text.len()),
+                    format: default_format.clone(),
+                });
+            } else {
+                for span in &line.spans {
+                    let start = line_start.saturating_add(span.range.start);
+                    let end = line_start.saturating_add(span.range.end);
+                    if start >= text.len() || end > text.len() || start >= end {
+                        continue;
+                    }
+                    job.sections.push(LayoutSection {
+                        leading_space: 0.0,
+                        byte_range: start..end,
+                        format: render_span_to_format(span, editor_font),
+                    });
+                }
+            }
+            line_start = line_start.saturating_add(line.len);
+        }
+        if line_start < text.len() {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: line_start..text.len(),
+                format: default_format,
+            });
+        }
+
+        job
+    }
 }
 
 fn editor_buffer_revision(text: &dyn egui::TextBuffer) -> Option<u64> {
@@ -491,6 +566,26 @@ fn syntect_style_to_format(style: Style, editor_font: &FontId) -> TextFormat {
     }
 }
 
+fn render_span_to_format(span: &HighlightSpan, editor_font: &FontId) -> TextFormat {
+    let color = Color32::from_rgba_unmultiplied(
+        span.style.color[0],
+        span.style.color[1],
+        span.style.color[2],
+        span.style.color[3],
+    );
+    TextFormat {
+        font_id: editor_font.clone(),
+        color,
+        italics: span.style.italics,
+        underline: if span.style.underline {
+            Stroke::new(1.0, color)
+        } else {
+            Stroke::NONE
+        },
+        ..Default::default()
+    }
+}
+
 fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usize) {
     for section in sections {
         let mut section = section.clone();
@@ -508,6 +603,263 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash
+}
+
+#[derive(Clone)]
+struct HighlightSpan {
+    range: Range<usize>,
+    style: HighlightStyle,
+}
+
+#[derive(Clone, Copy)]
+struct HighlightStyle {
+    color: [u8; 4],
+    italics: bool,
+    underline: bool,
+}
+
+#[derive(Clone)]
+struct HighlightRenderLine {
+    len: usize,
+    spans: Vec<HighlightSpan>,
+}
+
+#[derive(Clone)]
+struct HighlightRender {
+    paste_id: String,
+    revision: u64,
+    text_len: usize,
+    language_hint: String,
+    theme_key: String,
+    lines: Vec<HighlightRenderLine>,
+}
+
+impl HighlightRender {
+    fn matches_context(&self, paste_id: &str, language_hint: &str, theme_key: &str) -> bool {
+        self.paste_id == paste_id
+            && self.language_hint == language_hint
+            && self.theme_key == theme_key
+    }
+
+    fn matches_exact(
+        &self,
+        revision: u64,
+        text_len: usize,
+        language_hint: &str,
+        theme_key: &str,
+        paste_id: &str,
+    ) -> bool {
+        self.revision == revision
+            && self.text_len == text_len
+            && self.matches_context(paste_id, language_hint, theme_key)
+    }
+}
+
+#[derive(Clone)]
+struct HighlightRequest {
+    paste_id: String,
+    revision: u64,
+    text: String,
+    language_hint: String,
+    theme_key: String,
+}
+
+struct HighlightRequestMeta {
+    paste_id: String,
+    revision: u64,
+    text_len: usize,
+    language_hint: String,
+    theme_key: String,
+}
+
+impl HighlightRequestMeta {
+    fn matches(
+        &self,
+        revision: u64,
+        text_len: usize,
+        language_hint: &str,
+        theme_key: &str,
+        paste_id: &str,
+    ) -> bool {
+        self.revision == revision
+            && self.text_len == text_len
+            && self.language_hint == language_hint
+            && self.theme_key == theme_key
+            && self.paste_id == paste_id
+    }
+
+    fn matches_render(&self, render: &HighlightRender) -> bool {
+        self.revision == render.revision
+            && self.text_len == render.text_len
+            && self.language_hint == render.language_hint
+            && self.theme_key == render.theme_key
+            && self.paste_id == render.paste_id
+    }
+}
+
+struct HighlightWorker {
+    tx: crossbeam_channel::Sender<HighlightRequest>,
+    rx: crossbeam_channel::Receiver<HighlightRender>,
+}
+
+#[derive(Default)]
+struct HighlightWorkerCache {
+    language_hint: String,
+    theme_key: String,
+    lines: Vec<HighlightWorkerLine>,
+}
+
+#[derive(Clone)]
+struct HighlightWorkerLine {
+    hash: u64,
+    len: usize,
+    spans: Vec<HighlightSpan>,
+    end_state: HighlightStateSnapshot,
+}
+
+fn spawn_highlight_worker() -> HighlightWorker {
+    let (tx, rx_cmd) = crossbeam_channel::unbounded();
+    let (tx_evt, rx_evt) = crossbeam_channel::unbounded();
+
+    thread::Builder::new()
+        .name("localpaste-gui-highlight".to_string())
+        .spawn(move || {
+            let settings = SyntectSettings::default();
+            let mut cache = HighlightWorkerCache::default();
+            for req in rx_cmd.iter() {
+                let mut latest = req;
+                while let Ok(next) = rx_cmd.try_recv() {
+                    latest = next;
+                }
+                let render = highlight_in_worker(&settings, &mut cache, latest);
+                let _ = tx_evt.send(render);
+            }
+        })
+        .expect("spawn highlight worker");
+
+    HighlightWorker { tx, rx: rx_evt }
+}
+
+fn highlight_in_worker(
+    settings: &SyntectSettings,
+    cache: &mut HighlightWorkerCache,
+    req: HighlightRequest,
+) -> HighlightRender {
+    if cache.language_hint != req.language_hint || cache.theme_key != req.theme_key {
+        cache.language_hint = req.language_hint.clone();
+        cache.theme_key = req.theme_key.clone();
+        cache.lines.clear();
+    }
+
+    let syntax = settings
+        .ps
+        .find_syntax_by_name(&req.language_hint)
+        .or_else(|| settings.ps.find_syntax_by_extension(&req.language_hint))
+        .unwrap_or_else(|| settings.ps.find_syntax_plain_text());
+    let theme = settings
+        .ts
+        .themes
+        .get(req.theme_key.as_str())
+        .unwrap_or_else(|| settings.ts.themes.values().next().expect("theme"));
+
+    let highlighter = Highlighter::new(theme);
+    let mut parse_state = ParseState::new(syntax);
+    let mut highlight_state = HighlightState::new(&highlighter, ScopeStack::new());
+    let default_state = HighlightStateSnapshot {
+        parse: parse_state.clone(),
+        highlight: highlight_state.clone(),
+    };
+
+    let old_lines = std::mem::take(&mut cache.lines);
+    let mut new_lines = Vec::with_capacity(old_lines.len().max(1));
+    let mut render_lines = Vec::with_capacity(old_lines.len().max(1));
+
+    for (idx, line) in LinesWithEndings::from(req.text.as_str()).enumerate() {
+        let line_hash = hash_bytes(line.as_bytes());
+        let start_state_matches = if idx == 0 {
+            default_state.parse == parse_state && default_state.highlight == highlight_state
+        } else {
+            old_lines
+                .get(idx - 1)
+                .map(|line| {
+                    line.end_state.parse == parse_state
+                        && line.end_state.highlight == highlight_state
+                })
+                .unwrap_or(false)
+        };
+
+        if let Some(old_line) = old_lines.get(idx) {
+            if old_line.hash == line_hash && start_state_matches {
+                parse_state = old_line.end_state.parse.clone();
+                highlight_state = old_line.end_state.highlight.clone();
+                new_lines.push(old_line.clone());
+                render_lines.push(HighlightRenderLine {
+                    len: old_line.len,
+                    spans: old_line.spans.clone(),
+                });
+                continue;
+            }
+        }
+
+        let mut spans = Vec::new();
+        if let Ok(ops) = parse_state.parse_line(line, &settings.ps) {
+            let iter = syntect::highlighting::RangedHighlightIterator::new(
+                &mut highlight_state,
+                &ops[..],
+                line,
+                &highlighter,
+            );
+            for (style, _token, range) in iter {
+                if range.is_empty() {
+                    continue;
+                }
+                spans.push(HighlightSpan {
+                    range,
+                    style: HighlightStyle {
+                        color: [
+                            style.foreground.r,
+                            style.foreground.g,
+                            style.foreground.b,
+                            style.foreground.a,
+                        ],
+                        italics: style
+                            .font_style
+                            .contains(syntect::highlighting::FontStyle::ITALIC),
+                        underline: style
+                            .font_style
+                            .contains(syntect::highlighting::FontStyle::UNDERLINE),
+                    },
+                });
+            }
+        }
+
+        let end_state = HighlightStateSnapshot {
+            parse: parse_state.clone(),
+            highlight: highlight_state.clone(),
+        };
+        let line_len = line.len();
+        new_lines.push(HighlightWorkerLine {
+            hash: line_hash,
+            len: line_len,
+            spans: spans.clone(),
+            end_state,
+        });
+        render_lines.push(HighlightRenderLine {
+            len: line_len,
+            spans,
+        });
+    }
+
+    cache.lines = new_lines;
+
+    HighlightRender {
+        paste_id: req.paste_id,
+        revision: req.revision,
+        text_len: req.text.len(),
+        language_hint: req.language_hint,
+        theme_key: req.theme_key,
+        lines: render_lines,
+    }
 }
 
 struct StatusMessage {
@@ -587,6 +939,7 @@ impl LocalPasteApp {
         let server_used_fallback = server.used_fallback();
 
         let backend = spawn_backend(db);
+        let highlight_worker = spawn_highlight_worker();
 
         let mut app = Self {
             backend,
@@ -595,6 +948,10 @@ impl LocalPasteApp {
             selected_paste: None,
             selected_content: EditorBuffer::new(String::new()),
             editor_cache: EditorLayoutCache::default(),
+            highlight_worker,
+            highlight_pending: None,
+            highlight_render: None,
+            highlight_version: 0,
             syntect: SyntectSettings::default(),
             db_path,
             locks,
@@ -764,6 +1121,7 @@ impl LocalPasteApp {
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     self.selected_content.reset(paste.content.clone());
                     self.editor_cache = EditorLayoutCache::default();
+                    self.clear_highlight_state();
                     self.selected_paste = Some(paste);
                     self.save_status = SaveStatus::Saved;
                     self.last_edit_at = None;
@@ -776,6 +1134,7 @@ impl LocalPasteApp {
                 self.select_paste(paste.id.clone());
                 self.selected_content.reset(paste.content.clone());
                 self.editor_cache = EditorLayoutCache::default();
+                self.clear_highlight_state();
                 self.selected_paste = Some(paste);
                 self.save_status = SaveStatus::Saved;
                 self.last_edit_at = None;
@@ -791,6 +1150,7 @@ impl LocalPasteApp {
                     let mut updated = paste;
                     updated.content = self.selected_content.to_string();
                     self.selected_paste = Some(updated);
+                    self.clear_highlight_state();
                     self.save_status = SaveStatus::Saved;
                     self.last_edit_at = None;
                     self.save_in_flight = false;
@@ -841,6 +1201,7 @@ impl LocalPasteApp {
         self.selected_paste = None;
         self.selected_content.reset(String::new());
         self.editor_cache = EditorLayoutCache::default();
+        self.clear_highlight_state();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
@@ -854,6 +1215,7 @@ impl LocalPasteApp {
         self.selected_paste = None;
         self.selected_content.reset(String::new());
         self.editor_cache = EditorLayoutCache::default();
+        self.clear_highlight_state();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
@@ -879,6 +1241,83 @@ impl LocalPasteApp {
             self.locks.unlock(&id);
             let _ = self.backend.cmd_tx.send(CoreCmd::DeletePaste { id });
         }
+    }
+
+    fn clear_highlight_state(&mut self) {
+        self.highlight_pending = None;
+        self.highlight_render = None;
+        self.highlight_version = self.highlight_version.wrapping_add(1);
+    }
+
+    fn apply_highlight_render(&mut self, render: HighlightRender) {
+        let Some(selected_id) = self.selected_id.as_deref() else {
+            return;
+        };
+        if render.paste_id != selected_id {
+            return;
+        }
+        if let Some(pending) = &self.highlight_pending {
+            if pending.matches_render(&render) {
+                self.highlight_pending = None;
+            }
+        }
+        self.highlight_render = Some(render);
+        self.highlight_version = self.highlight_version.wrapping_add(1);
+    }
+
+    fn should_request_highlight(
+        &self,
+        revision: u64,
+        text_len: usize,
+        language_hint: &str,
+        theme_key: &str,
+        debounce_active: bool,
+        paste_id: &str,
+    ) -> bool {
+        if text_len >= HIGHLIGHT_PLAIN_THRESHOLD {
+            return false;
+        }
+        if let Some(pending) = &self.highlight_pending {
+            if pending.matches(revision, text_len, language_hint, theme_key, paste_id) {
+                return false;
+            }
+        }
+        if let Some(render) = &self.highlight_render {
+            if render.matches_exact(revision, text_len, language_hint, theme_key, paste_id) {
+                return false;
+            }
+        }
+        if debounce_active && (self.highlight_pending.is_some() || self.highlight_render.is_some())
+        {
+            return false;
+        }
+        true
+    }
+
+    fn dispatch_highlight_request(
+        &mut self,
+        revision: u64,
+        text: String,
+        language_hint: &str,
+        theme_key: &str,
+        paste_id: &str,
+    ) {
+        let text_len = text.len();
+        let request = HighlightRequest {
+            paste_id: paste_id.to_string(),
+            revision,
+            text,
+            language_hint: language_hint.to_string(),
+            theme_key: theme_key.to_string(),
+        };
+        self.highlight_pending = Some(HighlightRequestMeta {
+            paste_id: paste_id.to_string(),
+            revision,
+            text_len,
+            language_hint: language_hint.to_string(),
+            theme_key: theme_key.to_string(),
+        });
+        let _ = self.highlight_worker.tx.send(request);
     }
 
     fn mark_dirty(&mut self) {
@@ -942,6 +1381,10 @@ impl eframe::App for LocalPasteApp {
 
         while let Ok(event) = self.backend.evt_rx.try_recv() {
             self.apply_event(event);
+        }
+
+        while let Ok(render) = self.highlight_worker.rx.try_recv() {
+            self.apply_highlight_render(render);
         }
 
         ctx.input(|input| {
@@ -1074,7 +1517,7 @@ impl eframe::App for LocalPasteApp {
                     );
                 });
                 ui.label(
-                    RichText::new(id)
+                    RichText::new(id.clone())
                         .small()
                         .monospace()
                         .color(COLOR_TEXT_MUTED),
@@ -1104,9 +1547,44 @@ impl eframe::App for LocalPasteApp {
                                     && last.elapsed() < HIGHLIGHT_DEBOUNCE
                             })
                             .unwrap_or(false);
-                        let use_plain = is_large || debounce_active;
                         let theme =
-                            (!use_plain).then(|| CodeTheme::from_memory(ui.ctx(), ui.style()));
+                            (!is_large).then(|| CodeTheme::from_memory(ui.ctx(), ui.style()));
+                        let theme_key = theme
+                            .as_ref()
+                            .map(syntect_theme_key)
+                            .unwrap_or("base16-mocha.dark");
+                        let revision = self.selected_content.revision();
+                        let text_len = self.selected_content.len();
+                        let async_mode = text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES && !is_large;
+                        let should_request = async_mode
+                            && self.should_request_highlight(
+                                revision,
+                                text_len,
+                                &language_hint,
+                                theme_key,
+                                debounce_active,
+                                id.as_str(),
+                            );
+                        if should_request {
+                            let content_snapshot = self.selected_content.to_string();
+                            self.dispatch_highlight_request(
+                                revision,
+                                content_snapshot,
+                                &language_hint,
+                                theme_key,
+                                id.as_str(),
+                            );
+                        }
+                        let highlight_render = self.highlight_render.as_ref().filter(|render| {
+                            render.matches_context(id.as_str(), &language_hint, theme_key)
+                        });
+                        let use_plain = if is_large {
+                            true
+                        } else if async_mode {
+                            highlight_render.is_none()
+                        } else {
+                            debounce_active
+                        };
                         let row_height = ui.text_style_height(&editor_style);
                         let rows_that_fit = ((editor_height / row_height).ceil() as usize).max(1);
 
@@ -1119,6 +1597,7 @@ impl eframe::App for LocalPasteApp {
 
                         let mut editor_cache = std::mem::take(&mut self.editor_cache);
                         let syntect = &self.syntect;
+                        let highlight_version = self.highlight_version;
                         let mut layouter =
                             |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
                                 editor_cache.layout(
@@ -1128,6 +1607,8 @@ impl eframe::App for LocalPasteApp {
                                     language_hint.as_str(),
                                     use_plain,
                                     theme.as_ref(),
+                                    highlight_render,
+                                    highlight_version,
                                     &editor_font,
                                     syntect,
                                 )
@@ -1262,6 +1743,10 @@ mod tests {
             selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
             selected_content: EditorBuffer::new("content".to_string()),
             editor_cache: EditorLayoutCache::default(),
+            highlight_worker: spawn_highlight_worker(),
+            highlight_pending: None,
+            highlight_render: None,
+            highlight_version: 0,
             syntect: SyntectSettings::default(),
             db_path: db_path_str,
             locks,
@@ -1351,6 +1836,8 @@ mod tests {
                     "py",
                     false,
                     Some(&theme),
+                    None,
+                    0,
                     &font,
                     &syntect,
                 );
@@ -1363,6 +1850,8 @@ mod tests {
                     "py",
                     false,
                     Some(&theme),
+                    None,
+                    0,
                     &font,
                     &syntect,
                 );
@@ -1390,6 +1879,8 @@ mod tests {
                     "py",
                     false,
                     Some(&theme),
+                    None,
+                    0,
                     &font,
                     &syntect,
                 );
@@ -1403,6 +1894,8 @@ mod tests {
                     "py",
                     false,
                     Some(&theme),
+                    None,
+                    0,
                     &font,
                     &syntect,
                 );
