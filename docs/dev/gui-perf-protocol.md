@@ -51,23 +51,20 @@ function New-TestPaste {
 
 # Medium (10-50KB) python paste
 $linePy = "def compute(value):`n    return value * 2`n`n"
-$sb = New-Object System.Text.StringBuilder
-while ($sb.Length -lt 20000) { [void]$sb.Append($linePy) }
-$medium = $sb.ToString()
+$repeat = [math]::Ceiling(20000 / $linePy.Length)
+$medium = ($linePy * $repeat).Substring(0, 20000)
 $pasteMedium = New-TestPaste "perf-medium-python" $medium "python"
 
 # ~100KB python paste
 $linePy2 = "class DataProcessor:`n    def __init__(self, cfg):`n        self.cfg = cfg`n`n"
-$sb = New-Object System.Text.StringBuilder
-while ($sb.Length -lt 100000) { [void]$sb.Append($linePy2) }
-$big = $sb.ToString()
+$repeat = [math]::Ceiling(100000 / $linePy2.Length)
+$big = ($linePy2 * $repeat).Substring(0, 100000)
 $paste100 = New-TestPaste "perf-100kb-python" $big "python"
 
 # ~300KB rust paste (forces plain fallback)
 $lineRs = 'fn main() { println!("hello"); }' + "`n"
-$sb = New-Object System.Text.StringBuilder
-while ($sb.Length -lt 300000) { [void]$sb.Append($lineRs) }
-$huge = $sb.ToString()
+$repeat = [math]::Ceiling(300000 / $lineRs.Length)
+$huge = ($lineRs * $repeat).Substring(0, 300000)
 $paste300 = New-TestPaste "perf-300kb-rust" $huge "rust"
 
 # Scroll-heavy paste (~5k lines)
