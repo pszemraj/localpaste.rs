@@ -64,7 +64,7 @@ $big = $sb.ToString()
 $paste100 = New-TestPaste "perf-100kb-python" $big "python"
 
 # ~300KB rust paste (forces plain fallback)
-$lineRs = "fn main() { println!(\"hello\"); }`n"
+$lineRs = 'fn main() { println!("hello"); }' + "`n"
 $sb = New-Object System.Text.StringBuilder
 while ($sb.Length -lt 300000) { [void]$sb.Append($lineRs) }
 $huge = $sb.ToString()
