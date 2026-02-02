@@ -75,8 +75,6 @@ pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(150);
 const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
-const HIGHLIGHT_SLOW_MS: f32 = 14.0;
-const HIGHLIGHT_BACKOFF: Duration = Duration::from_millis(200);
 
 #[derive(Default)]
 struct EditorBuffer {
@@ -184,7 +182,6 @@ struct EditorLayoutCache {
     galley: Option<Arc<egui::Galley>>,
     highlight_cache: HighlightCache,
     last_highlight_ms: Option<f32>,
-    highlight_backoff_until: Option<Instant>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -270,17 +267,9 @@ impl EditorLayoutCache {
             editor_font,
             syntect,
         );
-        if use_plain {
-            self.last_highlight_ms = None;
-        } else {
+        if !use_plain {
             let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
             self.last_highlight_ms = Some(elapsed_ms);
-            if elapsed_ms > HIGHLIGHT_SLOW_MS && text.as_str().len() >= HIGHLIGHT_DEBOUNCE_MIN_BYTES
-            {
-                self.highlight_backoff_until = Some(Instant::now() + HIGHLIGHT_BACKOFF);
-            } else {
-                self.highlight_backoff_until = None;
-            }
         }
 
         self.revision = revision;
@@ -1108,25 +1097,14 @@ impl eframe::App for LocalPasteApp {
                             .unwrap_or_else(|| TextStyle::Monospace.resolve(ui.style()));
                         let language_hint =
                             syntect_language_hint(language.as_deref().unwrap_or("text"));
-                        let highlight_slow = self
-                            .editor_cache
-                            .last_highlight_ms
-                            .map(|ms| ms > HIGHLIGHT_SLOW_MS)
-                            .unwrap_or(false);
                         let debounce_active = self
                             .last_edit_at
                             .map(|last| {
                                 self.selected_content.len() >= HIGHLIGHT_DEBOUNCE_MIN_BYTES
-                                    && highlight_slow
                                     && last.elapsed() < HIGHLIGHT_DEBOUNCE
                             })
                             .unwrap_or(false);
-                        let backoff_active = self
-                            .editor_cache
-                            .highlight_backoff_until
-                            .map(|until| Instant::now() < until)
-                            .unwrap_or(false);
-                        let use_plain = is_large || debounce_active || backoff_active;
+                        let use_plain = is_large || debounce_active;
                         let theme =
                             (!use_plain).then(|| CodeTheme::from_memory(ui.ctx(), ui.style()));
                         let row_height = ui.text_style_height(&editor_style);
