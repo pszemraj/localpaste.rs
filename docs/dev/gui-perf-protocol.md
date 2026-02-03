@@ -29,40 +29,106 @@ $env:PORT = "$Port"
 $env:DB_PATH = $TestDb
 $env:RUST_LOG = "info"
 
-$server = Start-Process -FilePath .\target\debug\localpaste.exe -NoNewWindow -PassThru
+$serverPid = Start-ServerProcess -ExePath .\target\debug\localpaste.exe
 Start-Sleep -Seconds 1
 $Base = "http://127.0.0.1:$Port"
 
-function Stop-ServerGracefully {
-    param([System.Diagnostics.Process]$Process)
-    if (-not $Process -or $Process.HasExited) { return }
-    if (-not ([System.Management.Automation.PSTypeName]'Localpaste.ConsoleControl').Type) {
-        Add-Type -Namespace Localpaste -Name ConsoleControl -MemberDefinition @"
+function Start-ServerProcess {
+    param([string]$ExePath)
+    if (-not ([System.Management.Automation.PSTypeName]'Localpaste.ProcessUtil').Type) {
+        Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class ConsoleControl {
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool AttachConsole(uint dwProcessId);
-    [DllImport("kernel32.dll", SetLastError=true, ExactSpelling=true)]
-    public static extern bool FreeConsole();
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId);
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool SetConsoleCtrlHandler(IntPtr HandlerRoutine, bool Add);
+namespace Localpaste {
+    public static class ProcessUtil {
+        public const uint CREATE_NEW_PROCESS_GROUP = 0x00000200;
+        public const uint CREATE_NO_WINDOW = 0x08000000;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct STARTUPINFO {
+            public int cb;
+            public string lpReserved;
+            public string lpDesktop;
+            public string lpTitle;
+            public int dwX;
+            public int dwY;
+            public int dwXSize;
+            public int dwYSize;
+            public int dwXCountChars;
+            public int dwYCountChars;
+            public int dwFillAttribute;
+            public int dwFlags;
+            public short wShowWindow;
+            public short cbReserved2;
+            public IntPtr lpReserved2;
+            public IntPtr hStdInput;
+            public IntPtr hStdOutput;
+            public IntPtr hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_INFORMATION {
+            public IntPtr hProcess;
+            public IntPtr hThread;
+            public uint dwProcessId;
+            public uint dwThreadId;
+        }
+
+        [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+        public static extern bool CreateProcess(
+            string lpApplicationName,
+            string lpCommandLine,
+            IntPtr lpProcessAttributes,
+            IntPtr lpThreadAttributes,
+            bool bInheritHandles,
+            uint dwCreationFlags,
+            IntPtr lpEnvironment,
+            string lpCurrentDirectory,
+            ref STARTUPINFO lpStartupInfo,
+            out PROCESS_INFORMATION lpProcessInformation);
+
+        [DllImport("kernel32.dll", SetLastError=true)]
+        public static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId);
+
+        [DllImport("kernel32.dll", SetLastError=true)]
+        public static extern bool CloseHandle(IntPtr hObject);
+    }
 }
-"@
+'@
     }
-    [Localpaste.ConsoleControl]::FreeConsole() | Out-Null
-    if ([Localpaste.ConsoleControl]::AttachConsole([uint32]$Process.Id)) {
-        [Localpaste.ConsoleControl]::SetConsoleCtrlHandler([IntPtr]::Zero, $true) | Out-Null
-        [Localpaste.ConsoleControl]::GenerateConsoleCtrlEvent(0, 0) | Out-Null
-        Start-Sleep -Milliseconds 200
-        [Localpaste.ConsoleControl]::FreeConsole() | Out-Null
-        [Localpaste.ConsoleControl]::AttachConsole(0xFFFFFFFF) | Out-Null
-        [Localpaste.ConsoleControl]::SetConsoleCtrlHandler([IntPtr]::Zero, $false) | Out-Null
-        if ($Process.WaitForExit(3000)) { return }
+    $si = New-Object Localpaste.ProcessUtil+STARTUPINFO
+    $si.cb = [Runtime.InteropServices.Marshal]::SizeOf($si)
+    $pi = New-Object Localpaste.ProcessUtil+PROCESS_INFORMATION
+    $flags = [Localpaste.ProcessUtil]::CREATE_NEW_PROCESS_GROUP -bor [Localpaste.ProcessUtil]::CREATE_NO_WINDOW
+    $ok = [Localpaste.ProcessUtil]::CreateProcess(
+        $ExePath,
+        "`"$ExePath`"",
+        [IntPtr]::Zero,
+        [IntPtr]::Zero,
+        $false,
+        $flags,
+        [IntPtr]::Zero,
+        (Split-Path $ExePath),
+        [ref]$si,
+        [ref]$pi
+    )
+    if (-not $ok) {
+        $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw "CreateProcess failed with Win32 error $err"
     }
-    Stop-Process -Id $Process.Id -Force
+    [Localpaste.ProcessUtil]::CloseHandle($pi.hThread) | Out-Null
+    [Localpaste.ProcessUtil]::CloseHandle($pi.hProcess) | Out-Null
+    return [int]$pi.dwProcessId
+}
+
+function Stop-ServerGracefully {
+    param([int]$ProcessId)
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc) { return }
+    [Localpaste.ProcessUtil]::GenerateConsoleCtrlEvent(0, [uint32]$ProcessId) | Out-Null
+    Start-Sleep -Milliseconds 300
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($proc) { Stop-Process -Id $ProcessId -Force }
 }
 
 function New-TestPaste {
@@ -108,7 +174,7 @@ $pasteScroll = New-TestPaste "perf-scroll-5k-lines" $scroll "rust"
 $pasteMedium, $paste100, $paste300, $pasteScroll | Format-Table
 
 # Stop server (DB is now populated)
-Stop-ServerGracefully -Process $server
+Stop-ServerGracefully -ProcessId $serverPid
 ```
 
 ## 2) Launch the GUI using the perf DB
