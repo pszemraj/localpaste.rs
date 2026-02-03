@@ -1,7 +1,7 @@
-# GUI Perf Test Protocol (Rewrite)
+<!-- # GUI Perf Test Protocol (Rewrite) -->
 
 This is a repeatable, low-friction protocol for validating editor performance
-changes in the rewrite. It isolates a temporary database, seeds deterministic
+<!-- changes in the rewrite. It isolates a temporary database, seeds deterministic -->
 test pastes, launches the GUI against that DB, and lists the manual checks.
 
 ## Goals
@@ -32,6 +32,38 @@ $env:RUST_LOG = "info"
 $server = Start-Process -FilePath .\target\debug\localpaste.exe -NoNewWindow -PassThru
 Start-Sleep -Seconds 1
 $Base = "http://127.0.0.1:$Port"
+
+function Stop-ServerGracefully {
+    param([System.Diagnostics.Process]$Process)
+    if (-not $Process -or $Process.HasExited) { return }
+    if (-not ([System.Management.Automation.PSTypeName]'Localpaste.ConsoleControl').Type) {
+        Add-Type -Namespace Localpaste -Name ConsoleControl -MemberDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class ConsoleControl {
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool AttachConsole(uint dwProcessId);
+    [DllImport("kernel32.dll", SetLastError=true, ExactSpelling=true)]
+    public static extern bool FreeConsole();
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool SetConsoleCtrlHandler(IntPtr HandlerRoutine, bool Add);
+}
+"@
+    }
+    [Localpaste.ConsoleControl]::FreeConsole() | Out-Null
+    if ([Localpaste.ConsoleControl]::AttachConsole([uint32]$Process.Id)) {
+        [Localpaste.ConsoleControl]::SetConsoleCtrlHandler([IntPtr]::Zero, $true) | Out-Null
+        [Localpaste.ConsoleControl]::GenerateConsoleCtrlEvent(0, 0) | Out-Null
+        Start-Sleep -Milliseconds 200
+        [Localpaste.ConsoleControl]::FreeConsole() | Out-Null
+        [Localpaste.ConsoleControl]::AttachConsole(0xFFFFFFFF) | Out-Null
+        [Localpaste.ConsoleControl]::SetConsoleCtrlHandler([IntPtr]::Zero, $false) | Out-Null
+        if ($Process.WaitForExit(3000)) { return }
+    }
+    Stop-Process -Id $Process.Id -Force
+}
 
 function New-TestPaste {
     param(
@@ -76,7 +108,7 @@ $pasteScroll = New-TestPaste "perf-scroll-5k-lines" $scroll "rust"
 $pasteMedium, $paste100, $paste300, $pasteScroll | Format-Table
 
 # Stop server (DB is now populated)
-Stop-Process -Id $server.Id
+Stop-ServerGracefully -Process $server
 ```
 
 ## 2) Launch the GUI using the perf DB
