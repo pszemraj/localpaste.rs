@@ -3,6 +3,7 @@
 mod editor;
 mod highlight;
 mod util;
+mod virtual_view;
 
 use crate::backend::{spawn_backend, BackendHandle, CoreCmd, CoreEvent, PasteSummary};
 use editor::{EditorBuffer, EditorLineIndex, EditorMode};
@@ -28,6 +29,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use util::{display_language_label, word_range_at};
+use virtual_view::{VirtualCursor, VirtualSelectionState};
 
 /// Native egui application shell for the rewrite.
 ///
@@ -42,6 +44,7 @@ pub struct LocalPasteApp {
     editor_cache: EditorLayoutCache,
     editor_lines: EditorLineIndex,
     editor_mode: EditorMode,
+    virtual_selection: VirtualSelectionState,
     highlight_worker: HighlightWorker,
     highlight_pending: Option<HighlightRequestMeta>,
     highlight_render: Option<HighlightRender>,
@@ -144,6 +147,7 @@ impl LocalPasteApp {
             editor_cache: EditorLayoutCache::default(),
             editor_lines: EditorLineIndex::default(),
             editor_mode: EditorMode::from_env(),
+            virtual_selection: VirtualSelectionState::default(),
             highlight_worker,
             highlight_pending: None,
             highlight_render: None,
@@ -322,6 +326,7 @@ impl LocalPasteApp {
                     self.selected_content.reset(paste.content.clone());
                     self.editor_cache = EditorLayoutCache::default();
                     self.editor_lines.reset();
+                    self.virtual_selection.clear();
                     self.clear_highlight_state();
                     self.selected_paste = Some(paste);
                     self.save_status = SaveStatus::Saved;
@@ -336,6 +341,7 @@ impl LocalPasteApp {
                 self.selected_content.reset(paste.content.clone());
                 self.editor_cache = EditorLayoutCache::default();
                 self.editor_lines.reset();
+                self.virtual_selection.clear();
                 self.clear_highlight_state();
                 self.selected_paste = Some(paste);
                 self.save_status = SaveStatus::Saved;
@@ -404,6 +410,7 @@ impl LocalPasteApp {
         self.selected_content.reset(String::new());
         self.editor_cache = EditorLayoutCache::default();
         self.editor_lines.reset();
+        self.virtual_selection.clear();
         self.clear_highlight_state();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
@@ -419,6 +426,7 @@ impl LocalPasteApp {
         self.selected_content.reset(String::new());
         self.editor_cache = EditorLayoutCache::default();
         self.editor_lines.reset();
+        self.virtual_selection.clear();
         self.clear_highlight_state();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
@@ -529,6 +537,42 @@ impl LocalPasteApp {
             CCursor::new(end),
         )));
         state.store(&output.response.ctx, output.response.id);
+    }
+
+    fn virtual_selection_text(&mut self) -> Option<String> {
+        let (start, end) = self.virtual_selection.selection_bounds()?;
+        let text = self.selected_content.as_str();
+        self.editor_lines
+            .ensure_for(self.selected_content.revision(), text);
+        let mut out = String::new();
+        for line_idx in start.line..=end.line {
+            let line = self.editor_lines.line_slice(text, line_idx);
+            let line_chars = line.chars().count();
+            let start_char = if line_idx == start.line {
+                start.column.min(line_chars)
+            } else {
+                0
+            };
+            let end_char = if line_idx == end.line {
+                end.column.min(line_chars)
+            } else {
+                line_chars
+            };
+            if start_char >= end_char {
+                continue;
+            }
+            let start_byte = egui::text_selection::text_cursor_state::byte_index_from_char_index(
+                line, start_char,
+            );
+            let end_byte =
+                egui::text_selection::text_cursor_state::byte_index_from_char_index(line, end_char);
+            out.push_str(&line[start_byte..end_byte]);
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
     }
 
     fn should_request_highlight(
@@ -658,6 +702,7 @@ impl eframe::App for LocalPasteApp {
             self.queue_highlight_render(render);
         }
 
+        let mut copy_virtual = false;
         ctx.input(|input| {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());
@@ -668,7 +713,15 @@ impl eframe::App for LocalPasteApp {
             if input.modifiers.command && input.key_pressed(egui::Key::Delete) {
                 self.delete_selected();
             }
+            if input.modifiers.command && input.key_pressed(egui::Key::C) {
+                copy_virtual = true;
+            }
         });
+        if copy_virtual && self.editor_mode == EditorMode::VirtualPreview {
+            if let Some(selection) = self.virtual_selection_text() {
+                ctx.copy_text(selection);
+            }
+        }
 
         if self.highlight_staged.is_some() {
             self.maybe_apply_staged_highlight(Instant::now());
@@ -883,6 +936,7 @@ impl eframe::App for LocalPasteApp {
                     let line_count = self.editor_lines.line_count();
                     scroll.show_rows(ui, row_height, line_count, |ui, range| {
                         ui.set_min_width(ui.available_width());
+                        let sense = egui::Sense::click_and_drag();
                         for line_idx in range {
                             let line = self.editor_lines.line_without_newline(text, line_idx);
                             let render_line = highlight_render_match
@@ -894,9 +948,77 @@ impl eframe::App for LocalPasteApp {
                                 render_line,
                                 use_plain,
                             );
-                            ui.add(egui::Label::new(job));
+                            let mut galley = ui.fonts_mut(|f| f.layout_job(job));
+                            let line_chars = line.chars().count();
+                            let row_width = ui.available_width();
+                            let (rect, response) =
+                                ui.allocate_exact_size(egui::vec2(row_width, row_height), sense);
+                            if response.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                            }
+                            if response.clicked()
+                                || response.double_clicked()
+                                || response.drag_started()
+                                || response.dragged()
+                            {
+                                if let Some(pointer_pos) = response.interact_pointer_pos() {
+                                    let local_pos = pointer_pos - rect.min;
+                                    let cursor = galley.cursor_from_pos(local_pos);
+                                    let vcursor = VirtualCursor {
+                                        line: line_idx,
+                                        column: cursor.index,
+                                    };
+                                    if response.double_clicked() {
+                                        if let Some((start, end)) =
+                                            word_range_at(line, cursor.index)
+                                        {
+                                            self.virtual_selection.select_range(
+                                                VirtualCursor {
+                                                    line: line_idx,
+                                                    column: start,
+                                                },
+                                                VirtualCursor {
+                                                    line: line_idx,
+                                                    column: end,
+                                                },
+                                            );
+                                        } else {
+                                            self.virtual_selection.set_cursor(vcursor);
+                                        }
+                                    } else if response.drag_started() {
+                                        self.virtual_selection.begin_drag(vcursor);
+                                    } else if response.dragged() {
+                                        self.virtual_selection.update_drag(vcursor);
+                                    } else if response.clicked() {
+                                        self.virtual_selection.set_cursor(vcursor);
+                                    }
+                                }
+                            }
+                            if response.drag_stopped() {
+                                self.virtual_selection.end_drag();
+                            }
+                            if let Some(selection) = self
+                                .virtual_selection
+                                .selection_for_line(line_idx, line_chars)
+                            {
+                                let cursor_range = CCursorRange::two(
+                                    CCursor::new(selection.start),
+                                    CCursor::new(selection.end),
+                                );
+                                egui::text_selection::visuals::paint_text_selection(
+                                    &mut galley,
+                                    ui.visuals(),
+                                    &cursor_range,
+                                    None,
+                                );
+                            }
+                            ui.painter()
+                                .galley(rect.min, galley, ui.visuals().text_color());
                         }
                     });
+                    if !ui.input(|input| input.pointer.primary_down()) {
+                        self.virtual_selection.end_drag();
+                    }
                 } else {
                     scroll.show(ui, |ui| {
                         ui.set_min_size(egui::vec2(ui.available_width(), editor_height));
@@ -1081,6 +1203,7 @@ mod tests {
             editor_cache: EditorLayoutCache::default(),
             editor_lines: EditorLineIndex::default(),
             editor_mode: EditorMode::TextEdit,
+            virtual_selection: VirtualSelectionState::default(),
             highlight_worker: spawn_highlight_worker(),
             highlight_pending: None,
             highlight_render: None,
