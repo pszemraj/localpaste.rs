@@ -35,6 +35,8 @@ pub struct LocalPasteApp {
     selected_paste: Option<Paste>,
     selected_content: EditorBuffer,
     editor_cache: EditorLayoutCache,
+    editor_lines: EditorLineIndex,
+    editor_mode: EditorMode,
     highlight_worker: HighlightWorker,
     highlight_pending: Option<HighlightRequestMeta>,
     highlight_render: Option<HighlightRender>,
@@ -65,6 +67,28 @@ enum SaveStatus {
     Saved,
     Dirty,
     Saving,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum EditorMode {
+    TextEdit,
+    VirtualPreview,
+}
+
+impl EditorMode {
+    fn from_env() -> Self {
+        match std::env::var("LOCALPASTE_VIRTUAL_PREVIEW") {
+            Ok(value) => {
+                let lowered = value.trim().to_ascii_lowercase();
+                if lowered.is_empty() || lowered == "0" || lowered == "false" {
+                    Self::TextEdit
+                } else {
+                    Self::VirtualPreview
+                }
+            }
+            Err(_) => Self::TextEdit,
+        }
+    }
 }
 
 const COLOR_BG_PRIMARY: Color32 = Color32::from_rgb(0x0d, 0x11, 0x17);
@@ -125,8 +149,86 @@ impl EditorBuffer {
         self.char_len
     }
 
+    fn as_str(&self) -> &str {
+        self.text.as_str()
+    }
+
     fn to_string(&self) -> String {
         self.text.clone()
+    }
+}
+
+#[derive(Default)]
+struct EditorLineIndex {
+    revision: u64,
+    text_len: usize,
+    lines: Vec<LineEntry>,
+}
+
+#[derive(Clone, Copy)]
+struct LineEntry {
+    start: usize,
+    len: usize,
+}
+
+impl EditorLineIndex {
+    fn reset(&mut self) {
+        self.revision = 0;
+        self.text_len = 0;
+        self.lines.clear();
+    }
+
+    fn ensure_for(&mut self, revision: u64, text: &str) {
+        if !self.lines.is_empty() && self.revision == revision && self.text_len == text.len() {
+            return;
+        }
+        self.rebuild(revision, text);
+    }
+
+    fn rebuild(&mut self, revision: u64, text: &str) {
+        self.lines.clear();
+        let mut start = 0usize;
+        for (idx, byte) in text.as_bytes().iter().enumerate() {
+            if *byte == b'\n' {
+                let len = idx + 1 - start;
+                self.lines.push(LineEntry { start, len });
+                start = idx + 1;
+            }
+        }
+        if start <= text.len() {
+            self.lines.push(LineEntry {
+                start,
+                len: text.len().saturating_sub(start),
+            });
+        }
+        if self.lines.is_empty() {
+            self.lines.push(LineEntry { start: 0, len: 0 });
+        }
+        self.revision = revision;
+        self.text_len = text.len();
+    }
+
+    fn line_count(&self) -> usize {
+        self.lines.len().max(1)
+    }
+
+    fn line_slice<'a>(&self, text: &'a str, index: usize) -> &'a str {
+        let Some(line) = self.lines.get(index) else {
+            return "";
+        };
+        let end = line.start.saturating_add(line.len).min(text.len());
+        &text[line.start..end]
+    }
+
+    fn line_without_newline<'a>(&self, text: &'a str, index: usize) -> &'a str {
+        let mut line = self.line_slice(text, index);
+        if let Some(trimmed) = line.strip_suffix('\n') {
+            line = trimmed;
+        }
+        if let Some(trimmed) = line.strip_suffix('\r') {
+            line = trimmed;
+        }
+        line
     }
 }
 
@@ -518,6 +620,58 @@ impl EditorLayoutCache {
 
         job
     }
+}
+
+fn build_virtual_line_job(
+    ui: &egui::Ui,
+    line: &str,
+    editor_font: &FontId,
+    render_line: Option<&HighlightRenderLine>,
+    use_plain: bool,
+) -> LayoutJob {
+    if use_plain || render_line.is_none() {
+        return LayoutJob::simple(
+            line.to_owned(),
+            editor_font.clone(),
+            ui.visuals().text_color(),
+            f32::INFINITY,
+        );
+    }
+
+    let render_line = render_line.expect("render line");
+    let mut job = LayoutJob {
+        text: line.to_owned(),
+        ..Default::default()
+    };
+    let default_format = TextFormat {
+        font_id: editor_font.clone(),
+        color: ui.visuals().text_color(),
+        ..Default::default()
+    };
+
+    if render_line.spans.is_empty() && !line.is_empty() {
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: 0..line.len(),
+            format: default_format,
+        });
+    } else {
+        for span in &render_line.spans {
+            let start = span.range.start.min(line.len());
+            let end = span.range.end.min(line.len());
+            if start >= end {
+                continue;
+            }
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: start..end,
+                format: render_span_to_format(span, editor_font),
+            });
+        }
+    }
+
+    job.wrap.max_width = f32::INFINITY;
+    job
 }
 
 fn editor_buffer_revision(text: &dyn egui::TextBuffer) -> Option<u64> {
@@ -1002,6 +1156,8 @@ impl LocalPasteApp {
             selected_paste: None,
             selected_content: EditorBuffer::new(String::new()),
             editor_cache: EditorLayoutCache::default(),
+            editor_lines: EditorLineIndex::default(),
+            editor_mode: EditorMode::from_env(),
             highlight_worker,
             highlight_pending: None,
             highlight_render: None,
@@ -1179,6 +1335,7 @@ impl LocalPasteApp {
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     self.selected_content.reset(paste.content.clone());
                     self.editor_cache = EditorLayoutCache::default();
+                    self.editor_lines.reset();
                     self.clear_highlight_state();
                     self.selected_paste = Some(paste);
                     self.save_status = SaveStatus::Saved;
@@ -1192,6 +1349,7 @@ impl LocalPasteApp {
                 self.select_paste(paste.id.clone());
                 self.selected_content.reset(paste.content.clone());
                 self.editor_cache = EditorLayoutCache::default();
+                self.editor_lines.reset();
                 self.clear_highlight_state();
                 self.selected_paste = Some(paste);
                 self.save_status = SaveStatus::Saved;
@@ -1259,6 +1417,7 @@ impl LocalPasteApp {
         self.selected_paste = None;
         self.selected_content.reset(String::new());
         self.editor_cache = EditorLayoutCache::default();
+        self.editor_lines.reset();
         self.clear_highlight_state();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
@@ -1273,6 +1432,7 @@ impl LocalPasteApp {
         self.selected_paste = None;
         self.selected_content.reset(String::new());
         self.editor_cache = EditorLayoutCache::default();
+        self.editor_lines.reset();
         self.clear_highlight_state();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
@@ -1655,69 +1815,105 @@ impl eframe::App for LocalPasteApp {
                         .color(COLOR_TEXT_MUTED),
                 );
                 ui.add_space(8.0);
+                if self.editor_mode == EditorMode::VirtualPreview {
+                    ui.label(
+                        RichText::new("Virtual preview (read-only)")
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
+                    );
+                    ui.add_space(4.0);
+                }
                 let editor_height = ui.available_height();
                 let mut response = None;
-                egui::ScrollArea::vertical()
+                let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
+                let editor_font = ui
+                    .style()
+                    .text_styles
+                    .get(&editor_style)
+                    .cloned()
+                    .unwrap_or_else(|| TextStyle::Monospace.resolve(ui.style()));
+                let language_hint = syntect_language_hint(language.as_deref().unwrap_or("text"));
+                let debounce_active = self
+                    .last_edit_at
+                    .map(|last| {
+                        self.selected_content.len() >= HIGHLIGHT_DEBOUNCE_MIN_BYTES
+                            && last.elapsed() < HIGHLIGHT_DEBOUNCE
+                    })
+                    .unwrap_or(false);
+                let theme = (!is_large).then(|| CodeTheme::from_memory(ui.ctx(), ui.style()));
+                let theme_key = theme
+                    .as_ref()
+                    .map(syntect_theme_key)
+                    .unwrap_or("base16-mocha.dark");
+                let revision = self.selected_content.revision();
+                let text_len = self.selected_content.len();
+                let async_mode = text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES && !is_large;
+                let should_request = async_mode
+                    && self.should_request_highlight(
+                        revision,
+                        text_len,
+                        &language_hint,
+                        theme_key,
+                        debounce_active,
+                        id.as_str(),
+                    );
+                if should_request {
+                    let content_snapshot = self.selected_content.to_string();
+                    self.dispatch_highlight_request(
+                        revision,
+                        content_snapshot,
+                        &language_hint,
+                        theme_key,
+                        id.as_str(),
+                    );
+                }
+                let has_render = self
+                    .highlight_render
+                    .as_ref()
+                    .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
+                    .is_some();
+                let use_plain = if is_large {
+                    true
+                } else if async_mode {
+                    !has_render
+                } else {
+                    debounce_active
+                };
+                let highlight_render = self.highlight_render.take();
+                let highlight_render_match = highlight_render.as_ref().filter(|render| {
+                    render.matches_context(id.as_str(), &language_hint, theme_key)
+                });
+                let row_height = ui.text_style_height(&editor_style);
+                let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
+
+                let scroll = egui::ScrollArea::vertical()
                     .id_salt("editor_scroll")
                     .max_height(editor_height)
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        ui.set_min_size(egui::vec2(ui.available_width(), editor_height));
-                        let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
-                        let editor_font = ui
-                            .style()
-                            .text_styles
-                            .get(&editor_style)
-                            .cloned()
-                            .unwrap_or_else(|| TextStyle::Monospace.resolve(ui.style()));
-                        let language_hint =
-                            syntect_language_hint(language.as_deref().unwrap_or("text"));
-                        let debounce_active = self
-                            .last_edit_at
-                            .map(|last| {
-                                self.selected_content.len() >= HIGHLIGHT_DEBOUNCE_MIN_BYTES
-                                    && last.elapsed() < HIGHLIGHT_DEBOUNCE
-                            })
-                            .unwrap_or(false);
-                        let theme =
-                            (!is_large).then(|| CodeTheme::from_memory(ui.ctx(), ui.style()));
-                        let theme_key = theme
-                            .as_ref()
-                            .map(syntect_theme_key)
-                            .unwrap_or("base16-mocha.dark");
-                        let revision = self.selected_content.revision();
-                        let text_len = self.selected_content.len();
-                        let async_mode = text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES && !is_large;
-                        let should_request = async_mode
-                            && self.should_request_highlight(
-                                revision,
-                                text_len,
-                                &language_hint,
-                                theme_key,
-                                debounce_active,
-                                id.as_str(),
+                    .auto_shrink([false; 2]);
+                if use_virtual_preview {
+                    let text = self.selected_content.as_str();
+                    self.editor_lines
+                        .ensure_for(self.selected_content.revision(), text);
+                    let line_count = self.editor_lines.line_count();
+                    scroll.show_rows(ui, row_height, line_count, |ui, range| {
+                        ui.set_min_width(ui.available_width());
+                        for line_idx in range {
+                            let line = self.editor_lines.line_without_newline(text, line_idx);
+                            let render_line = highlight_render_match
+                                .and_then(|render| render.lines.get(line_idx));
+                            let job = build_virtual_line_job(
+                                ui,
+                                line,
+                                &editor_font,
+                                render_line,
+                                use_plain,
                             );
-                        if should_request {
-                            let content_snapshot = self.selected_content.to_string();
-                            self.dispatch_highlight_request(
-                                revision,
-                                content_snapshot,
-                                &language_hint,
-                                theme_key,
-                                id.as_str(),
-                            );
+                            ui.add(egui::Label::new(job));
                         }
-                        let highlight_render = self.highlight_render.as_ref().filter(|render| {
-                            render.matches_context(id.as_str(), &language_hint, theme_key)
-                        });
-                        let use_plain = if is_large {
-                            true
-                        } else if async_mode {
-                            highlight_render.is_none()
-                        } else {
-                            debounce_active
-                        };
-                        let row_height = ui.text_style_height(&editor_style);
+                    });
+                } else {
+                    scroll.show(ui, |ui| {
+                        ui.set_min_size(egui::vec2(ui.available_width(), editor_height));
                         let rows_that_fit = ((editor_height / row_height).ceil() as usize).max(1);
 
                         let edit = egui::TextEdit::multiline(&mut self.selected_content)
@@ -1739,7 +1935,7 @@ impl eframe::App for LocalPasteApp {
                                     language_hint.as_str(),
                                     use_plain,
                                     theme.as_ref(),
-                                    highlight_render,
+                                    highlight_render_match,
                                     highlight_version,
                                     &editor_font,
                                     syntect,
@@ -1772,6 +1968,8 @@ impl eframe::App for LocalPasteApp {
                         }
                         response = Some(output.response);
                     });
+                }
+                self.highlight_render = highlight_render;
                 if response.map(|r| r.changed()).unwrap_or(false) {
                     self.mark_dirty();
                 }
@@ -1894,6 +2092,8 @@ mod tests {
             selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
             selected_content: EditorBuffer::new("content".to_string()),
             editor_cache: EditorLayoutCache::default(),
+            editor_lines: EditorLineIndex::default(),
+            editor_mode: EditorMode::TextEdit,
             highlight_worker: spawn_highlight_worker(),
             highlight_pending: None,
             highlight_render: None,
@@ -2058,6 +2258,18 @@ mod tests {
                 assert_eq!(cache.highlight_cache.lines.len(), line_count);
             });
         });
+    }
+
+    #[test]
+    fn editor_line_index_tracks_lines_and_trailing_newlines() {
+        let buffer = EditorBuffer::new("alpha\nbeta\n".to_string());
+        let mut index = EditorLineIndex::default();
+        index.ensure_for(buffer.revision(), buffer.as_str());
+
+        assert_eq!(index.line_count(), 3);
+        assert_eq!(index.line_without_newline(buffer.as_str(), 0), "alpha");
+        assert_eq!(index.line_without_newline(buffer.as_str(), 1), "beta");
+        assert_eq!(index.line_without_newline(buffer.as_str(), 2), "");
     }
 
     #[test]
