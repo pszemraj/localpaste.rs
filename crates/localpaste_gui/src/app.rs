@@ -4,7 +4,8 @@ use crate::backend::{spawn_backend, BackendHandle, CoreCmd, CoreEvent, PasteSumm
 use eframe::egui::{
     self,
     style::WidgetVisuals,
-    text::{LayoutJob, LayoutSection, TextFormat},
+    text::{CCursor, CCursorRange, LayoutJob, LayoutSection, TextFormat},
+    text_edit::TextEditOutput,
     Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, RichText, Stroke,
     TextStyle, Visuals,
 };
@@ -37,7 +38,11 @@ pub struct LocalPasteApp {
     highlight_worker: HighlightWorker,
     highlight_pending: Option<HighlightRequestMeta>,
     highlight_render: Option<HighlightRender>,
+    highlight_staged: Option<HighlightRender>,
     highlight_version: u64,
+    last_interaction_at: Option<Instant>,
+    last_editor_click_at: Option<Instant>,
+    last_editor_click_pos: Option<egui::Pos2>,
     syntect: SyntectSettings,
     db_path: String,
     locks: Arc<PasteLockManager>,
@@ -81,6 +86,9 @@ pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(150);
 const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
+const HIGHLIGHT_APPLY_IDLE: Duration = Duration::from_millis(200);
+const EDITOR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(300);
+const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
 
 #[derive(Default)]
 struct EditorBuffer {
@@ -908,6 +916,52 @@ fn display_language_label(language: Option<&str>, is_large: bool) -> String {
     }
 }
 
+fn is_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usize)> {
+    if text.is_empty() {
+        return None;
+    }
+    let total_chars = text.chars().count();
+    let target_char_index = if char_index >= total_chars {
+        total_chars.saturating_sub(1)
+    } else {
+        char_index
+    };
+    let byte_index = text
+        .char_indices()
+        .nth(target_char_index)
+        .map(|(idx, _)| idx)?;
+    let mut iter = text[byte_index..].chars();
+    let current = iter.next()?;
+    let current_is_word = is_word_char(current);
+    let mut start_byte = byte_index;
+    let mut end_byte = byte_index + current.len_utf8();
+
+    for (idx, ch) in text[..byte_index].char_indices().rev() {
+        if is_word_char(ch) == current_is_word {
+            start_byte = idx;
+        } else {
+            break;
+        }
+    }
+
+    let mut tail = text[end_byte..].chars();
+    while let Some(ch) = tail.next() {
+        if is_word_char(ch) == current_is_word {
+            end_byte = end_byte.saturating_add(ch.len_utf8());
+        } else {
+            break;
+        }
+    }
+
+    let start_char = text[..start_byte].chars().count();
+    let selected_chars = text[start_byte..end_byte].chars().count();
+    Some((start_char, start_char + selected_chars))
+}
+
 impl LocalPasteApp {
     /// Construct a new app instance from the current environment config.
     ///
@@ -951,6 +1005,7 @@ impl LocalPasteApp {
             highlight_worker,
             highlight_pending: None,
             highlight_render: None,
+            highlight_staged: None,
             highlight_version: 0,
             syntect: SyntectSettings::default(),
             db_path,
@@ -967,6 +1022,9 @@ impl LocalPasteApp {
             style_applied: false,
             window_checked: false,
             last_refresh_at: Instant::now(),
+            last_interaction_at: None,
+            last_editor_click_at: None,
+            last_editor_click_pos: None,
         };
         app.request_refresh();
         Ok(app)
@@ -1246,10 +1304,11 @@ impl LocalPasteApp {
     fn clear_highlight_state(&mut self) {
         self.highlight_pending = None;
         self.highlight_render = None;
+        self.highlight_staged = None;
         self.highlight_version = self.highlight_version.wrapping_add(1);
     }
 
-    fn apply_highlight_render(&mut self, render: HighlightRender) {
+    fn queue_highlight_render(&mut self, render: HighlightRender) {
         let Some(selected_id) = self.selected_id.as_deref() else {
             return;
         };
@@ -1261,8 +1320,69 @@ impl LocalPasteApp {
                 self.highlight_pending = None;
             }
         }
+        self.highlight_staged = Some(render);
+    }
+
+    fn apply_staged_highlight(&mut self) {
+        let Some(render) = self.highlight_staged.take() else {
+            return;
+        };
         self.highlight_render = Some(render);
         self.highlight_version = self.highlight_version.wrapping_add(1);
+    }
+
+    fn maybe_apply_staged_highlight(&mut self, now: Instant) {
+        if self.highlight_staged.is_none() {
+            return;
+        }
+        let idle = self
+            .last_interaction_at
+            .map(|last| now.duration_since(last) >= HIGHLIGHT_APPLY_IDLE)
+            .unwrap_or(true);
+        if idle {
+            self.apply_staged_highlight();
+        }
+    }
+
+    fn handle_large_editor_click(
+        &mut self,
+        output: &TextEditOutput,
+        text: &str,
+        is_large_buffer: bool,
+    ) {
+        if !is_large_buffer || !output.response.clicked() {
+            return;
+        }
+        let now = Instant::now();
+        let click_pos = output.response.interact_pointer_pos();
+        let is_double = if let (Some(last_at), Some(last_pos), Some(pos)) = (
+            self.last_editor_click_at,
+            self.last_editor_click_pos,
+            click_pos,
+        ) {
+            now.duration_since(last_at) <= EDITOR_DOUBLE_CLICK_WINDOW
+                && last_pos.distance(pos) <= EDITOR_DOUBLE_CLICK_DISTANCE
+        } else {
+            false
+        };
+        self.last_editor_click_at = Some(now);
+        self.last_editor_click_pos = click_pos;
+
+        if !is_double {
+            return;
+        }
+        let Some(range) = output.cursor_range else {
+            return;
+        };
+        let Some((start, end)) = word_range_at(text, range.primary.index) else {
+            return;
+        };
+        let mut state = output.state.clone();
+        state.cursor.set_char_range(Some(CCursorRange::two(
+            CCursor::new(start),
+            CCursor::new(end),
+        )));
+        state.store(&output.response.ctx, output.response.id);
     }
 
     fn should_request_highlight(
@@ -1283,6 +1403,11 @@ impl LocalPasteApp {
             }
         }
         if let Some(render) = &self.highlight_render {
+            if render.matches_exact(revision, text_len, language_hint, theme_key, paste_id) {
+                return false;
+            }
+        }
+        if let Some(render) = &self.highlight_staged {
             if render.matches_exact(revision, text_len, language_hint, theme_key, paste_id) {
                 return false;
             }
@@ -1384,10 +1509,13 @@ impl eframe::App for LocalPasteApp {
         }
 
         while let Ok(render) = self.highlight_worker.rx.try_recv() {
-            self.apply_highlight_render(render);
+            self.queue_highlight_render(render);
         }
 
         ctx.input(|input| {
+            if !input.events.is_empty() || input.pointer.any_down() {
+                self.last_interaction_at = Some(Instant::now());
+            }
             if input.modifiers.command && input.key_pressed(egui::Key::N) {
                 self.create_new_paste();
             }
@@ -1395,6 +1523,10 @@ impl eframe::App for LocalPasteApp {
                 self.delete_selected();
             }
         });
+
+        if self.highlight_staged.is_some() {
+            self.maybe_apply_staged_highlight(Instant::now());
+        }
 
         let mut pasted_text: Option<String> = None;
         ctx.input(|input| {
@@ -1613,13 +1745,32 @@ impl eframe::App for LocalPasteApp {
                                     syntect,
                                 )
                             };
-                        let edit = ui.add(edit.layouter(&mut layouter));
+                        let disable_builtin_double_click = async_mode;
+                        let previous_double_click = if disable_builtin_double_click {
+                            Some(ui.ctx().options_mut(|options| {
+                                let previous = options.input_options.max_double_click_delay;
+                                options.input_options.max_double_click_delay = 0.0;
+                                previous
+                            }))
+                        } else {
+                            None
+                        };
+                        let output = edit.layouter(&mut layouter).show(ui);
+                        if let Some(previous) = previous_double_click {
+                            ui.ctx().options_mut(|options| {
+                                options.input_options.max_double_click_delay = previous;
+                            });
+                        }
                         self.editor_cache = editor_cache;
-                        if self.focus_editor_next || edit.clicked() {
-                            edit.request_focus();
+                        if disable_builtin_double_click && output.response.clicked() {
+                            let text_snapshot = self.selected_content.text.clone();
+                            self.handle_large_editor_click(&output, &text_snapshot, true);
+                        }
+                        if self.focus_editor_next || output.response.clicked() {
+                            output.response.request_focus();
                             self.focus_editor_next = false;
                         }
-                        response = Some(edit);
+                        response = Some(output.response);
                     });
                 if response.map(|r| r.changed()).unwrap_or(false) {
                     self.mark_dirty();
@@ -1746,6 +1897,7 @@ mod tests {
             highlight_worker: spawn_highlight_worker(),
             highlight_pending: None,
             highlight_render: None,
+            highlight_staged: None,
             highlight_version: 0,
             syntect: SyntectSettings::default(),
             db_path: db_path_str,
@@ -1762,6 +1914,9 @@ mod tests {
             style_applied: false,
             window_checked: false,
             last_refresh_at: Instant::now(),
+            last_interaction_at: None,
+            last_editor_click_at: None,
+            last_editor_click_pos: None,
         };
 
         TestHarness { _dir: dir, app }
@@ -1903,5 +2058,58 @@ mod tests {
                 assert_eq!(cache.highlight_cache.lines.len(), line_count);
             });
         });
+    }
+
+    #[test]
+    fn staged_highlight_waits_for_idle() {
+        let mut harness = make_app();
+        let render = HighlightRender {
+            paste_id: "alpha".to_string(),
+            revision: 0,
+            text_len: harness.app.selected_content.len(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            lines: Vec::new(),
+        };
+        harness.app.highlight_staged = Some(render.clone());
+        let now = Instant::now();
+        harness.app.last_interaction_at = Some(now);
+        harness.app.maybe_apply_staged_highlight(now);
+        assert!(harness.app.highlight_render.is_none());
+
+        let idle_now = now + HIGHLIGHT_APPLY_IDLE + Duration::from_millis(10);
+        harness.app.maybe_apply_staged_highlight(idle_now);
+        assert!(harness.app.highlight_render.is_some());
+    }
+
+    #[test]
+    fn highlight_request_skips_when_staged_matches() {
+        let mut harness = make_app();
+        let render = HighlightRender {
+            paste_id: "alpha".to_string(),
+            revision: 0,
+            text_len: harness.app.selected_content.len(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            lines: Vec::new(),
+        };
+        harness.app.highlight_staged = Some(render);
+        let should = harness.app.should_request_highlight(
+            0,
+            harness.app.selected_content.len(),
+            "py",
+            "base16-mocha.dark",
+            false,
+            "alpha",
+        );
+        assert!(!should);
+    }
+
+    #[test]
+    fn word_range_at_selects_word() {
+        let text = "hello world";
+        let (start, end) = word_range_at(text, 1).expect("range");
+        let selected: String = text.chars().skip(start).take(end - start).collect();
+        assert_eq!(selected, "hello");
     }
 }

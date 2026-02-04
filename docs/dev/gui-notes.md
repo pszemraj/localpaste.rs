@@ -24,6 +24,7 @@
 - Buffers >=64KB use an async highlighter thread; the UI keeps the last render until the worker returns (avoids on/off flicker while typing).
 - Highlight requests are debounced (150ms) so large edits don't clone/reparse every keystroke.
 - Highlighting caches per-line syntect parse/highlight state to reuse unchanged lines after edits (both UI and worker).
+- For large buffers, built-in egui double-click selection is disabled to avoid O(n^2) word boundary scans; the editor applies a local word-range selection instead.
 - Language hint is derived from paste language metadata; missing metadata is shown as `(auto)` in the list/header.
 
 ## Edit Locks
