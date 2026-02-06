@@ -546,7 +546,7 @@ impl LocalPasteApp {
             .ensure_for(self.selected_content.revision(), text);
         let mut out = String::new();
         for line_idx in start.line..=end.line {
-            let line = self.editor_lines.line_slice(text, line_idx);
+            let line = self.editor_lines.line_without_newline(text, line_idx);
             let line_chars = line.chars().count();
             let start_char = if line_idx == start.line {
                 start.column.min(line_chars)
@@ -558,15 +558,19 @@ impl LocalPasteApp {
             } else {
                 line_chars
             };
-            if start_char >= end_char {
-                continue;
+            if start_char < end_char {
+                let start_byte =
+                    egui::text_selection::text_cursor_state::byte_index_from_char_index(
+                        line, start_char,
+                    );
+                let end_byte = egui::text_selection::text_cursor_state::byte_index_from_char_index(
+                    line, end_char,
+                );
+                out.push_str(&line[start_byte..end_byte]);
             }
-            let start_byte = egui::text_selection::text_cursor_state::byte_index_from_char_index(
-                line, start_char,
-            );
-            let end_byte =
-                egui::text_selection::text_cursor_state::byte_index_from_char_index(line, end_char);
-            out.push_str(&line[start_byte..end_byte]);
+            if line_idx < end.line {
+                out.push('\n');
+            }
         }
         if out.is_empty() {
             None
@@ -717,7 +721,10 @@ impl eframe::App for LocalPasteApp {
                 copy_virtual = true;
             }
         });
-        if copy_virtual && self.editor_mode == EditorMode::VirtualPreview {
+        if copy_virtual
+            && self.editor_mode == EditorMode::VirtualPreview
+            && !ctx.wants_keyboard_input()
+        {
             if let Some(selection) = self.virtual_selection_text() {
                 ctx.copy_text(selection);
             }
@@ -937,6 +944,26 @@ impl eframe::App for LocalPasteApp {
                     scroll.show_rows(ui, row_height, line_count, |ui, range| {
                         ui.set_min_width(ui.available_width());
                         let sense = egui::Sense::click_and_drag();
+                        struct RowRender {
+                            line_idx: usize,
+                            rect: egui::Rect,
+                            galley: Arc<egui::Galley>,
+                            line_chars: usize,
+                        }
+                        enum RowAction<'a> {
+                            Double {
+                                cursor: VirtualCursor,
+                                line: &'a str,
+                            },
+                            DragStart {
+                                cursor: VirtualCursor,
+                            },
+                            Click {
+                                cursor: VirtualCursor,
+                            },
+                        }
+                        let mut rows = Vec::with_capacity(range.len());
+                        let mut pending_action: Option<RowAction<'_>> = None;
                         for line_idx in range {
                             let line = self.editor_lines.line_without_newline(text, line_idx);
                             let render_line = highlight_render_match
@@ -948,18 +975,18 @@ impl eframe::App for LocalPasteApp {
                                 render_line,
                                 use_plain,
                             );
-                            let mut galley = ui.fonts_mut(|f| f.layout_job(job));
                             let line_chars = line.chars().count();
+                            let galley = ui.fonts_mut(|f| f.layout_job(job));
                             let row_width = ui.available_width();
                             let (rect, response) =
                                 ui.allocate_exact_size(egui::vec2(row_width, row_height), sense);
                             if response.hovered() {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                             }
-                            if response.clicked()
-                                || response.double_clicked()
-                                || response.drag_started()
-                                || response.dragged()
+                            if pending_action.is_none()
+                                && (response.double_clicked()
+                                    || response.drag_started()
+                                    || response.clicked())
                             {
                                 if let Some(pointer_pos) = response.interact_pointer_pos() {
                                     let local_pos = pointer_pos - rect.min;
@@ -969,37 +996,97 @@ impl eframe::App for LocalPasteApp {
                                         column: cursor.index,
                                     };
                                     if response.double_clicked() {
-                                        if let Some((start, end)) =
-                                            word_range_at(line, cursor.index)
-                                        {
-                                            self.virtual_selection.select_range(
-                                                VirtualCursor {
-                                                    line: line_idx,
-                                                    column: start,
-                                                },
-                                                VirtualCursor {
-                                                    line: line_idx,
-                                                    column: end,
-                                                },
-                                            );
-                                        } else {
-                                            self.virtual_selection.set_cursor(vcursor);
-                                        }
+                                        pending_action = Some(RowAction::Double {
+                                            cursor: vcursor,
+                                            line,
+                                        });
                                     } else if response.drag_started() {
-                                        self.virtual_selection.begin_drag(vcursor);
-                                    } else if response.dragged() {
-                                        self.virtual_selection.update_drag(vcursor);
+                                        pending_action =
+                                            Some(RowAction::DragStart { cursor: vcursor });
                                     } else if response.clicked() {
-                                        self.virtual_selection.set_cursor(vcursor);
+                                        pending_action = Some(RowAction::Click { cursor: vcursor });
                                     }
                                 }
                             }
-                            if response.drag_stopped() {
-                                self.virtual_selection.end_drag();
+                            rows.push(RowRender {
+                                line_idx,
+                                rect,
+                                galley,
+                                line_chars,
+                            });
+                        }
+
+                        if let Some(action) = pending_action {
+                            match action {
+                                RowAction::Double { cursor, line } => {
+                                    if let Some((start, end)) = word_range_at(line, cursor.column) {
+                                        self.virtual_selection.select_range(
+                                            VirtualCursor {
+                                                line: cursor.line,
+                                                column: start,
+                                            },
+                                            VirtualCursor {
+                                                line: cursor.line,
+                                                column: end,
+                                            },
+                                        );
+                                    } else {
+                                        self.virtual_selection.set_cursor(cursor);
+                                    }
+                                }
+                                RowAction::DragStart { cursor } => {
+                                    self.virtual_selection.begin_drag(cursor);
+                                }
+                                RowAction::Click { cursor } => {
+                                    self.virtual_selection.set_cursor(cursor);
+                                }
                             }
+                        }
+
+                        let pointer_pos = ui.input(|input| input.pointer.interact_pos());
+                        let pointer_down = ui.input(|input| input.pointer.primary_down());
+                        if pointer_down {
+                            if let Some(pointer_pos) = pointer_pos {
+                                let target_row = rows
+                                    .iter()
+                                    .find(|row| {
+                                        pointer_pos.y >= row.rect.min.y
+                                            && pointer_pos.y <= row.rect.max.y
+                                    })
+                                    .or_else(|| {
+                                        let first = rows.first()?;
+                                        let last = rows.last()?;
+                                        if pointer_pos.y < first.rect.min.y {
+                                            Some(first)
+                                        } else if pointer_pos.y > last.rect.max.y {
+                                            Some(last)
+                                        } else {
+                                            None
+                                        }
+                                    });
+                                if let Some(row) = target_row {
+                                    let clamped_pos = egui::pos2(
+                                        pointer_pos.x.clamp(row.rect.min.x, row.rect.max.x),
+                                        pointer_pos.y.clamp(row.rect.min.y, row.rect.max.y),
+                                    );
+                                    let local_pos = clamped_pos - row.rect.min;
+                                    let cursor = row.galley.cursor_from_pos(local_pos);
+                                    let vcursor = VirtualCursor {
+                                        line: row.line_idx,
+                                        column: cursor.index,
+                                    };
+                                    self.virtual_selection.update_drag(vcursor);
+                                }
+                            }
+                        } else {
+                            self.virtual_selection.end_drag();
+                        }
+
+                        for row in rows {
+                            let mut galley = row.galley;
                             if let Some(selection) = self
                                 .virtual_selection
-                                .selection_for_line(line_idx, line_chars)
+                                .selection_for_line(row.line_idx, row.line_chars)
                             {
                                 let cursor_range = CCursorRange::two(
                                     CCursor::new(selection.start),
@@ -1013,12 +1100,9 @@ impl eframe::App for LocalPasteApp {
                                 );
                             }
                             ui.painter()
-                                .galley(rect.min, galley, ui.visuals().text_color());
+                                .galley(row.rect.min, galley, ui.visuals().text_color());
                         }
                     });
-                    if !ui.input(|input| input.pointer.primary_down()) {
-                        self.virtual_selection.end_drag();
-                    }
                 } else {
                     scroll.show(ui, |ui| {
                         ui.set_min_size(egui::vec2(ui.available_width(), editor_height));
@@ -1380,6 +1464,35 @@ mod tests {
         assert_eq!(index.line_without_newline(buffer.as_str(), 0), "alpha");
         assert_eq!(index.line_without_newline(buffer.as_str(), 1), "beta");
         assert_eq!(index.line_without_newline(buffer.as_str(), 2), "");
+    }
+
+    #[test]
+    fn virtual_selection_text_multiline_preserves_single_newlines() {
+        let mut harness = make_app();
+        harness
+            .app
+            .selected_content
+            .reset("alpha\nbeta\ngamma".to_string());
+        harness.app.virtual_selection.select_range(
+            VirtualCursor { line: 0, column: 2 },
+            VirtualCursor { line: 2, column: 3 },
+        );
+
+        let copied = harness.app.virtual_selection_text().expect("copied text");
+        assert_eq!(copied, "pha\nbeta\ngam");
+    }
+
+    #[test]
+    fn virtual_selection_text_preserves_blank_line_boundaries() {
+        let mut harness = make_app();
+        harness.app.selected_content.reset("a\n\nb".to_string());
+        harness.app.virtual_selection.select_range(
+            VirtualCursor { line: 0, column: 1 },
+            VirtualCursor { line: 2, column: 0 },
+        );
+
+        let copied = harness.app.virtual_selection_text().expect("copied text");
+        assert_eq!(copied, "\n\n");
     }
 
     #[test]
