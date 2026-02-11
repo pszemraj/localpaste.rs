@@ -1,12 +1,32 @@
 //! Editor buffer, line index, and mode helpers for the native GUI.
 
 use eframe::egui;
+use ropey::Rope;
 use std::any::TypeId;
+
+/// Delta summary for the most recent text mutation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct EditDelta {
+    /// Line where the mutation started in the pre-edit buffer.
+    pub(super) start_line: usize,
+    /// Last impacted line index in the pre-edit buffer.
+    pub(super) old_end_line: usize,
+    /// Last impacted line index in the post-edit buffer.
+    pub(super) new_end_line: usize,
+    /// Character delta (`new_chars - old_chars`) from the mutation.
+    pub(super) char_delta: isize,
+}
+
+fn line_for_char(rope: &Rope, char_index: usize) -> usize {
+    rope.char_to_line(char_index.min(rope.len_chars()))
+}
 
 /// Tracks the current editor buffer text and simple revision counters.
 #[derive(Default)]
 pub(super) struct EditorBuffer {
     text: String,
+    rope: Rope,
+    last_delta: Option<EditDelta>,
     revision: u64,
     char_len: usize,
 }
@@ -15,14 +35,18 @@ impl EditorBuffer {
     pub(super) fn new(text: String) -> Self {
         let char_len = text.chars().count();
         Self {
+            rope: Rope::from_str(text.as_str()),
             text,
+            last_delta: None,
             revision: 0,
             char_len,
         }
     }
 
     pub(super) fn reset(&mut self, text: String) {
+        self.rope = Rope::from_str(text.as_str());
         self.text = text;
+        self.last_delta = None;
         self.revision = 0;
         self.char_len = self.text.chars().count();
     }
@@ -39,12 +63,20 @@ impl EditorBuffer {
         self.char_len
     }
 
+    pub(super) fn rope(&self) -> &Rope {
+        &self.rope
+    }
+
     pub(super) fn as_str(&self) -> &str {
         self.text.as_str()
     }
 
     pub(super) fn to_string(&self) -> String {
         self.text.clone()
+    }
+
+    pub(super) fn take_edit_delta(&mut self) -> Option<EditDelta> {
+        self.last_delta.take()
     }
 }
 
@@ -133,8 +165,18 @@ impl egui::TextBuffer for EditorBuffer {
     }
 
     fn insert_text(&mut self, text: &str, char_index: usize) -> usize {
-        let inserted = <String as egui::TextBuffer>::insert_text(&mut self.text, text, char_index);
+        let start_char = char_index.min(self.char_len);
+        let start_line = line_for_char(&self.rope, start_char);
+        let inserted = <String as egui::TextBuffer>::insert_text(&mut self.text, text, start_char);
         if inserted > 0 {
+            self.rope.insert(start_char, text);
+            let end_line = line_for_char(&self.rope, start_char.saturating_add(inserted));
+            self.last_delta = Some(EditDelta {
+                start_line,
+                old_end_line: start_line,
+                new_end_line: end_line,
+                char_delta: inserted as isize,
+            });
             self.revision = self.revision.wrapping_add(1);
             self.char_len = self.char_len.saturating_add(inserted);
         }
@@ -145,8 +187,23 @@ impl egui::TextBuffer for EditorBuffer {
         if char_range.start == char_range.end {
             return;
         }
-        let removed = char_range.end.saturating_sub(char_range.start);
-        <String as egui::TextBuffer>::delete_char_range(&mut self.text, char_range);
+        let start_char = char_range.start.min(self.char_len);
+        let end_char = char_range.end.min(self.char_len);
+        if start_char >= end_char {
+            return;
+        }
+        let removed = end_char.saturating_sub(start_char);
+        let start_line = line_for_char(&self.rope, start_char);
+        let old_end_line = line_for_char(&self.rope, end_char);
+        <String as egui::TextBuffer>::delete_char_range(&mut self.text, start_char..end_char);
+        self.rope.remove(start_char..end_char);
+        let new_end_line = line_for_char(&self.rope, start_char);
+        self.last_delta = Some(EditDelta {
+            start_line,
+            old_end_line,
+            new_end_line,
+            char_delta: -(removed as isize),
+        });
         self.revision = self.revision.wrapping_add(1);
         self.char_len = self.char_len.saturating_sub(removed);
     }
@@ -155,7 +212,15 @@ impl egui::TextBuffer for EditorBuffer {
         if self.text.is_empty() {
             return;
         }
+        let old_end_line = self.rope.len_lines().saturating_sub(1);
         self.text.clear();
+        self.rope = Rope::new();
+        self.last_delta = Some(EditDelta {
+            start_line: 0,
+            old_end_line,
+            new_end_line: 0,
+            char_delta: -(self.char_len as isize),
+        });
         self.revision = self.revision.wrapping_add(1);
         self.char_len = 0;
     }
@@ -164,15 +229,35 @@ impl egui::TextBuffer for EditorBuffer {
         if self.text == text {
             return;
         }
+        let old_end_line = self.rope.len_lines().saturating_sub(1);
+        let old_chars = self.char_len as isize;
         self.text.clear();
         self.text.push_str(text);
+        self.rope = Rope::from_str(text);
+        let new_chars = text.chars().count() as isize;
+        let new_end_line = self.rope.len_lines().saturating_sub(1);
+        self.last_delta = Some(EditDelta {
+            start_line: 0,
+            old_end_line,
+            new_end_line,
+            char_delta: new_chars - old_chars,
+        });
         self.revision = self.revision.wrapping_add(1);
-        self.char_len = text.chars().count();
+        self.char_len = new_chars as usize;
     }
 
     fn take(&mut self) -> String {
+        let old_end_line = self.rope.len_lines().saturating_sub(1);
+        let old_chars = self.char_len as isize;
         self.revision = self.revision.wrapping_add(1);
         self.char_len = 0;
+        self.rope = Rope::new();
+        self.last_delta = Some(EditDelta {
+            start_line: 0,
+            old_end_line,
+            new_end_line: 0,
+            char_delta: -old_chars,
+        });
         std::mem::take(&mut self.text)
     }
 
@@ -186,10 +271,20 @@ impl egui::TextBuffer for EditorBuffer {
 pub(super) enum EditorMode {
     TextEdit,
     VirtualPreview,
+    VirtualEditor,
 }
 
 impl EditorMode {
     pub(super) fn from_env() -> Self {
+        match std::env::var("LOCALPASTE_VIRTUAL_EDITOR") {
+            Ok(value) => {
+                let lowered = value.trim().to_ascii_lowercase();
+                if !(lowered.is_empty() || lowered == "0" || lowered == "false") {
+                    return Self::VirtualEditor;
+                }
+            }
+            Err(_) => {}
+        }
         match std::env::var("LOCALPASTE_VIRTUAL_PREVIEW") {
             Ok(value) => {
                 let lowered = value.trim().to_ascii_lowercase();
@@ -213,5 +308,44 @@ pub(super) fn editor_buffer_revision(text: &dyn egui::TextBuffer) -> Option<u64>
         Some(buffer.revision)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui::TextBuffer;
+
+    #[test]
+    fn editor_buffer_maintains_rope_after_edits() {
+        let mut buffer = EditorBuffer::new("ab\ncd".to_string());
+        buffer.insert_text("X", 1);
+        buffer.delete_char_range(0..1);
+        buffer.replace_with("hello\nworld");
+        assert_eq!(buffer.as_str(), "hello\nworld");
+        assert_eq!(buffer.rope().to_string(), "hello\nworld");
+        assert_eq!(buffer.chars_len(), "hello\nworld".chars().count());
+    }
+
+    #[test]
+    fn editor_mode_prefers_virtual_editor_env() {
+        let preview_key = "LOCALPASTE_VIRTUAL_PREVIEW";
+        let editor_key = "LOCALPASTE_VIRTUAL_EDITOR";
+        let old_preview = std::env::var(preview_key).ok();
+        let old_editor = std::env::var(editor_key).ok();
+        std::env::set_var(preview_key, "1");
+        std::env::set_var(editor_key, "1");
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
+
+        if let Some(value) = old_preview {
+            std::env::set_var(preview_key, value);
+        } else {
+            std::env::remove_var(preview_key);
+        }
+        if let Some(value) = old_editor {
+            std::env::set_var(editor_key, value);
+        } else {
+            std::env::remove_var(editor_key);
+        }
     }
 }

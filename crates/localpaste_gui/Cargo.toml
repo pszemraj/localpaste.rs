@@ -21,6 +21,8 @@ crossbeam-channel = "0.5"
 eframe = { version = "0.33", features = ["wgpu", "persistence"] }
 egui_extras = { version = "0.33", features = ["syntect"] }
 syntect = "5.3"
+ropey = "1.6"
+unicode-segmentation = "1.11"
 rfd = { version = "0.14", optional = true }
 puffin = { version = "0.19", optional = true }
 tokio = { version = "1.40", features = ["full"], optional = true }
