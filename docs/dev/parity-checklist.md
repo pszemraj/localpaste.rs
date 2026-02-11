@@ -66,6 +66,7 @@ Decision key:
 ## Phase 4: Editor + Autosave
 
 - [x] Editable multiline editor
+- [x] Read-only virtual preview mode behind `LOCALPASTE_VIRTUAL_PREVIEW`
 - [~] Editable virtual rope editor behind `LOCALPASTE_VIRTUAL_EDITOR` (runtime parity/perf sign-off pending)
 - [x] Dirty state tracking + save indicator
 - [x] Autosave debounce (UI non-blocking) [Replace]
@@ -96,7 +97,7 @@ Decision key:
 
 - [~] Auto-detect language on content (core detects on create; rewrite does not re-run yet)
 - [ ] Manual language override + `language_is_manual`
-- [x] Highlighting via `egui_extras` [Replace]
+- [x] Async syntect highlighting with staged apply and line-state reuse [Replace]
 - [x] Large-paste fallback to plain text
 - [x] Plain highlight threshold (aligned with perf budget)
 - [x] Highlighting debounce while typing for performance
@@ -128,7 +129,7 @@ Decision key:
 - [Replace] Form header (Name/Language/Folder) -> inferred + status bar
 - [Replace] Manual folders as primary nav -> Smart Collections + search
 - [Replace] Export button as primary save -> autosave + subtle indicator
-- [Replace] Custom highlight cache -> `egui_extras` memoization
+- [Replace] Highlight/layout path -> async syntect render + cache lifecycle keyed by editor revision and highlight epoch
 - [Replace] Blocking DB calls in UI -> backend thread + channels
 - [Drop] Any legacy-only UI quirks that fight the new model
 

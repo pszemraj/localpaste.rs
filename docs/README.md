@@ -13,4 +13,4 @@
 - [Parity checklist](dev/parity-checklist.md) - Phase-aligned checklist tracking rewrite parity and intentional deviations.
 - [Performance baseline](dev/perf-baseline.md) - Headless performance measurements and the manual GUI benchmarks to capture.
 - [UI palette](dev/ui-palette.md) - Color, typography, and UI tokens used to keep the rewrite aligned with the design system.
-- [Virtual editor plan](dev/virtual-editor-plan.md) - Plan and milestones for the virtualized editor rewrite.
+- [Virtual editor plan](dev/virtual-editor-plan.md) - Current status, remaining gaps, and rollout gates for the virtualized editor rewrite.

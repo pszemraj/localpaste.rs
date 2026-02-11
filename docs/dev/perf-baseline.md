@@ -1,6 +1,6 @@
 # Phase 0 Performance Baseline (2026-01-29)
 
-This baseline captures headless API/CLI timings and documents the manual GUI measurements still required for Phase 0.
+This is a historical baseline snapshot for early rewrite work. Use `docs/dev/gui-perf-protocol.md` for current virtual-editor performance verification.
 
 ## Environment
 
@@ -50,9 +50,9 @@ Interpretation:
 
 - `list` and `search` are still O(n) over all pastes; expected to be higher at 10k.
 
-## Manual GUI Baseline (Required)
+## Manual GUI Baseline (Historical Legacy Snapshot)
 
-These metrics require a human run of the GUI:
+These legacy checks were used before the editable virtual editor path existed:
 
 1) **Scroll FPS (10k snippets)**
    - Run: `cargo run -p localpaste_gui --bin localpaste-gui-legacy --features gui-legacy,debug-tools,profile`
@@ -71,4 +71,12 @@ These metrics require a human run of the GUI:
 4) **Profiler snapshot**
    - Open the profiler panel (Ctrl+Shift+P) and capture a screenshot or note hot paths.
 
-Record results here once measured.
+## Current Rewrite Gate
+
+Use `docs/dev/gui-perf-protocol.md` with `LOCALPASTE_VIRTUAL_EDITOR=1` for release-gate validation.
+
+Required gate on `perf-scroll-5k-lines`:
+
+- Average FPS `>= 45`
+- p95 frame time `<= 25 ms`
+- No visible hitching during rapid scroll + mid-document typing

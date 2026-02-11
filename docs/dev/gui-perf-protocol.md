@@ -1,8 +1,6 @@
-<!-- # GUI Perf Test Protocol (Rewrite) -->
+# GUI Perf Test Protocol (Rewrite)
 
-This is a repeatable, low-friction protocol for validating editor performance
-<!-- changes in the rewrite. It isolates a temporary database, seeds deterministic -->
-test pastes, launches the GUI against that DB, and lists the manual checks.
+This is a repeatable, low-friction protocol for validating editor performance changes in the rewrite. It isolates a temporary database, seeds deterministic test pastes, launches the GUI against that DB, and lists the manual checks.
 
 ## Goals
 
@@ -15,8 +13,8 @@ test pastes, launches the GUI against that DB, and lists the manual checks.
 - Build the server + GUI binaries:
 
 ```powershell
-cargo build -p localpaste_server --bin localpaste
-cargo build -p localpaste_gui --bin localpaste-gui
+cargo build -p localpaste_server --bin localpaste --release
+cargo build -p localpaste_gui --bin localpaste-gui --release
 ```
 
 ## 1) Seed a dedicated perf DB
@@ -29,7 +27,7 @@ $env:PORT = "$Port"
 $env:DB_PATH = $TestDb
 $env:RUST_LOG = "info"
 
-$serverPid = Start-ServerProcess -ExePath .\target\debug\localpaste.exe
+$serverPid = Start-ServerProcess -ExePath .\target\release\localpaste.exe
 Start-Sleep -Seconds 1
 $Base = "http://127.0.0.1:$Port"
 
@@ -181,16 +179,16 @@ Stop-ServerGracefully -ProcessId $serverPid
 
 ```powershell
 $env:DB_PATH = $TestDb
-# Read-only virtual preview (baseline)
+# Read-only virtual preview (diagnostic baseline)
 # $env:LOCALPASTE_VIRTUAL_PREVIEW = "1"
 
-# Editable rope-backed virtual editor
+# Editable rope-backed virtual editor (wins if both flags are set)
 $env:LOCALPASTE_VIRTUAL_EDITOR = "1"
 
 # Optional frame metrics log (avg FPS + p95 ms every ~2s)
 # $env:LOCALPASTE_EDITOR_PERF_LOG = "1"
 
-.\target\debug\localpaste-gui.exe
+.\target\release\localpaste-gui.exe
 ```
 
 ## 3) Manual verification checklist
@@ -231,6 +229,7 @@ $env:LOCALPASTE_VIRTUAL_EDITOR = "1"
 8. **Virtual editor parity (when `LOCALPASTE_VIRTUAL_EDITOR=1`)**
    - Verify `Ctrl/Cmd+A/C/X/V`, `Ctrl/Cmd+Z/Y`, Home/End, PageUp/PageDown, shift-selection.
    - Verify IME composition (`Enabled` -> `Preedit` -> `Commit`) does not lose caret/selection state.
+   - Verify drag-selection behavior when crossing viewport edges (including auto-scroll behavior if implemented).
 
 ## 4) Cleanup
 
@@ -249,3 +248,4 @@ cmd /c rmdir /s /q "$TestDb"
 - Keep the perf DB isolated (always set `DB_PATH`) to avoid polluting real data.
 - If a perf regression is found, note which paste name, approximate size, and
   the exact interaction that triggers lag.
+- Release gate for `perf-scroll-5k-lines`: average FPS `>= 45` and p95 frame time `<= 25 ms`.

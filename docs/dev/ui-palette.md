@@ -1,6 +1,6 @@
 # LocalPaste Desktop Palette
 
-These canonical values are applied inside `legacy/gui/mod.rs` and should be reused for future widgets or theming tweaks.
+These canonical values are applied in the rewrite (`crates/localpaste_gui/src/app.rs`) and mirrored in `legacy/gui/mod.rs` for reference.
 
 | Token                  | Hex       | Notes                      |
 | ---------------------- | --------- | -------------------------- |

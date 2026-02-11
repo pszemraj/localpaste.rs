@@ -16,6 +16,12 @@ localpaste.rs/
 |   |-- localpaste_gui/         # New egui rewrite (Phase 2+)
 |   |   `-- src/
 |   |       |-- app.rs
+|   |       |-- app/
+|   |       |   |-- editor.rs
+|   |       |   |-- highlight.rs
+|   |       |   |-- util.rs
+|   |       |   |-- virtual_view.rs
+|   |       |   `-- virtual_editor/
 |   |       `-- backend/
 |   |-- localpaste_server/      # Axum API server (used by headless + GUI)
 |   |   `-- src/
@@ -58,7 +64,11 @@ localpaste.rs/
 
 - **Rewrite (primary):** `crates/localpaste_gui` (egui/eframe app with backend worker)
 - **Legacy GUI:** `legacy/gui/mod.rs` (feature-complete reference while rewrite lands)
-- Syntax highlighting via `egui_extras` in the rewrite
+- Rewrite editor paths:
+  - default `TextEdit` editable path
+  - `LOCALPASTE_VIRTUAL_PREVIEW=1` read-only viewport diagnostics path
+  - `LOCALPASTE_VIRTUAL_EDITOR=1` editable rope-backed viewport path
+- Syntax highlighting in rewrite uses async syntect rendering with staged apply
 - Folder management via dialogs with cycle-safe parenting rules (legacy)
 - Auto-save with debouncing and manual export support (legacy)
 - Incremental in-memory paste index keeps the sidebar responsive without requerying sled (legacy)
@@ -67,14 +77,13 @@ localpaste.rs/
 ### GUI Shortcuts
 
 - `Ctrl/Cmd+N` New paste (focuses editor)
-- `Ctrl/Cmd+S` Save current paste
 - `Ctrl/Cmd+Delete` Delete selected paste
-- `Ctrl/Cmd+F` or `Ctrl/Cmd+K` Focus the paste filter in the sidebar
 - `Ctrl/Cmd+V` when no text input is focused creates a new paste from the clipboard and focuses the editor
 
 ### Known Issues
 
-- The egui text editor caret can “flash” to the start of the next line, especially on macOS, when typing in the middle of a large paste. This is cosmetic but distracting; root cause suspected in the highlight/layout invalidation path. Track and fix in a follow-up branch.
+- Virtual editor remains feature-gated until parity/perf sign-off.
+- Drag-selection auto-scroll at viewport edges still needs dedicated validation and potential follow-up fixes.
 
 ### API Design
 
@@ -377,12 +386,19 @@ $env:BIND = "127.0.0.1:38411"
 - Gzip compression for HTTP responses
 - Embedded assets are compressed
 
-## Editor Performance TODOs (Rewrite)
+## Editor Performance Status (Rewrite)
 
-- Replace the editor buffer with `ropey::Rope` (or similar) to avoid O(n) shifts on mid-buffer edits.
-- Move syntax highlighting off the UI thread (background worker + swap-in results).
-- Add viewport-only rendering so only visible lines are laid out and painted.
-- Add convergence-based highlight invalidation (stop re-tokenizing once line state stabilizes).
+Done:
+
+- Rope-backed editor buffer landed for virtual editor path.
+- Async syntax highlighting worker + staged apply is in place.
+- Viewport-only rendering is implemented for virtual preview and virtual editor paths.
+- Per-line highlight state reuse is in place for UI-side and worker-side rendering.
+
+Pending before default switch:
+
+- Full manual parity pass in editable virtual mode.
+- Release perf gate sign-off (`>=45 FPS`, p95 `<=25 ms`) on the 5k-line scenario.
 
 ## Security
 

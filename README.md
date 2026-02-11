@@ -33,6 +33,13 @@ Install to your PATH:
 cargo install --path crates/localpaste_gui --bin localpaste-gui
 ```
 
+Optional editor modes (rewrite GUI):
+
+- `LOCALPASTE_VIRTUAL_PREVIEW=1` -> read-only viewport-virtualized preview.
+- `LOCALPASTE_VIRTUAL_EDITOR=1` -> editable rope-backed viewport-virtualized editor.
+- `LOCALPASTE_VIRTUAL_EDITOR=1` takes precedence if both flags are set.
+- `LOCALPASTE_EDITOR_PERF_LOG=1` logs moving-average FPS and p95 frame time every ~2s.
+
 ### Server + CLI
 
 ```bash

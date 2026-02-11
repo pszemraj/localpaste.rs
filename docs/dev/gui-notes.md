@@ -11,7 +11,7 @@
 - Logged events:
   - `highlight_job`: duration, cache hit/miss, language token, paste id, character count.
   - `text_edit_layout`: the time spent laying out the multiline editor per frame and the current character count.
-- These hooks are meant to guide the upcoming virtualized editor work; remove or downgrade them once we have a replacement metrics story.
+- These hooks are retained for legacy diagnostics. Rewrite perf telemetry now uses `LOCALPASTE_EDITOR_PERF_LOG=1`.
 
 ## Virtualized Editor
 
@@ -23,6 +23,7 @@
   - operation-based undo/redo
   - IME composition event handling
   - command reducer for keyboard navigation/selection/edit operations
+- Default editable mode is still `TextEdit` while parity/perf validation completes.
 
 ## Rewrite Highlighting
 
