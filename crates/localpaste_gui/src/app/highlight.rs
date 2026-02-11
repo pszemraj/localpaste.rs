@@ -111,7 +111,9 @@ impl EditorLayoutCache {
             && self.highlight_version == highlight_version;
 
         if cache_hit {
-            return self.galley.as_ref().expect("cached galley").clone();
+            if let Some(galley) = self.galley.as_ref() {
+                return galley.clone();
+            }
         }
 
         let started = Instant::now();
@@ -165,9 +167,15 @@ impl EditorLayoutCache {
             )
         } else if let Some(render) = highlight_render {
             self.build_render_job(ui, text, render, editor_font)
-        } else {
-            let theme = theme.expect("theme required for highlighted layout");
+        } else if let Some(theme) = theme {
             self.build_highlight_job(ui, text, language_hint, theme, editor_font, syntect)
+        } else {
+            LayoutJob::simple(
+                text.to_owned(),
+                editor_font.clone(),
+                ui.visuals().text_color(),
+                wrap_width,
+            )
         };
         job.wrap.max_width = wrap_width;
         ui.fonts_mut(|f| f.layout_job(job))
@@ -195,7 +203,15 @@ impl EditorLayoutCache {
             .ts
             .themes
             .get(theme_key)
-            .unwrap_or_else(|| settings.ts.themes.values().next().expect("theme"));
+            .or_else(|| settings.ts.themes.values().next());
+        let Some(theme) = theme else {
+            return LayoutJob::simple(
+                text.to_owned(),
+                editor_font.clone(),
+                ui.visuals().text_color(),
+                f32::INFINITY,
+            );
+        };
 
         let highlighter = Highlighter::new(theme);
         let mut parse_state = ParseState::new(syntax);
@@ -372,7 +388,14 @@ pub(super) fn build_virtual_line_job(
         );
     }
 
-    let render_line = render_line.expect("render line");
+    let Some(render_line) = render_line else {
+        return LayoutJob::simple(
+            line.to_owned(),
+            editor_font.clone(),
+            ui.visuals().text_color(),
+            f32::INFINITY,
+        );
+    };
     let mut job = LayoutJob {
         text: line.to_owned(),
         ..Default::default()
@@ -658,7 +681,23 @@ fn highlight_in_worker(
         .ts
         .themes
         .get(req.theme_key.as_str())
-        .unwrap_or_else(|| settings.ts.themes.values().next().expect("theme"));
+        .or_else(|| settings.ts.themes.values().next());
+    let Some(theme) = theme else {
+        let lines = LinesWithEndings::from(req.text.as_str())
+            .map(|line| HighlightRenderLine {
+                len: line.len(),
+                spans: Vec::new(),
+            })
+            .collect();
+        return HighlightRender {
+            paste_id: req.paste_id,
+            revision: req.revision,
+            text_len: req.text.len(),
+            language_hint: req.language_hint,
+            theme_key: req.theme_key,
+            lines,
+        };
+    };
 
     let highlighter = Highlighter::new(theme);
     let mut parse_state = ParseState::new(syntax);
