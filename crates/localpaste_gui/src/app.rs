@@ -1345,7 +1345,8 @@ impl eframe::App for LocalPasteApp {
             }
         }
 
-        let mut copy_virtual = false;
+        let mut copy_virtual_preview = false;
+        let mut copy_virtual_editor = false;
         ctx.input(|input| {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());
@@ -1357,15 +1358,28 @@ impl eframe::App for LocalPasteApp {
                 self.delete_selected();
             }
             if input.modifiers.command && input.key_pressed(egui::Key::C) {
-                copy_virtual = true;
+                match self.editor_mode {
+                    EditorMode::VirtualPreview => copy_virtual_preview = true,
+                    EditorMode::VirtualEditor => copy_virtual_editor = true,
+                    EditorMode::TextEdit => {}
+                }
             }
         });
-        if copy_virtual
+        if copy_virtual_preview
             && self.editor_mode == EditorMode::VirtualPreview
             && !ctx.wants_keyboard_input()
         {
             if let Some(selection) = self.virtual_selection_text() {
                 ctx.copy_text(selection);
+            }
+        }
+        if copy_virtual_editor && self.editor_mode == EditorMode::VirtualEditor {
+            let focused = self.virtual_editor_state.has_focus
+                || ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+            if focused {
+                if let Some(selection) = self.virtual_selected_text() {
+                    ctx.copy_text(selection);
+                }
             }
         }
 
