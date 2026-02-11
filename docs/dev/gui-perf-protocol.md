@@ -22,7 +22,7 @@ cargo build -p localpaste_gui --bin localpaste-gui --release
 ```powershell
 $ErrorActionPreference = "Stop"
 $TestDb = Join-Path $env:TEMP ("lpaste-gui-perf-" + [guid]::NewGuid().ToString("N"))
-$Port = 3055
+$Port = 38455
 $env:PORT = "$Port"
 $env:DB_PATH = $TestDb
 $env:RUST_LOG = "info"
