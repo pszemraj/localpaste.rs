@@ -4,7 +4,7 @@ use eframe::egui;
 
 /// Normalized commands consumed by the virtual editor state machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum VirtualInputCommand {
+pub(crate) enum VirtualInputCommand {
     MoveLeft { select: bool, word: bool },
     MoveRight { select: bool, word: bool },
     MoveUp { select: bool },
@@ -35,7 +35,7 @@ fn word_modifier(modifiers: egui::Modifiers) -> bool {
 }
 
 /// Convert egui input events into virtual-editor commands.
-pub(super) fn commands_from_events(
+pub(crate) fn commands_from_events(
     events: &[egui::Event],
     focused: bool,
 ) -> Vec<VirtualInputCommand> {

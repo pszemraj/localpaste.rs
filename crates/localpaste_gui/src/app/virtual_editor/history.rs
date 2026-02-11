@@ -10,7 +10,7 @@ const DEFAULT_COALESCE_WINDOW: Duration = Duration::from_millis(750);
 
 /// Mutation intent used for history coalescing rules.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum EditIntent {
+pub(crate) enum EditIntent {
     Insert,
     DeleteBackward,
     DeleteForward,
@@ -37,7 +37,7 @@ fn op_bytes(op: &EditRecord) -> usize {
 
 /// Operation-based undo/redo stack with bounded memory.
 #[derive(Debug)]
-pub(super) struct VirtualEditorHistory {
+pub(crate) struct VirtualEditorHistory {
     undo: Vec<EditRecord>,
     redo: Vec<EditRecord>,
     undo_bytes: usize,
@@ -61,7 +61,7 @@ impl Default for VirtualEditorHistory {
 
 impl VirtualEditorHistory {
     /// Record a text mutation in undo history.
-    pub(super) fn record_edit(
+    pub(crate) fn record_edit(
         &mut self,
         start: usize,
         deleted: String,
@@ -126,7 +126,7 @@ impl VirtualEditorHistory {
     }
 
     /// Undo the most recent mutation.
-    pub(super) fn undo(&mut self, buffer: &mut RopeBuffer, state: &mut VirtualEditorState) -> bool {
+    pub(crate) fn undo(&mut self, buffer: &mut RopeBuffer, state: &mut VirtualEditorState) -> bool {
         let Some(op) = self.undo.pop() else {
             return false;
         };
@@ -140,7 +140,7 @@ impl VirtualEditorHistory {
     }
 
     /// Redo the next mutation, if available.
-    pub(super) fn redo(&mut self, buffer: &mut RopeBuffer, state: &mut VirtualEditorState) -> bool {
+    pub(crate) fn redo(&mut self, buffer: &mut RopeBuffer, state: &mut VirtualEditorState) -> bool {
         let Some(op) = self.redo.pop() else {
             return false;
         };

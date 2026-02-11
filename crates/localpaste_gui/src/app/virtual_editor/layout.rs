@@ -13,13 +13,13 @@ fn div_ceil(value: usize, divisor: usize) -> usize {
 
 /// Wrap metrics for a single physical line.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct WrapLineMetrics {
+pub(crate) struct WrapLineMetrics {
     /// Number of visual rows occupied by this physical line.
-    pub(super) visual_rows: usize,
+    pub(crate) visual_rows: usize,
     /// Total painted height for this physical line.
-    pub(super) height_px: f32,
+    pub(crate) height_px: f32,
     /// Character count of the source line (without newline).
-    pub(super) chars: usize,
+    pub(crate) chars: usize,
 }
 
 impl Default for WrapLineMetrics {
@@ -34,19 +34,20 @@ impl Default for WrapLineMetrics {
 
 /// Cache of variable-height line metrics for viewport virtualization.
 #[derive(Clone, Debug, Default)]
-pub(super) struct WrapLayoutCache {
+pub(crate) struct WrapLayoutCache {
     revision: u64,
     wrap_width: u32,
     line_height_bits: u32,
     char_width_bits: u32,
     highlight_epoch: u64,
+    wrap_cols: usize,
     line_metrics: Vec<WrapLineMetrics>,
     prefix_heights: Vec<f32>,
 }
 
 impl WrapLayoutCache {
     /// Returns `true` when cache keys no longer match rendering context.
-    pub(super) fn needs_rebuild(
+    pub(crate) fn needs_rebuild(
         &self,
         revision: u64,
         wrap_width: f32,
@@ -64,7 +65,7 @@ impl WrapLayoutCache {
     }
 
     /// Rebuild metrics for all physical lines.
-    pub(super) fn rebuild(
+    pub(crate) fn rebuild(
         &mut self,
         buffer: &RopeBuffer,
         wrap_width: f32,
@@ -83,6 +84,7 @@ impl WrapLayoutCache {
         self.prefix_heights.push(0.0);
 
         let cols = ((wrap_width as f32 / char_width.max(1.0)).floor() as usize).max(1);
+        self.wrap_cols = cols;
         let mut total = 0.0f32;
         for idx in 0..buffer.line_count() {
             let chars = buffer.line_len_chars(idx);
@@ -99,12 +101,12 @@ impl WrapLayoutCache {
     }
 
     /// Total scrollable content height in pixels.
-    pub(super) fn total_height(&self) -> f32 {
+    pub(crate) fn total_height(&self) -> f32 {
         self.prefix_heights.last().copied().unwrap_or(0.0)
     }
 
     /// Top y-offset for a physical line.
-    pub(super) fn line_top(&self, line: usize) -> f32 {
+    pub(crate) fn line_top(&self, line: usize) -> f32 {
         self.prefix_heights
             .get(line)
             .copied()
@@ -112,7 +114,7 @@ impl WrapLayoutCache {
     }
 
     /// Bottom y-offset for a physical line.
-    pub(super) fn line_bottom(&self, line: usize) -> f32 {
+    pub(crate) fn line_bottom(&self, line: usize) -> f32 {
         self.prefix_heights
             .get(line + 1)
             .copied()
@@ -120,8 +122,13 @@ impl WrapLayoutCache {
     }
 
     /// Returns metrics for a line index.
-    pub(super) fn line_metrics(&self, line: usize) -> Option<WrapLineMetrics> {
+    pub(crate) fn line_metrics(&self, line: usize) -> Option<WrapLineMetrics> {
         self.line_metrics.get(line).copied()
+    }
+
+    /// Number of monospace columns used by the current wrap configuration.
+    pub(crate) fn wrap_columns(&self) -> usize {
+        self.wrap_cols.max(1)
     }
 
     fn line_at_y(&self, y: f32) -> usize {
@@ -144,7 +151,7 @@ impl WrapLayoutCache {
     }
 
     /// Returns visible line range with overscan in physical line units.
-    pub(super) fn visible_range(
+    pub(crate) fn visible_range(
         &self,
         viewport_top: f32,
         viewport_height: f32,

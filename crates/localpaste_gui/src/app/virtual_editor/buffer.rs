@@ -5,15 +5,15 @@ use std::ops::Range;
 
 /// Delta summary for a virtual editor text mutation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct VirtualEditDelta {
+pub(crate) struct VirtualEditDelta {
     /// Line where the mutation started in the pre-edit buffer.
-    pub(super) start_line: usize,
+    pub(crate) start_line: usize,
     /// Last impacted line index in the pre-edit buffer.
-    pub(super) old_end_line: usize,
+    pub(crate) old_end_line: usize,
     /// Last impacted line index in the post-edit buffer.
-    pub(super) new_end_line: usize,
+    pub(crate) new_end_line: usize,
     /// Character delta (`new_chars - old_chars`) from the mutation.
-    pub(super) char_delta: isize,
+    pub(crate) char_delta: isize,
 }
 
 fn line_for_char(rope: &Rope, char_index: usize) -> usize {
@@ -22,7 +22,7 @@ fn line_for_char(rope: &Rope, char_index: usize) -> usize {
 
 /// Rope-backed content buffer used by the virtualized editor path.
 #[derive(Clone, Default)]
-pub(super) struct RopeBuffer {
+pub(crate) struct RopeBuffer {
     rope: Rope,
     revision: u64,
     char_len: usize,
@@ -30,7 +30,7 @@ pub(super) struct RopeBuffer {
 
 impl RopeBuffer {
     /// Create a new buffer from UTF-8 text.
-    pub(super) fn new(text: &str) -> Self {
+    pub(crate) fn new(text: &str) -> Self {
         let rope = Rope::from_str(text);
         let char_len = rope.len_chars();
         Self {
@@ -41,44 +41,44 @@ impl RopeBuffer {
     }
 
     /// Returns a borrowed rope handle.
-    pub(super) fn rope(&self) -> &Rope {
+    pub(crate) fn rope(&self) -> &Rope {
         &self.rope
     }
 
     /// Returns the current revision of the buffer.
-    pub(super) fn revision(&self) -> u64 {
+    pub(crate) fn revision(&self) -> u64 {
         self.revision
     }
 
     /// Returns the content length in characters.
-    pub(super) fn len_chars(&self) -> usize {
+    pub(crate) fn len_chars(&self) -> usize {
         self.char_len
     }
 
     /// Returns the content length in bytes.
-    pub(super) fn len_bytes(&self) -> usize {
+    pub(crate) fn len_bytes(&self) -> usize {
         self.rope.len_bytes()
     }
 
     /// Returns the number of physical lines in the rope.
-    pub(super) fn line_count(&self) -> usize {
+    pub(crate) fn line_count(&self) -> usize {
         self.rope.len_lines().max(1)
     }
 
     /// Returns a UTF-8 snapshot of the whole buffer.
-    pub(super) fn to_string(&self) -> String {
+    pub(crate) fn to_string(&self) -> String {
         self.rope.to_string()
     }
 
     /// Replace the full buffer text with a fresh snapshot.
-    pub(super) fn reset(&mut self, text: &str) {
+    pub(crate) fn reset(&mut self, text: &str) {
         self.rope = Rope::from_str(text);
         self.char_len = self.rope.len_chars();
         self.revision = 0;
     }
 
     /// Convert a global char index into `(line, column)` coordinates.
-    pub(super) fn char_to_line_col(&self, char_index: usize) -> (usize, usize) {
+    pub(crate) fn char_to_line_col(&self, char_index: usize) -> (usize, usize) {
         let clamped = char_index.min(self.char_len);
         let line = line_for_char(&self.rope, clamped);
         let line_start = self.rope.line_to_char(line);
@@ -89,7 +89,7 @@ impl RopeBuffer {
     }
 
     /// Convert `(line, column)` into a global char index.
-    pub(super) fn line_col_to_char(&self, line: usize, column: usize) -> usize {
+    pub(crate) fn line_col_to_char(&self, line: usize, column: usize) -> usize {
         if line >= self.line_count() {
             return self.char_len;
         }
@@ -98,7 +98,7 @@ impl RopeBuffer {
     }
 
     /// Returns a line as UTF-8 without trailing `\\r?\\n`.
-    pub(super) fn line_without_newline(&self, line: usize) -> String {
+    pub(crate) fn line_without_newline(&self, line: usize) -> String {
         if line >= self.line_count() {
             return String::new();
         }
@@ -108,7 +108,7 @@ impl RopeBuffer {
     }
 
     /// Returns the character length of a line without trailing `\\r?\\n`.
-    pub(super) fn line_len_chars(&self, line: usize) -> usize {
+    pub(crate) fn line_len_chars(&self, line: usize) -> usize {
         if line >= self.line_count() {
             return 0;
         }
@@ -130,7 +130,7 @@ impl RopeBuffer {
     }
 
     /// Returns a UTF-8 snapshot for the given char range.
-    pub(super) fn slice_chars(&self, range: Range<usize>) -> String {
+    pub(crate) fn slice_chars(&self, range: Range<usize>) -> String {
         let start = range.start.min(self.char_len);
         let end = range.end.min(self.char_len);
         if start >= end {
@@ -140,7 +140,7 @@ impl RopeBuffer {
     }
 
     /// Insert text at the given char position.
-    pub(super) fn insert_text(
+    pub(crate) fn insert_text(
         &mut self,
         char_index: usize,
         text: &str,
@@ -164,7 +164,7 @@ impl RopeBuffer {
     }
 
     /// Delete a char range.
-    pub(super) fn delete_char_range(&mut self, range: Range<usize>) -> Option<VirtualEditDelta> {
+    pub(crate) fn delete_char_range(&mut self, range: Range<usize>) -> Option<VirtualEditDelta> {
         let start = range.start.min(self.char_len);
         let end = range.end.min(self.char_len);
         if start >= end {
@@ -186,7 +186,7 @@ impl RopeBuffer {
     }
 
     /// Replace a char range with new text.
-    pub(super) fn replace_char_range(
+    pub(crate) fn replace_char_range(
         &mut self,
         range: Range<usize>,
         text: &str,

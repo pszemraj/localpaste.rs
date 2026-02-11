@@ -4,42 +4,42 @@ use std::ops::Range;
 
 /// IME composition state tracked by the virtual editor.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct ImeState {
-    pub(super) enabled: bool,
-    pub(super) preedit_range: Option<Range<usize>>,
-    pub(super) preedit_text: String,
+pub(crate) struct ImeState {
+    pub(crate) enabled: bool,
+    pub(crate) preedit_range: Option<Range<usize>>,
+    pub(crate) preedit_text: String,
 }
 
 /// Mutable editor interaction state independent of rendering.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct VirtualEditorState {
+pub(crate) struct VirtualEditorState {
     cursor: usize,
     anchor: Option<usize>,
     preferred_column: Option<usize>,
-    pub(super) has_focus: bool,
-    pub(super) ime: ImeState,
+    pub(crate) has_focus: bool,
+    pub(crate) ime: ImeState,
 }
 
 impl VirtualEditorState {
     /// Returns the current caret position in global char coordinates.
-    pub(super) fn cursor(&self) -> usize {
+    pub(crate) fn cursor(&self) -> usize {
         self.cursor
     }
 
     /// Returns the preferred visual column for vertical movement.
-    pub(super) fn preferred_column(&self) -> Option<usize> {
+    pub(crate) fn preferred_column(&self) -> Option<usize> {
         self.preferred_column
     }
 
     /// Sets the cursor, clearing any active selection.
-    pub(super) fn set_cursor(&mut self, char_index: usize, text_len: usize) {
+    pub(crate) fn set_cursor(&mut self, char_index: usize, text_len: usize) {
         self.cursor = char_index.min(text_len);
         self.anchor = None;
         self.preferred_column = None;
     }
 
     /// Moves cursor to a new char index.
-    pub(super) fn move_cursor(&mut self, new_index: usize, text_len: usize, select: bool) {
+    pub(crate) fn move_cursor(&mut self, new_index: usize, text_len: usize, select: bool) {
         let clamped = new_index.min(text_len);
         if select {
             if self.anchor.is_none() {
@@ -52,23 +52,23 @@ impl VirtualEditorState {
     }
 
     /// Selects the entire buffer.
-    pub(super) fn select_all(&mut self, text_len: usize) {
+    pub(crate) fn select_all(&mut self, text_len: usize) {
         self.anchor = Some(0);
         self.cursor = text_len;
     }
 
     /// Clears active selection, keeping cursor in place.
-    pub(super) fn clear_selection(&mut self) {
+    pub(crate) fn clear_selection(&mut self) {
         self.anchor = None;
     }
 
     /// True when the state has a non-empty selection.
-    pub(super) fn has_selection(&self) -> bool {
+    pub(crate) fn has_selection(&self) -> bool {
         self.selection_range().is_some()
     }
 
     /// Returns a normalized selected range, if any.
-    pub(super) fn selection_range(&self) -> Option<Range<usize>> {
+    pub(crate) fn selection_range(&self) -> Option<Range<usize>> {
         let anchor = self.anchor?;
         if anchor == self.cursor {
             return None;
@@ -81,7 +81,7 @@ impl VirtualEditorState {
     }
 
     /// Collapse selection to its start edge if selection is active.
-    pub(super) fn collapse_to_selection_start(&mut self) {
+    pub(crate) fn collapse_to_selection_start(&mut self) {
         if let Some(range) = self.selection_range() {
             self.cursor = range.start;
             self.anchor = None;
@@ -89,7 +89,7 @@ impl VirtualEditorState {
     }
 
     /// Collapse selection to its end edge if selection is active.
-    pub(super) fn collapse_to_selection_end(&mut self) {
+    pub(crate) fn collapse_to_selection_end(&mut self) {
         if let Some(range) = self.selection_range() {
             self.cursor = range.end;
             self.anchor = None;
@@ -97,12 +97,12 @@ impl VirtualEditorState {
     }
 
     /// Updates preferred visual column for subsequent vertical motions.
-    pub(super) fn set_preferred_column(&mut self, column: usize) {
+    pub(crate) fn set_preferred_column(&mut self, column: usize) {
         self.preferred_column = Some(column);
     }
 
     /// Clears preferred visual column hint.
-    pub(super) fn clear_preferred_column(&mut self) {
+    pub(crate) fn clear_preferred_column(&mut self) {
         self.preferred_column = None;
     }
 }

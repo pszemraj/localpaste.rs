@@ -63,6 +63,7 @@ impl EditorBuffer {
         self.char_len
     }
 
+    #[cfg(test)]
     pub(super) fn rope(&self) -> &Rope {
         &self.rope
     }
