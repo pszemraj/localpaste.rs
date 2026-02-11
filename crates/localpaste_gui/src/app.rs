@@ -3,6 +3,7 @@
 mod editor;
 mod highlight;
 mod util;
+mod virtual_editor;
 mod virtual_view;
 
 use crate::backend::{spawn_backend, BackendHandle, CoreCmd, CoreEvent, PasteSummary};
