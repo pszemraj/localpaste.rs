@@ -1336,7 +1336,9 @@ impl eframe::App for LocalPasteApp {
         }
 
         if self.is_virtual_editor_mode() {
-            let focused = ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+            let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+            let focused =
+                self.virtual_editor_state.has_focus || ctx.memory(|m| m.has_focus(focus_id));
             let commands = ctx.input(|input| commands_from_events(&input.events, focused));
             if self.apply_virtual_commands(ctx, &commands) {
                 self.mark_dirty();
@@ -1793,6 +1795,22 @@ impl eframe::App for LocalPasteApp {
                         ui.set_min_width(wrap_width);
                         ui.set_min_height(total_height.max(editor_height));
                         let content_origin = ui.min_rect().min;
+                        let content_rect = egui::Rect::from_min_max(
+                            content_origin,
+                            egui::pos2(
+                                content_origin.x + wrap_width,
+                                content_origin.y + total_height.max(editor_height),
+                            ),
+                        );
+                        let background_response =
+                            ui.interact(content_rect, editor_id, egui::Sense::click());
+                        if background_response.clicked() {
+                            ui.memory_mut(|m| m.request_focus(editor_id));
+                            focused = true;
+                            self.virtual_editor_state.has_focus = true;
+                        } else if background_response.lost_focus() {
+                            self.virtual_editor_state.has_focus = false;
+                        }
                         let visible = self.virtual_layout.visible_range(
                             viewport.min.y,
                             viewport.height(),
