@@ -181,6 +181,15 @@ Stop-ServerGracefully -ProcessId $serverPid
 
 ```powershell
 $env:DB_PATH = $TestDb
+# Read-only virtual preview (baseline)
+# $env:LOCALPASTE_VIRTUAL_PREVIEW = "1"
+
+# Editable rope-backed virtual editor
+$env:LOCALPASTE_VIRTUAL_EDITOR = "1"
+
+# Optional frame metrics log (avg FPS + p95 ms every ~2s)
+# $env:LOCALPASTE_EDITOR_PERF_LOG = "1"
+
 .\target\debug\localpaste-gui.exe
 ```
 
@@ -204,7 +213,7 @@ $env:DB_PATH = $TestDb
 4. **Scroll performance**
    - Open `perf-scroll-5k-lines`.
    - Rapidly scroll up/down.
-   - Expect: no hitching when redraws happen.
+   - Expect: no hitching when redraws happen; sustained smoothness target is >=45 FPS in release runs.
 
 5. **Wrap/reflow**
    - Resize the window width several times with a highlighted paste open.
@@ -218,6 +227,10 @@ $env:DB_PATH = $TestDb
 7. **Shortcut sanity**
    - `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+V` (with no focus).
    - Expect: behavior unchanged, no noticeable lag.
+
+8. **Virtual editor parity (when `LOCALPASTE_VIRTUAL_EDITOR=1`)**
+   - Verify `Ctrl/Cmd+A/C/X/V`, `Ctrl/Cmd+Z/Y`, Home/End, PageUp/PageDown, shift-selection.
+   - Verify IME composition (`Enabled` -> `Preedit` -> `Commit`) does not lose caret/selection state.
 
 ## 4) Cleanup
 

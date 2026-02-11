@@ -15,8 +15,14 @@
 
 ## Virtualized Editor
 
-- Detailed plan in [virtual-editor-plan.md](virtual-editor-plan.md); current focus is chunked highlighting + per-line layout cache before tackling full viewport editing.
-- Legacy highlight recompute is debounced (75ms) and reuses prior galley; profile flag logs run durations.
+- Detailed plan in [virtual-editor-plan.md](virtual-editor-plan.md).
+- `LOCALPASTE_VIRTUAL_PREVIEW=1` keeps the read-only viewport renderer available for diagnostics.
+- `LOCALPASTE_VIRTUAL_EDITOR=1` enables the editable virtual editor:
+  - rope-backed text buffer
+  - virtualized variable-height rendering (`show_viewport`)
+  - operation-based undo/redo
+  - IME composition event handling
+  - command reducer for keyboard navigation/selection/edit operations
 
 ## Rewrite Highlighting
 
@@ -26,6 +32,7 @@
 - Highlighting caches per-line syntect parse/highlight state to reuse unchanged lines after edits (both UI and worker).
 - For large buffers, built-in egui double-click selection is disabled to avoid O(n^2) word boundary scans; the editor applies a local word-range selection instead.
 - Language hint is derived from paste language metadata; missing metadata is shown as `(auto)` in the list/header.
+- Virtual editor uses the same staged highlight flow; render cache keys include highlight epoch so stale galleys are not reused after highlight updates.
 
 ## Edit Locks
 

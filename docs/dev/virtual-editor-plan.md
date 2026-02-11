@@ -2,7 +2,12 @@
 
 This document outlines the planned work for a virtualized editor that would replace the current `TextEdit` widget.
 
-**Note:** The rewrite currently uses `egui_extras::syntax_highlighting` with a large‑paste fallback. The items below are future work (likely starting from the legacy/editor performance path) and are not yet implemented in the rewrite.
+**Note:** The rewrite now ships three editor paths:
+- `TextEdit` fallback (default editable path)
+- `LOCALPASTE_VIRTUAL_PREVIEW=1` read-only viewport renderer
+- `LOCALPASTE_VIRTUAL_EDITOR=1` editable rope-backed virtual editor
+
+The virtual editor path is still feature-gated while parity/perf validation completes.
 
 ---
 
@@ -64,6 +69,18 @@ Suggestion:
 - Store per-line syntax state to resume highlighting without reprocessing from the start.
 - Track viewport/cursor state in a new `VirtualEditorState` (scroll offset, row height, cached IME data).
 
+## Current Architecture (2026-02-11)
+
+- `EditorBuffer` is now rope-backed internally (with a `String` mirror for `TextEdit` compatibility).
+- `app/virtual_editor/` contains:
+  - `buffer.rs`: rope buffer + char/line conversions + edit deltas
+  - `state.rs`: cursor/selection/focus/IME state
+  - `history.rs`: bounded undo/redo with typing coalescing
+  - `layout.rs`: wrap metrics + prefix-height viewport range lookup
+  - `input.rs`: egui event -> editor command reducer
+- Editable virtual rendering uses `ScrollArea::show_viewport` and variable-height line layout.
+- Highlight worker/staged apply flow is shared across `TextEdit` and virtual editor modes.
+
 ## Staged Milestones
 
 1. **Highlight Cache Improvements (Short-term)**
@@ -102,3 +119,11 @@ Suggestion:
 
 - Chunked highlight caching plus chunk galley reuse now power the existing TextEdit workflow, delivering Milestones 1 & 2.
 - Set `LOCALPASTE_VIRTUAL_PREVIEW=1` to render a read-only chunk-virtualized preview that exercises the new caches before replacing the editable widget.
+- `LOCALPASTE_VIRTUAL_EDITOR=1` enables an editable virtual path with:
+  - rope-backed buffer edits
+  - keyboard navigation and selection commands
+  - clipboard copy/cut/paste
+  - undo/redo operation stack
+  - IME event handling (`Enabled`/`Preedit`/`Commit`/`Disabled`)
+  - soft-wrap-aware variable-height viewport rendering
+- Remaining gate is runtime/manual parity verification and performance-gate sign-off before default flip.

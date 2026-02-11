@@ -66,6 +66,7 @@ Decision key:
 ## Phase 4: Editor + Autosave
 
 - [x] Editable multiline editor
+- [~] Editable virtual rope editor behind `LOCALPASTE_VIRTUAL_EDITOR` (runtime parity/perf sign-off pending)
 - [x] Dirty state tracking + save indicator
 - [x] Autosave debounce (UI non-blocking) [Replace]
 - [ ] Manual save (Ctrl/Cmd+S)
