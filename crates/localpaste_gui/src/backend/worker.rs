@@ -316,11 +316,17 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         name,
                         parent_id,
                     } => {
-                        let normalized_parent = parent_id.and_then(|pid| match pid.trim() {
-                            "" => None,
-                            trimmed => Some(trimmed.to_string()),
-                        });
-                        if normalized_parent.as_deref() == Some(id.as_str()) {
+                        // Preserve API semantics:
+                        // - `None` => leave parent unchanged
+                        // - `Some("")` => clear parent (top-level)
+                        // - `Some("id")` => set explicit parent
+                        let parent_update = parent_id.map(|pid| pid.trim().to_string());
+                        let normalized_parent =
+                            parent_update.as_ref().and_then(|pid| match pid.trim() {
+                                "" => None,
+                                trimmed => Some(trimmed),
+                            });
+                        if normalized_parent == Some(id.as_str()) {
                             let _ = evt_tx.send(CoreEvent::Error {
                                 message: "Update folder failed: folder cannot be its own parent"
                                     .to_string(),
@@ -328,7 +334,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             continue;
                         }
 
-                        if let Some(parent_id) = normalized_parent.as_deref() {
+                        if let Some(parent_id) = normalized_parent {
                             let folders = match db.folders.list() {
                                 Ok(folders) => folders,
                                 Err(err) => {
@@ -357,8 +363,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                         }
 
-                        let persisted_parent = Some(normalized_parent.clone().unwrap_or_default());
-                        match db.folders.update(&id, name, persisted_parent) {
+                        match db.folders.update(&id, name, parent_update) {
                             Ok(Some(folder)) => {
                                 let _ = evt_tx.send(CoreEvent::FolderSaved { folder });
                             }

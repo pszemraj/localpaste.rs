@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn backend_update_folder_can_clear_parent_to_top_level() {
+    fn backend_update_folder_preserves_parent_unless_clear_is_explicit() {
         let TestDb { _dir: _guard, db } = setup_db();
         let backend = spawn_backend(db);
 
@@ -599,10 +599,28 @@ mod tests {
             .cmd_tx
             .send(CoreCmd::UpdateFolder {
                 id: child.id.clone(),
-                name: child.name.clone(),
+                name: "child-renamed".to_string(),
                 parent_id: None,
             })
-            .expect("send clear parent");
+            .expect("send rename without re-parenting");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => {
+                assert_eq!(folder.id, child.id);
+                assert_eq!(folder.name, "child-renamed");
+                assert_eq!(folder.parent_id.as_deref(), Some(root.id.as_str()));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdateFolder {
+                id: child.id.clone(),
+                name: "child-renamed".to_string(),
+                parent_id: Some(String::new()),
+            })
+            .expect("send explicit clear parent");
 
         match recv_event(&backend.evt_rx) {
             CoreEvent::FolderSaved { folder } => {

@@ -128,6 +128,26 @@ fn paste_id_and_name(paste: &Value) -> Option<(&str, &str)> {
     Some((id, name))
 }
 
+fn format_list_output(pastes: &[Value], json: bool) -> Result<String, String> {
+    if json {
+        return serde_json::to_string_pretty(pastes)
+            .map_err(|err| format!("response encoding error: {}", err));
+    }
+
+    let mut rows = Vec::with_capacity(pastes.len());
+    for (index, p) in pastes.iter().enumerate() {
+        let Some((id, name)) = paste_id_and_name(p) else {
+            return Err(format!(
+                "response item {} missing 'id' or 'name' field",
+                index
+            ));
+        };
+        rows.push(format!("{:<24} {:<30}", id, name));
+    }
+
+    Ok(rows.join("\n"))
+}
+
 fn normalize_server(server: String) -> String {
     if let Ok(mut url) = reqwest::Url::parse(&server) {
         let should_normalize_localhost =
@@ -235,15 +255,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let parse_elapsed = parse_start.elapsed();
 
             log_timing_parts(timing, "list", request_elapsed, Some(parse_elapsed));
-            for (index, p) in pastes.iter().enumerate() {
-                let Some((id, name)) = paste_id_and_name(p) else {
-                    eprintln!(
-                        "List failed: response item {} missing 'id' or 'name' field",
-                        index
-                    );
+            let output = match format_list_output(&pastes, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("List failed: {}", message);
                     std::process::exit(1);
-                };
-                println!("{:<24} {:<30}", id, name);
+                }
+            };
+            if !output.is_empty() {
+                println!("{}", output);
             }
         }
         Commands::Search { query } => {
@@ -290,7 +310,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{error_message_for_response, normalize_server, paste_id_and_name};
+    use super::{
+        error_message_for_response, format_list_output, normalize_server, paste_id_and_name,
+    };
 
     #[test]
     fn normalize_server_rewrites_http_localhost() {
@@ -341,5 +363,18 @@ mod tests {
         });
 
         assert_eq!(paste_id_and_name(&paste), None);
+    }
+
+    #[test]
+    fn list_output_honors_json_mode() {
+        let pastes = vec![serde_json::json!({
+            "id": "abc123",
+            "name": "demo"
+        })];
+        let rendered = format_list_output(&pastes, true).expect("json output should render");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).expect("rendered output should be valid json");
+        assert_eq!(parsed[0]["id"], "abc123");
+        assert_eq!(parsed[0]["name"], "demo");
     }
 }

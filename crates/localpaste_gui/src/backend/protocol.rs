@@ -46,6 +46,7 @@ pub enum CoreCmd {
     UpdateFolder {
         id: String,
         name: String,
+        /// `None` keeps current parent, `Some("")` clears parent, `Some(id)` re-parents.
         parent_id: Option<String>,
     },
     /// Delete a folder tree and migrate contained pastes to unfiled.
