@@ -78,6 +78,9 @@ impl PasteDb {
                 }
                 if update.language.is_some() {
                     paste.language = update.language.clone();
+                } else if update.language_is_manual == Some(false) {
+                    // Switching back to auto language mode clears any manual override.
+                    paste.language = None;
                 }
                 if let Some(is_manual) = update.language_is_manual {
                     paste.language_is_manual = is_manual;

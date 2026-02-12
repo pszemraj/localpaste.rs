@@ -65,6 +65,30 @@ mod db_tests {
     }
 
     #[test]
+    fn test_manual_language_can_be_cleared_when_switching_to_auto() {
+        let (db, _temp) = setup_test_db();
+
+        let mut paste = Paste::new("print('hello')".to_string(), "script".to_string());
+        paste.language = Some("python".to_string());
+        paste.language_is_manual = true;
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).unwrap();
+
+        let to_auto = UpdatePasteRequest {
+            content: None,
+            name: None,
+            language: None,
+            language_is_manual: Some(false),
+            folder_id: None,
+            tags: None,
+        };
+        let updated = db.pastes.update(&paste_id, to_auto).unwrap().unwrap();
+
+        assert!(!updated.language_is_manual);
+        assert!(updated.language.is_none());
+    }
+
+    #[test]
     fn test_paste_delete() {
         let (db, _temp) = setup_test_db();
 
