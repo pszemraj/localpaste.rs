@@ -232,7 +232,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         }
                     }
                     CoreCmd::DeletePaste { id } => {
-                        let existing = match db.pastes.get(&id) {
+                        let _existing = match db.pastes.get(&id) {
                             Ok(Some(paste)) => paste,
                             Ok(None) => {
                                 let _ = evt_tx.send(CoreEvent::PasteMissing { id });
@@ -247,11 +247,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                         };
 
-                        let deleted = if let Some(ref folder_id) = existing.folder_id {
-                            TransactionOps::delete_paste_with_folder(&db, &id, folder_id)
-                        } else {
-                            db.pastes.delete(&id)
-                        };
+                        let deleted = TransactionOps::delete_paste_with_folder(&db, &id);
 
                         match deleted {
                             Ok(true) => {

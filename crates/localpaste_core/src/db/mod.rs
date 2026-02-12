@@ -98,30 +98,28 @@ impl TransactionOps {
     /// # Arguments
     /// - `db`: Database handle.
     /// - `paste_id`: Paste identifier to delete.
-    /// - `folder_id`: Folder containing the paste.
     ///
     /// # Returns
     /// `Ok(true)` if a paste was deleted, `Ok(false)` if not found.
     ///
     /// # Errors
     /// Propagates storage errors from the paste tree.
-    pub fn delete_paste_with_folder(
-        db: &Database,
-        paste_id: &str,
-        folder_id: &str,
-    ) -> Result<bool, AppError> {
-        // Delete paste first
-        let deleted = db.pastes.delete(paste_id)?;
+    pub fn delete_paste_with_folder(db: &Database, paste_id: &str) -> Result<bool, AppError> {
+        let deleted = db.pastes.delete_and_return(paste_id)?;
 
-        if deleted {
-            // Update folder count - if this fails, log but continue
-            // (paste is already deleted, better to have incorrect count than fail)
-            if let Err(e) = db.folders.update_count(folder_id, -1) {
-                tracing::error!("Failed to update folder count after paste deletion: {}", e);
+        if let Some(paste) = deleted {
+            if let Some(folder_id) = paste.folder_id.as_deref() {
+                // Update folder count - if this fails, log but continue
+                // (paste is already deleted, better to have incorrect count than fail)
+                if let Err(e) = db.folders.update_count(folder_id, -1) {
+                    tracing::error!("Failed to update folder count after paste deletion: {}", e);
+                }
             }
-        }
 
-        Ok(deleted)
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Atomically move a paste between folders

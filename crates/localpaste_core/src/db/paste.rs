@@ -116,12 +116,26 @@ impl PasteDb {
     /// Delete a paste by id.
     ///
     /// # Returns
+    /// Deleted paste if it existed.
+    ///
+    /// # Errors
+    /// Returns an error if deletion fails or the deleted value cannot be decoded.
+    pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
+        match self.tree.remove(id.as_bytes())? {
+            Some(value) => Ok(Some(deserialize_paste(&value)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Delete a paste by id.
+    ///
+    /// # Returns
     /// `true` if a paste was deleted.
     ///
     /// # Errors
     /// Returns an error if deletion fails.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
-        Ok(self.tree.remove(id.as_bytes())?.is_some())
+        Ok(self.delete_and_return(id)?.is_some())
     }
 
     /// List pastes with an optional folder filter.

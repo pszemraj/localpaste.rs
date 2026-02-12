@@ -246,4 +246,57 @@ mod db_tests {
             "new folder count should rollback when paste update returns None"
         );
     }
+
+    #[test]
+    fn test_delete_uses_folder_from_deleted_record_not_stale_context() {
+        let (db, _temp) = setup_test_db();
+
+        let old_folder = Folder::new("old-folder".to_string());
+        let old_folder_id = old_folder.id.clone();
+        db.folders.create(&old_folder).unwrap();
+
+        let new_folder = Folder::new("new-folder".to_string());
+        let new_folder_id = new_folder.id.clone();
+        db.folders.create(&new_folder).unwrap();
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(old_folder_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &old_folder_id).unwrap();
+
+        let stale_folder_id = paste.folder_id.clone().unwrap();
+        assert_eq!(stale_folder_id, old_folder_id);
+
+        let move_req = UpdatePasteRequest {
+            content: None,
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: Some(new_folder_id.clone()),
+            tags: None,
+        };
+        TransactionOps::move_paste_between_folders(
+            &db,
+            &paste_id,
+            Some(old_folder_id.as_str()),
+            Some(new_folder_id.as_str()),
+            move_req,
+        )
+        .unwrap()
+        .expect("paste should exist when moving");
+
+        let deleted = TransactionOps::delete_paste_with_folder(&db, &paste_id).unwrap();
+        assert!(deleted, "delete should remove existing paste");
+
+        let old_after = db.folders.get(&old_folder_id).unwrap().unwrap();
+        let new_after = db.folders.get(&new_folder_id).unwrap().unwrap();
+        assert_eq!(
+            old_after.paste_count, 0,
+            "stale folder should not be decremented twice"
+        );
+        assert_eq!(
+            new_after.paste_count, 0,
+            "current folder should be decremented on delete"
+        );
+    }
 }

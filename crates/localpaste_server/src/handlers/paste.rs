@@ -213,17 +213,14 @@ pub async fn delete_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
+    let _paste = state.db.pastes.get(&id)?.ok_or(AppError::NotFound)?;
     if state.locks.is_locked(&id) {
         return Err(AppError::Locked("Paste is currently open for editing.".to_string()).into());
     }
 
-    // Use transaction-like operation for atomic folder count update
-    let deleted = if let Some(ref folder_id) = paste.folder_id {
-        crate::db::TransactionOps::delete_paste_with_folder(&state.db, &id, folder_id)?
-    } else {
-        state.db.pastes.delete(&id)?
-    };
+    // Use transaction-like operation for atomic folder count update.
+    // The helper derives folder ownership from the deleted record to avoid stale-folder races.
+    let deleted = crate::db::TransactionOps::delete_paste_with_folder(&state.db, &id)?;
 
     if deleted {
         Ok(Json(serde_json::json!({ "success": true })))
