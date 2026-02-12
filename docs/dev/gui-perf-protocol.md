@@ -261,7 +261,8 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
    - Expected:
      - copy/cut always transfers text to system clipboard;
      - cut removes selected text from buffer;
-     - triple-click consistently expands to full physical line selection.
+     - triple-click consistently expands to full physical line selection;
+     - with `LOCALPASTE_EDITOR_INPUT_TRACE=1`, `virtual input frame` logs show `copied=true` for copy and `copied=true cut=true` for cut frames.
 
 10. **Highlight Recovery Repro (required)**
    - Keep `perf-scroll-5k-lines` selected.
@@ -269,7 +270,8 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
    - Expected:
      - existing highlight remains visible while recompute is pending;
      - no full-buffer fallback to plain text after initial highlight exists;
-     - trace logs (`LOCALPASTE_HIGHLIGHT_TRACE=1`) show deterministic request/queue/apply flow.
+     - trace logs (`LOCALPASTE_HIGHLIGHT_TRACE=1`) show deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) flow with no stale render application;
+     - post-warm `worker_done` durations on this scenario stay below `2000 ms`.
 
 ## 4) Cleanup
 

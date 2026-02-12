@@ -79,13 +79,15 @@ Decision key:
 
 ### Virtual Editor Reliability Gates (Required Before Default Switch)
 
-- [~] Clipboard reliability (`Ctrl/Cmd+C/X/V`) with external paste verification
-- [~] Triple-click whole-line selection behavior (repeatable, non-intermittent)
-- [~] Selection visuals: low-opacity tint + left rail for multi-line ranges
-- [~] Highlight recovery: keep stale highlight while async refresh is pending
-- [ ] Trace protocol documented and validated with:
+- [x] Clipboard reliability (`Ctrl/Cmd+C/X/V`) with external paste verification
+- [x] Triple-click whole-line selection behavior (repeatable, non-intermittent)
+- [x] Selection visuals: style-driven low-opacity fill from `ui.visuals().selection` (no custom multi-line left rail)
+- [x] Highlight recovery: keep current render visible while async refresh is pending
+- [x] Trace protocol documented and validated with:
   - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
   - `LOCALPASTE_HIGHLIGHT_TRACE=1`
+  - Input trace expectation: `virtual input frame` logs show deterministic `immediate/deferred` routing and `copied/cut/pasted` flags aligned with executed commands.
+  - Highlight trace expectation: `queue -> worker_done -> apply` (or `apply_now/apply_idle`) without stale render application; `perf-scroll-5k-lines` post-warm `worker_done` spikes should stay below 2000ms.
 
 Recommended validation command (PowerShell):
 
