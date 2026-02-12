@@ -309,10 +309,16 @@ impl LocalPasteApp {
                             }
                         }
 
-                        let pointer_pos = ui.input(|input| input.pointer.interact_pos());
+                        let pointer_pos = ui.input(|input| {
+                            input
+                                .pointer
+                                .interact_pos()
+                                .or_else(|| input.pointer.latest_pos())
+                        });
                         let pointer_down = ui.input(|input| input.pointer.primary_down());
                         if pointer_down {
                             if let Some(pointer_pos) = pointer_pos {
+                                let viewport_rect = ui.clip_rect();
                                 let target_row = rows
                                     .iter()
                                     .find(|row| {
@@ -343,16 +349,14 @@ impl LocalPasteApp {
                                     };
                                     self.virtual_selection.update_drag(vcursor);
                                 }
-                                if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
-                                    let scroll_delta = drag_autoscroll_delta(
-                                        pointer_pos.y,
-                                        first.rect.min.y,
-                                        last.rect.max.y,
-                                        row_height,
-                                    );
-                                    if scroll_delta != 0.0 {
-                                        ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
-                                    }
+                                let scroll_delta = drag_autoscroll_delta(
+                                    pointer_pos.y,
+                                    viewport_rect.min.y,
+                                    viewport_rect.max.y,
+                                    row_height,
+                                );
+                                if scroll_delta != 0.0 {
+                                    ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
                                 }
                             }
                         } else {
@@ -609,11 +613,17 @@ impl LocalPasteApp {
                             }
                         }
 
-                        let pointer_pos = ui.input(|input| input.pointer.interact_pos());
+                        let pointer_pos = ui.input(|input| {
+                            input
+                                .pointer
+                                .interact_pos()
+                                .or_else(|| input.pointer.latest_pos())
+                        });
                         let pointer_down = ui.input(|input| input.pointer.primary_down());
                         if pointer_down && self.virtual_drag_active {
                             editor_interacted = true;
                             if let Some(pointer_pos) = pointer_pos {
+                                let viewport_rect = ui.clip_rect();
                                 let target_row = rows
                                     .iter()
                                     .find(|row| {
@@ -647,16 +657,14 @@ impl LocalPasteApp {
                                         true,
                                     );
                                 }
-                                if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
-                                    let scroll_delta = drag_autoscroll_delta(
-                                        pointer_pos.y,
-                                        first.rect.min.y,
-                                        last.rect.max.y,
-                                        self.virtual_line_height,
-                                    );
-                                    if scroll_delta != 0.0 {
-                                        ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
-                                    }
+                                let scroll_delta = drag_autoscroll_delta(
+                                    pointer_pos.y,
+                                    viewport_rect.min.y,
+                                    viewport_rect.max.y,
+                                    self.virtual_line_height,
+                                );
+                                if scroll_delta != 0.0 {
+                                    ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
                                 }
                             }
                         } else if !pointer_down {
