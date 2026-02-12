@@ -24,61 +24,65 @@ impl LocalPasteApp {
                 let mut export_requested = false;
                 let mut open_properties = false;
                 let mut delete_requested = false;
-                ui.horizontal_wrapped(|ui| {
-                    let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
-                    let name_response = ui.add(
-                        egui::TextEdit::singleline(&mut self.edit_name)
-                            .desired_width(title_width)
-                            .hint_text("Untitled paste"),
-                    );
-                    if name_response.changed() {
-                        self.metadata_dirty = true;
-                    }
-
-                    if ui.small_button(format!("[{}]", lang_label)).clicked() {
-                        pending_language_filter =
-                            Some(self.edit_language.clone().and_then(|value| {
-                                let trimmed = value.trim();
-                                if trimmed.is_empty() {
-                                    None
-                                } else {
-                                    Some(trimmed.to_string())
-                                }
-                            }));
-                    }
-                    for tag in &visible_tags {
-                        if ui.small_button(format!("#{}", tag)).clicked() {
-                            pending_tag_search = Some(tag.clone());
+                ui.scope(|ui| {
+                    apply_compact_meta_row_style(ui);
+                    ui.horizontal_wrapped(|ui| {
+                        let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
+                        let name_response = ui.add(
+                            egui::TextEdit::singleline(&mut self.edit_name)
+                                .font(egui::TextStyle::Button)
+                                .desired_width(title_width)
+                                .hint_text("Untitled paste"),
+                        );
+                        if name_response.changed() {
+                            self.metadata_dirty = true;
                         }
-                    }
-                    ui.separator();
-                    if ui
-                        .add_enabled(self.metadata_dirty, egui::Button::new("Apply"))
-                        .clicked()
-                    {
-                        apply_metadata = true;
-                    }
-                    if ui.small_button("Save").clicked() {
-                        save_requested = true;
-                    }
-                    if ui.small_button("Copy").clicked() {
-                        copy_requested = true;
-                    }
-                    if ui.small_button("Copy Link").clicked() {
-                        copy_link_requested = true;
-                    }
-                    if ui.small_button("Duplicate").clicked() {
-                        duplicate_requested = true;
-                    }
-                    if ui.small_button("Export").clicked() {
-                        export_requested = true;
-                    }
-                    if ui.small_button("Properties").clicked() {
-                        open_properties = true;
-                    }
-                    if ui.small_button("Delete").clicked() {
-                        delete_requested = true;
-                    }
+
+                        if ui.small_button(format!("[{}]", lang_label)).clicked() {
+                            pending_language_filter =
+                                Some(self.edit_language.clone().and_then(|value| {
+                                    let trimmed = value.trim();
+                                    if trimmed.is_empty() {
+                                        None
+                                    } else {
+                                        Some(trimmed.to_string())
+                                    }
+                                }));
+                        }
+                        for tag in &visible_tags {
+                            if ui.small_button(format!("#{}", tag)).clicked() {
+                                pending_tag_search = Some(tag.clone());
+                            }
+                        }
+                        ui.separator();
+                        if ui
+                            .add_enabled(self.metadata_dirty, egui::Button::new("Apply"))
+                            .clicked()
+                        {
+                            apply_metadata = true;
+                        }
+                        if ui.small_button("Save").clicked() {
+                            save_requested = true;
+                        }
+                        if ui.small_button("Copy").clicked() {
+                            copy_requested = true;
+                        }
+                        if ui.small_button("Copy Link").clicked() {
+                            copy_link_requested = true;
+                        }
+                        if ui.small_button("Duplicate").clicked() {
+                            duplicate_requested = true;
+                        }
+                        if ui.small_button("Export").clicked() {
+                            export_requested = true;
+                        }
+                        if ui.small_button("Properties").clicked() {
+                            open_properties = true;
+                        }
+                        if ui.small_button("Delete").clicked() {
+                            delete_requested = true;
+                        }
+                    });
                 });
                 if let Some(language_filter) = pending_language_filter {
                     self.set_active_language_filter(language_filter);
@@ -930,4 +934,32 @@ fn compact_header_tags(input: &str) -> Vec<String> {
         }
     }
     tags
+}
+
+fn apply_compact_meta_row_style(ui: &mut egui::Ui) {
+    let mut compact_style = (**ui.style()).clone();
+    if let Some(body_font) = compact_style
+        .text_styles
+        .get(&egui::TextStyle::Body)
+        .cloned()
+    {
+        compact_style.text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::new((body_font.size - 2.0).max(10.0), body_font.family),
+        );
+    }
+    if let Some(button_font) = compact_style
+        .text_styles
+        .get(&egui::TextStyle::Button)
+        .cloned()
+    {
+        compact_style.text_styles.insert(
+            egui::TextStyle::Button,
+            egui::FontId::new((button_font.size - 2.0).max(10.0), button_font.family),
+        );
+    }
+    compact_style.spacing.button_padding = egui::vec2(8.0, 4.0);
+    compact_style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    compact_style.spacing.interact_size.y = 28.0;
+    ui.set_style(compact_style);
 }

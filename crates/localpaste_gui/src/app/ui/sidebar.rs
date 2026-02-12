@@ -115,12 +115,77 @@ impl LocalPasteApp {
             (SidebarCollection::Logs, "Logs"),
             (SidebarCollection::Links, "Links"),
         ];
+        const FILTERS_PER_ROW: usize = 4;
+        const MAX_FILTER_ROWS: usize = 2;
+        let max_visible = FILTERS_PER_ROW * MAX_FILTER_ROWS;
+        let split_at = options.len().min(max_visible);
+        let (visible, hidden) = options.split_at(split_at);
         let mut pending_collection: Option<SidebarCollection> = None;
-        ui.horizontal_wrapped(|ui| {
-            for (collection, label) in options {
-                let selected = self.active_collection == collection;
-                if ui.selectable_label(selected, label).clicked() {
-                    pending_collection = Some(collection.clone());
+        ui.scope(|ui| {
+            let mut compact_style = (**ui.style()).clone();
+            if let Some(button_font) = compact_style
+                .text_styles
+                .get(&egui::TextStyle::Button)
+                .cloned()
+            {
+                compact_style.text_styles.insert(
+                    egui::TextStyle::Button,
+                    egui::FontId::new((button_font.size - 1.5).max(10.0), button_font.family),
+                );
+            }
+            if let Some(body_font) = compact_style
+                .text_styles
+                .get(&egui::TextStyle::Body)
+                .cloned()
+            {
+                compact_style.text_styles.insert(
+                    egui::TextStyle::Body,
+                    egui::FontId::new((body_font.size - 1.5).max(10.0), body_font.family),
+                );
+            }
+            compact_style.spacing.button_padding = egui::vec2(8.0, 4.0);
+            compact_style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+            compact_style.spacing.interact_size.y = 26.0;
+            ui.set_style(compact_style);
+
+            for row in visible.chunks(FILTERS_PER_ROW) {
+                ui.horizontal(|ui| {
+                    for (collection, label) in row {
+                        let selected = self.active_collection == *collection;
+                        if ui
+                            .selectable_label(selected, RichText::new(*label).small())
+                            .clicked()
+                        {
+                            pending_collection = Some(collection.clone());
+                        }
+                    }
+                });
+            }
+
+            if !hidden.is_empty() {
+                let hidden_active = hidden
+                    .iter()
+                    .find(|(collection, _)| self.active_collection == *collection);
+                ui.horizontal(|ui| {
+                    ui.menu_button(RichText::new("...").small(), |ui| {
+                        for (collection, label) in hidden {
+                            let selected = self.active_collection == *collection;
+                            if ui.selectable_label(selected, *label).clicked() {
+                                pending_collection = Some(collection.clone());
+                                ui.close();
+                            }
+                        }
+                    });
+                    if let Some((_, label)) = hidden_active {
+                        ui.label(RichText::new(*label).small().color(COLOR_TEXT_SECONDARY));
+                    }
+                });
+                if hidden_active.is_some() {
+                    ui.label(
+                        RichText::new("Active filter is in ...")
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
+                    );
                 }
             }
         });
