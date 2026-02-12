@@ -1,6 +1,11 @@
 # Virtualized Editor Plan
 
-This document tracks rollout of the rewrite editor from full-buffer `TextEdit` rendering to a rope-backed, viewport-virtualized editor.
+This document tracks virtual-editor rollout status and implementation notes.
+
+Canonical docs for validation status:
+
+- release/perf gate procedure: [gui-perf-protocol.md](gui-perf-protocol.md)
+- overall rewrite/merge gate status: [parity-checklist.md](parity-checklist.md)
 
 ## Current Modes
 
@@ -64,7 +69,7 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
 
 These items are intentionally deferred to follow-up PRs so the rewrite work can keep moving.
 They are not blockers for keeping `VirtualEditor` as the default path.
-Current pre-merge focus remains the broader parity work tracked in `docs/dev/parity-checklist.md`.
+Current pre-merge focus remains the broader parity work tracked in [parity-checklist.md](parity-checklist.md).
 
 - Fix known highlight latency gap on newline bursts in `perf-scroll-5k-lines`:
   - symptom: repeated `Enter` in the middle can cause 5-10s plain fallback before highlight returns
@@ -75,16 +80,13 @@ Current pre-merge focus remains the broader parity work tracked in `docs/dev/par
   - selection parity (mouse drag, shift-selection, word navigation)
   - navigation parity (Home/End, PageUp/PageDown, Ctrl/Cmd+arrows)
   - undo/redo parity (`Ctrl/Cmd+Z/Y`, `Shift+Ctrl/Cmd+Z`)
-- Keep performance gate stable in release mode for the 5k-line scenario:
-  - average FPS `>= 45`
-  - p95 frame time `<= 25 ms`
-  - no visible hitching during rapid scroll + mid-document typing
+- Keep performance behavior within the release gate tracked in [gui-perf-protocol.md](gui-perf-protocol.md).
 - Preserve unfocused paste behavior as a hard non-regression:
   - when LocalPaste window is active but editor is unfocused, `Ctrl/Cmd+V` must create a new paste and must not mutate the current editor
 
 ## Follow-up Sequencing
 
-1. Finish the highest-priority parity items from `docs/dev/parity-checklist.md` (legacy-removal track).
-2. Keep running `docs/dev/gui-perf-protocol.md` for perf + interaction regression checks.
-3. Keep `TextEdit` kill-switch (`LOCALPASTE_VIRTUAL_EDITOR=0`) available until parity and perf remain stable in normal usage.
+1. Finish remaining high-priority items in [parity-checklist.md](parity-checklist.md).
+2. Keep running [gui-perf-protocol.md](gui-perf-protocol.md) for perf and interaction regression checks.
+3. Keep `TextEdit` kill-switch (`LOCALPASTE_VIRTUAL_EDITOR=0`) available until parity/perf are stable.
 4. Remove fallback after parity gate confidence is established.

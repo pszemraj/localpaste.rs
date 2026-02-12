@@ -1,398 +1,108 @@
-# Development Documentation
+# Development Guide
 
-## Project Structure
+This is the primary development workflow document.
+For topic-specific details, link to the canonical docs in `docs/README.md`.
+
+## Workspace Layout
 
 ```text
 localpaste.rs/
 |-- Cargo.toml
 |-- crates/
-|   |-- localpaste_core/        # Config, storage, models, naming, core errors
-|   |   `-- src/
-|   |       |-- config.rs
-|   |       |-- db/
-|   |       |-- error.rs
-|   |       |-- models/
-|   |       `-- naming/
-|   |-- localpaste_gui/         # New egui rewrite (Phase 2+)
-|   |   `-- src/
-|   |       |-- app.rs
-|   |       |-- app/
-|   |       |   |-- editor.rs
-|   |       |   |-- highlight.rs
-|   |       |   |-- util.rs
-|   |       |   |-- virtual_view.rs
-|   |       |   `-- virtual_editor/
-|   |       `-- backend/
-|   |-- localpaste_server/      # Axum API server (used by headless + GUI)
-|   |   `-- src/
-|   |       |-- embedded.rs
-|   |       |-- handlers/
-|   |       |-- error.rs
-|   |       `-- locks.rs
-|   |-- localpaste_cli/         # Installs the lpaste CLI
-|   `-- localpaste_tools/       # Test-data generator (generate-test-data)
-|-- docs/                       # Project documentation
-|-- assets/                     # Screenshots / design references
-`-- target/                     # Build artifacts (git-ignored)
+|   |-- localpaste_core/    # config, db, models, naming, errors
+|   |-- localpaste_server/  # axum API + embedded server
+|   |-- localpaste_gui/     # native rewrite desktop app
+|   |-- localpaste_cli/     # lpaste binary
+|   `-- localpaste_tools/   # dataset generators / utilities
+|-- docs/
+|-- assets/
+`-- target/
 ```
 
+## Binary Map
 
-## Key Design Decisions
+- `localpaste-gui` - rewrite desktop app (`crates/localpaste_gui`)
+- `localpaste` - headless API server (`crates/localpaste_server`)
+- `lpaste` - CLI client (`crates/localpaste_cli`)
+- `generate-test-data` - synthetic dataset tool (`crates/localpaste_tools`)
 
-### Single Binary Distribution
-
-- No external dependencies at runtime
-- Desktop app embeds the API server in-process
-- Database is embedded (Sled)
-- Server binds to loopback unless `ALLOW_PUBLIC_ACCESS` is set
-
-### Database Choice
-
-- **Sled**: Embedded, ACID-compliant, fast
-- No external database server required
-- Data stored in `~/.cache/localpaste/db/`
-
-### Edit Locks
-
-- When a paste is open in the GUI, it is locked against API/CLI deletion.
-- Only the GUI instance editing the paste may delete it.
-
-### Frontend Architecture
-
-- **Rewrite (primary):** `crates/localpaste_gui` (egui/eframe app with backend worker)
-- Rewrite editor paths:
-  - default editable rope-backed viewport path
-  - `LOCALPASTE_VIRTUAL_PREVIEW=1` read-only viewport diagnostics path
-  - `LOCALPASTE_VIRTUAL_EDITOR=0` `TextEdit` fallback kill-switch
-- Syntax highlighting in rewrite uses async syntect rendering with staged apply
-- Folder management uses dialogs with cycle-safe parenting and delete-to-unfiled migration
-- Auto-save uses debouncing with manual save/export support
-- Incremental in-memory paste index keeps the sidebar responsive without requerying sled
-- Large pastes (above ~256KB) fall back to a plain renderer so highlight work stays bounded
-
-### GUI Shortcuts
-
-- `Ctrl/Cmd+N` New paste (focuses editor)
-- `Ctrl/Cmd+Delete` Delete selected paste
-- `Ctrl/Cmd+V` when no text input is focused creates a new paste from the clipboard and focuses the editor
-
-### Known Issues
-
-- Duplicate detection and pinning are post-merge follow-up items.
-
-### API Design
-
-RESTful endpoints:
-
-- `POST /api/paste` - Create paste
-- `GET /api/paste/:id` - Get paste
-- `PUT /api/paste/:id` - Update paste
-- `DELETE /api/paste/:id` - Delete paste
-- `GET /api/pastes` - List pastes
-- `GET /api/search?q=` - Search pastes
-- `POST /api/folder` - Create folder
-- `GET /api/folders` - List folders
-- `PUT /api/folder/:id` - Update folder (rename or re-parent; rejects cycles)
-- `DELETE /api/folder/:id` - Delete folder
-
-Folder operations enforce tree integrity: the API returns `400 Bad Request` if a move would introduce a cycle in the hierarchy.
-
-## Development Workflow
-
-### Building the Project
-
-The project contains multiple binaries:
-
-- `localpaste` - The web server (headless)
-- `lpaste` - CLI tool for interacting with the server
-- `localpaste-gui` - Native rewrite (primary desktop app)
-- `generate-test-data` - Synthetic dataset generator
+## Build Matrix
 
 ```bash
-# Build the primary GUI
+# GUI
 cargo build -p localpaste_gui --bin localpaste-gui --release
 
-# Build core library only
-cargo build -p localpaste_core
-
-# Build only the server
+# Server
 cargo build -p localpaste_server --bin localpaste --release
 
-# Build only the CLI
+# CLI
 cargo build -p localpaste_cli --bin lpaste --release
+
+# Tooling
+cargo build -p localpaste_tools --bin generate-test-data --release
 ```
 
-### Running Locally
+## Run Matrix
 
 ```bash
-# Run the desktop app (rewrite)
+# Rewrite GUI
 cargo run -p localpaste_gui --bin localpaste-gui
 
-# Run the desktop app with optional perf tools
-cargo run -p localpaste_gui --bin localpaste-gui --features="debug-tools,profile"
-
-# Run the server/API (JSON endpoints)
+# Server
 cargo run -p localpaste_server --bin localpaste --release
 
-# Run with auto-reload (server)
-cargo install cargo-watch
-cargo watch -x "run -p localpaste_server --bin localpaste"
+# CLI (built binary)
+./target/release/lpaste --help
+```
 
-# Run with debug logging
-RUST_LOG=debug cargo run -p localpaste_server --bin localpaste
+For editor-mode flags and tracing env vars, see [GUI notes](gui-notes.md).
+For repeatable GUI perf validation, see [GUI perf protocol](gui-perf-protocol.md).
 
-# Run core tests only
-cargo test -p localpaste_core
+## Validation Loop
 
-# Run rewrite tests only
-cargo test -p localpaste_gui
-
-# Run server tests (API integration)
-cargo test -p localpaste_server
-
-# Format code
+```bash
+# 1) format
 cargo fmt
 
-# Lint (all targets)
+# 2) lint
 cargo clippy --all-targets --all-features
-```
 
-### Install to PATH (cargo install --path)
-
-```bash
-# GUI launcher
-cargo install --path crates/localpaste_gui --bin localpaste-gui
-
-# CLI client
-cargo install --path crates/localpaste_cli --bin lpaste
-```
-
-### Building for Production
-
-```bash
-# Optimized server build
-cargo build -p localpaste_server --bin localpaste --release
-
-# Include the CLI binary
-cargo build -p localpaste_cli --bin lpaste --release
-
-# Include the desktop GUI
-cargo build -p localpaste_gui --bin localpaste-gui --release
-
-# Strip symbols for smaller binaries (build required first)
-strip target/release/localpaste
-strip target/release/lpaste
-strip target/release/localpaste-gui
-
-# Check binary sizes
-du -h target/release/localpaste target/release/lpaste target/release/localpaste-gui
-```
-
-### Using the CLI Tool
-
-```bash
-# Build before running
-cargo build -p localpaste_cli --bin lpaste --release
-
-# The CLI tool should be run from the compiled binary
-./target/release/lpaste --help
-
-# Examples
-echo "test" | ./target/release/lpaste new
-./target/release/lpaste list
-./target/release/lpaste get <paste-id>
-```
-
-### Adding New Features
-
-1. **Backend Changes**
-   - Add model in `crates/localpaste_core/src/models/`
-   - Add database operations in `crates/localpaste_core/src/db/`
-   - Add naming helpers in `crates/localpaste_core/src/naming/`
-   - Add handler in `crates/localpaste_server/src/handlers/`
-   - Register route in `crates/localpaste_server/src/lib.rs`
-
-2. **Frontend Changes**
-   - Rewrite: update `crates/localpaste_gui/` and run `cargo run -p localpaste_gui --bin localpaste-gui`
-   - Refresh screenshots in `assets/` if the UI changes
-
-3. **Database Migrations**
-   - Sled handles schema evolution automatically
-   - Add migration logic in `crates/localpaste_core/src/db/mod.rs` if needed
-
-## Code Style
-
-- Use `cargo fmt` before committing
-- Follow Rust naming conventions
-- Keep functions small and focused
-- Add doc comments for public APIs
-
-## Testing
-
-```bash
-# Run all tests
+# 3) tests
 cargo test
 
-# Run specific test
-cargo test test_name
-
-# Run with output
-cargo test -- --nocapture
-
-# Run benchmarks
-cargo bench
+# 4) runtime smoke (server + CLI CRUD)
+# start localpaste, run lpaste new/list/search/get/delete, then stop localpaste
 ```
 
-## Debugging
+Parity/release gate status is tracked in [parity-checklist.md](parity-checklist.md).
 
-### Enable Debug Logging
+## API Summary
 
-```bash
-RUST_LOG=debug cargo run -p localpaste_gui --bin localpaste-gui
-```
+- `POST /api/paste`
+- `GET /api/paste/:id`
+- `PUT /api/paste/:id`
+- `DELETE /api/paste/:id`
+- `GET /api/pastes`
+- `GET /api/search?q=`
+- `POST /api/folder`
+- `GET /api/folders`
+- `PUT /api/folder/:id`
+- `DELETE /api/folder/:id`
 
-### Database Inspection
+Folder updates reject cyclic parent relationships (`400 Bad Request`).
 
-```bash
-# View database files
-ls -la ~/.cache/localpaste/db/
+## Database Notes
 
-# Database size
-du -sh ~/.cache/localpaste/
+- Backend store: sled.
+- Default DB path: `~/.cache/localpaste/db`.
+- Use `DB_PATH` for isolated test runs.
 
-# List backups
-ls -la ~/.cache/localpaste/db.backup.*
+Lock recovery guidance (including what not to delete) lives in [docs/deployment.md](../deployment.md).
 
-# Check database integrity (requires running server)
-curl http://localhost:38411/api/health  # (if implemented)
-```
+## Related Docs
 
-### Database Management
-
-**Backup and Recovery:**
-
-```bash
-# Manual backup (server can be running)
-./target/release/localpaste --backup
-
-# Enable automatic backups on startup (default: false)
-AUTO_BACKUP=true ./target/release/localpaste
-
-# Default behavior - no auto-backup
-./target/release/localpaste
-
-# Restore from backup
-cp -r ~/.cache/localpaste/db.backup.TIMESTAMP ~/.cache/localpaste/db
-```
-
-**Clean Shutdown:**
-
-- Always use Ctrl+C to stop the server (triggers graceful shutdown)
-- This ensures database flush and lock cleanup
-- Avoid `kill -9` which prevents cleanup
-
-**Development Best Practices:**
-
-- Use `timeout` with caution - it can leave locks
-- Create backups before testing destructive operations
-- Use a separate DB_PATH for testing: `DB_PATH=/tmp/test-db cargo run -p localpaste_server --bin localpaste`
-
-### Common Issues
-
-#### Database Lock Error
-
-⚠️ **CRITICAL: Never delete the entire database directory to fix lock issues!**
-
-When you encounter: `Error: could not acquire lock on "/home/pszemraj/.cache/localpaste/db/db"`
-
-**Safe Recovery Steps:**
-
-1. Check if LocalPaste is actually running:
-
-   ```bash
-   ps aux | grep localpaste
-   ```
-
-2. If no process is running, the lock is stale. Use the built-in recovery:
-
-   ```bash
-   # Recommended: Use force-unlock (preserves data)
-   ./target/release/localpaste --force-unlock
-
-   # Or manually remove ONLY lock files (not the database!)
-   rm ~/.cache/localpaste/db/*.lock
-   ```
-
-3. **Always backup before manual intervention:**
-
-   ```bash
-   # Create backup first
-   ./target/release/localpaste --backup
-   # Or manually: cp -r ~/.cache/localpaste/db ~/.cache/localpaste/db.backup
-   ```
-
-**What NOT to do:**
-
-- ❌ `rm -rf ~/.cache/localpaste/db` - This deletes ALL your data!
-- ❌ `pkill -9 localpaste` during normal operation - Use Ctrl+C for graceful shutdown
-- ❌ Deleting the database directory - You'll lose all pastes permanently
-
-**Understanding Sled Locks:**
-
-- Sled creates internal lock files to prevent database corruption
-- These locks are different from PID files - they're part of the database
-- Force-killing processes (`kill -9`) can leave stale locks
-- The lock error is Sled protecting your data from corruption
-
-**Automatic Protection:**
-
-- LocalPaste can create automatic backups on startup when `AUTO_BACKUP=true` is set
-- Manual backups can be created with `./target/release/localpaste --backup`
-- Backups are stored as `~/.cache/localpaste/db.backup.TIMESTAMP`
-- To restore from backup: `cp -r ~/.cache/localpaste/db.backup.TIMESTAMP ~/.cache/localpaste/db`
-
-**Port Already in Use**
-
-- Check what's using port: `lsof -i :38411`
-- Change port (bash/zsh): `PORT=38411 cargo run -p localpaste_server --bin localpaste`
-- Change port (PowerShell):
-
-```powershell
-$env:PORT = "38411"
-# or
-$env:BIND = "127.0.0.1:38411"
-```
-
-## Performance Optimization
-
-- Release builds use `opt-level = "z"` for size
-- LTO enabled for better optimization
-- Single codegen unit for smaller binary
-- Gzip compression for HTTP responses
-- Embedded assets are compressed
-
-## Editor Performance Status (Rewrite)
-
-Done:
-
-- Rope-backed editor buffer landed for virtual editor path.
-- Async syntax highlighting worker + staged apply is in place.
-- Viewport-only rendering is implemented for virtual preview and virtual editor paths.
-- Per-line highlight state reuse is in place for UI-side and worker-side rendering.
-
-Pending before default switch:
-
-- Full manual parity pass in editable virtual mode.
-- Release perf gate sign-off (`>=45 FPS`, p95 `<=25 ms`) on the 5k-line scenario.
-
-## Security
-
-See [security.md](../security.md) for detailed security configuration and best practices.
-
-## Contributing
-
-1. Format code: `cargo fmt`
-2. Check lints: `cargo clippy`
-3. Run tests: `cargo test`
-4. Update documentation if needed
-5. Create descriptive commit messages
+- Security defaults and public exposure: [docs/security.md](../security.md)
+- Service management: [docs/deployment.md](../deployment.md)
+- Perf protocol: [gui-perf-protocol.md](gui-perf-protocol.md)
+- Virtual editor rollout plan: [virtual-editor-plan.md](virtual-editor-plan.md)
+- Rewrite parity checklist: [parity-checklist.md](parity-checklist.md)

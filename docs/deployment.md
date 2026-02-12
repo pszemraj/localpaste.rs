@@ -31,7 +31,7 @@ pkill -f localpaste && pkill -f "cargo run" && sleep 2
 # lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
 
-⚠️ **Important**: Avoid using `kill -9` as it prevents graceful shutdown and can leave database locks. See [dev/devlog.md](dev/devlog.md#database-lock-error) for recovery steps if locks occur.
+⚠️ **Important**: Avoid using `kill -9` as it prevents graceful shutdown and can leave database locks. See [dev/devlog.md](dev/devlog.md) for development lock-handling guidance.
 
 ## Linux (systemd)
 

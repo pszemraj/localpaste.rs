@@ -15,8 +15,6 @@ These canonical values are applied in the rewrite (`crates/localpaste_gui/src/ap
 | `COLOR_DANGER`         | `#F85149` | Destructive actions        |
 | `COLOR_BORDER`         | `#30363D` | Divider strokes            |
 
-These values are applied in `crates/localpaste_gui/src/app.rs`.
-
 ## Editor Font
 
 The native editor uses [the 0xProto font](https://github.com/0xType/0xProto) (Regular NL) under the SIL Open Font License ([release 2.502](https://github.com/0xType/0xProto/releases/tag/2.502))

@@ -33,10 +33,10 @@ cargo install --path crates/localpaste_gui --bin localpaste-gui
 
 Optional editor modes (rewrite GUI):
 
-- `LOCALPASTE_VIRTUAL_PREVIEW=1` -> read-only viewport-virtualized preview.
-- `LOCALPASTE_VIRTUAL_EDITOR=1` -> editable rope-backed viewport-virtualized editor.
-- `LOCALPASTE_VIRTUAL_EDITOR=1` takes precedence if both flags are set.
-- `LOCALPASTE_EDITOR_PERF_LOG=1` logs moving-average FPS and p95 frame time every ~2s.
+- `LOCALPASTE_VIRTUAL_PREVIEW=1` -> read-only viewport diagnostics.
+- `LOCALPASTE_VIRTUAL_EDITOR=0` -> `TextEdit` fallback kill-switch.
+
+For full mode/trace/perf flags, see [docs/dev/gui-notes.md](docs/dev/gui-notes.md) and [docs/dev/gui-perf-protocol.md](docs/dev/gui-perf-protocol.md).
 
 ### Server + CLI
 
@@ -71,7 +71,7 @@ For background services and OS-specific setup, see [docs/deployment.md](docs/dep
 
 ## Documentation
 
-- [docs/README.md](docs/README.md) - docs table of contents
+- [docs/README.md](docs/README.md) - docs table of contents + source-of-truth map
 - [docs/security.md](docs/security.md) - security defaults + public exposure notes
 - [docs/deployment.md](docs/deployment.md) - background service setup
 - [docs/dev](docs/dev) - dev notes and checklists

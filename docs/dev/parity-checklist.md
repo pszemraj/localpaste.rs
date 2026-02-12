@@ -92,21 +92,10 @@ Decision key:
 - [x] Trace protocol documented and validated with:
   - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
   - `LOCALPASTE_HIGHLIGHT_TRACE=1`
-  - Input trace expectation: `virtual input frame` logs show deterministic `immediate_focus/deferred_focus/deferred_copy` routing with pre/post focus booleans and `copied/cut/pasted` flags aligned with executed commands.
-  - Highlight trace expectation: `queue -> worker_done -> apply` (or `apply_now/apply_idle`) with stale staged renders dropped via `drop_stale_staged`; `perf-scroll-5k-lines` post-warm `worker_done` spikes should stay below 2000ms.
+  - Input trace expectation: deterministic routing with accurate `copied/cut/pasted` outcomes.
+  - Highlight trace expectation: deterministic staged highlight lifecycle with stale render drops.
 
-Recommended validation command (PowerShell):
-
-```powershell
-.\scratch\virtualizedgui-perf-run.ps1 `
-  -Profile Release `
-  -VirtualMode Editor `
-  -PerfLog `
-  -InputTrace `
-  -HighlightTrace `
-  -KeepDb `
-  -Port 38973
-```
+Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Phase 5: Search + Command Palette
 

@@ -1,6 +1,7 @@
 # Phase 0 Performance Baseline (2026-01-29)
 
-This is a historical baseline snapshot for early rewrite work. Use `docs/dev/gui-perf-protocol.md` for current virtual-editor performance verification.
+Historical snapshot from early rewrite work.
+Current release/perf validation source of truth: [gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Environment
 
@@ -50,34 +51,11 @@ Interpretation:
 
 - `list` and `search` are still O(n) over all pastes; expected to be higher at 10k.
 
-## Manual GUI Baseline (Historical Snapshot)
+## Historical GUI Notes
 
-These checks were used before the editable virtual editor path became default:
-
-1) **Scroll FPS (10k snippets)**
-   - Run: `cargo run -p localpaste_gui --bin localpaste-gui --features debug-tools,profile`
-   - Load the 10k dataset.
-   - Scroll the sidebar list continuously for ~10 seconds.
-   - Record: average FPS and any stutters.
-
-2) **Typing latency**
-   - Open a large paste (50-250 KB) and type at speed for ~10 seconds.
-   - Record: perceived latency and any frame spikes in the Debug panel.
-
-3) **Search first results**
-   - Use filter/search with a query that matches multiple entries.
-   - Record: time-to-first-result and any frame time spikes.
-
-4) **Profiler snapshot**
-   - Open the profiler panel (Ctrl+Shift+P) and capture a screenshot or note hot paths.
+The original manual GUI checks from this phase are superseded by the scripted protocol in [gui-perf-protocol.md](gui-perf-protocol.md).
+Keep this file for historical timing context only.
 
 ## Current Rewrite Gate
 
-Use `docs/dev/gui-perf-protocol.md` for release-gate validation.
-Virtual editor is now default; set `LOCALPASTE_VIRTUAL_EDITOR=1` only when you want to force it explicitly.
-
-Required gate on `perf-scroll-5k-lines`:
-
-- Average FPS `>= 45`
-- p95 frame time `<= 25 ms`
-- No visible hitching during rapid scroll + mid-document typing
+Use [gui-perf-protocol.md](gui-perf-protocol.md) for release-gate validation and thresholds.
