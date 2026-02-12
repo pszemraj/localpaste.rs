@@ -3,7 +3,10 @@
 #[cfg(test)]
 mod db_tests {
     use super::super::*;
+    use crate::error::AppError;
     use crate::models::{folder::*, paste::*};
+    use std::sync::{Arc, Barrier};
+    use std::thread;
     use tempfile::TempDir;
 
     fn setup_test_db() -> (Database, TempDir) {
@@ -227,7 +230,6 @@ mod db_tests {
         let result = TransactionOps::move_paste_between_folders(
             &db,
             "missing-paste-id",
-            Some(old_folder_id.as_str()),
             Some(new_folder_id.as_str()),
             update,
         )
@@ -278,7 +280,6 @@ mod db_tests {
         TransactionOps::move_paste_between_folders(
             &db,
             &paste_id,
-            Some(old_folder_id.as_str()),
             Some(new_folder_id.as_str()),
             move_req,
         )
@@ -298,5 +299,164 @@ mod db_tests {
             new_after.paste_count, 0,
             "current folder should be decremented on delete"
         );
+    }
+
+    #[test]
+    fn test_update_count_returns_not_found_for_missing_folder() {
+        let (db, _temp) = setup_test_db();
+
+        let result = db.folders.update_count("missing-folder-id", 1);
+        assert!(
+            matches!(result, Err(AppError::NotFound)),
+            "missing folder should return NotFound"
+        );
+    }
+
+    #[test]
+    fn test_folder_update_count_preserves_corrupt_record_on_error() {
+        let (db, _temp) = setup_test_db();
+        let tree = db.db.open_tree("folders").unwrap();
+        let folder_id = "corrupt-folder-id";
+        tree.insert(folder_id.as_bytes(), b"not-a-folder").unwrap();
+
+        let result = db.folders.update_count(folder_id, 1);
+        assert!(
+            matches!(result, Err(AppError::Serialization(_))),
+            "corrupt folder value should surface serialization error"
+        );
+        assert!(
+            tree.get(folder_id.as_bytes()).unwrap().is_some(),
+            "corrupt record should not be deleted by failed update_count"
+        );
+    }
+
+    #[test]
+    fn test_paste_update_preserves_corrupt_record_on_error() {
+        let (db, _temp) = setup_test_db();
+        let tree = db.db.open_tree("pastes").unwrap();
+        let paste_id = "corrupt-paste-id";
+        tree.insert(paste_id.as_bytes(), b"not-a-paste").unwrap();
+
+        let update = UpdatePasteRequest {
+            content: Some("new".to_string()),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        };
+
+        let result = db.pastes.update(paste_id, update);
+        assert!(
+            matches!(result, Err(AppError::Serialization(_))),
+            "corrupt paste value should surface serialization error"
+        );
+        assert!(
+            tree.get(paste_id.as_bytes()).unwrap().is_some(),
+            "corrupt record should not be deleted by failed update"
+        );
+    }
+
+    #[test]
+    fn test_concurrent_moves_keep_folder_counts_consistent() {
+        let (db, _temp) = setup_test_db();
+
+        let old_folder = Folder::new("old-folder".to_string());
+        let old_folder_id = old_folder.id.clone();
+        db.folders.create(&old_folder).unwrap();
+
+        let folder_a = Folder::new("folder-a".to_string());
+        let folder_a_id = folder_a.id.clone();
+        db.folders.create(&folder_a).unwrap();
+
+        let folder_b = Folder::new("folder-b".to_string());
+        let folder_b_id = folder_b.id.clone();
+        db.folders.create(&folder_b).unwrap();
+
+        let mut paste = Paste::new("concurrent".to_string(), "move".to_string());
+        paste.folder_id = Some(old_folder_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &old_folder_id).unwrap();
+
+        let worker_a = db.share().unwrap();
+        let worker_b = db.share().unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+
+        let paste_for_a = paste_id.clone();
+        let folder_for_a = folder_a_id.clone();
+        let barrier_a = barrier.clone();
+        let handle_a = thread::spawn(move || {
+            barrier_a.wait();
+            let update = UpdatePasteRequest {
+                content: None,
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(folder_for_a.clone()),
+                tags: None,
+            };
+            TransactionOps::move_paste_between_folders(
+                &worker_a,
+                &paste_for_a,
+                Some(folder_for_a.as_str()),
+                update,
+            )
+            .expect("move to folder-a should not fail");
+        });
+
+        let paste_for_b = paste_id.clone();
+        let folder_for_b = folder_b_id.clone();
+        let barrier_b = barrier;
+        let handle_b = thread::spawn(move || {
+            barrier_b.wait();
+            let update = UpdatePasteRequest {
+                content: None,
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(folder_for_b.clone()),
+                tags: None,
+            };
+            TransactionOps::move_paste_between_folders(
+                &worker_b,
+                &paste_for_b,
+                Some(folder_for_b.as_str()),
+                update,
+            )
+            .expect("move to folder-b should not fail");
+        });
+
+        handle_a.join().expect("worker-a join");
+        handle_b.join().expect("worker-b join");
+
+        let moved = db
+            .pastes
+            .get(&paste_id)
+            .unwrap()
+            .expect("paste should exist");
+        let old_after = db.folders.get(&old_folder_id).unwrap().unwrap();
+        let a_after = db.folders.get(&folder_a_id).unwrap().unwrap();
+        let b_after = db.folders.get(&folder_b_id).unwrap().unwrap();
+
+        assert_eq!(
+            old_after.paste_count, 0,
+            "old folder should be empty after concurrent moves"
+        );
+        assert_eq!(
+            a_after.paste_count + b_after.paste_count,
+            1,
+            "exactly one destination folder should own the paste"
+        );
+        match moved.folder_id.as_deref() {
+            Some(fid) if fid == folder_a_id.as_str() => {
+                assert_eq!(a_after.paste_count, 1);
+                assert_eq!(b_after.paste_count, 0);
+            }
+            Some(fid) if fid == folder_b_id.as_str() => {
+                assert_eq!(a_after.paste_count, 0);
+                assert_eq!(b_after.paste_count, 1);
+            }
+            other => panic!("paste moved to unexpected folder: {:?}", other),
+        }
     }
 }

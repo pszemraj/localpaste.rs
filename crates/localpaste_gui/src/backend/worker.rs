@@ -129,7 +129,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         folder_id,
                         tags,
                     } => {
-                        let existing = match db.pastes.get(&id) {
+                        let _existing = match db.pastes.get(&id) {
                             Ok(Some(paste)) => paste,
                             Ok(None) => {
                                 let _ = evt_tx.send(CoreEvent::PasteMissing { id });
@@ -186,18 +186,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             tags,
                         };
 
-                        let folder_changing = normalized_folder_id.is_some() && {
-                            let new_folder = normalized_folder_id.as_ref().and_then(|f| {
-                                if f.is_empty() {
-                                    None
-                                } else {
-                                    Some(f.as_str())
-                                }
-                            });
-                            new_folder != existing.folder_id.as_deref()
-                        };
-
-                        let result = if folder_changing {
+                        let result = if normalized_folder_id.is_some() {
                             let new_folder_id = normalized_folder_id.clone().and_then(|f| {
                                 if f.is_empty() {
                                     None
@@ -208,7 +197,6 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             TransactionOps::move_paste_between_folders(
                                 &db,
                                 &id,
-                                existing.folder_id.as_deref(),
                                 new_folder_id.as_deref(),
                                 update,
                             )

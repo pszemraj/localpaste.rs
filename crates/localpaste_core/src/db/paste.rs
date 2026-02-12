@@ -4,6 +4,8 @@ use crate::{error::AppError, models::paste::*};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sled::Db;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// Accessor for the `pastes` sled tree.
@@ -64,48 +66,93 @@ impl PasteDb {
     /// # Errors
     /// Returns an error if the update fails.
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
+        let update_error = Rc::new(RefCell::new(None));
+        let update_error_in = Rc::clone(&update_error);
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
-            old.and_then(|bytes| {
-                let mut paste = deserialize_paste(bytes).ok()?;
-                let mut content_changed = false;
+            let bytes = old?;
 
-                if let Some(content) = &update.content {
-                    paste.content = content.clone();
-                    paste.is_markdown =
-                        paste.content.contains("```") || paste.content.contains('#');
-                    content_changed = true;
+            let mut paste = match deserialize_paste(bytes) {
+                Ok(paste) => paste,
+                Err(err) => {
+                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    return Some(bytes.to_vec());
                 }
-                if let Some(name) = &update.name {
-                    paste.name = name.clone();
-                }
-                if update.language.is_some() {
-                    paste.language = update.language.clone();
-                }
-                if let Some(is_manual) = update.language_is_manual {
-                    paste.language_is_manual = is_manual;
-                }
-                let should_auto_detect = update.language.is_none()
-                    && !paste.language_is_manual
-                    && (content_changed || update.language_is_manual == Some(false));
-                if should_auto_detect {
-                    paste.language = detect_language(&paste.content);
-                }
-                // Normalize folder_id: empty string becomes None
-                if let Some(ref fid) = update.folder_id {
-                    paste.folder_id = if fid.is_empty() {
-                        None
-                    } else {
-                        Some(fid.clone())
-                    };
-                }
-                if let Some(tags) = &update.tags {
-                    paste.tags = tags.clone();
-                }
+            };
 
-                paste.updated_at = chrono::Utc::now();
-                bincode::serialize(&paste).ok()
-            })
+            apply_update_request(&mut paste, &update);
+            match bincode::serialize(&paste) {
+                Ok(encoded) => Some(encoded),
+                Err(err) => {
+                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    Some(bytes.to_vec())
+                }
+            }
         })?;
+        if let Some(err) = update_error.borrow_mut().take() {
+            return Err(err);
+        }
+
+        match result {
+            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Update a paste only when its current folder matches `expected_folder_id`.
+    ///
+    /// This is used as a compare-and-swap guard for cross-tree folder count updates.
+    ///
+    /// # Arguments
+    /// - `id`: Paste identifier.
+    /// - `expected_folder_id`: Folder id expected to be on the current record.
+    /// - `update`: Update payload to apply when the expected folder matches.
+    ///
+    /// # Returns
+    /// Updated paste if it exists *and* the expected folder matches.
+    ///
+    /// # Errors
+    /// Returns an error if deserialization, serialization, or storage update fails.
+    pub fn update_if_folder_matches(
+        &self,
+        id: &str,
+        expected_folder_id: Option<&str>,
+        update: UpdatePasteRequest,
+    ) -> Result<Option<Paste>, AppError> {
+        let update_error = Rc::new(RefCell::new(None));
+        let update_error_in = Rc::clone(&update_error);
+        let folder_mismatch = Rc::new(Cell::new(false));
+        let folder_mismatch_in = Rc::clone(&folder_mismatch);
+        let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
+            let bytes = old?;
+
+            let mut paste = match deserialize_paste(bytes) {
+                Ok(paste) => paste,
+                Err(err) => {
+                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    return Some(bytes.to_vec());
+                }
+            };
+
+            if paste.folder_id.as_deref() != expected_folder_id {
+                folder_mismatch_in.set(true);
+                return Some(bytes.to_vec());
+            }
+
+            apply_update_request(&mut paste, &update);
+            match bincode::serialize(&paste) {
+                Ok(encoded) => Some(encoded),
+                Err(err) => {
+                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    Some(bytes.to_vec())
+                }
+            }
+        })?;
+        if let Some(err) = update_error.borrow_mut().take() {
+            return Err(err);
+        }
+        if folder_mismatch.get() {
+            return Ok(None);
+        }
 
         match result {
             Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
@@ -242,6 +289,45 @@ impl PasteDb {
             .map(|(_, paste)| paste)
             .collect())
     }
+}
+
+fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
+    let mut content_changed = false;
+
+    if let Some(content) = &update.content {
+        paste.content = content.clone();
+        paste.is_markdown = paste.content.contains("```") || paste.content.contains('#');
+        content_changed = true;
+    }
+    if let Some(name) = &update.name {
+        paste.name = name.clone();
+    }
+    if update.language.is_some() {
+        paste.language = update.language.clone();
+    }
+    if let Some(is_manual) = update.language_is_manual {
+        paste.language_is_manual = is_manual;
+    }
+    let should_auto_detect = update.language.is_none()
+        && !paste.language_is_manual
+        && (content_changed || update.language_is_manual == Some(false));
+    if should_auto_detect {
+        paste.language = detect_language(&paste.content);
+    }
+
+    // Normalize folder_id: empty string becomes None
+    if let Some(ref fid) = update.folder_id {
+        paste.folder_id = if fid.is_empty() {
+            None
+        } else {
+            Some(fid.clone())
+        };
+    }
+    if let Some(tags) = &update.tags {
+        paste.tags = tags.clone();
+    }
+
+    paste.updated_at = chrono::Utc::now();
 }
 
 fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {

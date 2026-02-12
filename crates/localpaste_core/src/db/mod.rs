@@ -127,7 +127,6 @@ impl TransactionOps {
     /// # Arguments
     /// - `db`: Database handle.
     /// - `paste_id`: Paste identifier to update.
-    /// - `old_folder_id`: Existing folder id, if any.
     /// - `new_folder_id`: Destination folder id, if any.
     /// - `update_req`: Update payload to apply to the paste.
     ///
@@ -139,62 +138,81 @@ impl TransactionOps {
     pub fn move_paste_between_folders(
         db: &Database,
         paste_id: &str,
-        old_folder_id: Option<&str>,
         new_folder_id: Option<&str>,
         update_req: crate::models::paste::UpdatePasteRequest,
     ) -> Result<Option<crate::models::paste::Paste>, AppError> {
-        // If folder is changing, update counts first
-        if old_folder_id != new_folder_id {
-            // Decrement old folder count
-            if let Some(old_id) = old_folder_id {
-                db.folders.update_count(old_id, -1)?;
-            }
+        const MAX_MOVE_RETRIES: usize = 8;
 
-            // Increment new folder count
-            if let Some(new_id) = new_folder_id {
-                if let Err(e) = db.folders.update_count(new_id, 1) {
-                    // Rollback old folder count change
-                    if let Some(old_id) = old_folder_id {
-                        if let Err(rollback_err) = db.folders.update_count(old_id, 1) {
-                            tracing::error!(
-                                "Failed to rollback old folder count: {}",
-                                rollback_err
-                            );
-                        }
-                    }
-                    return Err(e);
-                }
-            }
-
-            // Update paste - if this fails, rollback both folder counts
-            let rollback_folder_counts = || {
-                if let Some(old_id) = old_folder_id {
-                    if let Err(rollback_err) = db.folders.update_count(old_id, 1) {
-                        tracing::error!("Failed to rollback old folder count: {}", rollback_err);
-                    }
-                }
-                if let Some(new_id) = new_folder_id {
-                    if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
-                        tracing::error!("Failed to rollback new folder count: {}", rollback_err);
-                    }
-                }
+        for _ in 0..MAX_MOVE_RETRIES {
+            let current = match db.pastes.get(paste_id)? {
+                Some(paste) => paste,
+                None => return Ok(None),
             };
 
-            match db.pastes.update(paste_id, update_req) {
-                Ok(Some(updated)) => Ok(Some(updated)),
-                Ok(None) => {
-                    rollback_folder_counts();
-                    Ok(None)
-                }
-                Err(e) => {
-                    rollback_folder_counts();
-                    Err(e)
+            let old_folder_id = current.folder_id.as_deref();
+            let folder_changing = old_folder_id != new_folder_id;
+
+            // Reserve the destination count first so we can fail fast if the folder is gone.
+            if folder_changing {
+                if let Some(new_id) = new_folder_id {
+                    db.folders.update_count(new_id, 1)?;
                 }
             }
-        } else {
-            // No folder change, just update paste
-            db.pastes.update(paste_id, update_req)
+
+            let update_result =
+                db.pastes
+                    .update_if_folder_matches(paste_id, old_folder_id, update_req.clone());
+            match update_result {
+                Ok(Some(updated)) => {
+                    // Paste update succeeded; best-effort decrement of prior folder count.
+                    if folder_changing {
+                        if let Some(old_id) = old_folder_id {
+                            if let Err(err) = db.folders.update_count(old_id, -1) {
+                                tracing::error!(
+                                    "Failed to decrement old folder count after move: {}",
+                                    err
+                                );
+                            }
+                        }
+                    }
+                    return Ok(Some(updated));
+                }
+                Ok(None) => {
+                    // Compare-and-swap mismatch or deletion. Roll back destination reservation.
+                    if folder_changing {
+                        if let Some(new_id) = new_folder_id {
+                            if let Err(err) = db.folders.update_count(new_id, -1) {
+                                tracing::error!(
+                                    "Failed to rollback destination folder count after conflict: {}",
+                                    err
+                                );
+                            }
+                        }
+                    }
+
+                    if db.pastes.get(paste_id)?.is_none() {
+                        return Ok(None);
+                    }
+                }
+                Err(err) => {
+                    if folder_changing {
+                        if let Some(new_id) = new_folder_id {
+                            if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
+                                tracing::error!(
+                                    "Failed to rollback destination folder count after error: {}",
+                                    rollback_err
+                                );
+                            }
+                        }
+                    }
+                    return Err(err);
+                }
+            }
         }
+
+        Err(AppError::DatabaseError(
+            "Paste update conflicted repeatedly; please retry.".to_string(),
+        ))
     }
 }
 

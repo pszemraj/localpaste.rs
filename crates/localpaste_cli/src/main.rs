@@ -170,6 +170,20 @@ fn format_delete_output(id: &str, response: &Value, json: bool) -> Result<String
     Ok(format!("Deleted paste: {}", id))
 }
 
+fn api_url(server: &str, segments: &[&str]) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(server)
+        .map_err(|err| format!("Invalid server URL '{}': {}", server, err))?;
+    let mut path = url
+        .path_segments_mut()
+        .map_err(|_| "Server URL cannot be used as an API base".to_string())?;
+    path.pop_if_empty();
+    for segment in segments {
+        path.push(segment);
+    }
+    drop(path);
+    Ok(url)
+}
+
 fn normalize_server(server: String) -> String {
     if let Ok(mut url) = reqwest::Url::parse(&server) {
         let should_normalize_localhost =
@@ -243,11 +257,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Get { id } => {
+            let endpoint = match api_url(&server, &["api", "paste", id.as_str()]) {
+                Ok(url) => url,
+                Err(message) => {
+                    eprintln!("Get failed: {}", message);
+                    std::process::exit(1);
+                }
+            };
             let request_start = Instant::now();
-            let res = client
-                .get(format!("{}/api/paste/{}", server, id))
-                .send()
-                .await?;
+            let res = client.get(endpoint).send().await?;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "Get").await;
 
@@ -318,11 +336,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Delete { id } => {
+            let endpoint = match api_url(&server, &["api", "paste", id.as_str()]) {
+                Ok(url) => url,
+                Err(message) => {
+                    eprintln!("Delete failed: {}", message);
+                    std::process::exit(1);
+                }
+            };
             let request_start = Instant::now();
-            let res = client
-                .delete(format!("{}/api/paste/{}", server, id))
-                .send()
-                .await?;
+            let res = client.delete(endpoint).send().await?;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "Delete").await;
             let parse_start = Instant::now();
@@ -347,8 +369,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        error_message_for_response, format_delete_output, format_get_output, format_summary_output,
-        normalize_server, paste_id_and_name,
+        api_url, error_message_for_response, format_delete_output, format_get_output,
+        format_summary_output, normalize_server, paste_id_and_name,
     };
 
     #[test]
@@ -436,5 +458,25 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&rendered).expect("rendered output should be valid json");
         assert_eq!(parsed["success"], true);
+    }
+
+    #[test]
+    fn api_url_encodes_path_segments() {
+        let url = api_url(
+            "http://127.0.0.1:38411",
+            &["api", "paste", "id/with?reserved#chars"],
+        )
+        .expect("api_url should build");
+        assert_eq!(
+            url.as_str(),
+            "http://127.0.0.1:38411/api/paste/id%2Fwith%3Freserved%23chars"
+        );
+    }
+
+    #[test]
+    fn api_url_appends_segments_to_existing_base_path() {
+        let url = api_url("http://127.0.0.1:38411/base", &["api", "paste", "abc123"])
+            .expect("api_url should build");
+        assert_eq!(url.as_str(), "http://127.0.0.1:38411/base/api/paste/abc123");
     }
 }

@@ -2,6 +2,8 @@
 
 use crate::{error::AppError, models::folder::*};
 use sled::Db;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// Accessor for the `folders` sled tree.
@@ -69,22 +71,40 @@ impl FolderDb {
         name: String,
         parent_id: Option<String>,
     ) -> Result<Option<Folder>, AppError> {
+        let update_error = Rc::new(RefCell::new(None));
+        let update_error_in = Rc::clone(&update_error);
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
             let name = name.clone();
             let parent_id = parent_id.clone();
-            old.and_then(|bytes| {
-                let mut folder: Folder = bincode::deserialize(bytes).ok()?;
-                folder.name = name.clone();
-                if let Some(ref pid) = parent_id {
-                    folder.parent_id = if pid.is_empty() {
-                        None
-                    } else {
-                        Some(pid.clone())
-                    };
+            let bytes = old?;
+
+            let mut folder: Folder = match bincode::deserialize(bytes) {
+                Ok(folder) => folder,
+                Err(err) => {
+                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    return Some(bytes.to_vec());
                 }
-                bincode::serialize(&folder).ok()
-            })
+            };
+            folder.name = name;
+            if let Some(ref pid) = parent_id {
+                folder.parent_id = if pid.is_empty() {
+                    None
+                } else {
+                    Some(pid.clone())
+                };
+            }
+
+            match bincode::serialize(&folder) {
+                Ok(encoded) => Some(encoded),
+                Err(err) => {
+                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    Some(bytes.to_vec())
+                }
+            }
         })?;
+        if let Some(err) = update_error.borrow_mut().take() {
+            return Err(err);
+        }
 
         match result {
             Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
@@ -131,19 +151,48 @@ impl FolderDb {
     /// `Ok(())` when the update is applied.
     ///
     /// # Errors
-    /// Returns an error if the update fails.
+    /// Returns [`AppError::NotFound`] when the folder does not exist, or a storage/serialization
+    /// error when the update fails.
     pub fn update_count(&self, id: &str, delta: i32) -> Result<(), AppError> {
+        let missing = Rc::new(Cell::new(false));
+        let missing_in = Rc::clone(&missing);
+        let update_error = Rc::new(RefCell::new(None));
+        let update_error_in = Rc::clone(&update_error);
         self.tree.fetch_and_update(id.as_bytes(), |old| {
-            old.and_then(|bytes| {
-                let mut folder: Folder = bincode::deserialize(bytes).ok()?;
-                if delta > 0 {
-                    folder.paste_count = folder.paste_count.saturating_add(delta as usize);
-                } else {
-                    folder.paste_count = folder.paste_count.saturating_sub((-delta) as usize);
+            let Some(bytes) = old else {
+                missing_in.set(true);
+                return None;
+            };
+
+            let mut folder: Folder = match bincode::deserialize(bytes) {
+                Ok(folder) => folder,
+                Err(err) => {
+                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    return Some(bytes.to_vec());
                 }
-                bincode::serialize(&folder).ok()
-            })
+            };
+
+            if delta > 0 {
+                folder.paste_count = folder.paste_count.saturating_add(delta as usize);
+            } else {
+                folder.paste_count = folder.paste_count.saturating_sub((-delta) as usize);
+            }
+
+            match bincode::serialize(&folder) {
+                Ok(encoded) => Some(encoded),
+                Err(err) => {
+                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    Some(bytes.to_vec())
+                }
+            }
         })?;
+        if let Some(err) = update_error.borrow_mut().take() {
+            return Err(err);
+        }
+        if missing.get() {
+            return Err(AppError::NotFound);
+        }
+
         Ok(())
     }
 }
