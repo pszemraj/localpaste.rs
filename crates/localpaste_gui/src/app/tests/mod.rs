@@ -569,6 +569,79 @@ fn virtual_cut_reports_copy_and_removes_selected_text() {
 }
 
 #[test]
+fn ime_commit_replaces_preedit_and_clears_state() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("ab");
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(1, len);
+    let ctx = egui::Context::default();
+
+    let result = harness.app.apply_virtual_commands(
+        &ctx,
+        &[
+            VirtualInputCommand::ImeEnabled,
+            VirtualInputCommand::ImePreedit("に".to_string()),
+            VirtualInputCommand::ImeCommit("日".to_string()),
+            VirtualInputCommand::ImeDisabled,
+        ],
+    );
+
+    assert!(result.changed);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "a日b");
+    assert!(!harness.app.virtual_editor_state.ime.enabled);
+    assert!(harness.app.virtual_editor_state.ime.preedit_range.is_none());
+    assert!(harness.app.virtual_editor_state.ime.preedit_text.is_empty());
+}
+
+#[test]
+fn ime_disable_cancels_uncommitted_preedit_text() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("ab");
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(1, len);
+    let ctx = egui::Context::default();
+
+    let result = harness.app.apply_virtual_commands(
+        &ctx,
+        &[
+            VirtualInputCommand::ImeEnabled,
+            VirtualInputCommand::ImePreedit("に".to_string()),
+            VirtualInputCommand::ImeDisabled,
+        ],
+    );
+
+    assert!(result.changed);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "ab");
+    assert!(!harness.app.virtual_editor_state.ime.enabled);
+    assert!(harness.app.virtual_editor_state.ime.preedit_range.is_none());
+    assert!(harness.app.virtual_editor_state.ime.preedit_text.is_empty());
+}
+
+#[test]
+fn empty_preedit_clears_composition_and_allows_insert_text() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("ab");
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(1, len);
+    let ctx = egui::Context::default();
+
+    let result = harness.app.apply_virtual_commands(
+        &ctx,
+        &[
+            VirtualInputCommand::ImeEnabled,
+            VirtualInputCommand::ImePreedit("に".to_string()),
+            VirtualInputCommand::ImePreedit(String::new()),
+            VirtualInputCommand::InsertText("x".to_string()),
+        ],
+    );
+
+    assert!(result.changed);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "axb");
+    assert!(harness.app.virtual_editor_state.ime.preedit_range.is_none());
+    assert!(harness.app.virtual_editor_state.ime.preedit_text.is_empty());
+}
+
+#[test]
 fn virtual_command_classification_respects_focus_policy() {
     assert_eq!(
         classify_virtual_command(&VirtualInputCommand::Copy, false),
@@ -646,6 +719,10 @@ fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
         VirtualInputCommand::DeleteForward { word: false },
         VirtualInputCommand::Cut,
         VirtualInputCommand::Paste("ZZ".to_string()),
+        VirtualInputCommand::ImeEnabled,
+        VirtualInputCommand::ImePreedit("Z".to_string()),
+        VirtualInputCommand::ImeCommit("Z".to_string()),
+        VirtualInputCommand::ImeDisabled,
         VirtualInputCommand::MoveLeft {
             select: false,
             word: false,
@@ -658,6 +735,7 @@ fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
         let before_text = harness.app.virtual_editor_buffer.to_string();
         let before_cursor = harness.app.virtual_editor_state.cursor();
         let before_selection = harness.app.virtual_editor_state.selection_range();
+        let before_ime = harness.app.virtual_editor_state.ime.clone();
         let result = route_and_apply(
             &mut harness.app,
             &ctx,
@@ -673,6 +751,7 @@ fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
             harness.app.virtual_editor_state.selection_range(),
             before_selection
         );
+        assert_eq!(harness.app.virtual_editor_state.ime, before_ime);
         assert!(!result.changed);
         assert!(!result.cut);
         assert!(!result.pasted);
@@ -721,6 +800,24 @@ fn virtual_click_counter_promotes_to_triple_and_resets() {
     let far = egui::pos2(100.0 + EDITOR_DOUBLE_CLICK_DISTANCE + 1.0, 200.0);
     let distant = next_virtual_click_count(Some(now), Some(p), Some(5), c3, 5, far, now);
     assert_eq!(distant, 1);
+}
+
+#[test]
+fn drag_autoscroll_delta_scrolls_up_when_pointer_above() {
+    let delta = drag_autoscroll_delta(80.0, 100.0, 220.0, 20.0);
+    assert!(delta > 0.0);
+}
+
+#[test]
+fn drag_autoscroll_delta_scrolls_down_when_pointer_below() {
+    let delta = drag_autoscroll_delta(260.0, 100.0, 220.0, 20.0);
+    assert!(delta < 0.0);
+}
+
+#[test]
+fn drag_autoscroll_delta_is_zero_inside_viewport() {
+    let delta = drag_autoscroll_delta(150.0, 100.0, 220.0, 20.0);
+    assert_eq!(delta, 0.0);
 }
 
 #[test]

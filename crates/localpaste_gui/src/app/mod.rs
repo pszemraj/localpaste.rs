@@ -112,6 +112,9 @@ const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
 const HIGHLIGHT_APPLY_IDLE: Duration = Duration::from_millis(200);
 const EDITOR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(300);
 const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 8.0;
+const DRAG_AUTOSCROLL_EDGE_DISTANCE: f32 = 24.0;
+const DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME: f32 = 0.5;
+const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const VIRTUAL_OVERSCAN_LINES: usize = 3;
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
@@ -160,6 +163,40 @@ fn next_virtual_click_count(
         last_count.saturating_add(1).min(3)
     } else {
         1
+    }
+}
+
+fn drag_autoscroll_delta(pointer_y: f32, top: f32, bottom: f32, line_height: f32) -> f32 {
+    if !pointer_y.is_finite()
+        || !top.is_finite()
+        || !bottom.is_finite()
+        || !line_height.is_finite()
+        || line_height <= 0.0
+        || bottom <= top
+    {
+        return 0.0;
+    }
+
+    let outside_distance = if pointer_y < top {
+        top - pointer_y
+    } else if pointer_y > bottom {
+        pointer_y - bottom
+    } else {
+        return 0.0;
+    };
+
+    // Scale autoscroll speed with distance beyond the viewport edge.
+    let edge_distance = (line_height * 2.0).max(DRAG_AUTOSCROLL_EDGE_DISTANCE);
+    let lines_per_frame = (outside_distance / edge_distance).clamp(
+        DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME,
+        DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME,
+    );
+    let delta = line_height * lines_per_frame;
+
+    if pointer_y < top {
+        delta
+    } else {
+        -delta
     }
 }
 

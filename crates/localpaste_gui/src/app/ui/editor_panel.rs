@@ -343,6 +343,17 @@ impl LocalPasteApp {
                                     };
                                     self.virtual_selection.update_drag(vcursor);
                                 }
+                                if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
+                                    let scroll_delta = drag_autoscroll_delta(
+                                        pointer_pos.y,
+                                        first.rect.min.y,
+                                        last.rect.max.y,
+                                        row_height,
+                                    );
+                                    if scroll_delta != 0.0 {
+                                        ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
+                                    }
+                                }
                             }
                         } else {
                             self.virtual_selection.end_drag();
@@ -635,6 +646,17 @@ impl LocalPasteApp {
                                         self.virtual_editor_buffer.len_chars(),
                                         true,
                                     );
+                                }
+                                if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
+                                    let scroll_delta = drag_autoscroll_delta(
+                                        pointer_pos.y,
+                                        first.rect.min.y,
+                                        last.rect.max.y,
+                                        self.virtual_line_height,
+                                    );
+                                    if scroll_delta != 0.0 {
+                                        ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
+                                    }
                                 }
                             }
                         } else if !pointer_down {

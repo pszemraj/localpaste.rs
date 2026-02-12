@@ -674,14 +674,22 @@ impl LocalPasteApp {
                 }
                 VirtualInputCommand::ImePreedit(text) => {
                     self.virtual_editor_state.ime.enabled = true;
+                    let existing_preedit_range =
+                        self.virtual_editor_state.ime.preedit_range.clone();
+                    if text.is_empty() && existing_preedit_range.is_none() {
+                        self.virtual_editor_state.ime.preedit_text.clear();
+                        continue;
+                    }
                     let cursor = self.virtual_editor_state.cursor();
-                    let range = self
-                        .virtual_editor_state
-                        .ime
-                        .preedit_range
+                    let range = existing_preedit_range
                         .clone()
                         .or_else(|| self.virtual_editor_state.selection_range())
                         .unwrap_or(cursor..cursor);
+                    if self.virtual_editor_state.ime.preedit_text == *text
+                        && existing_preedit_range.as_ref() == Some(&range)
+                    {
+                        continue;
+                    }
                     result.changed |= self.replace_virtual_range(
                         range.clone(),
                         text,
@@ -689,6 +697,12 @@ impl LocalPasteApp {
                         false,
                         now,
                     );
+                    self.virtual_editor_state.clear_preferred_column();
+                    if text.is_empty() {
+                        self.virtual_editor_state.ime.preedit_range = None;
+                        self.virtual_editor_state.ime.preedit_text.clear();
+                        continue;
+                    }
                     let end = range.start.saturating_add(text.chars().count());
                     self.virtual_editor_state.ime.preedit_range = Some(range.start..end);
                     self.virtual_editor_state.ime.preedit_text = text.clone();
@@ -707,11 +721,16 @@ impl LocalPasteApp {
                     self.virtual_editor_state.ime.preedit_range = None;
                     self.virtual_editor_state.ime.preedit_text.clear();
                     self.virtual_editor_state.ime.enabled = false;
+                    self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::ImeDisabled => {
                     self.virtual_editor_state.ime.enabled = false;
-                    self.virtual_editor_state.ime.preedit_range = None;
+                    if let Some(range) = self.virtual_editor_state.ime.preedit_range.take() {
+                        result.changed |=
+                            self.replace_virtual_range(range, "", EditIntent::Other, false, now);
+                    }
                     self.virtual_editor_state.ime.preedit_text.clear();
+                    self.virtual_editor_state.clear_preferred_column();
                 }
             }
         }
