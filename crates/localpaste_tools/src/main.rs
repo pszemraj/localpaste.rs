@@ -20,8 +20,15 @@
 //! ```
 
 use clap::Parser;
-use localpaste_core::{config::Config, db::Database, models::folder::Folder, models::paste::Paste};
+use localpaste_core::{
+    config::Config,
+    db::{Database, TransactionOps},
+    models::folder::Folder,
+    models::paste::Paste,
+    AppError,
+};
 use rand::prelude::*;
+use std::num::NonZeroUsize;
 use std::time::Instant;
 
 /// Test data generator for LocalPaste performance testing.
@@ -45,7 +52,7 @@ struct Args {
 
     /// Print progress every N pastes
     #[arg(long, default_value = "100")]
-    progress_interval: usize,
+    progress_interval: NonZeroUsize,
 }
 
 /// Language templates with realistic code snippets.
@@ -534,6 +541,14 @@ fn generate_content(rng: &mut impl Rng, size_category: &str) -> (String, &'stati
     (content, lang.id)
 }
 
+fn persist_generated_paste(db: &Database, paste: &Paste) -> Result<(), AppError> {
+    if let Some(folder_id) = paste.folder_id.as_deref() {
+        TransactionOps::create_paste_with_folder(db, paste, folder_id)
+    } else {
+        db.pastes.create(paste)
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
@@ -646,10 +661,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect();
         }
 
-        db.pastes.create(&paste)?;
+        persist_generated_paste(&db, &paste)?;
 
         // Progress reporting
-        if (i + 1) % args.progress_interval == 0 {
+        if (i + 1) % args.progress_interval.get() == 0 {
             let elapsed = start.elapsed().as_secs_f64();
             let rate = (i + 1) as f64 / elapsed;
             println!(
@@ -674,4 +689,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nDatabase path: {}", config.db_path);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn progress_interval_rejects_zero() {
+        let parsed = Args::try_parse_from([
+            "generate-test-data",
+            "--count",
+            "1",
+            "--folders",
+            "0",
+            "--progress-interval",
+            "0",
+        ]);
+        assert!(
+            parsed.is_err(),
+            "progress interval of zero must be rejected"
+        );
+    }
+
+    #[test]
+    fn persist_generated_paste_updates_folder_count() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+
+        let folder = Folder::new("fixtures".to_string());
+        let folder_id = folder.id.clone();
+        db.folders.create(&folder).expect("create folder");
+
+        let mut paste = Paste::new("seed".to_string(), "seed-paste".to_string());
+        paste.folder_id = Some(folder_id.clone());
+        persist_generated_paste(&db, &paste).expect("persist generated paste");
+
+        let persisted_folder = db
+            .folders
+            .get(&folder_id)
+            .expect("read folder")
+            .expect("folder exists");
+        assert_eq!(
+            persisted_folder.paste_count, 1,
+            "folder count should track generated pastes"
+        );
+    }
 }

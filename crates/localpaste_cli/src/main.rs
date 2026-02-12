@@ -93,7 +93,9 @@ fn log_timing_parts(timing: bool, label: &str, request: Duration, parse: Option<
 
 fn normalize_server(server: String) -> String {
     if let Ok(mut url) = reqwest::Url::parse(&server) {
-        if url.host_str() == Some("localhost") {
+        let should_normalize_localhost =
+            url.scheme().eq_ignore_ascii_case("http") && url.host_str() == Some("localhost");
+        if should_normalize_localhost {
             let _ = url.set_host(Some("127.0.0.1"));
         }
         let mut normalized = url.to_string();
@@ -252,4 +254,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_server;
+
+    #[test]
+    fn normalize_server_rewrites_http_localhost() {
+        let normalized = normalize_server("http://localhost:38411".to_string());
+        assert_eq!(normalized, "http://127.0.0.1:38411");
+    }
+
+    #[test]
+    fn normalize_server_preserves_https_localhost() {
+        let normalized = normalize_server("https://localhost:38411".to_string());
+        assert_eq!(normalized, "https://localhost:38411");
+    }
+
+    #[test]
+    fn normalize_server_trims_trailing_slash() {
+        let normalized = normalize_server("http://127.0.0.1:38411/".to_string());
+        assert_eq!(normalized, "http://127.0.0.1:38411");
+    }
 }

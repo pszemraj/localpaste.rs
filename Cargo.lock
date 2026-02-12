@@ -2527,6 +2527,7 @@ dependencies = [
  "clap",
  "localpaste_core",
  "rand",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
 ]
