@@ -231,20 +231,43 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                         }
                     }
-                    CoreCmd::DeletePaste { id } => match db.pastes.delete(&id) {
-                        Ok(true) => {
-                            let _ = evt_tx.send(CoreEvent::PasteDeleted { id });
+                    CoreCmd::DeletePaste { id } => {
+                        let existing = match db.pastes.get(&id) {
+                            Ok(Some(paste)) => paste,
+                            Ok(None) => {
+                                let _ = evt_tx.send(CoreEvent::PasteMissing { id });
+                                continue;
+                            }
+                            Err(err) => {
+                                error!("backend delete failed during lookup: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("Delete failed: {}", err),
+                                });
+                                continue;
+                            }
+                        };
+
+                        let deleted = if let Some(ref folder_id) = existing.folder_id {
+                            TransactionOps::delete_paste_with_folder(&db, &id, folder_id)
+                        } else {
+                            db.pastes.delete(&id)
+                        };
+
+                        match deleted {
+                            Ok(true) => {
+                                let _ = evt_tx.send(CoreEvent::PasteDeleted { id });
+                            }
+                            Ok(false) => {
+                                let _ = evt_tx.send(CoreEvent::PasteMissing { id });
+                            }
+                            Err(err) => {
+                                error!("backend delete failed: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("Delete failed: {}", err),
+                                });
+                            }
                         }
-                        Ok(false) => {
-                            let _ = evt_tx.send(CoreEvent::PasteMissing { id });
-                        }
-                        Err(err) => {
-                            error!("backend delete failed: {}", err);
-                            let _ = evt_tx.send(CoreEvent::Error {
-                                message: format!("Delete failed: {}", err),
-                            });
-                        }
-                    },
+                    }
                     CoreCmd::ListFolders => match db.folders.list() {
                         Ok(items) => {
                             let _ = evt_tx.send(CoreEvent::FoldersLoaded { items });

@@ -167,6 +167,94 @@ mod tests {
     }
 
     #[test]
+    fn backend_delete_paste_updates_folder_count() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreateFolder {
+                name: "Scripts".to_string(),
+                parent_id: None,
+            })
+            .expect("send create folder");
+        let folder_id = match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => folder.id,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste {
+                content: "print('hello')".to_string(),
+            })
+            .expect("send create paste");
+        let paste_id = match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteCreated { paste } => paste.id,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteMeta {
+                id: paste_id.clone(),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(folder_id.clone()),
+                tags: None,
+            })
+            .expect("send assign folder");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteMetaSaved { paste } => {
+                assert_eq!(paste.folder_id.as_deref(), Some(folder_id.as_str()));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::ListFolders)
+            .expect("send list folders before delete");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FoldersLoaded { items } => {
+                let folder = items
+                    .iter()
+                    .find(|folder| folder.id == folder_id)
+                    .expect("folder should exist");
+                assert_eq!(folder.paste_count, 1);
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::DeletePaste {
+                id: paste_id.clone(),
+            })
+            .expect("send delete paste");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteDeleted { id } => assert_eq!(id, paste_id),
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::ListFolders)
+            .expect("send list folders after delete");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FoldersLoaded { items } => {
+                let folder = items
+                    .iter()
+                    .find(|folder| folder.id == folder_id)
+                    .expect("folder should exist");
+                assert_eq!(folder.paste_count, 0);
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
     fn backend_searches_and_lists_folders() {
         let TestDb { _dir: _guard, db } = setup_db();
         let root = localpaste_core::models::folder::Folder::new("Root".to_string());
