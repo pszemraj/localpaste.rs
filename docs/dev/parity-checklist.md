@@ -109,7 +109,7 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 - [ ] Duplicate detection
 - [ ] LLM output heuristic
 - [ ] Optional folder tree (if kept)
-- [ ] Drag-drop to folder (if kept)
+- [x] Drag-drop to folder (paste row -> folder row, keep active scope)
 - [x] Copy as fenced code block
 - [ ] Context menus
 

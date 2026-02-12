@@ -3,7 +3,8 @@
 use super::editor::EditorMode;
 use super::util::word_range_at;
 use super::virtual_editor::{
-    EditIntent, VirtualEditorHistory, VirtualEditorState, VirtualInputCommand, WrapLayoutCache,
+    EditIntent, RecordedEdit, VirtualEditorHistory, VirtualEditorState, VirtualInputCommand,
+    WrapLayoutCache,
 };
 use super::{
     is_editor_word_char, next_virtual_click_count, LocalPasteApp, VirtualApplyResult,
@@ -345,15 +346,15 @@ impl LocalPasteApp {
         self.virtual_editor_state
             .set_cursor(after_cursor, self.virtual_editor_buffer.len_chars());
         if record_history {
-            self.virtual_editor_history.record_edit(
+            self.virtual_editor_history.record_edit(RecordedEdit {
                 start,
                 deleted,
-                replacement.to_string(),
+                inserted: replacement.to_string(),
                 intent,
                 before_cursor,
                 after_cursor,
-                now,
-            );
+                at: now,
+            });
         }
         true
     }

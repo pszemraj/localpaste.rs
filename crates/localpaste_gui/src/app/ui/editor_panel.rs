@@ -6,8 +6,43 @@ use eframe::egui;
 impl LocalPasteApp {
     pub(crate) fn render_editor_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading(RichText::new("Editor").color(COLOR_TEXT_PRIMARY));
-            ui.add_space(12.0);
+            let mut pending_collection: Option<SidebarCollection> = None;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Editor").color(COLOR_TEXT_SECONDARY));
+                ui.separator();
+                ui.label(RichText::new("Collections").small().color(COLOR_TEXT_MUTED));
+                if ui
+                    .selectable_label(
+                        matches!(self.active_collection, SidebarCollection::All),
+                        "All",
+                    )
+                    .clicked()
+                {
+                    pending_collection = Some(SidebarCollection::All);
+                }
+                if ui
+                    .selectable_label(
+                        matches!(self.active_collection, SidebarCollection::Recent),
+                        "Recent (7d)",
+                    )
+                    .clicked()
+                {
+                    pending_collection = Some(SidebarCollection::Recent);
+                }
+                if ui
+                    .selectable_label(
+                        matches!(self.active_collection, SidebarCollection::Unfiled),
+                        "Unfiled",
+                    )
+                    .clicked()
+                {
+                    pending_collection = Some(SidebarCollection::Unfiled);
+                }
+            });
+            if let Some(collection) = pending_collection {
+                self.set_active_collection(collection);
+            }
+            ui.add_space(10.0);
 
             let selected_meta = self.selected_paste.as_ref().map(|paste| paste.id.clone());
 
@@ -889,18 +924,18 @@ impl LocalPasteApp {
                         let highlight_version = self.highlight_version;
                         let mut layouter =
                             |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-                                editor_cache.layout(
+                                editor_cache.layout(EditorLayoutRequest {
                                     ui,
                                     text,
                                     wrap_width,
-                                    language_hint.as_str(),
+                                    language_hint: language_hint.as_str(),
                                     use_plain,
-                                    theme.as_ref(),
-                                    highlight_render_match,
+                                    theme: theme.as_ref(),
+                                    highlight_render: highlight_render_match,
                                     highlight_version,
-                                    &editor_font,
+                                    editor_font: &editor_font,
                                     syntect,
-                                )
+                                })
                             };
                         let disable_builtin_double_click = async_mode;
                         let previous_double_click = if disable_builtin_double_click {

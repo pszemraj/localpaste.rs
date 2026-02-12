@@ -54,7 +54,7 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
     let current_is_word = is_word_char(current);
     let mut start_byte = byte_index;
     let mut head = text[..byte_index].chars().rev();
-    while let Some(ch) = head.next() {
+    for ch in &mut head {
         if is_word_char(ch) == current_is_word {
             start_byte = start_byte.saturating_sub(ch.len_utf8());
         } else {
@@ -63,7 +63,7 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
     }
     let mut end_byte = byte_index + current.len_utf8();
     let mut tail = text[end_byte..].chars();
-    while let Some(ch) = tail.next() {
+    for ch in &mut tail {
         if is_word_char(ch) == current_is_word {
             end_byte = end_byte.saturating_add(ch.len_utf8());
         } else {

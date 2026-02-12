@@ -34,6 +34,31 @@ pub(super) struct EditorLayoutCache {
     pub(super) last_highlight_ms: Option<f32>,
 }
 
+pub(super) struct EditorLayoutRequest<'a> {
+    pub(super) ui: &'a egui::Ui,
+    pub(super) text: &'a dyn egui::TextBuffer,
+    pub(super) wrap_width: f32,
+    pub(super) language_hint: &'a str,
+    pub(super) use_plain: bool,
+    pub(super) theme: Option<&'a CodeTheme>,
+    pub(super) highlight_render: Option<&'a HighlightRender>,
+    pub(super) highlight_version: u64,
+    pub(super) editor_font: &'a FontId,
+    pub(super) syntect: &'a SyntectSettings,
+}
+
+struct BuildGalleyRequest<'a> {
+    ui: &'a egui::Ui,
+    text: &'a str,
+    wrap_width: f32,
+    language_hint: &'a str,
+    use_plain: bool,
+    theme: Option<&'a CodeTheme>,
+    highlight_render: Option<&'a HighlightRender>,
+    editor_font: &'a FontId,
+    syntect: &'a SyntectSettings,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct HighlightStateSnapshot {
     parse: ParseState,
@@ -71,46 +96,38 @@ impl EditorLayoutCache {
         self.highlight_cache.lines.len()
     }
 
-    pub(super) fn layout(
-        &mut self,
-        ui: &egui::Ui,
-        text: &dyn egui::TextBuffer,
-        wrap_width: f32,
-        language_hint: &str,
-        use_plain: bool,
-        theme: Option<&CodeTheme>,
-        highlight_render: Option<&HighlightRender>,
-        highlight_version: u64,
-        editor_font: &FontId,
-        syntect: &SyntectSettings,
-    ) -> Arc<egui::Galley> {
-        let Some(revision) = editor_buffer_revision(text) else {
-            return self.build_galley(
-                ui,
-                text.as_str(),
-                wrap_width,
-                language_hint,
-                use_plain,
-                theme,
-                highlight_render,
-                editor_font,
-                syntect,
-            );
+    pub(super) fn layout(&mut self, request: EditorLayoutRequest<'_>) -> Arc<egui::Galley> {
+        let Some(revision) = editor_buffer_revision(request.text) else {
+            return self.build_galley(BuildGalleyRequest {
+                ui: request.ui,
+                text: request.text.as_str(),
+                wrap_width: request.wrap_width,
+                language_hint: request.language_hint,
+                use_plain: request.use_plain,
+                theme: request.theme,
+                highlight_render: request.highlight_render,
+                editor_font: request.editor_font,
+                syntect: request.syntect,
+            });
         };
 
-        let pixels_per_point = ui.ctx().pixels_per_point();
-        let wrap_width = wrap_width.max(0.0).round();
-        let theme_value = if use_plain { None } else { theme.cloned() };
+        let pixels_per_point = request.ui.ctx().pixels_per_point();
+        let wrap_width = request.wrap_width.max(0.0).round();
+        let theme_value = if request.use_plain {
+            None
+        } else {
+            request.theme.cloned()
+        };
 
         let cache_hit = self.galley.is_some()
             && self.revision == revision
-            && self.use_plain == use_plain
+            && self.use_plain == request.use_plain
             && self.wrap_width == wrap_width
             && self.pixels_per_point == pixels_per_point
-            && self.language_hint == language_hint
-            && self.font_id.as_ref() == Some(editor_font)
+            && self.language_hint == request.language_hint
+            && self.font_id.as_ref() == Some(request.editor_font)
             && self.theme == theme_value
-            && self.highlight_version == highlight_version;
+            && self.highlight_version == request.highlight_version;
 
         if cache_hit {
             if let Some(galley) = self.galley.as_ref() {
@@ -119,68 +136,64 @@ impl EditorLayoutCache {
         }
 
         let started = Instant::now();
-        let galley = self.build_galley(
-            ui,
-            text.as_str(),
+        let galley = self.build_galley(BuildGalleyRequest {
+            ui: request.ui,
+            text: request.text.as_str(),
             wrap_width,
-            language_hint,
-            use_plain,
-            theme,
-            highlight_render,
-            editor_font,
-            syntect,
-        );
-        if !use_plain {
+            language_hint: request.language_hint,
+            use_plain: request.use_plain,
+            theme: request.theme,
+            highlight_render: request.highlight_render,
+            editor_font: request.editor_font,
+            syntect: request.syntect,
+        });
+        if !request.use_plain {
             let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
             self.last_highlight_ms = Some(elapsed_ms);
         }
 
         self.revision = revision;
-        self.use_plain = use_plain;
+        self.use_plain = request.use_plain;
         self.wrap_width = wrap_width;
         self.pixels_per_point = pixels_per_point;
-        self.language_hint = language_hint.to_string();
-        self.font_id = Some(editor_font.clone());
+        self.language_hint = request.language_hint.to_string();
+        self.font_id = Some(request.editor_font.clone());
         self.theme = theme_value;
-        self.highlight_version = highlight_version;
+        self.highlight_version = request.highlight_version;
         self.galley = Some(galley.clone());
 
         galley
     }
 
-    fn build_galley(
-        &mut self,
-        ui: &egui::Ui,
-        text: &str,
-        wrap_width: f32,
-        language_hint: &str,
-        use_plain: bool,
-        theme: Option<&CodeTheme>,
-        highlight_render: Option<&HighlightRender>,
-        editor_font: &FontId,
-        syntect: &SyntectSettings,
-    ) -> Arc<egui::Galley> {
-        let mut job = if use_plain {
+    fn build_galley(&mut self, request: BuildGalleyRequest<'_>) -> Arc<egui::Galley> {
+        let mut job = if request.use_plain {
             LayoutJob::simple(
-                text.to_owned(),
-                editor_font.clone(),
-                ui.visuals().text_color(),
-                wrap_width,
+                request.text.to_owned(),
+                request.editor_font.clone(),
+                request.ui.visuals().text_color(),
+                request.wrap_width,
             )
-        } else if let Some(render) = highlight_render {
-            self.build_render_job(ui, text, render, editor_font)
-        } else if let Some(theme) = theme {
-            self.build_highlight_job(ui, text, language_hint, theme, editor_font, syntect)
+        } else if let Some(render) = request.highlight_render {
+            self.build_render_job(request.ui, request.text, render, request.editor_font)
+        } else if let Some(theme) = request.theme {
+            self.build_highlight_job(
+                request.ui,
+                request.text,
+                request.language_hint,
+                theme,
+                request.editor_font,
+                request.syntect,
+            )
         } else {
             LayoutJob::simple(
-                text.to_owned(),
-                editor_font.clone(),
-                ui.visuals().text_color(),
-                wrap_width,
+                request.text.to_owned(),
+                request.editor_font.clone(),
+                request.ui.visuals().text_color(),
+                request.wrap_width,
             )
         };
-        job.wrap.max_width = wrap_width;
-        ui.fonts_mut(|f| f.layout_job(job))
+        job.wrap.max_width = request.wrap_width;
+        request.ui.fonts_mut(|f| f.layout_job(job))
     }
 
     fn build_highlight_job(

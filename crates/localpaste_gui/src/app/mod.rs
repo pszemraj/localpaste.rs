@@ -17,7 +17,8 @@ use eframe::egui::{self, text::CCursor, Color32, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
 use highlight::{
     build_virtual_line_job, spawn_highlight_worker, syntect_language_hint, syntect_theme_key,
-    EditorLayoutCache, HighlightRender, HighlightRequestMeta, HighlightWorker, SyntectSettings,
+    EditorLayoutCache, EditorLayoutRequest, HighlightRender, HighlightRequestMeta, HighlightWorker,
+    SyntectSettings,
 };
 use localpaste_core::models::{folder::Folder, paste::Paste};
 use localpaste_core::{Config, Database};
@@ -58,6 +59,7 @@ pub struct LocalPasteApp {
     search_last_sent: String,
     search_focus_requested: bool,
     active_collection: SidebarCollection,
+    active_language_filter: Option<String>,
     folder_dialog: Option<FolderDialog>,
     command_palette_open: bool,
     command_palette_query: String,
@@ -128,8 +130,12 @@ enum SidebarCollection {
     All,
     Recent,
     Unfiled,
-    Language(String),
     Folder(String),
+}
+
+#[derive(Debug, Clone)]
+struct SidebarPasteDragPayload {
+    paste_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -193,6 +199,19 @@ struct VirtualApplyResult {
     copied: bool,
     cut: bool,
     pasted: bool,
+}
+
+struct InputTraceFrame<'a> {
+    focus_active_pre: bool,
+    focus_active_post: bool,
+    egui_focus_pre: bool,
+    egui_focus_post: bool,
+    copy_ready_post: bool,
+    selection_chars: usize,
+    immediate_focus_commands: &'a [VirtualInputCommand],
+    deferred_focus_commands: &'a [VirtualInputCommand],
+    deferred_copy_commands: &'a [VirtualInputCommand],
+    apply_result: VirtualApplyResult,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -362,6 +381,7 @@ impl LocalPasteApp {
             search_last_sent: String::new(),
             search_focus_requested: false,
             active_collection: SidebarCollection::All,
+            active_language_filter: None,
             folder_dialog: None,
             command_palette_open: false,
             command_palette_query: String::new(),
@@ -424,19 +444,7 @@ impl LocalPasteApp {
         Ok(app)
     }
 
-    fn trace_input(
-        &self,
-        focus_active_pre: bool,
-        focus_active_post: bool,
-        egui_focus_pre: bool,
-        egui_focus_post: bool,
-        copy_ready_post: bool,
-        selection_chars: usize,
-        immediate_focus_commands: &[VirtualInputCommand],
-        deferred_focus_commands: &[VirtualInputCommand],
-        deferred_copy_commands: &[VirtualInputCommand],
-        apply_result: VirtualApplyResult,
-    ) {
+    fn trace_input(&self, frame: InputTraceFrame<'_>) {
         if !self.editor_input_trace_enabled {
             return;
         }
@@ -444,22 +452,22 @@ impl LocalPasteApp {
             target: "localpaste_gui::input",
             mode = ?self.editor_mode,
             editor_active = self.virtual_editor_active,
-            focus_active_pre = focus_active_pre,
-            focus_active_post = focus_active_post,
-            egui_focus_pre = egui_focus_pre,
-            egui_focus_post = egui_focus_post,
-            copy_ready_post = copy_ready_post,
-            selection_chars = selection_chars,
-            immediate_focus_count = immediate_focus_commands.len(),
-            deferred_focus_count = deferred_focus_commands.len(),
-            deferred_copy_count = deferred_copy_commands.len(),
-            immediate_focus = ?immediate_focus_commands,
-            deferred_focus = ?deferred_focus_commands,
-            deferred_copy = ?deferred_copy_commands,
-            changed = apply_result.changed,
-            copied = apply_result.copied,
-            cut = apply_result.cut,
-            pasted = apply_result.pasted,
+            focus_active_pre = frame.focus_active_pre,
+            focus_active_post = frame.focus_active_post,
+            egui_focus_pre = frame.egui_focus_pre,
+            egui_focus_post = frame.egui_focus_post,
+            copy_ready_post = frame.copy_ready_post,
+            selection_chars = frame.selection_chars,
+            immediate_focus_count = frame.immediate_focus_commands.len(),
+            deferred_focus_count = frame.deferred_focus_commands.len(),
+            deferred_copy_count = frame.deferred_copy_commands.len(),
+            immediate_focus = ?frame.immediate_focus_commands,
+            deferred_focus = ?frame.deferred_focus_commands,
+            deferred_copy = ?frame.deferred_copy_commands,
+            changed = frame.apply_result.changed,
+            copied = frame.apply_result.copied,
+            cut = frame.apply_result.cut,
+            pasted = frame.apply_result.pasted,
             "virtual input frame"
         );
     }
@@ -798,18 +806,18 @@ impl eframe::App for LocalPasteApp {
             .map(|range| range.end.saturating_sub(range.start))
             .unwrap_or(0);
         let egui_focus_post = ctx.memory(|m| m.has_focus(focus_id));
-        self.trace_input(
+        self.trace_input(InputTraceFrame {
             focus_active_pre,
             focus_active_post,
             egui_focus_pre,
             egui_focus_post,
             copy_ready_post,
             selection_chars,
-            &immediate_focus_commands,
-            &deferred_focus_commands,
-            &deferred_copy_commands,
-            combined_apply,
-        );
+            immediate_focus_commands: &immediate_focus_commands,
+            deferred_focus_commands: &deferred_focus_commands,
+            deferred_copy_commands: &deferred_copy_commands,
+            apply_result: combined_apply,
+        });
 
         self.render_status_bar(ctx);
         self.render_toasts(ctx);

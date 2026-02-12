@@ -4,6 +4,7 @@ use super::util::env_value_enabled;
 use eframe::egui;
 use ropey::Rope;
 use std::any::TypeId;
+use std::fmt;
 
 /// Delta summary for the most recent text mutation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,10 +74,6 @@ impl EditorBuffer {
         self.text.as_str()
     }
 
-    pub(super) fn to_string(&self) -> String {
-        self.text.clone()
-    }
-
     pub(super) fn take_edit_delta(&mut self) -> Option<EditDelta> {
         self.last_delta.take()
     }
@@ -91,6 +88,12 @@ impl EditorBuffer {
             self.rope.len_chars()
         };
         (start, end)
+    }
+}
+
+impl fmt::Display for EditorBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.text.as_str())
     }
 }
 

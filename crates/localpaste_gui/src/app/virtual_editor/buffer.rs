@@ -1,6 +1,7 @@
 //! Rope-backed text storage for the virtual editor.
 
 use ropey::Rope;
+use std::fmt;
 use std::ops::Range;
 
 /// Delta summary for a virtual editor text mutation.
@@ -63,11 +64,6 @@ impl RopeBuffer {
     /// Returns the number of physical lines in the rope.
     pub(crate) fn line_count(&self) -> usize {
         self.rope.len_lines().max(1)
-    }
-
-    /// Returns a UTF-8 snapshot of the whole buffer.
-    pub(crate) fn to_string(&self) -> String {
-        self.rope.to_string()
     }
 
     /// Replace the full buffer text with a fresh snapshot.
@@ -219,6 +215,12 @@ impl RopeBuffer {
             new_end_line,
             char_delta: inserted - removed,
         })
+    }
+}
+
+impl fmt::Display for RopeBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.rope.to_string().as_str())
     }
 }
 

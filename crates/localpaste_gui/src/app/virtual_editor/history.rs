@@ -31,6 +31,18 @@ struct EditRecord {
     at: Instant,
 }
 
+/// Captured mutation metadata to persist into undo history.
+#[derive(Clone, Debug)]
+pub(crate) struct RecordedEdit {
+    pub(crate) start: usize,
+    pub(crate) deleted: String,
+    pub(crate) inserted: String,
+    pub(crate) intent: EditIntent,
+    pub(crate) before_cursor: usize,
+    pub(crate) after_cursor: usize,
+    pub(crate) at: Instant,
+}
+
 fn op_bytes(op: &EditRecord) -> usize {
     op.deleted.len().saturating_add(op.inserted.len())
 }
@@ -61,28 +73,19 @@ impl Default for VirtualEditorHistory {
 
 impl VirtualEditorHistory {
     /// Record a text mutation in undo history.
-    pub(crate) fn record_edit(
-        &mut self,
-        start: usize,
-        deleted: String,
-        inserted: String,
-        intent: EditIntent,
-        before_cursor: usize,
-        after_cursor: usize,
-        now: Instant,
-    ) {
-        if deleted.is_empty() && inserted.is_empty() {
+    pub(crate) fn record_edit(&mut self, edit: RecordedEdit) {
+        if edit.deleted.is_empty() && edit.inserted.is_empty() {
             return;
         }
         self.redo.clear();
         let incoming = EditRecord {
-            start,
-            deleted,
-            inserted,
-            intent,
-            before_cursor,
-            after_cursor,
-            at: now,
+            start: edit.start,
+            deleted: edit.deleted,
+            inserted: edit.inserted,
+            intent: edit.intent,
+            before_cursor: edit.before_cursor,
+            after_cursor: edit.after_cursor,
+            at: edit.at,
         };
         if let Some(last) = self.undo.last_mut() {
             if Self::can_coalesce(last, &incoming, self.coalesce_window) {
@@ -173,24 +176,24 @@ mod tests {
     fn coalesces_adjacent_typing() {
         let mut history = VirtualEditorHistory::default();
         let now = Instant::now();
-        history.record_edit(
-            0,
-            String::new(),
-            "h".to_string(),
-            EditIntent::Insert,
-            0,
-            1,
-            now,
-        );
-        history.record_edit(
-            1,
-            String::new(),
-            "i".to_string(),
-            EditIntent::Insert,
-            1,
-            2,
-            now + Duration::from_millis(10),
-        );
+        history.record_edit(RecordedEdit {
+            start: 0,
+            deleted: String::new(),
+            inserted: "h".to_string(),
+            intent: EditIntent::Insert,
+            before_cursor: 0,
+            after_cursor: 1,
+            at: now,
+        });
+        history.record_edit(RecordedEdit {
+            start: 1,
+            deleted: String::new(),
+            inserted: "i".to_string(),
+            intent: EditIntent::Insert,
+            before_cursor: 1,
+            after_cursor: 2,
+            at: now + Duration::from_millis(10),
+        });
         assert_eq!(history.undo_len(), 1);
     }
 
@@ -201,15 +204,15 @@ mod tests {
         let mut history = VirtualEditorHistory::default();
         let now = Instant::now();
         let _ = buffer.replace_char_range(1..2, "XYZ");
-        history.record_edit(
-            1,
-            "b".to_string(),
-            "XYZ".to_string(),
-            EditIntent::Other,
-            1,
-            4,
-            now,
-        );
+        history.record_edit(RecordedEdit {
+            start: 1,
+            deleted: "b".to_string(),
+            inserted: "XYZ".to_string(),
+            intent: EditIntent::Other,
+            before_cursor: 1,
+            after_cursor: 4,
+            at: now,
+        });
 
         assert!(history.undo(&mut buffer, &mut state));
         assert_eq!(buffer.to_string(), "abc");

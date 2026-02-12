@@ -83,6 +83,7 @@ fn make_app() -> TestHarness {
         search_last_sent: String::new(),
         search_focus_requested: false,
         active_collection: SidebarCollection::All,
+        active_language_filter: None,
         folder_dialog: None,
         command_palette_open: false,
         command_palette_query: String::new(),
@@ -245,32 +246,32 @@ fn highlight_cache_reuses_layout_when_unchanged() {
         egui::CentralPanel::default().show(ctx, |ui| {
             let font = egui::FontId::monospace(14.0);
             let theme = CodeTheme::dark(14.0);
-            let _ = cache.layout(
+            let _ = cache.layout(EditorLayoutRequest {
                 ui,
-                &buffer,
-                400.0,
-                "py",
-                false,
-                Some(&theme),
-                None,
-                0,
-                &font,
-                &syntect,
-            );
+                text: &buffer,
+                wrap_width: 400.0,
+                language_hint: "py",
+                use_plain: false,
+                theme: Some(&theme),
+                highlight_render: None,
+                highlight_version: 0,
+                editor_font: &font,
+                syntect: &syntect,
+            });
             let first_ms = cache.last_highlight_ms;
             let line_count = LinesWithEndings::from(buffer.as_str()).count();
-            let _ = cache.layout(
+            let _ = cache.layout(EditorLayoutRequest {
                 ui,
-                &buffer,
-                400.0,
-                "py",
-                false,
-                Some(&theme),
-                None,
-                0,
-                &font,
-                &syntect,
-            );
+                text: &buffer,
+                wrap_width: 400.0,
+                language_hint: "py",
+                use_plain: false,
+                theme: Some(&theme),
+                highlight_render: None,
+                highlight_version: 0,
+                editor_font: &font,
+                syntect: &syntect,
+            });
 
             assert_eq!(cache.last_highlight_ms, first_ms);
             assert_eq!(cache.highlight_line_count(), line_count);
@@ -288,33 +289,33 @@ fn highlight_cache_updates_after_line_edit() {
         egui::CentralPanel::default().show(ctx, |ui| {
             let font = egui::FontId::monospace(14.0);
             let theme = CodeTheme::dark(14.0);
-            let _ = cache.layout(
+            let _ = cache.layout(EditorLayoutRequest {
                 ui,
-                &buffer,
-                400.0,
-                "py",
-                false,
-                Some(&theme),
-                None,
-                0,
-                &font,
-                &syntect,
-            );
+                text: &buffer,
+                wrap_width: 400.0,
+                language_hint: "py",
+                use_plain: false,
+                theme: Some(&theme),
+                highlight_render: None,
+                highlight_version: 0,
+                editor_font: &font,
+                syntect: &syntect,
+            });
 
             buffer.insert_text("x", 0);
 
-            let _ = cache.layout(
+            let _ = cache.layout(EditorLayoutRequest {
                 ui,
-                &buffer,
-                400.0,
-                "py",
-                false,
-                Some(&theme),
-                None,
-                0,
-                &font,
-                &syntect,
-            );
+                text: &buffer,
+                wrap_width: 400.0,
+                language_hint: "py",
+                use_plain: false,
+                theme: Some(&theme),
+                highlight_render: None,
+                highlight_version: 0,
+                editor_font: &font,
+                syntect: &syntect,
+            });
             let line_count = LinesWithEndings::from(buffer.as_str()).count();
             assert_eq!(cache.highlight_line_count(), line_count);
         });
@@ -1056,9 +1057,10 @@ fn maybe_dispatch_search_applies_collection_filters() {
         other => panic!("unexpected command: {:?}", other),
     }
 
+    harness.app.set_active_collection(SidebarCollection::All);
     harness
         .app
-        .set_active_collection(SidebarCollection::Language("rust".to_string()));
+        .set_active_language_filter(Some("rust".to_string()));
     harness.app.set_search_query("beta".to_string());
     harness.app.search_last_input_at =
         Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
@@ -1074,6 +1076,198 @@ fn maybe_dispatch_search_applies_collection_filters() {
         }
         other => panic!("unexpected command: {:?}", other),
     }
+
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Folder("folder-789".to_string()));
+    harness
+        .app
+        .set_active_language_filter(Some("python".to_string()));
+    harness.app.set_search_query("gamma".to_string());
+    harness.app.search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPastes {
+            folder_id,
+            language,
+            ..
+        } => {
+            assert_eq!(folder_id.as_deref(), Some("folder-789"));
+            assert_eq!(language.as_deref(), Some("python"));
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn language_filter_stacks_with_primary_collection() {
+    let mut harness = make_app();
+    let now = Utc::now();
+    let folder_rust = PasteSummary {
+        id: "folder-rust".to_string(),
+        name: "folder-rust".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 12,
+        updated_at: now,
+        folder_id: Some("folder-1".to_string()),
+        tags: Vec::new(),
+    };
+    let folder_python = PasteSummary {
+        id: "folder-python".to_string(),
+        name: "folder-python".to_string(),
+        language: Some("python".to_string()),
+        content_len: 12,
+        updated_at: now,
+        folder_id: Some("folder-1".to_string()),
+        tags: Vec::new(),
+    };
+    let unfiled_rust = PasteSummary {
+        id: "unfiled-rust".to_string(),
+        name: "unfiled-rust".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 12,
+        updated_at: now,
+        folder_id: None,
+        tags: Vec::new(),
+    };
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![
+            folder_rust.clone(),
+            folder_python.clone(),
+            unfiled_rust.clone(),
+        ],
+    });
+
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Unfiled);
+    harness
+        .app
+        .set_active_language_filter(Some("rust".to_string()));
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, unfiled_rust.id);
+
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Folder("folder-1".to_string()));
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, folder_rust.id);
+
+    harness.app.set_active_language_filter(None);
+    assert_eq!(harness.app.pastes.len(), 2);
+}
+
+#[test]
+fn move_paste_to_folder_sends_metadata_update_command() {
+    let mut harness = make_app();
+    harness
+        .app
+        .folders
+        .push(Folder::new("Folder A".to_string()));
+    let folder_id = harness.app.folders[0].id.clone();
+    harness.app.all_pastes = vec![PasteSummary {
+        id: "alpha".to_string(),
+        name: "Alpha".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 7,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    }];
+
+    assert!(harness
+        .app
+        .move_paste_to_folder("alpha", folder_id.as_str()));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePasteMeta {
+            id,
+            name,
+            language,
+            language_is_manual,
+            folder_id: moved_to,
+            tags,
+        } => {
+            assert_eq!(id, "alpha");
+            assert!(name.is_none());
+            assert!(language.is_none());
+            assert!(language_is_manual.is_none());
+            assert_eq!(moved_to.as_deref(), Some(folder_id.as_str()));
+            assert!(tags.is_none());
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn move_paste_to_folder_noops_when_already_in_target_folder() {
+    let mut harness = make_app();
+    harness
+        .app
+        .folders
+        .push(Folder::new("Folder A".to_string()));
+    let folder_id = harness.app.folders[0].id.clone();
+    harness.app.all_pastes = vec![PasteSummary {
+        id: "alpha".to_string(),
+        name: "Alpha".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 7,
+        updated_at: Utc::now(),
+        folder_id: Some(folder_id.clone()),
+        tags: Vec::new(),
+    }];
+
+    assert!(!harness
+        .app
+        .move_paste_to_folder("alpha", folder_id.as_str()));
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn paste_meta_saved_refilters_when_selected_paste_leaves_active_scope() {
+    let mut harness = make_app();
+    let now = Utc::now();
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![
+            PasteSummary {
+                id: "alpha".to_string(),
+                name: "Alpha".to_string(),
+                language: Some("rust".to_string()),
+                content_len: 7,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+            PasteSummary {
+                id: "beta".to_string(),
+                name: "Beta".to_string(),
+                language: Some("rust".to_string()),
+                content_len: 7,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+        ],
+    });
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Unfiled);
+    harness.app.select_paste("alpha".to_string());
+
+    let mut moved = Paste::new("moved".to_string(), "Alpha".to_string());
+    moved.id = "alpha".to_string();
+    moved.folder_id = Some("folder-z".to_string());
+    moved.language = Some("rust".to_string());
+    harness
+        .app
+        .apply_event(CoreEvent::PasteMetaSaved { paste: moved });
+
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, "beta");
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
 }
 
 #[test]

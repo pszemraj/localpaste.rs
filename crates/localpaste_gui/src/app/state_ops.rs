@@ -8,6 +8,7 @@ use super::{
 use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Utc};
 use localpaste_core::models::paste::Paste;
+use std::collections::BTreeSet;
 use std::time::Instant;
 use tracing::warn;
 
@@ -77,13 +78,18 @@ impl LocalPasteApp {
                 if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste.id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
-                if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
-                    *item = PasteSummary::from_paste(&paste);
-                }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     self.sync_editor_metadata(&paste);
-                    self.selected_paste = Some(paste);
+                    self.selected_paste = Some(paste.clone());
                 }
+                if self.search_query.trim().is_empty() {
+                    self.recompute_visible_pastes();
+                } else {
+                    let visible = self.pastes.clone();
+                    self.pastes = self.filter_by_collection(&visible);
+                    self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+                }
+                self.ensure_selection_after_list_update();
             }
             CoreEvent::SearchResults { query: _, items } => {
                 self.pastes = self.filter_by_collection(&items);
@@ -165,6 +171,35 @@ impl LocalPasteApp {
         } else {
             self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
         }
+    }
+
+    pub(super) fn set_active_language_filter(&mut self, language: Option<String>) {
+        if self.active_language_filter == language {
+            return;
+        }
+        self.active_language_filter = language;
+        self.search_last_sent.clear();
+        if self.search_query.trim().is_empty() {
+            self.recompute_visible_pastes();
+            self.ensure_selection_after_list_update();
+        } else {
+            self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+        }
+    }
+
+    pub(super) fn language_filter_options(&self) -> Vec<String> {
+        let mut langs: BTreeSet<String> = BTreeSet::new();
+        for paste in &self.all_pastes {
+            if let Some(lang) = paste
+                .language
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                langs.insert(lang.to_string());
+            }
+        }
+        langs.into_iter().collect()
     }
 
     pub(super) fn maybe_dispatch_search(&mut self) {
@@ -397,12 +432,35 @@ impl LocalPasteApp {
             .count()
     }
 
-    fn search_backend_filters(&self) -> (Option<String>, Option<String>) {
-        match &self.active_collection {
-            SidebarCollection::Folder(id) => (Some(id.clone()), None),
-            SidebarCollection::Language(lang) => (None, Some(lang.clone())),
-            _ => (None, None),
+    pub(super) fn move_paste_to_folder(&mut self, paste_id: &str, folder_id: &str) -> bool {
+        if !self.folders.iter().any(|folder| folder.id == folder_id) {
+            return false;
         }
+        let Some(current) = self.all_pastes.iter().find(|paste| paste.id == paste_id) else {
+            return false;
+        };
+        if current.folder_id.as_deref() == Some(folder_id) {
+            return false;
+        }
+
+        let _ = self.backend.cmd_tx.send(CoreCmd::UpdatePasteMeta {
+            id: paste_id.to_string(),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: Some(folder_id.to_string()),
+            tags: None,
+        });
+        self.set_status("Moved paste to folder.");
+        true
+    }
+
+    fn search_backend_filters(&self) -> (Option<String>, Option<String>) {
+        let folder_id = match &self.active_collection {
+            SidebarCollection::Folder(id) => Some(id.clone()),
+            _ => None,
+        };
+        (folder_id, self.active_language_filter.clone())
     }
 
     fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
@@ -410,16 +468,24 @@ impl LocalPasteApp {
         let recent_cutoff = now - ChronoDuration::days(7);
         items
             .iter()
-            .filter(|item| match &self.active_collection {
-                SidebarCollection::All => true,
-                SidebarCollection::Recent => item.updated_at >= recent_cutoff,
-                SidebarCollection::Unfiled => item.folder_id.is_none(),
-                SidebarCollection::Language(lang) => item
-                    .language
-                    .as_deref()
-                    .map(|v| v.eq_ignore_ascii_case(lang))
-                    .unwrap_or(false),
-                SidebarCollection::Folder(id) => item.folder_id.as_deref() == Some(id.as_str()),
+            .filter(|item| {
+                let collection_match = match &self.active_collection {
+                    SidebarCollection::All => true,
+                    SidebarCollection::Recent => item.updated_at >= recent_cutoff,
+                    SidebarCollection::Unfiled => item.folder_id.is_none(),
+                    SidebarCollection::Folder(id) => item.folder_id.as_deref() == Some(id.as_str()),
+                };
+                if !collection_match {
+                    return false;
+                }
+                match &self.active_language_filter {
+                    None => true,
+                    Some(lang) => item
+                        .language
+                        .as_deref()
+                        .map(|v| v.eq_ignore_ascii_case(lang))
+                        .unwrap_or(false),
+                }
             })
             .cloned()
             .collect()

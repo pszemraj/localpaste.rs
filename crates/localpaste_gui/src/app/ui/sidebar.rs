@@ -4,7 +4,6 @@ use super::super::*;
 use crate::backend::CoreCmd;
 use eframe::egui::{self, RichText};
 use localpaste_core::folder_ops::introduces_cycle;
-use std::collections::BTreeSet;
 
 impl LocalPasteApp {
     pub(crate) fn render_top_bar(&mut self, ctx: &egui::Context) {
@@ -33,8 +32,12 @@ impl LocalPasteApp {
             .default_width(300.0)
             .show(ctx, |ui| {
                 ui.heading(
-                    RichText::new(format!("Pastes ({}/{})", self.pastes.len(), self.all_pastes.len()))
-                        .color(COLOR_TEXT_PRIMARY),
+                    RichText::new(format!(
+                        "Pastes ({}/{})",
+                        self.pastes.len(),
+                        self.all_pastes.len()
+                    ))
+                    .color(COLOR_TEXT_PRIMARY),
                 );
                 ui.add_space(8.0);
 
@@ -65,58 +68,8 @@ impl LocalPasteApp {
                     }
                 });
 
-                ui.add_space(10.0);
-                ui.label(RichText::new("Collections").small().color(COLOR_TEXT_MUTED));
                 let mut pending_collection: Option<SidebarCollection> = None;
-                self.render_collection_button(
-                    ui,
-                    "All",
-                    matches!(self.active_collection, SidebarCollection::All),
-                    SidebarCollection::All,
-                    &mut pending_collection,
-                );
-                self.render_collection_button(
-                    ui,
-                    "Recent (7d)",
-                    matches!(self.active_collection, SidebarCollection::Recent),
-                    SidebarCollection::Recent,
-                    &mut pending_collection,
-                );
-                self.render_collection_button(
-                    ui,
-                    "Unfiled",
-                    matches!(self.active_collection, SidebarCollection::Unfiled),
-                    SidebarCollection::Unfiled,
-                    &mut pending_collection,
-                );
-
-                let mut langs: BTreeSet<String> = BTreeSet::new();
-                for paste in &self.all_pastes {
-                    if let Some(lang) = paste
-                        .language
-                        .as_ref()
-                        .map(|v| v.trim())
-                        .filter(|v| !v.is_empty())
-                    {
-                        langs.insert(lang.to_string());
-                    }
-                }
-                if !langs.is_empty() {
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("By Language").small().color(COLOR_TEXT_MUTED));
-                    for lang in langs {
-                        let selected = matches!(&self.active_collection, SidebarCollection::Language(value) if value.eq_ignore_ascii_case(&lang));
-                        self.render_collection_button(
-                            ui,
-                            lang.as_str(),
-                            selected,
-                            SidebarCollection::Language(lang.clone()),
-                            &mut pending_collection,
-                        );
-                    }
-                }
-
-                ui.add_space(8.0);
+                ui.add_space(10.0);
                 ui.label(RichText::new("Folders").small().color(COLOR_TEXT_MUTED));
                 ui.horizontal(|ui| {
                     if ui.small_button("+ Folder").clicked() {
@@ -150,10 +103,19 @@ impl LocalPasteApp {
                         }
                     }
                 });
-                self.render_folder_collection_nodes(ui, None, &mut pending_collection);
+                let mut pending_move: Option<(String, String)> = None;
+                self.render_folder_collection_nodes(
+                    ui,
+                    None,
+                    &mut pending_collection,
+                    &mut pending_move,
+                );
 
                 if let Some(collection) = pending_collection {
                     self.set_active_collection(collection);
+                }
+                if let Some((paste_id, folder_id)) = pending_move {
+                    self.move_paste_to_folder(paste_id.as_str(), folder_id.as_str());
                 }
 
                 ui.separator();
@@ -165,16 +127,23 @@ impl LocalPasteApp {
                     .show_rows(ui, row_height, self.pastes.len(), |ui, range| {
                         for idx in range {
                             if let Some(paste) = self.pastes.get(idx) {
-                                let selected = self.selected_id.as_deref() == Some(paste.id.as_str());
+                                let selected =
+                                    self.selected_id.as_deref() == Some(paste.id.as_str());
                                 let lang_label = display_language_label(
                                     paste.language.as_deref(),
                                     paste.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
                                 );
                                 let label = format!("{}  ({})", paste.name, lang_label);
-                                if ui
-                                    .selectable_label(selected, RichText::new(label))
-                                    .clicked()
-                                {
+                                let response = ui.selectable_label(selected, RichText::new(label));
+                                let drag_response = ui.interact(
+                                    response.rect,
+                                    egui::Id::new(format!("paste-dnd-{}", paste.id)),
+                                    egui::Sense::drag(),
+                                );
+                                drag_response.dnd_set_drag_payload(SidebarPasteDragPayload {
+                                    paste_id: paste.id.clone(),
+                                });
+                                if response.clicked() {
                                     pending_select = Some(paste.id.clone());
                                 }
                             }
@@ -188,24 +157,12 @@ impl LocalPasteApp {
         self.render_folder_dialog(ctx);
     }
 
-    fn render_collection_button(
-        &self,
-        ui: &mut egui::Ui,
-        label: &str,
-        selected: bool,
-        collection: SidebarCollection,
-        pending_collection: &mut Option<SidebarCollection>,
-    ) {
-        if ui.selectable_label(selected, label).clicked() {
-            *pending_collection = Some(collection);
-        }
-    }
-
     fn render_folder_collection_nodes(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         parent_id: Option<&str>,
         pending_collection: &mut Option<SidebarCollection>,
+        pending_move: &mut Option<(String, String)>,
     ) {
         let mut children: Vec<Folder> = self
             .folders
@@ -223,7 +180,22 @@ impl LocalPasteApp {
             let count = self.folder_paste_count(Some(folder.id.as_str()));
             let label = format!("{} ({})", folder.name, count);
             let selected = matches!(&self.active_collection, SidebarCollection::Folder(id) if id == &folder.id);
-            if ui.selectable_label(selected, label).clicked() {
+            let response = ui.selectable_label(selected, label);
+            if response
+                .dnd_hover_payload::<SidebarPasteDragPayload>()
+                .is_some()
+            {
+                ui.painter().rect_stroke(
+                    response.rect.expand(1.0),
+                    4.0,
+                    egui::Stroke::new(1.0, COLOR_ACCENT),
+                    egui::StrokeKind::Outside,
+                );
+            }
+            if let Some(payload) = response.dnd_release_payload::<SidebarPasteDragPayload>() {
+                *pending_move = Some((payload.paste_id.clone(), folder.id.clone()));
+            }
+            if response.clicked() {
                 *pending_collection = Some(SidebarCollection::Folder(folder.id.clone()));
             }
             ui.indent(format!("folder-indent-{}", folder.id), |ui| {
@@ -231,6 +203,7 @@ impl LocalPasteApp {
                     ui,
                     Some(folder.id.as_str()),
                     pending_collection,
+                    pending_move,
                 );
             });
         }
