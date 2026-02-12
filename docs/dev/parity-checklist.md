@@ -21,8 +21,9 @@ Decision key:
 
 Codebase audit against this checklist found:
 
-- `Optional folder tree (if kept)` was stale in this doc; nested folder tree rendering and ops are implemented in the rewrite sidebar.
-- Auto language re-detection on update was the essential remaining language parity gap; it is now implemented in core update flow when `language_is_manual = false`.
+- Auto language re-detection on update was the essential language parity gap; it is now implemented in core update flow when `language_is_manual = false`.
+- Compact metadata now uses an inline header row (title + chips + quick actions), with infrequent edits moved into a right-side Properties drawer.
+- Sidebar navigation now defaults to smart faceted filters (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) instead of folder-tree-first navigation.
 
 ---
 
@@ -69,7 +70,7 @@ Codebase audit against this checklist found:
 ## Phase 3: Fast List + Collections
 
 - [x] Virtualized list (show_rows) for 10k items
-- [~] Smart collections + secondary language filter (Collections in editor header; language filter in status bar; pinning deferred) [Replace]
+- [x] Smart collections + secondary language filter (smart facets in sidebar + language filter in status bar) [Replace]
 - [x] Keyboard navigation (up/down, enter)
 
 ## Phase 4: Editor + Autosave
@@ -117,8 +118,8 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 
 - [ ] Duplicate detection
 - [ ] LLM output heuristic
-- [x] Optional folder tree (if kept) [Keep]
-- [x] Drag-drop to folder (paste row -> folder row, keep active scope)
+- [ ] Optional folder tree (if kept) [Keep]
+- [ ] Drag-drop to folder (paste row -> folder row, keep active scope)
 - [x] Copy as fenced code block
 - [ ] Context menus
 
@@ -139,11 +140,8 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 
 ## Folders
 
-- [x] Folder list + counts
-- [x] Create/rename/delete folders
-- [x] Cycle-safe parenting dialog
-- [x] Move paste between folders
-- [x] Folder delete migrates pastes to unfiled
+- [~] Folder APIs remain available in core/server, but folder controls are removed from the rewrite GUI in favor of smart filters
+- [x] Folder delete migrates pastes to unfiled (API/core behavior)
 
 ## UX + Theme
 
@@ -155,8 +153,8 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 
 ## Intentional Deviations (per PLAN.md)
 
-- [Replace] Metadata editing lives in the editor panel header instead of a separate legacy form layout
-- [Replace] Manual folders as primary nav -> Smart Collections + search
+- [x] Metadata editing lives in a compact editor header + properties drawer instead of a large always-on form
+- [x] Manual folders as primary nav -> Smart Collections + search
 - [Replace] Export button as primary save -> autosave + subtle indicator
 - [Replace] Highlight/layout path -> async syntect render + cache lifecycle keyed by editor revision and highlight epoch
 - [Replace] Blocking DB calls in UI -> backend thread + channels
@@ -177,5 +175,5 @@ Rewrite merge gate before release:
 - Phase 3 list performance is met (virtualized, 10k OK)
 - Phase 4 editor + autosave UX is complete
 - Phase 5 search + command palette is complete
-- Folder operations + delete migration work end-to-end
+- Smart filters + language filter flows work end-to-end
 - Large-paste handling + highlight strategy is stable

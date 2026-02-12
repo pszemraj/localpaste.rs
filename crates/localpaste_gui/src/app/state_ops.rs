@@ -425,55 +425,28 @@ impl LocalPasteApp {
         self.pastes.iter().position(|paste| paste.id == *id)
     }
 
-    pub(super) fn folder_paste_count(&self, folder_id: Option<&str>) -> usize {
-        self.all_pastes
-            .iter()
-            .filter(|paste| paste.folder_id.as_deref() == folder_id)
-            .count()
-    }
-
-    pub(super) fn move_paste_to_folder(&mut self, paste_id: &str, folder_id: &str) -> bool {
-        if !self.folders.iter().any(|folder| folder.id == folder_id) {
-            return false;
-        }
-        let Some(current) = self.all_pastes.iter().find(|paste| paste.id == paste_id) else {
-            return false;
-        };
-        if current.folder_id.as_deref() == Some(folder_id) {
-            return false;
-        }
-
-        let _ = self.backend.cmd_tx.send(CoreCmd::UpdatePasteMeta {
-            id: paste_id.to_string(),
-            name: None,
-            language: None,
-            language_is_manual: None,
-            folder_id: Some(folder_id.to_string()),
-            tags: None,
-        });
-        self.set_status("Moved paste to folder.");
-        true
-    }
-
     fn search_backend_filters(&self) -> (Option<String>, Option<String>) {
-        let folder_id = match &self.active_collection {
-            SidebarCollection::Folder(id) => Some(id.clone()),
-            _ => None,
-        };
-        (folder_id, self.active_language_filter.clone())
+        (None, self.active_language_filter.clone())
     }
 
     fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
         let now = Utc::now();
-        let recent_cutoff = now - ChronoDuration::days(7);
+        let today = now.date_naive();
+        let week_cutoff = now - ChronoDuration::days(7);
+        let recent_cutoff = now - ChronoDuration::days(30);
         items
             .iter()
             .filter(|item| {
                 let collection_match = match &self.active_collection {
                     SidebarCollection::All => true,
+                    SidebarCollection::Today => item.updated_at.date_naive() == today,
+                    SidebarCollection::Week => item.updated_at >= week_cutoff,
                     SidebarCollection::Recent => item.updated_at >= recent_cutoff,
                     SidebarCollection::Unfiled => item.folder_id.is_none(),
-                    SidebarCollection::Folder(id) => item.folder_id.as_deref() == Some(id.as_str()),
+                    SidebarCollection::Code => is_code_summary(item),
+                    SidebarCollection::Config => is_config_summary(item),
+                    SidebarCollection::Logs => is_log_summary(item),
+                    SidebarCollection::Links => is_link_summary(item),
                 };
                 if !collection_match {
                     return false;
@@ -567,6 +540,119 @@ fn parse_tags_csv(input: &str) -> Vec<String> {
         out.push(trimmed.to_string());
     }
     out
+}
+
+fn language_in_set(language: Option<&str>, values: &[&str]) -> bool {
+    let Some(language) = language.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    values
+        .iter()
+        .any(|value| language.eq_ignore_ascii_case(value))
+}
+
+fn contains_any_ci(value: &str, needles: &[&str]) -> bool {
+    let value_lower = value.to_ascii_lowercase();
+    needles.iter().any(|needle| value_lower.contains(needle))
+}
+
+fn tags_contain_any(tags: &[String], needles: &[&str]) -> bool {
+    tags.iter().any(|tag| contains_any_ci(tag, needles))
+}
+
+fn is_code_summary(item: &PasteSummary) -> bool {
+    language_in_set(
+        item.language.as_deref(),
+        &[
+            "rust",
+            "python",
+            "javascript",
+            "typescript",
+            "go",
+            "java",
+            "kotlin",
+            "swift",
+            "ruby",
+            "php",
+            "c",
+            "cpp",
+            "c++",
+            "csharp",
+            "cs",
+            "shell",
+            "bash",
+            "zsh",
+            "sql",
+            "html",
+            "css",
+            "markdown",
+        ],
+    ) || contains_any_ci(
+        item.name.as_str(),
+        &[
+            ".rs", ".py", ".js", ".ts", ".go", ".java", ".cs", ".sql", ".sh", "snippet", "script",
+            "class", "function",
+        ],
+    ) || tags_contain_any(item.tags.as_slice(), &["code", "snippet", "script"])
+}
+
+fn is_config_summary(item: &PasteSummary) -> bool {
+    language_in_set(
+        item.language.as_deref(),
+        &[
+            "json",
+            "yaml",
+            "yml",
+            "toml",
+            "ini",
+            "env",
+            "xml",
+            "hcl",
+            "properties",
+        ],
+    ) || contains_any_ci(
+        item.name.as_str(),
+        &[
+            "config",
+            "settings",
+            ".env",
+            "dockerfile",
+            "compose",
+            "k8s",
+            "kubernetes",
+            "helm",
+        ],
+    ) || tags_contain_any(
+        item.tags.as_slice(),
+        &[
+            "config",
+            "settings",
+            "env",
+            "docker",
+            "k8s",
+            "kubernetes",
+            "helm",
+        ],
+    )
+}
+
+fn is_log_summary(item: &PasteSummary) -> bool {
+    language_in_set(item.language.as_deref(), &["log"])
+        || contains_any_ci(
+            item.name.as_str(),
+            &["log", "logs", "trace", "stderr", "stdout", "error"],
+        )
+        || tags_contain_any(
+            item.tags.as_slice(),
+            &["log", "logs", "trace", "stderr", "stdout", "error"],
+        )
+}
+
+fn is_link_summary(item: &PasteSummary) -> bool {
+    contains_any_ci(
+        item.name.as_str(),
+        &["http://", "https://", "www.", "url", "link", "links"],
+    ) || tags_contain_any(item.tags.as_slice(), &["url", "link", "links", "bookmark"])
 }
 
 fn language_extension(language: Option<&str>) -> &'static str {

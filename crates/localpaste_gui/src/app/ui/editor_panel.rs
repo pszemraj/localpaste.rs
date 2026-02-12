@@ -6,192 +6,143 @@ use eframe::egui;
 impl LocalPasteApp {
     pub(crate) fn render_editor_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            let mut pending_collection: Option<SidebarCollection> = None;
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Editor").color(COLOR_TEXT_SECONDARY));
-                ui.separator();
-                ui.label(RichText::new("Collections").small().color(COLOR_TEXT_MUTED));
-                if ui
-                    .selectable_label(
-                        matches!(self.active_collection, SidebarCollection::All),
-                        "All",
-                    )
-                    .clicked()
-                {
-                    pending_collection = Some(SidebarCollection::All);
-                }
-                if ui
-                    .selectable_label(
-                        matches!(self.active_collection, SidebarCollection::Recent),
-                        "Recent (7d)",
-                    )
-                    .clicked()
-                {
-                    pending_collection = Some(SidebarCollection::Recent);
-                }
-                if ui
-                    .selectable_label(
-                        matches!(self.active_collection, SidebarCollection::Unfiled),
-                        "Unfiled",
-                    )
-                    .clicked()
-                {
-                    pending_collection = Some(SidebarCollection::Unfiled);
-                }
-            });
-            if let Some(collection) = pending_collection {
-                self.set_active_collection(collection);
-            }
-            ui.add_space(10.0);
-
             let selected_meta = self.selected_paste.as_ref().map(|paste| paste.id.clone());
 
             if let Some(id) = selected_meta {
                 let language = self.edit_language.clone();
-                let name = if self.edit_name.trim().is_empty() {
-                    self.selected_paste
-                        .as_ref()
-                        .map(|paste| paste.name.clone())
-                        .unwrap_or_default()
-                } else {
-                    self.edit_name.clone()
-                };
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let lang_label = display_language_label(language.as_deref(), is_large);
-                ui.horizontal(|ui| {
-                    ui.heading(RichText::new(name).color(COLOR_TEXT_PRIMARY));
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(format!("({})", lang_label))
-                            .color(COLOR_TEXT_MUTED)
-                            .small(),
+                let folder_label = self
+                    .edit_folder_id
+                    .as_ref()
+                    .and_then(|folder_id| {
+                        self.folders
+                            .iter()
+                            .find(|folder| folder.id == *folder_id)
+                            .map(|folder| folder.name.clone())
+                    })
+                    .unwrap_or_else(|| "Unfiled".to_string());
+                let visible_tags = compact_header_tags(self.edit_tags.as_str());
+
+                let mut pending_collection: Option<SidebarCollection> = None;
+                let mut pending_language_filter: Option<Option<String>> = None;
+                let mut pending_tag_search: Option<String> = None;
+                let mut apply_metadata = false;
+                let mut save_requested = false;
+                let mut copy_requested = false;
+                let mut copy_link_requested = false;
+                let mut duplicate_requested = false;
+                let mut export_requested = false;
+                let mut open_properties = false;
+                let mut delete_requested = false;
+                ui.horizontal_wrapped(|ui| {
+                    let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
+                    let name_response = ui.add(
+                        egui::TextEdit::singleline(&mut self.edit_name)
+                            .desired_width(title_width)
+                            .hint_text("Untitled paste"),
                     );
+                    if name_response.changed() {
+                        self.metadata_dirty = true;
+                    }
+
+                    if ui.small_button(format!("[{}]", lang_label)).clicked() {
+                        pending_language_filter =
+                            Some(self.edit_language.clone().and_then(|value| {
+                                let trimmed = value.trim();
+                                if trimmed.is_empty() {
+                                    None
+                                } else {
+                                    Some(trimmed.to_string())
+                                }
+                            }));
+                    }
+                    if ui.small_button(format!("[{}]", folder_label)).clicked() {
+                        pending_collection = Some(if self.edit_folder_id.is_none() {
+                            SidebarCollection::Unfiled
+                        } else {
+                            SidebarCollection::All
+                        });
+                    }
+                    for tag in &visible_tags {
+                        if ui.small_button(format!("#{}", tag)).clicked() {
+                            pending_tag_search = Some(tag.clone());
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(self.metadata_dirty, egui::Button::new("Apply"))
+                        .clicked()
+                    {
+                        apply_metadata = true;
+                    }
+                    if ui.small_button("Save").clicked() {
+                        save_requested = true;
+                    }
+                    if ui.small_button("Copy").clicked() {
+                        copy_requested = true;
+                    }
+                    if ui.small_button("Copy Link").clicked() {
+                        copy_link_requested = true;
+                    }
+                    if ui.small_button("Duplicate").clicked() {
+                        duplicate_requested = true;
+                    }
+                    if ui.small_button("Export").clicked() {
+                        export_requested = true;
+                    }
+                    if ui.small_button("Properties").clicked() {
+                        open_properties = true;
+                    }
+                    if ui.small_button("Delete").clicked() {
+                        delete_requested = true;
+                    }
                 });
+                if let Some(collection) = pending_collection {
+                    self.set_active_collection(collection);
+                }
+                if let Some(language_filter) = pending_language_filter {
+                    self.set_active_language_filter(language_filter);
+                }
+                if let Some(tag) = pending_tag_search {
+                    self.set_search_query(tag);
+                }
+                if apply_metadata {
+                    self.save_metadata_now();
+                }
+                if save_requested {
+                    self.save_now();
+                }
+                if copy_requested {
+                    self.clipboard_outgoing = Some(self.active_snapshot());
+                    self.set_status("Copied paste content.");
+                }
+                if copy_link_requested {
+                    self.clipboard_outgoing =
+                        Some(format!("http://{}/api/paste/{}", self.server_addr, id));
+                    self.set_status("Copied API paste link.");
+                }
+                if duplicate_requested {
+                    self.create_new_paste_with_content(self.active_snapshot());
+                    self.set_status("Duplicated paste into a new draft.");
+                }
+                if export_requested {
+                    self.export_selected_paste();
+                }
+                if open_properties {
+                    self.properties_drawer_open = true;
+                }
+                if delete_requested {
+                    self.delete_selected();
+                }
+
                 ui.label(
                     RichText::new(id.clone())
                         .small()
                         .monospace()
                         .color(COLOR_TEXT_MUTED),
                 );
-                ui.add_space(8.0);
-
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("Name").small().color(COLOR_TEXT_MUTED));
-                    if ui
-                        .add(egui::TextEdit::singleline(&mut self.edit_name).desired_width(220.0))
-                        .changed()
-                    {
-                        self.metadata_dirty = true;
-                    }
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
-                    let mut language_choice = if self.edit_language_is_manual {
-                        self.edit_language
-                            .clone()
-                            .unwrap_or_else(|| "text".to_string())
-                    } else {
-                        "Auto".to_string()
-                    };
-                    egui::ComboBox::from_id_salt("editor_language_select")
-                        .selected_text(language_choice.clone())
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut language_choice, "Auto".to_string(), "Auto");
-                            for value in [
-                                "rust",
-                                "python",
-                                "javascript",
-                                "typescript",
-                                "json",
-                                "yaml",
-                                "toml",
-                                "markdown",
-                                "html",
-                                "css",
-                                "sql",
-                                "shell",
-                                "text",
-                            ] {
-                                ui.selectable_value(
-                                    &mut language_choice,
-                                    value.to_string(),
-                                    value.to_string(),
-                                );
-                            }
-                        });
-                    if language_choice == "Auto" {
-                        if self.edit_language_is_manual || self.edit_language.is_some() {
-                            self.edit_language_is_manual = false;
-                            self.edit_language = None;
-                            self.metadata_dirty = true;
-                        }
-                    } else if !self.edit_language_is_manual
-                        || self.edit_language.as_deref() != Some(language_choice.as_str())
-                    {
-                        self.edit_language_is_manual = true;
-                        self.edit_language = Some(language_choice);
-                        self.metadata_dirty = true;
-                    }
-                });
-
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("Folder").small().color(COLOR_TEXT_MUTED));
-                    let mut selected_folder = self.edit_folder_id.clone();
-                    egui::ComboBox::from_id_salt("editor_folder_select")
-                        .selected_text(
-                            selected_folder
-                                .as_ref()
-                                .and_then(|id| {
-                                    self.folders
-                                        .iter()
-                                        .find(|folder| folder.id == *id)
-                                        .map(|folder| folder.name.clone())
-                                })
-                                .unwrap_or_else(|| "Unfiled".to_string()),
-                        )
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut selected_folder, None, "Unfiled");
-                            for folder in &self.folders {
-                                ui.selectable_value(
-                                    &mut selected_folder,
-                                    Some(folder.id.clone()),
-                                    folder.name.clone(),
-                                );
-                            }
-                        });
-                    if selected_folder != self.edit_folder_id {
-                        self.edit_folder_id = selected_folder;
-                        self.metadata_dirty = true;
-                    }
-
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
-                    if ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.edit_tags)
-                                .desired_width(220.0)
-                                .hint_text("comma,separated,tags"),
-                        )
-                        .changed()
-                    {
-                        self.metadata_dirty = true;
-                    }
-                });
-
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(self.metadata_dirty, egui::Button::new("Save Metadata"))
-                        .clicked()
-                    {
-                        self.save_metadata_now();
-                    }
-                    if ui.button("Save Now").clicked() {
-                        self.save_now();
-                    }
-                    if ui.button("Export...").clicked() {
-                        self.export_selected_paste();
-                    }
-                });
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 if self.editor_mode == EditorMode::VirtualPreview {
                     ui.label(
                         RichText::new("Virtual preview (read-only)")
@@ -979,4 +930,25 @@ impl LocalPasteApp {
             }
         });
     }
+}
+
+fn compact_header_tags(input: &str) -> Vec<String> {
+    let mut tags = Vec::new();
+    for tag in input.split(',') {
+        let trimmed = tag.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if tags
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(trimmed))
+        {
+            continue;
+        }
+        tags.push(trimmed.to_string());
+        if tags.len() >= 4 {
+            break;
+        }
+    }
+    tags
 }

@@ -60,7 +60,7 @@ pub struct LocalPasteApp {
     search_focus_requested: bool,
     active_collection: SidebarCollection,
     active_language_filter: Option<String>,
-    folder_dialog: Option<FolderDialog>,
+    properties_drawer_open: bool,
     command_palette_open: bool,
     command_palette_query: String,
     command_palette_selected: usize,
@@ -128,31 +128,14 @@ enum SaveStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SidebarCollection {
     All,
+    Today,
+    Week,
     Recent,
     Unfiled,
-    Folder(String),
-}
-
-#[derive(Debug, Clone)]
-struct SidebarPasteDragPayload {
-    paste_id: String,
-}
-
-#[derive(Debug, Clone)]
-enum FolderDialog {
-    Create {
-        name: String,
-        parent_id: Option<String>,
-    },
-    Edit {
-        id: String,
-        name: String,
-        parent_id: Option<String>,
-    },
-    Delete {
-        id: String,
-        name: String,
-    },
+    Code,
+    Config,
+    Logs,
+    Links,
 }
 
 #[derive(Debug, Clone)]
@@ -382,7 +365,7 @@ impl LocalPasteApp {
             search_focus_requested: false,
             active_collection: SidebarCollection::All,
             active_language_filter: None,
-            folder_dialog: None,
+            properties_drawer_open: false,
             command_palette_open: false,
             command_palette_query: String::new(),
             command_palette_selected: 0,
@@ -648,6 +631,11 @@ impl eframe::App for LocalPasteApp {
                 self.command_palette_query.clear();
                 self.command_palette_selected = 0;
             }
+            if input.modifiers.command
+                && (input.key_pressed(egui::Key::I) || input.key_pressed(egui::Key::P))
+            {
+                self.properties_drawer_open = !self.properties_drawer_open;
+            }
             if input.key_pressed(egui::Key::F1) {
                 self.shortcut_help_open = !self.shortcut_help_open;
             }
@@ -753,6 +741,7 @@ impl eframe::App for LocalPasteApp {
         }
         self.render_top_bar(ctx);
         self.render_sidebar(ctx);
+        self.render_properties_drawer(ctx);
         self.render_editor_panel(ctx);
         self.render_command_palette(ctx);
         self.render_shortcut_help(ctx);
