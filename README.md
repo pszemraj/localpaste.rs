@@ -33,10 +33,8 @@ cargo install --path crates/localpaste_gui --bin localpaste-gui
 
 Optional editor modes (rewrite GUI):
 
-- `LOCALPASTE_VIRTUAL_PREVIEW=1` -> read-only viewport diagnostics.
-- `LOCALPASTE_VIRTUAL_EDITOR=0` -> `TextEdit` fallback kill-switch.
-
-For full mode/trace/perf flags, see [docs/dev/gui-notes.md](docs/dev/gui-notes.md) and [docs/dev/gui-perf-protocol.md](docs/dev/gui-perf-protocol.md).
+See [docs/dev/gui-notes.md](docs/dev/gui-notes.md) for the canonical runtime flag matrix and behavior notes.
+See [docs/dev/gui-perf-protocol.md](docs/dev/gui-perf-protocol.md) for perf validation procedure and thresholds.
 
 ### Server + CLI
 
@@ -71,10 +69,10 @@ For background services and OS-specific setup, see [docs/deployment.md](docs/dep
 
 ## Documentation
 
-- [docs/README.md](docs/README.md) - docs table of contents + source-of-truth map
-- [docs/security.md](docs/security.md) - security defaults + public exposure notes
-- [docs/deployment.md](docs/deployment.md) - background service setup
-- [docs/dev](docs/dev) - dev notes and checklists
+- [docs/README.md](docs/README.md) - canonical docs map and source-of-truth ownership
+- [docs/dev/devlog.md](docs/dev/devlog.md) - canonical build/run/test contributor workflow
+- [docs/security.md](docs/security.md) - canonical security posture and public exposure notes
+- [docs/deployment.md](docs/deployment.md) - canonical service/background operation guide
 
 ## License
 

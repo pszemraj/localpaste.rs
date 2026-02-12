@@ -9,10 +9,17 @@ Use these as canonical references. Other docs should link here instead of restat
 | Security posture + public exposure | [security.md](security.md) |
 | Service/background operation | [deployment.md](deployment.md) |
 | Development workflow (build/run/test/debug) | [dev/devlog.md](dev/devlog.md) |
+| GUI runtime flags + behavior notes | [dev/gui-notes.md](dev/gui-notes.md) |
 | Rewrite parity status + merge gate | [dev/parity-checklist.md](dev/parity-checklist.md) |
 | GUI perf validation protocol + thresholds | [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md) |
 | Virtual editor rollout/status | [dev/virtual-editor-plan.md](dev/virtual-editor-plan.md) |
 | UI visual tokens | [dev/ui-palette.md](dev/ui-palette.md) |
+
+When updating docs:
+
+- Put normative procedures in the canonical doc for that topic.
+- Keep non-canonical docs concise and link back to the canonical source.
+- Avoid copying command matrices/flag definitions across multiple files.
 
 ## Overview
 

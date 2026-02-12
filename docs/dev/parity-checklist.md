@@ -60,7 +60,7 @@ Decision key:
 ## Phase 3: Fast List + Collections
 
 - [x] Virtualized list (show_rows) for 10k items
-- [~] Smart collections sidebar (Recent, Unfiled, By Language; pinning deferred) [Replace]
+- [~] Smart collections + secondary language filter (Collections in editor header; language filter in status bar; pinning deferred) [Replace]
 - [x] Keyboard navigation (up/down, enter)
 
 ## Phase 4: Editor + Autosave

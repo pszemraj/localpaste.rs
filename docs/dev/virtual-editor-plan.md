@@ -10,9 +10,8 @@ Canonical docs for validation status:
 ## Current Modes
 
 - `VirtualEditor` is the default editable path.
-- `LOCALPASTE_VIRTUAL_PREVIEW=1` enables the read-only viewport renderer.
-- `LOCALPASTE_VIRTUAL_EDITOR=0` forces `TextEdit` fallback for diagnostics/kill-switch use.
-- `LOCALPASTE_VIRTUAL_EDITOR=1` explicitly forces editable virtual mode and wins over preview.
+- `TextEdit` remains available as a fallback/diagnostic path.
+- Runtime flag definitions and env matrix live in [gui-notes.md](gui-notes.md) (canonical).
 
 ## Scope Note
 
@@ -62,7 +61,8 @@ Canonical docs for validation status:
   - `app/state_ops.rs`
   - `app/ui/*`
   - `app/tests/mod.rs`
-- Post-refactor constraint achieved: all `crates/localpaste_gui/src/**/*.rs` files are now `< 1000` LoC.
+- Post-refactor constraint achieved for runtime modules: non-test files under
+  `crates/localpaste_gui/src/app/**/*.rs` remain `< 1000` LoC.
 - Default mode switched to editable virtual editor (`EditorMode::VirtualEditor`) with explicit `TextEdit` opt-out via `LOCALPASTE_VIRTUAL_EDITOR=0`.
 
 ## Deferred Follow-ups (Post-Merge)

@@ -1,6 +1,7 @@
 # LocalPaste Desktop Palette
 
-These canonical values are applied in the rewrite (`crates/localpaste_gui/src/app.rs`).
+These canonical values are defined in the rewrite theme module:
+`crates/localpaste_gui/src/app/style.rs`.
 
 | Token                  | Hex       | Notes                      |
 | ---------------------- | --------- | -------------------------- |
@@ -12,7 +13,8 @@ These canonical values are applied in the rewrite (`crates/localpaste_gui/src/ap
 | `COLOR_TEXT_MUTED`     | `#6E7681` | Labels / metadata          |
 | `COLOR_ACCENT`         | `#E57000` | Primary actions, selection |
 | `COLOR_ACCENT_HOVER`   | `#CE422B` | Accent hover state         |
-| `COLOR_DANGER`         | `#F85149` | Destructive actions        |
+| `COLOR_SELECTION_STROKE` | `#3B82F6` | Selection outline          |
+| `COLOR_SELECTION_FILL` | `#3B82F655` | Selection fill (with alpha) |
 | `COLOR_BORDER`         | `#30363D` | Divider strokes            |
 
 ## Editor Font
