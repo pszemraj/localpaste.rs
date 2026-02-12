@@ -12,6 +12,7 @@ pub use worker::{spawn_backend, BackendHandle};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use localpaste_core::models::folder::Folder;
     use localpaste_core::models::paste::Paste;
     use localpaste_core::Database;
     use std::time::Duration;
@@ -32,6 +33,20 @@ mod tests {
     fn recv_event(rx: &crossbeam_channel::Receiver<CoreEvent>) -> CoreEvent {
         rx.recv_timeout(Duration::from_secs(2))
             .expect("expected backend event")
+    }
+
+    fn expect_error_contains(rx: &crossbeam_channel::Receiver<CoreEvent>, expected_fragment: &str) {
+        match recv_event(rx) {
+            CoreEvent::Error { message } => {
+                assert!(
+                    message.contains(expected_fragment),
+                    "expected error containing '{}', got '{}'",
+                    expected_fragment,
+                    message
+                );
+            }
+            other => panic!("expected error event, got {:?}", other),
+        }
     }
 
     #[test]
@@ -191,5 +206,210 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         }
+    }
+
+    #[test]
+    fn backend_updates_paste_metadata() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreateFolder {
+                name: "Scripts".to_string(),
+                parent_id: None,
+            })
+            .expect("send create folder");
+
+        let folder_id = match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => folder.id,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste {
+                content: "print('hi')".to_string(),
+            })
+            .expect("send create paste");
+
+        let paste_id = match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteCreated { paste } => paste.id,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteMeta {
+                id: paste_id.clone(),
+                name: Some("Script One".to_string()),
+                language: Some("python".to_string()),
+                language_is_manual: Some(true),
+                folder_id: Some(folder_id.clone()),
+                tags: Some(vec!["tooling".to_string(), "python".to_string()]),
+            })
+            .expect("send metadata update");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteMetaSaved { paste } => {
+                assert_eq!(paste.id, paste_id);
+                assert_eq!(paste.name, "Script One");
+                assert_eq!(paste.language.as_deref(), Some("python"));
+                assert!(paste.language_is_manual);
+                assert_eq!(paste.folder_id.as_deref(), Some(folder_id.as_str()));
+                assert_eq!(
+                    paste.tags,
+                    vec!["tooling".to_string(), "python".to_string()]
+                );
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::GetPaste {
+                id: paste_id.clone(),
+            })
+            .expect("send get paste");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteLoaded { paste } => {
+                assert_eq!(paste.id, paste_id);
+                assert_eq!(paste.language.as_deref(), Some("python"));
+                assert!(paste.language_is_manual);
+                assert_eq!(paste.folder_id.as_deref(), Some(folder_id.as_str()));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn backend_folder_commands_enforce_parenting_rules_and_migrate_on_delete() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreateFolder {
+                name: "root".to_string(),
+                parent_id: None,
+            })
+            .expect("send create root");
+        let root = match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => folder,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreateFolder {
+                name: "child".to_string(),
+                parent_id: Some(root.id.clone()),
+            })
+            .expect("send create child");
+        let child = match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => folder,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdateFolder {
+                id: root.id.clone(),
+                name: "root".to_string(),
+                parent_id: Some(child.id.clone()),
+            })
+            .expect("send cycle update");
+        expect_error_contains(&backend.evt_rx, "would create cycle");
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreateFolder {
+                name: "orphan".to_string(),
+                parent_id: Some("missing-parent".to_string()),
+            })
+            .expect("send missing-parent create");
+        expect_error_contains(&backend.evt_rx, "does not exist");
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste {
+                content: "folder-owned".to_string(),
+            })
+            .expect("send create paste");
+        let paste_id = match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteCreated { paste } => paste.id,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteMeta {
+                id: paste_id.clone(),
+                name: Some("folder-owned".to_string()),
+                language: None,
+                language_is_manual: Some(false),
+                folder_id: Some(child.id.clone()),
+                tags: Some(Vec::new()),
+            })
+            .expect("send move paste to child");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteMetaSaved { paste } => {
+                assert_eq!(paste.folder_id.as_deref(), Some(child.id.as_str()));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::DeleteFolder {
+                id: root.id.clone(),
+            })
+            .expect("send delete root");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderDeleted { id } => assert_eq!(id, root.id),
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::GetPaste {
+                id: paste_id.clone(),
+            })
+            .expect("send get moved paste");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteLoaded { paste } => {
+                assert_eq!(paste.id, paste_id);
+                assert!(paste.folder_id.is_none());
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::ListFolders)
+            .expect("send folders list");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FoldersLoaded { items } => assert!(items.is_empty()),
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn backend_rejects_missing_folder_parent_on_update() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let root = Folder::new("root".to_string());
+        let root_id = root.id.clone();
+        db.folders.create(&root).expect("create folder");
+        let backend = spawn_backend(db);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdateFolder {
+                id: root_id,
+                name: "root".to_string(),
+                parent_id: Some("missing-parent".to_string()),
+            })
+            .expect("send update");
+        expect_error_contains(&backend.evt_rx, "does not exist");
     }
 }
