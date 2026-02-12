@@ -1,3 +1,5 @@
+//! Collection/search filtering tests for list projection and palette ranking.
+
 use super::*;
 
 #[test]

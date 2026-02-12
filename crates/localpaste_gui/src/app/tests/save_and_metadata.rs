@@ -1,3 +1,5 @@
+//! Save/autosave and metadata command emission tests.
+
 use super::*;
 
 #[test]

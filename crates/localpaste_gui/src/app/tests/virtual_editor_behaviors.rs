@@ -1,3 +1,5 @@
+//! Virtual editor input/editing tests including IME and selection behavior.
+
 use super::*;
 
 #[test]

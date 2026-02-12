@@ -1,3 +1,5 @@
+//! Highlight cache/render alignment tests for editor and staged-highlight flows.
+
 use super::*;
 
 #[test]

@@ -1,3 +1,5 @@
+//! State/event flow tests for basic app selection, status, and toast behavior.
+
 use super::*;
 
 #[test]
