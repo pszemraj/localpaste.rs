@@ -4,11 +4,10 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
 
 ## Current Modes
 
-- `TextEdit` fallback (default editable path)
-- `LOCALPASTE_VIRTUAL_PREVIEW=1` read-only viewport renderer
-- `LOCALPASTE_VIRTUAL_EDITOR=1` editable rope-backed viewport renderer
-
-If both flags are set, `LOCALPASTE_VIRTUAL_EDITOR=1` wins.
+- `VirtualEditor` is the default editable path.
+- `LOCALPASTE_VIRTUAL_PREVIEW=1` enables the read-only viewport renderer.
+- `LOCALPASTE_VIRTUAL_EDITOR=0` forces `TextEdit` fallback for diagnostics/kill-switch use.
+- `LOCALPASTE_VIRTUAL_EDITOR=1` explicitly forces editable virtual mode and wins over preview.
 
 ## Status Snapshot (2026-02-12)
 
@@ -45,24 +44,24 @@ If both flags are set, `LOCALPASTE_VIRTUAL_EDITOR=1` wins.
   - `app/ui/*`
   - `app/tests/mod.rs`
 - Post-refactor constraint achieved: all `crates/localpaste_gui/src/**/*.rs` files are now `< 1000` LoC.
+- Default mode switched to editable virtual editor (`EditorMode::VirtualEditor`) with explicit `TextEdit` opt-out via `LOCALPASTE_VIRTUAL_EDITOR=0`.
 
-## Remaining Gaps Before Default Switch
+## Post-Default Follow-ups
 
-- Complete/record final manual parity pass in GUI for:
+- Continue periodic manual parity passes in GUI for:
   - typing and edits at start/middle/end of large buffers
   - selection parity (mouse drag, shift-selection, word navigation)
   - navigation parity (Home/End, PageUp/PageDown, Ctrl/Cmd+arrows)
   - undo/redo parity (`Ctrl/Cmd+Z/Y`, `Shift+Ctrl/Cmd+Z`)
-- Validate IME behavior on Windows end-to-end (`Enabled -> Preedit -> Commit -> Disabled`).
+- Validate and re-check IME behavior on Windows end-to-end (`Enabled -> Preedit -> Commit -> Disabled`).
 - Add or explicitly defer drag auto-scroll behavior when selecting beyond viewport edges.
-- Performance gate sign-off in release mode for the 5k-line scenario:
+- Keep performance gate stable in release mode for the 5k-line scenario:
   - average FPS `>= 45`
   - p95 frame time `<= 25 ms`
   - no visible hitching during rapid scroll + mid-document typing
 
 ## Rollout Plan
 
-1. Keep `LOCALPASTE_VIRTUAL_EDITOR=1` feature-gated while parity/perf issues are closed.
-2. Run protocol in `docs/dev/gui-perf-protocol.md` for perf + interaction sign-off.
-3. Keep `TextEdit` as a temporary kill-switch for one release cycle after default flip.
-4. Remove fallback only after parity checklist and perf gate remain stable across normal usage.
+1. Keep running `docs/dev/gui-perf-protocol.md` for perf + interaction regression checks.
+2. Keep `TextEdit` as a temporary kill-switch (`LOCALPASTE_VIRTUAL_EDITOR=0`) for at least one cycle.
+3. Remove fallback only after parity checklist and perf gate remain stable across normal usage.

@@ -288,26 +288,27 @@ pub(super) enum EditorMode {
 }
 
 impl EditorMode {
+    fn env_flag_enabled(value: &str) -> bool {
+        let lowered = value.trim().to_ascii_lowercase();
+        !(lowered.is_empty() || lowered == "0" || lowered == "false")
+    }
+
     pub(super) fn from_env() -> Self {
-        match std::env::var("LOCALPASTE_VIRTUAL_EDITOR") {
-            Ok(value) => {
-                let lowered = value.trim().to_ascii_lowercase();
-                if !(lowered.is_empty() || lowered == "0" || lowered == "false") {
-                    return Self::VirtualEditor;
-                }
+        let preview_mode = || match std::env::var("LOCALPASTE_VIRTUAL_PREVIEW") {
+            Ok(value) if Self::env_flag_enabled(&value) => Self::VirtualPreview,
+            _ => Self::TextEdit,
+        };
+
+        if let Ok(value) = std::env::var("LOCALPASTE_VIRTUAL_EDITOR") {
+            if Self::env_flag_enabled(&value) {
+                return Self::VirtualEditor;
             }
-            Err(_) => {}
+            return preview_mode();
         }
+
         match std::env::var("LOCALPASTE_VIRTUAL_PREVIEW") {
-            Ok(value) => {
-                let lowered = value.trim().to_ascii_lowercase();
-                if lowered.is_empty() || lowered == "0" || lowered == "false" {
-                    Self::TextEdit
-                } else {
-                    Self::VirtualPreview
-                }
-            }
-            Err(_) => Self::TextEdit,
+            Ok(value) if Self::env_flag_enabled(&value) => Self::VirtualPreview,
+            _ => Self::VirtualEditor,
         }
     }
 }
@@ -341,14 +342,31 @@ mod tests {
     }
 
     #[test]
-    fn editor_mode_prefers_virtual_editor_env() {
+    fn editor_mode_env_matrix() {
         let preview_key = "LOCALPASTE_VIRTUAL_PREVIEW";
         let editor_key = "LOCALPASTE_VIRTUAL_EDITOR";
         let old_preview = std::env::var(preview_key).ok();
         let old_editor = std::env::var(editor_key).ok();
+        std::env::remove_var(preview_key);
+        std::env::remove_var(editor_key);
+
+        // Default mode is the editable virtual editor.
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
+
+        // Read-only preview can be forced for diagnostics.
         std::env::set_var(preview_key, "1");
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
+
+        // Explicit virtual editor flag wins over preview.
         std::env::set_var(editor_key, "1");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
+
+        // Explicitly disabling virtual editor falls back to preview/textedit.
+        std::env::set_var(editor_key, "0");
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
+
+        std::env::set_var(preview_key, "0");
+        assert_eq!(EditorMode::from_env(), EditorMode::TextEdit);
 
         if let Some(value) = old_preview {
             std::env::set_var(preview_key, value);

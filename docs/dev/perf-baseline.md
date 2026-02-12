@@ -73,7 +73,8 @@ These legacy checks were used before the editable virtual editor path existed:
 
 ## Current Rewrite Gate
 
-Use `docs/dev/gui-perf-protocol.md` with `LOCALPASTE_VIRTUAL_EDITOR=1` for release-gate validation.
+Use `docs/dev/gui-perf-protocol.md` for release-gate validation.
+Virtual editor is now default; set `LOCALPASTE_VIRTUAL_EDITOR=1` only when you want to force it explicitly.
 
 Required gate on `perf-scroll-5k-lines`:
 

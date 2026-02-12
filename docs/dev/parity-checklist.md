@@ -67,7 +67,7 @@ Decision key:
 
 - [x] Editable multiline editor
 - [x] Read-only virtual preview mode behind `LOCALPASTE_VIRTUAL_PREVIEW`
-- [~] Editable virtual rope editor behind `LOCALPASTE_VIRTUAL_EDITOR` (runtime parity/perf sign-off pending)
+- [x] Editable virtual rope editor is the default mode (`LOCALPASTE_VIRTUAL_EDITOR=0` keeps `TextEdit` fallback)
 - [x] Dirty state tracking + save indicator
 - [x] Autosave debounce (UI non-blocking) [Replace]
 - [ ] Manual save (Ctrl/Cmd+S)
@@ -77,7 +77,7 @@ Decision key:
 - [ ] Export (file dialog + extension mapping)
 - [x] Native GUI edit locks (open paste blocks API/CLI deletion)
 
-### Virtual Editor Reliability Gates (Required Before Default Switch)
+### Virtual Editor Reliability Gates (Validated For Default Mode)
 
 - [x] Clipboard reliability (`Ctrl/Cmd+C/X/V`) with external paste verification
 - [x] Triple-click whole-line selection behavior (repeatable, non-intermittent)

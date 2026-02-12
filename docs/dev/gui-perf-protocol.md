@@ -195,8 +195,11 @@ $env:DB_PATH = $TestDb
 # Read-only virtual preview (diagnostic baseline)
 # $env:LOCALPASTE_VIRTUAL_PREVIEW = "1"
 
-# Editable rope-backed virtual editor (wins if both flags are set)
-$env:LOCALPASTE_VIRTUAL_EDITOR = "1"
+# Editable rope-backed virtual editor is the default (no flag required).
+# Uncomment to force it explicitly:
+# $env:LOCALPASTE_VIRTUAL_EDITOR = "1"
+# Uncomment to force legacy TextEdit fallback:
+# $env:LOCALPASTE_VIRTUAL_EDITOR = "0"
 
 # Optional frame metrics log (avg FPS + p95 ms every ~2s)
 # $env:LOCALPASTE_EDITOR_PERF_LOG = "1"
@@ -247,7 +250,7 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
    - `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+V` (with no focus).
    - Expect: behavior unchanged, no noticeable lag.
 
-8. **Virtual editor parity (when `LOCALPASTE_VIRTUAL_EDITOR=1`)**
+8. **Virtual editor parity (default mode)**
    - Verify `Ctrl/Cmd+A/C/X/V`, `Ctrl/Cmd+Z/Y`, Home/End, PageUp/PageDown, shift-selection.
    - Verify IME composition (`Enabled` -> `Preedit` -> `Commit`) does not lose caret/selection state.
    - Verify drag-selection behavior when crossing viewport edges (including auto-scroll behavior if implemented).

@@ -17,13 +17,14 @@
 
 - Detailed plan in [virtual-editor-plan.md](virtual-editor-plan.md).
 - `LOCALPASTE_VIRTUAL_PREVIEW=1` keeps the read-only viewport renderer available for diagnostics.
-- `LOCALPASTE_VIRTUAL_EDITOR=1` enables the editable virtual editor:
+- Editable virtual editor is now the default mode.
+- `LOCALPASTE_VIRTUAL_EDITOR=1` explicitly forces editable virtual mode:
   - rope-backed text buffer
   - virtualized variable-height rendering (`show_viewport`)
   - operation-based undo/redo
   - IME composition event handling
   - command reducer for keyboard navigation/selection/edit operations
-- Default editable mode is still `TextEdit` while parity/perf validation completes.
+- `LOCALPASTE_VIRTUAL_EDITOR=0` forces the legacy `TextEdit` fallback.
 
 ## Rewrite Highlighting
 
