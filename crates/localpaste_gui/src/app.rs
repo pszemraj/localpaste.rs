@@ -68,6 +68,10 @@ pub struct LocalPasteApp {
     last_interaction_at: Option<Instant>,
     last_editor_click_at: Option<Instant>,
     last_editor_click_pos: Option<egui::Pos2>,
+    last_virtual_click_at: Option<Instant>,
+    last_virtual_click_pos: Option<egui::Pos2>,
+    last_virtual_click_line: Option<usize>,
+    last_virtual_click_count: u8,
     syntect: SyntectSettings,
     db_path: String,
     locks: Arc<PasteLockManager>,
@@ -104,6 +108,7 @@ const COLOR_TEXT_SECONDARY: Color32 = Color32::from_rgb(0x8b, 0x94, 0x9e);
 const COLOR_TEXT_MUTED: Color32 = Color32::from_rgb(0x6e, 0x76, 0x81);
 const COLOR_ACCENT: Color32 = Color32::from_rgb(0xE5, 0x70, 0x00);
 const COLOR_ACCENT_HOVER: Color32 = Color32::from_rgb(0xCE, 0x42, 0x2B);
+const COLOR_SELECTION_STROKE: Color32 = Color32::from_rgb(0xF9, 0x73, 0x16);
 const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const STATUS_TTL: Duration = Duration::from_secs(5);
@@ -130,6 +135,30 @@ struct StatusMessage {
 
 fn is_editor_word_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn next_virtual_click_count(
+    last_at: Option<Instant>,
+    last_pos: Option<egui::Pos2>,
+    last_line: Option<usize>,
+    last_count: u8,
+    line_idx: usize,
+    pointer_pos: egui::Pos2,
+    now: Instant,
+) -> u8 {
+    let is_continuation =
+        if let (Some(last_at), Some(last_pos), Some(last_line)) = (last_at, last_pos, last_line) {
+            last_line == line_idx
+                && now.duration_since(last_at) <= EDITOR_DOUBLE_CLICK_WINDOW
+                && last_pos.distance(pointer_pos) <= EDITOR_DOUBLE_CLICK_DISTANCE
+        } else {
+            false
+        };
+    if is_continuation {
+        last_count.saturating_add(1).min(3)
+    } else {
+        1
+    }
 }
 
 impl LocalPasteApp {
@@ -215,6 +244,10 @@ impl LocalPasteApp {
             last_interaction_at: None,
             last_editor_click_at: None,
             last_editor_click_pos: None,
+            last_virtual_click_at: None,
+            last_virtual_click_pos: None,
+            last_virtual_click_line: None,
+            last_virtual_click_count: 0,
         };
         app.request_refresh();
         Ok(app)
@@ -259,8 +292,8 @@ impl LocalPasteApp {
         style.visuals.faint_bg_color = COLOR_BG_TERTIARY;
         style.visuals.window_stroke = Stroke::new(1.0, COLOR_BORDER);
         style.visuals.hyperlink_color = COLOR_ACCENT;
-        style.visuals.selection.bg_fill = COLOR_ACCENT;
-        style.visuals.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+        style.visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(0xC2, 0x6D, 0x2B, 0x40);
+        style.visuals.selection.stroke = Stroke::new(1.0, COLOR_SELECTION_STROKE);
         style.visuals.text_edit_bg_color = Some(COLOR_BG_TERTIARY);
 
         style.visuals.widgets.noninteractive = WidgetVisuals {
@@ -404,7 +437,6 @@ impl LocalPasteApp {
                     let mut updated = paste;
                     updated.content = self.active_snapshot();
                     self.selected_paste = Some(updated);
-                    self.clear_highlight_state();
                     self.save_status = SaveStatus::Saved;
                     self.last_edit_at = None;
                     self.save_in_flight = false;
@@ -669,6 +701,32 @@ impl LocalPasteApp {
         self.virtual_editor_history = VirtualEditorHistory::default();
         self.virtual_layout = WrapLayoutCache::default();
         self.virtual_drag_active = false;
+        self.reset_virtual_click_streak();
+    }
+
+    fn reset_virtual_click_streak(&mut self) {
+        self.last_virtual_click_at = None;
+        self.last_virtual_click_pos = None;
+        self.last_virtual_click_line = None;
+        self.last_virtual_click_count = 0;
+    }
+
+    fn register_virtual_click(&mut self, line_idx: usize, pointer_pos: egui::Pos2) -> u8 {
+        let now = Instant::now();
+        let count = next_virtual_click_count(
+            self.last_virtual_click_at,
+            self.last_virtual_click_pos,
+            self.last_virtual_click_line,
+            self.last_virtual_click_count,
+            line_idx,
+            pointer_pos,
+            now,
+        );
+        self.last_virtual_click_at = Some(now);
+        self.last_virtual_click_pos = Some(pointer_pos);
+        self.last_virtual_click_line = Some(line_idx);
+        self.last_virtual_click_count = count;
+        count
     }
 
     fn virtual_selected_text(&self) -> Option<String> {
@@ -700,6 +758,21 @@ impl LocalPasteApp {
         self.virtual_editor_state
             .move_cursor(end, self.virtual_editor_buffer.len_chars(), true);
         self.virtual_editor_state.clear_preferred_column();
+    }
+
+    fn virtual_editor_selection_is_multiline(&self) -> bool {
+        let Some(range) = self.virtual_editor_state.selection_range() else {
+            return false;
+        };
+        let len = self.virtual_editor_buffer.len_chars();
+        if len == 0 {
+            return false;
+        }
+        let start = range.start.min(len.saturating_sub(1));
+        let end = range.end.saturating_sub(1).min(len.saturating_sub(1));
+        let start_line = self.virtual_editor_buffer.rope().char_to_line(start);
+        let end_line = self.virtual_editor_buffer.rope().char_to_line(end);
+        start_line != end_line
     }
 
     fn virtual_word_left(&self, cursor: usize) -> usize {
@@ -1692,6 +1765,10 @@ impl eframe::App for LocalPasteApp {
                     self.editor_lines
                         .ensure_for(self.selected_content.revision(), text);
                     let line_count = self.editor_lines.line_count();
+                    let mut last_virtual_click_at = self.last_virtual_click_at;
+                    let mut last_virtual_click_pos = self.last_virtual_click_pos;
+                    let mut last_virtual_click_line = self.last_virtual_click_line;
+                    let mut last_virtual_click_count = self.last_virtual_click_count;
                     scroll.show_rows(ui, row_height, line_count, |ui, range| {
                         ui.set_min_width(ui.available_width());
                         let sense = egui::Sense::click_and_drag();
@@ -1739,10 +1816,7 @@ impl eframe::App for LocalPasteApp {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                             }
                             if pending_action.is_none()
-                                && (response.triple_clicked()
-                                    || response.double_clicked()
-                                    || response.drag_started()
-                                    || response.clicked())
+                                && (response.drag_started() || response.clicked())
                             {
                                 if let Some(pointer_pos) = response.interact_pointer_pos() {
                                     let local_pos = pointer_pos - rect.min;
@@ -1751,21 +1825,46 @@ impl eframe::App for LocalPasteApp {
                                         line: line_idx,
                                         column: cursor.index,
                                     };
-                                    if response.triple_clicked() {
-                                        pending_action = Some(RowAction::Triple {
-                                            line_idx,
-                                            line_chars,
-                                        });
-                                    } else if response.double_clicked() {
-                                        pending_action = Some(RowAction::Double {
-                                            cursor: vcursor,
-                                            line,
-                                        });
-                                    } else if response.drag_started() {
+                                    if response.drag_started() {
+                                        last_virtual_click_at = None;
+                                        last_virtual_click_pos = None;
+                                        last_virtual_click_line = None;
+                                        last_virtual_click_count = 0;
                                         pending_action =
                                             Some(RowAction::DragStart { cursor: vcursor });
-                                    } else if response.clicked() {
-                                        pending_action = Some(RowAction::Click { cursor: vcursor });
+                                    } else {
+                                        let now = Instant::now();
+                                        let click_count = next_virtual_click_count(
+                                            last_virtual_click_at,
+                                            last_virtual_click_pos,
+                                            last_virtual_click_line,
+                                            last_virtual_click_count,
+                                            line_idx,
+                                            pointer_pos,
+                                            now,
+                                        );
+                                        last_virtual_click_at = Some(now);
+                                        last_virtual_click_pos = Some(pointer_pos);
+                                        last_virtual_click_line = Some(line_idx);
+                                        last_virtual_click_count = click_count;
+                                        match click_count {
+                                            3 => {
+                                                pending_action = Some(RowAction::Triple {
+                                                    line_idx,
+                                                    line_chars,
+                                                });
+                                            }
+                                            2 => {
+                                                pending_action = Some(RowAction::Double {
+                                                    cursor: vcursor,
+                                                    line,
+                                                });
+                                            }
+                                            _ => {
+                                                pending_action =
+                                                    Some(RowAction::Click { cursor: vcursor });
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1864,12 +1963,19 @@ impl eframe::App for LocalPasteApp {
                             self.virtual_selection.end_drag();
                         }
 
+                        let multiline_selection = self
+                            .virtual_selection
+                            .selection_bounds()
+                            .map(|(start, end)| start.line != end.line)
+                            .unwrap_or(false);
                         for row in rows {
                             let mut galley = row.galley;
+                            let mut has_selection = false;
                             if let Some(selection) = self
                                 .virtual_selection
                                 .selection_for_line(row.line_idx, row.line_chars)
                             {
+                                has_selection = true;
                                 let cursor_range = CCursorRange::two(
                                     CCursor::new(selection.start),
                                     CCursor::new(selection.end),
@@ -1883,8 +1989,19 @@ impl eframe::App for LocalPasteApp {
                             }
                             ui.painter()
                                 .galley(row.rect.min, galley, ui.visuals().text_color());
+                            if has_selection && multiline_selection {
+                                let x = row.rect.min.x + 1.0;
+                                ui.painter().line_segment(
+                                    [egui::pos2(x, row.rect.min.y), egui::pos2(x, row.rect.max.y)],
+                                    Stroke::new(2.0, COLOR_SELECTION_STROKE),
+                                );
+                            }
                         }
                     });
+                    self.last_virtual_click_at = last_virtual_click_at;
+                    self.last_virtual_click_pos = last_virtual_click_pos;
+                    self.last_virtual_click_line = last_virtual_click_line;
+                    self.last_virtual_click_count = last_virtual_click_count;
                 } else if use_virtual_editor {
                     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
                     if self.focus_editor_next {
@@ -2009,28 +2126,33 @@ impl eframe::App for LocalPasteApp {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                             }
                             if pending_action.is_none()
-                                && (response.triple_clicked()
-                                    || response.double_clicked()
-                                    || response.drag_started()
-                                    || response.clicked())
+                                && (response.drag_started() || response.clicked())
                             {
                                 if let Some(pointer_pos) = response.interact_pointer_pos() {
                                     let local_pos = pointer_pos - rect.min;
                                     let cursor = galley.cursor_from_pos(local_pos);
                                     let global =
                                         line_start.saturating_add(cursor.index.min(line_chars));
-                                    if response.triple_clicked() {
-                                        pending_action = Some(RowAction::Triple { line_idx });
-                                    } else if response.double_clicked() {
-                                        pending_action = Some(RowAction::Double {
-                                            line_start,
-                                            line: line.to_string(),
-                                            column: cursor.index.min(line_chars),
-                                        });
-                                    } else if response.drag_started() {
+                                    if response.drag_started() {
+                                        self.reset_virtual_click_streak();
                                         pending_action = Some(RowAction::DragStart { global });
-                                    } else if response.clicked() {
-                                        pending_action = Some(RowAction::Click { global });
+                                    } else {
+                                        match self.register_virtual_click(line_idx, pointer_pos) {
+                                            3 => {
+                                                pending_action =
+                                                    Some(RowAction::Triple { line_idx });
+                                            }
+                                            2 => {
+                                                pending_action = Some(RowAction::Double {
+                                                    line_start,
+                                                    line: line.to_string(),
+                                                    column: cursor.index.min(line_chars),
+                                                });
+                                            }
+                                            _ => {
+                                                pending_action = Some(RowAction::Click { global });
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -2138,11 +2260,14 @@ impl eframe::App for LocalPasteApp {
                             self.virtual_drag_active = false;
                         }
 
+                        let multiline_selection = self.virtual_editor_selection_is_multiline();
                         for row in rows {
                             let mut galley = row.galley;
+                            let mut has_selection = false;
                             if let Some(selection) =
                                 self.virtual_selection_for_line(row.line_start, row.line_chars)
                             {
+                                has_selection = true;
                                 let cursor_range = CCursorRange::two(
                                     CCursor::new(selection.start),
                                     CCursor::new(selection.end),
@@ -2159,6 +2284,13 @@ impl eframe::App for LocalPasteApp {
                                 galley.clone(),
                                 ui.visuals().text_color(),
                             );
+                            if has_selection && multiline_selection {
+                                let x = row.rect.min.x + 1.0;
+                                ui.painter().line_segment(
+                                    [egui::pos2(x, row.rect.min.y), egui::pos2(x, row.rect.max.y)],
+                                    Stroke::new(2.0, COLOR_SELECTION_STROKE),
+                                );
+                            }
 
                             if focused {
                                 let cursor = self.virtual_editor_state.cursor();
@@ -2396,6 +2528,10 @@ mod tests {
             last_interaction_at: None,
             last_editor_click_at: None,
             last_editor_click_pos: None,
+            last_virtual_click_at: None,
+            last_virtual_click_pos: None,
+            last_virtual_click_line: None,
+            last_virtual_click_count: 0,
         };
 
         TestHarness { _dir: dir, app }
@@ -2641,6 +2777,53 @@ mod tests {
             "alpha",
         );
         assert!(!should);
+    }
+
+    #[test]
+    fn paste_saved_keeps_existing_highlight_render() {
+        let mut harness = make_app();
+        harness.app.highlight_version = 7;
+        harness.app.highlight_render = Some(HighlightRender {
+            paste_id: "alpha".to_string(),
+            revision: 42,
+            text_len: harness.app.selected_content.len(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            lines: Vec::new(),
+        });
+
+        let mut paste = Paste::new("content".to_string(), "Alpha".to_string());
+        paste.id = "alpha".to_string();
+        harness.app.apply_event(CoreEvent::PasteSaved { paste });
+
+        assert!(harness.app.highlight_render.is_some());
+        assert_eq!(harness.app.highlight_version, 7);
+    }
+
+    #[test]
+    fn virtual_click_counter_promotes_to_triple_and_resets() {
+        let now = Instant::now();
+        let p = egui::pos2(100.0, 200.0);
+        let c1 = next_virtual_click_count(None, None, None, 0, 5, p, now);
+        assert_eq!(c1, 1);
+        let c2 = next_virtual_click_count(Some(now), Some(p), Some(5), c1, 5, p, now);
+        assert_eq!(c2, 2);
+        let c3 = next_virtual_click_count(Some(now), Some(p), Some(5), c2, 5, p, now);
+        assert_eq!(c3, 3);
+
+        let changed_line = next_virtual_click_count(Some(now), Some(p), Some(5), c3, 6, p, now);
+        assert_eq!(changed_line, 1);
+
+        let expired = next_virtual_click_count(
+            Some(now),
+            Some(p),
+            Some(5),
+            c3,
+            5,
+            p,
+            now + EDITOR_DOUBLE_CLICK_WINDOW + Duration::from_millis(1),
+        );
+        assert_eq!(expired, 1);
     }
 
     #[test]

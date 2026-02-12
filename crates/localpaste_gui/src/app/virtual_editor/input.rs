@@ -51,6 +51,8 @@ pub(crate) fn commands_from_events(
                 }
             }
             egui::Event::Paste(text) => out.push(VirtualInputCommand::Paste(text.clone())),
+            egui::Event::Copy => out.push(VirtualInputCommand::Copy),
+            egui::Event::Cut => out.push(VirtualInputCommand::Cut),
             egui::Event::Ime(ime) => match ime {
                 egui::ImeEvent::Enabled => out.push(VirtualInputCommand::ImeEnabled),
                 egui::ImeEvent::Preedit(text) => {
@@ -160,6 +162,16 @@ mod tests {
                 VirtualInputCommand::ImeCommit("日".to_string()),
                 VirtualInputCommand::ImeDisabled,
             ]
+        );
+    }
+
+    #[test]
+    fn maps_copy_and_cut_events() {
+        let events = vec![egui::Event::Copy, egui::Event::Cut];
+        let commands = commands_from_events(&events, true);
+        assert_eq!(
+            commands,
+            vec![VirtualInputCommand::Copy, VirtualInputCommand::Cut]
         );
     }
 }
