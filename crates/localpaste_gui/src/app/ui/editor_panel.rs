@@ -229,6 +229,11 @@ impl LocalPasteApp {
                         )
                     })
                     .is_some();
+                let has_context_render = self
+                    .highlight_render
+                    .as_ref()
+                    .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
+                    .is_some();
                 let has_staged_render = self
                     .highlight_staged
                     .as_ref()
@@ -242,25 +247,54 @@ impl LocalPasteApp {
                         )
                     })
                     .is_some();
+                let has_staged_context = self
+                    .highlight_staged
+                    .as_ref()
+                    .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
+                    .is_some();
                 let use_plain = if is_large {
                     true
                 } else if async_mode {
-                    !(has_render || has_staged_render)
+                    !(has_context_render || has_staged_context)
                 } else {
                     debounce_active && !has_render
                 };
                 self.trace_highlight(
                     "frame",
                     format!(
-                        "revision={} text_len={} async={} has_render={} has_staged={} use_plain={}",
-                        revision, text_len, async_mode, has_render, has_staged_render, use_plain
+                        "revision={} text_len={} async={} has_render={} has_render_ctx={} has_staged={} has_staged_ctx={} use_plain={}",
+                        revision,
+                        text_len,
+                        async_mode,
+                        has_render,
+                        has_context_render,
+                        has_staged_render,
+                        has_staged_context,
+                        use_plain
                     )
                     .as_str(),
                 );
                 let highlight_render = self.highlight_render.take();
-                let highlight_render_match = highlight_render.as_ref().filter(|render| {
-                    render.matches_exact(revision, text_len, &language_hint, theme_key, id.as_str())
-                });
+                let highlight_render_match = highlight_render
+                    .as_ref()
+                    .filter(|render| {
+                        render.matches_exact(
+                            revision,
+                            text_len,
+                            &language_hint,
+                            theme_key,
+                            id.as_str(),
+                        )
+                    })
+                    .or_else(|| {
+                        if async_mode {
+                            highlight_render.as_ref().filter(|render| {
+                                render.matches_context(id.as_str(), &language_hint, theme_key)
+                            })
+                        } else {
+                            None
+                        }
+                    });
                 let row_height = ui.text_style_height(&editor_style);
                 let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
                 let use_virtual_editor = self.editor_mode == EditorMode::VirtualEditor;
