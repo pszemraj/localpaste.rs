@@ -546,7 +546,7 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
     hash
 }
 
-fn align_old_lines_by_hash<T, F>(
+pub(super) fn align_old_lines_by_hash<T, F>(
     old_lines: Vec<T>,
     new_hashes: &[u64],
     hash_for: F,
@@ -949,61 +949,5 @@ pub(super) fn syntect_language_hint(language: &str) -> String {
         "xml" => "xml".to_string(),
         "sql" => "sql".to_string(),
         _ => lang,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::align_old_lines_by_hash;
-
-    #[derive(Debug)]
-    struct FakeLine {
-        hash: u64,
-        name: &'static str,
-    }
-
-    fn names(aligned: &[Option<FakeLine>]) -> Vec<Option<&'static str>> {
-        aligned
-            .iter()
-            .map(|line| line.as_ref().map(|line| line.name))
-            .collect()
-    }
-
-    #[test]
-    fn align_old_lines_handles_middle_insert() {
-        let old = vec![
-            FakeLine { hash: 1, name: "a" },
-            FakeLine { hash: 2, name: "b" },
-            FakeLine { hash: 3, name: "c" },
-            FakeLine { hash: 4, name: "d" },
-        ];
-        let aligned = align_old_lines_by_hash(old, &[1, 2, 99, 3, 4], |line| line.hash);
-        assert_eq!(
-            names(&aligned),
-            vec![Some("a"), Some("b"), None, Some("c"), Some("d")]
-        );
-    }
-
-    #[test]
-    fn align_old_lines_handles_middle_delete() {
-        let old = vec![
-            FakeLine { hash: 1, name: "a" },
-            FakeLine { hash: 2, name: "b" },
-            FakeLine { hash: 3, name: "c" },
-            FakeLine { hash: 4, name: "d" },
-        ];
-        let aligned = align_old_lines_by_hash(old, &[1, 3, 4], |line| line.hash);
-        assert_eq!(names(&aligned), vec![Some("a"), Some("c"), Some("d")]);
-    }
-
-    #[test]
-    fn align_old_lines_handles_middle_replace() {
-        let old = vec![
-            FakeLine { hash: 1, name: "a" },
-            FakeLine { hash: 2, name: "b" },
-            FakeLine { hash: 4, name: "d" },
-        ];
-        let aligned = align_old_lines_by_hash(old, &[1, 77, 4], |line| line.hash);
-        assert_eq!(names(&aligned), vec![Some("a"), None, Some("d")]);
     }
 }
