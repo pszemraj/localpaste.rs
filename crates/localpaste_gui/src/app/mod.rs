@@ -19,7 +19,7 @@ use highlight::{
     build_virtual_line_job, spawn_highlight_worker, syntect_language_hint, syntect_theme_key,
     EditorLayoutCache, HighlightRender, HighlightRequestMeta, HighlightWorker, SyntectSettings,
 };
-use localpaste_core::models::paste::Paste;
+use localpaste_core::models::{folder::Folder, paste::Paste};
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
 use std::collections::VecDeque;
@@ -42,9 +42,16 @@ use virtual_view::{VirtualCursor, VirtualSelectionState};
 /// the `update` loop never blocks on database I/O.
 pub struct LocalPasteApp {
     backend: BackendHandle,
+    all_pastes: Vec<PasteSummary>,
     pastes: Vec<PasteSummary>,
+    folders: Vec<Folder>,
     selected_id: Option<String>,
     selected_paste: Option<Paste>,
+    search_query: String,
+    search_last_input_at: Option<Instant>,
+    search_last_sent: String,
+    search_focus_requested: bool,
+    active_collection: SidebarCollection,
     selected_content: EditorBuffer,
     editor_cache: EditorLayoutCache,
     editor_lines: EditorLineIndex,
@@ -102,11 +109,21 @@ enum SaveStatus {
     Saving,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SidebarCollection {
+    All,
+    Recent,
+    Unfiled,
+    Language(String),
+    Folder(String),
+}
+
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const STATUS_TTL: Duration = Duration::from_secs(5);
 pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 720.0];
 pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(150);
 const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
 const HIGHLIGHT_APPLY_IDLE: Duration = Duration::from_millis(200);
@@ -116,6 +133,7 @@ const DRAG_AUTOSCROLL_EDGE_DISTANCE: f32 = 24.0;
 const DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME: f32 = 0.5;
 const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
+const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const VIRTUAL_OVERSCAN_LINES: usize = 3;
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
@@ -284,9 +302,16 @@ impl LocalPasteApp {
 
         let mut app = Self {
             backend,
+            all_pastes: Vec::new(),
             pastes: Vec::new(),
+            folders: Vec::new(),
             selected_id: None,
             selected_paste: None,
+            search_query: String::new(),
+            search_last_input_at: None,
+            search_last_sent: String::new(),
+            search_focus_requested: false,
+            active_collection: SidebarCollection::All,
             selected_content: EditorBuffer::new(String::new()),
             editor_cache: EditorLayoutCache::default(),
             editor_lines: EditorLineIndex::default(),
@@ -337,6 +362,7 @@ impl LocalPasteApp {
             highlight_trace_enabled: env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE"),
         };
         app.request_refresh();
+        app.request_folder_refresh();
         Ok(app)
     }
 
@@ -531,6 +557,9 @@ impl eframe::App for LocalPasteApp {
             if input.modifiers.command && input.key_pressed(egui::Key::Delete) {
                 self.delete_selected();
             }
+            if input.modifiers.command && input.key_pressed(egui::Key::F) {
+                self.search_focus_requested = true;
+            }
             if input.modifiers.command && input.key_pressed(egui::Key::C) {
                 match self.editor_mode {
                     EditorMode::VirtualPreview => copy_virtual_preview = true,
@@ -699,6 +728,7 @@ impl eframe::App for LocalPasteApp {
 
         self.render_status_bar(ctx);
 
+        self.maybe_dispatch_search();
         self.maybe_autosave();
         if self.last_refresh_at.elapsed() >= AUTO_REFRESH_INTERVAL {
             self.request_refresh();

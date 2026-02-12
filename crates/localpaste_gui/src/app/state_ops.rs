@@ -1,8 +1,11 @@
 //! State transitions for backend events, selection, and autosave flow.
 
 use super::highlight::EditorLayoutCache;
-use super::{LocalPasteApp, SaveStatus, StatusMessage, STATUS_TTL};
+use super::{
+    LocalPasteApp, SaveStatus, SidebarCollection, StatusMessage, SEARCH_DEBOUNCE, STATUS_TTL,
+};
 use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
+use chrono::{Duration as ChronoDuration, Utc};
 use std::time::Instant;
 use tracing::warn;
 
@@ -10,18 +13,10 @@ impl LocalPasteApp {
     pub(super) fn apply_event(&mut self, event: CoreEvent) {
         match event {
             CoreEvent::PasteList { items } => {
-                self.pastes = items;
-                let selection_valid = self
-                    .selected_id
-                    .as_ref()
-                    .map(|id| self.pastes.iter().any(|p| p.id == *id))
-                    .unwrap_or(false);
-                if !selection_valid {
-                    if let Some(first) = self.pastes.first() {
-                        self.select_paste(first.id.clone());
-                    } else {
-                        self.clear_selection();
-                    }
+                self.all_pastes = items;
+                if self.search_query.trim().is_empty() {
+                    self.recompute_visible_pastes();
+                    self.ensure_selection_after_list_update();
                 }
             }
             CoreEvent::PasteLoaded { paste } => {
@@ -40,6 +35,7 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteCreated { paste } => {
                 let summary = PasteSummary::from_paste(&paste);
+                self.all_pastes.insert(0, summary.clone());
                 self.pastes.insert(0, summary);
                 self.select_paste(paste.id.clone());
                 self.selected_content.reset(paste.content.clone());
@@ -56,6 +52,9 @@ impl LocalPasteApp {
                 self.set_status("Created new paste.");
             }
             CoreEvent::PasteSaved { paste } => {
+                if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste.id) {
+                    *item = PasteSummary::from_paste(&paste);
+                }
                 if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
@@ -69,6 +68,9 @@ impl LocalPasteApp {
                 }
             }
             CoreEvent::PasteMetaSaved { paste } => {
+                if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste.id) {
+                    *item = PasteSummary::from_paste(&paste);
+                }
                 if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
@@ -77,16 +79,11 @@ impl LocalPasteApp {
                 }
             }
             CoreEvent::SearchResults { query: _, items } => {
-                self.pastes = items;
-                if let Some(first) = self.pastes.first() {
-                    if self.selected_id.as_deref() != Some(first.id.as_str()) {
-                        self.select_paste(first.id.clone());
-                    }
-                } else {
-                    self.clear_selection();
-                }
+                self.pastes = self.filter_by_collection(&items);
+                self.ensure_selection_after_list_update();
             }
             CoreEvent::PasteDeleted { id } => {
+                self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
@@ -97,6 +94,7 @@ impl LocalPasteApp {
                 self.request_refresh();
             }
             CoreEvent::PasteMissing { id } => {
+                self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
@@ -106,11 +104,15 @@ impl LocalPasteApp {
                 }
                 self.request_refresh();
             }
-            CoreEvent::FoldersLoaded { items: _ } => {}
+            CoreEvent::FoldersLoaded { items } => {
+                self.folders = items;
+            }
             CoreEvent::FolderSaved { folder: _ } => {
+                self.request_folder_refresh();
                 self.request_refresh();
             }
             CoreEvent::FolderDeleted { id: _ } => {
+                self.request_folder_refresh();
                 self.request_refresh();
             }
             CoreEvent::Error { message } => {
@@ -130,6 +132,63 @@ impl LocalPasteApp {
             folder_id: None,
         });
         self.last_refresh_at = Instant::now();
+    }
+
+    pub(super) fn request_folder_refresh(&mut self) {
+        let _ = self.backend.cmd_tx.send(CoreCmd::ListFolders);
+    }
+
+    pub(super) fn set_search_query(&mut self, query: String) {
+        if self.search_query == query {
+            return;
+        }
+        self.search_query = query;
+        self.search_last_input_at = Some(Instant::now());
+    }
+
+    pub(super) fn set_active_collection(&mut self, collection: SidebarCollection) {
+        if self.active_collection == collection {
+            return;
+        }
+        self.active_collection = collection;
+        self.search_last_sent.clear();
+        if self.search_query.trim().is_empty() {
+            self.recompute_visible_pastes();
+            self.ensure_selection_after_list_update();
+        } else {
+            self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+        }
+    }
+
+    pub(super) fn maybe_dispatch_search(&mut self) {
+        let query = self.search_query.trim().to_string();
+        if query.is_empty() {
+            if !self.search_last_sent.is_empty() {
+                self.search_last_sent.clear();
+                self.recompute_visible_pastes();
+                self.ensure_selection_after_list_update();
+            }
+            return;
+        }
+
+        if self.search_last_sent == query {
+            return;
+        }
+        let Some(last_input_at) = self.search_last_input_at else {
+            return;
+        };
+        if last_input_at.elapsed() < SEARCH_DEBOUNCE {
+            return;
+        }
+
+        let (folder_id, language) = self.search_backend_filters();
+        let _ = self.backend.cmd_tx.send(CoreCmd::SearchPastes {
+            query: query.clone(),
+            limit: 512,
+            folder_id,
+            language,
+        });
+        self.search_last_sent = query;
     }
 
     pub(super) fn select_paste(&mut self, id: String) {
@@ -221,5 +280,60 @@ impl LocalPasteApp {
     pub(super) fn selected_index(&self) -> Option<usize> {
         let id = self.selected_id.as_ref()?;
         self.pastes.iter().position(|paste| paste.id == *id)
+    }
+
+    pub(super) fn folder_paste_count(&self, folder_id: Option<&str>) -> usize {
+        self.all_pastes
+            .iter()
+            .filter(|paste| paste.folder_id.as_deref() == folder_id)
+            .count()
+    }
+
+    fn search_backend_filters(&self) -> (Option<String>, Option<String>) {
+        match &self.active_collection {
+            SidebarCollection::Folder(id) => (Some(id.clone()), None),
+            SidebarCollection::Language(lang) => (None, Some(lang.clone())),
+            _ => (None, None),
+        }
+    }
+
+    fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
+        let now = Utc::now();
+        let recent_cutoff = now - ChronoDuration::days(7);
+        items
+            .iter()
+            .filter(|item| match &self.active_collection {
+                SidebarCollection::All => true,
+                SidebarCollection::Recent => item.updated_at >= recent_cutoff,
+                SidebarCollection::Unfiled => item.folder_id.is_none(),
+                SidebarCollection::Language(lang) => item
+                    .language
+                    .as_deref()
+                    .map(|v| v.eq_ignore_ascii_case(lang))
+                    .unwrap_or(false),
+                SidebarCollection::Folder(id) => item.folder_id.as_deref() == Some(id.as_str()),
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn recompute_visible_pastes(&mut self) {
+        self.pastes = self.filter_by_collection(&self.all_pastes);
+    }
+
+    fn ensure_selection_after_list_update(&mut self) {
+        let selection_valid = self
+            .selected_id
+            .as_ref()
+            .map(|id| self.pastes.iter().any(|p| p.id == *id))
+            .unwrap_or(false);
+        if selection_valid {
+            return;
+        }
+        if let Some(first) = self.pastes.first() {
+            self.select_paste(first.id.clone());
+        } else {
+            self.clear_selection();
+        }
     }
 }

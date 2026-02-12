@@ -50,6 +50,15 @@ fn make_app() -> TestHarness {
 
     let app = LocalPasteApp {
         backend: BackendHandle { cmd_tx, evt_rx },
+        all_pastes: vec![PasteSummary {
+            id: "alpha".to_string(),
+            name: "Alpha".to_string(),
+            language: None,
+            content_len: 7,
+            updated_at: Utc::now(),
+            folder_id: None,
+            tags: Vec::new(),
+        }],
         pastes: vec![PasteSummary {
             id: "alpha".to_string(),
             name: "Alpha".to_string(),
@@ -59,8 +68,14 @@ fn make_app() -> TestHarness {
             folder_id: None,
             tags: Vec::new(),
         }],
+        folders: Vec::new(),
         selected_id: Some("alpha".to_string()),
         selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
+        search_query: String::new(),
+        search_last_input_at: None,
+        search_last_sent: String::new(),
+        search_focus_requested: false,
+        active_collection: SidebarCollection::All,
         selected_content: EditorBuffer::new("content".to_string()),
         editor_cache: EditorLayoutCache::default(),
         editor_lines: EditorLineIndex::default(),
@@ -833,4 +848,70 @@ fn word_range_at_selects_word() {
     let (start, end) = word_range_at(text, 1).expect("range");
     let selected: String = text.chars().skip(start).take(end - start).collect();
     assert_eq!(selected, "hello");
+}
+
+#[test]
+fn search_results_respect_collection_filter() {
+    let mut harness = make_app();
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Unfiled);
+
+    let now = Utc::now();
+    let with_folder = PasteSummary {
+        id: "a".to_string(),
+        name: "with-folder".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 10,
+        updated_at: now,
+        folder_id: Some("folder-1".to_string()),
+        tags: Vec::new(),
+    };
+    let unfiled = PasteSummary {
+        id: "b".to_string(),
+        name: "unfiled".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 10,
+        updated_at: now,
+        folder_id: None,
+        tags: Vec::new(),
+    };
+
+    harness.app.apply_event(CoreEvent::SearchResults {
+        query: "rust".to_string(),
+        items: vec![with_folder, unfiled.clone()],
+    });
+
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, unfiled.id);
+}
+
+#[test]
+fn paste_list_filters_recent_collection() {
+    let mut harness = make_app();
+    harness.app.set_active_collection(SidebarCollection::Recent);
+    let old = PasteSummary {
+        id: "old".to_string(),
+        name: "old".to_string(),
+        language: None,
+        content_len: 3,
+        updated_at: Utc::now() - chrono::Duration::days(30),
+        folder_id: None,
+        tags: Vec::new(),
+    };
+    let fresh = PasteSummary {
+        id: "fresh".to_string(),
+        name: "fresh".to_string(),
+        language: None,
+        content_len: 5,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    };
+
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![old, fresh.clone()],
+    });
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, fresh.id);
 }
