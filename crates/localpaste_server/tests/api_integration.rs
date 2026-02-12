@@ -9,6 +9,13 @@ use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+fn assert_folder_deprecation_headers(response: &axum_test::TestResponse) {
+    response.assert_header("deprecation", "true");
+    response.assert_contains_header("sunset");
+    response.assert_contains_header("warning");
+    response.assert_contains_header("link");
+}
+
 async fn setup_test_server() -> (TestServer, TempDir, Arc<PasteLockManager>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.db");
@@ -93,6 +100,7 @@ async fn test_folder_lifecycle() {
         .await;
 
     assert_eq!(create_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&create_response);
     let folder: serde_json::Value = create_response.json();
     let folder_id = folder["id"].as_str().unwrap();
 
@@ -100,6 +108,7 @@ async fn test_folder_lifecycle() {
     let list_response = server.get("/api/folders").await;
 
     assert_eq!(list_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&list_response);
     let folders: Vec<serde_json::Value> = list_response.json();
     assert_eq!(folders.len(), 1);
     assert_eq!(folders[0]["name"], "Test Folder");
@@ -113,6 +122,7 @@ async fn test_folder_lifecycle() {
         .await;
 
     assert_eq!(update_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&update_response);
     let updated: serde_json::Value = update_response.json();
     assert_eq!(updated["name"], "Updated Folder");
 
@@ -126,6 +136,7 @@ async fn test_folder_lifecycle() {
         .await;
 
     assert_eq!(child_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&child_response);
     let child: serde_json::Value = child_response.json();
     let child_id = child["id"].as_str().unwrap();
     assert_eq!(child["parent_id"], folder_id);
@@ -133,6 +144,7 @@ async fn test_folder_lifecycle() {
     // Verify both folders appear
     let updated_list_response = server.get("/api/folders").await;
     assert_eq!(updated_list_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&updated_list_response);
     let updated_folders: Vec<serde_json::Value> = updated_list_response.json();
     assert_eq!(updated_folders.len(), 2);
 
@@ -152,6 +164,7 @@ async fn test_folder_lifecycle() {
     // Delete the parent folder (should cascade)
     let delete_response = server.delete(&format!("/api/folder/{}", folder_id)).await;
     assert_eq!(delete_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&delete_response);
 
     // The nested paste should now be unfiled
     let moved_response = server.get(&format!("/api/paste/{}", child_paste_id)).await;
@@ -162,6 +175,7 @@ async fn test_folder_lifecycle() {
     // No folders should remain
     let remaining_response = server.get("/api/folders").await;
     assert_eq!(remaining_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&remaining_response);
     let remaining: Vec<serde_json::Value> = remaining_response.json();
     assert!(remaining.is_empty());
 }
@@ -192,6 +206,7 @@ async fn test_paste_with_folder() {
         .await;
 
     assert_eq!(paste_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&paste_response);
     let paste: serde_json::Value = paste_response.json();
     assert_eq!(paste["folder_id"], folder_id);
 
@@ -201,6 +216,7 @@ async fn test_paste_with_folder() {
         .await;
 
     assert_eq!(list_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&list_response);
     let pastes: Vec<serde_json::Value> = list_response.json();
     assert_eq!(pastes.len(), 1);
     assert_eq!(pastes[0]["folder_id"], folder_id);

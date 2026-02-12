@@ -1,8 +1,10 @@
 //! Folder HTTP handlers.
 
+use super::deprecation::{warn_folder_deprecation, with_folder_deprecation_headers};
 use crate::{error::HttpError, models::folder::*, AppError, AppState};
 use axum::{
     extract::{Path, State},
+    response::Response,
     Json,
 };
 use localpaste_core::folder_ops::{delete_folder_tree_and_migrate, introduces_cycle};
@@ -21,7 +23,9 @@ use localpaste_core::folder_ops::{delete_folder_tree_and_migrate, introduces_cyc
 pub async fn create_folder(
     State(state): State<AppState>,
     Json(req): Json<CreateFolderRequest>,
-) -> Result<Json<Folder>, HttpError> {
+) -> Result<Response, HttpError> {
+    warn_folder_deprecation("POST /api/folder");
+
     if let Some(ref parent_id) = req.parent_id {
         if state.db.folders.get(parent_id)?.is_none() {
             return Err(AppError::BadRequest(format!(
@@ -34,7 +38,7 @@ pub async fn create_folder(
 
     let folder = Folder::with_parent(req.name, req.parent_id);
     state.db.folders.create(&folder)?;
-    Ok(Json(folder))
+    Ok(with_folder_deprecation_headers(Json(folder)))
 }
 
 /// List all folders.
@@ -44,9 +48,11 @@ pub async fn create_folder(
 ///
 /// # Errors
 /// Returns an error if listing fails.
-pub async fn list_folders(State(state): State<AppState>) -> Result<Json<Vec<Folder>>, HttpError> {
+pub async fn list_folders(State(state): State<AppState>) -> Result<Response, HttpError> {
+    warn_folder_deprecation("GET /api/folders");
+
     let folders = state.db.folders.list()?;
-    Ok(Json(folders))
+    Ok(with_folder_deprecation_headers(Json(folders)))
 }
 
 /// Update a folder's name or parent.
@@ -68,7 +74,9 @@ pub async fn update_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateFolderRequest>,
-) -> Result<Json<Folder>, HttpError> {
+) -> Result<Response, HttpError> {
+    warn_folder_deprecation("PUT /api/folder/:id");
+
     let folders = if req
         .parent_id
         .as_ref()
@@ -103,12 +111,12 @@ pub async fn update_folder(
         }
     }
 
-    state
+    let folder = state
         .db
         .folders
         .update(&id, req.name, req.parent_id)?
-        .map(Json)
-        .ok_or_else(|| AppError::NotFound.into())
+        .ok_or(AppError::NotFound)?;
+    Ok(with_folder_deprecation_headers(Json(folder)))
 }
 
 /// Delete a folder and migrate its pastes to unfiled.
@@ -125,8 +133,12 @@ pub async fn update_folder(
 pub async fn delete_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, HttpError> {
+) -> Result<Response, HttpError> {
+    warn_folder_deprecation("DELETE /api/folder/:id");
+
     let _ = delete_folder_tree_and_migrate(&state.db, &id)?;
 
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(with_folder_deprecation_headers(Json(
+        serde_json::json!({ "success": true }),
+    )))
 }

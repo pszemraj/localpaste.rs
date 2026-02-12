@@ -1,8 +1,10 @@
 //! Paste HTTP handlers.
 
+use super::deprecation::{warn_folder_deprecation, with_folder_deprecation_headers};
 use crate::{error::HttpError, models::paste::*, naming, AppError, AppState};
 use axum::{
     extract::{Path, Query, State},
+    response::{IntoResponse, Response},
     Json,
 };
 
@@ -20,7 +22,9 @@ use axum::{
 pub async fn create_paste(
     State(state): State<AppState>,
     Json(mut req): Json<CreatePasteRequest>,
-) -> Result<Json<Paste>, HttpError> {
+) -> Result<Response, HttpError> {
+    let folder_field_used = req.folder_id.is_some();
+
     // Check paste size limit
     if req.content.len() > state.config.max_paste_size {
         return Err(AppError::BadRequest(format!(
@@ -72,7 +76,12 @@ pub async fn create_paste(
         state.db.pastes.create(&paste)?;
     }
 
-    Ok(Json(paste))
+    if folder_field_used {
+        warn_folder_deprecation("POST /api/paste with folder_id");
+        Ok(with_folder_deprecation_headers(Json(paste)))
+    } else {
+        Ok(Json(paste).into_response())
+    }
 }
 
 /// Fetch a paste by id.
@@ -114,7 +123,9 @@ pub async fn update_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdatePasteRequest>,
-) -> Result<Json<Paste>, HttpError> {
+) -> Result<Response, HttpError> {
+    let folder_field_used = req.folder_id.is_some();
+
     // Check size limit if content is being updated
     if let Some(ref content) = req.content {
         if content.len() > state.config.max_paste_size {
@@ -157,23 +168,33 @@ pub async fn update_paste(
                 .and_then(|f| if f.is_empty() { None } else { Some(f) });
         let old_folder_id = old_paste.folder_id.clone();
 
-        crate::db::TransactionOps::move_paste_between_folders(
+        let updated = crate::db::TransactionOps::move_paste_between_folders(
             &state.db,
             &id,
             old_folder_id.as_deref(),
             new_folder_id.as_deref(),
             req,
         )?
-        .map(Json)
-        .ok_or_else(|| AppError::NotFound.into())
+        .ok_or(AppError::NotFound)?;
+        if folder_field_used {
+            warn_folder_deprecation("PUT /api/paste/:id with folder_id");
+            Ok(with_folder_deprecation_headers(Json(updated)))
+        } else {
+            Ok(Json(updated).into_response())
+        }
     } else {
         // folder_id not changing, just update the paste
-        state
+        let updated = state
             .db
             .pastes
             .update(&id, req)?
-            .map(Json)
-            .ok_or_else(|| AppError::NotFound.into())
+            .ok_or(AppError::NotFound)?;
+        if folder_field_used {
+            warn_folder_deprecation("PUT /api/paste/:id with folder_id");
+            Ok(with_folder_deprecation_headers(Json(updated)))
+        } else {
+            Ok(Json(updated).into_response())
+        }
     }
 }
 
@@ -225,10 +246,21 @@ pub async fn delete_paste(
 pub async fn list_pastes(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
-) -> Result<Json<Vec<Paste>>, HttpError> {
+) -> Result<Response, HttpError> {
+    let folder_filter_used = query
+        .folder_id
+        .as_deref()
+        .map(str::trim)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false);
     let limit = query.limit.unwrap_or(50).min(100);
     let pastes = state.db.pastes.list(limit, query.folder_id)?;
-    Ok(Json(pastes))
+    if folder_filter_used {
+        warn_folder_deprecation("GET /api/pastes?folder_id=...");
+        Ok(with_folder_deprecation_headers(Json(pastes)))
+    } else {
+        Ok(Json(pastes).into_response())
+    }
 }
 
 /// Search pastes by query.
@@ -245,11 +277,22 @@ pub async fn list_pastes(
 pub async fn search_pastes(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
-) -> Result<Json<Vec<Paste>>, HttpError> {
+) -> Result<Response, HttpError> {
+    let folder_filter_used = query
+        .folder_id
+        .as_deref()
+        .map(str::trim)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false);
     let limit = query.limit.unwrap_or(50).min(100);
     let pastes = state
         .db
         .pastes
         .search(&query.q, limit, query.folder_id, query.language)?;
-    Ok(Json(pastes))
+    if folder_filter_used {
+        warn_folder_deprecation("GET /api/search?folder_id=...");
+        Ok(with_folder_deprecation_headers(Json(pastes)))
+    } else {
+        Ok(Json(pastes).into_response())
+    }
 }

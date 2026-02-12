@@ -69,13 +69,11 @@ fn make_app() -> TestHarness {
             folder_id: None,
             tags: Vec::new(),
         }],
-        folders: Vec::new(),
         selected_id: Some("alpha".to_string()),
         selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
         edit_name: "Alpha".to_string(),
         edit_language: None,
         edit_language_is_manual: false,
-        edit_folder_id: None,
         edit_tags: String::new(),
         metadata_dirty: false,
         search_query: String::new(),
@@ -1266,7 +1264,6 @@ fn save_metadata_now_sends_manual_language_and_normalized_tags() {
     harness.app.edit_name = "Script One".to_string();
     harness.app.edit_language = Some("python".to_string());
     harness.app.edit_language_is_manual = true;
-    harness.app.edit_folder_id = Some("folder-a".to_string());
     harness.app.edit_tags = "rust, CLI, rust, cli, ".to_string();
 
     harness.app.save_metadata_now();
@@ -1285,7 +1282,7 @@ fn save_metadata_now_sends_manual_language_and_normalized_tags() {
             assert_eq!(name.as_deref(), Some("Script One"));
             assert_eq!(language.as_deref(), Some("python"));
             assert_eq!(language_is_manual, Some(true));
-            assert_eq!(folder_id.as_deref(), Some("folder-a"));
+            assert!(folder_id.is_none());
             assert_eq!(
                 tags.expect("tags"),
                 vec!["rust".to_string(), "CLI".to_string()]
@@ -1296,13 +1293,12 @@ fn save_metadata_now_sends_manual_language_and_normalized_tags() {
 }
 
 #[test]
-fn save_metadata_now_auto_language_clears_override_and_folder() {
+fn save_metadata_now_auto_language_clears_override_without_folder_edits() {
     let mut harness = make_app();
     harness.app.metadata_dirty = true;
     harness.app.edit_name = "Auto Language".to_string();
     harness.app.edit_language = Some("python".to_string());
     harness.app.edit_language_is_manual = false;
-    harness.app.edit_folder_id = None;
     harness.app.edit_tags = String::new();
 
     harness.app.save_metadata_now();
@@ -1316,7 +1312,7 @@ fn save_metadata_now_auto_language_clears_override_and_folder() {
         } => {
             assert!(language.is_none());
             assert_eq!(language_is_manual, Some(false));
-            assert_eq!(folder_id.as_deref(), Some(""));
+            assert!(folder_id.is_none());
         }
         other => panic!("unexpected command: {:?}", other),
     }

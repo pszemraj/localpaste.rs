@@ -117,15 +117,11 @@ impl LocalPasteApp {
                 }
                 self.request_refresh();
             }
-            CoreEvent::FoldersLoaded { items } => {
-                self.folders = items;
-            }
+            CoreEvent::FoldersLoaded { items: _ } => {}
             CoreEvent::FolderSaved { folder: _ } => {
-                self.request_folder_refresh();
                 self.request_refresh();
             }
             CoreEvent::FolderDeleted { id: _ } => {
-                self.request_folder_refresh();
                 self.request_refresh();
             }
             CoreEvent::Error { message } => {
@@ -145,10 +141,6 @@ impl LocalPasteApp {
             folder_id: None,
         });
         self.last_refresh_at = Instant::now();
-    }
-
-    pub(super) fn request_folder_refresh(&mut self) {
-        let _ = self.backend.cmd_tx.send(CoreCmd::ListFolders);
     }
 
     pub(super) fn set_search_query(&mut self, query: String) {
@@ -243,7 +235,6 @@ impl LocalPasteApp {
         self.edit_name.clear();
         self.edit_language = None;
         self.edit_language_is_manual = false;
-        self.edit_folder_id = None;
         self.edit_tags.clear();
         self.metadata_dirty = false;
         self.selected_content.reset(String::new());
@@ -266,7 +257,6 @@ impl LocalPasteApp {
         self.edit_name.clear();
         self.edit_language = None;
         self.edit_language_is_manual = false;
-        self.edit_folder_id = None;
         self.edit_tags.clear();
         self.metadata_dirty = false;
         self.selected_content.reset(String::new());
@@ -373,7 +363,6 @@ impl LocalPasteApp {
         let Some(id) = self.selected_id.clone() else {
             return;
         };
-        let folder_id = Some(self.edit_folder_id.clone().unwrap_or_default());
         let language = if self.edit_language_is_manual {
             self.edit_language.clone()
         } else {
@@ -385,7 +374,7 @@ impl LocalPasteApp {
             name: Some(self.edit_name.clone()),
             language,
             language_is_manual: Some(self.edit_language_is_manual),
-            folder_id,
+            folder_id: None,
             tags,
         });
         self.metadata_dirty = false;
@@ -488,7 +477,6 @@ impl LocalPasteApp {
         self.edit_name = paste.name.clone();
         self.edit_language = paste.language.clone();
         self.edit_language_is_manual = paste.language_is_manual;
-        self.edit_folder_id = paste.folder_id.clone();
         self.edit_tags = paste.tags.join(", ");
         self.metadata_dirty = false;
     }

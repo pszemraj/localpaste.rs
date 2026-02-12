@@ -20,7 +20,7 @@ use highlight::{
     EditorLayoutCache, EditorLayoutRequest, HighlightRender, HighlightRequestMeta, HighlightWorker,
     SyntectSettings,
 };
-use localpaste_core::models::{folder::Folder, paste::Paste};
+use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
 use std::collections::VecDeque;
@@ -45,13 +45,11 @@ pub struct LocalPasteApp {
     backend: BackendHandle,
     all_pastes: Vec<PasteSummary>,
     pastes: Vec<PasteSummary>,
-    folders: Vec<Folder>,
     selected_id: Option<String>,
     selected_paste: Option<Paste>,
     edit_name: String,
     edit_language: Option<String>,
     edit_language_is_manual: bool,
-    edit_folder_id: Option<String>,
     edit_tags: String,
     metadata_dirty: bool,
     search_query: String,
@@ -350,13 +348,11 @@ impl LocalPasteApp {
             backend,
             all_pastes: Vec::new(),
             pastes: Vec::new(),
-            folders: Vec::new(),
             selected_id: None,
             selected_paste: None,
             edit_name: String::new(),
             edit_language: None,
             edit_language_is_manual: false,
-            edit_folder_id: None,
             edit_tags: String::new(),
             metadata_dirty: false,
             search_query: String::new(),
@@ -423,7 +419,6 @@ impl LocalPasteApp {
             highlight_trace_enabled: env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE"),
         };
         app.request_refresh();
-        app.request_folder_refresh();
         Ok(app)
     }
 

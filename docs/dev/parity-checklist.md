@@ -140,7 +140,7 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 
 ## Folders
 
-- [~] Folder APIs remain available in core/server, but folder controls are removed from the rewrite GUI in favor of smart filters
+- [~] Folder APIs remain available in core/server (deprecated via API warning headers), but folder controls are removed from the rewrite GUI in favor of smart filters
 - [x] Folder delete migrates pastes to unfiled (API/core behavior)
 
 ## UX + Theme

@@ -12,19 +12,8 @@ impl LocalPasteApp {
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let lang_label = display_language_label(language.as_deref(), is_large);
-                let folder_label = self
-                    .edit_folder_id
-                    .as_ref()
-                    .and_then(|folder_id| {
-                        self.folders
-                            .iter()
-                            .find(|folder| folder.id == *folder_id)
-                            .map(|folder| folder.name.clone())
-                    })
-                    .unwrap_or_else(|| "Unfiled".to_string());
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
 
-                let mut pending_collection: Option<SidebarCollection> = None;
                 let mut pending_language_filter: Option<Option<String>> = None;
                 let mut pending_tag_search: Option<String> = None;
                 let mut apply_metadata = false;
@@ -56,13 +45,6 @@ impl LocalPasteApp {
                                     Some(trimmed.to_string())
                                 }
                             }));
-                    }
-                    if ui.small_button(format!("[{}]", folder_label)).clicked() {
-                        pending_collection = Some(if self.edit_folder_id.is_none() {
-                            SidebarCollection::Unfiled
-                        } else {
-                            SidebarCollection::All
-                        });
                     }
                     for tag in &visible_tags {
                         if ui.small_button(format!("#{}", tag)).clicked() {
@@ -98,9 +80,6 @@ impl LocalPasteApp {
                         delete_requested = true;
                     }
                 });
-                if let Some(collection) = pending_collection {
-                    self.set_active_collection(collection);
-                }
                 if let Some(language_filter) = pending_language_filter {
                     self.set_active_language_filter(language_filter);
                 }
