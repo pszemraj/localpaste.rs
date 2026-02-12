@@ -9,6 +9,12 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
 - `LOCALPASTE_VIRTUAL_EDITOR=0` forces `TextEdit` fallback for diagnostics/kill-switch use.
 - `LOCALPASTE_VIRTUAL_EDITOR=1` explicitly forces editable virtual mode and wins over preview.
 
+## Scope Note
+
+- Product scope for this cycle is English-only editor UX.
+- Multilingual input design/validation (IME, i18n, locale-specific text workflows) is explicitly out of scope.
+- If multilingual input works incidentally, treat it as best-effort and non-blocking.
+
 ## Status Snapshot (2026-02-12)
 
 ### Implemented (2026-02-11)
@@ -16,7 +22,7 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
 - `EditorBuffer` now keeps rope-backed state (with a `String` mirror for `TextEdit` compatibility).
 - `app/virtual_editor/` now contains:
   - `buffer.rs` (`RopeBuffer`, edit deltas, char/line conversions)
-  - `state.rs` (cursor/selection/focus/IME state)
+  - `state.rs` (cursor/selection/focus editor state)
   - `history.rs` (bounded undo/redo with coalescing)
   - `layout.rs` (soft-wrap metrics + prefix-height index for viewport mapping)
   - `input.rs` (egui event -> virtual editor command reducer)
@@ -35,7 +41,6 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
   - virtual preview/editor click semantics now use one custom streak detector (no mixed egui double/triple overrides)
   - triple-click full-line selection in large-buffer editable paths
   - hardened clipboard routing (`Ctrl/Cmd+C/X`) with deferred apply after focus settles
-  - IME composition hardening: empty/canceled preedit clears transient composition range/text, commit/disable paths leave stable caret/selection state
   - drag-selection auto-scroll enabled at viewport edges for virtual preview and virtual editor (distance-scaled speed)
 - Reliability validation protocol was updated and run with trace expectations:
   - `LOCALPASTE_EDITOR_INPUT_TRACE=1`

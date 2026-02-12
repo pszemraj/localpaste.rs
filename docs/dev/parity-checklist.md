@@ -84,10 +84,10 @@ Decision key:
 - [x] Focus-gated virtual command routing: only `Copy` is selection-driven without focus; mutating/edit commands require focused virtual editor
 - [x] Triple-click whole-line selection behavior (repeatable, non-intermittent)
 - [x] Selection visuals: style-driven low-opacity fill from `ui.visuals().selection` (no custom multi-line left rail)
-- [x] IME end-to-end reliability: `Enabled -> Preedit -> Commit -> Disabled` keeps stable caret/selection and clears transient preedit state
 - [x] Drag-selection auto-scroll at viewport edges in virtual preview/editor (selection anchor preserved while scrolling)
 - [~] Highlight recovery: keep current render visible while async refresh is pending (known gap: repeated Enter in `perf-scroll-5k-lines` can still produce multi-second plain fallback)
 - [x] Stale staged-highlight renders are dropped before apply (no unnecessary `highlight_version` bumps)
+- [x] Scope policy: multilingual/IME-specific UX and validation are explicitly out of scope for release gating (English-first workflow only)
 - [x] Trace protocol documented and validated with:
   - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
   - `LOCALPASTE_HIGHLIGHT_TRACE=1`

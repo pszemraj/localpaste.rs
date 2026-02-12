@@ -22,9 +22,9 @@
   - rope-backed text buffer
   - virtualized variable-height rendering (`show_viewport`)
   - operation-based undo/redo
-  - IME composition event handling
   - command reducer for keyboard navigation/selection/edit operations
 - `LOCALPASTE_VIRTUAL_EDITOR=0` forces the legacy `TextEdit` fallback.
+- Scope note: this cycle is English-first; multilingual/IME-specific UX design and validation are out of scope.
 
 ## Rewrite Highlighting
 

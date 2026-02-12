@@ -7,6 +7,7 @@ This is a repeatable, low-friction protocol for validating editor performance ch
 - Keep tests isolated from your real data.
 - Create consistent paste sizes and languages for perf regression checks.
 - Make it easy to repeat across machines/branches.
+- Keep validation scoped to English-first editor workflows; multilingual/IME behavior is out of scope for this protocol.
 
 ## Prereqs
 
@@ -252,8 +253,6 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 
 8. **Virtual editor parity (default mode)**
    - Verify `Ctrl/Cmd+A/C/X/V`, `Ctrl/Cmd+Z/Y`, Home/End, PageUp/PageDown, shift-selection.
-   - Verify IME composition (`Enabled` -> `Preedit` -> `Commit` -> `Disabled`) does not lose caret/selection state.
-   - Verify canceled IME composition (`Enabled` -> `Preedit` -> `Disabled`) does not leave transient preedit text in the buffer.
    - Verify focus-gated mutation: with a virtual selection active but editor unfocused, typing/navigation/delete/undo/redo/cut/paste do not modify editor state.
    - Verify drag-selection crossing viewport edges auto-scrolls continuously while preserving the active selection anchor.
 
