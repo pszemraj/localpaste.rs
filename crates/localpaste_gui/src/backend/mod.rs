@@ -267,6 +267,21 @@ mod tests {
 
         backend
             .cmd_tx
+            .send(CoreCmd::ListFolders)
+            .expect("send folder list");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FoldersLoaded { items } => {
+                let folder = items
+                    .iter()
+                    .find(|folder| folder.id == folder_id)
+                    .expect("folder should exist");
+                assert_eq!(folder.paste_count, 1);
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
             .send(CoreCmd::GetPaste {
                 id: paste_id.clone(),
             })
@@ -280,6 +295,56 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteMeta {
+                id: paste_id.clone(),
+                name: None,
+                language: None,
+                language_is_manual: Some(false),
+                folder_id: Some(String::new()),
+                tags: None,
+            })
+            .expect("send metadata clear-folder update");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteMetaSaved { paste } => {
+                assert_eq!(paste.id, paste_id);
+                assert!(paste.folder_id.is_none());
+                assert!(!paste.language_is_manual);
+                assert!(paste.language.is_none());
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::ListFolders)
+            .expect("send folder list after unfile");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FoldersLoaded { items } => {
+                let folder = items
+                    .iter()
+                    .find(|folder| folder.id == folder_id)
+                    .expect("folder should exist");
+                assert_eq!(folder.paste_count, 0);
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteMeta {
+                id: paste_id,
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some("missing-folder".to_string()),
+                tags: None,
+            })
+            .expect("send metadata missing-folder update");
+        expect_error_contains(&backend.evt_rx, "does not exist");
     }
 
     #[test]
@@ -411,5 +476,52 @@ mod tests {
             })
             .expect("send update");
         expect_error_contains(&backend.evt_rx, "does not exist");
+    }
+
+    #[test]
+    fn backend_update_folder_can_clear_parent_to_top_level() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreateFolder {
+                name: "root".to_string(),
+                parent_id: None,
+            })
+            .expect("send create root");
+        let root = match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => folder,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreateFolder {
+                name: "child".to_string(),
+                parent_id: Some(root.id.clone()),
+            })
+            .expect("send create child");
+        let child = match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => folder,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdateFolder {
+                id: child.id.clone(),
+                name: child.name.clone(),
+                parent_id: None,
+            })
+            .expect("send clear parent");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => {
+                assert_eq!(folder.id, child.id);
+                assert!(folder.parent_id.is_none());
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
     }
 }

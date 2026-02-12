@@ -3,6 +3,7 @@
 use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use localpaste_core::{
+    db::TransactionOps,
     folder_ops::{delete_folder_tree_and_migrate, introduces_cycle},
     models::{folder::Folder, paste::UpdatePasteRequest},
     naming, Database,
@@ -128,15 +129,94 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         folder_id,
                         tags,
                     } => {
+                        let existing = match db.pastes.get(&id) {
+                            Ok(Some(paste)) => paste,
+                            Ok(None) => {
+                                let _ = evt_tx.send(CoreEvent::PasteMissing { id });
+                                continue;
+                            }
+                            Err(err) => {
+                                error!("backend metadata load failed: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("Metadata update failed: {}", err),
+                                });
+                                continue;
+                            }
+                        };
+
+                        let normalized_folder_id = folder_id.map(|fid| {
+                            let trimmed = fid.trim().to_string();
+                            if trimmed.is_empty() {
+                                String::new()
+                            } else {
+                                trimmed
+                            }
+                        });
+
+                        if let Some(folder_id) =
+                            normalized_folder_id.as_ref().filter(|fid| !fid.is_empty())
+                        {
+                            match db.folders.get(folder_id) {
+                                Ok(Some(_)) => {}
+                                Ok(None) => {
+                                    let _ = evt_tx.send(CoreEvent::Error {
+                                        message: format!(
+                                            "Metadata update failed: folder '{}' does not exist",
+                                            folder_id
+                                        ),
+                                    });
+                                    continue;
+                                }
+                                Err(err) => {
+                                    error!("backend folder lookup failed: {}", err);
+                                    let _ = evt_tx.send(CoreEvent::Error {
+                                        message: format!("Metadata update failed: {}", err),
+                                    });
+                                    continue;
+                                }
+                            }
+                        }
+
                         let update = UpdatePasteRequest {
                             content: None,
                             name,
                             language,
                             language_is_manual,
-                            folder_id,
+                            folder_id: normalized_folder_id.clone(),
                             tags,
                         };
-                        match db.pastes.update(&id, update) {
+
+                        let folder_changing = normalized_folder_id.is_some() && {
+                            let new_folder = normalized_folder_id.as_ref().and_then(|f| {
+                                if f.is_empty() {
+                                    None
+                                } else {
+                                    Some(f.as_str())
+                                }
+                            });
+                            new_folder != existing.folder_id.as_deref()
+                        };
+
+                        let result = if folder_changing {
+                            let new_folder_id = normalized_folder_id.clone().and_then(|f| {
+                                if f.is_empty() {
+                                    None
+                                } else {
+                                    Some(f)
+                                }
+                            });
+                            TransactionOps::move_paste_between_folders(
+                                &db,
+                                &id,
+                                existing.folder_id.as_deref(),
+                                new_folder_id.as_deref(),
+                                update,
+                            )
+                        } else {
+                            db.pastes.update(&id, update)
+                        };
+
+                        match result {
                             Ok(Some(paste)) => {
                                 let _ = evt_tx.send(CoreEvent::PasteMetaSaved { paste });
                             }
@@ -217,7 +297,10 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         name,
                         parent_id,
                     } => {
-                        let normalized_parent = parent_id.filter(|pid| !pid.trim().is_empty());
+                        let normalized_parent = parent_id.and_then(|pid| match pid.trim() {
+                            "" => None,
+                            trimmed => Some(trimmed.to_string()),
+                        });
                         if normalized_parent.as_deref() == Some(id.as_str()) {
                             let _ = evt_tx.send(CoreEvent::Error {
                                 message: "Update folder failed: folder cannot be its own parent"
@@ -255,7 +338,8 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                         }
 
-                        match db.folders.update(&id, name, normalized_parent) {
+                        let persisted_parent = Some(normalized_parent.clone().unwrap_or_default());
+                        match db.folders.update(&id, name, persisted_parent) {
                             Ok(Some(folder)) => {
                                 let _ = evt_tx.send(CoreEvent::FolderSaved { folder });
                             }
