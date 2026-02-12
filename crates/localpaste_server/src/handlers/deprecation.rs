@@ -5,8 +5,6 @@ use axum::response::{IntoResponse, Response};
 
 const FOLDER_DEPRECATION_WARNING: &str =
     r#"299 - "Folder APIs are deprecated; prefer tags, search, and smart filters""#;
-const FOLDER_DEPRECATION_LINK: &str =
-    r#"</docs/dev/parity-checklist.md>; rel="deprecation"; type="text/markdown""#;
 const FOLDER_DEPRECATION_SUNSET: &str = "Fri, 31 Dec 2027 23:59:59 GMT";
 
 /// Attach deprecation headers to responses for legacy folder-based API pathways.
@@ -25,7 +23,6 @@ where
         header::WARNING,
         HeaderValue::from_static(FOLDER_DEPRECATION_WARNING),
     );
-    headers.insert("link", HeaderValue::from_static(FOLDER_DEPRECATION_LINK));
     response
 }
 

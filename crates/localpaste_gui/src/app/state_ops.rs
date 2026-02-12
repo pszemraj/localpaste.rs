@@ -3,7 +3,7 @@
 use super::highlight::EditorLayoutCache;
 use super::{
     LocalPasteApp, PaletteCopyAction, SaveStatus, SidebarCollection, StatusMessage, ToastMessage,
-    SEARCH_DEBOUNCE, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
+    LIST_PASTES_LIMIT, SEARCH_DEBOUNCE, SEARCH_PASTES_LIMIT, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
 };
 use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Utc};
@@ -151,7 +151,7 @@ impl LocalPasteApp {
 
     pub(super) fn request_refresh(&mut self) {
         let _ = self.backend.cmd_tx.send(CoreCmd::ListPastes {
-            limit: 512,
+            limit: LIST_PASTES_LIMIT,
             folder_id: None,
         });
         self.last_refresh_at = Instant::now();
@@ -232,7 +232,7 @@ impl LocalPasteApp {
         let (folder_id, language) = self.search_backend_filters();
         let _ = self.backend.cmd_tx.send(CoreCmd::SearchPastes {
             query: query.clone(),
-            limit: 512,
+            limit: SEARCH_PASTES_LIMIT,
             folder_id,
             language,
         });
@@ -320,7 +320,6 @@ impl LocalPasteApp {
 
     pub(super) fn delete_selected(&mut self) {
         if let Some(id) = self.selected_id.clone() {
-            self.locks.unlock(&id);
             let _ = self.backend.cmd_tx.send(CoreCmd::DeletePaste { id });
         }
     }

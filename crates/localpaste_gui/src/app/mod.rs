@@ -161,6 +161,8 @@ const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const VIRTUAL_OVERSCAN_LINES: usize = 3;
+const LIST_PASTES_LIMIT: usize = 512;
+const SEARCH_PASTES_LIMIT: usize = 512;
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
 
@@ -333,7 +335,7 @@ impl LocalPasteApp {
         let locks = Arc::new(PasteLockManager::default());
         let server_db = db.share()?;
         let state = AppState::with_locks(config.clone(), server_db, locks.clone());
-        let allow_public = std::env::var("ALLOW_PUBLIC_ACCESS").is_ok();
+        let allow_public = localpaste_core::config::env_flag_enabled("ALLOW_PUBLIC_ACCESS");
         if allow_public {
             warn!("Public access enabled - server will accept requests from any origin");
         }

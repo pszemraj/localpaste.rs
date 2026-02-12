@@ -7,7 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Lock file manager for handling database locks gracefully
 pub struct LockManager {
-    lock_path: PathBuf,
+    db_path: PathBuf,
+    legacy_lock_path: PathBuf,
 }
 
 impl LockManager {
@@ -16,25 +17,68 @@ impl LockManager {
     /// # Returns
     /// A new [`LockManager`] instance.
     pub fn new(db_path: &str) -> Self {
-        let lock_path = PathBuf::from(format!("{}.lock", db_path));
-        Self { lock_path }
+        Self {
+            db_path: PathBuf::from(db_path),
+            legacy_lock_path: PathBuf::from(format!("{}.lock", db_path)),
+        }
+    }
+
+    fn known_lock_paths(&self) -> Result<Vec<PathBuf>, AppError> {
+        let mut lock_paths = vec![self.db_path.join("db.lock"), self.legacy_lock_path.clone()];
+
+        if self.db_path.is_dir() {
+            for entry in fs::read_dir(&self.db_path).map_err(|err| {
+                AppError::DatabaseError(format!(
+                    "Failed to inspect database directory for lock files: {}",
+                    err
+                ))
+            })? {
+                let entry = entry.map_err(|err| {
+                    AppError::DatabaseError(format!(
+                        "Failed to inspect database directory entry: {}",
+                        err
+                    ))
+                })?;
+                let path = entry.path();
+                let is_lock = path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.eq_ignore_ascii_case("lock"))
+                    .unwrap_or(false);
+                if is_lock {
+                    lock_paths.push(path);
+                }
+            }
+        }
+
+        lock_paths.sort();
+        lock_paths.dedup();
+        Ok(lock_paths)
     }
 
     /// Force unlock (use with caution!).
     ///
     /// # Returns
-    /// `Ok(())` if the lock file is removed or not present.
+    /// Number of lock files removed.
     ///
     /// # Errors
-    /// Returns an error if removal fails.
-    pub fn force_unlock(&self) -> Result<(), AppError> {
-        if self.lock_path.exists() {
-            tracing::warn!("Force removing lock file: {:?}", self.lock_path);
-            fs::remove_file(&self.lock_path).map_err(|e| {
-                AppError::DatabaseError(format!("Failed to force remove lock: {}", e))
+    /// Returns an error if lock discovery or file removal fails.
+    pub fn force_unlock(&self) -> Result<usize, AppError> {
+        let mut removed_count = 0usize;
+        for lock_path in self.known_lock_paths()? {
+            if !lock_path.exists() {
+                continue;
+            }
+            tracing::warn!("Force removing lock file: {:?}", lock_path);
+            fs::remove_file(&lock_path).map_err(|err| {
+                AppError::DatabaseError(format!(
+                    "Failed to force remove lock {:?}: {}",
+                    lock_path, err
+                ))
             })?;
+            removed_count += 1;
         }
-        Ok(())
+        Ok(removed_count)
     }
 
     /// Create a backup of the database before potentially destructive operations.
@@ -101,4 +145,43 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LockManager;
+    use tempfile::TempDir;
+
+    #[test]
+    fn force_unlock_removes_known_lock_files() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        std::fs::create_dir_all(&db_path).expect("db dir");
+
+        let db_lock = db_path.join("db.lock");
+        let extra_lock = db_path.join("tree.lock");
+        let legacy_lock = std::path::PathBuf::from(format!("{}.lock", db_path.to_string_lossy()));
+        std::fs::write(&db_lock, b"lock").expect("db lock");
+        std::fs::write(&extra_lock, b"lock").expect("extra lock");
+        std::fs::write(&legacy_lock, b"lock").expect("legacy lock");
+
+        let manager = LockManager::new(&db_path.to_string_lossy());
+        let removed = manager.force_unlock().expect("force unlock");
+
+        assert_eq!(removed, 3);
+        assert!(!db_lock.exists());
+        assert!(!extra_lock.exists());
+        assert!(!legacy_lock.exists());
+    }
+
+    #[test]
+    fn force_unlock_returns_zero_when_no_lock_files_exist() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        std::fs::create_dir_all(&db_path).expect("db dir");
+
+        let manager = LockManager::new(&db_path.to_string_lossy());
+        let removed = manager.force_unlock().expect("force unlock");
+        assert_eq!(removed, 0);
+    }
 }

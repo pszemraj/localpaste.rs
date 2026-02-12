@@ -51,6 +51,41 @@ fn resolve_home_dir() -> Option<PathBuf> {
     std::env::current_dir().ok()
 }
 
+/// Parse a boolean-like environment flag value.
+///
+/// # Supported Values
+/// - Truthy: `1`, `true`, `yes`, `on`
+/// - Falsy: `0`, `false`, `no`, `off`, empty string
+///
+/// Matching is case-insensitive and ignores surrounding whitespace.
+///
+/// # Returns
+/// `Some(bool)` when the value is recognized, otherwise `None`.
+pub fn parse_env_flag(value: &str) -> Option<bool> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "" | "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Read a boolean flag from the environment.
+///
+/// Missing or unrecognized values are treated as `false`.
+///
+/// # Arguments
+/// - `name`: Environment variable name.
+///
+/// # Returns
+/// `true` when the value is a recognized truthy value.
+pub fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .and_then(|value| parse_env_flag(&value))
+        .unwrap_or(false)
+}
+
 impl Config {
     /// Load configuration from environment variables.
     ///
@@ -75,10 +110,32 @@ impl Config {
                 .ok()
                 .and_then(|i| i.parse().ok())
                 .unwrap_or(2000), // 2 seconds
-            auto_backup: env::var("AUTO_BACKUP")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(false), // Default to false - backups should be explicit
+            auto_backup: env_flag_enabled("AUTO_BACKUP"), // Default to false - backups should be explicit
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_env_flag;
+
+    #[test]
+    fn parse_env_flag_accepts_truthy_values() {
+        for value in ["1", "true", "TRUE", " yes ", "on"] {
+            assert_eq!(parse_env_flag(value), Some(true), "value: {}", value);
+        }
+    }
+
+    #[test]
+    fn parse_env_flag_accepts_falsy_values() {
+        for value in ["", "0", "false", "FALSE", " no ", "off"] {
+            assert_eq!(parse_env_flag(value), Some(false), "value: {}", value);
+        }
+    }
+
+    #[test]
+    fn parse_env_flag_rejects_unknown_values() {
+        assert_eq!(parse_env_flag("maybe"), None);
+        assert_eq!(parse_env_flag("enabled"), None);
     }
 }

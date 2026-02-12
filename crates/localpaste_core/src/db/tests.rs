@@ -120,6 +120,46 @@ mod db_tests {
     }
 
     #[test]
+    fn test_language_update_without_manual_flag_sets_manual_override() {
+        let (db, _temp) = setup_test_db();
+
+        let paste = Paste::new(
+            "def main():\n    print('hello')".to_string(),
+            "script".to_string(),
+        );
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).unwrap();
+
+        let set_language = UpdatePasteRequest {
+            content: None,
+            name: None,
+            language: Some("rust".to_string()),
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        };
+        let updated = db.pastes.update(&paste_id, set_language).unwrap().unwrap();
+        assert_eq!(updated.language.as_deref(), Some("rust"));
+        assert!(updated.language_is_manual);
+
+        let content_update = UpdatePasteRequest {
+            content: Some("def another():\n    print('world')".to_string()),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        };
+        let after_content_update = db
+            .pastes
+            .update(&paste_id, content_update)
+            .unwrap()
+            .unwrap();
+        assert_eq!(after_content_update.language.as_deref(), Some("rust"));
+        assert!(after_content_update.language_is_manual);
+    }
+
+    #[test]
     fn test_paste_delete() {
         let (db, _temp) = setup_test_db();
 

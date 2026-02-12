@@ -39,7 +39,6 @@ pub(crate) struct WrapLayoutCache {
     wrap_width: u32,
     line_height_bits: u32,
     char_width_bits: u32,
-    highlight_epoch: u64,
     wrap_cols: usize,
     line_metrics: Vec<WrapLineMetrics>,
     prefix_heights: Vec<f32>,
@@ -53,14 +52,12 @@ impl WrapLayoutCache {
         wrap_width: f32,
         line_height: f32,
         char_width: f32,
-        highlight_epoch: u64,
         line_count: usize,
     ) -> bool {
         self.revision != revision
             || self.wrap_width != wrap_width.max(0.0).round() as u32
             || self.line_height_bits != line_height.to_bits()
             || self.char_width_bits != char_width.to_bits()
-            || self.highlight_epoch != highlight_epoch
             || self.line_metrics.len() != line_count
     }
 
@@ -71,14 +68,12 @@ impl WrapLayoutCache {
         wrap_width: f32,
         line_height: f32,
         char_width: f32,
-        highlight_epoch: u64,
     ) {
         let wrap_width = wrap_width.max(0.0).round() as u32;
         self.revision = buffer.revision();
         self.wrap_width = wrap_width;
         self.line_height_bits = line_height.to_bits();
         self.char_width_bits = char_width.to_bits();
-        self.highlight_epoch = highlight_epoch;
         self.line_metrics.clear();
         self.prefix_heights.clear();
         self.prefix_heights.push(0.0);
@@ -184,10 +179,20 @@ mod tests {
     fn visible_range_tracks_wrapped_heights() {
         let buffer = RopeBuffer::new("1234567890\n12\n123456");
         let mut cache = WrapLayoutCache::default();
-        cache.rebuild(&buffer, 30.0, 10.0, 5.0, 0);
+        cache.rebuild(&buffer, 30.0, 10.0, 5.0);
         // Wrap columns = 6, heights: [20,10,10]
         assert_eq!(cache.visible_range(0.0, 9.0, 0), 0..1);
         assert_eq!(cache.visible_range(21.0, 9.0, 0), 1..3);
         assert_eq!(cache.visible_range(35.0, 20.0, 1), 1..3);
+    }
+
+    #[test]
+    fn needs_rebuild_only_tracks_geometry_and_text_state() {
+        let buffer = RopeBuffer::new("alpha\nbeta");
+        let mut cache = WrapLayoutCache::default();
+        cache.rebuild(&buffer, 60.0, 12.0, 6.0);
+
+        assert!(!cache.needs_rebuild(buffer.revision(), 60.0, 12.0, 6.0, buffer.line_count()));
+        assert!(cache.needs_rebuild(buffer.revision(), 61.0, 12.0, 6.0, buffer.line_count()));
     }
 }

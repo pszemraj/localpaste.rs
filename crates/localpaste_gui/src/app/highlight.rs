@@ -746,6 +746,7 @@ pub(super) fn spawn_highlight_worker() -> HighlightWorker {
             let mut cache = HighlightWorkerCache::default();
             for req in rx_cmd.iter() {
                 let mut latest: HighlightRequest = req;
+                // Coalesce backlog bursts so stale highlight work is skipped.
                 while let Ok(next) = rx_cmd.try_recv() {
                     latest = next;
                 }

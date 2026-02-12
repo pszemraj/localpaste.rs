@@ -47,16 +47,22 @@ impl LocalPasteApp {
             FontData::from_static(FONT_0XPROTO_BYTES).into(),
         );
         let editor_family = FontFamily::Name(EDITOR_FONT_FAMILY.into());
-        fonts.families.insert(
-            editor_family.clone(),
-            vec![
-                FONT_0XPROTO.to_string(),
-                "Hack".to_string(),
-                "Ubuntu-Light".to_string(),
-                "NotoEmoji-Regular".to_string(),
-                "emoji-icon-font".to_string(),
-            ],
-        );
+        // Virtual editor wrap/cursor math assumes fixed-width glyphs. Keep fallback chain
+        // aligned with the monospace family to avoid proportional-font drift.
+        let mut editor_fallback_fonts = vec![FONT_0XPROTO.to_string()];
+        if let Some(monospace_fonts) = fonts.families.get(&FontFamily::Monospace).cloned() {
+            for font_name in monospace_fonts {
+                if !editor_fallback_fonts
+                    .iter()
+                    .any(|existing| existing == &font_name)
+                {
+                    editor_fallback_fonts.push(font_name);
+                }
+            }
+        }
+        fonts
+            .families
+            .insert(editor_family.clone(), editor_fallback_fonts);
         let editor_font_ready = fonts.font_data.contains_key(FONT_0XPROTO);
         if !editor_font_ready {
             warn!("0xProto font missing; falling back to monospace in editor");

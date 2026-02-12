@@ -13,21 +13,35 @@ use crate::error::AppError;
 use sled::Db;
 use std::sync::Arc;
 
-/// Check if a LocalPaste process is already running
+/// Check if another LocalPaste process is already running.
+///
+/// # Returns
+/// `true` when a matching process id (other than the current process) is found.
 #[cfg(unix)]
-fn is_localpaste_running() -> bool {
+pub fn is_localpaste_running() -> bool {
     use std::process::Command;
 
+    let current_pid = std::process::id();
     let output = Command::new("pgrep").arg("-f").arg("localpaste").output();
 
     match output {
-        Ok(result) => !result.stdout.is_empty(),
+        Ok(result) => String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .filter_map(|line| line.trim().parse::<u32>().ok())
+            .any(|pid| pid != current_pid),
         Err(_) => false,
     }
 }
 
+/// Check if another LocalPaste process is already running.
+///
+/// # Returns
+/// `true` when a matching process id (other than the current process) is found.
+///
+/// # Panics
+/// This function does not intentionally panic.
 #[cfg(windows)]
-fn is_localpaste_running() -> bool {
+pub fn is_localpaste_running() -> bool {
     use std::process::Command;
 
     let output = Command::new("tasklist").arg("/FO").arg("CSV").output();
@@ -35,12 +49,26 @@ fn is_localpaste_running() -> bool {
         return false;
     };
 
-    let haystack = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-    haystack.contains("localpaste.exe") || haystack.contains("localpaste-gui.exe")
+    let current_pid = std::process::id();
+    let csv = String::from_utf8_lossy(&output.stdout);
+    csv.lines().skip(1).any(|line| {
+        let parts: Vec<&str> = line.trim().trim_matches('"').split("\",\"").collect();
+        if parts.len() < 2 {
+            return false;
+        }
+        let process_name = parts[0].to_ascii_lowercase();
+        let pid = parts[1].parse::<u32>().ok();
+        (process_name == "localpaste.exe" || process_name == "localpaste-gui.exe")
+            && pid.map(|pid| pid != current_pid).unwrap_or(false)
+    })
 }
 
+/// Check if another LocalPaste process is already running.
+///
+/// # Returns
+/// Always returns `false` on unsupported platforms.
 #[cfg(not(any(unix, windows)))]
-fn is_localpaste_running() -> bool {
+pub fn is_localpaste_running() -> bool {
     false
 }
 
@@ -289,8 +317,8 @@ impl Database {
                                 path, path
                             ),
                             format!(
-                                "Remove-Item -Force \"{}\\*.lock\",\"{}\\db.lock\"",
-                                path, path
+                                "Remove-Item -Force \"{}\\*.lock\",\"{}\\db.lock\",\"{}.lock\"",
+                                path, path, path
                             ),
                             format!(
                                 "Get-ChildItem \"{}\\*.backup.*\" | Sort-Object LastWriteTime | Select-Object -Last 1",
@@ -300,7 +328,7 @@ impl Database {
                     } else {
                         (
                             format!("cp -r {} {}.backup", path, path),
-                            format!("rm {}/*.lock {}/db.lock", path, path),
+                            format!("rm -f {}/*.lock {}/db.lock {}.lock", path, path, path),
                             format!("ls -la {}/*.backup.* | tail -1", parent),
                         )
                     };
@@ -315,7 +343,9 @@ impl Database {
                         2. {}\n\
                         3. Try starting again\n\n\
                         If that doesn't work, restore from auto-backup:\n\
-                        {}",
+                        {}\n\
+                        Or use:\n\
+                        localpaste --force-unlock",
                         backup_cmd, remove_cmd, restore_cmd
                     )));
                 }

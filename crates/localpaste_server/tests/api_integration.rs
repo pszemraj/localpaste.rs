@@ -13,7 +13,6 @@ fn assert_folder_deprecation_headers(response: &axum_test::TestResponse) {
     response.assert_header("deprecation", "true");
     response.assert_contains_header("sunset");
     response.assert_contains_header("warning");
-    response.assert_contains_header("link");
 }
 
 async fn setup_test_server() -> (TestServer, TempDir, Arc<PasteLockManager>) {

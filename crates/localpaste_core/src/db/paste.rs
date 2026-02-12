@@ -302,8 +302,11 @@ fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
     if let Some(name) = &update.name {
         paste.name = name.clone();
     }
-    if update.language.is_some() {
-        paste.language = update.language.clone();
+    if let Some(language) = &update.language {
+        paste.language = Some(language.clone());
+        if update.language_is_manual.is_none() {
+            paste.language_is_manual = true;
+        }
     }
     if let Some(is_manual) = update.language_is_manual {
         paste.language_is_manual = is_manual;

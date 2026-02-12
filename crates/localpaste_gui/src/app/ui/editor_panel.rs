@@ -542,7 +542,6 @@ impl LocalPasteApp {
                         wrap_width,
                         self.virtual_line_height,
                         char_width,
-                        self.highlight_version,
                         line_count,
                     ) {
                         self.virtual_layout.rebuild(
@@ -550,7 +549,6 @@ impl LocalPasteApp {
                             wrap_width,
                             self.virtual_line_height,
                             char_width,
-                            self.highlight_version,
                         );
                     }
                     let total_height = self.virtual_layout.total_height();

@@ -25,10 +25,30 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env();
 
     if args.contains(&"--force-unlock".to_string()) {
+        if localpaste_server::db::is_localpaste_running() {
+            anyhow::bail!(
+                "Refusing --force-unlock while a LocalPaste process appears to be running"
+            );
+        }
+
         tracing::warn!("Force unlock requested");
+        if std::path::Path::new(&config.db_path).exists() {
+            let backup_path =
+                localpaste_server::db::lock::LockManager::backup_database(&config.db_path)?;
+            if !backup_path.is_empty() {
+                tracing::info!("Database backup created at {}", backup_path);
+            }
+        }
         let lock_manager = localpaste_server::db::lock::LockManager::new(&config.db_path);
-        lock_manager.force_unlock()?;
-        tracing::info!("Lock removed successfully");
+        let removed_count = lock_manager.force_unlock()?;
+        if removed_count == 0 {
+            tracing::info!("No known lock files found");
+        } else {
+            tracing::info!("Removed {} lock file(s)", removed_count);
+        }
+        if args.len() <= 2 {
+            return Ok(());
+        }
     }
 
     if args.contains(&"--backup".to_string()) {
@@ -48,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
     let database = Database::new(&config.db_path)?;
     let state = AppState::new(config.clone(), database);
 
-    let allow_public = std::env::var("ALLOW_PUBLIC_ACCESS").is_ok();
+    let allow_public = localpaste_server::config::env_flag_enabled("ALLOW_PUBLIC_ACCESS");
     if allow_public {
         tracing::warn!("Public access enabled - server will accept requests from any origin");
     }

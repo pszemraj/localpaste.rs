@@ -83,3 +83,23 @@ fn editor_buffer_tracks_char_len() {
     buffer.clear();
     assert_eq!(buffer.chars_len(), 0);
 }
+
+#[test]
+fn delete_selected_keeps_lock_until_delete_event() {
+    let mut harness = make_app();
+    harness.app.locks.lock("alpha");
+    assert!(harness.app.locks.is_locked("alpha"));
+
+    harness.app.delete_selected();
+    assert!(harness.app.locks.is_locked("alpha"));
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::DeletePaste { id } => assert_eq!(id, "alpha"),
+        other => panic!("expected delete command, got {:?}", other),
+    }
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".to_string(),
+    });
+    assert!(!harness.app.locks.is_locked("alpha"));
+}

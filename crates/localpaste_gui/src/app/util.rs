@@ -1,8 +1,7 @@
 //! Small UI helpers for labels and word selection.
 
 pub(super) fn env_value_enabled(value: &str) -> bool {
-    let lowered = value.trim().to_ascii_lowercase();
-    !(lowered.is_empty() || lowered == "0" || lowered == "false")
+    localpaste_core::config::parse_env_flag(value).unwrap_or(false)
 }
 
 pub(super) fn env_flag_enabled(name: &str) -> bool {

@@ -79,6 +79,11 @@ impl AppState {
 /// # Panics
 /// Panics if static header values fail to parse (should not happen).
 pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
+    let cors_port = state.config.port;
+    create_app_with_cors_port(state, allow_public_access, cors_port)
+}
+
+fn create_app_with_cors_port(state: AppState, allow_public_access: bool, cors_port: u16) -> Router {
     // Configure security headers
     let mut default_headers = HeaderMap::new();
     default_headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
@@ -102,11 +107,10 @@ pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
             ])
             .allow_headers(tower_http::cors::Any)
     } else {
-        let port = state.config.port;
         CorsLayer::new()
             .allow_origin([
-                format!("http://localhost:{}", port).parse().unwrap(),
-                format!("http://127.0.0.1:{}", port).parse().unwrap(),
+                format!("http://localhost:{}", cors_port).parse().unwrap(),
+                format!("http://127.0.0.1:{}", cors_port).parse().unwrap(),
             ])
             .allow_methods([
                 axum::http::Method::GET,
@@ -164,6 +168,13 @@ pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
         )
 }
 
+fn listener_cors_port(listener: &tokio::net::TcpListener, fallback_port: u16) -> u16 {
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .unwrap_or(fallback_port)
+}
+
 /// Run the Axum server with graceful shutdown support.
 ///
 /// # Arguments
@@ -183,8 +194,24 @@ pub async fn serve_router(
     allow_public_access: bool,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), std::io::Error> {
-    let app = create_app(state, allow_public_access);
+    let cors_port = listener_cors_port(&listener, state.config.port);
+    let app = create_app_with_cors_port(state, allow_public_access, cors_port);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::listener_cors_port;
+
+    #[tokio::test]
+    async fn listener_cors_port_uses_bound_listener_port() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let expected = listener.local_addr().expect("listener addr").port();
+        let resolved = listener_cors_port(&listener, 38411);
+        assert_eq!(resolved, expected);
+    }
 }
