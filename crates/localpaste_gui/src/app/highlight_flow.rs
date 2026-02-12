@@ -6,6 +6,15 @@ use std::time::Instant;
 use tracing::info;
 
 impl LocalPasteApp {
+    fn staged_matches_active_snapshot(&self, staged: &HighlightRender) -> bool {
+        let Some(selected_id) = self.selected_id.as_deref() else {
+            return false;
+        };
+        staged.paste_id == selected_id
+            && staged.revision == self.active_revision()
+            && staged.text_len == self.active_text_len_bytes()
+    }
+
     pub(super) fn trace_highlight(&self, event: &str, details: &str) {
         if !self.highlight_trace_enabled {
             return;
@@ -105,6 +114,20 @@ impl LocalPasteApp {
         let Some(staged) = self.highlight_staged.as_ref() else {
             return;
         };
+        if !self.staged_matches_active_snapshot(staged) {
+            let active_revision = self.active_revision();
+            let active_text_len = self.active_text_len_bytes();
+            self.trace_highlight(
+                "drop_stale_staged",
+                format!(
+                    "staged rev={} len={} active rev={} len={}",
+                    staged.revision, staged.text_len, active_revision, active_text_len
+                )
+                .as_str(),
+            );
+            self.highlight_staged = None;
+            return;
+        }
         if let Some(current) = &self.highlight_render {
             if current.matches_context(
                 staged.paste_id.as_str(),

@@ -351,18 +351,21 @@ fn virtual_select_line_last_line_excludes_missing_newline() {
 #[test]
 fn staged_highlight_waits_for_idle() {
     let mut harness = make_app();
+    harness.app.selected_content.insert_text("x", 0);
+    let active_revision = harness.app.selected_content.revision();
+    let active_len = harness.app.selected_content.len();
     harness.app.highlight_render = Some(HighlightRender {
         paste_id: "alpha".to_string(),
-        revision: 0,
-        text_len: harness.app.selected_content.len(),
+        revision: active_revision.saturating_sub(1),
+        text_len: active_len,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
     });
     let render = HighlightRender {
         paste_id: "alpha".to_string(),
-        revision: 1,
-        text_len: harness.app.selected_content.len(),
+        revision: active_revision,
+        text_len: active_len,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -397,10 +400,12 @@ fn staged_highlight_waits_for_idle() {
 #[test]
 fn staged_highlight_applies_immediately_without_current_render() {
     let mut harness = make_app();
+    let active_revision = harness.app.selected_content.revision();
+    let active_len = harness.app.selected_content.len();
     harness.app.highlight_staged = Some(HighlightRender {
         paste_id: "alpha".to_string(),
-        revision: 1,
-        text_len: harness.app.selected_content.len(),
+        revision: active_revision,
+        text_len: active_len,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -409,6 +414,48 @@ fn staged_highlight_applies_immediately_without_current_render() {
     harness.app.last_interaction_at = Some(now);
     harness.app.maybe_apply_staged_highlight(now);
     assert!(harness.app.highlight_render.is_some());
+}
+
+#[test]
+fn staged_highlight_drops_stale_revision_without_version_bump() {
+    let mut harness = make_app();
+    harness.app.highlight_version = 19;
+    let active_len = harness.app.selected_content.len();
+    harness.app.highlight_staged = Some(HighlightRender {
+        paste_id: "alpha".to_string(),
+        revision: harness.app.selected_content.revision().saturating_add(1),
+        text_len: active_len,
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        lines: Vec::new(),
+    });
+
+    harness.app.maybe_apply_staged_highlight(Instant::now());
+
+    assert!(harness.app.highlight_staged.is_none());
+    assert!(harness.app.highlight_render.is_none());
+    assert_eq!(harness.app.highlight_version, 19);
+}
+
+#[test]
+fn staged_highlight_drops_stale_text_len_without_version_bump() {
+    let mut harness = make_app();
+    harness.app.highlight_version = 23;
+    let active_revision = harness.app.selected_content.revision();
+    harness.app.highlight_staged = Some(HighlightRender {
+        paste_id: "alpha".to_string(),
+        revision: active_revision,
+        text_len: harness.app.selected_content.len().saturating_add(1),
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        lines: Vec::new(),
+    });
+
+    harness.app.maybe_apply_staged_highlight(Instant::now());
+
+    assert!(harness.app.highlight_staged.is_none());
+    assert!(harness.app.highlight_render.is_none());
+    assert_eq!(harness.app.highlight_version, 23);
 }
 
 #[test]
