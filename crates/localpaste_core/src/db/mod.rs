@@ -36,9 +36,7 @@ fn is_localpaste_running() -> bool {
     };
 
     let haystack = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-    haystack.contains("localpaste.exe")
-        || haystack.contains("localpaste-gui.exe")
-        || haystack.contains("localpaste-gui-legacy.exe")
+    haystack.contains("localpaste.exe") || haystack.contains("localpaste-gui.exe")
 }
 
 #[cfg(not(any(unix, windows)))]

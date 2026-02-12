@@ -2497,7 +2497,6 @@ dependencies = [
  "serde_json",
  "syntect",
  "tempfile",
- "tokio",
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",

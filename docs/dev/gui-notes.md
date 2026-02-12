@@ -7,11 +7,10 @@
 
 ## Highlight Profiling
 
-- **Legacy only**: set `LOCALPASTE_PROFILE_HIGHLIGHT=1` before launching the legacy GUI to log highlight and text layout timings via `tracing::debug!`.
-- Logged events:
-  - `highlight_job`: duration, cache hit/miss, language token, paste id, character count.
-  - `text_edit_layout`: the time spent laying out the multiline editor per frame and the current character count.
-- These hooks are retained for legacy diagnostics. Rewrite perf telemetry now uses `LOCALPASTE_EDITOR_PERF_LOG=1`.
+- Rewrite perf telemetry uses `LOCALPASTE_EDITOR_PERF_LOG=1` for moving-average FPS and p95 frame timing.
+- Detailed input/highlight traces use:
+  - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
+  - `LOCALPASTE_HIGHLIGHT_TRACE=1`
 
 ## Virtualized Editor
 
@@ -23,7 +22,7 @@
   - virtualized variable-height rendering (`show_viewport`)
   - operation-based undo/redo
   - command reducer for keyboard navigation/selection/edit operations
-- `LOCALPASTE_VIRTUAL_EDITOR=0` forces the legacy `TextEdit` fallback.
+- `LOCALPASTE_VIRTUAL_EDITOR=0` forces the `TextEdit` fallback.
 - Scope note: this cycle is English-first; multilingual/IME-specific UX design and validation are out of scope.
 
 ## Rewrite Highlighting

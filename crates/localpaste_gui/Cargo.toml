@@ -7,11 +7,6 @@ edition = "2021"
 name = "localpaste-gui"
 path = "src/main.rs"
 
-[[bin]]
-name = "localpaste-gui-legacy"
-path = "../../legacy/bin/localpaste-gui-legacy.rs"
-required-features = ["gui-legacy"]
-
 [dependencies]
 localpaste_core = { path = "../localpaste_core" }
 localpaste_server = { path = "../localpaste_server" }
@@ -26,11 +21,9 @@ unicode-segmentation = "1.11"
 chrono = { version = "0.4", features = ["serde"] }
 rfd = "0.14"
 puffin = { version = "0.19", optional = true }
-tokio = { version = "1.40", features = ["full"], optional = true }
 
 [features]
 default = []
-gui-legacy = ["tokio"]
 debug-tools = []
 profile = ["puffin"]
 

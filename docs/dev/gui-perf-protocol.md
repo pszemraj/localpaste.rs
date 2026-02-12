@@ -199,7 +199,7 @@ $env:DB_PATH = $TestDb
 # Editable rope-backed virtual editor is the default (no flag required).
 # Uncomment to force it explicitly:
 # $env:LOCALPASTE_VIRTUAL_EDITOR = "1"
-# Uncomment to force legacy TextEdit fallback:
+# Uncomment to force TextEdit fallback:
 # $env:LOCALPASTE_VIRTUAL_EDITOR = "0"
 
 # Optional frame metrics log (avg FPS + p95 ms every ~2s)

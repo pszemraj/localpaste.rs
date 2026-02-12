@@ -1,6 +1,6 @@
-# Plan-Aligned Rewrite Checklist (Legacy Reference)
+# Plan-Aligned Rewrite Checklist
 
-This checklist tracks PLAN.md phases. The legacy GUI (`legacy/gui/mod.rs`) is reference-only.
+This checklist tracks PLAN.md phases and merge-gate readiness for the native rewrite.
 Strict parity is NOT required - we only port or replace behaviors that match the plan and desired UX.
 
 Status key:
@@ -17,7 +17,7 @@ Decision key:
 
 ---
 
-- [Plan-Aligned Rewrite Checklist (Legacy Reference)](#plan-aligned-rewrite-checklist-legacy-reference)
+- [Plan-Aligned Rewrite Checklist](#plan-aligned-rewrite-checklist)
   - [Phase 0: Baseline \& Guardrails](#phase-0-baseline--guardrails)
   - [Phase 1: Extract localpaste\_core](#phase-1-extract-localpaste_core)
   - [Phase 2: Native App Skeleton (Current)](#phase-2-native-app-skeleton-current)
@@ -30,7 +30,7 @@ Decision key:
   - [Folders](#folders)
   - [UX + Theme](#ux--theme)
   - [Intentional Deviations (per PLAN.md)](#intentional-deviations-per-planmd)
-  - [Legacy Freeze Policy (Agreed)](#legacy-freeze-policy-agreed)
+  - [Legacy Removal Status](#legacy-removal-status)
   - [Removal Gate](#removal-gate)
 
 ---
@@ -60,7 +60,7 @@ Decision key:
 ## Phase 3: Fast List + Collections
 
 - [x] Virtualized list (show_rows) for 10k items
-- [ ] Smart collections sidebar (Recent, Pinned, By Language, etc.) [Replace]
+- [~] Smart collections sidebar (Recent, Unfiled, By Language; pinning deferred) [Replace]
 - [x] Keyboard navigation (up/down, enter)
 
 ## Phase 4: Editor + Autosave
@@ -70,11 +70,11 @@ Decision key:
 - [x] Editable virtual rope editor is the default mode (`LOCALPASTE_VIRTUAL_EDITOR=0` keeps `TextEdit` fallback)
 - [x] Dirty state tracking + save indicator
 - [x] Autosave debounce (UI non-blocking) [Replace]
-- [ ] Manual save (Ctrl/Cmd+S)
+- [x] Manual save (Ctrl/Cmd+S)
 - [x] New paste (Ctrl/Cmd+N)
 - [x] Smart paste creation when unfocused (Ctrl/Cmd+V)
 - [x] Delete selected (Ctrl/Cmd+Delete)
-- [ ] Export (file dialog + extension mapping)
+- [x] Export (file dialog + extension mapping)
 - [x] Native GUI edit locks (open paste blocks API/CLI deletion)
 
 ### Virtual Editor Reliability Gates (Validated For Default Mode)
@@ -86,7 +86,7 @@ Decision key:
 - [x] Selection visuals: style-driven low-opacity fill from `ui.visuals().selection` (no custom multi-line left rail)
 - [x] Drag-selection auto-scroll at viewport edges in virtual preview/editor (selection anchor preserved while scrolling)
 - [x] Manual recheck (2026-02-12): drag auto-scroll upward/downward both pass; unfocused `Ctrl/Cmd+V` still creates a new paste without mutating current editor
-- [~] Highlight recovery: keep current render visible while async refresh is pending (known gap: repeated Enter in `perf-scroll-5k-lines` can still produce multi-second plain fallback)
+- [~] Highlight recovery: keep current render visible while async refresh is pending (newline-burst scenario fixed in code path; perf gate recheck pending)
 - [x] Stale staged-highlight renders are dropped before apply (no unnecessary `highlight_version` bumps)
 - [x] Scope policy: multilingual/IME-specific UX and validation are explicitly out of scope for release gating (English-first workflow only)
 - [x] Trace protocol documented and validated with:
@@ -110,10 +110,10 @@ Recommended validation command (PowerShell):
 
 ## Phase 5: Search + Command Palette
 
-- [ ] Debounced search (150ms)
-- [ ] Command palette (Ctrl+K)
-- [ ] Result ranking
-- [ ] Quick actions (pin, delete, copy)
+- [x] Debounced search (150ms)
+- [x] Command palette (Ctrl+K)
+- [x] Result ranking
+- [~] Quick actions (delete/copy/copy-fenced done; pin deferred)
 
 ## Phase 6: Polish + Intelligence
 
@@ -121,13 +121,13 @@ Recommended validation command (PowerShell):
 - [ ] LLM output heuristic
 - [ ] Optional folder tree (if kept)
 - [ ] Drag-drop to folder (if kept)
-- [ ] Copy as fenced code block
+- [x] Copy as fenced code block
 - [ ] Context menus
 
 ## Language + Highlighting
 
 - [~] Auto-detect language on content (core detects on create; rewrite does not re-run yet)
-- [ ] Manual language override + `language_is_manual`
+- [x] Manual language override + `language_is_manual`
 - [x] Async syntect highlighting with staged apply and line-state reuse [Replace]
 - [x] Large-paste fallback to plain text
 - [x] Plain highlight threshold (aligned with perf budget)
@@ -135,17 +135,17 @@ Recommended validation command (PowerShell):
 
 ## Naming + Metadata
 
-- [~] Auto-name generation on create (random name today; planned content-derived)
-- [ ] Rename behavior (when/how) [Replace]
-- [ ] Tags edit + persistence
+- [x] Auto-name generation on create (content-derived with random fallback)
+- [x] Rename behavior (explicit editor metadata field) [Replace]
+- [x] Tags edit + persistence
 
 ## Folders
 
-- [ ] Folder list + counts
-- [ ] Create/rename/delete folders
-- [ ] Cycle-safe parenting dialog
-- [ ] Move paste between folders
-- [ ] Folder delete migrates pastes to unfiled
+- [x] Folder list + counts
+- [x] Create/rename/delete folders
+- [x] Cycle-safe parenting dialog
+- [x] Move paste between folders
+- [x] Folder delete migrates pastes to unfiled
 
 ## UX + Theme
 
@@ -157,7 +157,7 @@ Recommended validation command (PowerShell):
 
 ## Intentional Deviations (per PLAN.md)
 
-- [Replace] Form header (Name/Language/Folder) -> inferred + status bar
+- [Replace] Metadata editing lives in the editor panel header instead of a separate legacy form layout
 - [Replace] Manual folders as primary nav -> Smart Collections + search
 - [Replace] Export button as primary save -> autosave + subtle indicator
 - [Replace] Highlight/layout path -> async syntect render + cache lifecycle keyed by editor revision and highlight epoch
@@ -166,15 +166,15 @@ Recommended validation command (PowerShell):
 
 ---
 
-## Legacy Freeze Policy (Agreed)
+## Legacy Removal Status
 
-- Legacy GUI is reference-only.
-- No new features in legacy except critical data-loss/security fixes.
-- All new behavior goes into native rewrite.
+- [x] `legacy/` source files removed from tracked workspace content
+- [x] `localpaste-gui-legacy` bin wiring removed
+- [x] `gui-legacy` feature wiring removed from `crates/localpaste_gui/Cargo.toml`
 
 ## Removal Gate
 
-Legacy GUI can be removed once:
+Rewrite merge gate before release:
 
 - Phase 3 list performance is met (virtualized, 10k OK)
 - Phase 4 editor + autosave UX is complete

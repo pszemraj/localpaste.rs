@@ -1,6 +1,6 @@
 # LocalPaste Desktop Palette
 
-These canonical values are applied in the rewrite (`crates/localpaste_gui/src/app.rs`) and mirrored in `legacy/gui/mod.rs` for reference.
+These canonical values are applied in the rewrite (`crates/localpaste_gui/src/app.rs`).
 
 | Token                  | Hex       | Notes                      |
 | ---------------------- | --------- | -------------------------- |
@@ -15,7 +15,7 @@ These canonical values are applied in the rewrite (`crates/localpaste_gui/src/ap
 | `COLOR_DANGER`         | `#F85149` | Destructive actions        |
 | `COLOR_BORDER`         | `#30363D` | Divider strokes            |
 
-These values are applied in `crates/localpaste_gui/src/app.rs` and preserved in `legacy/gui/mod.rs` for reference while the legacy GUI remains in the repo.
+These values are applied in `crates/localpaste_gui/src/app.rs`.
 
 ## Editor Font
 

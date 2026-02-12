@@ -50,12 +50,12 @@ Interpretation:
 
 - `list` and `search` are still O(n) over all pastes; expected to be higher at 10k.
 
-## Manual GUI Baseline (Historical Legacy Snapshot)
+## Manual GUI Baseline (Historical Snapshot)
 
-These legacy checks were used before the editable virtual editor path existed:
+These checks were used before the editable virtual editor path became default:
 
 1) **Scroll FPS (10k snippets)**
-   - Run: `cargo run -p localpaste_gui --bin localpaste-gui-legacy --features gui-legacy,debug-tools,profile`
+   - Run: `cargo run -p localpaste_gui --bin localpaste-gui --features debug-tools,profile`
    - Load the 10k dataset.
    - Scroll the sidebar list continuously for ~10 seconds.
    - Record: average FPS and any stutters.

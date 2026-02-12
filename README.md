@@ -9,13 +9,11 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 LocalPaste is a local-first paste manager with:
 
 - Native GUI rewrite (primary desktop app)
-- Legacy GUI reference app (feature-complete)
 - Headless JSON API server + CLI
 
 ## Binaries
 
 - `localpaste-gui` - native rewrite desktop app
-- `localpaste-gui-legacy` - legacy GUI reference
 - `localpaste` - headless API server
 - `lpaste` - CLI client
 

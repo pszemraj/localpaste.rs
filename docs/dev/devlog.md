@@ -31,9 +31,6 @@ localpaste.rs/
 |   |       `-- locks.rs
 |   |-- localpaste_cli/         # Installs the lpaste CLI
 |   `-- localpaste_tools/       # Test-data generator (generate-test-data)
-|-- legacy/
-|   |-- gui/                    # Legacy egui widgets / layout
-|   `-- bin/                    # Legacy desktop launcher (built via localpaste_gui)
 |-- docs/                       # Project documentation
 |-- assets/                     # Screenshots / design references
 `-- target/                     # Build artifacts (git-ignored)
@@ -63,16 +60,15 @@ localpaste.rs/
 ### Frontend Architecture
 
 - **Rewrite (primary):** `crates/localpaste_gui` (egui/eframe app with backend worker)
-- **Legacy GUI:** `legacy/gui/mod.rs` (feature-complete reference while rewrite lands)
 - Rewrite editor paths:
-  - default `TextEdit` editable path
+  - default editable rope-backed viewport path
   - `LOCALPASTE_VIRTUAL_PREVIEW=1` read-only viewport diagnostics path
-  - `LOCALPASTE_VIRTUAL_EDITOR=1` editable rope-backed viewport path
+  - `LOCALPASTE_VIRTUAL_EDITOR=0` `TextEdit` fallback kill-switch
 - Syntax highlighting in rewrite uses async syntect rendering with staged apply
-- Folder management via dialogs with cycle-safe parenting rules (legacy)
-- Auto-save with debouncing and manual export support (legacy)
-- Incremental in-memory paste index keeps the sidebar responsive without requerying sled (legacy)
-- Large pastes (above ~256KB) fall back to a plain renderer so highlight work stays bounded (rewrite + legacy)
+- Folder management uses dialogs with cycle-safe parenting and delete-to-unfiled migration
+- Auto-save uses debouncing with manual save/export support
+- Incremental in-memory paste index keeps the sidebar responsive without requerying sled
+- Large pastes (above ~256KB) fall back to a plain renderer so highlight work stays bounded
 
 ### GUI Shortcuts
 
@@ -82,8 +78,7 @@ localpaste.rs/
 
 ### Known Issues
 
-- Virtual editor remains feature-gated until parity/perf sign-off.
-- Drag-selection auto-scroll at viewport edges still needs dedicated validation and potential follow-up fixes.
+- Duplicate detection and pinning are post-merge follow-up items.
 
 ### API Design
 
@@ -111,7 +106,6 @@ The project contains multiple binaries:
 - `localpaste` - The web server (headless)
 - `lpaste` - CLI tool for interacting with the server
 - `localpaste-gui` - Native rewrite (primary desktop app)
-- `localpaste-gui-legacy` - Legacy egui desktop app (feature `gui-legacy`)
 - `generate-test-data` - Synthetic dataset generator
 
 ```bash
@@ -134,9 +128,8 @@ cargo build -p localpaste_cli --bin lpaste --release
 # Run the desktop app (rewrite)
 cargo run -p localpaste_gui --bin localpaste-gui
 
-# Run the legacy desktop app
-cargo run -p localpaste_gui --bin localpaste-gui-legacy --features="gui-legacy"
-# (append --release when you need an optimized build)
+# Run the desktop app with optional perf tools
+cargo run -p localpaste_gui --bin localpaste-gui --features="debug-tools,profile"
 
 # Run the server/API (JSON endpoints)
 cargo run -p localpaste_server --bin localpaste --release
@@ -147,9 +140,6 @@ cargo watch -x "run -p localpaste_server --bin localpaste"
 
 # Run with debug logging
 RUST_LOG=debug cargo run -p localpaste_server --bin localpaste
-
-# Run tests (include legacy GUI when necessary)
-cargo test -p localpaste_gui --features gui-legacy
 
 # Run core tests only
 cargo test -p localpaste_core
@@ -189,17 +179,13 @@ cargo build -p localpaste_cli --bin lpaste --release
 # Include the desktop GUI
 cargo build -p localpaste_gui --bin localpaste-gui --release
 
-# Include the legacy desktop GUI
-cargo build -p localpaste_gui --bin localpaste-gui-legacy --features gui-legacy --release
-
 # Strip symbols for smaller binaries (build required first)
 strip target/release/localpaste
 strip target/release/lpaste
 strip target/release/localpaste-gui
-strip target/release/localpaste-gui-legacy
 
 # Check binary sizes
-du -h target/release/localpaste target/release/lpaste target/release/localpaste-gui target/release/localpaste-gui-legacy
+du -h target/release/localpaste target/release/lpaste target/release/localpaste-gui
 ```
 
 ### Using the CLI Tool
@@ -228,7 +214,6 @@ echo "test" | ./target/release/lpaste new
 
 2. **Frontend Changes**
    - Rewrite: update `crates/localpaste_gui/` and run `cargo run -p localpaste_gui --bin localpaste-gui`
-   - Legacy: update egui components in `legacy/gui/` and run `cargo run -p localpaste_gui --bin localpaste-gui-legacy --features gui-legacy`
    - Refresh screenshots in `assets/` if the UI changes
 
 3. **Database Migrations**
