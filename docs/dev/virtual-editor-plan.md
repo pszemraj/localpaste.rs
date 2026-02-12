@@ -29,7 +29,10 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
 - Reliability stabilization landed for virtual editor usage:
   - highlight cache alignment for line insert/delete in both UI-thread and worker-thread paths
   - exact snapshot matching for async highlight renders to avoid stale render application
+  - stale staged renders now drop before apply when revision/text length no longer match active snapshot
   - style-driven selection overlay (`ui.visuals().selection`) with no custom multi-line rail
+  - strict focus-gated input routing: only `Copy` can run selection-driven without focus; mutating/edit commands require focused virtual editor
+  - virtual preview/editor click semantics now use one custom streak detector (no mixed egui double/triple overrides)
   - triple-click full-line selection in large-buffer editable paths
   - hardened clipboard routing (`Ctrl/Cmd+C/X`) with deferred apply after focus settles
 - Reliability validation protocol was updated and run with trace expectations:

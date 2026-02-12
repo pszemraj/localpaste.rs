@@ -1,5 +1,16 @@
 //! Small UI helpers for labels and word selection.
 
+pub(super) fn env_value_enabled(value: &str) -> bool {
+    let lowered = value.trim().to_ascii_lowercase();
+    !(lowered.is_empty() || lowered == "0" || lowered == "false")
+}
+
+pub(super) fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| env_value_enabled(&value))
+        .unwrap_or(false)
+}
+
 /// Formats the language label shown in the UI, falling back to auto/plain.
 pub(super) fn display_language_label(language: Option<&str>, is_large: bool) -> String {
     if is_large {

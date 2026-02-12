@@ -1,5 +1,6 @@
 //! Editor buffer, line index, and mode helpers for the native GUI.
 
+use super::util::env_value_enabled;
 use eframe::egui;
 use ropey::Rope;
 use std::any::TypeId;
@@ -288,26 +289,21 @@ pub(super) enum EditorMode {
 }
 
 impl EditorMode {
-    fn env_flag_enabled(value: &str) -> bool {
-        let lowered = value.trim().to_ascii_lowercase();
-        !(lowered.is_empty() || lowered == "0" || lowered == "false")
-    }
-
     pub(super) fn from_env() -> Self {
         let preview_mode = || match std::env::var("LOCALPASTE_VIRTUAL_PREVIEW") {
-            Ok(value) if Self::env_flag_enabled(&value) => Self::VirtualPreview,
+            Ok(value) if env_value_enabled(&value) => Self::VirtualPreview,
             _ => Self::TextEdit,
         };
 
         if let Ok(value) = std::env::var("LOCALPASTE_VIRTUAL_EDITOR") {
-            if Self::env_flag_enabled(&value) {
+            if env_value_enabled(&value) {
                 return Self::VirtualEditor;
             }
             return preview_mode();
         }
 
         match std::env::var("LOCALPASTE_VIRTUAL_PREVIEW") {
-            Ok(value) if Self::env_flag_enabled(&value) => Self::VirtualPreview,
+            Ok(value) if env_value_enabled(&value) => Self::VirtualPreview,
             _ => Self::VirtualEditor,
         }
     }

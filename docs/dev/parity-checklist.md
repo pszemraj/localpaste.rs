@@ -80,14 +80,16 @@ Decision key:
 ### Virtual Editor Reliability Gates (Validated For Default Mode)
 
 - [x] Clipboard reliability (`Ctrl/Cmd+C/X/V`) with external paste verification
+- [x] Focus-gated virtual command routing: only `Copy` is selection-driven without focus; mutating/edit commands require focused virtual editor
 - [x] Triple-click whole-line selection behavior (repeatable, non-intermittent)
 - [x] Selection visuals: style-driven low-opacity fill from `ui.visuals().selection` (no custom multi-line left rail)
 - [x] Highlight recovery: keep current render visible while async refresh is pending
+- [x] Stale staged-highlight renders are dropped before apply (no unnecessary `highlight_version` bumps)
 - [x] Trace protocol documented and validated with:
   - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
   - `LOCALPASTE_HIGHLIGHT_TRACE=1`
-  - Input trace expectation: `virtual input frame` logs show deterministic `immediate/deferred` routing and `copied/cut/pasted` flags aligned with executed commands.
-  - Highlight trace expectation: `queue -> worker_done -> apply` (or `apply_now/apply_idle`) without stale render application; `perf-scroll-5k-lines` post-warm `worker_done` spikes should stay below 2000ms.
+  - Input trace expectation: `virtual input frame` logs show deterministic `immediate_focus/deferred_focus/deferred_copy` routing with pre/post focus booleans and `copied/cut/pasted` flags aligned with executed commands.
+  - Highlight trace expectation: `queue -> worker_done -> apply` (or `apply_now/apply_idle`) with stale staged renders dropped via `drop_stale_staged`; `perf-scroll-5k-lines` post-warm `worker_done` spikes should stay below 2000ms.
 
 Recommended validation command (PowerShell):
 

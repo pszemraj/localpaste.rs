@@ -253,6 +253,7 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 8. **Virtual editor parity (default mode)**
    - Verify `Ctrl/Cmd+A/C/X/V`, `Ctrl/Cmd+Z/Y`, Home/End, PageUp/PageDown, shift-selection.
    - Verify IME composition (`Enabled` -> `Preedit` -> `Commit`) does not lose caret/selection state.
+   - Verify focus-gated mutation: with a virtual selection active but editor unfocused, typing/navigation/delete/undo/redo/cut/paste do not modify editor state.
    - Verify drag-selection behavior when crossing viewport edges (including auto-scroll behavior if implemented).
 
 9. **Clipboard + Triple-Click Reliability Repro (required)**
@@ -260,10 +261,12 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
    - Drag-select single line and multi-line regions.
    - Run `Ctrl/Cmd+C` and paste in an external editor.
    - Run `Ctrl/Cmd+X` and paste in an external editor.
+   - Click outside the editor to defocus, keep selection visible, then press keys (`typing`, `Backspace/Delete`, `Ctrl/Cmd+Z/Y`, `Ctrl/Cmd+X/V`) and confirm no editor mutation while unfocused.
    - Triple-click repeatedly on the same line and verify whole-line selection each time.
    - Expected:
      - copy/cut always transfers text to system clipboard;
      - cut removes selected text from buffer;
+     - off-focus mutation shortcuts do not change editor content/caret/selection;
      - triple-click consistently expands to full physical line selection;
      - with `LOCALPASTE_EDITOR_INPUT_TRACE=1`, `virtual input frame` logs show `copied=true` for copy and `copied=true cut=true` for cut frames.
 
@@ -273,7 +276,7 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
    - Expected:
      - existing highlight remains visible while recompute is pending;
      - no full-buffer fallback to plain text after initial highlight exists;
-     - trace logs (`LOCALPASTE_HIGHLIGHT_TRACE=1`) show deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) flow with no stale render application;
+     - trace logs (`LOCALPASTE_HIGHLIGHT_TRACE=1`) show deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) flow; stale staged renders should emit `drop_stale_staged` instead of applying;
      - post-warm `worker_done` durations on this scenario stay below `2000 ms`.
 
 ## 4) Cleanup

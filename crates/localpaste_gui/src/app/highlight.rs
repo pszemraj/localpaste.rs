@@ -1,6 +1,7 @@
 //! Syntax highlighting caches and worker support for the native GUI editor.
 
 use super::editor::editor_buffer_revision;
+use super::util::env_flag_enabled;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui::{
     self,
@@ -16,15 +17,6 @@ use syntect::highlighting::{HighlightState, Highlighter, Style, ThemeSet};
 use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
 use syntect::util::LinesWithEndings;
 use tracing::info;
-
-fn env_flag_enabled(name: &str) -> bool {
-    std::env::var(name)
-        .map(|value| {
-            let lowered = value.trim().to_ascii_lowercase();
-            !(lowered.is_empty() || lowered == "0" || lowered == "false")
-        })
-        .unwrap_or(false)
-}
 
 /// Cached layout state for highlighted editor content.
 #[derive(Default)]
