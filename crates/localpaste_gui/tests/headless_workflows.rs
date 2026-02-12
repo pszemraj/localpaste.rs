@@ -47,7 +47,10 @@ fn api_updates_are_visible_to_backend_list() {
     let backend = spawn_backend(db);
     backend
         .cmd_tx
-        .send(CoreCmd::ListAll { limit: 10 })
+        .send(CoreCmd::ListPastes {
+            limit: 10,
+            folder_id: None,
+        })
         .expect("send list");
 
     match recv_event(&backend.evt_rx) {

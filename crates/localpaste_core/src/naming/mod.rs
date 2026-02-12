@@ -219,3 +219,121 @@ where
         }
     }
 }
+
+/// Derive a human-readable paste name from content.
+///
+/// Returns `None` when content is empty or no meaningful line can be extracted.
+///
+/// # Arguments
+/// - `content`: Paste text used to infer a title.
+/// - `language`: Optional detected/manual language hint.
+///
+/// # Returns
+/// A derived title when a meaningful line can be extracted, otherwise `None`.
+pub fn derive_name_from_content(content: &str, language: Option<&str>) -> Option<String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let lang = language.unwrap_or_default().to_ascii_lowercase();
+    if lang == "markdown" {
+        for line in content.lines() {
+            let candidate = line.trim().trim_start_matches('#').trim();
+            if line.trim_start().starts_with('#') && !candidate.is_empty() {
+                return Some(truncate_name(candidate, 48));
+            }
+        }
+    }
+
+    for line in content.lines() {
+        let candidate = line.trim();
+        if candidate.is_empty()
+            || candidate.starts_with("//")
+            || candidate.starts_with('#')
+            || candidate.starts_with("/*")
+        {
+            continue;
+        }
+
+        if let Some(name) = extract_definition_name(candidate, &lang) {
+            return Some(truncate_name(name.as_str(), 48));
+        }
+
+        return Some(truncate_name(candidate, 48));
+    }
+
+    None
+}
+
+/// Prefer a content-derived name and fall back to random adjective-noun.
+///
+/// # Arguments
+/// - `content`: Paste text used to infer a title.
+/// - `language`: Optional detected/manual language hint.
+///
+/// # Returns
+/// A content-derived title when possible; otherwise a random generated name.
+pub fn generate_name_for_content(content: &str, language: Option<&str>) -> String {
+    derive_name_from_content(content, language).unwrap_or_else(generate_name)
+}
+
+fn truncate_name(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect::<String>()
+}
+
+fn extract_definition_name(line: &str, language: &str) -> Option<String> {
+    let patterns: &[&str] = match language {
+        "rust" => &["fn ", "struct ", "enum ", "trait ", "impl "],
+        "python" => &["def ", "class ", "async def "],
+        "javascript" | "typescript" => &["function ", "class ", "const ", "export "],
+        "go" => &["func ", "type ", "package "],
+        _ => return None,
+    };
+
+    for pattern in patterns {
+        if let Some(rest) = line.strip_prefix(pattern) {
+            let ident: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect();
+            if !ident.is_empty() {
+                return Some(format!("{} {}", pattern.trim(), ident));
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derives_markdown_heading() {
+        let content = "# Hello World\nbody";
+        let derived = derive_name_from_content(content, Some("markdown"));
+        assert_eq!(derived.as_deref(), Some("Hello World"));
+    }
+
+    #[test]
+    fn derives_rust_function_name() {
+        let content = "fn handle_request(req: Request) -> Response {}";
+        let derived = derive_name_from_content(content, Some("rust"));
+        assert_eq!(derived.as_deref(), Some("fn handle_request"));
+    }
+
+    #[test]
+    fn skips_comment_lines_and_uses_first_meaningful_line() {
+        let content = "// comment\n# metadata\nactual line";
+        let derived = derive_name_from_content(content, None);
+        assert_eq!(derived.as_deref(), Some("actual line"));
+    }
+
+    #[test]
+    fn content_name_falls_back_to_random() {
+        let generated = generate_name_for_content("", None);
+        assert!(!generated.is_empty());
+    }
+}

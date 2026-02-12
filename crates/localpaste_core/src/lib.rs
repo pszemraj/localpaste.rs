@@ -6,6 +6,8 @@ pub mod config;
 pub mod db;
 /// Application error types (storage/domain).
 pub mod error;
+/// Shared folder tree operations.
+pub mod folder_ops;
 /// Data models for API requests and persistence.
 pub mod models;
 /// Paste naming helpers.

@@ -68,6 +68,24 @@ impl LocalPasteApp {
                     self.save_in_flight = false;
                 }
             }
+            CoreEvent::PasteMetaSaved { paste } => {
+                if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
+                    *item = PasteSummary::from_paste(&paste);
+                }
+                if self.selected_id.as_deref() == Some(paste.id.as_str()) {
+                    self.selected_paste = Some(paste);
+                }
+            }
+            CoreEvent::SearchResults { query: _, items } => {
+                self.pastes = items;
+                if let Some(first) = self.pastes.first() {
+                    if self.selected_id.as_deref() != Some(first.id.as_str()) {
+                        self.select_paste(first.id.clone());
+                    }
+                } else {
+                    self.clear_selection();
+                }
+            }
             CoreEvent::PasteDeleted { id } => {
                 self.pastes.retain(|paste| paste.id != id);
                 if self.selected_id.as_deref() == Some(id.as_str()) {
@@ -88,6 +106,13 @@ impl LocalPasteApp {
                 }
                 self.request_refresh();
             }
+            CoreEvent::FoldersLoaded { items: _ } => {}
+            CoreEvent::FolderSaved { folder: _ } => {
+                self.request_refresh();
+            }
+            CoreEvent::FolderDeleted { id: _ } => {
+                self.request_refresh();
+            }
             CoreEvent::Error { message } => {
                 warn!("backend error: {}", message);
                 self.set_status(message);
@@ -100,7 +125,10 @@ impl LocalPasteApp {
     }
 
     pub(super) fn request_refresh(&mut self) {
-        let _ = self.backend.cmd_tx.send(CoreCmd::ListAll { limit: 512 });
+        let _ = self.backend.cmd_tx.send(CoreCmd::ListPastes {
+            limit: 512,
+            folder_id: None,
+        });
         self.last_refresh_at = Instant::now();
     }
 

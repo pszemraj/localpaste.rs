@@ -3,6 +3,7 @@
 use super::highlight::align_old_lines_by_hash;
 use super::*;
 use crate::backend::CoreEvent;
+use chrono::Utc;
 use crossbeam_channel::unbounded;
 use eframe::egui::TextBuffer;
 use syntect::util::LinesWithEndings;
@@ -54,6 +55,9 @@ fn make_app() -> TestHarness {
             name: "Alpha".to_string(),
             language: None,
             content_len: 7,
+            updated_at: Utc::now(),
+            folder_id: None,
+            tags: Vec::new(),
         }],
         selected_id: Some("alpha".to_string()),
         selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
@@ -132,6 +136,9 @@ fn paste_missing_non_selected_removes_list_entry() {
         name: "Beta".to_string(),
         language: None,
         content_len: 4,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
     });
 
     harness.app.apply_event(CoreEvent::PasteMissing {

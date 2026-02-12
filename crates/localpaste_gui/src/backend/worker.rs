@@ -2,7 +2,11 @@
 
 use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use localpaste_core::{models::paste::UpdatePasteRequest, naming, Database};
+use localpaste_core::{
+    folder_ops::{delete_folder_tree_and_migrate, introduces_cycle},
+    models::{folder::Folder, paste::UpdatePasteRequest},
+    naming, Database,
+};
 use std::thread;
 use tracing::error;
 
@@ -31,15 +35,34 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
         .spawn(move || {
             for cmd in cmd_rx.iter() {
                 match cmd {
-                    CoreCmd::ListAll { limit } => match db.pastes.list(limit, None) {
+                    CoreCmd::ListPastes { limit, folder_id } => {
+                        match db.pastes.list(limit, folder_id) {
+                            Ok(pastes) => {
+                                let items = pastes.iter().map(PasteSummary::from_paste).collect();
+                                let _ = evt_tx.send(CoreEvent::PasteList { items });
+                            }
+                            Err(err) => {
+                                error!("backend list failed: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("List failed: {}", err),
+                                });
+                            }
+                        }
+                    }
+                    CoreCmd::SearchPastes {
+                        query,
+                        limit,
+                        folder_id,
+                        language,
+                    } => match db.pastes.search(&query, limit, folder_id, language) {
                         Ok(pastes) => {
                             let items = pastes.iter().map(PasteSummary::from_paste).collect();
-                            let _ = evt_tx.send(CoreEvent::PasteList { items });
+                            let _ = evt_tx.send(CoreEvent::SearchResults { query, items });
                         }
                         Err(err) => {
-                            error!("backend list failed: {}", err);
+                            error!("backend search failed: {}", err);
                             let _ = evt_tx.send(CoreEvent::Error {
-                                message: format!("List failed: {}", err),
+                                message: format!("Search failed: {}", err),
                             });
                         }
                     },
@@ -58,7 +81,8 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         }
                     },
                     CoreCmd::CreatePaste { content } => {
-                        let name = naming::generate_name();
+                        let inferred = localpaste_core::models::paste::detect_language(&content);
+                        let name = naming::generate_name_for_content(&content, inferred.as_deref());
                         let paste = localpaste_core::models::paste::Paste::new(content, name);
                         match db.pastes.create(&paste) {
                             Ok(()) => {
@@ -96,6 +120,37 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                         }
                     }
+                    CoreCmd::UpdatePasteMeta {
+                        id,
+                        name,
+                        language,
+                        language_is_manual,
+                        folder_id,
+                        tags,
+                    } => {
+                        let update = UpdatePasteRequest {
+                            content: None,
+                            name,
+                            language,
+                            language_is_manual,
+                            folder_id,
+                            tags,
+                        };
+                        match db.pastes.update(&id, update) {
+                            Ok(Some(paste)) => {
+                                let _ = evt_tx.send(CoreEvent::PasteMetaSaved { paste });
+                            }
+                            Ok(None) => {
+                                let _ = evt_tx.send(CoreEvent::PasteMissing { id });
+                            }
+                            Err(err) => {
+                                error!("backend metadata update failed: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("Metadata update failed: {}", err),
+                                });
+                            }
+                        }
+                    }
                     CoreCmd::DeletePaste { id } => match db.pastes.delete(&id) {
                         Ok(true) => {
                             let _ = evt_tx.send(CoreEvent::PasteDeleted { id });
@@ -110,6 +165,126 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             });
                         }
                     },
+                    CoreCmd::ListFolders => match db.folders.list() {
+                        Ok(items) => {
+                            let _ = evt_tx.send(CoreEvent::FoldersLoaded { items });
+                        }
+                        Err(err) => {
+                            error!("backend list folders failed: {}", err);
+                            let _ = evt_tx.send(CoreEvent::Error {
+                                message: format!("List folders failed: {}", err),
+                            });
+                        }
+                    },
+                    CoreCmd::CreateFolder { name, parent_id } => {
+                        let normalized_parent = parent_id.filter(|pid| !pid.trim().is_empty());
+                        if let Some(parent_id) = normalized_parent.as_deref() {
+                            match db.folders.get(parent_id) {
+                                Ok(Some(_)) => {}
+                                Ok(None) => {
+                                    let _ = evt_tx.send(CoreEvent::Error {
+                                        message: format!(
+                                            "Create folder failed: parent '{}' does not exist",
+                                            parent_id
+                                        ),
+                                    });
+                                    continue;
+                                }
+                                Err(err) => {
+                                    let _ = evt_tx.send(CoreEvent::Error {
+                                        message: format!("Create folder failed: {}", err),
+                                    });
+                                    continue;
+                                }
+                            }
+                        }
+
+                        let folder = Folder::with_parent(name, normalized_parent);
+                        match db.folders.create(&folder) {
+                            Ok(()) => {
+                                let _ = evt_tx.send(CoreEvent::FolderSaved { folder });
+                            }
+                            Err(err) => {
+                                error!("backend create folder failed: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("Create folder failed: {}", err),
+                                });
+                            }
+                        }
+                    }
+                    CoreCmd::UpdateFolder {
+                        id,
+                        name,
+                        parent_id,
+                    } => {
+                        let normalized_parent = parent_id.filter(|pid| !pid.trim().is_empty());
+                        if normalized_parent.as_deref() == Some(id.as_str()) {
+                            let _ = evt_tx.send(CoreEvent::Error {
+                                message: "Update folder failed: folder cannot be its own parent"
+                                    .to_string(),
+                            });
+                            continue;
+                        }
+
+                        if let Some(parent_id) = normalized_parent.as_deref() {
+                            let folders = match db.folders.list() {
+                                Ok(folders) => folders,
+                                Err(err) => {
+                                    let _ = evt_tx.send(CoreEvent::Error {
+                                        message: format!("Update folder failed: {}", err),
+                                    });
+                                    continue;
+                                }
+                            };
+
+                            if folders.iter().all(|f| f.id != parent_id) {
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!(
+                                        "Update folder failed: parent '{}' does not exist",
+                                        parent_id
+                                    ),
+                                });
+                                continue;
+                            }
+
+                            if introduces_cycle(&folders, &id, parent_id) {
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: "Update folder failed: would create cycle".to_string(),
+                                });
+                                continue;
+                            }
+                        }
+
+                        match db.folders.update(&id, name, normalized_parent) {
+                            Ok(Some(folder)) => {
+                                let _ = evt_tx.send(CoreEvent::FolderSaved { folder });
+                            }
+                            Ok(None) => {
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: "Update folder failed: folder not found".to_string(),
+                                });
+                            }
+                            Err(err) => {
+                                error!("backend update folder failed: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("Update folder failed: {}", err),
+                                });
+                            }
+                        }
+                    }
+                    CoreCmd::DeleteFolder { id } => {
+                        match delete_folder_tree_and_migrate(&db, &id) {
+                            Ok(_) => {
+                                let _ = evt_tx.send(CoreEvent::FolderDeleted { id });
+                            }
+                            Err(err) => {
+                                error!("backend delete folder failed: {}", err);
+                                let _ = evt_tx.send(CoreEvent::Error {
+                                    message: format!("Delete folder failed: {}", err),
+                                });
+                            }
+                        }
+                    }
                 }
             }
         })

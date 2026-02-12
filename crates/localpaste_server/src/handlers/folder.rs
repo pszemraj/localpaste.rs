@@ -1,13 +1,11 @@
 //! Folder HTTP handlers.
 
-use crate::{
-    error::HttpError, models::folder::*, models::paste::UpdatePasteRequest, AppError, AppState,
-};
+use crate::{error::HttpError, models::folder::*, AppError, AppState};
 use axum::{
     extract::{Path, State},
     Json,
 };
-use std::collections::{HashMap, HashSet};
+use localpaste_core::folder_ops::{delete_folder_tree_and_migrate, introduces_cycle};
 
 /// Create a new folder.
 ///
@@ -128,72 +126,7 @@ pub async fn delete_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let folders = state.db.folders.list()?;
-    if !folders.iter().any(|f| f.id == id) {
-        return Err(AppError::NotFound.into());
-    }
-
-    // Collect descendants (depth-first) so pastes can be migrated before deletion
-    let mut to_visit = vec![id.clone()];
-    let mut delete_order = Vec::new();
-    let mut visited = HashSet::new();
-    while let Some(current) = to_visit.pop() {
-        if !visited.insert(current.clone()) {
-            continue;
-        }
-        delete_order.push(current.clone());
-        for child in folders
-            .iter()
-            .filter(|f| f.parent_id.as_deref() == Some(current.as_str()))
-        {
-            to_visit.push(child.id.clone());
-        }
-    }
-
-    // Ensure children are deleted before parent
-    delete_order.reverse();
-
-    for folder_id in &delete_order {
-        // Migrate all pastes in this folder to unfiled
-        loop {
-            let pastes = state.db.pastes.list(100, Some(folder_id.clone()))?;
-            if pastes.is_empty() {
-                break;
-            }
-
-            for paste in pastes {
-                let update = UpdatePasteRequest {
-                    content: None,
-                    name: None,
-                    language: None,
-                    language_is_manual: None,
-                    folder_id: Some(String::new()), // Normalized to None
-                    tags: None,
-                };
-                state.db.pastes.update(&paste.id, update)?;
-            }
-        }
-
-        state.db.folders.delete(folder_id)?;
-    }
+    let _ = delete_folder_tree_and_migrate(&state.db, &id)?;
 
     Ok(Json(serde_json::json!({ "success": true })))
-}
-
-fn introduces_cycle(folders: &[Folder], folder_id: &str, new_parent_id: &str) -> bool {
-    let parent_map: HashMap<&str, Option<&str>> = folders
-        .iter()
-        .map(|f| (f.id.as_str(), f.parent_id.as_deref()))
-        .collect();
-    let mut current = Some(new_parent_id);
-    let mut visited = HashSet::new();
-
-    while let Some(curr) = current {
-        if !visited.insert(curr) || curr == folder_id {
-            return true;
-        }
-        current = parent_map.get(curr).copied().flatten();
-    }
-
-    false
 }

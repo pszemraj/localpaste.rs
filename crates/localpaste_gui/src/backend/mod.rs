@@ -45,7 +45,10 @@ mod tests {
         let backend = spawn_backend(db);
         backend
             .cmd_tx
-            .send(CoreCmd::ListAll { limit: 10 })
+            .send(CoreCmd::ListPastes {
+                limit: 10,
+                folder_id: None,
+            })
             .expect("send list");
 
         match recv_event(&backend.evt_rx) {
@@ -144,6 +147,48 @@ mod tests {
 
         match recv_event(&backend.evt_rx) {
             CoreEvent::PasteDeleted { id } => assert_eq!(id, created_id),
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn backend_searches_and_lists_folders() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let root = localpaste_core::models::folder::Folder::new("Root".to_string());
+        db.folders.create(&root).expect("create folder");
+
+        let paste = Paste::new("alpha rust beta".to_string(), "alpha".to_string());
+        db.pastes.create(&paste).expect("create paste");
+
+        let backend = spawn_backend(db);
+        backend
+            .cmd_tx
+            .send(CoreCmd::SearchPastes {
+                query: "rust".to_string(),
+                limit: 10,
+                folder_id: None,
+                language: None,
+            })
+            .expect("send search");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::SearchResults { query, items } => {
+                assert_eq!(query, "rust");
+                assert_eq!(items.len(), 1);
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::ListFolders)
+            .expect("send list folders");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FoldersLoaded { items } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].name, "Root");
+            }
             other => panic!("unexpected event: {:?}", other),
         }
     }
