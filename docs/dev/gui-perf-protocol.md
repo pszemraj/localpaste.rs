@@ -188,6 +188,12 @@ $env:LOCALPASTE_VIRTUAL_EDITOR = "1"
 # Optional frame metrics log (avg FPS + p95 ms every ~2s)
 # $env:LOCALPASTE_EDITOR_PERF_LOG = "1"
 
+# Optional virtual-editor input trace (focus/commands/copy-cut outcomes)
+# $env:LOCALPASTE_EDITOR_INPUT_TRACE = "1"
+
+# Optional highlight lifecycle trace (request/queue/apply/drop reasons)
+# $env:LOCALPASTE_HIGHLIGHT_TRACE = "1"
+
 .\target\release\localpaste-gui.exe
 ```
 
@@ -230,6 +236,25 @@ $env:LOCALPASTE_VIRTUAL_EDITOR = "1"
    - Verify `Ctrl/Cmd+A/C/X/V`, `Ctrl/Cmd+Z/Y`, Home/End, PageUp/PageDown, shift-selection.
    - Verify IME composition (`Enabled` -> `Preedit` -> `Commit`) does not lose caret/selection state.
    - Verify drag-selection behavior when crossing viewport edges (including auto-scroll behavior if implemented).
+
+9. **Clipboard + Triple-Click Reliability Repro (required)**
+   - Open `perf-scroll-5k-lines`.
+   - Drag-select single line and multi-line regions.
+   - Run `Ctrl/Cmd+C` and paste in an external editor.
+   - Run `Ctrl/Cmd+X` and paste in an external editor.
+   - Triple-click repeatedly on the same line and verify whole-line selection each time.
+   - Expected:
+     - copy/cut always transfers text to system clipboard;
+     - cut removes selected text from buffer;
+     - triple-click consistently expands to full physical line selection.
+
+10. **Highlight Recovery Repro (required)**
+   - Keep `perf-scroll-5k-lines` selected.
+   - Type in the middle of the file and pause briefly.
+   - Expected:
+     - existing highlight remains visible while recompute is pending;
+     - no full-buffer fallback to plain text after initial highlight exists;
+     - trace logs (`LOCALPASTE_HIGHLIGHT_TRACE=1`) show deterministic request/queue/apply flow.
 
 ## 4) Cleanup
 

@@ -77,6 +77,16 @@ Decision key:
 - [ ] Export (file dialog + extension mapping)
 - [x] Native GUI edit locks (open paste blocks API/CLI deletion)
 
+### Virtual Editor Reliability Gates (Required Before Default Switch)
+
+- [~] Clipboard reliability (`Ctrl/Cmd+C/X/V`) with external paste verification
+- [~] Triple-click whole-line selection behavior (repeatable, non-intermittent)
+- [~] Selection visuals: low-opacity tint + left rail for multi-line ranges
+- [~] Highlight recovery: keep stale highlight while async refresh is pending
+- [ ] Trace protocol documented and validated with:
+  - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
+  - `LOCALPASTE_HIGHLIGHT_TRACE=1`
+
 ## Phase 5: Search + Command Palette
 
 - [ ] Debounced search (150ms)

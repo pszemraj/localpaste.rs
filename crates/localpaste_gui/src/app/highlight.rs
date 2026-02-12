@@ -15,6 +15,16 @@ use std::time::Instant;
 use syntect::highlighting::{HighlightState, Highlighter, Style, ThemeSet};
 use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
 use syntect::util::LinesWithEndings;
+use tracing::info;
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            let lowered = value.trim().to_ascii_lowercase();
+            !(lowered.is_empty() || lowered == "0" || lowered == "false")
+        })
+        .unwrap_or(false)
+}
 
 /// Cached layout state for highlighted editor content.
 #[derive(Default)]
@@ -641,6 +651,7 @@ struct HighlightWorkerLine {
 pub(super) fn spawn_highlight_worker() -> HighlightWorker {
     let (tx, rx_cmd) = crossbeam_channel::unbounded();
     let (tx_evt, rx_evt) = crossbeam_channel::unbounded();
+    let trace_enabled = env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE");
 
     thread::Builder::new()
         .name("localpaste-gui-highlight".to_string())
@@ -648,12 +659,28 @@ pub(super) fn spawn_highlight_worker() -> HighlightWorker {
             let settings = SyntectSettings::default();
             let mut cache = HighlightWorkerCache::default();
             for req in rx_cmd.iter() {
-                let mut latest = req;
+                let mut latest: HighlightRequest = req;
                 while let Ok(next) = rx_cmd.try_recv() {
                     latest = next;
                 }
+                let started = Instant::now();
+                let trace_paste_id = latest.paste_id.clone();
+                let trace_revision = latest.revision;
+                let trace_len = latest.text.len();
                 let render = highlight_in_worker(&settings, &mut cache, latest);
                 let _ = tx_evt.send(render);
+                if trace_enabled {
+                    let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
+                    info!(
+                        target: "localpaste_gui::highlight",
+                        event = "worker_done",
+                        paste_id = trace_paste_id.as_str(),
+                        revision = trace_revision,
+                        text_len = trace_len,
+                        elapsed_ms = elapsed_ms,
+                        "highlight worker pass"
+                    );
+                }
             }
         })
         .expect("spawn highlight worker");

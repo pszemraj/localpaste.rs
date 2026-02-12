@@ -72,6 +72,7 @@ pub struct LocalPasteApp {
     last_virtual_click_pos: Option<egui::Pos2>,
     last_virtual_click_line: Option<usize>,
     last_virtual_click_count: u8,
+    virtual_editor_active: bool,
     syntect: SyntectSettings,
     db_path: String,
     locks: Arc<PasteLockManager>,
@@ -91,6 +92,8 @@ pub struct LocalPasteApp {
     frame_samples: VecDeque<f32>,
     last_frame_at: Option<Instant>,
     last_perf_log_at: Instant,
+    editor_input_trace_enabled: bool,
+    highlight_trace_enabled: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -110,6 +113,7 @@ const COLOR_ACCENT: Color32 = Color32::from_rgb(0xE5, 0x70, 0x00);
 const COLOR_ACCENT_HOVER: Color32 = Color32::from_rgb(0xCE, 0x42, 0x2B);
 const COLOR_SELECTION_STROKE: Color32 = Color32::from_rgb(0xF9, 0x73, 0x16);
 const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
+const COLOR_SELECTION_FILL_RGBA: [u8; 4] = [0xF9, 0x73, 0x16, 0x1A];
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const STATUS_TTL: Duration = Duration::from_secs(5);
 const FONT_0XPROTO: &str = "0xProto";
@@ -133,8 +137,34 @@ struct StatusMessage {
     expires_at: Instant,
 }
 
+#[derive(Default, Debug, Clone, Copy)]
+struct VirtualApplyResult {
+    changed: bool,
+    copied: bool,
+    cut: bool,
+    pasted: bool,
+}
+
 fn is_editor_word_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            let lowered = value.trim().to_ascii_lowercase();
+            !(lowered.is_empty() || lowered == "0" || lowered == "false")
+        })
+        .unwrap_or(false)
+}
+
+fn selection_fill_color() -> Color32 {
+    Color32::from_rgba_unmultiplied(
+        COLOR_SELECTION_FILL_RGBA[0],
+        COLOR_SELECTION_FILL_RGBA[1],
+        COLOR_SELECTION_FILL_RGBA[2],
+        COLOR_SELECTION_FILL_RGBA[3],
+    )
 }
 
 fn next_virtual_click_count(
@@ -158,6 +188,39 @@ fn next_virtual_click_count(
         last_count.saturating_add(1).min(3)
     } else {
         1
+    }
+}
+
+fn paint_virtual_selection_overlay(
+    painter: &egui::Painter,
+    row_rect: egui::Rect,
+    galley: &egui::Galley,
+    selection: Range<usize>,
+) {
+    if selection.start >= selection.end {
+        return;
+    }
+    let fill = selection_fill_color();
+    let mut consumed = 0usize;
+    for placed_row in &galley.rows {
+        let row_chars = placed_row.char_count_excluding_newline();
+        let local_start = selection.start.saturating_sub(consumed).min(row_chars);
+        let local_end = selection.end.saturating_sub(consumed).min(row_chars);
+        if local_end > local_start {
+            let left = row_rect.min.x + placed_row.pos.x + placed_row.x_offset(local_start);
+            let mut right = row_rect.min.x + placed_row.pos.x + placed_row.x_offset(local_end);
+            if right <= left {
+                right = left + 1.0;
+            }
+            let top = row_rect.min.y + placed_row.pos.y;
+            let bottom = top + placed_row.height();
+            let rect = egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom));
+            painter.rect_filled(rect, 0.0, fill);
+        }
+        consumed = consumed.saturating_add(placed_row.char_count_including_newline());
+        if consumed >= selection.end {
+            break;
+        }
     }
 }
 
@@ -209,6 +272,7 @@ impl LocalPasteApp {
             virtual_editor_history: VirtualEditorHistory::default(),
             virtual_layout: WrapLayoutCache::default(),
             virtual_drag_active: false,
+            virtual_editor_active: false,
             virtual_viewport_height: 0.0,
             virtual_line_height: 1.0,
             virtual_wrap_width: 0.0,
@@ -232,12 +296,7 @@ impl LocalPasteApp {
             style_applied: false,
             window_checked: false,
             last_refresh_at: Instant::now(),
-            perf_log_enabled: std::env::var("LOCALPASTE_EDITOR_PERF_LOG")
-                .map(|value| {
-                    let lowered = value.trim().to_ascii_lowercase();
-                    !(lowered.is_empty() || lowered == "0" || lowered == "false")
-                })
-                .unwrap_or(false),
+            perf_log_enabled: env_flag_enabled("LOCALPASTE_EDITOR_PERF_LOG"),
             frame_samples: VecDeque::with_capacity(PERF_SAMPLE_CAP),
             last_frame_at: None,
             last_perf_log_at: Instant::now(),
@@ -248,6 +307,8 @@ impl LocalPasteApp {
             last_virtual_click_pos: None,
             last_virtual_click_line: None,
             last_virtual_click_count: 0,
+            editor_input_trace_enabled: env_flag_enabled("LOCALPASTE_EDITOR_INPUT_TRACE"),
+            highlight_trace_enabled: env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE"),
         };
         app.request_refresh();
         Ok(app)
@@ -292,7 +353,7 @@ impl LocalPasteApp {
         style.visuals.faint_bg_color = COLOR_BG_TERTIARY;
         style.visuals.window_stroke = Stroke::new(1.0, COLOR_BORDER);
         style.visuals.hyperlink_color = COLOR_ACCENT;
-        style.visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(0xC2, 0x6D, 0x2B, 0x40);
+        style.visuals.selection.bg_fill = selection_fill_color();
         style.visuals.selection.stroke = Stroke::new(1.0, COLOR_SELECTION_STROKE);
         style.visuals.text_edit_bg_color = Some(COLOR_BG_TERTIARY);
 
@@ -520,6 +581,47 @@ impl LocalPasteApp {
         });
     }
 
+    fn trace_input(
+        &self,
+        focused: bool,
+        egui_focus: bool,
+        selection_chars: usize,
+        immediate: &[VirtualInputCommand],
+        deferred: &[VirtualInputCommand],
+        apply_result: VirtualApplyResult,
+    ) {
+        if !self.editor_input_trace_enabled {
+            return;
+        }
+        info!(
+            target: "localpaste_gui::input",
+            mode = ?self.editor_mode,
+            editor_active = self.virtual_editor_active,
+            focused = focused,
+            egui_focus = egui_focus,
+            selection_chars = selection_chars,
+            immediate = ?immediate,
+            deferred = ?deferred,
+            changed = apply_result.changed,
+            copied = apply_result.copied,
+            cut = apply_result.cut,
+            pasted = apply_result.pasted,
+            "virtual input frame"
+        );
+    }
+
+    fn trace_highlight(&self, event: &str, details: &str) {
+        if !self.highlight_trace_enabled {
+            return;
+        }
+        info!(
+            target: "localpaste_gui::highlight",
+            event = event,
+            details = details,
+            "highlight trace"
+        );
+    }
+
     fn create_new_paste(&mut self) {
         self.create_new_paste_with_content(String::new());
     }
@@ -540,20 +642,65 @@ impl LocalPasteApp {
         self.highlight_render = None;
         self.highlight_staged = None;
         self.highlight_version = self.highlight_version.wrapping_add(1);
+        self.trace_highlight("clear", "cleared pending/render/staged");
     }
 
     fn queue_highlight_render(&mut self, render: HighlightRender) {
         let Some(selected_id) = self.selected_id.as_deref() else {
+            self.trace_highlight("drop", "render ignored: no selected paste");
             return;
         };
         if render.paste_id != selected_id {
+            self.trace_highlight("drop", "render ignored: paste id mismatch");
             return;
+        }
+        let active_revision = self.active_revision();
+        if let Some(current) = &self.highlight_render {
+            if current.matches_context(
+                render.paste_id.as_str(),
+                render.language_hint.as_str(),
+                render.theme_key.as_str(),
+            ) && current.revision >= render.revision
+            {
+                self.trace_highlight(
+                    "drop",
+                    "render ignored: older/equal than current highlighted revision",
+                );
+                return;
+            }
+        }
+        if render.revision < active_revision && self.highlight_render.is_some() {
+            self.trace_highlight(
+                "drop",
+                "render ignored: revision older than active text and stale render exists",
+            );
+            return;
+        }
+        if let Some(staged) = &self.highlight_staged {
+            if staged.matches_context(
+                render.paste_id.as_str(),
+                render.language_hint.as_str(),
+                render.theme_key.as_str(),
+            ) && staged.revision >= render.revision
+            {
+                self.trace_highlight("drop", "render ignored: older/equal than staged revision");
+                return;
+            }
         }
         if let Some(pending) = &self.highlight_pending {
             if pending.matches_render(&render) {
                 self.highlight_pending = None;
+                self.trace_highlight("pending_clear", "pending request matched worker render");
             }
         }
+        self.trace_highlight(
+            "queue",
+            format!(
+                "queued staged render revision={} text_len={}",
+                render.revision, render.text_len
+            )
+            .as_str(),
+        );
         self.highlight_staged = Some(render);
     }
 
@@ -561,20 +708,55 @@ impl LocalPasteApp {
         let Some(render) = self.highlight_staged.take() else {
             return;
         };
+        self.trace_highlight(
+            "apply",
+            format!(
+                "applied staged render revision={} text_len={}",
+                render.revision, render.text_len
+            )
+            .as_str(),
+        );
         self.highlight_render = Some(render);
         self.highlight_version = self.highlight_version.wrapping_add(1);
     }
 
     fn maybe_apply_staged_highlight(&mut self, now: Instant) {
-        if self.highlight_staged.is_none() {
+        let Some(staged) = self.highlight_staged.as_ref() else {
+            return;
+        };
+        if let Some(current) = &self.highlight_render {
+            if current.matches_context(
+                staged.paste_id.as_str(),
+                staged.language_hint.as_str(),
+                staged.theme_key.as_str(),
+            ) && current.revision >= staged.revision
+            {
+                self.trace_highlight("drop", "staged render superseded by current render");
+                self.highlight_staged = None;
+                return;
+            }
+        }
+        if self.highlight_render.is_none() {
+            self.trace_highlight("apply_now", "no current render; apply staged immediately");
+            self.apply_staged_highlight();
             return;
         }
         let idle = self
             .last_interaction_at
             .map(|last| now.duration_since(last) >= HIGHLIGHT_APPLY_IDLE)
             .unwrap_or(true);
-        if idle {
+        if idle || self.is_virtual_editor_mode() {
+            if idle {
+                self.trace_highlight("apply_idle", "applying staged render after idle");
+            } else {
+                self.trace_highlight(
+                    "apply_now",
+                    "virtual editor mode; applying staged render immediately",
+                );
+            }
             self.apply_staged_highlight();
+        } else {
+            self.trace_highlight("hold", "staged render waiting for idle threshold");
         }
     }
 
@@ -919,11 +1101,11 @@ impl LocalPasteApp {
         &mut self,
         ctx: &egui::Context,
         commands: &[VirtualInputCommand],
-    ) -> bool {
+    ) -> VirtualApplyResult {
         if commands.is_empty() {
-            return false;
+            return VirtualApplyResult::default();
         }
-        let mut changed = false;
+        let mut result = VirtualApplyResult::default();
         let now = Instant::now();
         for command in commands {
             match command {
@@ -934,15 +1116,20 @@ impl LocalPasteApp {
                 VirtualInputCommand::Copy => {
                     if let Some(selection) = self.virtual_selected_text() {
                         ctx.copy_text(selection);
+                        result.copied = true;
                     }
                 }
                 VirtualInputCommand::Cut => {
                     if let Some(range) = self.virtual_editor_state.selection_range() {
                         if let Some(selection) = self.virtual_selected_text() {
                             ctx.copy_text(selection);
+                            result.copied = true;
                         }
-                        changed |=
+                        result.changed |=
                             self.replace_virtual_range(range, "", EditIntent::Cut, true, now);
+                        if result.changed {
+                            result.cut = true;
+                        }
                     }
                 }
                 VirtualInputCommand::Paste(text) => {
@@ -951,8 +1138,11 @@ impl LocalPasteApp {
                         .virtual_editor_state
                         .selection_range()
                         .unwrap_or(cursor..cursor);
-                    changed |=
+                    result.changed |=
                         self.replace_virtual_range(range, text, EditIntent::Paste, true, now);
+                    if !text.is_empty() {
+                        result.pasted = true;
+                    }
                 }
                 VirtualInputCommand::InsertText(text) => {
                     if text.is_empty() {
@@ -966,7 +1156,7 @@ impl LocalPasteApp {
                         .virtual_editor_state
                         .selection_range()
                         .unwrap_or(cursor..cursor);
-                    changed |=
+                    result.changed |=
                         self.replace_virtual_range(range, text, EditIntent::Insert, true, now);
                     self.virtual_editor_state.clear_preferred_column();
                 }
@@ -976,7 +1166,7 @@ impl LocalPasteApp {
                         .virtual_editor_state
                         .selection_range()
                         .unwrap_or(cursor..cursor);
-                    changed |=
+                    result.changed |=
                         self.replace_virtual_range(range, "\n", EditIntent::Insert, true, now);
                     self.virtual_editor_state.clear_preferred_column();
                 }
@@ -986,13 +1176,13 @@ impl LocalPasteApp {
                         .virtual_editor_state
                         .selection_range()
                         .unwrap_or(cursor..cursor);
-                    changed |=
+                    result.changed |=
                         self.replace_virtual_range(range, "    ", EditIntent::Insert, true, now);
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::Backspace { word } => {
                     if let Some(range) = self.virtual_editor_state.selection_range() {
-                        changed |= self.replace_virtual_range(
+                        result.changed |= self.replace_virtual_range(
                             range,
                             "",
                             EditIntent::DeleteBackward,
@@ -1009,7 +1199,7 @@ impl LocalPasteApp {
                         } else {
                             cursor.saturating_sub(1)
                         };
-                        changed |= self.replace_virtual_range(
+                        result.changed |= self.replace_virtual_range(
                             start..cursor,
                             "",
                             EditIntent::DeleteBackward,
@@ -1021,7 +1211,7 @@ impl LocalPasteApp {
                 }
                 VirtualInputCommand::DeleteForward { word } => {
                     if let Some(range) = self.virtual_editor_state.selection_range() {
-                        changed |= self.replace_virtual_range(
+                        result.changed |= self.replace_virtual_range(
                             range,
                             "",
                             EditIntent::DeleteForward,
@@ -1038,7 +1228,7 @@ impl LocalPasteApp {
                                 .min(self.virtual_editor_buffer.len_chars())
                         };
                         if end > cursor {
-                            changed |= self.replace_virtual_range(
+                            result.changed |= self.replace_virtual_range(
                                 cursor..end,
                                 "",
                                 EditIntent::DeleteForward,
@@ -1207,13 +1397,13 @@ impl LocalPasteApp {
                 VirtualInputCommand::Undo => {
                     self.virtual_editor_state.ime.preedit_range = None;
                     self.virtual_editor_state.ime.preedit_text.clear();
-                    changed |= self.virtual_editor_history.undo(
+                    result.changed |= self.virtual_editor_history.undo(
                         &mut self.virtual_editor_buffer,
                         &mut self.virtual_editor_state,
                     );
                 }
                 VirtualInputCommand::Redo => {
-                    changed |= self.virtual_editor_history.redo(
+                    result.changed |= self.virtual_editor_history.redo(
                         &mut self.virtual_editor_buffer,
                         &mut self.virtual_editor_state,
                     );
@@ -1231,7 +1421,7 @@ impl LocalPasteApp {
                         .clone()
                         .or_else(|| self.virtual_editor_state.selection_range())
                         .unwrap_or(cursor..cursor);
-                    changed |= self.replace_virtual_range(
+                    result.changed |= self.replace_virtual_range(
                         range.clone(),
                         text,
                         EditIntent::Other,
@@ -1251,7 +1441,7 @@ impl LocalPasteApp {
                         .clone()
                         .or_else(|| self.virtual_editor_state.selection_range())
                         .unwrap_or(cursor..cursor);
-                    changed |=
+                    result.changed |=
                         self.replace_virtual_range(range, text, EditIntent::ImeCommit, true, now);
                     self.virtual_editor_state.ime.preedit_range = None;
                     self.virtual_editor_state.ime.preedit_text.clear();
@@ -1264,7 +1454,7 @@ impl LocalPasteApp {
                 }
             }
         }
-        changed
+        result
     }
 
     fn track_frame_metrics(&mut self) {
@@ -1316,25 +1506,33 @@ impl LocalPasteApp {
         paste_id: &str,
     ) -> bool {
         if text_len >= HIGHLIGHT_PLAIN_THRESHOLD {
+            self.trace_highlight("skip_request", "plain threshold exceeded");
             return false;
         }
         if let Some(pending) = &self.highlight_pending {
             if pending.matches(revision, text_len, language_hint, theme_key, paste_id) {
+                self.trace_highlight("skip_request", "matching highlight request already pending");
                 return false;
             }
         }
         if let Some(render) = &self.highlight_render {
             if render.matches_exact(revision, text_len, language_hint, theme_key, paste_id) {
+                self.trace_highlight("skip_request", "exact render already available");
                 return false;
             }
         }
         if let Some(render) = &self.highlight_staged {
             if render.matches_exact(revision, text_len, language_hint, theme_key, paste_id) {
+                self.trace_highlight("skip_request", "exact render already staged");
                 return false;
             }
         }
         if debounce_active && (self.highlight_pending.is_some() || self.highlight_render.is_some())
         {
+            self.trace_highlight(
+                "skip_request",
+                "debounce active with pending/current render",
+            );
             return false;
         }
         true
@@ -1349,6 +1547,14 @@ impl LocalPasteApp {
         paste_id: &str,
     ) {
         let text_len = text.len();
+        self.trace_highlight(
+            "request",
+            format!(
+                "dispatch revision={} text_len={} lang={} theme={} paste={}",
+                revision, text_len, language_hint, theme_key, paste_id
+            )
+            .as_str(),
+        );
         let request = HighlightRequest {
             paste_id: paste_id.to_string(),
             revision,
@@ -1434,29 +1640,49 @@ impl eframe::App for LocalPasteApp {
             self.queue_highlight_render(render);
         }
 
+        if !self.is_virtual_editor_mode() {
+            self.virtual_editor_active = false;
+        }
+
+        let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+        let egui_focus = ctx.memory(|m| m.has_focus(focus_id));
+        let has_virtual_selection = self.virtual_editor_state.selection_range().is_some();
+        let virtual_shortcut_active = self.is_virtual_editor_mode()
+            && (self.virtual_editor_active
+                || self.virtual_editor_state.has_focus
+                || egui_focus
+                || has_virtual_selection);
         let mut saw_virtual_select_all = false;
         let mut saw_virtual_copy = false;
         let mut saw_virtual_cut = false;
         let mut saw_virtual_undo = false;
         let mut saw_virtual_redo = false;
-        let mut virtual_editor_shortcut_focus = false;
+        let mut saw_virtual_paste = false;
+        let mut immediate_virtual_commands: Vec<VirtualInputCommand> = Vec::new();
+        let mut deferred_virtual_commands: Vec<VirtualInputCommand> = Vec::new();
+        let mut immediate_apply_result = VirtualApplyResult::default();
         if self.is_virtual_editor_mode() {
-            let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-            let focused =
-                self.virtual_editor_state.has_focus || ctx.memory(|m| m.has_focus(focus_id));
-            virtual_editor_shortcut_focus = focused;
-            let commands = ctx.input(|input| commands_from_events(&input.events, focused));
-            for command in &commands {
-                match command {
+            let commands =
+                ctx.input(|input| commands_from_events(&input.events, virtual_shortcut_active));
+            for command in commands {
+                match &command {
                     VirtualInputCommand::SelectAll => saw_virtual_select_all = true,
                     VirtualInputCommand::Copy => saw_virtual_copy = true,
                     VirtualInputCommand::Cut => saw_virtual_cut = true,
                     VirtualInputCommand::Undo => saw_virtual_undo = true,
                     VirtualInputCommand::Redo => saw_virtual_redo = true,
+                    VirtualInputCommand::Paste(_) => saw_virtual_paste = true,
                     _ => {}
                 }
+                match command {
+                    VirtualInputCommand::Copy
+                    | VirtualInputCommand::Cut
+                    | VirtualInputCommand::Paste(_) => deferred_virtual_commands.push(command),
+                    _ => immediate_virtual_commands.push(command),
+                }
             }
-            if self.apply_virtual_commands(ctx, &commands) {
+            immediate_apply_result = self.apply_virtual_commands(ctx, &immediate_virtual_commands);
+            if immediate_apply_result.changed {
                 self.mark_dirty();
             }
         }
@@ -1467,6 +1693,9 @@ impl eframe::App for LocalPasteApp {
         let mut fallback_virtual_cut = false;
         let mut fallback_virtual_undo = false;
         let mut fallback_virtual_redo = false;
+        let mut request_virtual_paste = false;
+        let mut pasted_text: Option<String> = None;
+        let mut sidebar_direction: i32 = 0;
         ctx.input(|input| {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());
@@ -1481,7 +1710,7 @@ impl eframe::App for LocalPasteApp {
                 match self.editor_mode {
                     EditorMode::VirtualPreview => copy_virtual_preview = true,
                     EditorMode::VirtualEditor => {
-                        if !saw_virtual_copy {
+                        if virtual_shortcut_active && !saw_virtual_copy {
                             fallback_virtual_copy = true;
                         }
                     }
@@ -1489,13 +1718,16 @@ impl eframe::App for LocalPasteApp {
                 }
             }
             if self.editor_mode == EditorMode::VirtualEditor && input.modifiers.command {
-                if input.key_pressed(egui::Key::A) && !saw_virtual_select_all {
+                if virtual_shortcut_active
+                    && input.key_pressed(egui::Key::A)
+                    && !saw_virtual_select_all
+                {
                     fallback_virtual_select_all = true;
                 }
-                if input.key_pressed(egui::Key::X) && !saw_virtual_cut {
+                if virtual_shortcut_active && input.key_pressed(egui::Key::X) && !saw_virtual_cut {
                     fallback_virtual_cut = true;
                 }
-                if input.key_pressed(egui::Key::Z) {
+                if virtual_shortcut_active && input.key_pressed(egui::Key::Z) {
                     if input.modifiers.shift {
                         if !saw_virtual_redo {
                             fallback_virtual_redo = true;
@@ -1504,8 +1736,24 @@ impl eframe::App for LocalPasteApp {
                         fallback_virtual_undo = true;
                     }
                 }
-                if input.key_pressed(egui::Key::Y) && !saw_virtual_redo {
+                if virtual_shortcut_active && input.key_pressed(egui::Key::Y) && !saw_virtual_redo {
                     fallback_virtual_redo = true;
+                }
+                if virtual_shortcut_active && input.key_pressed(egui::Key::V) && !saw_virtual_paste
+                {
+                    request_virtual_paste = true;
+                }
+            }
+            for event in &input.events {
+                if let egui::Event::Paste(text) = event {
+                    pasted_text = Some(text.clone());
+                }
+            }
+            if !ctx.wants_keyboard_input() && !self.pastes.is_empty() {
+                if input.key_pressed(egui::Key::ArrowDown) {
+                    sidebar_direction = 1;
+                } else if input.key_pressed(egui::Key::ArrowUp) {
+                    sidebar_direction = -1;
                 }
             }
         });
@@ -1518,31 +1766,34 @@ impl eframe::App for LocalPasteApp {
             }
         }
         if self.editor_mode == EditorMode::VirtualEditor {
-            let focused = virtual_editor_shortcut_focus
-                || self.virtual_editor_state.has_focus
-                || ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
-            if focused {
-                let mut fallback_commands = Vec::new();
-                if fallback_virtual_select_all {
-                    fallback_commands.push(VirtualInputCommand::SelectAll);
-                }
-                if fallback_virtual_copy {
-                    fallback_commands.push(VirtualInputCommand::Copy);
-                }
-                if fallback_virtual_cut {
-                    fallback_commands.push(VirtualInputCommand::Cut);
-                }
-                if fallback_virtual_undo {
-                    fallback_commands.push(VirtualInputCommand::Undo);
-                }
-                if fallback_virtual_redo {
-                    fallback_commands.push(VirtualInputCommand::Redo);
-                }
-                if !fallback_commands.is_empty()
-                    && self.apply_virtual_commands(ctx, &fallback_commands)
-                {
+            let mut fallback_commands = Vec::new();
+            if fallback_virtual_select_all {
+                fallback_commands.push(VirtualInputCommand::SelectAll);
+            }
+            if fallback_virtual_copy {
+                deferred_virtual_commands.push(VirtualInputCommand::Copy);
+            }
+            if fallback_virtual_cut {
+                deferred_virtual_commands.push(VirtualInputCommand::Cut);
+            }
+            if fallback_virtual_undo {
+                fallback_commands.push(VirtualInputCommand::Undo);
+            }
+            if fallback_virtual_redo {
+                fallback_commands.push(VirtualInputCommand::Redo);
+            }
+            if !fallback_commands.is_empty() {
+                let fallback_result = self.apply_virtual_commands(ctx, &fallback_commands);
+                immediate_apply_result.changed |= fallback_result.changed;
+                immediate_apply_result.copied |= fallback_result.copied;
+                immediate_apply_result.cut |= fallback_result.cut;
+                immediate_apply_result.pasted |= fallback_result.pasted;
+                if fallback_result.changed {
                     self.mark_dirty();
                 }
+            }
+            if request_virtual_paste {
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
             }
         }
 
@@ -1550,40 +1801,13 @@ impl eframe::App for LocalPasteApp {
             self.maybe_apply_staged_highlight(Instant::now());
         }
 
-        let mut pasted_text: Option<String> = None;
-        ctx.input(|input| {
-            for event in &input.events {
-                if let egui::Event::Paste(text) = event {
-                    pasted_text = Some(text.clone());
-                }
-            }
-        });
-        if !ctx.wants_keyboard_input() {
-            if let Some(text) = pasted_text {
-                if !text.trim().is_empty() {
-                    self.create_new_paste_with_content(text);
-                }
-            }
-        }
-
-        if !ctx.wants_keyboard_input() && !self.pastes.is_empty() {
-            let mut direction: i32 = 0;
-            ctx.input(|input| {
-                if input.key_pressed(egui::Key::ArrowDown) {
-                    direction = 1;
-                } else if input.key_pressed(egui::Key::ArrowUp) {
-                    direction = -1;
-                }
-            });
-
-            if direction != 0 {
-                let current = self.selected_index().unwrap_or(0) as i32;
-                let max_index = (self.pastes.len() - 1) as i32;
-                let next = (current + direction).clamp(0, max_index) as usize;
-                if self.selected_index() != Some(next) {
-                    let next_id = self.pastes[next].id.clone();
-                    self.select_paste(next_id);
-                }
+        if sidebar_direction != 0 {
+            let current = self.selected_index().unwrap_or(0) as i32;
+            let max_index = (self.pastes.len().saturating_sub(1)) as i32;
+            let next = (current + sidebar_direction).clamp(0, max_index) as usize;
+            if self.selected_index() != Some(next) {
+                let next_id = self.pastes[next].id.clone();
+                self.select_paste(next_id);
             }
         }
 
@@ -1741,13 +1965,26 @@ impl eframe::App for LocalPasteApp {
                     .as_ref()
                     .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
                     .is_some();
+                let has_staged_render = self
+                    .highlight_staged
+                    .as_ref()
+                    .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
+                    .is_some();
                 let use_plain = if is_large {
                     true
                 } else if async_mode {
-                    !has_render
+                    !(has_render || has_staged_render)
                 } else {
-                    debounce_active
+                    debounce_active && !has_render
                 };
+                self.trace_highlight(
+                    "frame",
+                    format!(
+                        "revision={} text_len={} async={} has_render={} has_staged={} use_plain={}",
+                        revision, text_len, async_mode, has_render, has_staged_render, use_plain
+                    )
+                    .as_str(),
+                );
                 let highlight_render = self.highlight_render.take();
                 let highlight_render_match = highlight_render.as_ref().filter(|render| {
                     render.matches_context(id.as_str(), &language_hint, theme_key)
@@ -1816,7 +2053,10 @@ impl eframe::App for LocalPasteApp {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                             }
                             if pending_action.is_none()
-                                && (response.drag_started() || response.clicked())
+                                && (response.triple_clicked()
+                                    || response.double_clicked()
+                                    || response.drag_started()
+                                    || response.clicked())
                             {
                                 if let Some(pointer_pos) = response.interact_pointer_pos() {
                                     let local_pos = pointer_pos - rect.min;
@@ -1834,7 +2074,7 @@ impl eframe::App for LocalPasteApp {
                                             Some(RowAction::DragStart { cursor: vcursor });
                                     } else {
                                         let now = Instant::now();
-                                        let click_count = next_virtual_click_count(
+                                        let mut click_count = next_virtual_click_count(
                                             last_virtual_click_at,
                                             last_virtual_click_pos,
                                             last_virtual_click_line,
@@ -1843,6 +2083,12 @@ impl eframe::App for LocalPasteApp {
                                             pointer_pos,
                                             now,
                                         );
+                                        if response.double_clicked() {
+                                            click_count = click_count.max(2);
+                                        }
+                                        if response.triple_clicked() {
+                                            click_count = 3;
+                                        }
                                         last_virtual_click_at = Some(now);
                                         last_virtual_click_pos = Some(pointer_pos);
                                         last_virtual_click_line = Some(line_idx);
@@ -1969,22 +2215,18 @@ impl eframe::App for LocalPasteApp {
                             .map(|(start, end)| start.line != end.line)
                             .unwrap_or(false);
                         for row in rows {
-                            let mut galley = row.galley;
+                            let galley = row.galley;
                             let mut has_selection = false;
                             if let Some(selection) = self
                                 .virtual_selection
                                 .selection_for_line(row.line_idx, row.line_chars)
                             {
                                 has_selection = true;
-                                let cursor_range = CCursorRange::two(
-                                    CCursor::new(selection.start),
-                                    CCursor::new(selection.end),
-                                );
-                                egui::text_selection::visuals::paint_text_selection(
-                                    &mut galley,
-                                    ui.visuals(),
-                                    &cursor_range,
-                                    None,
+                                paint_virtual_selection_overlay(
+                                    ui.painter(),
+                                    row.rect,
+                                    galley.as_ref(),
+                                    selection,
                                 );
                             }
                             ui.painter()
@@ -2002,6 +2244,7 @@ impl eframe::App for LocalPasteApp {
                     self.last_virtual_click_pos = last_virtual_click_pos;
                     self.last_virtual_click_line = last_virtual_click_line;
                     self.last_virtual_click_count = last_virtual_click_count;
+                    self.virtual_editor_active = false;
                 } else if use_virtual_editor {
                     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
                     if self.focus_editor_next {
@@ -2043,6 +2286,7 @@ impl eframe::App for LocalPasteApp {
                     }
                     let total_height = self.virtual_layout.total_height();
                     let mut focused = ui.memory(|m| m.has_focus(editor_id));
+                    let mut editor_interacted = false;
                     scroll.show_viewport(ui, |ui, viewport| {
                         ui.set_min_width(wrap_width);
                         ui.set_min_height(total_height.max(editor_height));
@@ -2060,6 +2304,7 @@ impl eframe::App for LocalPasteApp {
                             ui.memory_mut(|m| m.request_focus(editor_id));
                             focused = true;
                             self.virtual_editor_state.has_focus = true;
+                            editor_interacted = true;
                         } else if background_response.lost_focus() {
                             self.virtual_editor_state.has_focus = false;
                         }
@@ -2126,7 +2371,10 @@ impl eframe::App for LocalPasteApp {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                             }
                             if pending_action.is_none()
-                                && (response.drag_started() || response.clicked())
+                                && (response.triple_clicked()
+                                    || response.double_clicked()
+                                    || response.drag_started()
+                                    || response.clicked())
                             {
                                 if let Some(pointer_pos) = response.interact_pointer_pos() {
                                     let local_pos = pointer_pos - rect.min;
@@ -2135,14 +2383,26 @@ impl eframe::App for LocalPasteApp {
                                         line_start.saturating_add(cursor.index.min(line_chars));
                                     if response.drag_started() {
                                         self.reset_virtual_click_streak();
+                                        editor_interacted = true;
                                         pending_action = Some(RowAction::DragStart { global });
                                     } else {
-                                        match self.register_virtual_click(line_idx, pointer_pos) {
+                                        let mut click_count =
+                                            self.register_virtual_click(line_idx, pointer_pos);
+                                        if response.double_clicked() {
+                                            click_count = click_count.max(2);
+                                        }
+                                        if response.triple_clicked() {
+                                            click_count = 3;
+                                        }
+                                        self.last_virtual_click_count = click_count;
+                                        match click_count {
                                             3 => {
+                                                editor_interacted = true;
                                                 pending_action =
                                                     Some(RowAction::Triple { line_idx });
                                             }
                                             2 => {
+                                                editor_interacted = true;
                                                 pending_action = Some(RowAction::Double {
                                                     line_start,
                                                     line: line.to_string(),
@@ -2150,6 +2410,7 @@ impl eframe::App for LocalPasteApp {
                                                 });
                                             }
                                             _ => {
+                                                editor_interacted = true;
                                                 pending_action = Some(RowAction::Click { global });
                                             }
                                         }
@@ -2168,6 +2429,7 @@ impl eframe::App for LocalPasteApp {
                             ui.memory_mut(|m| m.request_focus(editor_id));
                             focused = true;
                             self.virtual_editor_state.has_focus = true;
+                            editor_interacted = true;
                             match action {
                                 RowAction::Click { global } => {
                                     self.virtual_editor_state
@@ -2221,6 +2483,7 @@ impl eframe::App for LocalPasteApp {
                         let pointer_pos = ui.input(|input| input.pointer.interact_pos());
                         let pointer_down = ui.input(|input| input.pointer.primary_down());
                         if pointer_down && self.virtual_drag_active {
+                            editor_interacted = true;
                             if let Some(pointer_pos) = pointer_pos {
                                 let target_row = rows
                                     .iter()
@@ -2262,21 +2525,17 @@ impl eframe::App for LocalPasteApp {
 
                         let multiline_selection = self.virtual_editor_selection_is_multiline();
                         for row in rows {
-                            let mut galley = row.galley;
+                            let galley = row.galley;
                             let mut has_selection = false;
                             if let Some(selection) =
                                 self.virtual_selection_for_line(row.line_start, row.line_chars)
                             {
                                 has_selection = true;
-                                let cursor_range = CCursorRange::two(
-                                    CCursor::new(selection.start),
-                                    CCursor::new(selection.end),
-                                );
-                                egui::text_selection::visuals::paint_text_selection(
-                                    &mut galley,
-                                    ui.visuals(),
-                                    &cursor_range,
-                                    None,
+                                paint_virtual_selection_overlay(
+                                    ui.painter(),
+                                    row.rect,
+                                    galley.as_ref(),
+                                    selection,
                                 );
                             }
                             ui.painter().galley(
@@ -2310,7 +2569,12 @@ impl eframe::App for LocalPasteApp {
                             }
                         }
                     });
+                    self.virtual_editor_active = focused
+                        || self.virtual_editor_state.has_focus
+                        || self.virtual_drag_active
+                        || editor_interacted;
                 } else {
+                    self.virtual_editor_active = false;
                     scroll.show(ui, |ui| {
                         ui.set_min_size(egui::vec2(ui.available_width(), editor_height));
                         let rows_that_fit = ((editor_height / row_height).ceil() as usize).max(1);
@@ -2374,11 +2638,57 @@ impl eframe::App for LocalPasteApp {
                     let _ = self.selected_content.take_edit_delta();
                 }
             } else if self.selected_id.is_some() {
+                self.virtual_editor_active = false;
                 ui.label(RichText::new("Loading paste...").color(COLOR_TEXT_MUTED));
             } else {
+                self.virtual_editor_active = false;
                 ui.label(RichText::new("Select a paste from the sidebar.").color(COLOR_TEXT_MUTED));
             }
         });
+
+        let mut deferred_apply_result = VirtualApplyResult::default();
+        let editor_active_now = self.editor_mode == EditorMode::VirtualEditor
+            && (self.virtual_editor_active
+                || self.virtual_editor_state.has_focus
+                || ctx.memory(|m| m.has_focus(focus_id)));
+        let virtual_clipboard_ready = editor_active_now
+            || virtual_shortcut_active
+            || self.virtual_editor_state.selection_range().is_some();
+        if virtual_clipboard_ready {
+            deferred_apply_result = self.apply_virtual_commands(ctx, &deferred_virtual_commands);
+            if deferred_apply_result.changed {
+                self.mark_dirty();
+            }
+        }
+        let virtual_paste_consumed = immediate_apply_result.pasted || deferred_apply_result.pasted;
+        if !ctx.wants_keyboard_input() && !virtual_clipboard_ready && !virtual_paste_consumed {
+            if let Some(text) = pasted_text {
+                if !text.trim().is_empty() {
+                    self.create_new_paste_with_content(text);
+                }
+            }
+        }
+        let combined_apply = VirtualApplyResult {
+            changed: immediate_apply_result.changed || deferred_apply_result.changed,
+            copied: immediate_apply_result.copied || deferred_apply_result.copied,
+            cut: immediate_apply_result.cut || deferred_apply_result.cut,
+            pasted: virtual_paste_consumed,
+        };
+        let selection_chars = self
+            .virtual_editor_state
+            .selection_range()
+            .map(|range| range.end.saturating_sub(range.start))
+            .unwrap_or(0);
+        let focused_now = self.virtual_editor_state.has_focus || editor_active_now;
+        let egui_focus_now = ctx.memory(|m| m.has_focus(focus_id));
+        self.trace_input(
+            focused_now,
+            egui_focus_now,
+            selection_chars,
+            &immediate_virtual_commands,
+            &deferred_virtual_commands,
+            combined_apply,
+        );
 
         egui::TopBottomPanel::bottom("status")
             .resizable(false)
@@ -2498,6 +2808,7 @@ mod tests {
             virtual_editor_history: VirtualEditorHistory::default(),
             virtual_layout: WrapLayoutCache::default(),
             virtual_drag_active: false,
+            virtual_editor_active: false,
             virtual_viewport_height: 0.0,
             virtual_line_height: 1.0,
             virtual_wrap_width: 0.0,
@@ -2532,6 +2843,8 @@ mod tests {
             last_virtual_click_pos: None,
             last_virtual_click_line: None,
             last_virtual_click_count: 0,
+            editor_input_trace_enabled: false,
+            highlight_trace_enabled: false,
         };
 
         TestHarness { _dir: dir, app }
@@ -2737,9 +3050,17 @@ mod tests {
     #[test]
     fn staged_highlight_waits_for_idle() {
         let mut harness = make_app();
-        let render = HighlightRender {
+        harness.app.highlight_render = Some(HighlightRender {
             paste_id: "alpha".to_string(),
             revision: 0,
+            text_len: harness.app.selected_content.len(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            lines: Vec::new(),
+        });
+        let render = HighlightRender {
+            paste_id: "alpha".to_string(),
+            revision: 1,
             text_len: harness.app.selected_content.len(),
             language_hint: "py".to_string(),
             theme_key: "base16-mocha.dark".to_string(),
@@ -2749,10 +3070,43 @@ mod tests {
         let now = Instant::now();
         harness.app.last_interaction_at = Some(now);
         harness.app.maybe_apply_staged_highlight(now);
-        assert!(harness.app.highlight_render.is_none());
+        assert_eq!(
+            harness
+                .app
+                .highlight_render
+                .as_ref()
+                .map(|render| render.revision),
+            Some(0)
+        );
+        assert!(harness.app.highlight_staged.is_some());
 
         let idle_now = now + HIGHLIGHT_APPLY_IDLE + Duration::from_millis(10);
         harness.app.maybe_apply_staged_highlight(idle_now);
+        assert_eq!(
+            harness
+                .app
+                .highlight_render
+                .as_ref()
+                .map(|render| render.revision),
+            Some(1)
+        );
+        assert!(harness.app.highlight_staged.is_none());
+    }
+
+    #[test]
+    fn staged_highlight_applies_immediately_without_current_render() {
+        let mut harness = make_app();
+        harness.app.highlight_staged = Some(HighlightRender {
+            paste_id: "alpha".to_string(),
+            revision: 1,
+            text_len: harness.app.selected_content.len(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            lines: Vec::new(),
+        });
+        let now = Instant::now();
+        harness.app.last_interaction_at = Some(now);
+        harness.app.maybe_apply_staged_highlight(now);
         assert!(harness.app.highlight_render.is_some());
     }
 
@@ -2780,6 +3134,37 @@ mod tests {
     }
 
     #[test]
+    fn queue_highlight_render_ignores_older_revision_when_current_exists() {
+        let mut harness = make_app();
+        harness.app.highlight_render = Some(HighlightRender {
+            paste_id: "alpha".to_string(),
+            revision: 9,
+            text_len: harness.app.selected_content.len(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            lines: Vec::new(),
+        });
+        harness.app.queue_highlight_render(HighlightRender {
+            paste_id: "alpha".to_string(),
+            revision: 4,
+            text_len: harness.app.selected_content.len(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            lines: Vec::new(),
+        });
+
+        assert!(harness.app.highlight_staged.is_none());
+        assert_eq!(
+            harness
+                .app
+                .highlight_render
+                .as_ref()
+                .map(|render| render.revision),
+            Some(9)
+        );
+    }
+
+    #[test]
     fn paste_saved_keeps_existing_highlight_render() {
         let mut harness = make_app();
         harness.app.highlight_version = 7;
@@ -2798,6 +3183,41 @@ mod tests {
 
         assert!(harness.app.highlight_render.is_some());
         assert_eq!(harness.app.highlight_version, 7);
+    }
+
+    #[test]
+    fn virtual_copy_reports_copied_without_text_mutation() {
+        let mut harness = make_app();
+        harness.app.reset_virtual_editor("abcdef");
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        harness.app.virtual_editor_state.set_cursor(1, len);
+        harness.app.virtual_editor_state.move_cursor(4, len, true);
+        let ctx = egui::Context::default();
+
+        let result = harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Copy]);
+        assert!(!result.changed);
+        assert!(result.copied);
+        assert_eq!(harness.app.virtual_editor_buffer.to_string(), "abcdef");
+    }
+
+    #[test]
+    fn virtual_cut_reports_copy_and_removes_selected_text() {
+        let mut harness = make_app();
+        harness.app.reset_virtual_editor("abcdef");
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        harness.app.virtual_editor_state.set_cursor(1, len);
+        harness.app.virtual_editor_state.move_cursor(4, len, true);
+        let ctx = egui::Context::default();
+
+        let result = harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Cut]);
+        assert!(result.changed);
+        assert!(result.copied);
+        assert!(result.cut);
+        assert_eq!(harness.app.virtual_editor_buffer.to_string(), "aef");
     }
 
     #[test]
