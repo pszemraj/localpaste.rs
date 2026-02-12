@@ -47,6 +47,12 @@ pub struct LocalPasteApp {
     folders: Vec<Folder>,
     selected_id: Option<String>,
     selected_paste: Option<Paste>,
+    edit_name: String,
+    edit_language: Option<String>,
+    edit_language_is_manual: bool,
+    edit_folder_id: Option<String>,
+    edit_tags: String,
+    metadata_dirty: bool,
     search_query: String,
     search_last_input_at: Option<Instant>,
     search_last_sent: String,
@@ -307,6 +313,12 @@ impl LocalPasteApp {
             folders: Vec::new(),
             selected_id: None,
             selected_paste: None,
+            edit_name: String::new(),
+            edit_language: None,
+            edit_language_is_manual: false,
+            edit_folder_id: None,
+            edit_tags: String::new(),
+            metadata_dirty: false,
             search_query: String::new(),
             search_last_input_at: None,
             search_last_sent: String::new(),
@@ -556,6 +568,10 @@ impl eframe::App for LocalPasteApp {
             }
             if input.modifiers.command && input.key_pressed(egui::Key::Delete) {
                 self.delete_selected();
+            }
+            if input.modifiers.command && input.key_pressed(egui::Key::S) {
+                self.save_now();
+                self.save_metadata_now();
             }
             if input.modifiers.command && input.key_pressed(egui::Key::F) {
                 self.search_focus_requested = true;

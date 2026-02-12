@@ -6,6 +6,7 @@ use super::{
 };
 use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Utc};
+use localpaste_core::models::paste::Paste;
 use std::time::Instant;
 use tracing::warn;
 
@@ -21,6 +22,7 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteLoaded { paste } => {
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
+                    self.sync_editor_metadata(&paste);
                     self.selected_content.reset(paste.content.clone());
                     self.reset_virtual_editor(paste.content.as_str());
                     self.editor_cache = EditorLayoutCache::default();
@@ -38,6 +40,7 @@ impl LocalPasteApp {
                 self.all_pastes.insert(0, summary.clone());
                 self.pastes.insert(0, summary);
                 self.select_paste(paste.id.clone());
+                self.sync_editor_metadata(&paste);
                 self.selected_content.reset(paste.content.clone());
                 self.reset_virtual_editor(paste.content.as_str());
                 self.editor_cache = EditorLayoutCache::default();
@@ -59,6 +62,7 @@ impl LocalPasteApp {
                     *item = PasteSummary::from_paste(&paste);
                 }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
+                    self.sync_editor_metadata(&paste);
                     let mut updated = paste;
                     updated.content = self.active_snapshot();
                     self.selected_paste = Some(updated);
@@ -75,6 +79,7 @@ impl LocalPasteApp {
                     *item = PasteSummary::from_paste(&paste);
                 }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
+                    self.sync_editor_metadata(&paste);
                     self.selected_paste = Some(paste);
                 }
             }
@@ -198,6 +203,12 @@ impl LocalPasteApp {
         self.selected_id = Some(id.clone());
         self.locks.lock(&id);
         self.selected_paste = None;
+        self.edit_name.clear();
+        self.edit_language = None;
+        self.edit_language_is_manual = false;
+        self.edit_folder_id = None;
+        self.edit_tags.clear();
+        self.metadata_dirty = false;
         self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
         self.editor_cache = EditorLayoutCache::default();
@@ -215,6 +226,12 @@ impl LocalPasteApp {
             self.locks.unlock(&prev);
         }
         self.selected_paste = None;
+        self.edit_name.clear();
+        self.edit_language = None;
+        self.edit_language_is_manual = false;
+        self.edit_folder_id = None;
+        self.edit_tags.clear();
+        self.metadata_dirty = false;
         self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
         self.editor_cache = EditorLayoutCache::default();
@@ -277,6 +294,76 @@ impl LocalPasteApp {
             .send(CoreCmd::UpdatePaste { id, content });
     }
 
+    pub(super) fn save_now(&mut self) {
+        if self.save_in_flight || self.save_status != SaveStatus::Dirty {
+            return;
+        }
+        let Some(id) = self.selected_id.clone() else {
+            return;
+        };
+        let content = self.active_snapshot();
+        self.save_in_flight = true;
+        self.save_status = SaveStatus::Saving;
+        let _ = self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePaste { id, content });
+    }
+
+    pub(super) fn save_metadata_now(&mut self) {
+        if !self.metadata_dirty {
+            return;
+        }
+        let Some(id) = self.selected_id.clone() else {
+            return;
+        };
+        let folder_id = Some(self.edit_folder_id.clone().unwrap_or_default());
+        let language = if self.edit_language_is_manual {
+            self.edit_language.clone()
+        } else {
+            None
+        };
+        let tags = Some(parse_tags_csv(self.edit_tags.as_str()));
+        let _ = self.backend.cmd_tx.send(CoreCmd::UpdatePasteMeta {
+            id,
+            name: Some(self.edit_name.clone()),
+            language,
+            language_is_manual: Some(self.edit_language_is_manual),
+            folder_id,
+            tags,
+        });
+        self.metadata_dirty = false;
+    }
+
+    pub(super) fn export_selected_paste(&mut self) {
+        let Some(paste_id) = self.selected_paste.as_ref().map(|paste| paste.id.clone()) else {
+            self.set_status("Nothing selected to export.");
+            return;
+        };
+        let extension = language_extension(self.edit_language.as_deref());
+        let default_name = format!("{}.{}", sanitize_filename(&self.edit_name), extension);
+        let dialog = rfd::FileDialog::new()
+            .set_file_name(default_name.as_str())
+            .add_filter("Text", &[extension]);
+        let Some(path) = dialog.save_file() else {
+            return;
+        };
+
+        let content = self.active_snapshot();
+        match std::fs::write(&path, content) {
+            Ok(()) => {
+                self.set_status(format!(
+                    "Exported {} to {}",
+                    paste_id,
+                    path.to_string_lossy()
+                ));
+            }
+            Err(err) => {
+                self.set_status(format!("Export failed: {}", err));
+            }
+        }
+    }
+
     pub(super) fn selected_index(&self) -> Option<usize> {
         let id = self.selected_id.as_ref()?;
         self.pastes.iter().position(|paste| paste.id == *id)
@@ -335,5 +422,71 @@ impl LocalPasteApp {
         } else {
             self.clear_selection();
         }
+    }
+
+    pub(super) fn sync_editor_metadata(&mut self, paste: &Paste) {
+        self.edit_name = paste.name.clone();
+        self.edit_language = paste.language.clone();
+        self.edit_language_is_manual = paste.language_is_manual;
+        self.edit_folder_id = paste.folder_id.clone();
+        self.edit_tags = paste.tags.join(", ");
+        self.metadata_dirty = false;
+    }
+}
+
+fn parse_tags_csv(input: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tag in input.split(',') {
+        let trimmed = tag.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if out
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(trimmed))
+        {
+            continue;
+        }
+        out.push(trimmed.to_string());
+    }
+    out
+}
+
+fn language_extension(language: Option<&str>) -> &'static str {
+    match language
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "rust" => "rs",
+        "python" => "py",
+        "javascript" => "js",
+        "typescript" => "ts",
+        "json" => "json",
+        "yaml" => "yaml",
+        "toml" => "toml",
+        "markdown" => "md",
+        "html" => "html",
+        "css" => "css",
+        "sql" => "sql",
+        "shell" => "sh",
+        _ => "txt",
+    }
+}
+
+fn sanitize_filename(value: &str) -> String {
+    let mut out: String = value
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            _ => ch,
+        })
+        .collect();
+    out = out.trim().to_string();
+    if out.is_empty() {
+        "localpaste-export".to_string()
+    } else {
+        out
     }
 }

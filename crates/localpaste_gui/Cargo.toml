@@ -24,13 +24,13 @@ syntect = "5.3"
 ropey = "1.6"
 unicode-segmentation = "1.11"
 chrono = { version = "0.4", features = ["serde"] }
-rfd = { version = "0.14", optional = true }
+rfd = "0.14"
 puffin = { version = "0.19", optional = true }
 tokio = { version = "1.40", features = ["full"], optional = true }
 
 [features]
 default = []
-gui-legacy = ["rfd", "tokio"]
+gui-legacy = ["tokio"]
 debug-tools = []
 profile = ["puffin"]
 

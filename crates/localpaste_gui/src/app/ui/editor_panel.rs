@@ -9,12 +9,18 @@ impl LocalPasteApp {
             ui.heading(RichText::new("Editor").color(COLOR_TEXT_PRIMARY));
             ui.add_space(12.0);
 
-            let selected_meta = self
-                .selected_paste
-                .as_ref()
-                .map(|paste| (paste.name.clone(), paste.language.clone(), paste.id.clone()));
+            let selected_meta = self.selected_paste.as_ref().map(|paste| paste.id.clone());
 
-            if let Some((name, language, id)) = selected_meta {
+            if let Some(id) = selected_meta {
+                let language = self.edit_language.clone();
+                let name = if self.edit_name.trim().is_empty() {
+                    self.selected_paste
+                        .as_ref()
+                        .map(|paste| paste.name.clone())
+                        .unwrap_or_default()
+                } else {
+                    self.edit_name.clone()
+                };
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let lang_label = display_language_label(language.as_deref(), is_large);
                 ui.horizontal(|ui| {
@@ -32,6 +38,124 @@ impl LocalPasteApp {
                         .monospace()
                         .color(COLOR_TEXT_MUTED),
                 );
+                ui.add_space(8.0);
+
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Name").small().color(COLOR_TEXT_MUTED));
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut self.edit_name).desired_width(220.0))
+                        .changed()
+                    {
+                        self.metadata_dirty = true;
+                    }
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
+                    let mut language_choice = if self.edit_language_is_manual {
+                        self.edit_language
+                            .clone()
+                            .unwrap_or_else(|| "text".to_string())
+                    } else {
+                        "Auto".to_string()
+                    };
+                    egui::ComboBox::from_id_salt("editor_language_select")
+                        .selected_text(language_choice.clone())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut language_choice, "Auto".to_string(), "Auto");
+                            for value in [
+                                "rust",
+                                "python",
+                                "javascript",
+                                "typescript",
+                                "json",
+                                "yaml",
+                                "toml",
+                                "markdown",
+                                "html",
+                                "css",
+                                "sql",
+                                "shell",
+                                "text",
+                            ] {
+                                ui.selectable_value(
+                                    &mut language_choice,
+                                    value.to_string(),
+                                    value.to_string(),
+                                );
+                            }
+                        });
+                    if language_choice == "Auto" {
+                        if self.edit_language_is_manual || self.edit_language.is_some() {
+                            self.edit_language_is_manual = false;
+                            self.edit_language = None;
+                            self.metadata_dirty = true;
+                        }
+                    } else if !self.edit_language_is_manual
+                        || self.edit_language.as_deref() != Some(language_choice.as_str())
+                    {
+                        self.edit_language_is_manual = true;
+                        self.edit_language = Some(language_choice);
+                        self.metadata_dirty = true;
+                    }
+                });
+
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Folder").small().color(COLOR_TEXT_MUTED));
+                    let mut selected_folder = self.edit_folder_id.clone();
+                    egui::ComboBox::from_id_salt("editor_folder_select")
+                        .selected_text(
+                            selected_folder
+                                .as_ref()
+                                .and_then(|id| {
+                                    self.folders
+                                        .iter()
+                                        .find(|folder| folder.id == *id)
+                                        .map(|folder| folder.name.clone())
+                                })
+                                .unwrap_or_else(|| "Unfiled".to_string()),
+                        )
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut selected_folder, None, "Unfiled");
+                            for folder in &self.folders {
+                                ui.selectable_value(
+                                    &mut selected_folder,
+                                    Some(folder.id.clone()),
+                                    folder.name.clone(),
+                                );
+                            }
+                        });
+                    if selected_folder != self.edit_folder_id {
+                        self.edit_folder_id = selected_folder;
+                        self.metadata_dirty = true;
+                    }
+
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.edit_tags)
+                                .desired_width(220.0)
+                                .hint_text("comma,separated,tags"),
+                        )
+                        .changed()
+                    {
+                        self.metadata_dirty = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(self.metadata_dirty, egui::Button::new("Save Metadata"))
+                        .clicked()
+                    {
+                        self.save_metadata_now();
+                    }
+                    if ui.button("Save Now").clicked() {
+                        self.save_now();
+                    }
+                    if ui.button("Export...").clicked() {
+                        self.export_selected_paste();
+                    }
+                });
                 ui.add_space(8.0);
                 if self.editor_mode == EditorMode::VirtualPreview {
                     ui.label(
