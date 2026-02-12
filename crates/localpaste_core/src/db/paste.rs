@@ -133,8 +133,11 @@ impl PasteDb {
                 }
             };
 
-            if paste.folder_id.as_deref() != expected_folder_id {
-                folder_mismatch_in.set(true);
+            if !folder_matches_expected(
+                paste.folder_id.as_deref(),
+                expected_folder_id,
+                &folder_mismatch_in,
+            ) {
                 return Some(bytes.to_vec());
             }
 
@@ -333,6 +336,21 @@ fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
     paste.updated_at = chrono::Utc::now();
 }
 
+fn folder_matches_expected(
+    current_folder_id: Option<&str>,
+    expected_folder_id: Option<&str>,
+    folder_mismatch: &Cell<bool>,
+) -> bool {
+    // update_and_fetch may retry the closure under contention; mismatch tracking
+    // must represent only the latest attempt.
+    folder_mismatch.set(false);
+    if current_folder_id != expected_folder_id {
+        folder_mismatch.set(true);
+        return false;
+    }
+    true
+}
+
 fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
     bincode::deserialize::<Paste>(bytes).or_else(|err| {
         bincode::deserialize::<LegacyPaste>(bytes)
@@ -368,5 +386,32 @@ impl From<LegacyPaste> for Paste {
             tags: old.tags,
             is_markdown: old.is_markdown,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::folder_matches_expected;
+    use std::cell::Cell;
+
+    #[test]
+    fn folder_mismatch_state_tracks_latest_retry_attempt() {
+        let mismatch = Cell::new(false);
+
+        // First attempt mismatches expected folder.
+        assert!(!folder_matches_expected(
+            Some("folder-a"),
+            Some("folder-b"),
+            &mismatch
+        ));
+        assert!(mismatch.get());
+
+        // Retry attempt matches; state must be cleared for final evaluation.
+        assert!(folder_matches_expected(
+            Some("folder-a"),
+            Some("folder-a"),
+            &mismatch
+        ));
+        assert!(!mismatch.get());
     }
 }
