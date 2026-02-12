@@ -21,6 +21,10 @@ pub(super) const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
 pub(super) const FONT_0XPROTO: &str = "0xProto";
 pub(super) const EDITOR_FONT_FAMILY: &str = "Editor";
 pub(super) const EDITOR_TEXT_STYLE: &str = "Editor";
+const FONT_0XPROTO_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/fonts/0xProto/0xProto-Regular-NL.ttf"
+));
 
 pub(super) fn selection_fill_color() -> Color32 {
     Color32::from_rgba_unmultiplied(
@@ -40,10 +44,7 @@ impl LocalPasteApp {
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
             FONT_0XPROTO.to_string(),
-            FontData::from_static(include_bytes!(
-                "../../../../assets/fonts/0xProto/0xProto-Regular-NL.ttf"
-            ))
-            .into(),
+            FontData::from_static(FONT_0XPROTO_BYTES).into(),
         );
         let editor_family = FontFamily::Name(EDITOR_FONT_FAMILY.into());
         fonts.families.insert(
