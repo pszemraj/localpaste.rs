@@ -82,6 +82,7 @@ fn make_app() -> TestHarness {
         search_last_sent: String::new(),
         search_focus_requested: false,
         active_collection: SidebarCollection::All,
+        folder_dialog: None,
         selected_content: EditorBuffer::new("content".to_string()),
         editor_cache: EditorLayoutCache::default(),
         editor_lines: EditorLineIndex::default(),

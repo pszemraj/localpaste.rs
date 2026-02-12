@@ -58,6 +58,7 @@ pub struct LocalPasteApp {
     search_last_sent: String,
     search_focus_requested: bool,
     active_collection: SidebarCollection,
+    folder_dialog: Option<FolderDialog>,
     selected_content: EditorBuffer,
     editor_cache: EditorLayoutCache,
     editor_lines: EditorLineIndex,
@@ -122,6 +123,23 @@ enum SidebarCollection {
     Unfiled,
     Language(String),
     Folder(String),
+}
+
+#[derive(Debug, Clone)]
+enum FolderDialog {
+    Create {
+        name: String,
+        parent_id: Option<String>,
+    },
+    Edit {
+        id: String,
+        name: String,
+        parent_id: Option<String>,
+    },
+    Delete {
+        id: String,
+        name: String,
+    },
 }
 
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
@@ -324,6 +342,7 @@ impl LocalPasteApp {
             search_last_sent: String::new(),
             search_focus_requested: false,
             active_collection: SidebarCollection::All,
+            folder_dialog: None,
             selected_content: EditorBuffer::new(String::new()),
             editor_cache: EditorLayoutCache::default(),
             editor_lines: EditorLineIndex::default(),
