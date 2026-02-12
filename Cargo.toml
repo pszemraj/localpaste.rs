@@ -6,6 +6,7 @@ members = [
     "crates/localpaste_cli",
     "crates/localpaste_tools",
 ]
+default-members = ["crates/localpaste_gui"]
 resolver = "2"
 
 [profile.dev]

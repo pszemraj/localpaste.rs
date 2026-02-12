@@ -26,6 +26,17 @@ mod tests {
     use super::run_and_report;
 
     #[test]
+    fn workspace_manifest_defaults_to_gui_member() {
+        let root_manifest =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml"))
+                .expect("read workspace Cargo.toml");
+        assert!(
+            root_manifest.contains("default-members = [\"crates/localpaste_gui\"]"),
+            "workspace should keep localpaste_gui as the default member for `cargo run`"
+        );
+    }
+
+    #[test]
     fn run_and_report_returns_zero_on_success() {
         let exit_code = run_and_report(|| Ok::<(), &str>(()));
         assert_eq!(exit_code, 0);
