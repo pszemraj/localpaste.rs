@@ -252,9 +252,10 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 
 8. **Virtual editor parity (default mode)**
    - Verify `Ctrl/Cmd+A/C/X/V`, `Ctrl/Cmd+Z/Y`, Home/End, PageUp/PageDown, shift-selection.
-   - Verify IME composition (`Enabled` -> `Preedit` -> `Commit`) does not lose caret/selection state.
+   - Verify IME composition (`Enabled` -> `Preedit` -> `Commit` -> `Disabled`) does not lose caret/selection state.
+   - Verify canceled IME composition (`Enabled` -> `Preedit` -> `Disabled`) does not leave transient preedit text in the buffer.
    - Verify focus-gated mutation: with a virtual selection active but editor unfocused, typing/navigation/delete/undo/redo/cut/paste do not modify editor state.
-   - Verify drag-selection behavior when crossing viewport edges (including auto-scroll behavior if implemented).
+   - Verify drag-selection crossing viewport edges auto-scrolls continuously while preserving the active selection anchor.
 
 9. **Clipboard + Triple-Click Reliability Repro (required)**
    - Open `perf-scroll-5k-lines`.

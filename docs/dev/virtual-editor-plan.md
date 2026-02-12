@@ -35,6 +35,8 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
   - virtual preview/editor click semantics now use one custom streak detector (no mixed egui double/triple overrides)
   - triple-click full-line selection in large-buffer editable paths
   - hardened clipboard routing (`Ctrl/Cmd+C/X`) with deferred apply after focus settles
+  - IME composition hardening: empty/canceled preedit clears transient composition range/text, commit/disable paths leave stable caret/selection state
+  - drag-selection auto-scroll enabled at viewport edges for virtual preview and virtual editor (distance-scaled speed)
 - Reliability validation protocol was updated and run with trace expectations:
   - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
   - `LOCALPASTE_HIGHLIGHT_TRACE=1`
@@ -60,8 +62,6 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
   - selection parity (mouse drag, shift-selection, word navigation)
   - navigation parity (Home/End, PageUp/PageDown, Ctrl/Cmd+arrows)
   - undo/redo parity (`Ctrl/Cmd+Z/Y`, `Shift+Ctrl/Cmd+Z`)
-- Validate and re-check IME behavior on Windows end-to-end (`Enabled -> Preedit -> Commit -> Disabled`).
-- Add or explicitly defer drag auto-scroll behavior when selecting beyond viewport edges.
 - Keep performance gate stable in release mode for the 5k-line scenario:
   - average FPS `>= 45`
   - p95 frame time `<= 25 ms`
