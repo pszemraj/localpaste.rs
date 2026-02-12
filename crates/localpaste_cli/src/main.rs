@@ -110,6 +110,24 @@ fn error_message_for_response(status: reqwest::StatusCode, body: &str) -> String
     body.to_string()
 }
 
+async fn ensure_success_or_exit(res: reqwest::Response, action: &str) -> reqwest::Response {
+    let status = res.status();
+    if status.is_success() {
+        return res;
+    }
+
+    let body = res.text().await.unwrap_or_default();
+    let message = error_message_for_response(status, &body);
+    eprintln!("{} failed ({}): {}", action, status, message);
+    std::process::exit(1);
+}
+
+fn paste_id_and_name(paste: &Value) -> Option<(&str, &str)> {
+    let id = paste.get("id").and_then(Value::as_str)?;
+    let name = paste.get("name").and_then(Value::as_str)?;
+    Some((id, name))
+}
+
 fn normalize_server(server: String) -> String {
     if let Ok(mut url) = reqwest::Url::parse(&server) {
         let should_normalize_localhost =
@@ -165,6 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .send()
                 .await?;
             let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "New").await;
 
             let parse_start = Instant::now();
             let paste: Value = res.json().await?;
@@ -174,11 +193,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&paste)?);
             } else {
-                println!(
-                    "Created: {} ({})",
-                    paste["name"].as_str().unwrap(),
-                    paste["id"].as_str().unwrap()
-                );
+                let Some((id, name)) = paste_id_and_name(&paste) else {
+                    eprintln!("New failed: response missing 'id' or 'name' field");
+                    std::process::exit(1);
+                };
+                println!("Created: {} ({})", name, id);
             }
         }
         Commands::Get { id } => {
@@ -188,14 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .send()
                 .await?;
             let request_elapsed = request_start.elapsed();
-
-            let status = res.status();
-            if !status.is_success() {
-                let body = res.text().await.unwrap_or_default();
-                let message = error_message_for_response(status, &body);
-                eprintln!("Get failed ({}): {}", status, message);
-                std::process::exit(1);
-            }
+            let res = ensure_success_or_exit(res, "Get").await;
 
             let parse_start = Instant::now();
             let paste: Value = res.json().await?;
@@ -211,43 +223,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::List { limit } => {
             let request_start = Instant::now();
             let res = client
-                .get(format!("{}/api/pastes?limit={}", server, limit))
+                .get(format!("{}/api/pastes", server))
+                .query(&[("limit", limit)])
                 .send()
                 .await?;
             let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "List").await;
 
             let parse_start = Instant::now();
             let pastes: Vec<Value> = res.json().await?;
             let parse_elapsed = parse_start.elapsed();
 
             log_timing_parts(timing, "list", request_elapsed, Some(parse_elapsed));
-            for p in pastes {
-                println!(
-                    "{:<24} {:<30}",
-                    p["id"].as_str().unwrap(),
-                    p["name"].as_str().unwrap()
-                );
+            for (index, p) in pastes.iter().enumerate() {
+                let Some((id, name)) = paste_id_and_name(p) else {
+                    eprintln!(
+                        "List failed: response item {} missing 'id' or 'name' field",
+                        index
+                    );
+                    std::process::exit(1);
+                };
+                println!("{:<24} {:<30}", id, name);
             }
         }
         Commands::Search { query } => {
             let request_start = Instant::now();
             let res = client
-                .get(format!("{}/api/search?q={}", server, query))
+                .get(format!("{}/api/search", server))
+                .query(&[("q", query.as_str())])
                 .send()
                 .await?;
             let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "Search").await;
 
             let parse_start = Instant::now();
             let pastes: Vec<Value> = res.json().await?;
             let parse_elapsed = parse_start.elapsed();
 
             log_timing_parts(timing, "search", request_elapsed, Some(parse_elapsed));
-            for p in pastes {
-                println!(
-                    "{:<24} {:<30}",
-                    p["id"].as_str().unwrap(),
-                    p["name"].as_str().unwrap()
-                );
+            for (index, p) in pastes.iter().enumerate() {
+                let Some((id, name)) = paste_id_and_name(p) else {
+                    eprintln!(
+                        "Search failed: response item {} missing 'id' or 'name' field",
+                        index
+                    );
+                    std::process::exit(1);
+                };
+                println!("{:<24} {:<30}", id, name);
             }
         }
         Commands::Delete { id } => {
@@ -258,15 +280,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
             let request_elapsed = request_start.elapsed();
             log_timing(timing, "delete", request_elapsed);
-            if res.status().is_success() {
-                println!("Deleted paste: {}", id);
-            } else {
-                let status = res.status();
-                let body = res.text().await.unwrap_or_default();
-                let message = error_message_for_response(status, &body);
-                eprintln!("Delete failed ({}): {}", status, message);
-                std::process::exit(1);
-            }
+            let _ = ensure_success_or_exit(res, "Delete").await;
+            println!("Deleted paste: {}", id);
         }
     }
 
@@ -275,7 +290,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{error_message_for_response, normalize_server};
+    use super::{error_message_for_response, normalize_server, paste_id_and_name};
 
     #[test]
     fn normalize_server_rewrites_http_localhost() {
@@ -307,5 +322,24 @@ mod tests {
         let status = reqwest::StatusCode::BAD_REQUEST;
         let message = error_message_for_response(status, "   ");
         assert_eq!(message, "Bad Request");
+    }
+
+    #[test]
+    fn paste_id_and_name_extracts_expected_fields() {
+        let paste = serde_json::json!({
+            "id": "abc123",
+            "name": "demo"
+        });
+
+        assert_eq!(paste_id_and_name(&paste), Some(("abc123", "demo")));
+    }
+
+    #[test]
+    fn paste_id_and_name_rejects_missing_fields() {
+        let paste = serde_json::json!({
+            "id": "abc123"
+        });
+
+        assert_eq!(paste_id_and_name(&paste), None);
     }
 }
