@@ -19,6 +19,11 @@ impl LocalPasteApp {
                             .monospace()
                             .color(COLOR_TEXT_SECONDARY),
                     );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Shortcuts (F1)").clicked() {
+                            self.shortcut_help_open = true;
+                        }
+                    });
                 });
             });
     }

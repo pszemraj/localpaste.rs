@@ -150,8 +150,8 @@ Recommended validation command (PowerShell):
 ## UX + Theme
 
 - [x] Native theme consistent with palette direction (dark + accent) [Replace]
-- [~] Status feedback (status bar; no toasts yet)
-- [~] Shortcut hints in UI (some implicit, no dedicated help surface)
+- [x] Status feedback (status bar + toast notifications)
+- [x] Shortcut hints in UI (top-bar help entry + F1 shortcut window)
 
 ---
 

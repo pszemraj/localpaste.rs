@@ -98,10 +98,12 @@ pub struct LocalPasteApp {
     server_addr: SocketAddr,
     server_used_fallback: bool,
     status: Option<StatusMessage>,
+    toasts: VecDeque<ToastMessage>,
     save_status: SaveStatus,
     last_edit_at: Option<Instant>,
     save_in_flight: bool,
     autosave_delay: Duration,
+    shortcut_help_open: bool,
     focus_editor_next: bool,
     style_applied: bool,
     window_checked: bool,
@@ -155,6 +157,8 @@ enum PaletteCopyAction {
 
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const STATUS_TTL: Duration = Duration::from_secs(5);
+const TOAST_TTL: Duration = Duration::from_secs(4);
+const TOAST_LIMIT: usize = 4;
 pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 720.0];
 pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
@@ -174,6 +178,11 @@ const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
 
 struct StatusMessage {
+    text: String,
+    expires_at: Instant,
+}
+
+struct ToastMessage {
     text: String,
     expires_at: Instant,
 }
@@ -385,10 +394,12 @@ impl LocalPasteApp {
             server_addr,
             server_used_fallback,
             status: None,
+            toasts: VecDeque::with_capacity(TOAST_LIMIT),
             save_status: SaveStatus::Saved,
             last_edit_at: None,
             save_in_flight: false,
             autosave_delay,
+            shortcut_help_open: false,
             focus_editor_next: false,
             style_applied: false,
             window_checked: false,
@@ -512,10 +523,19 @@ impl eframe::App for LocalPasteApp {
             self.window_checked = true;
         }
 
+        let now = Instant::now();
         if let Some(status) = &self.status {
-            if Instant::now() >= status.expires_at {
+            if now >= status.expires_at {
                 self.status = None;
             }
+        }
+        while self
+            .toasts
+            .front()
+            .map(|toast| now >= toast.expires_at)
+            .unwrap_or(false)
+        {
+            self.toasts.pop_front();
         }
 
         while let Ok(event) = self.backend.evt_rx.try_recv() {
@@ -619,6 +639,9 @@ impl eframe::App for LocalPasteApp {
                 self.command_palette_open = !self.command_palette_open;
                 self.command_palette_query.clear();
                 self.command_palette_selected = 0;
+            }
+            if input.key_pressed(egui::Key::F1) {
+                self.shortcut_help_open = !self.shortcut_help_open;
             }
             if input.modifiers.command && input.key_pressed(egui::Key::C) {
                 match self.editor_mode {
@@ -724,6 +747,7 @@ impl eframe::App for LocalPasteApp {
         self.render_sidebar(ctx);
         self.render_editor_panel(ctx);
         self.render_command_palette(ctx);
+        self.render_shortcut_help(ctx);
 
         let mut deferred_focus_apply_result = VirtualApplyResult::default();
         let mut deferred_copy_apply_result = VirtualApplyResult::default();
@@ -788,6 +812,7 @@ impl eframe::App for LocalPasteApp {
         );
 
         self.render_status_bar(ctx);
+        self.render_toasts(ctx);
 
         self.maybe_dispatch_search();
         self.maybe_autosave();
@@ -801,6 +826,10 @@ impl eframe::App for LocalPasteApp {
         };
         if let Some(status) = &self.status {
             let until = status.expires_at.saturating_duration_since(Instant::now());
+            repaint_after = repaint_after.min(until);
+        }
+        if let Some(toast) = self.toasts.front() {
+            let until = toast.expires_at.saturating_duration_since(Instant::now());
             repaint_after = repaint_after.min(until);
         }
         ctx.request_repaint_after(repaint_after);

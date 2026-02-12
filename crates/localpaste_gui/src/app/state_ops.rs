@@ -2,8 +2,8 @@
 
 use super::highlight::EditorLayoutCache;
 use super::{
-    LocalPasteApp, PaletteCopyAction, SaveStatus, SidebarCollection, StatusMessage,
-    SEARCH_DEBOUNCE, STATUS_TTL,
+    LocalPasteApp, PaletteCopyAction, SaveStatus, SidebarCollection, StatusMessage, ToastMessage,
+    SEARCH_DEBOUNCE, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
 };
 use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Utc};
@@ -246,10 +246,29 @@ impl LocalPasteApp {
     }
 
     pub(super) fn set_status(&mut self, text: impl Into<String>) {
+        let text = text.into();
         self.status = Some(StatusMessage {
-            text: text.into(),
+            text: text.clone(),
             expires_at: Instant::now() + STATUS_TTL,
         });
+        self.push_toast(text);
+    }
+
+    fn push_toast(&mut self, text: String) {
+        let now = Instant::now();
+        if let Some(last) = self.toasts.back_mut() {
+            if last.text == text {
+                last.expires_at = now + TOAST_TTL;
+                return;
+            }
+        }
+        self.toasts.push_back(ToastMessage {
+            text,
+            expires_at: now + TOAST_TTL,
+        });
+        while self.toasts.len() > TOAST_LIMIT {
+            self.toasts.pop_front();
+        }
     }
 
     pub(super) fn create_new_paste(&mut self) {

@@ -114,10 +114,12 @@ fn make_app() -> TestHarness {
         server_addr,
         server_used_fallback,
         status: None,
+        toasts: VecDeque::with_capacity(TOAST_LIMIT),
         save_status: SaveStatus::Saved,
         last_edit_at: None,
         save_in_flight: false,
         autosave_delay: Duration::from_millis(2000),
+        shortcut_help_open: false,
         focus_editor_next: false,
         style_applied: false,
         window_checked: false,
@@ -176,6 +178,33 @@ fn paste_missing_non_selected_removes_list_entry() {
     assert_eq!(harness.app.pastes[0].id, "alpha");
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
     assert!(harness.app.selected_paste.is_some());
+}
+
+#[test]
+fn set_status_pushes_toast_feedback() {
+    let mut harness = make_app();
+    harness.app.set_status("Saved metadata.");
+
+    assert!(harness.app.status.is_some());
+    assert_eq!(harness.app.toasts.len(), 1);
+    assert_eq!(
+        harness.app.toasts.back().map(|toast| toast.text.as_str()),
+        Some("Saved metadata.")
+    );
+}
+
+#[test]
+fn toast_queue_dedupes_tail_and_caps_length() {
+    let mut harness = make_app();
+
+    harness.app.set_status("Repeated");
+    harness.app.set_status("Repeated");
+    assert_eq!(harness.app.toasts.len(), 1);
+
+    for idx in 0..(TOAST_LIMIT + 2) {
+        harness.app.set_status(format!("Toast {}", idx));
+    }
+    assert_eq!(harness.app.toasts.len(), TOAST_LIMIT);
 }
 
 #[test]
