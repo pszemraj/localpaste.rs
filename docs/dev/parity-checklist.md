@@ -1,6 +1,7 @@
 # Plan-Aligned Rewrite Checklist
 
-This checklist tracks PLAN.md phases and merge-gate readiness for the native rewrite.
+This checklist tracks rewrite phases and merge-gate readiness for the native rewrite.
+Implementation context and sequencing live in [virtual-editor-plan.md](virtual-editor-plan.md).
 Strict parity is NOT required - we only port or replace behaviors that match the plan and desired UX.
 
 Status key:
@@ -41,7 +42,7 @@ Codebase audit against this checklist found:
   - [Naming + Metadata](#naming--metadata)
   - [Folders](#folders)
   - [UX + Theme](#ux--theme)
-  - [Intentional Deviations (per PLAN.md)](#intentional-deviations-per-planmd)
+  - [Intentional Deviations](#intentional-deviations)
   - [Legacy Removal Status](#legacy-removal-status)
   - [Removal Gate](#removal-gate)
 
@@ -153,7 +154,7 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 
 ---
 
-## Intentional Deviations (per PLAN.md)
+## Intentional Deviations
 
 - [x] Metadata editing lives in a compact editor header + properties drawer instead of a large always-on form
 - [x] Manual folders as primary nav -> Smart Collections + search

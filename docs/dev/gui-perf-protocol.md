@@ -19,45 +19,41 @@ cargo build -p localpaste_server --bin localpaste --release
 cargo build -p localpaste_gui --bin localpaste-gui --release
 ```
 
-## Canonical Runner
+## Canonical Runbook
 
-Use the script in `scratch/virtualizedgui-perf-run.ps1` as the single source of truth for:
-
-- isolated temp DB creation
-- deterministic perf paste seeding
-- server restart verification
-- optional GUI launch with perf/input/highlight tracing flags
-
-Example:
+Use this runbook as the canonical source for reproducible perf checks:
 
 ```powershell
-.\scratch\virtualizedgui-perf-run.ps1 `
-  -Profile Release `
-  -VirtualMode Editor `
-  -PerfLog `
-  -InputTrace `
-  -HighlightTrace `
-  -KeepDb `
-  -Port 38973
+$env:DB_PATH = Join-Path $env:TEMP "lpaste-perf-$([guid]::NewGuid().ToString('N'))"
+$env:PORT = "38973"
+$env:LP_SERVER = "http://127.0.0.1:$env:PORT"
+$env:LOCALPASTE_VIRTUAL_EDITOR = "1"
+$env:LOCALPASTE_EDITOR_PERF_LOG = "1"
+$env:LOCALPASTE_EDITOR_INPUT_TRACE = "1"
+$env:LOCALPASTE_HIGHLIGHT_TRACE = "1"
+
+cargo run -p localpaste_tools --bin generate-test-data -- --clear --count 10000 --folders 50
+cargo run -p localpaste_server --bin localpaste --release
+# in a second terminal:
+cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
-If you only need seed+verification without launching GUI, add `-NoGui`.
+If you only need seed + API verification, run the generator and server steps without launching the GUI.
 
 ## Dataset Expectations
 
-The canonical runner seeds these named pastes:
+The canonical runbook seeds a large mixed dataset via `generate-test-data`:
 
-- `perf-medium-python`
-- `perf-100kb-python`
-- `perf-300kb-rust`
-- `perf-scroll-5k-lines`
+- 10k pastes by default (configurable with `--count`)
+- weighted content-size distribution (small/medium/large/very large)
+- language-diverse snippets plus folder/tag metadata
 
 ## Manual Verification Checklist
 
-1. `perf-medium-python`: typing at start/middle/end stays responsive.
-2. `perf-100kb-python`: highlight remains visible while edits debounce/refresh.
-3. `perf-300kb-rust`: plain fallback mode is active and scrolling remains smooth.
-4. `perf-scroll-5k-lines`: rapid scroll and mid-document typing show no major hitching.
+1. Medium (~1-10KB) code paste: typing at start/middle/end stays responsive.
+2. Large (~10-50KB) code paste: highlight remains visible while edits debounce/refresh.
+3. Very large (~50-256KB) code paste: plain fallback mode is active and scrolling remains smooth.
+4. Long document paste (thousands of lines): rapid scroll and mid-document typing show no major hitching.
 5. Window resize reflow: no long plain-text gaps after resize.
 6. Shortcut sanity: `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, unfocused `Ctrl/Cmd+V`.
 7. Clipboard reliability: `Ctrl/Cmd+C/X/V` including unfocused mutation guard behavior.
