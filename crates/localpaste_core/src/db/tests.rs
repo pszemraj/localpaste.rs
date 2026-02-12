@@ -199,4 +199,51 @@ mod db_tests {
         // Flush should succeed
         assert!(db.flush().is_ok());
     }
+
+    #[test]
+    fn test_move_between_folders_rolls_back_counts_when_paste_missing() {
+        let (db, _temp) = setup_test_db();
+
+        let old_folder = Folder::new("old-folder".to_string());
+        let old_folder_id = old_folder.id.clone();
+        db.folders.create(&old_folder).unwrap();
+
+        let new_folder = Folder::new("new-folder".to_string());
+        let new_folder_id = new_folder.id.clone();
+        db.folders.create(&new_folder).unwrap();
+
+        db.folders.update_count(&old_folder_id, 1).unwrap();
+        db.folders.update_count(&new_folder_id, 1).unwrap();
+
+        let update = UpdatePasteRequest {
+            content: None,
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: Some(new_folder_id.clone()),
+            tags: None,
+        };
+
+        let result = TransactionOps::move_paste_between_folders(
+            &db,
+            "missing-paste-id",
+            Some(old_folder_id.as_str()),
+            Some(new_folder_id.as_str()),
+            update,
+        )
+        .unwrap();
+
+        assert!(result.is_none(), "missing paste should return None");
+
+        let old_after = db.folders.get(&old_folder_id).unwrap().unwrap();
+        let new_after = db.folders.get(&new_folder_id).unwrap().unwrap();
+        assert_eq!(
+            old_after.paste_count, 1,
+            "old folder count should rollback when paste update returns None"
+        );
+        assert_eq!(
+            new_after.paste_count, 1,
+            "new folder count should rollback when paste update returns None"
+        );
+    }
 }
