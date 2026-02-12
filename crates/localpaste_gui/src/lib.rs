@@ -11,6 +11,11 @@ use app::LocalPasteApp;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
+const DESKTOP_ICON_PNG: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/icons/desktop_icon.png"
+));
+
 fn suppress_vulkan_loader_debug() {
     if std::env::var("LOCALPASTE_KEEP_VK_DEBUG").is_ok() {
         return;
@@ -30,6 +35,16 @@ fn init_tracing() {
         .init();
 }
 
+fn load_desktop_icon() -> Option<egui::IconData> {
+    match eframe::icon_data::from_png_bytes(DESKTOP_ICON_PNG) {
+        Ok(icon) => Some(icon),
+        Err(err) => {
+            tracing::warn!("failed to decode desktop icon PNG: {}", err);
+            None
+        }
+    }
+}
+
 /// Start the native rewrite UI with tracing enabled.
 ///
 /// # Returns
@@ -44,13 +59,31 @@ pub fn run() -> eframe::Result<()> {
 
     let app = LocalPasteApp::new().map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size(app::DEFAULT_WINDOW_SIZE)
+        .with_min_inner_size(app::MIN_WINDOW_SIZE)
+        .with_title("LocalPaste.rs");
+    if let Some(icon) = load_desktop_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size(app::DEFAULT_WINDOW_SIZE)
-            .with_min_inner_size(app::MIN_WINDOW_SIZE)
-            .with_title("LocalPaste.rs"),
+        viewport,
         ..Default::default()
     };
 
     eframe::run_native("LocalPaste.rs", options, Box::new(|_cc| Ok(Box::new(app))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_desktop_icon;
+
+    #[test]
+    fn desktop_icon_asset_decodes() {
+        let icon = load_desktop_icon().expect("desktop icon should decode");
+        assert!(icon.width > 0);
+        assert!(icon.height > 0);
+        assert_eq!(icon.rgba.len() as u32, icon.width * icon.height * 4);
+    }
 }
