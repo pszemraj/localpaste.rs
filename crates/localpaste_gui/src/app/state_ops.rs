@@ -2,7 +2,8 @@
 
 use super::highlight::EditorLayoutCache;
 use super::{
-    LocalPasteApp, SaveStatus, SidebarCollection, StatusMessage, SEARCH_DEBOUNCE, STATUS_TTL,
+    LocalPasteApp, PaletteCopyAction, SaveStatus, SidebarCollection, StatusMessage,
+    SEARCH_DEBOUNCE, STATUS_TTL,
 };
 use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Utc};
@@ -30,6 +31,7 @@ impl LocalPasteApp {
                     self.virtual_selection.clear();
                     self.clear_highlight_state();
                     self.selected_paste = Some(paste);
+                    self.try_complete_pending_copy();
                     self.save_status = SaveStatus::Saved;
                     self.last_edit_at = None;
                     self.save_in_flight = false;
@@ -432,6 +434,36 @@ impl LocalPasteApp {
         self.edit_tags = paste.tags.join(", ");
         self.metadata_dirty = false;
     }
+
+    fn try_complete_pending_copy(&mut self) {
+        let Some(action) = self.pending_copy_action.clone() else {
+            return;
+        };
+        let Some(paste) = self.selected_paste.as_ref() else {
+            return;
+        };
+        match action {
+            PaletteCopyAction::Raw(id) => {
+                if id != paste.id {
+                    return;
+                }
+                self.clipboard_outgoing = Some(paste.content.clone());
+                self.pending_copy_action = None;
+                self.set_status("Copied paste content.");
+            }
+            PaletteCopyAction::Fenced(id) => {
+                if id != paste.id {
+                    return;
+                }
+                self.clipboard_outgoing = Some(format_fenced_block(
+                    &paste.content,
+                    paste.language.as_deref(),
+                ));
+                self.pending_copy_action = None;
+                self.set_status("Copied fenced code block.");
+            }
+        }
+    }
 }
 
 fn parse_tags_csv(input: &str) -> Vec<String> {
@@ -489,4 +521,9 @@ fn sanitize_filename(value: &str) -> String {
     } else {
         out
     }
+}
+
+fn format_fenced_block(content: &str, language: Option<&str>) -> String {
+    let lang = language.unwrap_or("text");
+    format!("```{}\n{}\n```", lang, content)
 }

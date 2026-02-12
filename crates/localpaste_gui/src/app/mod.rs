@@ -59,6 +59,11 @@ pub struct LocalPasteApp {
     search_focus_requested: bool,
     active_collection: SidebarCollection,
     folder_dialog: Option<FolderDialog>,
+    command_palette_open: bool,
+    command_palette_query: String,
+    command_palette_selected: usize,
+    pending_copy_action: Option<PaletteCopyAction>,
+    clipboard_outgoing: Option<String>,
     selected_content: EditorBuffer,
     editor_cache: EditorLayoutCache,
     editor_lines: EditorLineIndex,
@@ -140,6 +145,12 @@ enum FolderDialog {
         id: String,
         name: String,
     },
+}
+
+#[derive(Debug, Clone)]
+enum PaletteCopyAction {
+    Raw(String),
+    Fenced(String),
 }
 
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
@@ -343,6 +354,11 @@ impl LocalPasteApp {
             search_focus_requested: false,
             active_collection: SidebarCollection::All,
             folder_dialog: None,
+            command_palette_open: false,
+            command_palette_query: String::new(),
+            command_palette_selected: 0,
+            pending_copy_action: None,
+            clipboard_outgoing: None,
             selected_content: EditorBuffer::new(String::new()),
             editor_cache: EditorLayoutCache::default(),
             editor_lines: EditorLineIndex::default(),
@@ -506,6 +522,10 @@ impl eframe::App for LocalPasteApp {
             self.apply_event(event);
         }
 
+        if let Some(text) = self.clipboard_outgoing.take() {
+            ctx.send_cmd(egui::OutputCommand::CopyText(text));
+        }
+
         while let Ok(render) = self.highlight_worker.rx.try_recv() {
             self.queue_highlight_render(render);
         }
@@ -594,6 +614,11 @@ impl eframe::App for LocalPasteApp {
             }
             if input.modifiers.command && input.key_pressed(egui::Key::F) {
                 self.search_focus_requested = true;
+            }
+            if input.modifiers.command && input.key_pressed(egui::Key::K) {
+                self.command_palette_open = !self.command_palette_open;
+                self.command_palette_query.clear();
+                self.command_palette_selected = 0;
             }
             if input.modifiers.command && input.key_pressed(egui::Key::C) {
                 match self.editor_mode {
@@ -698,6 +723,7 @@ impl eframe::App for LocalPasteApp {
         self.render_top_bar(ctx);
         self.render_sidebar(ctx);
         self.render_editor_panel(ctx);
+        self.render_command_palette(ctx);
 
         let mut deferred_focus_apply_result = VirtualApplyResult::default();
         let mut deferred_copy_apply_result = VirtualApplyResult::default();

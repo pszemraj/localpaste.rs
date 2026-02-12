@@ -83,6 +83,11 @@ fn make_app() -> TestHarness {
         search_focus_requested: false,
         active_collection: SidebarCollection::All,
         folder_dialog: None,
+        command_palette_open: false,
+        command_palette_query: String::new(),
+        command_palette_selected: 0,
+        pending_copy_action: None,
+        clipboard_outgoing: None,
         selected_content: EditorBuffer::new("content".to_string()),
         editor_cache: EditorLayoutCache::default(),
         editor_lines: EditorLineIndex::default(),
@@ -921,4 +926,34 @@ fn paste_list_filters_recent_collection() {
     });
     assert_eq!(harness.app.pastes.len(), 1);
     assert_eq!(harness.app.pastes[0].id, fresh.id);
+}
+
+#[test]
+fn command_palette_ranking_prefers_prefix() {
+    let mut harness = make_app();
+    harness.app.all_pastes = vec![
+        PasteSummary {
+            id: "1".to_string(),
+            name: "alpha parser".to_string(),
+            language: Some("rust".to_string()),
+            content_len: 100,
+            updated_at: Utc::now(),
+            folder_id: None,
+            tags: vec!["core".to_string()],
+        },
+        PasteSummary {
+            id: "2".to_string(),
+            name: "parser alpha".to_string(),
+            language: Some("rust".to_string()),
+            content_len: 100,
+            updated_at: Utc::now(),
+            folder_id: None,
+            tags: vec!["core".to_string()],
+        },
+    ];
+    harness.app.command_palette_query = "alpha".to_string();
+
+    let ranked = harness.app.rank_palette_results();
+    assert_eq!(ranked.len(), 2);
+    assert_eq!(ranked[0].id, "1");
 }
