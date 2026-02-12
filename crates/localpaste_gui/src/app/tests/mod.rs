@@ -906,6 +906,7 @@ fn search_results_respect_collection_filter() {
     harness
         .app
         .set_active_collection(SidebarCollection::Unfiled);
+    harness.app.set_search_query("rust".to_string());
 
     let now = Utc::now();
     let with_folder = PasteSummary {
@@ -932,6 +933,23 @@ fn search_results_respect_collection_filter() {
         items: vec![with_folder, unfiled.clone()],
     });
 
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, unfiled.id);
+
+    let stale = PasteSummary {
+        id: "stale".to_string(),
+        name: "stale-result".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 2,
+        updated_at: now,
+        folder_id: None,
+        tags: Vec::new(),
+    };
+    harness.app.set_search_query(String::new());
+    harness.app.apply_event(CoreEvent::SearchResults {
+        query: "rust".to_string(),
+        items: vec![stale],
+    });
     assert_eq!(harness.app.pastes.len(), 1);
     assert_eq!(harness.app.pastes[0].id, unfiled.id);
 }
@@ -1359,4 +1377,30 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
         }
         other => panic!("unexpected command: {:?}", other),
     }
+
+    harness
+        .app
+        .selected_content
+        .reset("edited-during-save".to_string());
+    harness.app.mark_dirty();
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(harness.app.last_edit_at.is_some());
+
+    let mut saved = Paste::new("auto-save".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(!harness.app.save_in_flight);
+    assert!(harness.app.last_edit_at.is_some());
+    assert_eq!(
+        harness
+            .app
+            .selected_paste
+            .as_ref()
+            .map(|paste| paste.content.as_str()),
+        Some("edited-during-save")
+    );
 }

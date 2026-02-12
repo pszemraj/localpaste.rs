@@ -65,13 +65,23 @@ impl LocalPasteApp {
                     *item = PasteSummary::from_paste(&paste);
                 }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
+                    let active_content = self.active_snapshot();
+                    let has_newer_local_edits = active_content != paste.content;
                     self.sync_editor_metadata(&paste);
                     let mut updated = paste;
-                    updated.content = self.active_snapshot();
+                    updated.content = active_content;
                     self.selected_paste = Some(updated);
-                    self.save_status = SaveStatus::Saved;
-                    self.last_edit_at = None;
                     self.save_in_flight = false;
+                    if has_newer_local_edits {
+                        // Keep autosave armed when this ack corresponds to an older snapshot.
+                        self.save_status = SaveStatus::Dirty;
+                        if self.last_edit_at.is_none() {
+                            self.last_edit_at = Some(Instant::now());
+                        }
+                    } else {
+                        self.save_status = SaveStatus::Saved;
+                        self.last_edit_at = None;
+                    }
                 }
             }
             CoreEvent::PasteMetaSaved { paste } => {
@@ -91,7 +101,11 @@ impl LocalPasteApp {
                 }
                 self.ensure_selection_after_list_update();
             }
-            CoreEvent::SearchResults { query: _, items } => {
+            CoreEvent::SearchResults { query, items } => {
+                // Drop stale search responses that no longer match the active query text.
+                if self.search_query.trim().is_empty() || query.trim() != self.search_query.trim() {
+                    return;
+                }
                 self.pastes = self.filter_by_collection(&items);
                 self.ensure_selection_after_list_update();
             }
