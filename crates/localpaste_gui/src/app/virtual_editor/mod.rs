@@ -9,6 +9,6 @@ pub(crate) mod state;
 
 pub(crate) use buffer::RopeBuffer;
 pub(crate) use history::{EditIntent, VirtualEditorHistory};
-pub(crate) use input::{commands_from_events, VirtualInputCommand};
+pub(crate) use input::{commands_from_events, VirtualCommandRoute, VirtualInputCommand};
 pub(crate) use layout::WrapLayoutCache;
 pub(crate) use state::VirtualEditorState;

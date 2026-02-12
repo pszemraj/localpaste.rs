@@ -30,6 +30,28 @@ pub(crate) enum VirtualInputCommand {
     ImeDisabled,
 }
 
+/// Routing bucket for virtual editor input handling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VirtualCommandRoute {
+    CopyOnly,
+    FocusRequired,
+}
+
+impl VirtualInputCommand {
+    /// Returns the routing bucket used by app-level input gating.
+    pub(crate) fn route(&self) -> VirtualCommandRoute {
+        match self {
+            Self::Copy => VirtualCommandRoute::CopyOnly,
+            _ => VirtualCommandRoute::FocusRequired,
+        }
+    }
+
+    /// Returns true when the command should only run after post-UI focus is finalized.
+    pub(crate) fn requires_post_focus(&self) -> bool {
+        matches!(self, Self::Cut | Self::Paste(_))
+    }
+}
+
 fn word_modifier(modifiers: egui::Modifiers) -> bool {
     modifiers.ctrl || modifiers.alt
 }
@@ -173,5 +195,40 @@ mod tests {
             commands,
             vec![VirtualInputCommand::Copy, VirtualInputCommand::Cut]
         );
+    }
+
+    #[test]
+    fn routes_copy_as_copy_only() {
+        assert_eq!(
+            VirtualInputCommand::Copy.route(),
+            VirtualCommandRoute::CopyOnly
+        );
+    }
+
+    #[test]
+    fn routes_mutating_commands_as_focus_required() {
+        let commands = [
+            VirtualInputCommand::InsertText("x".to_string()),
+            VirtualInputCommand::InsertNewline,
+            VirtualInputCommand::MoveLeft {
+                select: false,
+                word: false,
+            },
+            VirtualInputCommand::Cut,
+            VirtualInputCommand::Paste("x".to_string()),
+            VirtualInputCommand::Undo,
+            VirtualInputCommand::ImeCommit("x".to_string()),
+        ];
+        for command in commands {
+            assert_eq!(command.route(), VirtualCommandRoute::FocusRequired);
+        }
+    }
+
+    #[test]
+    fn marks_cut_and_paste_as_post_focus_only() {
+        assert!(VirtualInputCommand::Cut.requires_post_focus());
+        assert!(VirtualInputCommand::Paste("x".to_string()).requires_post_focus());
+        assert!(!VirtualInputCommand::Copy.requires_post_focus());
+        assert!(!VirtualInputCommand::InsertText("x".to_string()).requires_post_focus());
     }
 }

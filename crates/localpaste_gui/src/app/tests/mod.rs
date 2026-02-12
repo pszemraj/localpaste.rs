@@ -522,6 +522,131 @@ fn virtual_cut_reports_copy_and_removes_selected_text() {
 }
 
 #[test]
+fn virtual_command_classification_respects_focus_policy() {
+    assert_eq!(
+        classify_virtual_command(&VirtualInputCommand::Copy, false),
+        VirtualCommandBucket::DeferredCopy
+    );
+    assert_eq!(
+        classify_virtual_command(&VirtualInputCommand::InsertText("x".to_string()), false),
+        VirtualCommandBucket::DeferredFocus
+    );
+    assert_eq!(
+        classify_virtual_command(&VirtualInputCommand::InsertText("x".to_string()), true),
+        VirtualCommandBucket::ImmediateFocus
+    );
+    assert_eq!(
+        classify_virtual_command(&VirtualInputCommand::Cut, true),
+        VirtualCommandBucket::DeferredFocus
+    );
+    assert_eq!(
+        classify_virtual_command(&VirtualInputCommand::Paste("x".to_string()), true),
+        VirtualCommandBucket::DeferredFocus
+    );
+}
+
+#[test]
+fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
+    fn setup_selection(app: &mut LocalPasteApp) {
+        app.reset_virtual_editor("abcdef");
+        let len = app.virtual_editor_buffer.len_chars();
+        app.virtual_editor_state.set_cursor(1, len);
+        app.virtual_editor_state.move_cursor(4, len, true);
+    }
+
+    fn merge_apply(target: &mut VirtualApplyResult, src: VirtualApplyResult) {
+        target.changed |= src.changed;
+        target.copied |= src.copied;
+        target.cut |= src.cut;
+        target.pasted |= src.pasted;
+    }
+
+    fn route_and_apply(
+        app: &mut LocalPasteApp,
+        ctx: &egui::Context,
+        command: VirtualInputCommand,
+        focus_active_pre: bool,
+        focus_active_post: bool,
+        copy_ready_post: bool,
+    ) -> VirtualApplyResult {
+        let mut immediate = Vec::new();
+        let mut deferred_focus = Vec::new();
+        let mut deferred_copy = Vec::new();
+        match classify_virtual_command(&command, focus_active_pre) {
+            VirtualCommandBucket::ImmediateFocus => immediate.push(command),
+            VirtualCommandBucket::DeferredFocus => deferred_focus.push(command),
+            VirtualCommandBucket::DeferredCopy => deferred_copy.push(command),
+        }
+
+        let mut result = app.apply_virtual_commands(ctx, &immediate);
+        if focus_active_post {
+            merge_apply(
+                &mut result,
+                app.apply_virtual_commands(ctx, &deferred_focus),
+            );
+        }
+        if copy_ready_post {
+            merge_apply(&mut result, app.apply_virtual_commands(ctx, &deferred_copy));
+        }
+        result
+    }
+
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    let blocked_commands = [
+        VirtualInputCommand::InsertText("X".to_string()),
+        VirtualInputCommand::Backspace { word: false },
+        VirtualInputCommand::DeleteForward { word: false },
+        VirtualInputCommand::Cut,
+        VirtualInputCommand::Paste("ZZ".to_string()),
+        VirtualInputCommand::MoveLeft {
+            select: false,
+            word: false,
+        },
+        VirtualInputCommand::SelectAll,
+    ];
+
+    for command in blocked_commands {
+        setup_selection(&mut harness.app);
+        let before_text = harness.app.virtual_editor_buffer.to_string();
+        let before_cursor = harness.app.virtual_editor_state.cursor();
+        let before_selection = harness.app.virtual_editor_state.selection_range();
+        let result = route_and_apply(
+            &mut harness.app,
+            &ctx,
+            command,
+            false,
+            false,
+            true, // copy-ready because selection exists
+        );
+
+        assert_eq!(harness.app.virtual_editor_buffer.to_string(), before_text);
+        assert_eq!(harness.app.virtual_editor_state.cursor(), before_cursor);
+        assert_eq!(
+            harness.app.virtual_editor_state.selection_range(),
+            before_selection
+        );
+        assert!(!result.changed);
+        assert!(!result.cut);
+        assert!(!result.pasted);
+    }
+
+    setup_selection(&mut harness.app);
+    let before_text = harness.app.virtual_editor_buffer.to_string();
+    let result = route_and_apply(
+        &mut harness.app,
+        &ctx,
+        VirtualInputCommand::Copy,
+        false,
+        false,
+        true,
+    );
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), before_text);
+    assert!(!result.changed);
+    assert!(result.copied);
+}
+
+#[test]
 fn virtual_click_counter_promotes_to_triple_and_resets() {
     let now = Instant::now();
     let p = egui::pos2(100.0, 200.0);

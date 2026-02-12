@@ -29,10 +29,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use style::*;
 use tracing::{info, warn};
-use util::{display_language_label, word_range_at};
+use util::{display_language_label, env_flag_enabled, word_range_at};
 use virtual_editor::{
-    commands_from_events, RopeBuffer, VirtualEditorHistory, VirtualEditorState,
-    VirtualInputCommand, WrapLayoutCache,
+    commands_from_events, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
+    VirtualEditorState, VirtualInputCommand, WrapLayoutCache,
 };
 use virtual_view::{VirtualCursor, VirtualSelectionState};
 
@@ -130,17 +130,15 @@ struct VirtualApplyResult {
     pasted: bool,
 }
 
-fn is_editor_word_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VirtualCommandBucket {
+    ImmediateFocus,
+    DeferredFocus,
+    DeferredCopy,
 }
 
-fn env_flag_enabled(name: &str) -> bool {
-    std::env::var(name)
-        .map(|value| {
-            let lowered = value.trim().to_ascii_lowercase();
-            !(lowered.is_empty() || lowered == "0" || lowered == "false")
-        })
-        .unwrap_or(false)
+fn is_editor_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
 }
 
 fn next_virtual_click_count(
@@ -162,6 +160,22 @@ fn next_virtual_click_count(
         last_count.saturating_add(1).min(3)
     } else {
         1
+    }
+}
+
+fn classify_virtual_command(
+    command: &VirtualInputCommand,
+    focus_active_pre: bool,
+) -> VirtualCommandBucket {
+    match command.route() {
+        VirtualCommandRoute::CopyOnly => VirtualCommandBucket::DeferredCopy,
+        VirtualCommandRoute::FocusRequired => {
+            if command.requires_post_focus() || !focus_active_pre {
+                VirtualCommandBucket::DeferredFocus
+            } else {
+                VirtualCommandBucket::ImmediateFocus
+            }
+        }
     }
 }
 
@@ -291,11 +305,15 @@ impl LocalPasteApp {
 
     fn trace_input(
         &self,
-        focused: bool,
-        egui_focus: bool,
+        focus_active_pre: bool,
+        focus_active_post: bool,
+        egui_focus_pre: bool,
+        egui_focus_post: bool,
+        copy_ready_post: bool,
         selection_chars: usize,
-        immediate: &[VirtualInputCommand],
-        deferred: &[VirtualInputCommand],
+        immediate_focus_commands: &[VirtualInputCommand],
+        deferred_focus_commands: &[VirtualInputCommand],
+        deferred_copy_commands: &[VirtualInputCommand],
         apply_result: VirtualApplyResult,
     ) {
         if !self.editor_input_trace_enabled {
@@ -305,11 +323,18 @@ impl LocalPasteApp {
             target: "localpaste_gui::input",
             mode = ?self.editor_mode,
             editor_active = self.virtual_editor_active,
-            focused = focused,
-            egui_focus = egui_focus,
+            focus_active_pre = focus_active_pre,
+            focus_active_post = focus_active_post,
+            egui_focus_pre = egui_focus_pre,
+            egui_focus_post = egui_focus_post,
+            copy_ready_post = copy_ready_post,
             selection_chars = selection_chars,
-            immediate = ?immediate,
-            deferred = ?deferred,
+            immediate_focus_count = immediate_focus_commands.len(),
+            deferred_focus_count = deferred_focus_commands.len(),
+            deferred_copy_count = deferred_copy_commands.len(),
+            immediate_focus = ?immediate_focus_commands,
+            deferred_focus = ?deferred_focus_commands,
+            deferred_copy = ?deferred_copy_commands,
             changed = apply_result.changed,
             copied = apply_result.copied,
             cut = apply_result.cut,
@@ -396,53 +421,54 @@ impl eframe::App for LocalPasteApp {
         }
 
         let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-        let egui_focus = ctx.memory(|m| m.has_focus(focus_id));
-        let has_virtual_selection = self.virtual_editor_state.selection_range().is_some();
-        let virtual_shortcut_active = self.is_virtual_editor_mode()
+        let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
+        let has_virtual_selection_pre = self.virtual_editor_state.selection_range().is_some();
+        let focus_active_pre = self.is_virtual_editor_mode()
             && (self.virtual_editor_active
                 || self.virtual_editor_state.has_focus
-                || egui_focus
-                || has_virtual_selection);
+                || egui_focus_pre);
+        let copy_ready_pre = focus_active_pre || has_virtual_selection_pre;
         let mut saw_virtual_select_all = false;
         let mut saw_virtual_copy = false;
         let mut saw_virtual_cut = false;
         let mut saw_virtual_undo = false;
         let mut saw_virtual_redo = false;
         let mut saw_virtual_paste = false;
-        let mut immediate_virtual_commands: Vec<VirtualInputCommand> = Vec::new();
-        let mut deferred_virtual_commands: Vec<VirtualInputCommand> = Vec::new();
+        let mut immediate_focus_commands: Vec<VirtualInputCommand> = Vec::new();
+        let mut deferred_focus_commands: Vec<VirtualInputCommand> = Vec::new();
+        let mut deferred_copy_commands: Vec<VirtualInputCommand> = Vec::new();
         let mut immediate_apply_result = VirtualApplyResult::default();
         if self.is_virtual_editor_mode() {
             let commands = ctx.input(|input| commands_from_events(&input.events, true));
             for command in commands {
-                match command {
-                    VirtualInputCommand::Copy => {
+                match classify_virtual_command(&command, focus_active_pre) {
+                    VirtualCommandBucket::DeferredCopy => {
                         saw_virtual_copy = true;
-                        deferred_virtual_commands.push(VirtualInputCommand::Copy);
+                        deferred_copy_commands.push(command);
                     }
-                    VirtualInputCommand::Cut => {
-                        saw_virtual_cut = true;
-                        deferred_virtual_commands.push(VirtualInputCommand::Cut);
-                    }
-                    VirtualInputCommand::Paste(text) => {
-                        saw_virtual_paste = true;
-                        deferred_virtual_commands.push(VirtualInputCommand::Paste(text));
-                    }
-                    other => {
-                        if !virtual_shortcut_active {
-                            continue;
+                    VirtualCommandBucket::DeferredFocus => {
+                        match &command {
+                            VirtualInputCommand::SelectAll => saw_virtual_select_all = true,
+                            VirtualInputCommand::Cut => saw_virtual_cut = true,
+                            VirtualInputCommand::Paste(_) => saw_virtual_paste = true,
+                            VirtualInputCommand::Undo => saw_virtual_undo = true,
+                            VirtualInputCommand::Redo => saw_virtual_redo = true,
+                            _ => {}
                         }
-                        match &other {
+                        deferred_focus_commands.push(command);
+                    }
+                    VirtualCommandBucket::ImmediateFocus => {
+                        match &command {
                             VirtualInputCommand::SelectAll => saw_virtual_select_all = true,
                             VirtualInputCommand::Undo => saw_virtual_undo = true,
                             VirtualInputCommand::Redo => saw_virtual_redo = true,
                             _ => {}
                         }
-                        immediate_virtual_commands.push(other);
+                        immediate_focus_commands.push(command);
                     }
                 }
             }
-            immediate_apply_result = self.apply_virtual_commands(ctx, &immediate_virtual_commands);
+            immediate_apply_result = self.apply_virtual_commands(ctx, &immediate_focus_commands);
             if immediate_apply_result.changed {
                 self.mark_dirty();
             }
@@ -472,7 +498,7 @@ impl eframe::App for LocalPasteApp {
                 match self.editor_mode {
                     EditorMode::VirtualPreview => copy_virtual_preview = true,
                     EditorMode::VirtualEditor => {
-                        if virtual_shortcut_active && !saw_virtual_copy {
+                        if copy_ready_pre && !saw_virtual_copy {
                             fallback_virtual_copy = true;
                         }
                     }
@@ -480,16 +506,13 @@ impl eframe::App for LocalPasteApp {
                 }
             }
             if self.editor_mode == EditorMode::VirtualEditor && input.modifiers.command {
-                if virtual_shortcut_active
-                    && input.key_pressed(egui::Key::A)
-                    && !saw_virtual_select_all
-                {
+                if focus_active_pre && input.key_pressed(egui::Key::A) && !saw_virtual_select_all {
                     fallback_virtual_select_all = true;
                 }
-                if virtual_shortcut_active && input.key_pressed(egui::Key::X) && !saw_virtual_cut {
+                if focus_active_pre && input.key_pressed(egui::Key::X) && !saw_virtual_cut {
                     fallback_virtual_cut = true;
                 }
-                if virtual_shortcut_active && input.key_pressed(egui::Key::Z) {
+                if focus_active_pre && input.key_pressed(egui::Key::Z) {
                     if input.modifiers.shift {
                         if !saw_virtual_redo {
                             fallback_virtual_redo = true;
@@ -498,11 +521,10 @@ impl eframe::App for LocalPasteApp {
                         fallback_virtual_undo = true;
                     }
                 }
-                if virtual_shortcut_active && input.key_pressed(egui::Key::Y) && !saw_virtual_redo {
+                if focus_active_pre && input.key_pressed(egui::Key::Y) && !saw_virtual_redo {
                     fallback_virtual_redo = true;
                 }
-                if virtual_shortcut_active && input.key_pressed(egui::Key::V) && !saw_virtual_paste
-                {
+                if focus_active_pre && input.key_pressed(egui::Key::V) && !saw_virtual_paste {
                     request_virtual_paste = true;
                 }
             }
@@ -533,10 +555,10 @@ impl eframe::App for LocalPasteApp {
                 fallback_commands.push(VirtualInputCommand::SelectAll);
             }
             if fallback_virtual_copy {
-                deferred_virtual_commands.push(VirtualInputCommand::Copy);
+                deferred_copy_commands.push(VirtualInputCommand::Copy);
             }
             if fallback_virtual_cut {
-                deferred_virtual_commands.push(VirtualInputCommand::Cut);
+                deferred_focus_commands.push(VirtualInputCommand::Cut);
             }
             if fallback_virtual_undo {
                 fallback_commands.push(VirtualInputCommand::Undo);
@@ -576,22 +598,31 @@ impl eframe::App for LocalPasteApp {
         self.render_sidebar(ctx);
         self.render_editor_panel(ctx);
 
-        let mut deferred_apply_result = VirtualApplyResult::default();
-        let editor_active_now = self.editor_mode == EditorMode::VirtualEditor
+        let mut deferred_focus_apply_result = VirtualApplyResult::default();
+        let mut deferred_copy_apply_result = VirtualApplyResult::default();
+        let has_virtual_selection_post = self.virtual_editor_state.selection_range().is_some();
+        let focus_active_post = self.editor_mode == EditorMode::VirtualEditor
             && (self.virtual_editor_active
                 || self.virtual_editor_state.has_focus
                 || ctx.memory(|m| m.has_focus(focus_id)));
-        let virtual_clipboard_ready = editor_active_now
-            || virtual_shortcut_active
-            || self.virtual_editor_state.selection_range().is_some();
-        if virtual_clipboard_ready {
-            deferred_apply_result = self.apply_virtual_commands(ctx, &deferred_virtual_commands);
-            if deferred_apply_result.changed {
+        let copy_ready_post = focus_active_post || has_virtual_selection_post;
+        if focus_active_post {
+            deferred_focus_apply_result =
+                self.apply_virtual_commands(ctx, &deferred_focus_commands);
+            if deferred_focus_apply_result.changed {
                 self.mark_dirty();
             }
         }
-        let virtual_paste_consumed = immediate_apply_result.pasted || deferred_apply_result.pasted;
-        if !ctx.wants_keyboard_input() && !virtual_clipboard_ready && !virtual_paste_consumed {
+        if copy_ready_post {
+            deferred_copy_apply_result = self.apply_virtual_commands(ctx, &deferred_copy_commands);
+            if deferred_copy_apply_result.changed {
+                self.mark_dirty();
+            }
+        }
+        let virtual_paste_consumed = immediate_apply_result.pasted
+            || deferred_focus_apply_result.pasted
+            || deferred_copy_apply_result.pasted;
+        if !ctx.wants_keyboard_input() && !focus_active_post && !virtual_paste_consumed {
             if let Some(text) = pasted_text {
                 if !text.trim().is_empty() {
                     self.create_new_paste_with_content(text);
@@ -599,9 +630,15 @@ impl eframe::App for LocalPasteApp {
             }
         }
         let combined_apply = VirtualApplyResult {
-            changed: immediate_apply_result.changed || deferred_apply_result.changed,
-            copied: immediate_apply_result.copied || deferred_apply_result.copied,
-            cut: immediate_apply_result.cut || deferred_apply_result.cut,
+            changed: immediate_apply_result.changed
+                || deferred_focus_apply_result.changed
+                || deferred_copy_apply_result.changed,
+            copied: immediate_apply_result.copied
+                || deferred_focus_apply_result.copied
+                || deferred_copy_apply_result.copied,
+            cut: immediate_apply_result.cut
+                || deferred_focus_apply_result.cut
+                || deferred_copy_apply_result.cut,
             pasted: virtual_paste_consumed,
         };
         let selection_chars = self
@@ -609,14 +646,17 @@ impl eframe::App for LocalPasteApp {
             .selection_range()
             .map(|range| range.end.saturating_sub(range.start))
             .unwrap_or(0);
-        let focused_now = self.virtual_editor_state.has_focus || editor_active_now;
-        let egui_focus_now = ctx.memory(|m| m.has_focus(focus_id));
+        let egui_focus_post = ctx.memory(|m| m.has_focus(focus_id));
         self.trace_input(
-            focused_now,
-            egui_focus_now,
+            focus_active_pre,
+            focus_active_post,
+            egui_focus_pre,
+            egui_focus_post,
+            copy_ready_post,
             selection_chars,
-            &immediate_virtual_commands,
-            &deferred_virtual_commands,
+            &immediate_focus_commands,
+            &deferred_focus_commands,
+            &deferred_copy_commands,
             combined_apply,
         );
 
