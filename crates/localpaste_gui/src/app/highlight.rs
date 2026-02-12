@@ -230,8 +230,17 @@ impl EditorLayoutCache {
             parse: parse_state.clone(),
             highlight: highlight_state.clone(),
         };
-        let old_lines = std::mem::take(&mut self.highlight_cache.lines);
-        let mut new_lines = Vec::with_capacity(old_lines.len().max(1));
+        let lines: Vec<&str> = LinesWithEndings::from(text).collect();
+        let new_hashes: Vec<u64> = lines
+            .iter()
+            .map(|line| hash_bytes(line.as_bytes()))
+            .collect();
+        let mut old_lines = align_old_lines_by_hash(
+            std::mem::take(&mut self.highlight_cache.lines),
+            &new_hashes,
+            |line| line.hash,
+        );
+        let mut new_lines = Vec::with_capacity(lines.len().max(1));
         let mut job = LayoutJob {
             text: text.to_owned(),
             ..Default::default()
@@ -242,27 +251,38 @@ impl EditorLayoutCache {
             ..Default::default()
         };
         let mut line_start = 0usize;
+        let mut prev_line_reused = false;
 
-        for (idx, line) in LinesWithEndings::from(text).enumerate() {
-            let line_hash = hash_bytes(line.as_bytes());
+        for (idx, line) in lines.iter().enumerate() {
+            let line_hash = new_hashes[idx];
             let start_state_matches = if idx == 0 {
                 default_state.parse == parse_state && default_state.highlight == highlight_state
+            } else if prev_line_reused {
+                true
             } else {
                 old_lines
                     .get(idx - 1)
+                    .and_then(|line| line.as_ref())
                     .map(|line| {
                         line.end_state.parse == parse_state
                             && line.end_state.highlight == highlight_state
                     })
                     .unwrap_or(false)
             };
-            if let Some(old_line) = old_lines.get(idx) {
-                if old_line.hash == line_hash && start_state_matches {
+            if start_state_matches {
+                let hash_matches = old_lines
+                    .get(idx)
+                    .and_then(|line| line.as_ref())
+                    .map(|line| line.hash == line_hash)
+                    .unwrap_or(false);
+                if hash_matches {
+                    let old_line = old_lines[idx].take().expect("checked Some");
                     append_sections(&mut job, &old_line.sections, line_start);
                     parse_state = old_line.end_state.parse.clone();
                     highlight_state = old_line.end_state.highlight.clone();
-                    new_lines.push(old_line.clone());
+                    new_lines.push(old_line);
                     line_start += line.len();
+                    prev_line_reused = true;
                     continue;
                 }
             }
@@ -319,6 +339,7 @@ impl EditorLayoutCache {
             }
 
             line_start += line.len();
+            prev_line_reused = false;
         }
 
         self.highlight_cache.lines = new_lines;
@@ -525,6 +546,66 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
     hash
 }
 
+fn align_old_lines_by_hash<T, F>(
+    old_lines: Vec<T>,
+    new_hashes: &[u64],
+    hash_for: F,
+) -> Vec<Option<T>>
+where
+    F: Fn(&T) -> u64,
+{
+    let old_len = old_lines.len();
+    let new_len = new_hashes.len();
+    if new_len == 0 {
+        return Vec::new();
+    }
+    if old_len == 0 {
+        let mut out = Vec::with_capacity(new_len);
+        out.resize_with(new_len, || None);
+        return out;
+    }
+
+    let mut old: Vec<Option<T>> = old_lines.into_iter().map(Some).collect();
+
+    let mut prefix = 0usize;
+    while prefix < old_len && prefix < new_len {
+        let Some(ref line) = old[prefix] else {
+            break;
+        };
+        if hash_for(line) == new_hashes[prefix] {
+            prefix += 1;
+        } else {
+            break;
+        }
+    }
+
+    let mut suffix = 0usize;
+    while suffix < (old_len - prefix) && suffix < (new_len - prefix) {
+        let old_idx = old_len - 1 - suffix;
+        let new_idx = new_len - 1 - suffix;
+        let Some(ref line) = old[old_idx] else {
+            break;
+        };
+        if hash_for(line) == new_hashes[new_idx] {
+            suffix += 1;
+        } else {
+            break;
+        }
+    }
+
+    let mut aligned = Vec::with_capacity(new_len);
+    aligned.resize_with(new_len, || None);
+    for i in 0..prefix {
+        aligned[i] = old[i].take();
+    }
+    for j in 0..suffix {
+        let new_idx = new_len - suffix + j;
+        let old_idx = old_len - suffix + j;
+        aligned[new_idx] = old[old_idx].take();
+    }
+    aligned
+}
+
 #[derive(Clone)]
 struct HighlightSpan {
     range: Range<usize>,
@@ -726,6 +807,16 @@ fn highlight_in_worker(
         };
     };
 
+    let lines: Vec<&str> = LinesWithEndings::from(req.text.as_str()).collect();
+    let new_hashes: Vec<u64> = lines
+        .iter()
+        .map(|line| hash_bytes(line.as_bytes()))
+        .collect();
+    let mut old_lines =
+        align_old_lines_by_hash(std::mem::take(&mut cache.lines), &new_hashes, |line| {
+            line.hash
+        });
+
     let highlighter = Highlighter::new(theme);
     let mut parse_state = ParseState::new(syntax);
     let mut highlight_state = HighlightState::new(&highlighter, ScopeStack::new());
@@ -734,17 +825,20 @@ fn highlight_in_worker(
         highlight: highlight_state.clone(),
     };
 
-    let old_lines = std::mem::take(&mut cache.lines);
-    let mut new_lines = Vec::with_capacity(old_lines.len().max(1));
-    let mut render_lines = Vec::with_capacity(old_lines.len().max(1));
+    let mut new_lines = Vec::with_capacity(lines.len().max(1));
+    let mut render_lines = Vec::with_capacity(lines.len().max(1));
+    let mut prev_line_reused = false;
 
-    for (idx, line) in LinesWithEndings::from(req.text.as_str()).enumerate() {
-        let line_hash = hash_bytes(line.as_bytes());
+    for (idx, line) in lines.iter().enumerate() {
+        let line_hash = new_hashes[idx];
         let start_state_matches = if idx == 0 {
             default_state.parse == parse_state && default_state.highlight == highlight_state
+        } else if prev_line_reused {
+            true
         } else {
             old_lines
                 .get(idx - 1)
+                .and_then(|line| line.as_ref())
                 .map(|line| {
                     line.end_state.parse == parse_state
                         && line.end_state.highlight == highlight_state
@@ -752,15 +846,22 @@ fn highlight_in_worker(
                 .unwrap_or(false)
         };
 
-        if let Some(old_line) = old_lines.get(idx) {
-            if old_line.hash == line_hash && start_state_matches {
+        if start_state_matches {
+            let hash_matches = old_lines
+                .get(idx)
+                .and_then(|line| line.as_ref())
+                .map(|line| line.hash == line_hash)
+                .unwrap_or(false);
+            if hash_matches {
+                let old_line = old_lines[idx].take().expect("checked Some");
                 parse_state = old_line.end_state.parse.clone();
                 highlight_state = old_line.end_state.highlight.clone();
-                new_lines.push(old_line.clone());
                 render_lines.push(HighlightRenderLine {
                     len: old_line.len,
                     spans: old_line.spans.clone(),
                 });
+                new_lines.push(old_line);
+                prev_line_reused = true;
                 continue;
             }
         }
@@ -812,6 +913,7 @@ fn highlight_in_worker(
             len: line_len,
             spans,
         });
+        prev_line_reused = false;
     }
 
     cache.lines = new_lines;
@@ -847,5 +949,61 @@ pub(super) fn syntect_language_hint(language: &str) -> String {
         "xml" => "xml".to_string(),
         "sql" => "sql".to_string(),
         _ => lang,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::align_old_lines_by_hash;
+
+    #[derive(Debug)]
+    struct FakeLine {
+        hash: u64,
+        name: &'static str,
+    }
+
+    fn names(aligned: &[Option<FakeLine>]) -> Vec<Option<&'static str>> {
+        aligned
+            .iter()
+            .map(|line| line.as_ref().map(|line| line.name))
+            .collect()
+    }
+
+    #[test]
+    fn align_old_lines_handles_middle_insert() {
+        let old = vec![
+            FakeLine { hash: 1, name: "a" },
+            FakeLine { hash: 2, name: "b" },
+            FakeLine { hash: 3, name: "c" },
+            FakeLine { hash: 4, name: "d" },
+        ];
+        let aligned = align_old_lines_by_hash(old, &[1, 2, 99, 3, 4], |line| line.hash);
+        assert_eq!(
+            names(&aligned),
+            vec![Some("a"), Some("b"), None, Some("c"), Some("d")]
+        );
+    }
+
+    #[test]
+    fn align_old_lines_handles_middle_delete() {
+        let old = vec![
+            FakeLine { hash: 1, name: "a" },
+            FakeLine { hash: 2, name: "b" },
+            FakeLine { hash: 3, name: "c" },
+            FakeLine { hash: 4, name: "d" },
+        ];
+        let aligned = align_old_lines_by_hash(old, &[1, 3, 4], |line| line.hash);
+        assert_eq!(names(&aligned), vec![Some("a"), Some("c"), Some("d")]);
+    }
+
+    #[test]
+    fn align_old_lines_handles_middle_replace() {
+        let old = vec![
+            FakeLine { hash: 1, name: "a" },
+            FakeLine { hash: 2, name: "b" },
+            FakeLine { hash: 4, name: "d" },
+        ];
+        let aligned = align_old_lines_by_hash(old, &[1, 77, 4], |line| line.hash);
+        assert_eq!(names(&aligned), vec![Some("a"), None, Some("d")]);
     }
 }

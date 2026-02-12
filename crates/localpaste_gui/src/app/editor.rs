@@ -79,6 +79,18 @@ impl EditorBuffer {
     pub(super) fn take_edit_delta(&mut self) -> Option<EditDelta> {
         self.last_delta.take()
     }
+
+    pub(super) fn line_range_chars(&self, char_index: usize) -> (usize, usize) {
+        let idx = char_index.min(self.char_len);
+        let line = line_for_char(&self.rope, idx);
+        let start = self.rope.line_to_char(line);
+        let end = if line + 1 < self.rope.len_lines() {
+            self.rope.line_to_char(line + 1)
+        } else {
+            self.rope.len_chars()
+        };
+        (start, end)
+    }
 }
 
 /// Holds byte offsets for each line in the buffer to enable fast line lookups.
@@ -348,5 +360,31 @@ mod tests {
         } else {
             std::env::remove_var(editor_key);
         }
+    }
+
+    #[test]
+    fn line_range_chars_includes_newline_for_non_terminal_lines() {
+        let buffer = EditorBuffer::new("one\ntwo\nthree".to_string());
+        let (start, end) = buffer.line_range_chars(5);
+        let selected: String = buffer
+            .as_str()
+            .chars()
+            .skip(start)
+            .take(end - start)
+            .collect();
+        assert_eq!(selected, "two\n");
+    }
+
+    #[test]
+    fn line_range_chars_excludes_missing_newline_for_last_line() {
+        let buffer = EditorBuffer::new("one\ntwo".to_string());
+        let (start, end) = buffer.line_range_chars(5);
+        let selected: String = buffer
+            .as_str()
+            .chars()
+            .skip(start)
+            .take(end - start)
+            .collect();
+        assert_eq!(selected, "two");
     }
 }

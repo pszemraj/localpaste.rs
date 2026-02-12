@@ -68,6 +68,7 @@ pub struct LocalPasteApp {
     last_interaction_at: Option<Instant>,
     last_editor_click_at: Option<Instant>,
     last_editor_click_pos: Option<egui::Pos2>,
+    last_editor_click_count: u8,
     last_virtual_click_at: Option<Instant>,
     last_virtual_click_pos: Option<egui::Pos2>,
     last_virtual_click_line: Option<usize>,
@@ -111,9 +112,9 @@ const COLOR_TEXT_SECONDARY: Color32 = Color32::from_rgb(0x8b, 0x94, 0x9e);
 const COLOR_TEXT_MUTED: Color32 = Color32::from_rgb(0x6e, 0x76, 0x81);
 const COLOR_ACCENT: Color32 = Color32::from_rgb(0xE5, 0x70, 0x00);
 const COLOR_ACCENT_HOVER: Color32 = Color32::from_rgb(0xCE, 0x42, 0x2B);
-const COLOR_SELECTION_STROKE: Color32 = Color32::from_rgb(0xF9, 0x73, 0x16);
+const COLOR_SELECTION_STROKE: Color32 = Color32::from_rgb(0x3B, 0x82, 0xF6);
+const COLOR_SELECTION_FILL_RGBA: [u8; 4] = [0x3B, 0x82, 0xF6, 0x55];
 const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
-const COLOR_SELECTION_FILL_RGBA: [u8; 4] = [0xF9, 0x73, 0x16, 0x1A];
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const STATUS_TTL: Duration = Duration::from_secs(5);
 const FONT_0XPROTO: &str = "0xProto";
@@ -126,7 +127,7 @@ const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(150);
 const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
 const HIGHLIGHT_APPLY_IDLE: Duration = Duration::from_millis(200);
 const EDITOR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(300);
-const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
+const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 8.0;
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const VIRTUAL_OVERSCAN_LINES: usize = 3;
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
@@ -170,20 +171,18 @@ fn selection_fill_color() -> Color32 {
 fn next_virtual_click_count(
     last_at: Option<Instant>,
     last_pos: Option<egui::Pos2>,
-    last_line: Option<usize>,
+    _last_line: Option<usize>,
     last_count: u8,
-    line_idx: usize,
+    _line_idx: usize,
     pointer_pos: egui::Pos2,
     now: Instant,
 ) -> u8 {
-    let is_continuation =
-        if let (Some(last_at), Some(last_pos), Some(last_line)) = (last_at, last_pos, last_line) {
-            last_line == line_idx
-                && now.duration_since(last_at) <= EDITOR_DOUBLE_CLICK_WINDOW
-                && last_pos.distance(pointer_pos) <= EDITOR_DOUBLE_CLICK_DISTANCE
-        } else {
-            false
-        };
+    let is_continuation = if let (Some(last_at), Some(last_pos)) = (last_at, last_pos) {
+        now.duration_since(last_at) <= EDITOR_DOUBLE_CLICK_WINDOW
+            && last_pos.distance(pointer_pos) <= EDITOR_DOUBLE_CLICK_DISTANCE
+    } else {
+        false
+    };
     if is_continuation {
         last_count.saturating_add(1).min(3)
     } else {
@@ -196,11 +195,11 @@ fn paint_virtual_selection_overlay(
     row_rect: egui::Rect,
     galley: &egui::Galley,
     selection: Range<usize>,
+    selection_fill: Color32,
 ) {
     if selection.start >= selection.end {
         return;
     }
-    let fill = selection_fill_color();
     let mut consumed = 0usize;
     for placed_row in &galley.rows {
         let row_chars = placed_row.char_count_excluding_newline();
@@ -215,7 +214,7 @@ fn paint_virtual_selection_overlay(
             let top = row_rect.min.y + placed_row.pos.y;
             let bottom = top + placed_row.height();
             let rect = egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom));
-            painter.rect_filled(rect, 0.0, fill);
+            painter.rect_filled(rect, 2.0, selection_fill);
         }
         consumed = consumed.saturating_add(placed_row.char_count_including_newline());
         if consumed >= selection.end {
@@ -303,6 +302,7 @@ impl LocalPasteApp {
             last_interaction_at: None,
             last_editor_click_at: None,
             last_editor_click_pos: None,
+            last_editor_click_count: 0,
             last_virtual_click_at: None,
             last_virtual_click_pos: None,
             last_virtual_click_line: None,
@@ -771,7 +771,7 @@ impl LocalPasteApp {
         }
         let now = Instant::now();
         let click_pos = output.response.interact_pointer_pos();
-        let is_double = if let (Some(last_at), Some(last_pos), Some(pos)) = (
+        let continued = if let (Some(last_at), Some(last_pos), Some(pos)) = (
             self.last_editor_click_at,
             self.last_editor_click_pos,
             click_pos,
@@ -781,23 +781,37 @@ impl LocalPasteApp {
         } else {
             false
         };
+        if continued {
+            self.last_editor_click_count = self.last_editor_click_count.saturating_add(1).min(3);
+        } else {
+            self.last_editor_click_count = 1;
+        }
         self.last_editor_click_at = Some(now);
         self.last_editor_click_pos = click_pos;
 
-        if !is_double {
-            return;
-        }
         let Some(range) = output.cursor_range else {
             return;
         };
-        let Some((start, end)) = word_range_at(text, range.primary.index) else {
-            return;
-        };
         let mut state = output.state.clone();
-        state.cursor.set_char_range(Some(CCursorRange::two(
-            CCursor::new(start),
-            CCursor::new(end),
-        )));
+        match self.last_editor_click_count {
+            2 => {
+                let Some((start, end)) = word_range_at(text, range.primary.index) else {
+                    return;
+                };
+                state.cursor.set_char_range(Some(CCursorRange::two(
+                    CCursor::new(start),
+                    CCursor::new(end),
+                )));
+            }
+            3 => {
+                let (start, end) = self.selected_content.line_range_chars(range.primary.index);
+                state.cursor.set_char_range(Some(CCursorRange::two(
+                    CCursor::new(start),
+                    CCursor::new(end),
+                )));
+            }
+            _ => return,
+        }
         state.store(&output.response.ctx, output.response.id);
     }
 
@@ -940,21 +954,6 @@ impl LocalPasteApp {
         self.virtual_editor_state
             .move_cursor(end, self.virtual_editor_buffer.len_chars(), true);
         self.virtual_editor_state.clear_preferred_column();
-    }
-
-    fn virtual_editor_selection_is_multiline(&self) -> bool {
-        let Some(range) = self.virtual_editor_state.selection_range() else {
-            return false;
-        };
-        let len = self.virtual_editor_buffer.len_chars();
-        if len == 0 {
-            return false;
-        }
-        let start = range.start.min(len.saturating_sub(1));
-        let end = range.end.saturating_sub(1).min(len.saturating_sub(1));
-        let start_line = self.virtual_editor_buffer.rope().char_to_line(start);
-        let end_line = self.virtual_editor_buffer.rope().char_to_line(end);
-        start_line != end_line
     }
 
     fn virtual_word_left(&self, cursor: usize) -> usize {
@@ -1115,14 +1114,14 @@ impl LocalPasteApp {
                 }
                 VirtualInputCommand::Copy => {
                     if let Some(selection) = self.virtual_selected_text() {
-                        ctx.copy_text(selection);
+                        ctx.send_cmd(egui::OutputCommand::CopyText(selection));
                         result.copied = true;
                     }
                 }
                 VirtualInputCommand::Cut => {
                     if let Some(range) = self.virtual_editor_state.selection_range() {
                         if let Some(selection) = self.virtual_selected_text() {
-                            ctx.copy_text(selection);
+                            ctx.send_cmd(egui::OutputCommand::CopyText(selection));
                             result.copied = true;
                         }
                         result.changed |=
@@ -1662,23 +1661,33 @@ impl eframe::App for LocalPasteApp {
         let mut deferred_virtual_commands: Vec<VirtualInputCommand> = Vec::new();
         let mut immediate_apply_result = VirtualApplyResult::default();
         if self.is_virtual_editor_mode() {
-            let commands =
-                ctx.input(|input| commands_from_events(&input.events, virtual_shortcut_active));
+            let commands = ctx.input(|input| commands_from_events(&input.events, true));
             for command in commands {
-                match &command {
-                    VirtualInputCommand::SelectAll => saw_virtual_select_all = true,
-                    VirtualInputCommand::Copy => saw_virtual_copy = true,
-                    VirtualInputCommand::Cut => saw_virtual_cut = true,
-                    VirtualInputCommand::Undo => saw_virtual_undo = true,
-                    VirtualInputCommand::Redo => saw_virtual_redo = true,
-                    VirtualInputCommand::Paste(_) => saw_virtual_paste = true,
-                    _ => {}
-                }
                 match command {
-                    VirtualInputCommand::Copy
-                    | VirtualInputCommand::Cut
-                    | VirtualInputCommand::Paste(_) => deferred_virtual_commands.push(command),
-                    _ => immediate_virtual_commands.push(command),
+                    VirtualInputCommand::Copy => {
+                        saw_virtual_copy = true;
+                        deferred_virtual_commands.push(VirtualInputCommand::Copy);
+                    }
+                    VirtualInputCommand::Cut => {
+                        saw_virtual_cut = true;
+                        deferred_virtual_commands.push(VirtualInputCommand::Cut);
+                    }
+                    VirtualInputCommand::Paste(text) => {
+                        saw_virtual_paste = true;
+                        deferred_virtual_commands.push(VirtualInputCommand::Paste(text));
+                    }
+                    other => {
+                        if !virtual_shortcut_active {
+                            continue;
+                        }
+                        match &other {
+                            VirtualInputCommand::SelectAll => saw_virtual_select_all = true,
+                            VirtualInputCommand::Undo => saw_virtual_undo = true,
+                            VirtualInputCommand::Redo => saw_virtual_redo = true,
+                            _ => {}
+                        }
+                        immediate_virtual_commands.push(other);
+                    }
                 }
             }
             immediate_apply_result = self.apply_virtual_commands(ctx, &immediate_virtual_commands);
@@ -1696,6 +1705,7 @@ impl eframe::App for LocalPasteApp {
         let mut request_virtual_paste = false;
         let mut pasted_text: Option<String> = None;
         let mut sidebar_direction: i32 = 0;
+        let wants_keyboard_input_before = ctx.wants_keyboard_input();
         ctx.input(|input| {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());
@@ -1749,7 +1759,7 @@ impl eframe::App for LocalPasteApp {
                     pasted_text = Some(text.clone());
                 }
             }
-            if !ctx.wants_keyboard_input() && !self.pastes.is_empty() {
+            if !wants_keyboard_input_before && !self.pastes.is_empty() {
                 if input.key_pressed(egui::Key::ArrowDown) {
                     sidebar_direction = 1;
                 } else if input.key_pressed(egui::Key::ArrowUp) {
@@ -1762,7 +1772,7 @@ impl eframe::App for LocalPasteApp {
             && !ctx.wants_keyboard_input()
         {
             if let Some(selection) = self.virtual_selection_text() {
-                ctx.copy_text(selection);
+                ctx.send_cmd(egui::OutputCommand::CopyText(selection));
             }
         }
         if self.editor_mode == EditorMode::VirtualEditor {
@@ -1963,12 +1973,28 @@ impl eframe::App for LocalPasteApp {
                 let has_render = self
                     .highlight_render
                     .as_ref()
-                    .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
+                    .filter(|render| {
+                        render.matches_exact(
+                            revision,
+                            text_len,
+                            &language_hint,
+                            theme_key,
+                            id.as_str(),
+                        )
+                    })
                     .is_some();
                 let has_staged_render = self
                     .highlight_staged
                     .as_ref()
-                    .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
+                    .filter(|render| {
+                        render.matches_exact(
+                            revision,
+                            text_len,
+                            &language_hint,
+                            theme_key,
+                            id.as_str(),
+                        )
+                    })
                     .is_some();
                 let use_plain = if is_large {
                     true
@@ -1987,7 +2013,7 @@ impl eframe::App for LocalPasteApp {
                 );
                 let highlight_render = self.highlight_render.take();
                 let highlight_render_match = highlight_render.as_ref().filter(|render| {
-                    render.matches_context(id.as_str(), &language_hint, theme_key)
+                    render.matches_exact(revision, text_len, &language_hint, theme_key, id.as_str())
                 });
                 let row_height = ui.text_style_height(&editor_style);
                 let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
@@ -2209,35 +2235,23 @@ impl eframe::App for LocalPasteApp {
                             self.virtual_selection.end_drag();
                         }
 
-                        let multiline_selection = self
-                            .virtual_selection
-                            .selection_bounds()
-                            .map(|(start, end)| start.line != end.line)
-                            .unwrap_or(false);
+                        let selection_fill = ui.visuals().selection.bg_fill;
                         for row in rows {
                             let galley = row.galley;
-                            let mut has_selection = false;
                             if let Some(selection) = self
                                 .virtual_selection
                                 .selection_for_line(row.line_idx, row.line_chars)
                             {
-                                has_selection = true;
                                 paint_virtual_selection_overlay(
                                     ui.painter(),
                                     row.rect,
                                     galley.as_ref(),
                                     selection,
+                                    selection_fill,
                                 );
                             }
                             ui.painter()
                                 .galley(row.rect.min, galley, ui.visuals().text_color());
-                            if has_selection && multiline_selection {
-                                let x = row.rect.min.x + 1.0;
-                                ui.painter().line_segment(
-                                    [egui::pos2(x, row.rect.min.y), egui::pos2(x, row.rect.max.y)],
-                                    Stroke::new(2.0, COLOR_SELECTION_STROKE),
-                                );
-                            }
                         }
                     });
                     self.last_virtual_click_at = last_virtual_click_at;
@@ -2523,19 +2537,18 @@ impl eframe::App for LocalPasteApp {
                             self.virtual_drag_active = false;
                         }
 
-                        let multiline_selection = self.virtual_editor_selection_is_multiline();
+                        let selection_fill = ui.visuals().selection.bg_fill;
                         for row in rows {
                             let galley = row.galley;
-                            let mut has_selection = false;
                             if let Some(selection) =
                                 self.virtual_selection_for_line(row.line_start, row.line_chars)
                             {
-                                has_selection = true;
                                 paint_virtual_selection_overlay(
                                     ui.painter(),
                                     row.rect,
                                     galley.as_ref(),
                                     selection,
+                                    selection_fill,
                                 );
                             }
                             ui.painter().galley(
@@ -2543,13 +2556,6 @@ impl eframe::App for LocalPasteApp {
                                 galley.clone(),
                                 ui.visuals().text_color(),
                             );
-                            if has_selection && multiline_selection {
-                                let x = row.rect.min.x + 1.0;
-                                ui.painter().line_segment(
-                                    [egui::pos2(x, row.rect.min.y), egui::pos2(x, row.rect.max.y)],
-                                    Stroke::new(2.0, COLOR_SELECTION_STROKE),
-                                );
-                            }
 
                             if focused {
                                 let cursor = self.virtual_editor_state.cursor();
@@ -2839,6 +2845,7 @@ mod tests {
             last_interaction_at: None,
             last_editor_click_at: None,
             last_editor_click_pos: None,
+            last_editor_click_count: 0,
             last_virtual_click_at: None,
             last_virtual_click_pos: None,
             last_virtual_click_line: None,
@@ -3232,7 +3239,7 @@ mod tests {
         assert_eq!(c3, 3);
 
         let changed_line = next_virtual_click_count(Some(now), Some(p), Some(5), c3, 6, p, now);
-        assert_eq!(changed_line, 1);
+        assert_eq!(changed_line, 3);
 
         let expired = next_virtual_click_count(
             Some(now),
@@ -3244,6 +3251,10 @@ mod tests {
             now + EDITOR_DOUBLE_CLICK_WINDOW + Duration::from_millis(1),
         );
         assert_eq!(expired, 1);
+
+        let far = egui::pos2(100.0 + EDITOR_DOUBLE_CLICK_DISTANCE + 1.0, 200.0);
+        let distant = next_virtual_click_count(Some(now), Some(p), Some(5), c3, 5, far, now);
+        assert_eq!(distant, 1);
     }
 
     #[test]
