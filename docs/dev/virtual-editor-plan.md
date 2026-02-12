@@ -51,6 +51,10 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
 
 ## Post-Default Follow-ups
 
+- Fix known highlight latency gap on newline bursts in `perf-scroll-5k-lines`:
+  - symptom: repeated `Enter` in the middle can cause 5-10s plain fallback before highlight returns
+  - likely cause: cache reuse boundary still misses suffix reuse after line topology changes
+  - target fix: add per-line start-state snapshots for worker/UI caches so reuse checks can match current start state directly after prefix/suffix alignment
 - Continue periodic manual parity passes in GUI for:
   - typing and edits at start/middle/end of large buffers
   - selection parity (mouse drag, shift-selection, word navigation)
@@ -62,6 +66,8 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
   - average FPS `>= 45`
   - p95 frame time `<= 25 ms`
   - no visible hitching during rapid scroll + mid-document typing
+- Preserve unfocused paste behavior as a hard non-regression:
+  - when LocalPaste window is active but editor is unfocused, `Ctrl/Cmd+V` must create a new paste and must not mutate the current editor
 
 ## Rollout Plan
 

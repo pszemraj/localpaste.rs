@@ -80,10 +80,11 @@ Decision key:
 ### Virtual Editor Reliability Gates (Validated For Default Mode)
 
 - [x] Clipboard reliability (`Ctrl/Cmd+C/X/V`) with external paste verification
+- [x] `Ctrl/Cmd+V` non-regression: when app window is active but editor is unfocused, paste creates a new paste and does not mutate current editor content
 - [x] Focus-gated virtual command routing: only `Copy` is selection-driven without focus; mutating/edit commands require focused virtual editor
 - [x] Triple-click whole-line selection behavior (repeatable, non-intermittent)
 - [x] Selection visuals: style-driven low-opacity fill from `ui.visuals().selection` (no custom multi-line left rail)
-- [x] Highlight recovery: keep current render visible while async refresh is pending
+- [~] Highlight recovery: keep current render visible while async refresh is pending (known gap: repeated Enter in `perf-scroll-5k-lines` can still produce multi-second plain fallback)
 - [x] Stale staged-highlight renders are dropped before apply (no unnecessary `highlight_version` bumps)
 - [x] Trace protocol documented and validated with:
   - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
