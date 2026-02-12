@@ -87,6 +87,19 @@ Decision key:
   - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
   - `LOCALPASTE_HIGHLIGHT_TRACE=1`
 
+Recommended validation command (PowerShell):
+
+```powershell
+.\scratch\virtualizedgui-perf-run.ps1 `
+  -Profile Release `
+  -VirtualMode Editor `
+  -PerfLog `
+  -InputTrace `
+  -HighlightTrace `
+  -KeepDb `
+  -Port 38973
+```
+
 ## Phase 5: Search + Command Palette
 
 - [ ] Debounced search (150ms)

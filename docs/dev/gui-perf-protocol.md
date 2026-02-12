@@ -17,12 +17,25 @@ cargo build -p localpaste_server --bin localpaste --release
 cargo build -p localpaste_gui --bin localpaste-gui --release
 ```
 
+Optional local helper (if present in your untracked `scratch/` folder):
+
+```powershell
+.\scratch\virtualizedgui-perf-run.ps1 `
+  -Profile Release `
+  -VirtualMode Editor `
+  -PerfLog `
+  -InputTrace `
+  -HighlightTrace `
+  -KeepDb `
+  -Port 38973
+```
+
 ## 1) Seed a dedicated perf DB
 
 ```powershell
 $ErrorActionPreference = "Stop"
 $TestDb = Join-Path $env:TEMP ("lpaste-gui-perf-" + [guid]::NewGuid().ToString("N"))
-$Port = 38455
+$Port = 38973
 $env:PORT = "$Port"
 $env:DB_PATH = $TestDb
 $env:RUST_LOG = "info"
@@ -194,7 +207,9 @@ $env:LOCALPASTE_VIRTUAL_EDITOR = "1"
 # Optional highlight lifecycle trace (request/queue/apply/drop reasons)
 # $env:LOCALPASTE_HIGHLIGHT_TRACE = "1"
 
-.\target\release\localpaste-gui.exe
+cargo run -p localpaste_gui --bin localpaste-gui --release
+# Optional equivalent:
+# .\target\release\localpaste-gui.exe
 ```
 
 ## 3) Manual verification checklist
