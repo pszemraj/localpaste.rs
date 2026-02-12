@@ -60,7 +60,11 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
 - Post-refactor constraint achieved: all `crates/localpaste_gui/src/**/*.rs` files are now `< 1000` LoC.
 - Default mode switched to editable virtual editor (`EditorMode::VirtualEditor`) with explicit `TextEdit` opt-out via `LOCALPASTE_VIRTUAL_EDITOR=0`.
 
-## Post-Default Follow-ups
+## Deferred Follow-ups (Post-Merge)
+
+These items are intentionally deferred to follow-up PRs so the rewrite work can keep moving.
+They are not blockers for keeping `VirtualEditor` as the default path.
+Current pre-merge focus remains the broader parity work tracked in `docs/dev/parity-checklist.md`.
 
 - Fix known highlight latency gap on newline bursts in `perf-scroll-5k-lines`:
   - symptom: repeated `Enter` in the middle can cause 5-10s plain fallback before highlight returns
@@ -78,8 +82,9 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
 - Preserve unfocused paste behavior as a hard non-regression:
   - when LocalPaste window is active but editor is unfocused, `Ctrl/Cmd+V` must create a new paste and must not mutate the current editor
 
-## Rollout Plan
+## Follow-up Sequencing
 
-1. Keep running `docs/dev/gui-perf-protocol.md` for perf + interaction regression checks.
-2. Keep `TextEdit` as a temporary kill-switch (`LOCALPASTE_VIRTUAL_EDITOR=0`) for at least one cycle.
-3. Remove fallback only after parity checklist and perf gate remain stable across normal usage.
+1. Finish the highest-priority parity items from `docs/dev/parity-checklist.md` (legacy-removal track).
+2. Keep running `docs/dev/gui-perf-protocol.md` for perf + interaction regression checks.
+3. Keep `TextEdit` kill-switch (`LOCALPASTE_VIRTUAL_EDITOR=0`) available until parity and perf remain stable in normal usage.
+4. Remove fallback after parity gate confidence is established.
