@@ -128,7 +128,7 @@ fn paste_id_and_name(paste: &Value) -> Option<(&str, &str)> {
     Some((id, name))
 }
 
-fn format_list_output(pastes: &[Value], json: bool) -> Result<String, String> {
+fn format_summary_output(pastes: &[Value], json: bool) -> Result<String, String> {
     if json {
         return serde_json::to_string_pretty(pastes)
             .map_err(|err| format!("response encoding error: {}", err));
@@ -146,6 +146,28 @@ fn format_list_output(pastes: &[Value], json: bool) -> Result<String, String> {
     }
 
     Ok(rows.join("\n"))
+}
+
+fn format_get_output(paste: &Value, json: bool) -> Result<String, String> {
+    if json {
+        return serde_json::to_string_pretty(paste)
+            .map_err(|err| format!("response encoding error: {}", err));
+    }
+
+    paste
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "response missing 'content' field".to_string())
+}
+
+fn format_delete_output(id: &str, response: &Value, json: bool) -> Result<String, String> {
+    if json {
+        return serde_json::to_string_pretty(response)
+            .map_err(|err| format!("response encoding error: {}", err));
+    }
+
+    Ok(format!("Deleted paste: {}", id))
 }
 
 fn normalize_server(server: String) -> String {
@@ -234,11 +256,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let parse_elapsed = parse_start.elapsed();
 
             log_timing_parts(timing, "get", request_elapsed, Some(parse_elapsed));
-            let Some(content) = paste.get("content").and_then(Value::as_str) else {
-                eprintln!("Get failed: response missing 'content' field");
-                std::process::exit(1);
+            let output = match format_get_output(&paste, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("Get failed: {}", message);
+                    std::process::exit(1);
+                }
             };
-            println!("{}", content);
+            println!("{}", output);
         }
         Commands::List { limit } => {
             let request_start = Instant::now();
@@ -255,7 +280,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let parse_elapsed = parse_start.elapsed();
 
             log_timing_parts(timing, "list", request_elapsed, Some(parse_elapsed));
-            let output = match format_list_output(&pastes, json) {
+            let output = match format_summary_output(&pastes, json) {
                 Ok(output) => output,
                 Err(message) => {
                     eprintln!("List failed: {}", message);
@@ -281,15 +306,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let parse_elapsed = parse_start.elapsed();
 
             log_timing_parts(timing, "search", request_elapsed, Some(parse_elapsed));
-            for (index, p) in pastes.iter().enumerate() {
-                let Some((id, name)) = paste_id_and_name(p) else {
-                    eprintln!(
-                        "Search failed: response item {} missing 'id' or 'name' field",
-                        index
-                    );
+            let output = match format_summary_output(&pastes, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("Search failed: {}", message);
                     std::process::exit(1);
-                };
-                println!("{:<24} {:<30}", id, name);
+                }
+            };
+            if !output.is_empty() {
+                println!("{}", output);
             }
         }
         Commands::Delete { id } => {
@@ -299,9 +324,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .send()
                 .await?;
             let request_elapsed = request_start.elapsed();
-            log_timing(timing, "delete", request_elapsed);
-            let _ = ensure_success_or_exit(res, "Delete").await;
-            println!("Deleted paste: {}", id);
+            let res = ensure_success_or_exit(res, "Delete").await;
+            let parse_start = Instant::now();
+            let response: Value = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+            log_timing_parts(timing, "delete", request_elapsed, Some(parse_elapsed));
+
+            let output = match format_delete_output(&id, &response, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("Delete failed: {}", message);
+                    std::process::exit(1);
+                }
+            };
+            println!("{}", output);
         }
     }
 
@@ -311,7 +347,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        error_message_for_response, format_list_output, normalize_server, paste_id_and_name,
+        error_message_for_response, format_delete_output, format_get_output, format_summary_output,
+        normalize_server, paste_id_and_name,
     };
 
     #[test]
@@ -366,15 +403,38 @@ mod tests {
     }
 
     #[test]
-    fn list_output_honors_json_mode() {
+    fn summary_output_honors_json_mode() {
         let pastes = vec![serde_json::json!({
             "id": "abc123",
             "name": "demo"
         })];
-        let rendered = format_list_output(&pastes, true).expect("json output should render");
+        let rendered = format_summary_output(&pastes, true).expect("json output should render");
         let parsed: serde_json::Value =
             serde_json::from_str(&rendered).expect("rendered output should be valid json");
         assert_eq!(parsed[0]["id"], "abc123");
         assert_eq!(parsed[0]["name"], "demo");
+    }
+
+    #[test]
+    fn get_output_honors_json_mode() {
+        let paste = serde_json::json!({
+            "id": "abc123",
+            "name": "demo",
+            "content": "hello"
+        });
+        let rendered = format_get_output(&paste, true).expect("json output should render");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).expect("rendered output should be valid json");
+        assert_eq!(parsed["content"], "hello");
+    }
+
+    #[test]
+    fn delete_output_honors_json_mode() {
+        let response = serde_json::json!({ "success": true });
+        let rendered =
+            format_delete_output("abc123", &response, true).expect("json output should render");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).expect("rendered output should be valid json");
+        assert_eq!(parsed["success"], true);
     }
 }

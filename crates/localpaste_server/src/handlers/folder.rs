@@ -9,6 +9,28 @@ use axum::{
 };
 use localpaste_core::folder_ops::{delete_folder_tree_and_migrate, introduces_cycle};
 
+fn normalize_optional_parent_for_create(parent_id: Option<String>) -> Option<String> {
+    parent_id.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn normalize_optional_parent_for_update(parent_id: Option<String>) -> Option<String> {
+    parent_id.map(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            String::new()
+        } else {
+            trimmed.to_string()
+        }
+    })
+}
+
 /// Create a new folder.
 ///
 /// # Arguments
@@ -22,9 +44,10 @@ use localpaste_core::folder_ops::{delete_folder_tree_and_migrate, introduces_cyc
 /// Returns an error if validation or persistence fails.
 pub async fn create_folder(
     State(state): State<AppState>,
-    Json(req): Json<CreateFolderRequest>,
+    Json(mut req): Json<CreateFolderRequest>,
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("POST /api/folder");
+    req.parent_id = normalize_optional_parent_for_create(req.parent_id);
 
     if let Some(ref parent_id) = req.parent_id {
         if state.db.folders.get(parent_id)?.is_none() {
@@ -73,9 +96,10 @@ pub async fn list_folders(State(state): State<AppState>) -> Result<Response, Htt
 pub async fn update_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(req): Json<UpdateFolderRequest>,
+    Json(mut req): Json<UpdateFolderRequest>,
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("PUT /api/folder/:id");
+    req.parent_id = normalize_optional_parent_for_update(req.parent_id);
 
     let folders = if req
         .parent_id

@@ -8,6 +8,28 @@ use axum::{
     Json,
 };
 
+fn normalize_optional_id_for_create(id: Option<String>) -> Option<String> {
+    id.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn normalize_optional_id_for_update(id: Option<String>) -> Option<String> {
+    id.map(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            String::new()
+        } else {
+            trimmed.to_string()
+        }
+    })
+}
+
 /// Create a new paste.
 ///
 /// # Arguments
@@ -24,6 +46,7 @@ pub async fn create_paste(
     Json(mut req): Json<CreatePasteRequest>,
 ) -> Result<Response, HttpError> {
     let folder_field_used = req.folder_id.is_some();
+    req.folder_id = normalize_optional_id_for_create(req.folder_id);
 
     // Check paste size limit
     if req.content.len() > state.config.max_paste_size {
@@ -34,19 +57,14 @@ pub async fn create_paste(
         .into());
     }
 
-    // Normalize empty string folder_id to None
     if let Some(ref folder_id) = req.folder_id {
-        if folder_id.is_empty() {
-            req.folder_id = None;
-        } else {
-            // Validate folder exists
-            if state.db.folders.get(folder_id)?.is_none() {
-                return Err(AppError::BadRequest(format!(
-                    "Folder with id '{}' does not exist",
-                    folder_id
-                ))
-                .into());
-            }
+        // Validate folder exists
+        if state.db.folders.get(folder_id)?.is_none() {
+            return Err(AppError::BadRequest(format!(
+                "Folder with id '{}' does not exist",
+                folder_id
+            ))
+            .into());
         }
     }
 
@@ -122,9 +140,10 @@ pub async fn get_paste(
 pub async fn update_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(req): Json<UpdatePasteRequest>,
+    Json(mut req): Json<UpdatePasteRequest>,
 ) -> Result<Response, HttpError> {
     let folder_field_used = req.folder_id.is_some();
+    req.folder_id = normalize_optional_id_for_update(req.folder_id);
 
     // Check size limit if content is being updated
     if let Some(ref content) = req.content {
@@ -244,14 +263,10 @@ pub async fn list_pastes(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, HttpError> {
-    let folder_filter_used = query
-        .folder_id
-        .as_deref()
-        .map(str::trim)
-        .map(|value| !value.is_empty())
-        .unwrap_or(false);
+    let normalized_folder_id = normalize_optional_id_for_create(query.folder_id);
+    let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
-    let pastes = state.db.pastes.list(limit, query.folder_id)?;
+    let pastes = state.db.pastes.list(limit, normalized_folder_id)?;
     if folder_filter_used {
         warn_folder_deprecation("GET /api/pastes?folder_id=...");
         Ok(with_folder_deprecation_headers(Json(pastes)))
@@ -275,17 +290,13 @@ pub async fn search_pastes(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Response, HttpError> {
-    let folder_filter_used = query
-        .folder_id
-        .as_deref()
-        .map(str::trim)
-        .map(|value| !value.is_empty())
-        .unwrap_or(false);
+    let normalized_folder_id = normalize_optional_id_for_create(query.folder_id);
+    let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
     let pastes = state
         .db
         .pastes
-        .search(&query.q, limit, query.folder_id, query.language)?;
+        .search(&query.q, limit, normalized_folder_id, query.language)?;
     if folder_filter_used {
         warn_folder_deprecation("GET /api/search?folder_id=...");
         Ok(with_folder_deprecation_headers(Json(pastes)))

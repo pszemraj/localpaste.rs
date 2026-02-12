@@ -302,6 +302,113 @@ async fn test_invalid_folder_association() {
 }
 
 #[tokio::test]
+async fn test_whitespace_folder_ids_normalize_consistently() {
+    let (server, _temp, _locks) = setup_test_server().await;
+
+    // Parent id containing only whitespace should normalize to top-level.
+    let top_level_response = server
+        .post("/api/folder")
+        .json(&json!({
+            "name": "Top Level",
+            "parent_id": "   "
+        }))
+        .await;
+    assert_eq!(top_level_response.status_code(), StatusCode::OK);
+    let top_level: serde_json::Value = top_level_response.json();
+    assert!(top_level["parent_id"].is_null());
+
+    let parent_response = server
+        .post("/api/folder")
+        .json(&json!({
+            "name": "Parent"
+        }))
+        .await;
+    assert_eq!(parent_response.status_code(), StatusCode::OK);
+    let parent: serde_json::Value = parent_response.json();
+    let parent_id = parent["id"].as_str().unwrap();
+
+    let child_response = server
+        .post("/api/folder")
+        .json(&json!({
+            "name": "Child",
+            "parent_id": parent_id
+        }))
+        .await;
+    assert_eq!(child_response.status_code(), StatusCode::OK);
+    let child: serde_json::Value = child_response.json();
+    let child_id = child["id"].as_str().unwrap();
+
+    // Whitespace parent update should explicitly clear parent.
+    let clear_parent_response = server
+        .put(&format!("/api/folder/{}", child_id))
+        .json(&json!({
+            "name": "Child",
+            "parent_id": "   "
+        }))
+        .await;
+    assert_eq!(clear_parent_response.status_code(), StatusCode::OK);
+    let cleared_child: serde_json::Value = clear_parent_response.json();
+    assert!(cleared_child["parent_id"].is_null());
+
+    // Whitespace folder id on create should be treated as unfiled.
+    let whitespace_create_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "whitespace-audit one",
+            "name": "ws-create",
+            "folder_id": "   "
+        }))
+        .await;
+    assert_eq!(whitespace_create_response.status_code(), StatusCode::OK);
+    let whitespace_created: serde_json::Value = whitespace_create_response.json();
+    assert!(whitespace_created["folder_id"].is_null());
+
+    // Assign to a folder, then clear with whitespace update.
+    let foldered_paste_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "whitespace-audit two",
+            "name": "ws-update",
+            "folder_id": parent_id
+        }))
+        .await;
+    assert_eq!(foldered_paste_response.status_code(), StatusCode::OK);
+    let foldered_paste: serde_json::Value = foldered_paste_response.json();
+    let foldered_paste_id = foldered_paste["id"].as_str().unwrap();
+
+    let whitespace_update_response = server
+        .put(&format!("/api/paste/{}", foldered_paste_id))
+        .json(&json!({
+            "folder_id": "   "
+        }))
+        .await;
+    assert_eq!(whitespace_update_response.status_code(), StatusCode::OK);
+    let whitespace_updated: serde_json::Value = whitespace_update_response.json();
+    assert!(whitespace_updated["folder_id"].is_null());
+
+    // Whitespace filter should behave like no filter in list/search paths.
+    let all_list_response = server.get("/api/pastes?limit=20").await;
+    assert_eq!(all_list_response.status_code(), StatusCode::OK);
+    let all_list: Vec<serde_json::Value> = all_list_response.json();
+
+    let whitespace_list_response = server.get("/api/pastes?limit=20&folder_id=%20%20%20").await;
+    assert_eq!(whitespace_list_response.status_code(), StatusCode::OK);
+    let whitespace_list: Vec<serde_json::Value> = whitespace_list_response.json();
+    assert_eq!(whitespace_list.len(), all_list.len());
+
+    let all_search_response = server.get("/api/search?q=whitespace-audit&limit=20").await;
+    assert_eq!(all_search_response.status_code(), StatusCode::OK);
+    let all_search: Vec<serde_json::Value> = all_search_response.json();
+
+    let whitespace_search_response = server
+        .get("/api/search?q=whitespace-audit&limit=20&folder_id=%20%20%20")
+        .await;
+    assert_eq!(whitespace_search_response.status_code(), StatusCode::OK);
+    let whitespace_search: Vec<serde_json::Value> = whitespace_search_response.json();
+    assert_eq!(whitespace_search.len(), all_search.len());
+}
+
+#[tokio::test]
 async fn test_folder_deletion_migrates_pastes() {
     let (server, _temp, _locks) = setup_test_server().await;
 
