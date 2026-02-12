@@ -1,11 +1,15 @@
 # Docs
 
+This file is the documentation index and ownership map.
+If two docs repeat the same procedures, keep one canonical and replace the other with a short link.
+
 ## Source Of Truth Map
 
 Use these as canonical references. Other docs should link here instead of restating procedures.
 
 | Topic | Canonical doc |
 | --- | --- |
+| Product/project overview | [../README.md](../README.md) |
 | Security posture + public exposure | [security.md](security.md) |
 | Service/background operation | [deployment.md](deployment.md) |
 | Development workflow (build/run/test/debug) | [dev/devlog.md](dev/devlog.md) |
@@ -19,7 +23,8 @@ When updating docs:
 
 - Put normative procedures in the canonical doc for that topic.
 - Keep non-canonical docs concise and link back to the canonical source.
-- Avoid copying command matrices/flag definitions across multiple files.
+- Avoid copying command matrices, env-flag definitions, or merge-gate checklists across files.
+- If context is needed in a non-canonical doc, summarize briefly and link to the canonical source.
 
 ## Overview
 

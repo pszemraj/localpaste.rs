@@ -2,6 +2,7 @@
 
 This is the primary development workflow document.
 For topic-specific details, link to the canonical docs in `docs/README.md`.
+This is the canonical source for binary/build/run command matrices.
 
 ## Workspace Layout
 

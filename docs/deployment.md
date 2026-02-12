@@ -1,6 +1,7 @@
 # Running LocalPaste as a Background Service
 
 > These instructions apply to the headless localpaste server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
+> Security posture, bind policy, and public exposure guidance are canonical in [security.md](security.md).
 
 ## Quick Start
 

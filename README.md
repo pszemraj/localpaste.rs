@@ -4,72 +4,36 @@ A fast, localhost-only pastebin with a modern editor, built in Rust.
 
 ![LocalPaste Screenshot](assets/ui.jpg)
 
-## What it is
+## What It Is
 
-LocalPaste is a local-first paste manager with:
+LocalPaste provides:
 
-- Native GUI rewrite (primary desktop app)
-- Headless JSON API server + CLI
+- Native desktop GUI (`localpaste-gui`) as the primary UX
+- Headless API server (`localpaste`) for automation/integration
+- CLI client (`lpaste`) for terminal workflows
 
-## Binaries
-
-- `localpaste-gui` - native rewrite desktop app
-- `localpaste` - headless API server
-- `lpaste` - CLI client
-
-## Quick start
-
-### GUI
+## Quick Start
 
 ```bash
+# GUI
 cargo run -p localpaste_gui --bin localpaste-gui
-```
 
-Install to your PATH:
-
-```bash
-cargo install --path crates/localpaste_gui --bin localpaste-gui
-```
-
-Optional editor modes (rewrite GUI):
-
-See [docs/dev/gui-notes.md](docs/dev/gui-notes.md) for the canonical runtime flag matrix and behavior notes.
-See [docs/dev/gui-perf-protocol.md](docs/dev/gui-perf-protocol.md) for perf validation procedure and thresholds.
-
-### Server + CLI
-
-```bash
+# API server
 cargo run -p localpaste_server --bin localpaste --release
-```
 
-The server listens on `http://127.0.0.1:38411` by default.
-
-```bash
-# Build the CLI
+# CLI example
 cargo build -p localpaste_cli --bin lpaste --release
-
-# Create a paste
 "Hello, World!" | ./target/release/lpaste new
-
-# List pastes
-./target/release/lpaste list
 ```
 
-## Configuration
+For the full binary/build/run matrix, use the canonical dev workflow doc:
+[docs/dev/devlog.md](docs/dev/devlog.md).
 
-Copy `.env.example` to `.env` for overrides:
+## Configuration And Ops
 
-```bash
-cp .env.example .env
-```
-
-For environment variables, security guidance, and public exposure notes, see [docs/security.md](docs/security.md).
-
-For background services and OS-specific setup, see [docs/deployment.md](docs/deployment.md).
-
-## Documentation
-
-See [docs/README.md](docs/README.md) for the canonical docs map and source-of-truth ownership.
+- Security and environment variables: [docs/security.md](docs/security.md)
+- Service/background operation: [docs/deployment.md](docs/deployment.md)
+- Documentation source-of-truth map: [docs/README.md](docs/README.md)
 
 ## License
 
