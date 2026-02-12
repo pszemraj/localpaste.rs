@@ -2,9 +2,9 @@
 
 use super::highlight::align_old_lines_by_hash;
 use super::*;
-use crate::backend::CoreEvent;
+use crate::backend::{CoreCmd, CoreEvent};
 use chrono::Utc;
-use crossbeam_channel::unbounded;
+use crossbeam_channel::{unbounded, Receiver, TryRecvError};
 use eframe::egui::TextBuffer;
 use syntect::util::LinesWithEndings;
 use tempfile::TempDir;
@@ -12,6 +12,7 @@ use tempfile::TempDir;
 struct TestHarness {
     _dir: TempDir,
     app: LocalPasteApp,
+    cmd_rx: Receiver<CoreCmd>,
 }
 
 #[derive(Debug)]
@@ -28,7 +29,7 @@ fn aligned_names(aligned: &[Option<FakeHighlightLine>]) -> Vec<Option<&'static s
 }
 
 fn make_app() -> TestHarness {
-    let (cmd_tx, _cmd_rx) = unbounded();
+    let (cmd_tx, cmd_rx) = unbounded();
     let (_evt_tx, evt_rx) = unbounded();
     let dir = TempDir::new().expect("temp dir");
     let db_path = dir.path().join("db");
@@ -140,7 +141,16 @@ fn make_app() -> TestHarness {
         highlight_trace_enabled: false,
     };
 
-    TestHarness { _dir: dir, app }
+    TestHarness {
+        _dir: dir,
+        app,
+        cmd_rx,
+    }
+}
+
+fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
+    rx.recv_timeout(Duration::from_millis(200))
+        .expect("expected outbound command")
 }
 
 #[test]
@@ -985,4 +995,189 @@ fn command_palette_ranking_prefers_prefix() {
     let ranked = harness.app.rank_palette_results();
     assert_eq!(ranked.len(), 2);
     assert_eq!(ranked[0].id, "1");
+}
+
+#[test]
+fn maybe_dispatch_search_requires_debounce_and_dedupes() {
+    let mut harness = make_app();
+    harness.app.set_search_query("rust".to_string());
+
+    harness.app.search_last_input_at = Some(Instant::now());
+    harness.app.maybe_dispatch_search();
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+
+    harness.app.search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPastes {
+            query,
+            limit,
+            folder_id,
+            language,
+        } => {
+            assert_eq!(query, "rust");
+            assert_eq!(limit, 512);
+            assert!(folder_id.is_none());
+            assert!(language.is_none());
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    harness.app.maybe_dispatch_search();
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn maybe_dispatch_search_applies_collection_filters() {
+    let mut harness = make_app();
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Folder("folder-123".to_string()));
+    harness.app.set_search_query("alpha".to_string());
+    harness.app.search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPastes {
+            folder_id,
+            language,
+            ..
+        } => {
+            assert_eq!(folder_id.as_deref(), Some("folder-123"));
+            assert!(language.is_none());
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Language("rust".to_string()));
+    harness.app.set_search_query("beta".to_string());
+    harness.app.search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPastes {
+            folder_id,
+            language,
+            ..
+        } => {
+            assert!(folder_id.is_none());
+            assert_eq!(language.as_deref(), Some("rust"));
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn save_metadata_now_sends_manual_language_and_normalized_tags() {
+    let mut harness = make_app();
+    harness.app.metadata_dirty = true;
+    harness.app.edit_name = "Script One".to_string();
+    harness.app.edit_language = Some("python".to_string());
+    harness.app.edit_language_is_manual = true;
+    harness.app.edit_folder_id = Some("folder-a".to_string());
+    harness.app.edit_tags = "rust, CLI, rust, cli, ".to_string();
+
+    harness.app.save_metadata_now();
+    assert!(!harness.app.metadata_dirty);
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePasteMeta {
+            id,
+            name,
+            language,
+            language_is_manual,
+            folder_id,
+            tags,
+        } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(name.as_deref(), Some("Script One"));
+            assert_eq!(language.as_deref(), Some("python"));
+            assert_eq!(language_is_manual, Some(true));
+            assert_eq!(folder_id.as_deref(), Some("folder-a"));
+            assert_eq!(
+                tags.expect("tags"),
+                vec!["rust".to_string(), "CLI".to_string()]
+            );
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn save_metadata_now_auto_language_clears_override_and_folder() {
+    let mut harness = make_app();
+    harness.app.metadata_dirty = true;
+    harness.app.edit_name = "Auto Language".to_string();
+    harness.app.edit_language = Some("python".to_string());
+    harness.app.edit_language_is_manual = false;
+    harness.app.edit_folder_id = None;
+    harness.app.edit_tags = String::new();
+
+    harness.app.save_metadata_now();
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePasteMeta {
+            language,
+            language_is_manual,
+            folder_id,
+            ..
+        } => {
+            assert!(language.is_none());
+            assert_eq!(language_is_manual, Some(false));
+            assert_eq!(folder_id.as_deref(), Some(""));
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn save_and_autosave_emit_update_commands_at_expected_times() {
+    let mut harness = make_app();
+    harness
+        .app
+        .selected_content
+        .reset("manual-save".to_string());
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.save_in_flight = false;
+    harness.app.save_now();
+
+    assert!(matches!(harness.app.save_status, SaveStatus::Saving));
+    assert!(harness.app.save_in_flight);
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePaste { id, content } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(content, "manual-save");
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    harness.app.save_in_flight = false;
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.selected_content.reset("auto-save".to_string());
+    harness.app.last_edit_at = Some(Instant::now());
+    harness.app.maybe_autosave();
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+
+    harness.app.last_edit_at =
+        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+    harness.app.maybe_autosave();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePaste { id, content } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(content, "auto-save");
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
 }

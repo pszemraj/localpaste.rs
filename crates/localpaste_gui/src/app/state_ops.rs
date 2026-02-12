@@ -546,3 +546,37 @@ fn format_fenced_block(content: &str, language: Option<&str>) -> String {
     let lang = language.unwrap_or("text");
     format!("```{}\n{}\n```", lang, content)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_tags_csv_trims_and_dedupes_case_insensitively() {
+        let parsed = parse_tags_csv(" rust,CLI, rust , cli ,");
+        assert_eq!(parsed, vec!["rust".to_string(), "CLI".to_string()]);
+    }
+
+    #[test]
+    fn language_extension_maps_known_and_unknown_languages() {
+        assert_eq!(language_extension(Some("rust")), "rs");
+        assert_eq!(language_extension(Some(" Python ")), "py");
+        assert_eq!(language_extension(Some("unknown")), "txt");
+        assert_eq!(language_extension(None), "txt");
+    }
+
+    #[test]
+    fn sanitize_filename_replaces_reserved_chars_and_falls_back() {
+        assert_eq!(sanitize_filename("bad<>:\"/\\|?*name"), "bad_________name");
+        assert_eq!(sanitize_filename("   "), "localpaste-export");
+    }
+
+    #[test]
+    fn format_fenced_block_uses_language_or_text_default() {
+        assert_eq!(
+            format_fenced_block("let x = 1;", Some("rust")),
+            "```rust\nlet x = 1;\n```"
+        );
+        assert_eq!(format_fenced_block("hello", None), "```text\nhello\n```");
+    }
+}
