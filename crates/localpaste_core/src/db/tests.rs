@@ -65,11 +65,14 @@ mod db_tests {
     }
 
     #[test]
-    fn test_manual_language_can_be_cleared_when_switching_to_auto() {
+    fn test_manual_language_switches_to_auto_and_redetects() {
         let (db, _temp) = setup_test_db();
 
-        let mut paste = Paste::new("print('hello')".to_string(), "script".to_string());
-        paste.language = Some("python".to_string());
+        let mut paste = Paste::new(
+            "def main():\n    print('hello')".to_string(),
+            "script".to_string(),
+        );
+        paste.language = Some("rust".to_string());
         paste.language_is_manual = true;
         let paste_id = paste.id.clone();
         db.pastes.create(&paste).unwrap();
@@ -85,7 +88,32 @@ mod db_tests {
         let updated = db.pastes.update(&paste_id, to_auto).unwrap().unwrap();
 
         assert!(!updated.language_is_manual);
-        assert!(updated.language.is_none());
+        assert_eq!(updated.language.as_deref(), Some("python"));
+    }
+
+    #[test]
+    fn test_content_update_redetects_language_in_auto_mode() {
+        let (db, _temp) = setup_test_db();
+
+        let paste = Paste::new(
+            "fn main() {\n    let x = 1;\n}".to_string(),
+            "script".to_string(),
+        );
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).unwrap();
+
+        let update = UpdatePasteRequest {
+            content: Some("def main():\n    print('hello')".to_string()),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        };
+        let updated = db.pastes.update(&paste_id, update).unwrap().unwrap();
+
+        assert!(!updated.language_is_manual);
+        assert_eq!(updated.language.as_deref(), Some("python"));
     }
 
     #[test]

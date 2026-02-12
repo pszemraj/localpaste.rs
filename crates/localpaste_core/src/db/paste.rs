@@ -67,23 +67,28 @@ impl PasteDb {
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
             old.and_then(|bytes| {
                 let mut paste = deserialize_paste(bytes).ok()?;
+                let mut content_changed = false;
 
                 if let Some(content) = &update.content {
                     paste.content = content.clone();
                     paste.is_markdown =
                         paste.content.contains("```") || paste.content.contains('#');
+                    content_changed = true;
                 }
                 if let Some(name) = &update.name {
                     paste.name = name.clone();
                 }
                 if update.language.is_some() {
                     paste.language = update.language.clone();
-                } else if update.language_is_manual == Some(false) {
-                    // Switching back to auto language mode clears any manual override.
-                    paste.language = None;
                 }
                 if let Some(is_manual) = update.language_is_manual {
                     paste.language_is_manual = is_manual;
+                }
+                let should_auto_detect = update.language.is_none()
+                    && !paste.language_is_manual
+                    && (content_changed || update.language_is_manual == Some(false));
+                if should_auto_detect {
+                    paste.language = detect_language(&paste.content);
                 }
                 // Normalize folder_id: empty string becomes None
                 if let Some(ref fid) = update.folder_id {

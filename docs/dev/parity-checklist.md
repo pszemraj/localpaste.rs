@@ -17,6 +17,15 @@ Decision key:
 
 ---
 
+## Audit Snapshot (2026-02-12)
+
+Codebase audit against this checklist found:
+
+- `Optional folder tree (if kept)` was stale in this doc; nested folder tree rendering and ops are implemented in the rewrite sidebar.
+- Auto language re-detection on update was the essential remaining language parity gap; it is now implemented in core update flow when `language_is_manual = false`.
+
+---
+
 - [Plan-Aligned Rewrite Checklist](#plan-aligned-rewrite-checklist)
   - [Phase 0: Baseline \& Guardrails](#phase-0-baseline--guardrails)
   - [Phase 1: Extract localpaste\_core](#phase-1-extract-localpaste_core)
@@ -108,14 +117,14 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 
 - [ ] Duplicate detection
 - [ ] LLM output heuristic
-- [ ] Optional folder tree (if kept)
+- [x] Optional folder tree (if kept) [Keep]
 - [x] Drag-drop to folder (paste row -> folder row, keep active scope)
 - [x] Copy as fenced code block
 - [ ] Context menus
 
 ## Language + Highlighting
 
-- [~] Auto-detect language on content (core detects on create; rewrite does not re-run yet)
+- [x] Auto-detect language on content (detect on create; re-detect on content update and when switching back to auto mode)
 - [x] Manual language override + `language_is_manual`
 - [x] Async syntect highlighting with staged apply and line-state reuse [Replace]
 - [x] Large-paste fallback to plain text
