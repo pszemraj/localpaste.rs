@@ -201,10 +201,7 @@ impl LocalPasteApp {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                             }
                             if pending_action.is_none()
-                                && (response.triple_clicked()
-                                    || response.double_clicked()
-                                    || response.drag_started()
-                                    || response.clicked())
+                                && (response.drag_started() || response.clicked())
                             {
                                 if let Some(pointer_pos) = response.interact_pointer_pos() {
                                     let local_pos = pointer_pos - rect.min;
@@ -222,7 +219,7 @@ impl LocalPasteApp {
                                             Some(RowAction::DragStart { cursor: vcursor });
                                     } else {
                                         let now = Instant::now();
-                                        let mut click_count = next_virtual_click_count(
+                                        let click_count = next_virtual_click_count(
                                             last_virtual_click_at,
                                             last_virtual_click_pos,
                                             last_virtual_click_line,
@@ -231,12 +228,6 @@ impl LocalPasteApp {
                                             pointer_pos,
                                             now,
                                         );
-                                        if response.double_clicked() {
-                                            click_count = click_count.max(2);
-                                        }
-                                        if response.triple_clicked() {
-                                            click_count = 3;
-                                        }
                                         last_virtual_click_at = Some(now);
                                         last_virtual_click_pos = Some(pointer_pos);
                                         last_virtual_click_line = Some(line_idx);
@@ -507,10 +498,7 @@ impl LocalPasteApp {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                             }
                             if pending_action.is_none()
-                                && (response.triple_clicked()
-                                    || response.double_clicked()
-                                    || response.drag_started()
-                                    || response.clicked())
+                                && (response.drag_started() || response.clicked())
                             {
                                 if let Some(pointer_pos) = response.interact_pointer_pos() {
                                     let local_pos = pointer_pos - rect.min;
@@ -522,14 +510,8 @@ impl LocalPasteApp {
                                         editor_interacted = true;
                                         pending_action = Some(RowAction::DragStart { global });
                                     } else {
-                                        let mut click_count =
+                                        let click_count =
                                             self.register_virtual_click(line_idx, pointer_pos);
-                                        if response.double_clicked() {
-                                            click_count = click_count.max(2);
-                                        }
-                                        if response.triple_clicked() {
-                                            click_count = 3;
-                                        }
                                         self.last_virtual_click_count = click_count;
                                         match click_count {
                                             3 => {
