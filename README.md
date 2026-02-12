@@ -69,10 +69,7 @@ For background services and OS-specific setup, see [docs/deployment.md](docs/dep
 
 ## Documentation
 
-- [docs/README.md](docs/README.md) - canonical docs map and source-of-truth ownership
-- [docs/dev/devlog.md](docs/dev/devlog.md) - canonical build/run/test contributor workflow
-- [docs/security.md](docs/security.md) - canonical security posture and public exposure notes
-- [docs/deployment.md](docs/deployment.md) - canonical service/background operation guide
+See [docs/README.md](docs/README.md) for the canonical docs map and source-of-truth ownership.
 
 ## License
 

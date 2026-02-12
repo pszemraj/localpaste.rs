@@ -71,10 +71,9 @@ These items are intentionally deferred to follow-up PRs so the rewrite work can 
 They are not blockers for keeping `VirtualEditor` as the default path.
 Current pre-merge focus remains the broader parity work tracked in [parity-checklist.md](parity-checklist.md).
 
-- Fix known highlight latency gap on newline bursts in `perf-scroll-5k-lines`:
-  - symptom: repeated `Enter` in the middle can cause 5-10s plain fallback before highlight returns
-  - likely cause: cache reuse boundary still misses suffix reuse after line topology changes
-  - target fix: add per-line start-state snapshots for worker/UI caches so reuse checks can match current start state directly after prefix/suffix alignment
+- Re-verify previous highlight latency gap fix on newline bursts in `perf-scroll-5k-lines`:
+  - previous symptom (now addressed in code path): repeated `Enter` in the middle could cause multi-second plain fallback before highlight returns
+  - current action: keep re-running perf protocol and trace checks to verify the fix holds under newline-burst edits across releases
 - Continue periodic manual parity passes in GUI for:
   - typing and edits at start/middle/end of large buffers
   - selection parity (mouse drag, shift-selection, word navigation)

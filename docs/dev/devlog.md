@@ -76,7 +76,10 @@ cargo test
 
 Parity/release gate status is tracked in [parity-checklist.md](parity-checklist.md).
 
-## API Summary
+## API Summary (High-Level)
+
+Authoritative route wiring lives in `crates/localpaste_server/src/lib.rs`.
+Use this section as a quick orientation only.
 
 - `POST /api/paste`
 - `GET /api/paste/:id`
@@ -84,12 +87,13 @@ Parity/release gate status is tracked in [parity-checklist.md](parity-checklist.
 - `DELETE /api/paste/:id`
 - `GET /api/pastes`
 - `GET /api/search?q=`
-- `POST /api/folder`
-- `GET /api/folders`
-- `PUT /api/folder/:id`
-- `DELETE /api/folder/:id`
+- `POST /api/folder` *(deprecated)*
+- `GET /api/folders` *(deprecated)*
+- `PUT /api/folder/:id` *(deprecated)*
+- `DELETE /api/folder/:id` *(deprecated)*
 
-Folder updates reject cyclic parent relationships (`400 Bad Request`).
+Deprecated folder endpoints currently remain supported and emit deprecation warning headers.
+Current deprecation and parity status is tracked in [parity-checklist.md](parity-checklist.md).
 
 ## Database Notes
 

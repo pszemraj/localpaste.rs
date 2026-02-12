@@ -16,12 +16,13 @@ For perf validation steps/gates, use [gui-perf-protocol.md](gui-perf-protocol.md
 ## Stable Behavior Notes
 
 - Paste rows use `selectable_label`; keep this if adjusting row styling to preserve reliable click targets.
-- Collections scope controls are rendered in the editor header (All/Recent/Unfiled), not in the sidebar list flow.
-- Language filtering is a secondary stackable filter in the bottom status bar (`Language: Any|...`) and applies on top of active collection/folder scope.
+- Collections scope controls are rendered as smart filters in the sidebar (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) with compact chips and overflow under `...`.
+- Language filtering is a secondary stackable filter in the bottom status bar (`Language: Any|...`) and applies on top of the active smart collection.
 - Large buffers (`>= 256KB`) intentionally use plain-text rendering.
 - Highlight updates are debounced (150ms) and staged so existing render stays visible during async refresh.
 - Language display can show `(auto)` when metadata language is unset.
-- Sidebar supports paste-to-folder drag/drop; dropping keeps current scope unchanged, so moved items may disappear if they no longer match.
+- Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
+- Folder create/edit/move controls are intentionally removed from the rewrite GUI; organization is smart-filter + search based.
 
 ## Edit Locks
 

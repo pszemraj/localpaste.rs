@@ -24,6 +24,8 @@ Codebase audit against this checklist found:
 - Auto language re-detection on update was the essential language parity gap; it is now implemented in core update flow when `language_is_manual = false`.
 - Compact metadata now uses an inline header row (title + chips + quick actions), with infrequent edits moved into a right-side Properties drawer.
 - Sidebar navigation now defaults to smart faceted filters (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) instead of folder-tree-first navigation.
+- Rewrite GUI no longer provides folder metadata/edit pathways (no folder create/rename/delete/move controls).
+- Folder APIs remain available in core/server but now emit deprecation warning headers in API responses.
 
 ---
 
@@ -118,8 +120,8 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 
 - [ ] Duplicate detection
 - [ ] LLM output heuristic
-- [ ] Optional folder tree (if kept) [Keep]
-- [ ] Drag-drop to folder (paste row -> folder row, keep active scope)
+- [x] Folder tree UI intentionally dropped in rewrite GUI [Drop]
+- [x] Drag-drop to folder intentionally dropped with folderless GUI navigation [Drop]
 - [x] Copy as fenced code block
 - [ ] Context menus
 
@@ -140,7 +142,7 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 
 ## Folders
 
-- [~] Folder APIs remain available in core/server (deprecated via API warning headers), but folder controls are removed from the rewrite GUI in favor of smart filters
+- [x] Folder APIs remain available in core/server (deprecated via API warning headers), while folder controls are removed from the rewrite GUI in favor of smart filters
 - [x] Folder delete migrates pastes to unfiled (API/core behavior)
 
 ## UX + Theme
@@ -177,3 +179,4 @@ Rewrite merge gate before release:
 - Phase 5 search + command palette is complete
 - Smart filters + language filter flows work end-to-end
 - Large-paste handling + highlight strategy is stable
+- GUI does not expose folder metadata/edit pathways
