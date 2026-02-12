@@ -91,6 +91,25 @@ fn log_timing_parts(timing: bool, label: &str, request: Duration, parse: Option<
     }
 }
 
+fn error_message_for_response(status: reqwest::StatusCode, body: &str) -> String {
+    if body.trim().is_empty() {
+        return status
+            .canonical_reason()
+            .unwrap_or("Request failed")
+            .to_string();
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        return value
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or(body)
+            .to_string();
+    }
+
+    body.to_string()
+}
+
 fn normalize_server(server: String) -> String {
     if let Ok(mut url) = reqwest::Url::parse(&server) {
         let should_normalize_localhost =
@@ -170,12 +189,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
             let request_elapsed = request_start.elapsed();
 
+            let status = res.status();
+            if !status.is_success() {
+                let body = res.text().await.unwrap_or_default();
+                let message = error_message_for_response(status, &body);
+                eprintln!("Get failed ({}): {}", status, message);
+                std::process::exit(1);
+            }
+
             let parse_start = Instant::now();
             let paste: Value = res.json().await?;
             let parse_elapsed = parse_start.elapsed();
 
             log_timing_parts(timing, "get", request_elapsed, Some(parse_elapsed));
-            println!("{}", paste["content"].as_str().unwrap());
+            let Some(content) = paste.get("content").and_then(Value::as_str) else {
+                eprintln!("Get failed: response missing 'content' field");
+                std::process::exit(1);
+            };
+            println!("{}", content);
         }
         Commands::List { limit } => {
             let request_start = Instant::now();
@@ -232,21 +263,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 let status = res.status();
                 let body = res.text().await.unwrap_or_default();
-                let message = if body.trim().is_empty() {
-                    status
-                        .canonical_reason()
-                        .unwrap_or("Request failed")
-                        .to_string()
-                } else if let Ok(value) = serde_json::from_str::<Value>(&body) {
-                    value
-                        .get("error")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(body.as_str())
-                        .to_string()
-                } else {
-                    body
-                };
-
+                let message = error_message_for_response(status, &body);
                 eprintln!("Delete failed ({}): {}", status, message);
                 std::process::exit(1);
             }
@@ -258,7 +275,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_server;
+    use super::{error_message_for_response, normalize_server};
 
     #[test]
     fn normalize_server_rewrites_http_localhost() {
@@ -276,5 +293,19 @@ mod tests {
     fn normalize_server_trims_trailing_slash() {
         let normalized = normalize_server("http://127.0.0.1:38411/".to_string());
         assert_eq!(normalized, "http://127.0.0.1:38411");
+    }
+
+    #[test]
+    fn error_message_for_response_prefers_json_error_field() {
+        let status = reqwest::StatusCode::NOT_FOUND;
+        let message = error_message_for_response(status, r#"{"error":"Not found"}"#);
+        assert_eq!(message, "Not found");
+    }
+
+    #[test]
+    fn error_message_for_response_uses_reason_for_empty_body() {
+        let status = reqwest::StatusCode::BAD_REQUEST;
+        let message = error_message_for_response(status, "   ");
+        assert_eq!(message, "Bad Request");
     }
 }
