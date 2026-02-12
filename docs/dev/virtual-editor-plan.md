@@ -45,6 +45,10 @@ This document tracks rollout of the rewrite editor from full-buffer `TextEdit` r
 - Reliability validation protocol was updated and run with trace expectations:
   - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
   - `LOCALPASTE_HIGHLIGHT_TRACE=1`
+  - manual revalidation pass (2026-02-12):
+    - drag auto-scroll upward works while selection extends
+    - drag auto-scroll downward works while selection extends
+    - unfocused `Ctrl/Cmd+V` still creates a new paste and does not mutate current editor text
 - `crates/localpaste_gui/src/app.rs` monolith was refactored into focused modules:
   - `app/mod.rs`
   - `app/style.rs`

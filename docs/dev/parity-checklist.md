@@ -85,6 +85,7 @@ Decision key:
 - [x] Triple-click whole-line selection behavior (repeatable, non-intermittent)
 - [x] Selection visuals: style-driven low-opacity fill from `ui.visuals().selection` (no custom multi-line left rail)
 - [x] Drag-selection auto-scroll at viewport edges in virtual preview/editor (selection anchor preserved while scrolling)
+- [x] Manual recheck (2026-02-12): drag auto-scroll upward/downward both pass; unfocused `Ctrl/Cmd+V` still creates a new paste without mutating current editor
 - [~] Highlight recovery: keep current render visible while async refresh is pending (known gap: repeated Enter in `perf-scroll-5k-lines` can still produce multi-second plain fallback)
 - [x] Stale staged-highlight renders are dropped before apply (no unnecessary `highlight_version` bumps)
 - [x] Scope policy: multilingual/IME-specific UX and validation are explicitly out of scope for release gating (English-first workflow only)
