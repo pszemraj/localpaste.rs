@@ -85,7 +85,18 @@ pub enum CoreEvent {
     /// Response confirming a folder tree was deleted.
     FolderDeleted { id: String },
     /// A backend failure occurred (database error, etc).
-    Error { message: String },
+    Error {
+        source: CoreErrorSource,
+        message: String,
+    },
+}
+
+/// Operation class for backend errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoreErrorSource {
+    Other,
+    SaveContent,
+    SaveMetadata,
 }
 
 /// Lightweight summary used for list rendering in the UI.

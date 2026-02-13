@@ -5,7 +5,7 @@ use super::{
     LocalPasteApp, PaletteCopyAction, SaveStatus, SidebarCollection, StatusMessage, ToastMessage,
     LIST_PASTES_LIMIT, SEARCH_DEBOUNCE, SEARCH_PASTES_LIMIT, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
 };
-use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
+use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Utc};
 use localpaste_core::models::paste::Paste;
 use std::collections::BTreeSet;
@@ -164,24 +164,30 @@ impl LocalPasteApp {
             CoreEvent::FolderDeleted { id: _ } => {
                 self.request_refresh();
             }
-            CoreEvent::Error { message } => {
-                warn!("backend error: {}", message);
-                let status_message = if self.metadata_save_in_flight {
-                    self.metadata_dirty = true;
-                    self.metadata_save_in_flight = false;
-                    if message.to_ascii_lowercase().contains("metadata") {
-                        message.clone()
-                    } else {
-                        format!("Metadata save failed: {}", message)
+            CoreEvent::Error { source, message } => {
+                warn!("backend error ({:?}): {}", source, message);
+                // Only mutate save-in-flight state for the matching request class.
+                // Generic backend errors (search/list/folder ops) should not cancel
+                // unrelated metadata/content saves that are still awaiting an ack.
+                match source {
+                    CoreErrorSource::SaveMetadata if self.metadata_save_in_flight => {
+                        self.metadata_dirty = true;
+                        self.metadata_save_in_flight = false;
+                        if message.to_ascii_lowercase().contains("metadata") {
+                            self.set_status(message);
+                        } else {
+                            self.set_status(format!("Metadata save failed: {}", message));
+                        }
                     }
-                } else {
-                    message.clone()
-                };
-                self.set_status(status_message);
-                if self.save_status == SaveStatus::Saving {
-                    self.save_status = SaveStatus::Dirty;
+                    CoreErrorSource::SaveContent if self.save_in_flight => {
+                        if self.save_status == SaveStatus::Saving {
+                            self.save_status = SaveStatus::Dirty;
+                        }
+                        self.save_in_flight = false;
+                        self.set_status(message);
+                    }
+                    _ => self.set_status(message),
                 }
-                self.save_in_flight = false;
             }
         }
     }

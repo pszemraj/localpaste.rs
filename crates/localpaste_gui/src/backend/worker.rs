@@ -1,6 +1,6 @@
 //! Background worker thread for database access.
 
-use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
+use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use localpaste_core::{
     db::TransactionOps,
@@ -15,6 +15,10 @@ use tracing::error;
 pub struct BackendHandle {
     pub cmd_tx: Sender<CoreCmd>,
     pub evt_rx: Receiver<CoreEvent>,
+}
+
+fn send_error(evt_tx: &Sender<CoreEvent>, source: CoreErrorSource, message: String) {
+    let _ = evt_tx.send(CoreEvent::Error { source, message });
 }
 
 /// Spawn the backend worker thread that performs blocking database access.
@@ -44,9 +48,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend list failed: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("List failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("List failed: {}", err),
+                                );
                             }
                         }
                     }
@@ -62,9 +68,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         }
                         Err(err) => {
                             error!("backend search failed: {}", err);
-                            let _ = evt_tx.send(CoreEvent::Error {
-                                message: format!("Search failed: {}", err),
-                            });
+                            send_error(
+                                &evt_tx,
+                                CoreErrorSource::Other,
+                                format!("Search failed: {}", err),
+                            );
                         }
                     },
                     CoreCmd::GetPaste { id } => match db.pastes.get(&id) {
@@ -76,9 +84,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         }
                         Err(err) => {
                             error!("backend get failed: {}", err);
-                            let _ = evt_tx.send(CoreEvent::Error {
-                                message: format!("Get failed: {}", err),
-                            });
+                            send_error(
+                                &evt_tx,
+                                CoreErrorSource::Other,
+                                format!("Get failed: {}", err),
+                            );
                         }
                     },
                     CoreCmd::CreatePaste { content } => {
@@ -91,9 +101,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend create failed: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("Create failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("Create failed: {}", err),
+                                );
                             }
                         }
                     }
@@ -115,9 +127,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend update failed: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("Update failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::SaveContent,
+                                    format!("Update failed: {}", err),
+                                );
                             }
                         }
                     }
@@ -137,9 +151,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend metadata load failed: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("Metadata update failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::SaveMetadata,
+                                    format!("Metadata update failed: {}", err),
+                                );
                                 continue;
                             }
                         };
@@ -159,19 +175,23 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             match db.folders.get(folder_id) {
                                 Ok(Some(_)) => {}
                                 Ok(None) => {
-                                    let _ = evt_tx.send(CoreEvent::Error {
-                                        message: format!(
+                                    send_error(
+                                        &evt_tx,
+                                        CoreErrorSource::SaveMetadata,
+                                        format!(
                                             "Metadata update failed: folder '{}' does not exist",
                                             folder_id
                                         ),
-                                    });
+                                    );
                                     continue;
                                 }
                                 Err(err) => {
                                     error!("backend folder lookup failed: {}", err);
-                                    let _ = evt_tx.send(CoreEvent::Error {
-                                        message: format!("Metadata update failed: {}", err),
-                                    });
+                                    send_error(
+                                        &evt_tx,
+                                        CoreErrorSource::SaveMetadata,
+                                        format!("Metadata update failed: {}", err),
+                                    );
                                     continue;
                                 }
                             }
@@ -213,9 +233,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend metadata update failed: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("Metadata update failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::SaveMetadata,
+                                    format!("Metadata update failed: {}", err),
+                                );
                             }
                         }
                     }
@@ -228,9 +250,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend delete failed during lookup: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("Delete failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("Delete failed: {}", err),
+                                );
                                 continue;
                             }
                         };
@@ -246,9 +270,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend delete failed: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("Delete failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("Delete failed: {}", err),
+                                );
                             }
                         }
                     }
@@ -258,9 +284,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         }
                         Err(err) => {
                             error!("backend list folders failed: {}", err);
-                            let _ = evt_tx.send(CoreEvent::Error {
-                                message: format!("List folders failed: {}", err),
-                            });
+                            send_error(
+                                &evt_tx,
+                                CoreErrorSource::Other,
+                                format!("List folders failed: {}", err),
+                            );
                         }
                     },
                     CoreCmd::CreateFolder { name, parent_id } => {
@@ -269,18 +297,22 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             match db.folders.get(parent_id) {
                                 Ok(Some(_)) => {}
                                 Ok(None) => {
-                                    let _ = evt_tx.send(CoreEvent::Error {
-                                        message: format!(
+                                    send_error(
+                                        &evt_tx,
+                                        CoreErrorSource::Other,
+                                        format!(
                                             "Create folder failed: parent '{}' does not exist",
                                             parent_id
                                         ),
-                                    });
+                                    );
                                     continue;
                                 }
                                 Err(err) => {
-                                    let _ = evt_tx.send(CoreEvent::Error {
-                                        message: format!("Create folder failed: {}", err),
-                                    });
+                                    send_error(
+                                        &evt_tx,
+                                        CoreErrorSource::Other,
+                                        format!("Create folder failed: {}", err),
+                                    );
                                     continue;
                                 }
                             }
@@ -293,9 +325,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend create folder failed: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("Create folder failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("Create folder failed: {}", err),
+                                );
                             }
                         }
                     }
@@ -315,10 +349,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                                 trimmed => Some(trimmed),
                             });
                         if normalized_parent == Some(id.as_str()) {
-                            let _ = evt_tx.send(CoreEvent::Error {
-                                message: "Update folder failed: folder cannot be its own parent"
-                                    .to_string(),
-                            });
+                            send_error(
+                                &evt_tx,
+                                CoreErrorSource::Other,
+                                "Update folder failed: folder cannot be its own parent".to_string(),
+                            );
                             continue;
                         }
 
@@ -326,27 +361,33 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             let folders = match db.folders.list() {
                                 Ok(folders) => folders,
                                 Err(err) => {
-                                    let _ = evt_tx.send(CoreEvent::Error {
-                                        message: format!("Update folder failed: {}", err),
-                                    });
+                                    send_error(
+                                        &evt_tx,
+                                        CoreErrorSource::Other,
+                                        format!("Update folder failed: {}", err),
+                                    );
                                     continue;
                                 }
                             };
 
                             if folders.iter().all(|f| f.id != parent_id) {
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!(
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!(
                                         "Update folder failed: parent '{}' does not exist",
                                         parent_id
                                     ),
-                                });
+                                );
                                 continue;
                             }
 
                             if introduces_cycle(&folders, &id, parent_id) {
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: "Update folder failed: would create cycle".to_string(),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    "Update folder failed: would create cycle".to_string(),
+                                );
                                 continue;
                             }
                         }
@@ -356,15 +397,19 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                                 let _ = evt_tx.send(CoreEvent::FolderSaved { folder });
                             }
                             Ok(None) => {
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: "Update folder failed: folder not found".to_string(),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    "Update folder failed: folder not found".to_string(),
+                                );
                             }
                             Err(err) => {
                                 error!("backend update folder failed: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("Update folder failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("Update folder failed: {}", err),
+                                );
                             }
                         }
                     }
@@ -375,9 +420,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend delete folder failed: {}", err);
-                                let _ = evt_tx.send(CoreEvent::Error {
-                                    message: format!("Delete folder failed: {}", err),
-                                });
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("Delete folder failed: {}", err),
+                                );
                             }
                         }
                     }

@@ -1,6 +1,7 @@
 //! Save/autosave and metadata command emission tests.
 
 use super::*;
+use crate::backend::CoreErrorSource;
 
 #[test]
 fn paste_meta_saved_refilters_when_selected_paste_leaves_active_scope() {
@@ -138,6 +139,7 @@ fn metadata_save_error_preserves_dirty_state_and_clears_in_flight() {
     let _ = recv_cmd(&harness.cmd_rx);
 
     harness.app.apply_event(CoreEvent::Error {
+        source: CoreErrorSource::SaveMetadata,
         message: "disk full".to_string(),
     });
 
@@ -150,6 +152,45 @@ fn metadata_save_error_preserves_dirty_state_and_clears_in_flight() {
             .as_ref()
             .map(|status| status.text.as_str()),
         Some("Metadata save failed: disk full")
+    );
+}
+
+#[test]
+fn content_save_error_does_not_clear_metadata_in_flight() {
+    let mut harness = make_app();
+    harness.app.metadata_dirty = true;
+    harness.app.edit_name = "Will Persist".to_string();
+    harness.app.save_metadata_now();
+    let _ = recv_cmd(&harness.cmd_rx);
+
+    harness
+        .app
+        .selected_content
+        .reset("edited-content".to_string());
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.last_edit_at =
+        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+    harness.app.maybe_autosave();
+    let _ = recv_cmd(&harness.cmd_rx);
+    assert!(harness.app.metadata_save_in_flight);
+    assert!(harness.app.save_in_flight);
+
+    harness.app.apply_event(CoreEvent::Error {
+        source: CoreErrorSource::SaveContent,
+        message: "Update failed: disk full".to_string(),
+    });
+
+    assert!(harness.app.metadata_save_in_flight);
+    assert!(harness.app.metadata_dirty);
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(!harness.app.save_in_flight);
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Update failed: disk full")
     );
 }
 

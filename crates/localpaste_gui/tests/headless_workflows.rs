@@ -15,7 +15,7 @@ fn recv_event(rx: &Receiver<CoreEvent>) -> CoreEvent {
 
 fn expect_error_contains(rx: &Receiver<CoreEvent>, expected_fragment: &str) {
     match recv_event(rx) {
-        CoreEvent::Error { message } => {
+        CoreEvent::Error { message, .. } => {
             assert!(
                 message.contains(expected_fragment),
                 "expected error containing '{}', got '{}'",

@@ -6,7 +6,7 @@
 mod protocol;
 mod worker;
 
-pub use protocol::{CoreCmd, CoreEvent, PasteSummary};
+pub use protocol::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 pub use worker::{spawn_backend, BackendHandle};
 
 #[cfg(test)]
@@ -37,7 +37,7 @@ mod tests {
 
     fn expect_error_contains(rx: &crossbeam_channel::Receiver<CoreEvent>, expected_fragment: &str) {
         match recv_event(rx) {
-            CoreEvent::Error { message } => {
+            CoreEvent::Error { message, .. } => {
                 assert!(
                     message.contains(expected_fragment),
                     "expected error containing '{}', got '{}'",
