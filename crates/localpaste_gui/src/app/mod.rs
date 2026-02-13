@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use style::*;
 use tracing::{info, warn};
-use util::{display_language_label, env_flag_enabled, word_range_at};
+use util::{display_language_label, env_flag_enabled, status_language_filter_label, word_range_at};
 use virtual_editor::{
     commands_from_events, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
     VirtualEditorState, VirtualInputCommand, WrapLayoutCache,

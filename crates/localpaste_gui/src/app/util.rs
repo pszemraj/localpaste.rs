@@ -23,6 +23,37 @@ pub(super) fn display_language_label(language: Option<&str>, is_large: bool) -> 
     }
 }
 
+/// Chooses the status-bar language filter label.
+///
+/// Prefers the explicit filter value, then falls back to the selected paste
+/// language so the footer reflects known language context.
+pub(super) fn status_language_filter_label(
+    active_filter: Option<&str>,
+    selected_language: Option<&str>,
+) -> String {
+    active_filter
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+        .or_else(|| {
+            selected_language.and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            })
+        })
+        .unwrap_or("Any")
+        .to_string()
+}
+
 fn is_word_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
 }
@@ -67,4 +98,31 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
     let start_char = text[..start_byte].chars().count();
     let selected_chars = text[start_byte..end_byte].chars().count();
     Some((start_char, start_char + selected_chars))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_language_filter_label;
+
+    #[test]
+    fn status_language_filter_label_prefers_active_filter() {
+        assert_eq!(
+            status_language_filter_label(Some("rust"), Some("python")),
+            "rust"
+        );
+    }
+
+    #[test]
+    fn status_language_filter_label_falls_back_to_selected_language() {
+        assert_eq!(status_language_filter_label(None, Some("python")), "python");
+    }
+
+    #[test]
+    fn status_language_filter_label_uses_any_when_unknown() {
+        assert_eq!(status_language_filter_label(None, None), "Any");
+        assert_eq!(
+            status_language_filter_label(Some("   "), Some("   ")),
+            "Any"
+        );
+    }
 }

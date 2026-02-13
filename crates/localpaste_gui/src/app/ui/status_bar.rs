@@ -31,8 +31,12 @@ impl LocalPasteApp {
                                 .color(COLOR_TEXT_MUTED),
                         );
                         let mut selected_language = self.active_language_filter.clone();
+                        let selected_language_text = status_language_filter_label(
+                            self.active_language_filter.as_deref(),
+                            self.edit_language.as_deref(),
+                        );
                         egui::ComboBox::from_id_salt("status_language_filter")
-                            .selected_text(selected_language.as_deref().unwrap_or("Any"))
+                            .selected_text(selected_language_text)
                             .width(140.0)
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(&mut selected_language, None, "Any");
