@@ -1,7 +1,7 @@
 //! Backup and restore helpers for sled databases.
 
-use crate::error::AppError;
 use super::fs_copy::copy_dir_recursive;
+use crate::error::AppError;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 

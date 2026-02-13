@@ -1,7 +1,7 @@
 //! Utilities for handling sled lock files safely.
 
-use crate::error::AppError;
 use super::fs_copy::copy_dir_recursive;
+use crate::error::AppError;
 use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME, DB_TREE_LOCK_FILE_NAME};
 use std::fs;
 use std::path::{Path, PathBuf};

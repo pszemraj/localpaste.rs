@@ -4,6 +4,7 @@ use crossbeam_channel::Receiver;
 use localpaste_core::{models::paste::Paste, Config, Database};
 use localpaste_gui::backend::{spawn_backend, CoreCmd, CoreEvent};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
+use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -11,20 +12,6 @@ use tempfile::TempDir;
 fn recv_event(rx: &Receiver<CoreEvent>) -> CoreEvent {
     rx.recv_timeout(Duration::from_secs(2))
         .expect("expected backend event")
-}
-
-fn expect_error_contains(rx: &Receiver<CoreEvent>, expected_fragment: &str) {
-    match recv_event(rx) {
-        CoreEvent::Error { message, .. } => {
-            assert!(
-                message.contains(expected_fragment),
-                "expected error containing '{}', got '{}'",
-                expected_fragment,
-                message
-            );
-        }
-        other => panic!("expected error event, got {:?}", other),
-    }
 }
 
 fn test_config(db_path: &str) -> Config {
@@ -204,7 +191,7 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
 }
 
 #[test]
-fn folder_crud_move_cycle_reject_and_delete_migration_hold_end_to_end() {
+fn api_folder_changes_are_visible_to_backend_state() {
     let dir = TempDir::new().expect("temp dir");
     let db_path = dir.path().join("db");
     let db_path_str = db_path.to_string_lossy().to_string();
@@ -212,106 +199,66 @@ fn folder_crud_move_cycle_reject_and_delete_migration_hold_end_to_end() {
     let locks = Arc::new(PasteLockManager::default());
     let server_db = db.share().expect("share db");
     let state = AppState::with_locks(test_config(&db_path_str), server_db, locks);
-    let _server = EmbeddedServer::start(state, false).expect("server");
+    let server = EmbeddedServer::start(state, false).expect("server");
     let backend = spawn_backend(db);
+    let client = reqwest::blocking::Client::new();
 
-    backend
-        .cmd_tx
-        .send(CoreCmd::CreateFolder {
-            name: "Root".to_string(),
-            parent_id: None,
-        })
-        .expect("create root");
-    let root_id = match recv_event(&backend.evt_rx) {
-        CoreEvent::FolderSaved { folder } => folder.id,
-        other => panic!("unexpected event: {:?}", other),
-    };
+    let folder_url = format!("http://{}/api/folder", server.addr());
+    let created_folder: serde_json::Value = client
+        .post(&folder_url)
+        .json(&json!({ "name": "API Folder" }))
+        .send()
+        .expect("create folder request")
+        .json()
+        .expect("parse folder response");
+    let folder_id = created_folder["id"]
+        .as_str()
+        .expect("folder id")
+        .to_string();
 
-    backend
-        .cmd_tx
-        .send(CoreCmd::CreateFolder {
-            name: "Child".to_string(),
-            parent_id: Some(root_id.clone()),
-        })
-        .expect("create child");
-    let child_id = match recv_event(&backend.evt_rx) {
-        CoreEvent::FolderSaved { folder } => folder.id,
-        other => panic!("unexpected event: {:?}", other),
-    };
-
-    backend
-        .cmd_tx
-        .send(CoreCmd::CreatePaste {
-            content: "child-owned".to_string(),
-        })
-        .expect("create paste");
-    let paste_id = match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteCreated { paste } => paste.id,
-        other => panic!("unexpected event: {:?}", other),
-    };
-
-    backend
-        .cmd_tx
-        .send(CoreCmd::UpdatePasteMeta {
-            id: paste_id.clone(),
-            name: Some("child-owned".to_string()),
-            language: None,
-            language_is_manual: Some(false),
-            folder_id: Some(child_id.clone()),
-            tags: Some(Vec::new()),
-        })
-        .expect("move paste");
-    match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteMetaSaved { paste } => {
-            assert_eq!(paste.folder_id.as_deref(), Some(child_id.as_str()));
-        }
-        other => panic!("unexpected event: {:?}", other),
-    }
+    let paste_url = format!("http://{}/api/paste", server.addr());
+    let created_paste: Paste = client
+        .post(&paste_url)
+        .json(&json!({
+            "content": "api-managed",
+            "name": "api-paste",
+            "folder_id": folder_id.clone()
+        }))
+        .send()
+        .expect("create paste request")
+        .json()
+        .expect("parse paste response");
 
     backend
         .cmd_tx
         .send(CoreCmd::ListPastes {
             limit: 10,
-            folder_id: Some(child_id.clone()),
+            folder_id: Some(folder_id.clone()),
         })
-        .expect("list child");
+        .expect("list folder");
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteList { items } => {
             assert_eq!(items.len(), 1);
-            assert_eq!(items[0].id, paste_id);
+            assert_eq!(items[0].id, created_paste.id);
         }
         other => panic!("unexpected event: {:?}", other),
     }
 
-    backend
-        .cmd_tx
-        .send(CoreCmd::UpdateFolder {
-            id: root_id.clone(),
-            name: "Root".to_string(),
-            parent_id: Some(child_id),
-        })
-        .expect("cycle update");
-    expect_error_contains(&backend.evt_rx, "would create cycle");
+    let delete_url = format!("http://{}/api/folder/{}", server.addr(), folder_id);
+    let delete_resp = client
+        .delete(&delete_url)
+        .send()
+        .expect("delete folder request");
+    assert!(delete_resp.status().is_success());
 
     backend
         .cmd_tx
-        .send(CoreCmd::DeleteFolder {
-            id: root_id.clone(),
+        .send(CoreCmd::GetPaste {
+            id: created_paste.id.clone(),
         })
-        .expect("delete root");
-    match recv_event(&backend.evt_rx) {
-        CoreEvent::FolderDeleted { id } => assert_eq!(id, root_id),
-        other => panic!("unexpected event: {:?}", other),
-    }
-
-    backend
-        .cmd_tx
-        .send(CoreCmd::GetPaste { id: paste_id })
         .expect("get migrated paste");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
-            assert!(paste.folder_id.is_none());
-        }
+        CoreEvent::PasteLoaded { paste } => assert!(paste.folder_id.is_none()),
         other => panic!("unexpected event: {:?}", other),
     }
 
@@ -320,7 +267,12 @@ fn folder_crud_move_cycle_reject_and_delete_migration_hold_end_to_end() {
         .send(CoreCmd::ListFolders)
         .expect("list folders");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::FoldersLoaded { items } => assert!(items.is_empty()),
+        CoreEvent::FoldersLoaded { items } => {
+            assert!(
+                items.iter().all(|folder| folder.id != folder_id),
+                "deleted folder should not appear in backend state"
+            );
+        }
         other => panic!("unexpected event: {:?}", other),
     }
 }

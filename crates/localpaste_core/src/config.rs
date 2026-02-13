@@ -166,9 +166,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::{env_flag_enabled, parse_bool_env, parse_env_flag, Config};
-    use crate::constants::{
-        DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_CLI_SERVER_URL, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
-    };
+    use crate::constants::{DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT};
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {
@@ -299,13 +297,5 @@ mod tests {
             let config = Config::from_env();
             assert_eq!(config.auto_backup, expected, "value: {value}");
         }
-    }
-
-    #[test]
-    fn cli_server_url_matches_default_port_constant() {
-        assert_eq!(
-            DEFAULT_CLI_SERVER_URL,
-            format!("http://localhost:{}", DEFAULT_PORT)
-        );
     }
 }

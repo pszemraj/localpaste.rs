@@ -502,45 +502,6 @@ async fn test_whitespace_folder_ids_normalize_consistently() {
 }
 
 #[tokio::test]
-async fn test_folder_deletion_migrates_pastes() {
-    let (server, _temp, _locks) = setup_test_server().await;
-
-    // Create folder
-    let folder_response = server
-        .post("/api/folder")
-        .json(&json!({
-            "name": "Temp Folder"
-        }))
-        .await;
-
-    let folder: serde_json::Value = folder_response.json();
-    let folder_id = folder["id"].as_str().unwrap();
-
-    // Create paste in folder
-    let paste_response = server
-        .post("/api/paste")
-        .json(&json!({
-            "content": "Will be migrated",
-            "name": "migrated-paste",
-            "folder_id": folder_id
-        }))
-        .await;
-
-    let paste: serde_json::Value = paste_response.json();
-    let paste_id = paste["id"].as_str().unwrap();
-
-    // Delete folder
-    server.delete(&format!("/api/folder/{}", folder_id)).await;
-
-    // Check paste still exists but has no folder
-    let get_paste = server.get(&format!("/api/paste/{}", paste_id)).await;
-
-    assert_eq!(get_paste.status_code(), StatusCode::OK);
-    let migrated_paste: serde_json::Value = get_paste.json();
-    assert_eq!(migrated_paste["folder_id"], serde_json::Value::Null);
-}
-
-#[tokio::test]
 async fn test_update_folder_rejects_cycle() {
     let (server, _temp, _locks) = setup_test_server().await;
 
