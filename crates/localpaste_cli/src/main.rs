@@ -5,6 +5,7 @@ use clap_complete::{generate, Shell};
 use serde_json::Value;
 use std::io::{self, Read};
 use std::time::{Duration, Instant};
+use localpaste_core::DEFAULT_CLI_SERVER_URL;
 
 #[derive(Parser)]
 #[command(name = "lpaste", about = "LocalPaste CLI", version)]
@@ -14,7 +15,7 @@ struct Cli {
         short,
         long,
         env = "LP_SERVER",
-        default_value = "http://localhost:38411"
+        default_value = DEFAULT_CLI_SERVER_URL,
     )]
     server: String,
 
@@ -402,24 +403,35 @@ mod tests {
         format_summary_output, normalize_server, paste_id_and_name,
     };
     use super::{Cli, Commands};
+    use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
     use clap::Parser;
 
     #[test]
     fn normalize_server_rewrites_http_localhost() {
-        let normalized = normalize_server("http://localhost:38411".to_string());
-        assert_eq!(normalized, "http://127.0.0.1:38411");
+        let normalized = normalize_server(DEFAULT_CLI_SERVER_URL.to_string());
+        assert_eq!(normalized, format!("http://127.0.0.1:{}", DEFAULT_PORT));
     }
 
     #[test]
     fn normalize_server_preserves_https_localhost() {
-        let normalized = normalize_server("https://localhost:38411".to_string());
-        assert_eq!(normalized, "https://localhost:38411");
+        let normalized =
+            normalize_server(format!("https://localhost:{}", DEFAULT_PORT));
+        assert_eq!(normalized, format!("https://localhost:{}", DEFAULT_PORT));
     }
 
     #[test]
     fn normalize_server_trims_trailing_slash() {
-        let normalized = normalize_server("http://127.0.0.1:38411/".to_string());
-        assert_eq!(normalized, "http://127.0.0.1:38411");
+        let normalized =
+            normalize_server(format!("http://127.0.0.1:{}/", DEFAULT_PORT));
+        assert_eq!(normalized, format!("http://127.0.0.1:{}", DEFAULT_PORT));
+    }
+
+    #[test]
+    fn default_cli_server_url_uses_default_port_constant() {
+        assert_eq!(
+            DEFAULT_CLI_SERVER_URL,
+            format!("http://localhost:{}", DEFAULT_PORT)
+        );
     }
 
     #[test]
@@ -494,21 +506,30 @@ mod tests {
     #[test]
     fn api_url_encodes_path_segments() {
         let url = api_url(
-            "http://127.0.0.1:38411",
+            &format!("http://127.0.0.1:{}", DEFAULT_PORT),
             &["api", "paste", "id/with?reserved#chars"],
         )
         .expect("api_url should build");
         assert_eq!(
             url.as_str(),
-            "http://127.0.0.1:38411/api/paste/id%2Fwith%3Freserved%23chars"
+            &format!(
+                "http://127.0.0.1:{}/api/paste/id%2Fwith%3Freserved%23chars",
+                DEFAULT_PORT
+            )
         );
     }
 
     #[test]
     fn api_url_appends_segments_to_existing_base_path() {
-        let url = api_url("http://127.0.0.1:38411/base", &["api", "paste", "abc123"])
+        let url = api_url(
+            &format!("http://127.0.0.1:{}/base", DEFAULT_PORT),
+            &["api", "paste", "abc123"],
+        )
             .expect("api_url should build");
-        assert_eq!(url.as_str(), "http://127.0.0.1:38411/base/api/paste/abc123");
+        assert_eq!(
+            url.as_str(),
+            &format!("http://127.0.0.1:{}/base/api/paste/abc123", DEFAULT_PORT)
+        );
     }
 
     #[test]

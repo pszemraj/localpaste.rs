@@ -6,6 +6,10 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::warn;
 
+use crate::constants::{
+    DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
+};
+
 /// Runtime configuration for LocalPaste.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -72,6 +76,32 @@ pub fn parse_env_flag(value: &str) -> Option<bool> {
     }
 }
 
+/// Parse a boolean-like environment value with a fallback default.
+///
+/// # Arguments
+/// - `name`: environment variable name.
+/// - `default`: value when missing or unrecognized.
+///
+/// # Returns
+/// Parsed boolean when recognized, otherwise `default`.
+pub fn parse_bool_env(name: &str, default: bool) -> bool {
+    let Ok(value) = env::var(name) else {
+        return default;
+    };
+    match parse_env_flag(&value) {
+        Some(enabled) => enabled,
+        None => {
+            warn!(
+                "Invalid value for {}='{}'; expected 1/0/true/false/yes/no/on/off. Using default {}.",
+                name,
+                value,
+                default
+            );
+            default
+        }
+    }
+}
+
 fn parse_env_number<T>(name: &str, default: T) -> T
 where
     T: FromStr + Copy + std::fmt::Display,
@@ -110,19 +140,7 @@ where
 /// # Returns
 /// `true` when the value is a recognized truthy value.
 pub fn env_flag_enabled(name: &str) -> bool {
-    let Ok(value) = env::var(name) else {
-        return false;
-    };
-    match parse_env_flag(&value) {
-        Some(enabled) => enabled,
-        None => {
-            warn!(
-                "Invalid value for {}='{}'; expected 1/0/true/false/yes/no/on/off. Using false.",
-                name, value
-            );
-            false
-        }
-    }
+    parse_bool_env(name, false)
 }
 
 impl Config {
@@ -137,9 +155,9 @@ impl Config {
                 let cache_dir = home.join(".cache").join("localpaste");
                 cache_dir.join("db").to_string_lossy().to_string()
             }),
-            port: parse_env_number("PORT", 38411),
-            max_paste_size: parse_env_number("MAX_PASTE_SIZE", 10 * 1024 * 1024), // 10MB default
-            auto_save_interval: parse_env_number("AUTO_SAVE_INTERVAL", 2000),     // 2 seconds
+            port: parse_env_number("PORT", DEFAULT_PORT),
+            max_paste_size: parse_env_number("MAX_PASTE_SIZE", DEFAULT_MAX_PASTE_SIZE),
+            auto_save_interval: parse_env_number("AUTO_SAVE_INTERVAL", DEFAULT_AUTO_SAVE_INTERVAL_MS), // 2 seconds
             auto_backup: env_flag_enabled("AUTO_BACKUP"), // Default to false - backups should be explicit
         }
     }
@@ -148,6 +166,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::{env_flag_enabled, parse_env_flag, Config};
+    use crate::constants::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {
@@ -215,9 +234,9 @@ mod tests {
         let _interval = EnvGuard::set("AUTO_SAVE_INTERVAL", "wat");
 
         let config = Config::from_env();
-        assert_eq!(config.port, 38411);
-        assert_eq!(config.max_paste_size, 10 * 1024 * 1024);
-        assert_eq!(config.auto_save_interval, 2000);
+        assert_eq!(config.port, DEFAULT_PORT);
+        assert_eq!(config.max_paste_size, DEFAULT_MAX_PASTE_SIZE);
+        assert_eq!(config.auto_save_interval, DEFAULT_AUTO_SAVE_INTERVAL_MS);
     }
 
     #[test]
@@ -225,5 +244,60 @@ mod tests {
         let _lock = env_lock().lock().expect("env lock");
         let _flag = EnvGuard::set("LOCALPASTE_TEST_FLAG", "maybe");
         assert!(!env_flag_enabled("LOCALPASTE_TEST_FLAG"));
+    }
+
+    #[test]
+    fn parse_bool_env_matrix_covers_missing_invalid_and_truthy_falsy() {
+        let _lock = env_lock().lock().expect("env lock");
+
+        let cases = [
+            ("LOCALPASTE_TEST_FLAG", "", Some(false)),
+            ("LOCALPASTE_TEST_FLAG", "1", Some(true)),
+            ("LOCALPASTE_TEST_FLAG", "true", Some(true)),
+            ("LOCALPASTE_TEST_FLAG", "TRUE", Some(true)),
+            ("LOCALPASTE_TEST_FLAG", " yes ", Some(true)),
+            ("LOCALPASTE_TEST_FLAG", "on", Some(true)),
+            ("LOCALPASTE_TEST_FLAG", "0", Some(false)),
+            ("LOCALPASTE_TEST_FLAG", "false", Some(false)),
+            ("LOCALPASTE_TEST_FLAG", "FALSE", Some(false)),
+            ("LOCALPASTE_TEST_FLAG", " no ", Some(false)),
+            ("LOCALPASTE_TEST_FLAG", "off", Some(false)),
+            ("LOCALPASTE_TEST_FLAG", "maybe", None),
+        ];
+
+        assert_eq!(parse_bool_env("LOCALPASTE_TEST_FLAG", false), false);
+        assert_eq!(parse_bool_env("LOCALPASTE_TEST_FLAG", true), true);
+
+        for (key, value, expected) in cases {
+            let _guard = EnvGuard::set(key, value);
+            match expected {
+                Some(expected) => assert_eq!(parse_bool_env(key, false), expected),
+                None => {
+                    assert_eq!(parse_bool_env(key, false), false);
+                    assert_eq!(parse_bool_env(key, true), true);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn config_auto_backup_obeys_bool_matrix_values() {
+        let _lock = env_lock().lock().expect("env lock");
+        let backup_key = "AUTO_BACKUP";
+        let values = [("1", true), ("0", false), ("true", true), ("false", false), ("", false)];
+
+        for (value, expected) in values {
+            let _flag = EnvGuard::set(backup_key, value);
+            let config = Config::from_env();
+            assert_eq!(config.auto_backup, expected, "value: {value}");
+        }
+    }
+
+    #[test]
+    fn cli_server_url_matches_default_port_constant() {
+        assert_eq!(
+            DEFAULT_CLI_SERVER_URL,
+            format!("http://localhost:{}", DEFAULT_PORT)
+        );
     }
 }

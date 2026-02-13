@@ -3,11 +3,13 @@
 use super::highlight::EditorLayoutCache;
 use super::{
     LocalPasteApp, PaletteCopyAction, SaveStatus, SidebarCollection, StatusMessage, ToastMessage,
-    LIST_PASTES_LIMIT, SEARCH_DEBOUNCE, SEARCH_PASTES_LIMIT, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
+    SEARCH_DEBOUNCE, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Utc};
-use localpaste_core::models::paste::Paste;
+use localpaste_core::{
+    models::paste::Paste, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
+};
 use std::collections::BTreeSet;
 use std::time::Instant;
 use tracing::warn;
@@ -193,10 +195,18 @@ impl LocalPasteApp {
     }
 
     pub(super) fn request_refresh(&mut self) {
-        let _ = self.backend.cmd_tx.send(CoreCmd::ListPastes {
-            limit: LIST_PASTES_LIMIT,
-            folder_id: None,
-        });
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::ListPastes {
+                limit: DEFAULT_LIST_PASTES_LIMIT,
+                folder_id: None,
+            })
+            .is_err()
+        {
+            self.set_status("List failed: backend unavailable.");
+            return;
+        }
         self.last_refresh_at = Instant::now();
     }
 
@@ -273,16 +283,24 @@ impl LocalPasteApp {
         }
 
         let (folder_id, language) = self.search_backend_filters();
-        let _ = self.backend.cmd_tx.send(CoreCmd::SearchPastes {
-            query: query.clone(),
-            limit: SEARCH_PASTES_LIMIT,
-            folder_id,
-            language,
-        });
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::SearchPastes {
+                query: query.clone(),
+                limit: DEFAULT_SEARCH_PASTES_LIMIT,
+                folder_id,
+                language,
+            })
+            .is_err()
+        {
+            self.set_status("Search failed: backend unavailable.");
+            return;
+        }
         self.search_last_sent = query;
     }
 
-    pub(super) fn select_paste(&mut self, id: String) {
+    pub(super) fn select_paste(&mut self, id: String) -> bool {
         if let Some(prev) = self.selected_id.take() {
             self.locks.unlock(&prev);
         }
@@ -304,7 +322,16 @@ impl LocalPasteApp {
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
-        let _ = self.backend.cmd_tx.send(CoreCmd::GetPaste { id });
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::GetPaste { id })
+            .is_err()
+        {
+            self.set_status("Get paste failed: backend unavailable.");
+            return false;
+        }
+        true
     }
 
     pub(super) fn clear_selection(&mut self) {
@@ -360,12 +387,26 @@ impl LocalPasteApp {
     }
 
     pub(super) fn create_new_paste_with_content(&mut self, content: String) {
-        let _ = self.backend.cmd_tx.send(CoreCmd::CreatePaste { content });
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste { content })
+            .is_err()
+        {
+            self.set_status("Create failed: backend unavailable.");
+        }
     }
 
     pub(super) fn delete_selected(&mut self) {
         if let Some(id) = self.selected_id.clone() {
-            let _ = self.backend.cmd_tx.send(CoreCmd::DeletePaste { id });
+            if self
+                .backend
+                .cmd_tx
+                .send(CoreCmd::DeletePaste { id })
+                .is_err()
+            {
+                self.set_status("Delete failed: backend unavailable.");
+            }
         }
     }
 

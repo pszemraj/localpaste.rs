@@ -1,6 +1,11 @@
 //! Utilities for handling sled lock files safely.
 
 use crate::error::AppError;
+use crate::{
+    DB_LOCK_EXTENSION,
+    DB_LOCK_FILE_NAME,
+    DB_TREE_LOCK_FILE_NAME,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,12 +24,16 @@ impl LockManager {
     pub fn new(db_path: &str) -> Self {
         Self {
             db_path: PathBuf::from(db_path),
-            legacy_lock_path: PathBuf::from(format!("{}.lock", db_path)),
+            legacy_lock_path: PathBuf::from(format!("{}.{}", db_path, DB_LOCK_EXTENSION)),
         }
     }
 
     fn known_lock_paths(&self) -> Result<Vec<PathBuf>, AppError> {
-        let mut lock_paths = vec![self.db_path.join("db.lock"), self.legacy_lock_path.clone()];
+        let mut lock_paths = vec![
+            self.db_path.join(DB_LOCK_FILE_NAME),
+            self.db_path.join(DB_TREE_LOCK_FILE_NAME),
+            self.legacy_lock_path.clone(),
+        ];
 
         if self.db_path.is_dir() {
             for entry in fs::read_dir(&self.db_path).map_err(|err| {
@@ -43,7 +52,7 @@ impl LockManager {
                 let is_lock = path
                     .extension()
                     .and_then(|ext| ext.to_str())
-                    .map(|ext| ext.eq_ignore_ascii_case("lock"))
+                    .map(|ext| ext.eq_ignore_ascii_case(DB_LOCK_EXTENSION))
                     .unwrap_or(false);
                 if is_lock {
                     lock_paths.push(path);
@@ -158,9 +167,10 @@ mod tests {
         let db_path = dir.path().join("db");
         std::fs::create_dir_all(&db_path).expect("db dir");
 
-        let db_lock = db_path.join("db.lock");
-        let extra_lock = db_path.join("tree.lock");
-        let legacy_lock = std::path::PathBuf::from(format!("{}.lock", db_path.to_string_lossy()));
+        let db_lock = db_path.join(DB_LOCK_FILE_NAME);
+        let extra_lock = db_path.join(DB_TREE_LOCK_FILE_NAME);
+        let legacy_lock =
+            std::path::PathBuf::from(format!("{}.{}", db_path.to_string_lossy(), DB_LOCK_EXTENSION));
         std::fs::write(&db_lock, b"lock").expect("db lock");
         std::fs::write(&extra_lock, b"lock").expect("extra lock");
         std::fs::write(&legacy_lock, b"lock").expect("legacy lock");

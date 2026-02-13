@@ -139,7 +139,7 @@ fn maybe_dispatch_search_requires_debounce_and_dedupes() {
             language,
         } => {
             assert_eq!(query, "rust");
-            assert_eq!(limit, 512);
+            assert_eq!(limit, localpaste_core::DEFAULT_SEARCH_PASTES_LIMIT);
             assert!(folder_id.is_none());
             assert!(language.is_none());
         }

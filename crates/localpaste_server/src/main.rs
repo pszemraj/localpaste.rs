@@ -1,7 +1,8 @@
 //! Headless API server entrypoint.
 
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
+use localpaste_core::DEFAULT_PORT;
 use localpaste_server::{config::Config, db::Database, serve_router, AppState};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -73,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Public access enabled - server will accept requests from any origin");
     }
 
-    let bind_addr = resolve_bind_address(&config, allow_public);
+    let bind_addr = localpaste_server::resolve_bind_address(&config, allow_public);
     if !bind_addr.ip().is_loopback() {
         tracing::warn!(
             "Binding to non-localhost address: {} - ensure proper security measures are in place",
@@ -100,10 +101,10 @@ fn print_help() {
     println!("  --help            Show this help message");
     println!("\nEnvironment variables:");
     println!("  DB_PATH           Database path (default: ~/.cache/localpaste/db)");
-    println!("  PORT              Server port (default: 38411)");
+    println!("  PORT              Server port (default: {})", DEFAULT_PORT);
     println!("  MAX_PASTE_SIZE    Maximum paste size in bytes (default: 10MB)");
     println!("  ALLOW_PUBLIC_ACCESS  Allow CORS from any origin");
-    println!("  BIND              Override bind address (e.g. 0.0.0.0:38411)");
+    println!("  BIND              Override bind address (e.g. 0.0.0.0:{})", DEFAULT_PORT);
 }
 
 fn run_backup(config: &Config) -> anyhow::Result<()> {
@@ -118,36 +119,6 @@ fn run_backup(config: &Config) -> anyhow::Result<()> {
         println!("ℹ️  No existing database to backup");
     }
     Ok(())
-}
-
-fn resolve_bind_address(config: &Config, allow_public: bool) -> SocketAddr {
-    let default_bind = SocketAddr::from(([127, 0, 0, 1], config.port));
-    let requested = match std::env::var("BIND") {
-        Ok(value) => match value.trim().parse::<SocketAddr>() {
-            Ok(addr) => addr,
-            Err(err) => {
-                tracing::warn!(
-                    "Invalid BIND='{}': {}. Falling back to {}",
-                    value,
-                    err,
-                    default_bind
-                );
-                default_bind
-            }
-        },
-        Err(_) => default_bind,
-    };
-
-    if allow_public || requested.ip().is_loopback() {
-        return requested;
-    }
-
-    tracing::warn!(
-        "Non-loopback bind {} requested without ALLOW_PUBLIC_ACCESS; forcing 127.0.0.1",
-        requested
-    );
-    SocketAddr::from(([127, 0, 0, 1], requested.port()))
-}
 
 async fn shutdown_signal(db: Arc<Database>) {
     let ctrl_c = async {

@@ -115,7 +115,10 @@ impl LocalPasteApp {
         self.pending_copy_action = Some(action);
 
         if self.selected_id.as_deref() != Some(id.as_str()) {
-            self.select_paste(id.clone());
+            if !self.select_paste(id.clone()) {
+                self.pending_copy_action = None;
+                return;
+            }
             self.set_status("Loading paste for copy...");
             return;
         }
@@ -125,7 +128,16 @@ impl LocalPasteApp {
             return;
         }
 
-        let _ = self.backend.cmd_tx.send(CoreCmd::GetPaste { id });
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::GetPaste { id })
+            .is_err()
+        {
+            self.pending_copy_action = None;
+            self.set_status("Load paste for copy failed: backend unavailable.");
+            return;
+        }
         self.set_status("Loading paste for copy...");
     }
 
@@ -221,7 +233,15 @@ impl LocalPasteApp {
     }
 
     pub(crate) fn send_palette_delete(&mut self, id: String) {
-        let _ = self.backend.cmd_tx.send(CoreCmd::DeletePaste { id });
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::DeletePaste { id })
+            .is_err()
+        {
+            self.set_status("Delete failed: backend unavailable.");
+            return;
+        }
         self.command_palette_open = false;
     }
 }

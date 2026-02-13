@@ -2,6 +2,8 @@
 
 /// Configuration loading and defaults.
 pub mod config;
+/// Shared cross-crate constants.
+pub mod constants;
 /// Database access layer and transactions.
 pub mod db;
 /// Application error types (storage/domain).
@@ -16,3 +18,14 @@ pub mod naming;
 pub use config::Config;
 pub use db::Database;
 pub use error::AppError;
+pub use constants::{
+    DEFAULT_AUTO_SAVE_INTERVAL_MS,
+    DEFAULT_CLI_SERVER_URL,
+    DEFAULT_LIST_PASTES_LIMIT,
+    DEFAULT_MAX_PASTE_SIZE,
+    DEFAULT_PORT,
+    DEFAULT_SEARCH_PASTES_LIMIT,
+    DB_LOCK_EXTENSION,
+    DB_LOCK_FILE_NAME,
+    DB_TREE_LOCK_FILE_NAME,
+};

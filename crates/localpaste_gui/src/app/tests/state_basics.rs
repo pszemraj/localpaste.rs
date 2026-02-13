@@ -123,3 +123,100 @@ fn palette_delete_keeps_lock_until_delete_event() {
     });
     assert!(!harness.app.locks.is_locked("alpha"));
 }
+
+#[test]
+fn create_new_paste_send_failure_shows_error_status() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    drop(cmd_rx);
+
+    app.create_new_paste_with_content("hello".to_string());
+
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Create failed: backend unavailable.")
+    );
+    assert!(app.all_pastes.len() == 1);
+}
+
+#[test]
+fn delete_selected_send_failure_keeps_lock_and_shows_error_status() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    app.locks.lock("alpha");
+    drop(cmd_rx);
+
+    app.delete_selected();
+
+    assert!(app.locks.is_locked("alpha"));
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Delete failed: backend unavailable.")
+    );
+}
+
+#[test]
+fn palette_delete_send_failure_keeps_lock_and_shows_error_status() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    app.locks.lock("alpha");
+    drop(cmd_rx);
+
+    app.send_palette_delete("alpha".to_string());
+
+    assert!(app.locks.is_locked("alpha"));
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Delete failed: backend unavailable.")
+    );
+}
+
+#[test]
+fn palette_copy_send_failure_when_selected_paste_missing_is_cleared() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    app.selected_paste = None;
+    app.pending_copy_action = None;
+    drop(cmd_rx);
+
+    app.queue_palette_copy("alpha".to_string(), false);
+
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Load paste for copy failed: backend unavailable.")
+    );
+    assert!(app.pending_copy_action.is_none());
+}
+
+#[test]
+fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    app.selected_id = None;
+    app.selected_paste = None;
+    app.pending_copy_action = None;
+    drop(cmd_rx);
+
+    app.queue_palette_copy("alpha".to_string(), true);
+
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Get paste failed: backend unavailable.")
+    );
+    assert!(app.pending_copy_action.is_none());
+}

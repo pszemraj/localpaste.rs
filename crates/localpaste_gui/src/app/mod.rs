@@ -21,7 +21,9 @@ use highlight::{
     SyntectSettings,
 };
 use localpaste_core::models::paste::Paste;
-use localpaste_core::{Config, Database};
+use localpaste_core::{
+    Config, Database, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
+};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -162,8 +164,6 @@ const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const VIRTUAL_OVERSCAN_LINES: usize = 3;
-const LIST_PASTES_LIMIT: usize = 512;
-const SEARCH_PASTES_LIMIT: usize = 512;
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
 

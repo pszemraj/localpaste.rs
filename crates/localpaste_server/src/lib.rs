@@ -10,7 +10,7 @@ pub mod handlers;
 pub mod locks;
 
 pub use embedded::EmbeddedServer;
-pub use localpaste_core::{config, db, models, naming, AppError, Config, Database};
+pub use localpaste_core::{config, db, models, naming, AppError, Config, Database, DEFAULT_PORT};
 pub use locks::PasteLockManager;
 
 use axum::{
@@ -22,6 +22,7 @@ use axum::{
 use hyper::HeaderMap;
 use std::future::Future;
 use std::sync::Arc;
+use std::net::SocketAddr;
 use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
@@ -81,6 +82,43 @@ impl AppState {
 pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
     let cors_port = state.config.port;
     create_app_with_cors_port(state, allow_public_access, cors_port)
+}
+
+/// Resolve the listener address from env var overrides and security policy.
+///
+/// # Arguments
+/// - `config`: Server configuration containing the configured `port`.
+/// - `allow_public_access`: Whether non-loopback bind targets are permitted.
+///
+/// # Returns
+/// A validated socket address that enforces loopback when public access is disabled.
+pub(crate) fn resolve_bind_address(config: &Config, allow_public_access: bool) -> SocketAddr {
+    let default_bind = SocketAddr::from(([127, 0, 0, 1], config.port));
+    let requested = match std::env::var("BIND") {
+        Ok(value) => match value.trim().parse::<SocketAddr>() {
+            Ok(addr) => addr,
+            Err(err) => {
+                tracing::warn!(
+                    "Invalid BIND='{}': {}. Falling back to {}",
+                    value,
+                    err,
+                    default_bind
+                );
+                default_bind
+            }
+        },
+        Err(_) => default_bind,
+    };
+
+    if allow_public_access || requested.ip().is_loopback() {
+        return requested;
+    }
+
+    tracing::warn!(
+        "Non-loopback bind {} requested without ALLOW_PUBLIC_ACCESS; forcing 127.0.0.1",
+        requested
+    );
+    SocketAddr::from(([127, 0, 0, 1], requested.port()))
 }
 
 fn create_app_with_cors_port(state: AppState, allow_public_access: bool, cors_port: u16) -> Router {
@@ -206,6 +244,9 @@ pub async fn serve_router(
 #[cfg(test)]
 mod tests {
     use super::listener_cors_port;
+    use super::resolve_bind_address;
+    use localpaste_core::DEFAULT_PORT;
+    use localpaste_core::Config;
 
     #[tokio::test]
     async fn listener_cors_port_uses_bound_listener_port() {
@@ -213,7 +254,49 @@ mod tests {
             .await
             .expect("listener");
         let expected = listener.local_addr().expect("listener addr").port();
-        let resolved = listener_cors_port(&listener, 38411);
+        let resolved = listener_cors_port(&listener, DEFAULT_PORT);
         assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn resolve_bind_address_enforces_loopback_when_public_access_disabled() {
+        let config = Config {
+            db_path: String::from("/tmp/localpaste-db"),
+            port: 4040,
+            max_paste_size: 1024,
+            auto_save_interval: 2000,
+            auto_backup: false,
+        };
+        unsafe {
+            std::env::set_var("BIND", "0.0.0.0:4040");
+        }
+        let resolved = resolve_bind_address(&config, false);
+        assert_eq!(resolved.ip().to_string(), "127.0.0.1");
+        assert_eq!(resolved.port(), 4040);
+        unsafe {
+            std::env::remove_var("BIND");
+        }
+    }
+
+    #[test]
+    fn resolve_bind_address_allows_loopback_and_invalid_fallback() {
+        let config = Config {
+            db_path: String::from("/tmp/localpaste-db"),
+            port: 4041,
+            max_paste_size: 1024,
+            auto_save_interval: 2000,
+            auto_backup: false,
+        };
+        let loopback = resolve_bind_address(&config, false);
+        assert_eq!(loopback, SocketAddr::from(([127, 0, 0, 1], 4041)));
+
+        unsafe {
+            std::env::set_var("BIND", "bad:host");
+        }
+        let fallback = resolve_bind_address(&config, false);
+        assert_eq!(fallback, SocketAddr::from(([127, 0, 0, 1], 4041)));
+        unsafe {
+            std::env::remove_var("BIND");
+        }
     }
 }

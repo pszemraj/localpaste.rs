@@ -10,6 +10,7 @@ pub mod lock;
 pub mod paste;
 
 use crate::error::AppError;
+use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME};
 use sled::Db;
 use std::sync::Arc;
 
@@ -310,6 +311,7 @@ impl Database {
                         .unwrap_or(std::path::Path::new("."))
                         .display()
                         .to_string();
+                    let wildcard = format!("{}\\*.{}", path, DB_LOCK_EXTENSION);
                     let (backup_cmd, remove_cmd, restore_cmd) = if cfg!(windows) {
                         (
                             format!(
@@ -317,8 +319,12 @@ impl Database {
                                 path, path
                             ),
                             format!(
-                                "Remove-Item -Force \"{}\\*.lock\",\"{}\\db.lock\",\"{}.lock\"",
-                                path, path, path
+                                "Remove-Item -Force \"{}\",\"{}\\\\{}\",\"{}.{}\"",
+                                wildcard,
+                                path,
+                                DB_LOCK_FILE_NAME,
+                                path,
+                                DB_LOCK_EXTENSION
                             ),
                             format!(
                                 "Get-ChildItem \"{}\\*.backup.*\" | Sort-Object LastWriteTime | Select-Object -Last 1",
@@ -328,7 +334,12 @@ impl Database {
                     } else {
                         (
                             format!("cp -r {} {}.backup", path, path),
-                            format!("rm -f {}/*.lock {}/db.lock {}.lock", path, path, path),
+                            format!(
+                                "rm -f {0}/*.{1} {0}/{2} {0}.{1}",
+                                path,
+                                DB_LOCK_EXTENSION,
+                                DB_LOCK_FILE_NAME,
+                            ),
                             format!("ls -la {}/*.backup.* | tail -1", parent),
                         )
                     };

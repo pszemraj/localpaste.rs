@@ -50,7 +50,7 @@ impl EmbeddedServer {
                     }
                 };
 
-                let bind_addr = resolve_bind_address(&state.config, allow_public);
+                let bind_addr = localpaste_server::resolve_bind_address(&state.config, allow_public);
                 let mut used_fallback = false;
                 let listener = match rt.block_on(tokio::net::TcpListener::bind(bind_addr)) {
                     Ok(listener) => listener,
@@ -166,31 +166,4 @@ impl Drop for EmbeddedServer {
             let _ = handle.join();
         }
     }
-}
-
-fn resolve_bind_address(config: &Config, allow_public: bool) -> SocketAddr {
-    let default_bind = SocketAddr::from(([127, 0, 0, 1], config.port));
-    let requested = match std::env::var("BIND") {
-        Ok(value) => match value.trim().parse::<SocketAddr>() {
-            Ok(addr) => addr,
-            Err(err) => {
-                warn!(
-                    "Invalid BIND='{}': {}. Falling back to {}",
-                    value, err, default_bind
-                );
-                default_bind
-            }
-        },
-        Err(_) => default_bind,
-    };
-
-    if allow_public || requested.ip().is_loopback() {
-        return requested;
-    }
-
-    warn!(
-        "Non-loopback bind {} requested without ALLOW_PUBLIC_ACCESS; forcing 127.0.0.1",
-        requested
-    );
-    SocketAddr::from(([127, 0, 0, 1], requested.port()))
 }
