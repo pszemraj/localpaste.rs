@@ -329,6 +329,67 @@ fn language_filter_stacks_with_primary_collection() {
 }
 
 #[test]
+fn language_filter_input_is_normalized_before_search_dispatch() {
+    let mut harness = make_app();
+    harness
+        .app
+        .set_active_language_filter(Some("  PyThOn  ".to_string()));
+    harness.app.set_search_query("script".to_string());
+    harness.app.search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+
+    harness.app.maybe_dispatch_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPastes { language, .. } => {
+            assert_eq!(language.as_deref(), Some("python"));
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn language_filter_options_dedupe_case_variants() {
+    let mut harness = make_app();
+    let now = Utc::now();
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![
+            PasteSummary {
+                id: "a".to_string(),
+                name: "one".to_string(),
+                language: Some("python".to_string()),
+                content_len: 10,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+            PasteSummary {
+                id: "b".to_string(),
+                name: "two".to_string(),
+                language: Some("Python".to_string()),
+                content_len: 10,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+            PasteSummary {
+                id: "c".to_string(),
+                name: "three".to_string(),
+                language: Some("  PYTHON  ".to_string()),
+                content_len: 10,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+        ],
+    });
+
+    assert_eq!(
+        harness.app.language_filter_options(),
+        vec!["python".to_string()]
+    );
+}
+
+#[test]
 fn smart_collections_match_time_and_content_facets() {
     let mut harness = make_app();
     let now = Utc::now();

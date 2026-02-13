@@ -75,7 +75,10 @@ impl LocalPasteApp {
                             if let Some(item) = results.get(idx) {
                                 let selected = idx == self.command_palette_selected;
                                 ui.horizontal(|ui| {
-                                    let lang = item.language.as_deref().unwrap_or("auto");
+                                    let lang = display_language_label(
+                                        item.language.as_deref(),
+                                        item.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
+                                    );
                                     let label = format!("{}  [{}]", item.name, lang);
                                     if ui
                                         .selectable_label(selected, RichText::new(label))
@@ -153,13 +156,26 @@ impl LocalPasteApp {
         };
         match action {
             PaletteCopyAction::Raw(id) if id == paste.id => {
-                self.clipboard_outgoing = Some(paste.content.clone());
+                let content = if self.selected_id.as_deref() == Some(id.as_str()) {
+                    self.active_snapshot()
+                } else {
+                    paste.content.clone()
+                };
+                self.clipboard_outgoing = Some(content);
                 self.pending_copy_action = None;
                 self.set_status("Copied paste content.");
             }
             PaletteCopyAction::Fenced(id) if id == paste.id => {
-                let lang = paste.language.as_deref().unwrap_or("text");
-                self.clipboard_outgoing = Some(format!("```{}\n{}\n```", lang, paste.content));
+                let (content, language) = if self.selected_id.as_deref() == Some(id.as_str()) {
+                    (
+                        self.active_snapshot(),
+                        self.edit_language.as_deref().or(paste.language.as_deref()),
+                    )
+                } else {
+                    (paste.content.clone(), paste.language.as_deref())
+                };
+                let lang = language.unwrap_or("text");
+                self.clipboard_outgoing = Some(format!("```{}\n{}\n```", lang, content));
                 self.pending_copy_action = None;
                 self.set_status("Copied fenced code block.");
             }

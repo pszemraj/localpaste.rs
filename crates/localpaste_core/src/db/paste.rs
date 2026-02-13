@@ -429,8 +429,13 @@ impl PasteDb {
         folder_id: Option<String>,
         language: Option<String>,
     ) -> Result<Vec<Paste>, AppError> {
+        let query = query.trim();
+        if query.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
+        let language_filter = normalized_language_filter(language.as_deref());
 
         for item in self.tree.iter() {
             let (_, value) = item?;
@@ -444,10 +449,8 @@ impl PasteDb {
             }
 
             // Apply language filter
-            if let Some(ref lang) = language {
-                if paste.language.as_ref() != Some(lang) {
-                    continue;
-                }
+            if !language_matches_filter(paste.language.as_deref(), language_filter.as_deref()) {
+                continue;
             }
 
             let mut score = 0;
@@ -500,6 +503,7 @@ impl PasteDb {
         folder_id: Option<String>,
         language: Option<String>,
     ) -> Result<Vec<PasteMeta>, AppError> {
+        let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
@@ -509,6 +513,7 @@ impl PasteDb {
         }
 
         let query_lower = query.to_lowercase();
+        let language_filter = normalized_language_filter(language.as_deref());
         let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
         for item in self.meta_tree.iter() {
             let (_, value) = item?;
@@ -535,10 +540,8 @@ impl PasteDb {
                     continue;
                 }
             }
-            if let Some(ref lang_filter) = language {
-                if meta.language.as_ref() != Some(lang_filter) {
-                    continue;
-                }
+            if !language_matches_filter(meta.language.as_deref(), language_filter.as_deref()) {
+                continue;
             }
 
             let mut score = 0;
@@ -782,6 +785,7 @@ impl PasteDb {
         language: Option<String>,
     ) -> Result<Vec<PasteMeta>, AppError> {
         let query_lower = query.to_lowercase();
+        let language_filter = normalized_language_filter(language.as_deref());
         let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
         for item in self.tree.iter() {
             let (_, value) = item?;
@@ -793,10 +797,8 @@ impl PasteDb {
                     continue;
                 }
             }
-            if let Some(ref lang_filter) = language {
-                if meta.language.as_ref() != Some(lang_filter) {
-                    continue;
-                }
+            if !language_matches_filter(meta.language.as_deref(), language_filter.as_deref()) {
+                continue;
             }
 
             let mut score = 0;
@@ -872,6 +874,24 @@ fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
     }
 
     paste.updated_at = chrono::Utc::now();
+}
+
+fn normalized_language_filter(language: Option<&str>) -> Option<String> {
+    language
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+fn language_matches_filter(language: Option<&str>, filter: Option<&str>) -> bool {
+    let Some(filter) = filter else {
+        return true;
+    };
+    language
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.eq_ignore_ascii_case(filter))
+        .unwrap_or(false)
 }
 
 fn folder_matches_expected(

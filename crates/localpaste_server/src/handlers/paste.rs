@@ -218,7 +218,7 @@ pub async fn delete_paste(
 /// - `query`: List query parameters.
 ///
 /// # Returns
-/// Pastes as JSON.
+/// Metadata rows as JSON.
 ///
 /// # Errors
 /// Returns an error if listing fails.
@@ -271,7 +271,7 @@ pub async fn list_pastes_meta(
 /// - `query`: Search query parameters.
 ///
 /// # Returns
-/// Matching pastes as JSON.
+/// Matching metadata rows as JSON.
 ///
 /// # Errors
 /// Returns an error if search fails.
@@ -279,15 +279,17 @@ pub async fn search_pastes(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Response, HttpError> {
+    let normalized_language = normalize_optional_for_create(query.language);
     let normalized_folder_id = normalize_optional_for_create(query.folder_id);
     let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
     // Preserve content-match semantics from canonical search while returning
     // metadata rows to avoid large full-content responses.
-    let pastes = state
-        .db
-        .pastes
-        .search(&query.q, limit, normalized_folder_id, query.language)?;
+    let pastes =
+        state
+            .db
+            .pastes
+            .search(&query.q, limit, normalized_folder_id, normalized_language)?;
     let metas: Vec<PasteMeta> = pastes.iter().map(PasteMeta::from).collect();
     Ok(maybe_with_folder_deprecation_headers(
         Json(metas),
@@ -313,6 +315,7 @@ pub async fn search_pastes_meta(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Response, HttpError> {
+    let normalized_language = normalize_optional_for_create(query.language);
     let normalized_folder_id = normalize_optional_for_create(query.folder_id);
     let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
@@ -320,7 +323,7 @@ pub async fn search_pastes_meta(
         state
             .db
             .pastes
-            .search_meta(&query.q, limit, normalized_folder_id, query.language)?;
+            .search_meta(&query.q, limit, normalized_folder_id, normalized_language)?;
     Ok(maybe_with_folder_deprecation_headers(
         Json(metas),
         folder_filter_used,

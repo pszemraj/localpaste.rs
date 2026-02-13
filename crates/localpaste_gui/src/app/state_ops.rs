@@ -316,10 +316,11 @@ impl LocalPasteApp {
     }
 
     pub(super) fn set_active_language_filter(&mut self, language: Option<String>) {
-        if self.active_language_filter == language {
+        let normalized = normalize_language_filter_value(language.as_deref());
+        if self.active_language_filter == normalized {
             return;
         }
-        self.active_language_filter = language;
+        self.active_language_filter = normalized;
         self.search_last_sent.clear();
         if self.search_query.trim().is_empty() {
             self.recompute_visible_pastes();
@@ -332,13 +333,8 @@ impl LocalPasteApp {
     pub(super) fn language_filter_options(&self) -> Vec<String> {
         let mut langs: BTreeSet<String> = BTreeSet::new();
         for paste in &self.all_pastes {
-            if let Some(lang) = paste
-                .language
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                langs.insert(lang.to_string());
+            if let Some(lang) = normalize_language_filter_value(paste.language.as_deref()) {
+                langs.insert(lang);
             }
         }
         langs.into_iter().collect()
@@ -832,6 +828,13 @@ fn language_in_set(language: Option<&str>, values: &[&str]) -> bool {
     values
         .iter()
         .any(|value| language.eq_ignore_ascii_case(value))
+}
+
+fn normalize_language_filter_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_ascii_lowercase())
 }
 
 fn contains_any_ci(value: &str, needles: &[&str]) -> bool {

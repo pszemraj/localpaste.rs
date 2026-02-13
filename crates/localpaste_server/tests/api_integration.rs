@@ -285,6 +285,77 @@ async fn test_paste_search() {
 }
 
 #[tokio::test]
+async fn test_search_language_filter_is_case_insensitive_and_trimmed() {
+    let (server, _temp, _locks) = setup_test_server().await;
+
+    server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "def run():\n    return 1",
+            "name": "python-note",
+            "language": "python",
+            "language_is_manual": true,
+            "tags": ["shared-tag"]
+        }))
+        .await;
+
+    server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "fn run() -> i32 { 1 }",
+            "name": "rust-note",
+            "language": "rust",
+            "language_is_manual": true,
+            "tags": ["shared-tag"]
+        }))
+        .await;
+
+    let search_response = server
+        .get("/api/search?q=shared-tag&language=%20%20PyThOn%20%20")
+        .await;
+    assert_eq!(search_response.status_code(), StatusCode::OK);
+    let search_results: Vec<serde_json::Value> = search_response.json();
+    assert_eq!(search_results.len(), 1);
+    assert_eq!(search_results[0]["name"], "python-note");
+
+    let search_meta_response = server
+        .get("/api/search/meta?q=shared-tag&language=%20PYTHON%20")
+        .await;
+    assert_eq!(search_meta_response.status_code(), StatusCode::OK);
+    let search_meta_results: Vec<serde_json::Value> = search_meta_response.json();
+    assert_eq!(search_meta_results.len(), 1);
+    assert_eq!(search_meta_results[0]["name"], "python-note");
+}
+
+#[tokio::test]
+async fn test_search_empty_or_whitespace_query_returns_no_results() {
+    let (server, _temp, _locks) = setup_test_server().await;
+
+    server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "hello world",
+            "name": "hello-note"
+        }))
+        .await;
+
+    let empty_search = server.get("/api/search?q=").await;
+    assert_eq!(empty_search.status_code(), StatusCode::OK);
+    let empty_results: Vec<serde_json::Value> = empty_search.json();
+    assert!(empty_results.is_empty());
+
+    let whitespace_search = server.get("/api/search?q=%20%20%20").await;
+    assert_eq!(whitespace_search.status_code(), StatusCode::OK);
+    let whitespace_results: Vec<serde_json::Value> = whitespace_search.json();
+    assert!(whitespace_results.is_empty());
+
+    let whitespace_meta_search = server.get("/api/search/meta?q=%20%20").await;
+    assert_eq!(whitespace_meta_search.status_code(), StatusCode::OK);
+    let whitespace_meta_results: Vec<serde_json::Value> = whitespace_meta_search.json();
+    assert!(whitespace_meta_results.is_empty());
+}
+
+#[tokio::test]
 async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
     let (server, _temp, _locks) = setup_test_server().await;
 

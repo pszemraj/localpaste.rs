@@ -93,6 +93,42 @@ fn locked_paste_blocks_api_delete() {
 }
 
 #[test]
+fn locked_paste_blocks_api_update() {
+    let dir = TempDir::new().expect("temp dir");
+    let db_path = dir.path().join("db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let db = Database::new(&db_path_str).expect("db");
+    let locks = Arc::new(PasteLockManager::default());
+    let server_db = db.share().expect("share db");
+    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks.clone());
+    let server = EmbeddedServer::start(state, false).expect("server");
+
+    let paste = Paste::new("locked content".to_string(), "locked".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create paste");
+
+    locks.lock(&paste_id);
+
+    let client = reqwest::blocking::Client::new();
+    let url = format!("http://{}/api/paste/{}", server.addr(), paste_id);
+    let resp = client
+        .put(&url)
+        .json(&json!({ "content": "updated" }))
+        .send()
+        .expect("update request");
+    assert_eq!(resp.status(), reqwest::StatusCode::LOCKED);
+
+    locks.unlock(&paste_id);
+
+    let resp = client
+        .put(&url)
+        .json(&json!({ "content": "updated" }))
+        .send()
+        .expect("update request");
+    assert!(resp.status().is_success());
+}
+
+#[test]
 fn metadata_update_persists_and_manual_auto_language_transitions_work() {
     let dir = TempDir::new().expect("temp dir");
     let db_path = dir.path().join("db");

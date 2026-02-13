@@ -290,6 +290,43 @@ fn palette_copy_fenced_for_loaded_selection_sets_language_block() {
 }
 
 #[test]
+fn palette_copy_raw_for_selected_uses_unsaved_editor_content() {
+    let mut harness = make_app();
+    if let Some(paste) = harness.app.selected_paste.as_mut() {
+        paste.id = "alpha".to_string();
+        paste.content = "saved".to_string();
+    }
+    harness.app.selected_content.reset("unsaved".to_string());
+    harness.app.pending_copy_action = None;
+
+    harness.app.queue_palette_copy("alpha".to_string(), false);
+
+    assert_eq!(harness.app.clipboard_outgoing.as_deref(), Some("unsaved"));
+    assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
+fn palette_copy_fenced_for_selected_prefers_editor_language_override() {
+    let mut harness = make_app();
+    if let Some(paste) = harness.app.selected_paste.as_mut() {
+        paste.id = "alpha".to_string();
+        paste.language = Some("rust".to_string());
+        paste.content = "saved".to_string();
+    }
+    harness.app.selected_content.reset("unsaved".to_string());
+    harness.app.edit_language = Some("python".to_string());
+    harness.app.pending_copy_action = None;
+
+    harness.app.queue_palette_copy("alpha".to_string(), true);
+
+    assert_eq!(
+        harness.app.clipboard_outgoing.as_deref(),
+        Some("```python\nunsaved\n```")
+    );
+    assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
 fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
     let TestHarness {
         _dir: _guard,

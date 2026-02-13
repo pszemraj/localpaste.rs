@@ -260,6 +260,74 @@ mod db_tests {
     }
 
     #[test]
+    fn test_paste_search_language_filter_is_case_insensitive_and_trimmed() {
+        let (db, _temp) = setup_test_db();
+
+        let mut python = Paste::new("def run():\n    pass".to_string(), "py".to_string());
+        python.language = Some("python".to_string());
+        python.language_is_manual = true;
+
+        let mut rust = Paste::new("fn run() {}".to_string(), "rs".to_string());
+        rust.language = Some("rust".to_string());
+        rust.language_is_manual = true;
+
+        db.pastes.create(&python).unwrap();
+        db.pastes.create(&rust).unwrap();
+
+        let results = db
+            .pastes
+            .search("run", 10, None, Some("  PyThOn  ".to_string()))
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, python.id);
+    }
+
+    #[test]
+    fn test_paste_search_meta_language_filter_is_case_insensitive_and_trimmed() {
+        let (db, _temp) = setup_test_db();
+
+        let mut python = Paste::new("hello".to_string(), "python-note".to_string());
+        python.language = Some("python".to_string());
+        python.language_is_manual = true;
+        python.tags = vec!["tips".to_string()];
+
+        let mut rust = Paste::new("hello".to_string(), "rust-note".to_string());
+        rust.language = Some("rust".to_string());
+        rust.language_is_manual = true;
+        rust.tags = vec!["tips".to_string()];
+
+        db.pastes.create(&python).unwrap();
+        db.pastes.create(&rust).unwrap();
+
+        let results = db
+            .pastes
+            .search_meta("tips", 10, None, Some(" PYTHON ".to_string()))
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, python.id);
+    }
+
+    #[test]
+    fn test_paste_search_ignores_empty_or_whitespace_queries() {
+        let (db, _temp) = setup_test_db();
+
+        let paste = Paste::new("hello world".to_string(), "note".to_string());
+        db.pastes.create(&paste).unwrap();
+
+        let empty = db.pastes.search("", 10, None, None).unwrap();
+        assert!(empty.is_empty());
+
+        let whitespace = db.pastes.search("   ", 10, None, None).unwrap();
+        assert!(whitespace.is_empty());
+
+        let meta_empty = db.pastes.search_meta("", 10, None, None).unwrap();
+        assert!(meta_empty.is_empty());
+
+        let meta_whitespace = db.pastes.search_meta("   ", 10, None, None).unwrap();
+        assert!(meta_whitespace.is_empty());
+    }
+
+    #[test]
     fn test_meta_indexes_stay_consistent_after_update_and_delete() {
         let (db, _temp) = setup_test_db();
         let paste = Paste::new("one".to_string(), "alpha".to_string());
