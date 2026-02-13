@@ -353,11 +353,13 @@ impl Database {
             Err(e) => return Err(AppError::DatabaseError(e.to_string())),
         };
 
-        Ok(Self {
+        let database = Self {
             pastes: paste::PasteDb::new(db.clone())?,
             folders: folder::FolderDb::new(db.clone())?,
             db,
-        })
+        };
+        database.pastes.reconcile_meta_indexes()?;
+        Ok(database)
     }
 
     /// Flush all pending writes to disk.

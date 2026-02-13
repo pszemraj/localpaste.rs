@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod db_tests {
     use super::super::*;
+    use chrono::Duration;
     use crate::error::AppError;
     use crate::models::{folder::*, paste::*};
     use std::sync::{Arc, Barrier};
@@ -191,6 +192,28 @@ mod db_tests {
     }
 
     #[test]
+    fn test_paste_list_meta_orders_by_updated_and_honors_limit() {
+        let (db, _temp) = setup_test_db();
+        let now = chrono::Utc::now();
+
+        let mut older = Paste::new("old".to_string(), "old".to_string());
+        older.updated_at = now - Duration::minutes(10);
+        let older_id = older.id.clone();
+
+        let mut newer = Paste::new("new".to_string(), "new".to_string());
+        newer.updated_at = now;
+        let newer_id = newer.id.clone();
+
+        db.pastes.create(&older).unwrap();
+        db.pastes.create(&newer).unwrap();
+
+        let metas = db.pastes.list_meta(1, None).unwrap();
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].id, newer_id);
+        assert_ne!(metas[0].id, older_id);
+    }
+
+    #[test]
     fn test_paste_search() {
         let (db, _temp) = setup_test_db();
 
@@ -206,6 +229,83 @@ mod db_tests {
         let results = db.pastes.search("rust", 10, None, None).unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].content.to_lowercase().contains("rust"));
+    }
+
+    #[test]
+    fn test_paste_search_meta_is_metadata_only() {
+        let (db, _temp) = setup_test_db();
+
+        let mut by_name = Paste::new("hello".to_string(), "rust-note".to_string());
+        by_name.language = None;
+        by_name.tags = vec![];
+
+        let mut by_tag = Paste::new("hello".to_string(), "misc".to_string());
+        by_tag.language = None;
+        by_tag.tags = vec!["rusty".to_string()];
+
+        let mut content_only = Paste::new("rust appears in content".to_string(), "plain".to_string());
+        content_only.language = None;
+        content_only.tags = vec![];
+
+        db.pastes.create(&by_name).unwrap();
+        db.pastes.create(&by_tag).unwrap();
+        db.pastes.create(&content_only).unwrap();
+
+        let results = db.pastes.search_meta("rust", 10, None, None).unwrap();
+        let ids: Vec<String> = results.into_iter().map(|m| m.id).collect();
+        assert!(ids.contains(&by_name.id));
+        assert!(ids.contains(&by_tag.id));
+        assert!(!ids.contains(&content_only.id));
+    }
+
+    #[test]
+    fn test_meta_indexes_stay_consistent_after_update_and_delete() {
+        let (db, _temp) = setup_test_db();
+        let paste = Paste::new("one".to_string(), "alpha".to_string());
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).unwrap();
+
+        let update = UpdatePasteRequest {
+            content: Some("updated body".to_string()),
+            name: Some("beta".to_string()),
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: Some(vec!["tag".to_string()]),
+        };
+        db.pastes.update(&paste_id, update).unwrap().unwrap();
+
+        let metas = db.pastes.list_meta(10, None).unwrap();
+        let updated = metas.into_iter().find(|m| m.id == paste_id).unwrap();
+        assert_eq!(updated.name, "beta");
+        assert_eq!(updated.content_len, "updated body".len());
+        assert_eq!(updated.tags, vec!["tag".to_string()]);
+
+        db.pastes.delete(&paste_id).unwrap();
+        let metas_after_delete = db.pastes.list_meta(10, None).unwrap();
+        assert!(!metas_after_delete.into_iter().any(|m| m.id == paste_id));
+    }
+
+    #[test]
+    fn test_database_new_reconciles_missing_meta_indexes() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        let db = Database::new(&db_path_str).unwrap();
+        let paste = Paste::new("seed".to_string(), "seed".to_string());
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).unwrap();
+
+        let meta_tree = db.db.open_tree("pastes_meta").unwrap();
+        let updated_tree = db.db.open_tree("pastes_by_updated").unwrap();
+        meta_tree.clear().unwrap();
+        updated_tree.clear().unwrap();
+        drop(db);
+
+        let reopened = Database::new(&db_path_str).unwrap();
+        let metas = reopened.pastes.list_meta(10, None).unwrap();
+        assert!(metas.into_iter().any(|m| m.id == paste_id));
     }
 
     #[test]

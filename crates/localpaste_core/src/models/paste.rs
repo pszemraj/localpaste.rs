@@ -20,6 +20,19 @@ pub struct Paste {
     pub is_markdown: bool,
 }
 
+/// Lightweight paste metadata used by GUI list/search paths.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PasteMeta {
+    pub id: String,
+    pub name: String,
+    pub language: Option<String>,
+    pub folder_id: Option<String>,
+    pub updated_at: DateTime<Utc>,
+    pub tags: Vec<String>,
+    pub content_len: usize,
+    pub is_markdown: bool,
+}
+
 /// Request payload for creating a paste.
 #[derive(Debug, Deserialize)]
 pub struct CreatePasteRequest {
@@ -80,6 +93,21 @@ impl Paste {
             updated_at: now,
             tags: Vec::new(),
             is_markdown: content.contains("```") || content.contains('#'),
+        }
+    }
+}
+
+impl From<&Paste> for PasteMeta {
+    fn from(value: &Paste) -> Self {
+        Self {
+            id: value.id.clone(),
+            name: value.name.clone(),
+            language: value.language.clone(),
+            folder_id: value.folder_id.clone(),
+            updated_at: value.updated_at,
+            tags: value.tags.clone(),
+            content_len: value.content.len(),
+            is_markdown: value.is_markdown,
         }
     }
 }

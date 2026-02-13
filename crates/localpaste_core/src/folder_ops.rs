@@ -97,11 +97,11 @@ pub fn delete_folder_tree_and_migrate(
 
 fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<(), AppError> {
     loop {
-        let pastes = db.pastes.list(100, Some(folder_id.to_string()))?;
-        if pastes.is_empty() {
+        let metas = db.pastes.list_meta(100, Some(folder_id.to_string()))?;
+        if metas.is_empty() {
             break;
         }
-        for paste in pastes {
+        for meta in metas {
             let update = UpdatePasteRequest {
                 content: None,
                 name: None,
@@ -110,7 +110,7 @@ fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<()
                 folder_id: Some(String::new()), // normalized to None in PasteDb::update
                 tags: None,
             };
-            db.pastes.update(&paste.id, update)?;
+            db.pastes.update(&meta.id, update)?;
         }
     }
     Ok(())

@@ -11,6 +11,8 @@ use std::sync::Arc;
 /// Accessor for the `pastes` sled tree.
 pub struct PasteDb {
     tree: sled::Tree,
+    meta_tree: sled::Tree,
+    updated_tree: sled::Tree,
 }
 
 impl PasteDb {
@@ -23,7 +25,13 @@ impl PasteDb {
     /// Returns an error if the tree cannot be opened.
     pub fn new(db: Arc<Db>) -> Result<Self, AppError> {
         let tree = db.open_tree("pastes")?;
-        Ok(Self { tree })
+        let meta_tree = db.open_tree("pastes_meta")?;
+        let updated_tree = db.open_tree("pastes_by_updated")?;
+        Ok(Self {
+            tree,
+            meta_tree,
+            updated_tree,
+        })
     }
 
     /// Insert a new paste.
@@ -37,6 +45,7 @@ impl PasteDb {
         let key = paste.id.as_bytes();
         let value = bincode::serialize(paste)?;
         self.tree.insert(key, value)?;
+        self.upsert_meta_and_index_from_paste(paste, None)?;
         Ok(())
     }
 
@@ -68,6 +77,8 @@ impl PasteDb {
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
         let update_error = Rc::new(RefCell::new(None));
         let update_error_in = Rc::clone(&update_error);
+        let old_meta = Rc::new(RefCell::new(None));
+        let old_meta_in = Rc::clone(&old_meta);
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
             let bytes = old?;
 
@@ -79,6 +90,7 @@ impl PasteDb {
                 }
             };
 
+            *old_meta_in.borrow_mut() = Some(PasteMeta::from(&paste));
             apply_update_request(&mut paste, &update);
             match bincode::serialize(&paste) {
                 Ok(encoded) => Some(encoded),
@@ -93,7 +105,11 @@ impl PasteDb {
         }
 
         match result {
-            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
+            Some(bytes) => {
+                let paste = deserialize_paste(&bytes)?;
+                self.upsert_meta_and_index_from_paste(&paste, old_meta.borrow_mut().take())?;
+                Ok(Some(paste))
+            }
             None => Ok(None),
         }
     }
@@ -120,6 +136,8 @@ impl PasteDb {
     ) -> Result<Option<Paste>, AppError> {
         let update_error = Rc::new(RefCell::new(None));
         let update_error_in = Rc::clone(&update_error);
+        let old_meta = Rc::new(RefCell::new(None));
+        let old_meta_in = Rc::clone(&old_meta);
         let folder_mismatch = Rc::new(Cell::new(false));
         let folder_mismatch_in = Rc::clone(&folder_mismatch);
         let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
@@ -141,6 +159,7 @@ impl PasteDb {
                 return Some(bytes.to_vec());
             }
 
+            *old_meta_in.borrow_mut() = Some(PasteMeta::from(&paste));
             apply_update_request(&mut paste, &update);
             match bincode::serialize(&paste) {
                 Ok(encoded) => Some(encoded),
@@ -158,7 +177,11 @@ impl PasteDb {
         }
 
         match result {
-            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
+            Some(bytes) => {
+                let paste = deserialize_paste(&bytes)?;
+                self.upsert_meta_and_index_from_paste(&paste, old_meta.borrow_mut().take())?;
+                Ok(Some(paste))
+            }
             None => Ok(None),
         }
     }
@@ -172,7 +195,12 @@ impl PasteDb {
     /// Returns an error if deletion fails or the deleted value cannot be decoded.
     pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
         match self.tree.remove(id.as_bytes())? {
-            Some(value) => Ok(Some(deserialize_paste(&value)?)),
+            Some(value) => {
+                let paste = deserialize_paste(&value)?;
+                let meta = PasteMeta::from(&paste);
+                self.remove_meta_and_index(&meta)?;
+                Ok(Some(paste))
+            }
             None => Ok(None),
         }
     }
@@ -222,6 +250,49 @@ impl PasteDb {
         pastes.truncate(limit);
 
         Ok(pastes)
+    }
+
+    /// List paste metadata with an optional folder filter.
+    ///
+    /// # Arguments
+    /// - `limit`: Maximum number of metadata rows to return.
+    /// - `folder_id`: Optional folder id to filter by.
+    ///
+    /// # Returns
+    /// Metadata rows sorted by most recently updated.
+    ///
+    /// # Errors
+    /// Returns an error if iteration or deserialization fails.
+    pub fn list_meta(
+        &self,
+        limit: usize,
+        folder_id: Option<String>,
+    ) -> Result<Vec<PasteMeta>, AppError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut metas = Vec::with_capacity(limit);
+        for item in self.updated_tree.iter() {
+            let (_, value) = item?;
+            let id = match std::str::from_utf8(value.as_ref()) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let Some(meta_bytes) = self.meta_tree.get(id.as_bytes())? else {
+                continue;
+            };
+            let meta = deserialize_meta(&meta_bytes)?;
+            if let Some(ref fid) = folder_id {
+                if meta.folder_id.as_ref() != Some(fid) {
+                    continue;
+                }
+            }
+            metas.push(meta);
+            if metas.len() >= limit {
+                break;
+            }
+        }
+        Ok(metas)
     }
 
     /// Search pastes by query with optional filters.
@@ -292,6 +363,132 @@ impl PasteDb {
             .map(|(_, paste)| paste)
             .collect())
     }
+
+    /// Search paste metadata by query with optional filters.
+    ///
+    /// Metadata-only search matches name/tags/language and does not scan content.
+    ///
+    /// # Arguments
+    /// - `query`: Search term.
+    /// - `limit`: Maximum number of results.
+    /// - `folder_id`: Optional folder filter.
+    /// - `language`: Optional language filter.
+    ///
+    /// # Returns
+    /// Matching metadata rows sorted by score and recency.
+    ///
+    /// # Errors
+    /// Returns an error if iteration fails.
+    pub fn search_meta(
+        &self,
+        query: &str,
+        limit: usize,
+        folder_id: Option<String>,
+        language: Option<String>,
+    ) -> Result<Vec<PasteMeta>, AppError> {
+        if query.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let query_lower = query.to_lowercase();
+        let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
+        for item in self.meta_tree.iter() {
+            let (_, value) = item?;
+            let meta = deserialize_meta(&value)?;
+
+            if let Some(ref fid) = folder_id {
+                if meta.folder_id.as_ref() != Some(fid) {
+                    continue;
+                }
+            }
+            if let Some(ref lang_filter) = language {
+                if meta.language.as_ref() != Some(lang_filter) {
+                    continue;
+                }
+            }
+
+            let mut score = 0;
+            if meta.name.to_lowercase().contains(&query_lower) {
+                score += 10;
+            }
+            if meta
+                .tags
+                .iter()
+                .any(|tag| tag.to_lowercase().contains(&query_lower))
+            {
+                score += 5;
+            }
+            if meta
+                .language
+                .as_ref()
+                .map(|lang| lang.to_lowercase().contains(&query_lower))
+                .unwrap_or(false)
+            {
+                score += 2;
+            }
+            if score > 0 {
+                results.push((score, meta.updated_at, meta));
+            }
+        }
+        results.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+        Ok(results
+            .into_iter()
+            .take(limit)
+            .map(|(_, _, meta)| meta)
+            .collect())
+    }
+
+    /// Rebuild metadata and recency indexes from the canonical `pastes` tree.
+    ///
+    /// # Errors
+    /// Returns an error if index rebuild fails.
+    pub fn reconcile_meta_indexes(&self) -> Result<(), AppError> {
+        self.meta_tree.clear()?;
+        self.updated_tree.clear()?;
+        for item in self.tree.iter() {
+            let (_, value) = item?;
+            let paste = deserialize_paste(&value)?;
+            self.upsert_meta_and_index_from_paste(&paste, None)?;
+        }
+        self.meta_tree.flush()?;
+        self.updated_tree.flush()?;
+        Ok(())
+    }
+
+    fn upsert_meta_and_index_from_paste(
+        &self,
+        paste: &Paste,
+        previous: Option<PasteMeta>,
+    ) -> Result<(), AppError> {
+        let meta = PasteMeta::from(paste);
+        self.upsert_meta_and_index(&meta, previous.as_ref())
+    }
+
+    fn upsert_meta_and_index(
+        &self,
+        meta: &PasteMeta,
+        previous: Option<&PasteMeta>,
+    ) -> Result<(), AppError> {
+        if let Some(previous) = previous {
+            self.remove_index_entry(previous)?;
+        }
+        let meta_bytes = bincode::serialize(meta)?;
+        self.meta_tree.insert(meta.id.as_bytes(), meta_bytes)?;
+        let recency_key = index_key(meta.updated_at, meta.id.as_str());
+        self.updated_tree.insert(recency_key, meta.id.as_bytes())?;
+        Ok(())
+    }
+
+    fn remove_meta_and_index(&self, meta: &PasteMeta) -> Result<(), AppError> {
+        self.meta_tree.remove(meta.id.as_bytes())?;
+        self.remove_index_entry(meta)?;
+        Ok(())
+    }
+
+    fn remove_index_entry(&self, meta: &PasteMeta) -> Result<(), AppError> {
+        let recency_key = index_key(meta.updated_at, meta.id.as_str());
+        self.updated_tree.remove(recency_key)?;
+        Ok(())
+    }
 }
 
 fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
@@ -357,6 +554,19 @@ fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
             .map(Paste::from)
             .map_err(|_| err)
     })
+}
+
+fn deserialize_meta(bytes: &[u8]) -> Result<PasteMeta, bincode::Error> {
+    bincode::deserialize(bytes)
+}
+
+fn index_key(updated_at: DateTime<Utc>, id: &str) -> Vec<u8> {
+    let millis = updated_at.timestamp_millis().max(0) as u64;
+    let reverse = u64::MAX.saturating_sub(millis);
+    let mut key = Vec::with_capacity(8 + id.len());
+    key.extend_from_slice(&reverse.to_be_bytes());
+    key.extend_from_slice(id.as_bytes());
+    key
 }
 
 #[derive(Serialize, Deserialize)]
