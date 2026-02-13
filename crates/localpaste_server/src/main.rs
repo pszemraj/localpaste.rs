@@ -48,7 +48,9 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env();
 
     if has_flag(&args, "--force-unlock") {
-        guard_force_unlock_probe(localpaste_server::db::localpaste_process_probe())?;
+        guard_force_unlock_probe(localpaste_server::db::lock::probe_owner_lock(
+            &config.db_path,
+        ))?;
 
         tracing::warn!("Force unlock requested");
         if std::path::Path::new(&config.db_path).exists() {

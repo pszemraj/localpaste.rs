@@ -291,12 +291,11 @@ pub async fn search_pastes(
     let limit = query.limit.unwrap_or(50).min(100);
     // Preserve content-match semantics from canonical search while returning
     // metadata rows to avoid large full-content responses.
-    let pastes =
+    let metas =
         state
             .db
             .pastes
             .search(&query.q, limit, normalized_folder_id, normalized_language)?;
-    let metas: Vec<PasteMeta> = pastes.iter().map(PasteMeta::from).collect();
     Ok(with_meta_only_response_shape(
         maybe_with_folder_deprecation_headers(
             Json(metas),

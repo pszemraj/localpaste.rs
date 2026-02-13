@@ -147,6 +147,7 @@ pub fn delete_folder_tree_and_migrate(
     db: &Database,
     root_id: &str,
 ) -> Result<Vec<String>, AppError> {
+    let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
     let folders = db.folders.list()?;
     if !folders.iter().any(|f| f.id == root_id) {
         return Err(AppError::NotFound);
@@ -163,7 +164,12 @@ pub fn delete_folder_tree_and_migrate(
         // list_meta can temporarily mask stale rows by falling back to canonical data.
         // Rebuild indexes from canonical rows so folder deletions do not leave persistent
         // metadata/index ghosts that force repeated runtime fallback scans.
-        db.pastes.reconcile_meta_indexes()?;
+        if let Err(err) = reconcile_meta_indexes_after_folder_delete(db) {
+            tracing::error!(
+                "Folder delete committed but metadata reconcile failed; leaving reconcile marker for repair: {}",
+                err
+            );
+        }
 
         Ok(delete_order.clone())
     })();
@@ -194,13 +200,25 @@ fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<()
                 folder_id: Some(String::new()), // normalized to None in PasteDb::update
                 tags: None,
             };
-            let moved = TransactionOps::move_paste_between_folders(db, &paste.id, None, update)?;
+            let moved =
+                TransactionOps::move_paste_between_folders_locked(db, &paste.id, None, update)?;
             if moved.is_none() {
                 continue;
             }
         }
     }
     Ok(())
+}
+
+#[cfg(not(test))]
+fn reconcile_meta_indexes_after_folder_delete(db: &Database) -> Result<(), AppError> {
+    db.pastes.reconcile_meta_indexes()
+}
+
+#[cfg(test)]
+fn reconcile_meta_indexes_after_folder_delete(db: &Database) -> Result<(), AppError> {
+    maybe_inject_delete_reconcile_failpoint(db)?;
+    db.pastes.reconcile_meta_indexes()
 }
 
 /// Reconcile folder invariants from canonical paste rows.
@@ -252,6 +270,37 @@ pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
+fn delete_reconcile_failpoint_slot() -> &'static std::sync::Mutex<bool> {
+    static SLOT: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
+    SLOT.get_or_init(|| std::sync::Mutex::new(false))
+}
+
+#[cfg(test)]
+pub(crate) fn set_delete_reconcile_failpoint(enabled: bool) {
+    let mut slot = delete_reconcile_failpoint_slot()
+        .lock()
+        .expect("delete reconcile failpoint lock poisoned");
+    *slot = enabled;
+}
+
+#[cfg(test)]
+fn maybe_inject_delete_reconcile_failpoint(db: &Database) -> Result<(), AppError> {
+    let mut slot = delete_reconcile_failpoint_slot()
+        .lock()
+        .expect("delete reconcile failpoint lock poisoned");
+    if !*slot {
+        return Ok(());
+    }
+    *slot = false;
+    let tree = db.db.open_tree("pastes")?;
+    tree.insert(
+        b"folder-delete-reconcile-failpoint-row",
+        b"corrupt-canonical-row",
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{db::TransactionOps, models::paste::Paste};
@@ -265,6 +314,14 @@ mod tests {
         let db_path = dir.path().join("db");
         let db = Database::new(db_path.to_str().expect("db path")).expect("db");
         (db, dir)
+    }
+
+    struct DeleteReconcileFailpointGuard;
+
+    impl Drop for DeleteReconcileFailpointGuard {
+        fn drop(&mut self) {
+            set_delete_reconcile_failpoint(false);
+        }
     }
 
     fn assert_folder_counts_match_canonical(db: &Database) {
@@ -480,6 +537,40 @@ mod tests {
         assert!(
             db.pastes.get(&paste_id).expect("lookup").is_none(),
             "failed create must not leave canonical row"
+        );
+    }
+
+    #[test]
+    fn delete_tree_returns_success_when_post_commit_reconcile_fails() {
+        let _guard = DeleteReconcileFailpointGuard;
+        let (db, _dir) = setup_db();
+
+        let root = Folder::with_parent("root".to_string(), None);
+        db.folders.create(&root).expect("create root");
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(root.id.clone());
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).expect("create paste");
+
+        set_delete_reconcile_failpoint(true);
+        let deleted = delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
+        assert_eq!(deleted, vec![root.id.clone()]);
+        assert!(
+            db.folders.get(&root.id).expect("folder lookup").is_none(),
+            "folder deletion should commit even when reconcile fails"
+        );
+        let moved = db
+            .pastes
+            .get(&paste_id)
+            .expect("paste lookup")
+            .expect("paste should still exist");
+        assert_eq!(moved.folder_id, None);
+        assert!(
+            db.pastes
+                .needs_reconcile_meta_indexes(false)
+                .expect("needs reconcile"),
+            "failed reconcile should leave recovery markers for follow-up repair"
         );
     }
 

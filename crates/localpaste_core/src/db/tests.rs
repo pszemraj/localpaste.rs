@@ -27,6 +27,7 @@ mod db_tests {
     impl Drop for FailpointGuard {
         fn drop(&mut self) {
             set_transaction_failpoint(None);
+            set_move_pause_hooks(None);
         }
     }
 
@@ -241,7 +242,7 @@ mod db_tests {
         // Search
         let results = db.pastes.search("rust", 10, None, None).unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].content.to_lowercase().contains("rust"));
+        assert_eq!(results[0].id, paste1.id);
     }
 
     #[test]
@@ -708,6 +709,101 @@ mod db_tests {
         assert!(
             db.folders.get(&new_folder_id).unwrap().is_none(),
             "injected race removes destination folder"
+        );
+    }
+
+    #[test]
+    fn test_move_and_folder_delete_are_linearized_after_destination_reserve() {
+        let _lock = transaction_failpoint_test_lock()
+            .lock()
+            .expect("transaction failpoint lock");
+        let _guard = FailpointGuard;
+        let (db, _temp) = setup_test_db();
+
+        let source = Folder::new("source-folder".to_string());
+        let source_id = source.id.clone();
+        db.folders.create(&source).unwrap();
+
+        let destination = Folder::new("destination-folder".to_string());
+        let destination_id = destination.id.clone();
+        db.folders.create(&destination).unwrap();
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(source_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &source_id).unwrap();
+
+        let reached = Arc::new(Barrier::new(2));
+        let resume = Arc::new(Barrier::new(2));
+        set_move_pause_hooks(Some(MovePauseHooks {
+            reached: reached.clone(),
+            resume: resume.clone(),
+        }));
+
+        let mover_db = db.share().expect("share db");
+        let mover_paste_id = paste_id.clone();
+        let mover_destination = destination_id.clone();
+        let mover = thread::spawn(move || {
+            set_transaction_failpoint(Some(
+                TransactionFailpoint::MovePauseAfterDestinationReserveOnce,
+            ));
+            let update = UpdatePasteRequest {
+                content: None,
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(mover_destination.clone()),
+                tags: None,
+            };
+            let result = TransactionOps::move_paste_between_folders(
+                &mover_db,
+                &mover_paste_id,
+                Some(mover_destination.as_str()),
+                update,
+            );
+            set_transaction_failpoint(None);
+            result
+        });
+
+        // Ensure the move paused after destination reservation and before CAS.
+        reached.wait();
+
+        let deleter_db = db.share().expect("share db");
+        let deleter_destination = destination_id.clone();
+        let deleter = thread::spawn(move || {
+            crate::folder_ops::delete_folder_tree_and_migrate(&deleter_db, &deleter_destination)
+        });
+
+        // Allow the move to resume and release the transaction lock.
+        resume.wait();
+
+        let move_result = mover.join().expect("mover join");
+        set_move_pause_hooks(None);
+        assert!(
+            move_result.is_ok(),
+            "move should succeed under lock serialization: {:?}",
+            move_result
+        );
+
+        let delete_result = deleter.join().expect("deleter join");
+        assert!(
+            delete_result.is_ok(),
+            "delete should succeed after move completes: {:?}",
+            delete_result
+        );
+
+        let final_paste = db
+            .pastes
+            .get(&paste_id)
+            .expect("paste lookup")
+            .expect("paste should remain");
+        assert_eq!(
+            final_paste.folder_id, None,
+            "folder delete should migrate moved paste to unfiled after serialization"
+        );
+        assert!(
+            db.folders.get(&destination_id).unwrap().is_none(),
+            "destination folder should be deleted"
         );
     }
 

@@ -23,3 +23,5 @@ pub const DB_LOCK_FILE_NAME: &str = "db.lock";
 pub const DB_TREE_LOCK_FILE_NAME: &str = "tree.lock";
 /// Legacy lock suffix used when scanning for stale lock artifacts.
 pub const DB_LOCK_EXTENSION: &str = "lock";
+/// Process-lifetime owner lock file used to detect active writers safely.
+pub const DB_OWNER_LOCK_FILE_NAME: &str = "db.owner.lock";

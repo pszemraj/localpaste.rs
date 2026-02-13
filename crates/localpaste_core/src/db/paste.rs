@@ -11,8 +11,9 @@ use std::sync::Arc;
 
 const META_STATE_TREE_NAME: &str = "pastes_meta_state";
 const META_INDEX_VERSION_KEY: &[u8] = b"version";
-const META_INDEX_DIRTY_COUNT_KEY: &[u8] = b"dirty_count";
-const META_INDEX_SCHEMA_VERSION: u32 = 2;
+const META_INDEX_IN_PROGRESS_COUNT_KEY: &[u8] = b"in_progress_count";
+const META_INDEX_FAULTED_KEY: &[u8] = b"faulted";
+const META_INDEX_SCHEMA_VERSION: u32 = 3;
 
 /// Accessor for the `pastes` sled tree.
 pub struct PasteDb {
@@ -55,7 +56,10 @@ impl PasteDb {
         if marker_version != Some(META_INDEX_SCHEMA_VERSION) {
             return Ok(true);
         }
-        if self.meta_index_dirty_count()? > 0 {
+        if self.meta_index_faulted()? {
+            return Ok(true);
+        }
+        if self.meta_index_in_progress_count()? > 0 {
             return Ok(true);
         }
 
@@ -472,7 +476,7 @@ impl PasteDb {
     /// - `language`: Optional language filter.
     ///
     /// # Returns
-    /// Matching pastes sorted by score.
+    /// Matching metadata rows sorted by score and recency.
     ///
     /// # Errors
     /// Returns an error if iteration fails.
@@ -482,13 +486,13 @@ impl PasteDb {
         limit: usize,
         folder_id: Option<String>,
         language: Option<String>,
-    ) -> Result<Vec<Paste>, AppError> {
+    ) -> Result<Vec<PasteMeta>, AppError> {
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
         let query_lower = query.to_lowercase();
-        let mut results: Vec<(i32, DateTime<Utc>, Paste)> = Vec::new();
+        let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
         let language_filter = normalized_language_filter(language.as_deref());
 
         for item in self.tree.iter() {
@@ -510,11 +514,12 @@ impl PasteDb {
             let score = score_paste_match(&paste, &query_lower);
 
             if score > 0 {
-                push_ranked_paste_top_k(&mut results, (score, paste.updated_at, paste), limit);
+                let meta = PasteMeta::from(&paste);
+                push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }
         }
 
-        Ok(finalize_paste_search_results(results))
+        Ok(finalize_meta_search_results(results, limit))
     }
 
     /// Search paste metadata by query with optional filters.
@@ -600,7 +605,7 @@ impl PasteDb {
         }
         self.meta_tree.flush()?;
         self.updated_tree.flush()?;
-        self.write_meta_index_state(META_INDEX_SCHEMA_VERSION, 0)?;
+        self.write_meta_index_state(META_INDEX_SCHEMA_VERSION, 0, false)?;
         Ok(())
     }
 
@@ -620,13 +625,13 @@ impl PasteDb {
         Ok(Some(u32::from_be_bytes(bytes)))
     }
 
-    fn meta_index_dirty_count(&self) -> Result<u64, AppError> {
-        let Some(raw) = self.meta_state_tree.get(META_INDEX_DIRTY_COUNT_KEY)? else {
+    fn meta_index_in_progress_count(&self) -> Result<u64, AppError> {
+        let Some(raw) = self.meta_state_tree.get(META_INDEX_IN_PROGRESS_COUNT_KEY)? else {
             return Ok(0);
         };
         if raw.len() != std::mem::size_of::<u64>() {
             tracing::warn!(
-                "Metadata index dirty marker has invalid length {}; forcing reconcile",
+                "Metadata index in-progress marker has invalid length {}; forcing reconcile",
                 raw.len()
             );
             return Ok(1);
@@ -636,13 +641,36 @@ impl PasteDb {
         Ok(u64::from_be_bytes(bytes))
     }
 
-    fn write_meta_index_state(&self, version: u32, dirty_count: u64) -> Result<(), AppError> {
+    fn meta_index_faulted(&self) -> Result<bool, AppError> {
+        let Some(raw) = self.meta_state_tree.get(META_INDEX_FAULTED_KEY)? else {
+            return Ok(false);
+        };
+        if raw.len() != std::mem::size_of::<u8>() {
+            tracing::warn!(
+                "Metadata index faulted marker has invalid length {}; forcing reconcile",
+                raw.len()
+            );
+            return Ok(true);
+        }
+        Ok(raw[0] != 0)
+    }
+
+    fn write_meta_index_state(
+        &self,
+        version: u32,
+        in_progress_count: u64,
+        faulted: bool,
+    ) -> Result<(), AppError> {
         self.meta_state_tree
             .insert(META_INDEX_VERSION_KEY, version.to_be_bytes().to_vec())?;
         self.meta_state_tree.insert(
-            META_INDEX_DIRTY_COUNT_KEY,
-            dirty_count.to_be_bytes().to_vec(),
+            META_INDEX_IN_PROGRESS_COUNT_KEY,
+            in_progress_count.to_be_bytes().to_vec(),
         )?;
+        self.meta_state_tree
+            .insert(META_INDEX_FAULTED_KEY, vec![u8::from(faulted)])?;
+        // Remove v2 marker when upgrading to v3 state.
+        self.meta_state_tree.remove(b"dirty_count")?;
         self.meta_state_tree.flush()?;
         Ok(())
     }
@@ -650,7 +678,7 @@ impl PasteDb {
     fn begin_meta_index_mutation(&self) -> Result<(), AppError> {
         let _ = self
             .meta_state_tree
-            .update_and_fetch(META_INDEX_DIRTY_COUNT_KEY, |old| {
+            .update_and_fetch(META_INDEX_IN_PROGRESS_COUNT_KEY, |old| {
                 let current = decode_dirty_count(old);
                 Some(current.saturating_add(1).to_be_bytes().to_vec())
             })?;
@@ -660,17 +688,30 @@ impl PasteDb {
     fn end_meta_index_mutation(&self) -> Result<(), AppError> {
         let _ = self
             .meta_state_tree
-            .update_and_fetch(META_INDEX_DIRTY_COUNT_KEY, |old| {
+            .update_and_fetch(META_INDEX_IN_PROGRESS_COUNT_KEY, |old| {
                 let current = decode_dirty_count(old);
                 Some(current.saturating_sub(1).to_be_bytes().to_vec())
             })?;
         Ok(())
     }
 
+    fn mark_meta_index_faulted(&self) {
+        if let Err(err) = self
+            .meta_state_tree
+            .insert(META_INDEX_FAULTED_KEY, vec![1u8])
+        {
+            tracing::warn!("Failed to mark metadata index as faulted: {}", err);
+            return;
+        }
+        if let Err(err) = self.meta_state_tree.flush() {
+            tracing::warn!("Failed to flush metadata index fault marker: {}", err);
+        }
+    }
+
     fn try_end_meta_index_mutation(&self) {
         if let Err(err) = self.end_meta_index_mutation() {
             tracing::warn!(
-                "Failed to clear metadata index dirty marker after successful mutation: {}",
+                "Failed to clear metadata index in-progress marker after mutation: {}",
                 err
             );
         }
@@ -686,13 +727,15 @@ impl PasteDb {
             Ok(()) => self.try_end_meta_index_mutation(),
             Err(err) => {
                 // Canonical paste writes are the source of truth. If derived metadata/index
-                // maintenance fails after the canonical mutation commits, keep the dirty marker
-                // set and continue so callers do not receive a false-negative failure.
+                // maintenance fails after the canonical mutation commits, flag indexes as faulted
+                // so readers can safely route through canonical fallback until reconcile.
+                self.mark_meta_index_faulted();
+                self.try_end_meta_index_mutation();
                 tracing::warn!(
                     operation,
                     paste_id,
                     error = %err,
-                    "Canonical write committed but metadata index update failed; leaving dirty marker set for canonical fallback/reconcile"
+                    "Canonical write committed but metadata index update failed; marked index faulted for canonical fallback/reconcile"
                 );
             }
         }
@@ -742,7 +785,7 @@ impl PasteDb {
         if self.meta_index_schema_version()? != Some(META_INDEX_SCHEMA_VERSION) {
             return Ok(false);
         }
-        if self.meta_index_dirty_count()? > 0 {
+        if self.meta_index_faulted()? {
             return Ok(false);
         }
         Ok(true)
@@ -753,8 +796,19 @@ impl PasteDb {
         limit: usize,
         folder_id: Option<String>,
     ) -> Result<Vec<PasteMeta>, AppError> {
-        self.list(limit, folder_id)
-            .map(|pastes| pastes.iter().map(PasteMeta::from).collect())
+        let mut ranked: Vec<(DateTime<Utc>, PasteMeta)> = Vec::new();
+        for item in self.tree.iter() {
+            let (_, value) = item?;
+            let paste = deserialize_paste(&value)?;
+            if let Some(ref fid) = folder_id {
+                if paste.folder_id.as_ref() != Some(fid) {
+                    continue;
+                }
+            }
+            let meta = PasteMeta::from(&paste);
+            push_recent_meta_top_k(&mut ranked, (meta.updated_at, meta), limit);
+        }
+        Ok(finalize_recent_meta_results(ranked, limit))
     }
 
     fn search_meta_from_canonical(
@@ -882,28 +936,20 @@ fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
 
 fn score_paste_match(paste: &Paste, query_lower: &str) -> i32 {
     let mut score = 0;
-    if paste.name.to_lowercase().contains(query_lower) {
+    if contains_case_insensitive(&paste.name, query_lower) {
         score += 10;
     }
     if paste
         .tags
         .iter()
-        .any(|tag| tag.to_lowercase().contains(query_lower))
+        .any(|tag| contains_case_insensitive(tag, query_lower))
     {
         score += 5;
     }
-    if paste.content.to_lowercase().contains(query_lower) {
+    if contains_case_insensitive(&paste.content, query_lower) {
         score += 1;
     }
     score
-}
-
-fn push_ranked_paste_top_k(
-    results: &mut Vec<(i32, DateTime<Utc>, Paste)>,
-    candidate: (i32, DateTime<Utc>, Paste),
-    limit: usize,
-) {
-    push_ranked_top_k(results, candidate, limit);
 }
 
 fn push_ranked_meta_top_k(
@@ -943,16 +989,6 @@ fn push_ranked_top_k<T>(
     }
 }
 
-fn finalize_paste_search_results(
-    mut ranked_results: Vec<(i32, DateTime<Utc>, Paste)>,
-) -> Vec<Paste> {
-    ranked_results.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
-    ranked_results
-        .into_iter()
-        .map(|(_, _, paste)| paste)
-        .collect()
-}
-
 fn finalize_meta_search_results(
     mut ranked_results: Vec<(i32, DateTime<Utc>, PasteMeta)>,
     limit: usize,
@@ -963,6 +999,68 @@ fn finalize_meta_search_results(
         .take(limit)
         .map(|(_, _, meta)| meta)
         .collect()
+}
+
+fn push_recent_meta_top_k(
+    results: &mut Vec<(DateTime<Utc>, PasteMeta)>,
+    candidate: (DateTime<Utc>, PasteMeta),
+    limit: usize,
+) {
+    if limit == 0 {
+        return;
+    }
+    if results.len() < limit {
+        results.push(candidate);
+        return;
+    }
+
+    let Some((worst_idx, worst_entry)) = results
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| left.0.cmp(&right.0))
+    else {
+        results.push(candidate);
+        return;
+    };
+    if candidate.0 > worst_entry.0 {
+        results[worst_idx] = candidate;
+    }
+}
+
+fn finalize_recent_meta_results(
+    mut ranked_results: Vec<(DateTime<Utc>, PasteMeta)>,
+    limit: usize,
+) -> Vec<PasteMeta> {
+    ranked_results.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked_results
+        .into_iter()
+        .take(limit)
+        .map(|(_, meta)| meta)
+        .collect()
+}
+
+fn contains_case_insensitive(haystack: &str, query_lower: &str) -> bool {
+    if query_lower.is_empty() {
+        return true;
+    }
+    if query_lower.is_ascii() {
+        let needle = query_lower.as_bytes();
+        let hay = haystack.as_bytes();
+        if needle.len() > hay.len() {
+            return false;
+        }
+        for idx in 0..=hay.len() - needle.len() {
+            if hay[idx..idx + needle.len()]
+                .iter()
+                .map(u8::to_ascii_lowercase)
+                .eq(needle.iter().copied())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    haystack.to_lowercase().contains(query_lower)
 }
 
 fn folder_matches_expected(
@@ -1046,8 +1144,8 @@ impl From<LegacyPaste> for Paste {
 #[cfg(test)]
 mod tests {
     use super::{
-        folder_matches_expected, push_ranked_meta_top_k, PasteDb, META_INDEX_DIRTY_COUNT_KEY,
-        META_INDEX_SCHEMA_VERSION, META_INDEX_VERSION_KEY,
+        folder_matches_expected, push_ranked_meta_top_k, PasteDb, META_INDEX_FAULTED_KEY,
+        META_INDEX_IN_PROGRESS_COUNT_KEY, META_INDEX_SCHEMA_VERSION, META_INDEX_VERSION_KEY,
     };
     use crate::models::paste::{Paste, UpdatePasteRequest};
     use crate::AppError;
@@ -1263,6 +1361,37 @@ mod tests {
     }
 
     #[test]
+    fn list_meta_keeps_index_fast_path_when_only_in_progress_marker_is_set() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        let paste = Paste::new("body".to_string(), "indexed-only".to_string());
+        let paste_id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        paste_db
+            .meta_state_tree
+            .insert(
+                META_INDEX_IN_PROGRESS_COUNT_KEY,
+                1u64.to_be_bytes().to_vec(),
+            )
+            .expect("set in-progress marker");
+
+        // If list_meta falls back to canonical rows, this injected corruption would fail decode.
+        paste_db
+            .tree
+            .insert(paste_id.as_bytes(), b"corrupt-canonical-row")
+            .expect("corrupt canonical row");
+
+        let metas = paste_db.list_meta(10, None).expect("list metadata");
+        assert!(
+            metas.into_iter().any(|meta| meta.id == paste_id),
+            "in-progress marker alone must not force canonical fallback"
+        );
+    }
+
+    #[test]
     fn search_meta_falls_back_to_canonical_when_meta_decode_fails() {
         let (paste_db, _dir) = setup_paste_db();
         paste_db
@@ -1339,14 +1468,21 @@ mod tests {
             "derived metadata should remain stale until reconcile"
         );
         assert!(
-            paste_db.meta_index_dirty_count().expect("dirty count") > 0,
-            "failed index write should keep dirty marker set"
+            paste_db.meta_index_faulted().expect("faulted marker"),
+            "failed index write should set faulted marker"
+        );
+        assert_eq!(
+            paste_db
+                .meta_index_in_progress_count()
+                .expect("in-progress count"),
+            0,
+            "failed index write should still clear in-progress marker"
         );
         assert!(
             paste_db
                 .needs_reconcile_meta_indexes(false)
                 .expect("needs reconcile"),
-            "dirty marker should force reconcile"
+            "faulted marker should force reconcile"
         );
         let metas = paste_db
             .list_meta(10, None)
@@ -1354,6 +1490,31 @@ mod tests {
         assert!(
             metas.iter().any(|meta| meta.id == id),
             "canonical fallback should keep committed paste visible"
+        );
+    }
+
+    #[test]
+    fn reconcile_clears_faulted_marker_after_index_write_failure() {
+        let (paste_db, _dir) = setup_paste_db();
+        let paste = Paste::new("content".to_string(), "name".to_string());
+
+        let result = paste_db.create_inner(&paste, |_db, _paste| {
+            Err(AppError::DatabaseError(
+                "injected create index failure".to_string(),
+            ))
+        });
+        assert!(result.is_ok(), "canonical create should still succeed");
+        assert!(
+            paste_db.meta_index_faulted().expect("faulted marker"),
+            "failure should mark indexes as faulted"
+        );
+
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("reconcile should clear fault marker");
+        assert!(
+            !paste_db.meta_index_faulted().expect("faulted marker"),
+            "reconcile should clear fault marker"
         );
     }
 
@@ -1391,8 +1552,14 @@ mod tests {
             .expect("paste should remain");
         assert_eq!(canonical.content, "after");
         assert!(
-            paste_db.meta_index_dirty_count().expect("dirty count") > 0,
-            "failed index write should keep dirty marker set"
+            paste_db.meta_index_faulted().expect("faulted marker"),
+            "failed index write should set faulted marker"
+        );
+        assert_eq!(
+            paste_db
+                .meta_index_in_progress_count()
+                .expect("in-progress count"),
+            0
         );
     }
 
@@ -1432,8 +1599,14 @@ mod tests {
             .expect("paste should remain");
         assert_eq!(canonical.folder_id.as_deref(), Some("folder-x"));
         assert!(
-            paste_db.meta_index_dirty_count().expect("dirty count") > 0,
-            "failed derived index write should keep dirty marker set"
+            paste_db.meta_index_faulted().expect("faulted marker"),
+            "failed derived index write should set faulted marker"
+        );
+        assert_eq!(
+            paste_db
+                .meta_index_in_progress_count()
+                .expect("in-progress count"),
+            0
         );
     }
 
@@ -1458,13 +1631,19 @@ mod tests {
             "canonical row should remain deleted"
         );
         assert!(
-            paste_db.meta_index_dirty_count().expect("dirty count") > 0,
-            "failed index delete should keep dirty marker set"
+            paste_db.meta_index_faulted().expect("faulted marker"),
+            "failed index delete should set faulted marker"
+        );
+        assert_eq!(
+            paste_db
+                .meta_index_in_progress_count()
+                .expect("in-progress count"),
+            0
         );
     }
 
     #[test]
-    fn update_error_does_not_leave_meta_index_dirty_marker_set() {
+    fn update_error_does_not_leave_meta_index_state_marked() {
         let (paste_db, _dir) = setup_paste_db();
         let paste = Paste::new("body".to_string(), "name".to_string());
         let paste_id = paste.id.clone();
@@ -1491,14 +1670,20 @@ mod tests {
             "expected serialization error for corrupt canonical row"
         );
         assert_eq!(
-            paste_db.meta_index_dirty_count().expect("dirty count"),
+            paste_db
+                .meta_index_in_progress_count()
+                .expect("in-progress count"),
             0,
-            "update errors without index mutation should not leave dirty marker set"
+            "update errors without index mutation should not leave in-progress marker set"
+        );
+        assert!(
+            !paste_db.meta_index_faulted().expect("faulted marker"),
+            "update errors without index mutation should not mark indexes as faulted"
         );
     }
 
     #[test]
-    fn update_if_folder_mismatch_error_does_not_leave_meta_index_dirty_marker_set() {
+    fn update_if_folder_mismatch_error_does_not_leave_meta_index_state_marked() {
         let (paste_db, _dir) = setup_paste_db();
         let paste = Paste::new("body".to_string(), "name".to_string());
         let paste_id = paste.id.clone();
@@ -1525,9 +1710,15 @@ mod tests {
             "expected serialization error for corrupt canonical row"
         );
         assert_eq!(
-            paste_db.meta_index_dirty_count().expect("dirty count"),
+            paste_db
+                .meta_index_in_progress_count()
+                .expect("in-progress count"),
             0,
-            "failed CAS update without index mutation should not leave dirty marker set"
+            "failed CAS update without index mutation should not leave in-progress marker set"
+        );
+        assert!(
+            !paste_db.meta_index_faulted().expect("faulted marker"),
+            "failed CAS update without index mutation should not mark indexes as faulted"
         );
     }
 
@@ -1546,15 +1737,21 @@ mod tests {
             u32::from_be_bytes(marker.as_ref().try_into().expect("version bytes")),
             META_INDEX_SCHEMA_VERSION
         );
-        let dirty = paste_db
+        let in_progress = paste_db
             .meta_state_tree
-            .get(META_INDEX_DIRTY_COUNT_KEY)
-            .expect("dirty lookup")
-            .expect("dirty marker");
+            .get(META_INDEX_IN_PROGRESS_COUNT_KEY)
+            .expect("in-progress lookup")
+            .expect("in-progress marker");
         assert_eq!(
-            u64::from_be_bytes(dirty.as_ref().try_into().expect("dirty bytes")),
+            u64::from_be_bytes(in_progress.as_ref().try_into().expect("in-progress bytes")),
             0
         );
+        let faulted = paste_db
+            .meta_state_tree
+            .get(META_INDEX_FAULTED_KEY)
+            .expect("faulted lookup")
+            .expect("faulted marker");
+        assert_eq!(faulted.as_ref(), &[0u8]);
         assert!(!paste_db
             .needs_reconcile_meta_indexes(false)
             .expect("needs reconcile"));

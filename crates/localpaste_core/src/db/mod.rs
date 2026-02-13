@@ -14,9 +14,11 @@ use crate::error::AppError;
 use crate::folder_ops::{ensure_folder_assignable, reconcile_folder_invariants};
 use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME};
 use sled::Db;
-use std::sync::Arc;
 #[cfg(test)]
-use std::sync::{Mutex, OnceLock};
+use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use std::sync::{Barrier, OnceLock};
 
 /// Process probe state used for lock-safety decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,9 +97,8 @@ fn pgrep_probe_result(args: &[&str], current_pid: u32) -> ProcessProbeResult {
 #[cfg(unix)]
 fn pgrep_error_probe_result(err: &std::io::Error) -> ProcessProbeResult {
     if err.kind() == std::io::ErrorKind::NotFound {
-        // Minimal Unix environments may not ship `pgrep`; treat that as a recoverable
-        // "not running" fallback so stale lock recovery is not permanently blocked.
-        ProcessProbeResult::NotRunning
+        // Missing probe tooling means liveness is unknown; treat as unsafe.
+        ProcessProbeResult::Unknown
     } else {
         ProcessProbeResult::Unknown
     }
@@ -196,8 +197,8 @@ pub fn localpaste_process_probe() -> ProcessProbeResult {
 #[cfg(windows)]
 fn tasklist_error_probe_result(kind: std::io::ErrorKind) -> ProcessProbeResult {
     if kind == std::io::ErrorKind::NotFound {
-        // Keep stale lock recovery reachable when tasklist is unavailable.
-        ProcessProbeResult::NotRunning
+        // Missing probe tooling means liveness is unknown; treat as unsafe.
+        ProcessProbeResult::Unknown
     } else {
         ProcessProbeResult::Unknown
     }
@@ -221,6 +222,8 @@ pub struct Database {
     pub db: Arc<Db>,
     pub pastes: paste::PasteDb,
     pub folders: folder::FolderDb,
+    _owner_lock_guard: Option<Arc<lock::OwnerLockGuard>>,
+    pub(crate) folder_txn_lock: Arc<Mutex<()>>,
 }
 
 #[cfg(test)]
@@ -241,36 +244,60 @@ pub(crate) enum TransactionFailpoint {
     CreateDeleteDestinationAfterCanonicalCreateOnce,
     MoveAfterDestinationReserveOnce,
     MoveDeleteDestinationAfterReserveOnce,
+    MovePauseAfterDestinationReserveOnce,
 }
 
 #[cfg(test)]
-fn transaction_failpoint_slot() -> &'static Mutex<Option<TransactionFailpoint>> {
-    static SLOT: OnceLock<Mutex<Option<TransactionFailpoint>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
+thread_local! {
+    static TRANSACTION_FAILPOINT: RefCell<Option<TransactionFailpoint>> = const { RefCell::new(None) };
 }
 
 #[cfg(test)]
 pub(crate) fn set_transaction_failpoint(failpoint: Option<TransactionFailpoint>) {
-    let mut slot = transaction_failpoint_slot()
-        .lock()
-        .expect("transaction failpoint lock poisoned");
-    *slot = failpoint;
+    TRANSACTION_FAILPOINT.with(|slot| {
+        *slot.borrow_mut() = failpoint;
+    });
 }
 
 #[cfg(test)]
 fn take_transaction_failpoint() -> Option<TransactionFailpoint> {
-    transaction_failpoint_slot()
-        .lock()
-        .expect("transaction failpoint lock poisoned")
-        .take()
+    TRANSACTION_FAILPOINT.with(|slot| slot.borrow_mut().take())
 }
 
 #[cfg(test)]
 fn restore_transaction_failpoint(failpoint: TransactionFailpoint) {
-    let mut slot = transaction_failpoint_slot()
+    TRANSACTION_FAILPOINT.with(|slot| {
+        *slot.borrow_mut() = Some(failpoint);
+    });
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct MovePauseHooks {
+    pub(crate) reached: Arc<Barrier>,
+    pub(crate) resume: Arc<Barrier>,
+}
+
+#[cfg(test)]
+fn move_pause_hooks_slot() -> &'static Mutex<Option<MovePauseHooks>> {
+    static SLOT: OnceLock<Mutex<Option<MovePauseHooks>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) fn set_move_pause_hooks(hooks: Option<MovePauseHooks>) {
+    let mut slot = move_pause_hooks_slot()
         .lock()
-        .expect("transaction failpoint lock poisoned");
-    *slot = Some(failpoint);
+        .expect("move pause hook lock poisoned");
+    *slot = hooks;
+}
+
+#[cfg(test)]
+fn take_move_pause_hooks() -> Option<MovePauseHooks> {
+    move_pause_hooks_slot()
+        .lock()
+        .expect("move pause hook lock poisoned")
+        .take()
 }
 
 #[cfg(test)]
@@ -301,6 +328,13 @@ fn apply_move_failpoint_after_destination_reserve(
             }
             Ok(())
         }
+        TransactionFailpoint::MovePauseAfterDestinationReserveOnce => {
+            if let Some(hooks) = take_move_pause_hooks() {
+                hooks.reached.wait();
+                hooks.resume.wait();
+            }
+            Ok(())
+        }
     }
 }
 
@@ -326,7 +360,8 @@ fn apply_create_failpoint_after_destination_reserve(
             Ok(())
         }
         TransactionFailpoint::MoveAfterDestinationReserveOnce
-        | TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce => {
+        | TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce
+        | TransactionFailpoint::MovePauseAfterDestinationReserveOnce => {
             restore_transaction_failpoint(failpoint);
             Ok(())
         }
@@ -350,7 +385,8 @@ fn apply_create_failpoint_after_canonical_create(
         TransactionFailpoint::CreateAfterDestinationReserveOnce
         | TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce
         | TransactionFailpoint::MoveAfterDestinationReserveOnce
-        | TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce => {
+        | TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce
+        | TransactionFailpoint::MovePauseAfterDestinationReserveOnce => {
             restore_transaction_failpoint(failpoint);
             Ok(())
         }
@@ -358,6 +394,14 @@ fn apply_create_failpoint_after_canonical_create(
 }
 
 impl TransactionOps {
+    pub(crate) fn acquire_folder_txn_lock(
+        db: &Database,
+    ) -> Result<std::sync::MutexGuard<'_, ()>, AppError> {
+        db.folder_txn_lock
+            .lock()
+            .map_err(|_| AppError::DatabaseError("Folder transaction lock poisoned".to_string()))
+    }
+
     /// Atomically create a paste and update folder count
     ///
     /// # Arguments
@@ -371,6 +415,15 @@ impl TransactionOps {
     /// # Errors
     /// Propagates storage errors from paste or folder updates.
     pub fn create_paste_with_folder(
+        db: &Database,
+        paste: &crate::models::paste::Paste,
+        folder_id: &str,
+    ) -> Result<(), AppError> {
+        let _guard = Self::acquire_folder_txn_lock(db)?;
+        Self::create_paste_with_folder_locked(db, paste, folder_id)
+    }
+
+    pub(crate) fn create_paste_with_folder_locked(
         db: &Database,
         paste: &crate::models::paste::Paste,
         folder_id: &str,
@@ -464,6 +517,14 @@ impl TransactionOps {
     /// # Errors
     /// Propagates storage errors from the paste tree.
     pub fn delete_paste_with_folder(db: &Database, paste_id: &str) -> Result<bool, AppError> {
+        let _guard = Self::acquire_folder_txn_lock(db)?;
+        Self::delete_paste_with_folder_locked(db, paste_id)
+    }
+
+    pub(crate) fn delete_paste_with_folder_locked(
+        db: &Database,
+        paste_id: &str,
+    ) -> Result<bool, AppError> {
         let deleted = db.pastes.delete_and_return(paste_id)?;
 
         if let Some(paste) = deleted {
@@ -495,6 +556,16 @@ impl TransactionOps {
     /// # Errors
     /// Propagates storage errors from paste or folder updates.
     pub fn move_paste_between_folders(
+        db: &Database,
+        paste_id: &str,
+        new_folder_id: Option<&str>,
+        update_req: crate::models::paste::UpdatePasteRequest,
+    ) -> Result<Option<crate::models::paste::Paste>, AppError> {
+        let _guard = Self::acquire_folder_txn_lock(db)?;
+        Self::move_paste_between_folders_locked(db, paste_id, new_folder_id, update_req)
+    }
+
+    pub(crate) fn move_paste_between_folders_locked(
         db: &Database,
         paste_id: &str,
         new_folder_id: Option<&str>,
@@ -653,6 +724,20 @@ impl TransactionOps {
 }
 
 impl Database {
+    fn from_shared_with_coordination(
+        db: Arc<Db>,
+        owner_lock_guard: Option<Arc<lock::OwnerLockGuard>>,
+        folder_txn_lock: Arc<Mutex<()>>,
+    ) -> Result<Self, AppError> {
+        Ok(Self {
+            pastes: paste::PasteDb::new(db.clone())?,
+            folders: folder::FolderDb::new(db.clone())?,
+            db,
+            _owner_lock_guard: owner_lock_guard,
+            folder_txn_lock,
+        })
+    }
+
     /// Build a database handle from an existing shared sled instance.
     ///
     /// This is used when multiple components in the same process need
@@ -664,11 +749,7 @@ impl Database {
     /// # Errors
     /// Returns an error if the required trees cannot be opened.
     pub fn from_shared(db: Arc<Db>) -> Result<Self, AppError> {
-        Ok(Self {
-            pastes: paste::PasteDb::new(db.clone())?,
-            folders: folder::FolderDb::new(db.clone())?,
-            db,
-        })
+        Self::from_shared_with_coordination(db, None, Arc::new(Mutex::new(())))
     }
 
     /// Clone this handle for another subsystem in the same process.
@@ -682,7 +763,11 @@ impl Database {
     /// # Errors
     /// Returns an error if tree initialization fails.
     pub fn share(&self) -> Result<Self, AppError> {
-        Self::from_shared(self.db.clone())
+        Self::from_shared_with_coordination(
+            self.db.clone(),
+            self._owner_lock_guard.clone(),
+            self.folder_txn_lock.clone(),
+        )
     }
 
     /// Open the database and initialize trees.
@@ -697,6 +782,9 @@ impl Database {
         if let Some(parent) = std::path::Path::new(path).parent() {
             std::fs::create_dir_all(parent).ok();
         }
+
+        // Acquire process-lifetime owner lock before opening sled.
+        let owner_lock_guard = Some(Arc::new(lock::acquire_owner_lock_for_lifetime(path)?));
 
         // Try to open database - sled handles its own locking
         let db = match sled::open(path) {
@@ -785,6 +873,8 @@ impl Database {
             pastes: paste::PasteDb::new(db.clone())?,
             folders: folder::FolderDb::new(db.clone())?,
             db,
+            _owner_lock_guard: owner_lock_guard,
+            folder_txn_lock: Arc::new(Mutex::new(())),
         };
         let force_reindex = crate::config::env_flag_enabled("LOCALPASTE_REINDEX");
         if database
@@ -855,10 +945,10 @@ mod process_detection_tests {
     }
 
     #[test]
-    fn unix_probe_treats_missing_pgrep_as_not_running() {
+    fn unix_probe_treats_missing_pgrep_as_unknown() {
         let err = std::io::Error::new(ErrorKind::NotFound, "pgrep not found");
         let probe = pgrep_error_probe_result(&err);
-        assert_eq!(probe, ProcessProbeResult::NotRunning);
+        assert_eq!(probe, ProcessProbeResult::Unknown);
     }
 
     #[test]
@@ -875,9 +965,9 @@ mod process_detection_windows_tests {
     use std::io::ErrorKind;
 
     #[test]
-    fn windows_probe_treats_missing_tasklist_as_not_running() {
+    fn windows_probe_treats_missing_tasklist_as_unknown() {
         let probe = tasklist_error_probe_result(ErrorKind::NotFound);
-        assert_eq!(probe, ProcessProbeResult::NotRunning);
+        assert_eq!(probe, ProcessProbeResult::Unknown);
     }
 
     #[test]
