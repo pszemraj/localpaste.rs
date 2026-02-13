@@ -1,6 +1,7 @@
 //! Utilities for handling sled lock files safely.
 
 use crate::error::AppError;
+use super::fs_copy::copy_dir_recursive;
 use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME, DB_TREE_LOCK_FILE_NAME};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -121,35 +122,6 @@ impl LockManager {
         tracing::debug!("Created database backup at: {:?}", backup_path);
         Ok(backup_path.to_string_lossy().to_string())
     }
-}
-
-/// Recursively copy a directory
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), AppError> {
-    fs::create_dir_all(dst).map_err(|e| {
-        AppError::DatabaseError(format!("Failed to create backup directory: {}", e))
-    })?;
-
-    for entry in fs::read_dir(src)
-        .map_err(|e| AppError::DatabaseError(format!("Failed to read directory: {}", e)))?
-    {
-        let entry = entry.map_err(|e| {
-            AppError::DatabaseError(format!("Failed to read directory entry: {}", e))
-        })?;
-
-        let path = entry.path();
-        let file_name = entry.file_name();
-        let dst_path = dst.join(&file_name);
-
-        if path.is_dir() {
-            copy_dir_recursive(&path, &dst_path)?;
-        } else {
-            fs::copy(&path, &dst_path).map_err(|e| {
-                AppError::DatabaseError(format!("Failed to copy file {:?}: {}", path, e))
-            })?;
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

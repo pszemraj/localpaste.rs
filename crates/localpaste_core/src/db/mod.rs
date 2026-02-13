@@ -4,6 +4,7 @@
 pub mod backup;
 /// Folder storage helpers.
 pub mod folder;
+mod fs_copy;
 /// Lock handling helpers.
 pub mod lock;
 /// Paste storage helpers.
