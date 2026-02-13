@@ -37,9 +37,9 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
             for cmd in cmd_rx.iter() {
                 match cmd {
                     CoreCmd::ListPastes { limit, folder_id } => {
-                        match db.pastes.list(limit, folder_id) {
-                            Ok(pastes) => {
-                                let items = pastes.iter().map(PasteSummary::from_paste).collect();
+                        match db.pastes.list_meta(limit, folder_id) {
+                            Ok(metas) => {
+                                let items = metas.iter().map(PasteSummary::from_meta).collect();
                                 let _ = evt_tx.send(CoreEvent::PasteList { items });
                             }
                             Err(err) => {
@@ -55,9 +55,9 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         limit,
                         folder_id,
                         language,
-                    } => match db.pastes.search(&query, limit, folder_id, language) {
-                        Ok(pastes) => {
-                            let items = pastes.iter().map(PasteSummary::from_paste).collect();
+                    } => match db.pastes.search_meta(&query, limit, folder_id, language) {
+                        Ok(metas) => {
+                            let items = metas.iter().map(PasteSummary::from_meta).collect();
                             let _ = evt_tx.send(CoreEvent::SearchResults { query, items });
                         }
                         Err(err) => {

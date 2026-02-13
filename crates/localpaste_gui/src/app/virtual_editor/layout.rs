@@ -1,6 +1,6 @@
 //! Wrap and viewport metrics for virtualized rendering.
 
-use super::buffer::RopeBuffer;
+use super::buffer::{RopeBuffer, VirtualEditDelta};
 use std::ops::Range;
 
 fn div_ceil(value: usize, divisor: usize) -> usize {
@@ -82,17 +82,71 @@ impl WrapLayoutCache {
         self.wrap_cols = cols;
         let mut total = 0.0f32;
         for idx in 0..buffer.line_count() {
-            let chars = buffer.line_len_chars(idx);
-            let visual_rows = div_ceil(chars.max(1), cols).max(1);
-            let height_px = visual_rows as f32 * line_height.max(1.0);
-            self.line_metrics.push(WrapLineMetrics {
-                visual_rows,
-                height_px,
-                chars,
-            });
-            total += height_px;
+            let metrics = measure_line(buffer, idx, cols, line_height);
+            self.line_metrics.push(metrics);
+            total += metrics.height_px;
             self.prefix_heights.push(total);
         }
+    }
+
+    /// Applies a localized line-layout update from an edit delta.
+    ///
+    /// Returns `false` when the cache cannot be safely patched in-place.
+    pub(crate) fn apply_delta(&mut self, buffer: &RopeBuffer, delta: VirtualEditDelta) -> bool {
+        if self.line_metrics.is_empty() || self.prefix_heights.len() != self.line_metrics.len() + 1 {
+            return false;
+        }
+        if self.char_width_bits == 0 || self.line_height_bits == 0 {
+            return false;
+        }
+
+        let old_len = self.line_metrics.len();
+        let new_len = buffer.line_count();
+        let old_start = delta.start_line;
+        let old_end_exclusive = delta.old_end_line.saturating_add(1);
+        if old_start >= old_len || old_end_exclusive > old_len {
+            return false;
+        }
+        if delta.new_end_line >= new_len {
+            return false;
+        }
+
+        let new_count = delta
+            .new_end_line
+            .saturating_sub(delta.start_line)
+            .saturating_add(1);
+        let old_count = old_end_exclusive.saturating_sub(old_start);
+        let expected_len = old_len.saturating_sub(old_count).saturating_add(new_count);
+        if expected_len != new_len {
+            return false;
+        }
+
+        let line_height = f32::from_bits(self.line_height_bits).max(1.0);
+        let char_width = f32::from_bits(self.char_width_bits).max(1.0);
+        let computed_cols = ((self.wrap_width as f32 / char_width).floor() as usize).max(1);
+        if computed_cols != self.wrap_cols.max(1) {
+            return false;
+        }
+
+        let mut replacement = Vec::with_capacity(new_count);
+        for line in old_start..=delta.new_end_line {
+            replacement.push(measure_line(buffer, line, self.wrap_cols.max(1), line_height));
+        }
+
+        self.line_metrics
+            .splice(old_start..old_end_exclusive, replacement);
+        if self.line_metrics.len() != new_len {
+            return false;
+        }
+
+        self.prefix_heights.truncate(old_start.saturating_add(1));
+        let mut total = self.prefix_heights.last().copied().unwrap_or(0.0);
+        for idx in old_start..self.line_metrics.len() {
+            total += self.line_metrics[idx].height_px;
+            self.prefix_heights.push(total);
+        }
+        self.revision = buffer.revision();
+        true
     }
 
     /// Total scrollable content height in pixels.
@@ -171,6 +225,17 @@ impl WrapLayoutCache {
     }
 }
 
+fn measure_line(buffer: &RopeBuffer, idx: usize, cols: usize, line_height: f32) -> WrapLineMetrics {
+    let chars = buffer.line_len_chars(idx);
+    let visual_rows = div_ceil(chars.max(1), cols).max(1);
+    let height_px = visual_rows as f32 * line_height.max(1.0);
+    WrapLineMetrics {
+        visual_rows,
+        height_px,
+        chars,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +259,25 @@ mod tests {
 
         assert!(!cache.needs_rebuild(buffer.revision(), 60.0, 12.0, 6.0, buffer.line_count()));
         assert!(cache.needs_rebuild(buffer.revision(), 61.0, 12.0, 6.0, buffer.line_count()));
+    }
+
+    #[test]
+    fn apply_delta_recomputes_changed_range_and_preserves_others() {
+        let mut buffer = RopeBuffer::new("abcdef\nxy\nzz");
+        let mut cache = WrapLayoutCache::default();
+        cache.rebuild(&buffer, 20.0, 10.0, 5.0);
+        let first_before = cache.line_metrics(0).expect("line 0");
+
+        let delta = buffer.replace_char_range(7..9, "longer-line").expect("delta");
+        assert!(cache.apply_delta(&buffer, delta));
+        assert!(!cache.needs_rebuild(buffer.revision(), 20.0, 10.0, 5.0, buffer.line_count()));
+        assert_eq!(cache.line_metrics(0), Some(first_before));
+
+        let mut rebuilt = WrapLayoutCache::default();
+        rebuilt.rebuild(&buffer, 20.0, 10.0, 5.0);
+        assert_eq!(cache.total_height(), rebuilt.total_height());
+        for line in 0..buffer.line_count() {
+            assert_eq!(cache.line_metrics(line), rebuilt.line_metrics(line));
+        }
     }
 }

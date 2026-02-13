@@ -1,6 +1,7 @@
 //! Central editor panel rendering for TextEdit, virtual preview, and virtual editor modes.
 
 use super::super::*;
+use super::super::highlight::hash_bytes;
 use eframe::egui;
 
 impl LocalPasteApp {
@@ -165,18 +166,32 @@ impl LocalPasteApp {
                     .unwrap_or("base16-mocha.dark");
                 let revision = self.active_revision();
                 let text_len = self.active_text_len_bytes();
+                let mut content_snapshot_for_dispatch: Option<String> = None;
+                let content_hash = if is_large {
+                    0
+                } else if self.is_virtual_editor_mode() {
+                    let snapshot = self.active_snapshot();
+                    let hash = hash_bytes(snapshot.as_bytes());
+                    content_snapshot_for_dispatch = Some(snapshot);
+                    hash
+                } else {
+                    hash_bytes(self.selected_content.as_str().as_bytes())
+                };
                 let async_mode = text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES && !is_large;
                 let should_request = async_mode
                     && self.should_request_highlight(
                         revision,
                         text_len,
+                        content_hash,
                         &language_hint,
                         theme_key,
                         debounce_active,
                         id.as_str(),
                     );
                 if should_request {
-                    let content_snapshot = self.active_snapshot();
+                    let content_snapshot = content_snapshot_for_dispatch
+                        .take()
+                        .unwrap_or_else(|| self.active_snapshot());
                     self.dispatch_highlight_request(
                         revision,
                         content_snapshot,
@@ -192,6 +207,7 @@ impl LocalPasteApp {
                         render.matches_exact(
                             revision,
                             text_len,
+                            content_hash,
                             &language_hint,
                             theme_key,
                             id.as_str(),
@@ -210,6 +226,7 @@ impl LocalPasteApp {
                         render.matches_exact(
                             revision,
                             text_len,
+                            content_hash,
                             &language_hint,
                             theme_key,
                             id.as_str(),
@@ -250,6 +267,7 @@ impl LocalPasteApp {
                         render.matches_exact(
                             revision,
                             text_len,
+                            content_hash,
                             &language_hint,
                             theme_key,
                             id.as_str(),

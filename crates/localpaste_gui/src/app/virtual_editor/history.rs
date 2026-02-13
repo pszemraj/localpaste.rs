@@ -1,6 +1,6 @@
 //! Undo/redo history for the virtual editor.
 
-use super::buffer::RopeBuffer;
+use super::buffer::{RopeBuffer, VirtualEditDelta};
 use super::state::VirtualEditorState;
 use std::time::{Duration, Instant};
 
@@ -129,32 +129,40 @@ impl VirtualEditorHistory {
     }
 
     /// Undo the most recent mutation.
-    pub(crate) fn undo(&mut self, buffer: &mut RopeBuffer, state: &mut VirtualEditorState) -> bool {
+    pub(crate) fn undo(
+        &mut self,
+        buffer: &mut RopeBuffer,
+        state: &mut VirtualEditorState,
+    ) -> Option<VirtualEditDelta> {
         let Some(op) = self.undo.pop() else {
-            return false;
+            return None;
         };
         self.undo_bytes = self.undo_bytes.saturating_sub(op_bytes(&op));
         let inserted_chars = op.inserted.chars().count();
         let end = op.start.saturating_add(inserted_chars);
-        let _ = buffer.replace_char_range(op.start..end, op.deleted.as_str());
+        let delta = buffer.replace_char_range(op.start..end, op.deleted.as_str());
         state.set_cursor(op.before_cursor, buffer.len_chars());
         self.redo.push(op);
-        true
+        delta
     }
 
     /// Redo the next mutation, if available.
-    pub(crate) fn redo(&mut self, buffer: &mut RopeBuffer, state: &mut VirtualEditorState) -> bool {
+    pub(crate) fn redo(
+        &mut self,
+        buffer: &mut RopeBuffer,
+        state: &mut VirtualEditorState,
+    ) -> Option<VirtualEditDelta> {
         let Some(op) = self.redo.pop() else {
-            return false;
+            return None;
         };
         let deleted_chars = op.deleted.chars().count();
         let end = op.start.saturating_add(deleted_chars);
-        let _ = buffer.replace_char_range(op.start..end, op.inserted.as_str());
+        let delta = buffer.replace_char_range(op.start..end, op.inserted.as_str());
         state.set_cursor(op.after_cursor, buffer.len_chars());
         self.undo_bytes = self.undo_bytes.saturating_add(op_bytes(&op));
         self.undo.push(op);
         self.trim_undo();
-        true
+        delta
     }
 
     #[cfg(test)]
@@ -214,9 +222,9 @@ mod tests {
             at: now,
         });
 
-        assert!(history.undo(&mut buffer, &mut state));
+        assert!(history.undo(&mut buffer, &mut state).is_some());
         assert_eq!(buffer.to_string(), "abc");
-        assert!(history.redo(&mut buffer, &mut state));
+        assert!(history.redo(&mut buffer, &mut state).is_some());
         assert_eq!(buffer.to_string(), "aXYZc");
         assert_eq!(history.redo_len(), 0);
     }

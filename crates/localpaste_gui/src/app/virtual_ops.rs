@@ -338,9 +338,14 @@ impl LocalPasteApp {
         }
         let deleted = self.virtual_editor_buffer.slice_chars(start..end);
         let before_cursor = self.virtual_editor_state.cursor();
-        let _ = self
+        let delta = self
             .virtual_editor_buffer
             .replace_char_range(start..end, replacement);
+        if let Some(delta) = delta {
+            let _ = self
+                .virtual_layout
+                .apply_delta(&self.virtual_editor_buffer, delta);
+        }
         let inserted_chars = replacement.chars().count();
         let after_cursor = start.saturating_add(inserted_chars);
         self.virtual_editor_state
@@ -659,16 +664,28 @@ impl LocalPasteApp {
                 VirtualInputCommand::Undo => {
                     self.virtual_editor_state.ime.preedit_range = None;
                     self.virtual_editor_state.ime.preedit_text.clear();
-                    result.changed |= self.virtual_editor_history.undo(
+                    let delta = self.virtual_editor_history.undo(
                         &mut self.virtual_editor_buffer,
                         &mut self.virtual_editor_state,
                     );
+                    if let Some(delta) = delta {
+                        result.changed = true;
+                        let _ = self
+                            .virtual_layout
+                            .apply_delta(&self.virtual_editor_buffer, delta);
+                    }
                 }
                 VirtualInputCommand::Redo => {
-                    result.changed |= self.virtual_editor_history.redo(
+                    let delta = self.virtual_editor_history.redo(
                         &mut self.virtual_editor_buffer,
                         &mut self.virtual_editor_state,
                     );
+                    if let Some(delta) = delta {
+                        result.changed = true;
+                        let _ = self
+                            .virtual_layout
+                            .apply_delta(&self.virtual_editor_buffer, delta);
+                    }
                 }
                 VirtualInputCommand::ImeEnabled => {
                     self.virtual_editor_state.ime.enabled = true;

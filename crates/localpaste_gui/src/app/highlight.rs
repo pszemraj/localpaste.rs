@@ -540,7 +540,7 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
     }
 }
 
-fn hash_bytes(bytes: &[u8]) -> u64 {
+pub(super) fn hash_bytes(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x00000100000001B3;
     let mut hash = FNV_OFFSET;
@@ -637,6 +637,7 @@ pub(super) struct HighlightRender {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text_len: usize,
+    pub(super) content_hash: u64,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
     pub(super) lines: Vec<HighlightRenderLine>,
@@ -658,12 +659,14 @@ impl HighlightRender {
         &self,
         revision: u64,
         text_len: usize,
+        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         paste_id: &str,
     ) -> bool {
         self.revision == revision
             && self.text_len == text_len
+            && self.content_hash == content_hash
             && self.matches_context(paste_id, language_hint, theme_key)
     }
 }
@@ -674,6 +677,7 @@ pub(super) struct HighlightRequest {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text: String,
+    pub(super) content_hash: u64,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
 }
@@ -683,6 +687,7 @@ pub(super) struct HighlightRequestMeta {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text_len: usize,
+    pub(super) content_hash: u64,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
 }
@@ -692,12 +697,14 @@ impl HighlightRequestMeta {
         &self,
         revision: u64,
         text_len: usize,
+        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         paste_id: &str,
     ) -> bool {
         self.revision == revision
             && self.text_len == text_len
+            && self.content_hash == content_hash
             && self.language_hint == language_hint
             && self.theme_key == theme_key
             && self.paste_id == paste_id
@@ -706,6 +713,7 @@ impl HighlightRequestMeta {
     pub(super) fn matches_render(&self, render: &HighlightRender) -> bool {
         self.revision == render.revision
             && self.text_len == render.text_len
+            && self.content_hash == render.content_hash
             && self.language_hint == render.language_hint
             && self.theme_key == render.theme_key
             && self.paste_id == render.paste_id
@@ -807,6 +815,7 @@ fn highlight_in_worker(
             paste_id: req.paste_id,
             revision: req.revision,
             text_len: req.text.len(),
+            content_hash: req.content_hash,
             language_hint: req.language_hint,
             theme_key: req.theme_key,
             lines,
@@ -928,6 +937,7 @@ fn highlight_in_worker(
         paste_id: req.paste_id,
         revision: req.revision,
         text_len: req.text.len(),
+        content_hash: req.content_hash,
         language_hint: req.language_hint,
         theme_key: req.theme_key,
         lines: render_lines,

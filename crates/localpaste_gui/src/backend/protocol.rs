@@ -1,7 +1,10 @@
 //! Protocol types for the native GUI backend worker.
 
 use chrono::{DateTime, Utc};
-use localpaste_core::models::{folder::Folder, paste::Paste};
+use localpaste_core::models::{
+    folder::Folder,
+    paste::{Paste, PasteMeta},
+};
 
 /// Commands issued by the UI thread for the backend worker to execute.
 #[derive(Debug)]
@@ -111,6 +114,19 @@ impl PasteSummary {
             updated_at: paste.updated_at,
             folder_id: paste.folder_id.clone(),
             tags: paste.tags.clone(),
+        }
+    }
+
+    /// Build a summary from a metadata record.
+    pub fn from_meta(meta: &PasteMeta) -> Self {
+        Self {
+            id: meta.id.clone(),
+            name: meta.name.clone(),
+            language: meta.language.clone(),
+            content_len: meta.content_len,
+            updated_at: meta.updated_at,
+            folder_id: meta.folder_id.clone(),
+            tags: meta.tags.clone(),
         }
     }
 }

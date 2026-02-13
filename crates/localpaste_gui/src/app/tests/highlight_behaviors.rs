@@ -1,6 +1,7 @@
 //! Highlight cache/render alignment tests for editor and staged-highlight flows.
 
 use super::*;
+use super::super::highlight::hash_bytes;
 
 #[test]
 fn highlight_cache_reuses_layout_when_unchanged() {
@@ -198,6 +199,7 @@ fn staged_highlight_waits_for_idle() {
         paste_id: "alpha".to_string(),
         revision: active_revision.saturating_sub(1),
         text_len: active_len,
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -206,6 +208,7 @@ fn staged_highlight_waits_for_idle() {
         paste_id: "alpha".to_string(),
         revision: active_revision,
         text_len: active_len,
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -246,6 +249,7 @@ fn staged_highlight_applies_immediately_without_current_render() {
         paste_id: "alpha".to_string(),
         revision: active_revision,
         text_len: active_len,
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -265,6 +269,7 @@ fn staged_highlight_drops_stale_revision_without_version_bump() {
         paste_id: "alpha".to_string(),
         revision: harness.app.selected_content.revision().saturating_add(1),
         text_len: active_len,
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -286,6 +291,7 @@ fn staged_highlight_drops_stale_text_len_without_version_bump() {
         paste_id: "alpha".to_string(),
         revision: active_revision,
         text_len: harness.app.selected_content.len().saturating_add(1),
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -299,12 +305,36 @@ fn staged_highlight_drops_stale_text_len_without_version_bump() {
 }
 
 #[test]
+fn staged_highlight_drops_stale_hash_without_version_bump() {
+    let mut harness = make_app();
+    harness.app.highlight_version = 29;
+    let active_revision = harness.app.selected_content.revision();
+    let active_len = harness.app.selected_content.len();
+    harness.app.highlight_staged = Some(HighlightRender {
+        paste_id: "alpha".to_string(),
+        revision: active_revision,
+        text_len: active_len,
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()).wrapping_add(1),
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        lines: Vec::new(),
+    });
+
+    harness.app.maybe_apply_staged_highlight(Instant::now());
+
+    assert!(harness.app.highlight_staged.is_none());
+    assert!(harness.app.highlight_render.is_none());
+    assert_eq!(harness.app.highlight_version, 29);
+}
+
+#[test]
 fn highlight_request_skips_when_staged_matches() {
     let mut harness = make_app();
     let render = HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 0,
         text_len: harness.app.selected_content.len(),
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -313,6 +343,7 @@ fn highlight_request_skips_when_staged_matches() {
     let should = harness.app.should_request_highlight(
         0,
         harness.app.selected_content.len(),
+        hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         "py",
         "base16-mocha.dark",
         false,
@@ -328,6 +359,7 @@ fn queue_highlight_render_ignores_older_revision_when_current_exists() {
         paste_id: "alpha".to_string(),
         revision: 9,
         text_len: harness.app.selected_content.len(),
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -336,6 +368,7 @@ fn queue_highlight_render_ignores_older_revision_when_current_exists() {
         paste_id: "alpha".to_string(),
         revision: 4,
         text_len: harness.app.selected_content.len(),
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
@@ -360,6 +393,7 @@ fn paste_saved_keeps_existing_highlight_render() {
         paste_id: "alpha".to_string(),
         revision: 42,
         text_len: harness.app.selected_content.len(),
+        content_hash: hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         lines: Vec::new(),
