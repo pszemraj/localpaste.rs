@@ -174,10 +174,7 @@ impl LocalPasteApp {
                 self.request_refresh();
             }
             CoreEvent::FoldersLoaded { items: _ } => {}
-            CoreEvent::FolderSaved { folder: _ } => {
-                self.request_refresh();
-            }
-            CoreEvent::FolderDeleted { id: _ } => {
+            CoreEvent::FolderSaved { folder: _ } | CoreEvent::FolderDeleted { id: _ } => {
                 self.request_refresh();
             }
             CoreEvent::Error { source, message } => {

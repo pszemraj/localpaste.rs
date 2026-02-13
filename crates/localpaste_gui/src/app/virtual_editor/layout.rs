@@ -177,6 +177,7 @@ impl WrapLayoutCache {
     }
 
     /// Returns metrics for a line index.
+    #[cfg(test)]
     pub(crate) fn line_metrics(&self, line: usize) -> Option<WrapLineMetrics> {
         self.line_metrics.get(line).copied()
     }

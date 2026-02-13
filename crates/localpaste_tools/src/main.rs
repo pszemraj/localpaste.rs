@@ -508,11 +508,10 @@ fn generate_content(rng: &mut impl Rng, size_category: &str) -> (String, &'stati
     let base_sample = *lang.samples.choose(rng).unwrap();
 
     let target_size = match size_category {
-        "small" => rng.gen_range(100..1024),                  // <1KB
         "medium" => rng.gen_range(1024..10 * 1024),           // 1-10KB
         "large" => rng.gen_range(10 * 1024..50 * 1024),       // 10-50KB
         "very_large" => rng.gen_range(50 * 1024..256 * 1024), // 50-256KB
-        _ => rng.gen_range(100..1024),
+        _ => rng.gen_range(100..1024), // small (<1KB) and fallback
     };
 
     let mut content = String::with_capacity(target_size);

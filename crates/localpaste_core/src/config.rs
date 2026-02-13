@@ -14,7 +14,6 @@ pub struct Config {
     pub db_path: String,
     pub port: u16,
     pub max_paste_size: usize,
-    #[allow(dead_code)]
     pub auto_save_interval: u64,
     pub auto_backup: bool,
 }

@@ -1,5 +1,4 @@
 //! Rope-backed virtual editor primitives.
-#![allow(dead_code)]
 
 pub(crate) mod buffer;
 pub(crate) mod history;

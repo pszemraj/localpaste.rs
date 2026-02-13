@@ -135,52 +135,6 @@ impl RopeBuffer {
         self.rope.slice(start..end).to_string()
     }
 
-    /// Insert text at the given char position.
-    pub(crate) fn insert_text(
-        &mut self,
-        char_index: usize,
-        text: &str,
-    ) -> Option<VirtualEditDelta> {
-        if text.is_empty() {
-            return None;
-        }
-        let start = char_index.min(self.char_len);
-        let start_line = line_for_char(&self.rope, start);
-        let inserted = text.chars().count();
-        self.rope.insert(start, text);
-        self.char_len = self.char_len.saturating_add(inserted);
-        self.revision = self.revision.wrapping_add(1);
-        let new_end_line = line_for_char(&self.rope, start.saturating_add(inserted));
-        Some(VirtualEditDelta {
-            start_line,
-            old_end_line: start_line,
-            new_end_line,
-            char_delta: inserted as isize,
-        })
-    }
-
-    /// Delete a char range.
-    pub(crate) fn delete_char_range(&mut self, range: Range<usize>) -> Option<VirtualEditDelta> {
-        let start = range.start.min(self.char_len);
-        let end = range.end.min(self.char_len);
-        if start >= end {
-            return None;
-        }
-        let removed = end.saturating_sub(start);
-        let start_line = line_for_char(&self.rope, start);
-        let old_end_line = line_for_char(&self.rope, end);
-        self.rope.remove(start..end);
-        self.char_len = self.char_len.saturating_sub(removed);
-        self.revision = self.revision.wrapping_add(1);
-        let new_end_line = line_for_char(&self.rope, start);
-        Some(VirtualEditDelta {
-            start_line,
-            old_end_line,
-            new_end_line,
-            char_delta: -(removed as isize),
-        })
-    }
-
     /// Replace a char range with new text.
     pub(crate) fn replace_char_range(
         &mut self,

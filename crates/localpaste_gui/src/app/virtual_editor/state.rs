@@ -57,16 +57,6 @@ impl VirtualEditorState {
         self.cursor = text_len;
     }
 
-    /// Clears active selection, keeping cursor in place.
-    pub(crate) fn clear_selection(&mut self) {
-        self.anchor = None;
-    }
-
-    /// True when the state has a non-empty selection.
-    pub(crate) fn has_selection(&self) -> bool {
-        self.selection_range().is_some()
-    }
-
     /// Returns a normalized selected range, if any.
     pub(crate) fn selection_range(&self) -> Option<Range<usize>> {
         let anchor = self.anchor?;
@@ -77,22 +67,6 @@ impl VirtualEditorState {
             Some(anchor..self.cursor)
         } else {
             Some(self.cursor..anchor)
-        }
-    }
-
-    /// Collapse selection to its start edge if selection is active.
-    pub(crate) fn collapse_to_selection_start(&mut self) {
-        if let Some(range) = self.selection_range() {
-            self.cursor = range.start;
-            self.anchor = None;
-        }
-    }
-
-    /// Collapse selection to its end edge if selection is active.
-    pub(crate) fn collapse_to_selection_end(&mut self) {
-        if let Some(range) = self.selection_range() {
-            self.cursor = range.end;
-            self.anchor = None;
         }
     }
 
