@@ -64,6 +64,9 @@ impl PasteDb {
         if pastes_empty && (!meta_empty || !updated_empty) {
             return Ok(true);
         }
+        if !pastes_empty && self.has_meta_index_inconsistency()? {
+            return Ok(true);
+        }
         Ok(false)
     }
 
@@ -75,10 +78,22 @@ impl PasteDb {
     /// # Errors
     /// Returns an error if serialization or insertion fails.
     pub fn create(&self, paste: &Paste) -> Result<(), AppError> {
+        self.create_inner(paste, |db, paste| {
+            db.upsert_meta_and_index_from_paste(paste, None)
+        })
+    }
+
+    fn create_inner<F>(&self, paste: &Paste, index_writer: F) -> Result<(), AppError>
+    where
+        F: FnOnce(&Self, &Paste) -> Result<(), AppError>,
+    {
         let key = paste.id.as_bytes();
         let value = bincode::serialize(paste)?;
-        self.tree.insert(key, value)?;
-        self.upsert_meta_and_index_from_paste(paste, None)?;
+        let previous = self.tree.insert(key, value)?;
+        if let Err(err) = index_writer(self, paste) {
+            self.rollback_create_after_index_failure(key, previous, paste);
+            return Err(err);
+        }
         Ok(())
     }
 
@@ -516,6 +531,66 @@ impl PasteDb {
         Ok(())
     }
 
+    fn has_meta_index_inconsistency(&self) -> Result<bool, AppError> {
+        let paste_len = self.tree.len();
+        if self.meta_tree.len() != paste_len || self.updated_tree.len() != paste_len {
+            return Ok(true);
+        }
+
+        for item in self.tree.iter() {
+            let (id_bytes, value) = item?;
+            let paste = deserialize_paste(&value)?;
+
+            let Some(meta_bytes) = self.meta_tree.get(id_bytes.as_ref())? else {
+                return Ok(true);
+            };
+            let meta = match deserialize_meta(&meta_bytes) {
+                Ok(meta) => meta,
+                Err(_) => return Ok(true),
+            };
+            let expected_meta = PasteMeta::from(&paste);
+            if meta != expected_meta {
+                return Ok(true);
+            }
+
+            let recency_key = index_key(meta.updated_at, meta.id.as_str());
+            match self.updated_tree.get(&recency_key)? {
+                Some(index_value) if index_value.as_ref() == id_bytes.as_ref() => {}
+                _ => return Ok(true),
+            }
+        }
+
+        for item in self.meta_tree.iter() {
+            let (id_bytes, value) = item?;
+            if self.tree.get(id_bytes.as_ref())?.is_none() {
+                return Ok(true);
+            }
+            let meta = match deserialize_meta(&value) {
+                Ok(meta) => meta,
+                Err(_) => return Ok(true),
+            };
+            if meta.id.as_bytes() != id_bytes.as_ref() {
+                return Ok(true);
+            }
+        }
+
+        for item in self.updated_tree.iter() {
+            let (recency_key, value) = item?;
+            let Some(meta_bytes) = self.meta_tree.get(value.as_ref())? else {
+                return Ok(true);
+            };
+            let meta = match deserialize_meta(&meta_bytes) {
+                Ok(meta) => meta,
+                Err(_) => return Ok(true),
+            };
+            if index_key(meta.updated_at, meta.id.as_str()) != recency_key.as_ref() {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
     fn upsert_meta_and_index_from_paste(
         &self,
         paste: &Paste,
@@ -550,6 +625,55 @@ impl PasteDb {
         let recency_key = index_key(meta.updated_at, meta.id.as_str());
         self.updated_tree.remove(recency_key)?;
         Ok(())
+    }
+
+    fn rollback_create_after_index_failure(
+        &self,
+        key: &[u8],
+        previous: Option<sled::IVec>,
+        inserted_paste: &Paste,
+    ) {
+        let inserted_meta = PasteMeta::from(inserted_paste);
+        if let Err(rollback_err) = self.remove_meta_and_index(&inserted_meta) {
+            tracing::error!(
+                "Failed to rollback paste metadata index after create failure: {}",
+                rollback_err
+            );
+        }
+
+        let previous_paste = previous
+            .as_ref()
+            .and_then(|bytes| match deserialize_paste(bytes) {
+                Ok(paste) => Some(paste),
+                Err(err) => {
+                    tracing::error!(
+                    "Failed to deserialize previous paste while rolling back create failure: {}",
+                    err
+                );
+                    None
+                }
+            });
+
+        let canonical_restored = match previous {
+            Some(previous_bytes) => self.tree.insert(key, previous_bytes).is_ok(),
+            None => self.tree.remove(key).is_ok(),
+        };
+        if !canonical_restored {
+            tracing::error!(
+                "Failed to rollback canonical paste row after metadata index create failure"
+            );
+            return;
+        }
+
+        if let Some(previous_paste) = previous_paste {
+            if let Err(rollback_err) = self.upsert_meta_and_index_from_paste(&previous_paste, None)
+            {
+                tracing::error!(
+                    "Failed to restore previous metadata index after create rollback: {}",
+                    rollback_err
+                );
+            }
+        }
     }
 }
 
@@ -667,6 +791,7 @@ mod tests {
         folder_matches_expected, PasteDb, META_INDEX_SCHEMA_VERSION, META_INDEX_VERSION_KEY,
     };
     use crate::models::paste::Paste;
+    use crate::AppError;
     use std::cell::Cell;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -733,6 +858,109 @@ mod tests {
         assert!(paste_db
             .needs_reconcile_meta_indexes(false)
             .expect("needs reconcile"));
+    }
+
+    #[test]
+    fn needs_reconcile_detects_partial_non_empty_metadata_drift() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        let first = Paste::new("first".to_string(), "first".to_string());
+        let second = Paste::new("second".to_string(), "second".to_string());
+        paste_db.create(&first).expect("create first");
+        paste_db.create(&second).expect("create second");
+
+        paste_db
+            .meta_tree
+            .remove(first.id.as_bytes())
+            .expect("remove first meta");
+        paste_db
+            .updated_tree
+            .remove(super::index_key(first.updated_at, first.id.as_str()))
+            .expect("remove first updated index");
+
+        assert!(
+            !paste_db.meta_tree.is_empty(),
+            "meta tree should remain non-empty"
+        );
+        assert!(
+            !paste_db.updated_tree.is_empty(),
+            "updated tree should remain non-empty"
+        );
+        assert!(
+            paste_db
+                .meta_state_tree
+                .get(META_INDEX_VERSION_KEY)
+                .expect("state lookup")
+                .is_some(),
+            "version marker should remain present"
+        );
+        assert!(paste_db
+            .needs_reconcile_meta_indexes(false)
+            .expect("needs reconcile"));
+    }
+
+    #[test]
+    fn needs_reconcile_detects_corrupt_meta_row_with_matching_tree_sizes() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        let paste = Paste::new("hello".to_string(), "hello".to_string());
+        paste_db.create(&paste).expect("create paste");
+
+        paste_db
+            .meta_tree
+            .insert(paste.id.as_bytes(), b"corrupt-meta-row")
+            .expect("insert corrupt meta");
+        assert_eq!(paste_db.tree.len(), paste_db.meta_tree.len());
+        assert_eq!(paste_db.tree.len(), paste_db.updated_tree.len());
+        assert!(paste_db
+            .needs_reconcile_meta_indexes(false)
+            .expect("needs reconcile"));
+    }
+
+    #[test]
+    fn create_rolls_back_canonical_insert_when_index_write_fails() {
+        let (paste_db, _dir) = setup_paste_db();
+        let paste = Paste::new("content".to_string(), "name".to_string());
+        let id = paste.id.clone();
+        let expected_index_key = super::index_key(paste.updated_at, paste.id.as_str());
+
+        let result = paste_db.create_inner(&paste, |_db, _paste| {
+            Err(AppError::DatabaseError(
+                "injected create index failure".to_string(),
+            ))
+        });
+        assert!(matches!(
+            result,
+            Err(AppError::DatabaseError(message)) if message == "injected create index failure"
+        ));
+        assert!(
+            paste_db
+                .tree
+                .get(id.as_bytes())
+                .expect("canonical lookup")
+                .is_none(),
+            "canonical row should roll back"
+        );
+        assert!(
+            paste_db
+                .meta_tree
+                .get(id.as_bytes())
+                .expect("meta lookup")
+                .is_none(),
+            "metadata row should roll back"
+        );
+        assert!(
+            paste_db
+                .updated_tree
+                .get(expected_index_key)
+                .expect("updated lookup")
+                .is_none(),
+            "updated index row should roll back"
+        );
     }
 
     #[test]
