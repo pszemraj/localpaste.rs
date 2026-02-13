@@ -69,16 +69,19 @@ For repeatable GUI perf validation, see [GUI perf protocol](gui-perf-protocol.md
 
 ```bash
 # 1) format
-cargo fmt
+cargo fmt --all
 
 # 2) lint
 cargo clippy --workspace --all-targets --all-features
 
-# 3) tests
-cargo test --workspace
+# 3) full compile check
+cargo check --workspace --all-targets --all-features
 
-# 4) runtime smoke (server + CLI CRUD)
-# start localpaste, run lpaste new/list/search/get/delete, then stop localpaste
+# 4) targeted tests for touched areas
+# cargo test -p <crate>
+
+# 5) runtime smoke (server + CLI CRUD)
+# run the AGENTS.md smoke flow for localpaste + lpaste
 ```
 
 Parity/release gate status is tracked in [parity-checklist.md](parity-checklist.md).
@@ -86,20 +89,21 @@ Parity/release gate status is tracked in [parity-checklist.md](parity-checklist.
 ## API Summary (High-Level)
 
 Authoritative route wiring lives in `crates/localpaste_server/src/lib.rs`.
-Use this section as a quick orientation only.
+Authoritative request/response behavior lives in `crates/localpaste_server/src/handlers/paste.rs`.
+Use this section as orientation only.
 
-- `POST /api/paste`
-- `GET /api/paste/:id`
-- `PUT /api/paste/:id`
-- `DELETE /api/paste/:id`
-- `GET /api/pastes`
-- `GET /api/search?q=`
-- `POST /api/folder` *(deprecated)*
-- `GET /api/folders` *(deprecated)*
-- `PUT /api/folder/:id` *(deprecated)*
-- `DELETE /api/folder/:id` *(deprecated)*
+| Route | Response shape | Notes |
+| --- | --- | --- |
+| `POST /api/paste` | `Paste` | create |
+| `GET /api/paste/:id` | `Paste` | full content fetch |
+| `PUT /api/paste/:id` | `Paste` | blocked with `423` when paste is locked by GUI |
+| `DELETE /api/paste/:id` | `{ success: true }` | blocked with `423` when paste is locked by GUI |
+| `GET /api/pastes` | `Vec<PasteMeta>` | metadata-only list for bounded payloads |
+| `GET /api/pastes/meta` | `Vec<PasteMeta>` | explicit metadata list endpoint |
+| `GET /api/search?q=...` | `Vec<PasteMeta>` | preserves content-match semantics, returns metadata rows |
+| `GET /api/search/meta?q=...` | `Vec<PasteMeta>` | metadata-only match (name/tags/language) |
+| `POST/GET/PUT/DELETE /api/folder...` | folder payloads | deprecated; emits warning headers |
 
-Deprecated folder endpoints currently remain supported and emit deprecation warning headers.
 Current deprecation and parity status is tracked in [parity-checklist.md](parity-checklist.md).
 
 ## Database Notes

@@ -29,8 +29,10 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 
 | Variable              | Default           | Description                                                                    |
 | --------------------- | ----------------- | ------------------------------------------------------------------------------ |
+| `PORT`                | `38411`           | Listener port used when `BIND` is unset                                        |
 | `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback ignored unless `ALLOW_PUBLIC_ACCESS` is set) |
 | `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind                        |
+| `MAX_PASTE_SIZE`      | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend)          |
 
 Invalid `BIND` values are treated as malformed and fall back to the `PORT`-based default.
 
@@ -51,8 +53,7 @@ If you need to expose LocalPaste publicly, follow these steps:
 ### 1. Enable Public Binding
 
 ```bash
-# Build the server binary once
-cargo build -p localpaste_server --bin localpaste --release
+# Build instructions are canonical in [docs/dev/devlog.md](dev/devlog.md)
 
 # Bind to all interfaces (requires ALLOW_PUBLIC_ACCESS)
 export BIND=0.0.0.0:38411
@@ -88,7 +89,6 @@ server {
     # Security headers
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
-    add_header X-XSS-Protection "1; mode=block" always;
 
     location / {
         proxy_pass http://127.0.0.1:38411;
@@ -126,6 +126,10 @@ server {
    # Allow only specific IPs (example with ufw)
    ufw allow from 192.168.1.0/24 to any port 38411
    ```
+
+5. **Keep broad-list payloads bounded by design**
+   `GET /api/pastes` and `GET /api/search` return metadata rows.
+   Fetch full content with `GET /api/paste/:id` only for selected records.
 
 ## Threat Model
 

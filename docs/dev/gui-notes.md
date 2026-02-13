@@ -21,6 +21,7 @@ For perf validation steps/gates, use [gui-perf-protocol.md](gui-perf-protocol.md
 - Paste rows use `selectable_label`; keep this if adjusting row styling to preserve reliable click targets.
 - Collections scope controls are rendered as smart filters in the sidebar (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) with compact chips and overflow under `...`.
 - Language filtering is a secondary stackable filter in the bottom status bar (`Language: Any|...`) and applies on top of the active smart collection.
+- When no explicit language filter is selected, the status bar label mirrors the selected paste language when known; it falls back to `Any` only when language is unknown.
 - Sidebar list refresh and sidebar search run on metadata projections (`name/tags/language/folder`) and do not deserialize full paste content.
 - Large buffers (`>= 256KB`) intentionally use plain-text rendering.
 - Highlight updates are debounced (150ms) and staged so existing render stays visible during async refresh.
@@ -30,5 +31,5 @@ For perf validation steps/gates, use [gui-perf-protocol.md](gui-perf-protocol.md
 
 ## Edit Locks
 
-- Opening a paste in GUI acquires a lock against API/CLI deletion.
-- Only the GUI instance holding the lock can delete that paste.
+- Opening a paste in GUI acquires a lock against API/CLI mutation for that paste id.
+- Locked pastes reject both API `PUT` and API `DELETE` with `423 Locked` until the lock is released by the GUI holder.

@@ -31,6 +31,7 @@ cargo build -p localpaste_gui --bin localpaste-gui --release
 ## Canonical Runbook
 
 Use this runbook as the canonical source for reproducible perf checks:
+Flag behavior/meanings are canonical in [gui-notes.md](gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell
 $env:DB_PATH = Join-Path $env:TEMP "lpaste-perf-$([guid]::NewGuid().ToString('N'))"

@@ -61,7 +61,7 @@ Codebase audit against this checklist found:
 - [x] Core extracted to `localpaste_core`
 - [x] API/CLI builds use core without GUI deps
 - [x] Default port updated + documented
-- [x] API delete lock enforcement (blocked when paste open in GUI)
+- [x] API update/delete lock enforcement (blocked when paste open in GUI)
 
 ## Phase 2: Native App Skeleton (Current)
 
@@ -91,7 +91,7 @@ Codebase audit against this checklist found:
 - [x] Smart paste creation when unfocused (Ctrl/Cmd+V)
 - [x] Delete selected (Ctrl/Cmd+Delete)
 - [x] Export (file dialog + extension mapping)
-- [x] Native GUI edit locks (open paste blocks API/CLI deletion)
+- [x] Native GUI edit locks (open paste blocks API/CLI update/delete)
 
 ### Virtual Editor Reliability Gates (Validated For Default Mode)
 
@@ -105,11 +105,7 @@ Codebase audit against this checklist found:
 - [~] Highlight recovery: keep current render visible while async refresh is pending (newline-burst scenario fixed in code path; perf gate recheck pending)
 - [x] Stale staged-highlight renders are dropped before apply (no unnecessary `highlight_version` bumps)
 - [x] Scope policy: multilingual/IME-specific UX and validation are explicitly out of scope for release gating (English-first workflow only)
-- [x] Trace protocol documented and validated with:
-  - `LOCALPASTE_EDITOR_INPUT_TRACE=1`
-  - `LOCALPASTE_HIGHLIGHT_TRACE=1`
-  - Input trace expectation: deterministic routing with accurate `copied/cut/pasted` outcomes.
-  - Highlight trace expectation: deterministic staged highlight lifecycle with stale render drops.
+- [x] Trace protocol documented and validated (flag semantics and trace expectations are canonical in [gui-notes.md](gui-notes.md) and [gui-perf-protocol.md](gui-perf-protocol.md))
 
 Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protocol.md).
 

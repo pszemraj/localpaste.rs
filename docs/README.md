@@ -13,11 +13,14 @@ Use these as canonical references. Other docs should link here instead of restat
 | Security posture + public exposure | [security.md](security.md) |
 | Service/background operation | [deployment.md](deployment.md) |
 | Development workflow (build/run/test/debug) | [dev/devlog.md](dev/devlog.md) |
+| API route behavior/response shape | [../crates/localpaste_server/src/handlers/paste.rs](../crates/localpaste_server/src/handlers/paste.rs) + [dev/devlog.md](dev/devlog.md) quick summary |
 | GUI runtime flags + behavior notes | [dev/gui-notes.md](dev/gui-notes.md) |
 | Rewrite parity status + merge gate | [dev/parity-checklist.md](dev/parity-checklist.md) |
 | GUI perf validation protocol + thresholds | [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md) |
 | Virtual editor rollout/status | [dev/virtual-editor-plan.md](dev/virtual-editor-plan.md) |
 | UI visual tokens | [dev/ui-palette.md](dev/ui-palette.md) |
+
+## Canonical Rules
 
 When updating docs:
 
@@ -25,6 +28,7 @@ When updating docs:
 - Keep non-canonical docs concise and link back to the canonical source.
 - Avoid copying command matrices, env-flag definitions, or merge-gate checklists across files.
 - If context is needed in a non-canonical doc, summarize briefly and link to the canonical source.
+- Keep historical docs clearly labeled as historical and non-normative.
 
 ## Overview
 
@@ -37,6 +41,6 @@ When updating docs:
 - [GUI notes](dev/gui-notes.md) - Rewrite GUI flags and behavior-specific implementation notes.
 - [GUI perf protocol](dev/gui-perf-protocol.md) - Canonical GUI perf validation procedure and thresholds.
 - [Parity checklist](dev/parity-checklist.md) - Canonical rewrite parity/merge-gate tracking.
-- [Performance baseline](dev/perf-baseline.md) - Historical baseline snapshot (superseded by the perf protocol).
+- [Performance baseline](dev/perf-baseline.md) - Historical baseline snapshot (superseded by the perf protocol; do not use as a gate).
 - [UI palette](dev/ui-palette.md) - Canonical color and typography tokens for the rewrite UI.
-- [Virtual editor plan](dev/virtual-editor-plan.md) - Virtual-editor rollout history and remaining follow-up items.
+- [Virtual editor plan](dev/virtual-editor-plan.md) - Historical rollout timeline (behavior/gates are tracked in GUI notes + parity checklist).

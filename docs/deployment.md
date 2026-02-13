@@ -7,6 +7,8 @@
 ## Quick Start
 
 ```bash
+# Build/install guidance is canonical in [docs/dev/devlog.md](dev/devlog.md)
+
 # Start in background
 nohup ./localpaste > ~/.cache/localpaste/server.log 2>&1 &
 ```
@@ -184,5 +186,5 @@ With cron:
 
 ```bash
 # Simple health check
-curl -f http://127.0.0.1:38411/api/pastes?limit=1 || echo "Service down"
+curl -f http://127.0.0.1:38411/api/pastes/meta?limit=1 || echo "Service down"
 ```
