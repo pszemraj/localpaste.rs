@@ -13,6 +13,27 @@ use std::time::Instant;
 use tracing::warn;
 
 impl LocalPasteApp {
+    fn send_update_paste_or_mark_failed(
+        &mut self,
+        id: String,
+        content: String,
+        mode: &str,
+    ) -> bool {
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePaste { id, content })
+            .is_ok()
+        {
+            return true;
+        }
+        self.save_in_flight = false;
+        self.save_status = SaveStatus::Dirty;
+        self.last_edit_at = Some(Instant::now());
+        self.set_status(format!("{mode} failed: backend unavailable."));
+        false
+    }
+
     pub(super) fn apply_event(&mut self, event: CoreEvent) {
         match event {
             CoreEvent::PasteList { items } => {
@@ -365,10 +386,7 @@ impl LocalPasteApp {
         let content = self.active_snapshot();
         self.save_in_flight = true;
         self.save_status = SaveStatus::Saving;
-        let _ = self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::UpdatePaste { id, content });
+        let _sent = self.send_update_paste_or_mark_failed(id, content, "Autosave");
     }
 
     pub(super) fn save_now(&mut self) {
@@ -381,10 +399,7 @@ impl LocalPasteApp {
         let content = self.active_snapshot();
         self.save_in_flight = true;
         self.save_status = SaveStatus::Saving;
-        let _ = self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::UpdatePaste { id, content });
+        let _sent = self.send_update_paste_or_mark_failed(id, content, "Save");
     }
 
     pub(super) fn save_metadata_now(&mut self) {

@@ -540,13 +540,28 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
     }
 }
 
-pub(super) fn hash_bytes(bytes: &[u8]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x00000100000001B3;
-    let mut hash = FNV_OFFSET;
+const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x00000100000001B3;
+
+fn hash_bytes_step(mut hash: u64, bytes: &[u8]) -> u64 {
     for byte in bytes {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+pub(super) fn hash_bytes(bytes: &[u8]) -> u64 {
+    hash_bytes_step(FNV_OFFSET, bytes)
+}
+
+pub(super) fn hash_text_chunks<'a, I>(chunks: I) -> u64
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut hash = FNV_OFFSET;
+    for chunk in chunks {
+        hash = hash_bytes_step(hash, chunk.as_bytes());
     }
     hash
 }

@@ -221,3 +221,50 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
         Some("edited-during-save")
     );
 }
+
+#[test]
+fn save_now_send_failure_restores_dirty_state() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    drop(cmd_rx);
+
+    app.selected_content.reset("manual-save".to_string());
+    app.save_status = SaveStatus::Dirty;
+    app.save_in_flight = false;
+    app.save_now();
+
+    assert!(matches!(app.save_status, SaveStatus::Dirty));
+    assert!(!app.save_in_flight);
+    assert!(app.last_edit_at.is_some());
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Save failed: backend unavailable.")
+    );
+}
+
+#[test]
+fn autosave_send_failure_restores_dirty_state() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    drop(cmd_rx);
+
+    app.selected_content.reset("auto-save".to_string());
+    app.save_status = SaveStatus::Dirty;
+    app.save_in_flight = false;
+    app.last_edit_at = Some(Instant::now() - app.autosave_delay - Duration::from_millis(5));
+    app.maybe_autosave();
+
+    assert!(matches!(app.save_status, SaveStatus::Dirty));
+    assert!(!app.save_in_flight);
+    assert!(app.last_edit_at.is_some());
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Autosave failed: backend unavailable.")
+    );
+}

@@ -1,6 +1,8 @@
 //! Highlight request, staging, and apply lifecycle for the editor.
 
-use super::highlight::{hash_bytes, HighlightRender, HighlightRequest, HighlightRequestMeta};
+use super::highlight::{
+    hash_bytes, hash_text_chunks, HighlightRender, HighlightRequest, HighlightRequestMeta,
+};
 use super::{LocalPasteApp, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_PLAIN_THRESHOLD};
 use std::time::Instant;
 use tracing::info;
@@ -18,8 +20,7 @@ impl LocalPasteApp {
 
     fn active_text_hash(&self) -> u64 {
         if self.is_virtual_editor_mode() {
-            let snapshot = self.virtual_editor_buffer.to_string();
-            hash_bytes(snapshot.as_bytes())
+            hash_text_chunks(self.virtual_editor_buffer.rope().chunks())
         } else {
             hash_bytes(self.selected_content.as_str().as_bytes())
         }
