@@ -1,10 +1,10 @@
 //! Editor buffer, line index, and mode helpers for the native GUI.
 
-use super::util::env_value_enabled;
 use eframe::egui;
 use ropey::Rope;
 use std::any::TypeId;
 use std::fmt;
+use tracing::warn;
 
 /// Delta summary for the most recent text mutation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,22 +292,40 @@ pub(super) enum EditorMode {
 }
 
 impl EditorMode {
-    pub(super) fn from_env() -> Self {
-        let preview_mode = || match std::env::var("LOCALPASTE_VIRTUAL_PREVIEW") {
-            Ok(value) if env_value_enabled(&value) => Self::VirtualPreview,
-            _ => Self::TextEdit,
-        };
-
-        if let Ok(value) = std::env::var("LOCALPASTE_VIRTUAL_EDITOR") {
-            if env_value_enabled(&value) {
-                return Self::VirtualEditor;
+    fn parse_flag(name: &str) -> Option<bool> {
+        let value = std::env::var(name).ok()?;
+        match localpaste_core::config::parse_env_flag(&value) {
+            Some(enabled) => Some(enabled),
+            None => {
+                warn!(
+                    "Unrecognized value for {}='{}'; expected 1/0/true/false/yes/no/on/off. Using defaults.",
+                    name, value
+                );
+                None
             }
-            return preview_mode();
         }
+    }
 
-        match std::env::var("LOCALPASTE_VIRTUAL_PREVIEW") {
-            Ok(value) if env_value_enabled(&value) => Self::VirtualPreview,
-            _ => Self::VirtualEditor,
+    pub(super) fn from_env() -> Self {
+        let preview_enabled = Self::parse_flag("LOCALPASTE_VIRTUAL_PREVIEW");
+        let editor_enabled = Self::parse_flag("LOCALPASTE_VIRTUAL_EDITOR");
+
+        match editor_enabled {
+            Some(true) => Self::VirtualEditor,
+            Some(false) => preview_enabled.map_or(Self::TextEdit, |enabled| {
+                if enabled {
+                    Self::VirtualPreview
+                } else {
+                    Self::TextEdit
+                }
+            }),
+            None => preview_enabled.map_or(Self::VirtualEditor, |enabled| {
+                if enabled {
+                    Self::VirtualPreview
+                } else {
+                    Self::TextEdit
+                }
+            }),
         }
     }
 }
@@ -364,6 +382,15 @@ mod tests {
         std::env::set_var(editor_key, "0");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
 
+        std::env::set_var(preview_key, "1");
+        std::env::set_var(editor_key, "enabled");
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
+
+        std::env::set_var(editor_key, "enabled");
+        std::env::set_var(preview_key, "0");
+        assert_eq!(EditorMode::from_env(), EditorMode::TextEdit);
+
+        std::env::remove_var(editor_key);
         std::env::set_var(preview_key, "0");
         assert_eq!(EditorMode::from_env(), EditorMode::TextEdit);
 

@@ -120,10 +120,22 @@ fn run_backup(config: &Config) -> anyhow::Result<()> {
 }
 
 fn resolve_bind_address(config: &Config, allow_public: bool) -> SocketAddr {
-    let requested = std::env::var("BIND")
-        .ok()
-        .and_then(|s| s.parse::<SocketAddr>().ok())
-        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], config.port)));
+    let default_bind = SocketAddr::from(([127, 0, 0, 1], config.port));
+    let requested = match std::env::var("BIND") {
+        Ok(value) => match value.trim().parse::<SocketAddr>() {
+            Ok(addr) => addr,
+            Err(err) => {
+                tracing::warn!(
+                    "Invalid BIND='{}': {}. Falling back to {}",
+                    value,
+                    err,
+                    default_bind
+                );
+                default_bind
+            }
+        },
+        Err(_) => default_bind,
+    };
 
     if allow_public || requested.ip().is_loopback() {
         return requested;

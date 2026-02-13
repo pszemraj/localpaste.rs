@@ -96,11 +96,7 @@ impl LocalPasteApp {
             self.command_palette_open = false;
         }
         if let Some(id) = pending_delete {
-            if self.selected_id.as_deref() == Some(id.as_str()) {
-                self.locks.unlock(&id);
-            }
-            let _ = self.backend.cmd_tx.send(CoreCmd::DeletePaste { id });
-            self.command_palette_open = false;
+            self.send_palette_delete(id);
         }
         if let Some(id) = pending_copy_raw {
             self.queue_palette_copy(id, false);
@@ -222,5 +218,10 @@ impl LocalPasteApp {
         });
         scored.truncate(40);
         scored.into_iter().map(|(_, item)| item).collect()
+    }
+
+    pub(crate) fn send_palette_delete(&mut self, id: String) {
+        let _ = self.backend.cmd_tx.send(CoreCmd::DeletePaste { id });
+        self.command_palette_open = false;
     }
 }

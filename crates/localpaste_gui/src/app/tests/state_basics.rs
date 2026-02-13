@@ -103,3 +103,23 @@ fn delete_selected_keeps_lock_until_delete_event() {
     });
     assert!(!harness.app.locks.is_locked("alpha"));
 }
+
+#[test]
+fn palette_delete_keeps_lock_until_delete_event() {
+    let mut harness = make_app();
+    harness.app.locks.lock("alpha");
+    assert!(harness.app.locks.is_locked("alpha"));
+
+    harness.app.send_palette_delete("alpha".to_string());
+    assert!(harness.app.locks.is_locked("alpha"));
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::DeletePaste { id } => assert_eq!(id, "alpha"),
+        other => panic!("expected delete command, got {:?}", other),
+    }
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".to_string(),
+    });
+    assert!(!harness.app.locks.is_locked("alpha"));
+}

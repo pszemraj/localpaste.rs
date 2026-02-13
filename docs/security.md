@@ -32,6 +32,8 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 | `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback ignored unless `ALLOW_PUBLIC_ACCESS` is set) |
 | `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind                        |
 
+Invalid `BIND` values are treated as malformed and fall back to the `PORT`-based default.
+
 ### Security Headers
 
 The following headers are automatically set:
