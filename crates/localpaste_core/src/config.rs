@@ -165,8 +165,11 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{env_flag_enabled, parse_env_flag, Config};
-    use crate::constants::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
+    use super::{env_flag_enabled, parse_bool_env, parse_env_flag, Config};
+    use crate::constants::{
+        DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_CLI_SERVER_URL, DEFAULT_MAX_PASTE_SIZE,
+        DEFAULT_PORT,
+    };
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {

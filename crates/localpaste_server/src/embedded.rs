@@ -1,6 +1,6 @@
 //! Embedded server helper for running the API inside another process (e.g. GUI).
 
-use crate::{serve_router, AppError, AppState, Config};
+use crate::{resolve_bind_address, serve_router, AppError, AppState};
 use std::{
     net::SocketAddr,
     sync::mpsc,
@@ -50,7 +50,7 @@ impl EmbeddedServer {
                     }
                 };
 
-                let bind_addr = localpaste_server::resolve_bind_address(&state.config, allow_public);
+                let bind_addr = resolve_bind_address(&state.config, allow_public);
                 let mut used_fallback = false;
                 let listener = match rt.block_on(tokio::net::TcpListener::bind(bind_addr)) {
                     Ok(listener) => listener,

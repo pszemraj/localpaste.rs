@@ -2460,6 +2460,7 @@ version = "0.4.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "localpaste_core",
  "reqwest",
  "serde_json",
  "tokio",

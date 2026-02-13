@@ -92,7 +92,7 @@ pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
 ///
 /// # Returns
 /// A validated socket address that enforces loopback when public access is disabled.
-pub(crate) fn resolve_bind_address(config: &Config, allow_public_access: bool) -> SocketAddr {
+pub fn resolve_bind_address(config: &Config, allow_public_access: bool) -> SocketAddr {
     let default_bind = SocketAddr::from(([127, 0, 0, 1], config.port));
     let requested = match std::env::var("BIND") {
         Ok(value) => match value.trim().parse::<SocketAddr>() {
@@ -247,6 +247,7 @@ mod tests {
     use super::resolve_bind_address;
     use localpaste_core::DEFAULT_PORT;
     use localpaste_core::Config;
+    use std::net::SocketAddr;
 
     #[tokio::test]
     async fn listener_cors_port_uses_bound_listener_port() {

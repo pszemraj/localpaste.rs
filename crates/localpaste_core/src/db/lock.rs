@@ -159,6 +159,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::LockManager;
+    use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME, DB_TREE_LOCK_FILE_NAME};
     use tempfile::TempDir;
 
     #[test]

@@ -21,9 +21,7 @@ use highlight::{
     SyntectSettings,
 };
 use localpaste_core::models::paste::Paste;
-use localpaste_core::{
-    Config, Database, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
-};
+use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
 use std::collections::VecDeque;
 use std::net::SocketAddr;

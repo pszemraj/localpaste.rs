@@ -106,7 +106,7 @@ impl LocalPasteApp {
         }
     }
 
-    fn queue_palette_copy(&mut self, id: String, fenced: bool) {
+    pub(crate) fn queue_palette_copy(&mut self, id: String, fenced: bool) {
         let action = if fenced {
             PaletteCopyAction::Fenced(id.clone())
         } else {

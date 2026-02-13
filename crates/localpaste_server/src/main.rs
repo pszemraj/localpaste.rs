@@ -119,6 +119,7 @@ fn run_backup(config: &Config) -> anyhow::Result<()> {
         println!("ℹ️  No existing database to backup");
     }
     Ok(())
+}
 
 async fn shutdown_signal(db: Arc<Database>) {
     let ctrl_c = async {
