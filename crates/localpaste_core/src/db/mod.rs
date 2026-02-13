@@ -15,6 +15,11 @@ use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME};
 use sled::Db;
 use std::sync::Arc;
 
+#[cfg(unix)]
+const UNIX_PGREP_EXACT_NAMES: &[&str] = &["localpaste", "localpaste-gui"];
+#[cfg(unix)]
+const UNIX_PGREP_CMDLINE_NAMES: &[&str] = &["generate-test-data"];
+
 /// Check if another LocalPaste process is already running.
 ///
 /// # Returns
@@ -27,24 +32,46 @@ fn pgrep_output_has_other_pid(stdout: &[u8], current_pid: u32) -> bool {
         .any(|pid| pid != current_pid)
 }
 
+#[cfg(unix)]
+fn pgrep_exact_name_has_other_pid(process_name: &str, current_pid: u32) -> bool {
+    use std::process::Command;
+
+    Command::new("pgrep")
+        .arg("-x")
+        .arg(process_name)
+        .output()
+        .ok()
+        .map(|result| pgrep_output_has_other_pid(&result.stdout, current_pid))
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn pgrep_cmdline_has_other_pid(binary_name: &str, current_pid: u32) -> bool {
+    use std::process::Command;
+
+    let pattern = format!(r"(^|[/ ]){}($|[[:space:]])", binary_name);
+    Command::new("pgrep")
+        .arg("-f")
+        .arg(pattern)
+        .output()
+        .ok()
+        .map(|result| pgrep_output_has_other_pid(&result.stdout, current_pid))
+        .unwrap_or(false)
+}
+
 /// Check if another LocalPaste process is already running.
 ///
 /// # Returns
 /// `true` when a matching process id (other than the current process) is found.
 #[cfg(unix)]
 pub fn is_localpaste_running() -> bool {
-    use std::process::Command;
-
     let current_pid = std::process::id();
-    ["localpaste", "localpaste-gui"].iter().any(|process_name| {
-        Command::new("pgrep")
-            .arg("-x")
-            .arg(process_name)
-            .output()
-            .ok()
-            .map(|result| pgrep_output_has_other_pid(&result.stdout, current_pid))
-            .unwrap_or(false)
-    })
+    UNIX_PGREP_EXACT_NAMES
+        .iter()
+        .any(|name| pgrep_exact_name_has_other_pid(name, current_pid))
+        || UNIX_PGREP_CMDLINE_NAMES
+            .iter()
+            .any(|name| pgrep_cmdline_has_other_pid(name, current_pid))
 }
 
 /// Check if another LocalPaste process is already running.
@@ -72,7 +99,9 @@ pub fn is_localpaste_running() -> bool {
         }
         let process_name = parts[0].to_ascii_lowercase();
         let pid = parts[1].parse::<u32>().ok();
-        (process_name == "localpaste.exe" || process_name == "localpaste-gui.exe")
+        (process_name == "localpaste.exe"
+            || process_name == "localpaste-gui.exe"
+            || process_name == "generate-test-data.exe")
             && pid.map(|pid| pid != current_pid).unwrap_or(false)
     })
 }
@@ -405,7 +434,7 @@ impl Database {
 
 #[cfg(all(test, unix))]
 mod process_detection_tests {
-    use super::pgrep_output_has_other_pid;
+    use super::{pgrep_output_has_other_pid, UNIX_PGREP_CMDLINE_NAMES};
 
     #[test]
     fn unix_pid_parser_ignores_current_pid_and_invalid_lines() {
@@ -421,5 +450,13 @@ mod process_detection_tests {
         let stdout = b"1111\n4242\n";
         let has_other = pgrep_output_has_other_pid(stdout, current_pid);
         assert!(has_other);
+    }
+
+    #[test]
+    fn unix_force_unlock_guard_includes_tooling_writer_processes() {
+        assert!(
+            UNIX_PGREP_CMDLINE_NAMES.contains(&"generate-test-data"),
+            "process allowlist for lock-owner detection must include tooling writers"
+        );
     }
 }

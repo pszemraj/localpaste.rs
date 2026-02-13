@@ -131,6 +131,28 @@ fn metadata_save_success_clears_dirty_state_on_ack() {
 }
 
 #[test]
+fn metadata_save_during_active_search_forces_fresh_backend_search() {
+    let mut harness = make_app();
+    harness.app.search_query = "alpha".to_string();
+    harness.app.search_last_sent = "alpha".to_string();
+
+    let mut paste = Paste::new("content".to_string(), "Alpha-renamed".to_string());
+    paste.id = "alpha".to_string();
+    harness.app.apply_event(CoreEvent::PasteMetaSaved { paste });
+
+    assert!(
+        harness.app.search_last_sent.is_empty(),
+        "metadata save should invalidate cached search query"
+    );
+
+    harness.app.maybe_dispatch_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "alpha"),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
 fn metadata_save_error_preserves_dirty_state_and_clears_in_flight() {
     let mut harness = make_app();
     harness.app.metadata_dirty = true;

@@ -131,6 +131,9 @@ impl LocalPasteApp {
                 } else {
                     let visible = self.pastes.clone();
                     self.pastes = self.filter_by_collection(&visible);
+                    // Metadata edits can change search inclusion/ranking; force a fresh
+                    // backend search even when the query text itself is unchanged.
+                    self.search_last_sent.clear();
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
                 self.ensure_selection_after_list_update();
