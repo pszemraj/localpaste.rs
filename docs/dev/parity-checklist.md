@@ -75,6 +75,7 @@ Codebase audit against this checklist found:
 - [x] Virtualized list (show_rows) for 10k items
 - [x] Smart collections + secondary language filter (smart facets in sidebar + language filter in status bar) [Replace]
 - [x] Keyboard navigation (up/down, enter)
+- [x] GUI list/search projections are metadata-index backed (no full-content deserialization on sidebar refresh/search)
 
 ## Phase 4: Editor + Autosave
 
@@ -159,7 +160,7 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 - [x] Metadata editing lives in a compact editor header + properties drawer instead of a large always-on form
 - [x] Manual folders as primary nav -> Smart Collections + search
 - [Replace] Export button as primary save -> autosave + subtle indicator
-- [Replace] Highlight/layout path -> async syntect render + cache lifecycle keyed by editor revision and highlight epoch
+- [Replace] Highlight/layout path -> async syntect render keyed by revision + snapshot hash/context; wrap layout keyed by geometry + revision with delta updates
 - [Replace] Blocking DB calls in UI -> backend thread + channels
 - [Drop] Any legacy-only UI quirks that fight the new model
 

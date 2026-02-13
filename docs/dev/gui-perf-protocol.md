@@ -47,6 +47,7 @@ The canonical runbook seeds a large mixed dataset via `generate-test-data`:
 - 10k pastes by default (configurable with `--count`)
 - weighted content-size distribution (small/medium/large/very large)
 - language-diverse snippets plus folder/tag metadata
+- GUI sidebar list/search path reads metadata/index projections (content loads only on paste open)
 
 ## Manual Verification Checklist
 
