@@ -15,6 +15,10 @@ fn assert_folder_deprecation_headers(response: &axum_test::TestResponse) {
     response.assert_contains_header("warning");
 }
 
+fn assert_meta_only_shape_header(response: &axum_test::TestResponse) {
+    response.assert_header("x-localpaste-response-shape", "meta-only");
+}
+
 async fn setup_test_server() -> (TestServer, TempDir, Arc<PasteLockManager>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.db");
@@ -215,6 +219,7 @@ async fn test_paste_with_folder() {
         .await;
 
     assert_eq!(list_response.status_code(), StatusCode::OK);
+    assert_meta_only_shape_header(&list_response);
     assert_folder_deprecation_headers(&list_response);
     let pastes: Vec<serde_json::Value> = list_response.json();
     assert_eq!(pastes.len(), 1);
@@ -278,6 +283,7 @@ async fn test_paste_search() {
     let search_response = server.get("/api/search?q=rust").await;
 
     assert_eq!(search_response.status_code(), StatusCode::OK);
+    assert_meta_only_shape_header(&search_response);
     let results: Vec<serde_json::Value> = search_response.json();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["name"], "rust-paste");
@@ -389,6 +395,7 @@ async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
 
     let full_search_response = server.get("/api/search?q=needle").await;
     assert_eq!(full_search_response.status_code(), StatusCode::OK);
+    assert_meta_only_shape_header(&full_search_response);
     let full_results: Vec<serde_json::Value> = full_search_response.json();
     assert_eq!(full_results.len(), 2);
     assert!(full_results
@@ -401,6 +408,55 @@ async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
     assert_eq!(meta_results.len(), 1);
     assert_eq!(meta_results[0]["name"], "needle-name");
     assert!(meta_results[0].get("content").is_none());
+}
+
+#[tokio::test]
+async fn test_delete_folder_rejects_when_descendant_paste_is_locked() {
+    let (server, _temp, locks) = setup_test_server().await;
+
+    let folder_response = server
+        .post("/api/folder")
+        .json(&json!({
+            "name": "Locked folder"
+        }))
+        .await;
+    assert_eq!(folder_response.status_code(), StatusCode::OK);
+    let folder: serde_json::Value = folder_response.json();
+    let folder_id = folder["id"].as_str().unwrap();
+
+    let paste_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "locked body",
+            "name": "locked-in-folder",
+            "folder_id": folder_id
+        }))
+        .await;
+    assert_eq!(paste_response.status_code(), StatusCode::OK);
+    let paste: serde_json::Value = paste_response.json();
+    let paste_id = paste["id"].as_str().unwrap().to_string();
+
+    locks.lock(&paste_id);
+
+    let delete_locked_response = server.delete(&format!("/api/folder/{}", folder_id)).await;
+    assert_eq!(delete_locked_response.status_code(), StatusCode::LOCKED);
+
+    // No migration/deletion should occur while lock is held.
+    let still_foldered = server.get(&format!("/api/paste/{}", paste_id)).await;
+    assert_eq!(still_foldered.status_code(), StatusCode::OK);
+    let still_foldered_json: serde_json::Value = still_foldered.json();
+    assert_eq!(still_foldered_json["folder_id"], folder_id);
+
+    locks.unlock(&paste_id);
+
+    let delete_after_unlock = server.delete(&format!("/api/folder/{}", folder_id)).await;
+    assert_eq!(delete_after_unlock.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&delete_after_unlock);
+
+    let moved = server.get(&format!("/api/paste/{}", paste_id)).await;
+    assert_eq!(moved.status_code(), StatusCode::OK);
+    let moved_json: serde_json::Value = moved.json();
+    assert!(moved_json["folder_id"].is_null());
 }
 
 #[tokio::test]

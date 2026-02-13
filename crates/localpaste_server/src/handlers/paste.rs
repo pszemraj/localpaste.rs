@@ -5,9 +5,21 @@ use super::normalize::{normalize_optional_for_create, normalize_optional_for_upd
 use crate::{error::HttpError, models::paste::*, naming, AppError, AppState};
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderValue,
     response::Response,
     Json,
 };
+
+const RESPONSE_SHAPE_HEADER: &str = "x-localpaste-response-shape";
+const META_RESPONSE_SHAPE: &str = "meta-only";
+
+fn with_meta_only_response_shape(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        RESPONSE_SHAPE_HEADER,
+        HeaderValue::from_static(META_RESPONSE_SHAPE),
+    );
+    response
+}
 
 /// Create a new paste.
 ///
@@ -231,10 +243,12 @@ pub async fn list_pastes(
     let limit = query.limit.unwrap_or(50).min(100);
     // This route intentionally returns metadata only to cap payload size.
     let pastes = state.db.pastes.list_meta(limit, normalized_folder_id)?;
-    Ok(maybe_with_folder_deprecation_headers(
-        Json(pastes),
-        folder_filter_used,
-        "GET /api/pastes?folder_id=...",
+    Ok(with_meta_only_response_shape(
+        maybe_with_folder_deprecation_headers(
+            Json(pastes),
+            folder_filter_used,
+            "GET /api/pastes?folder_id=...",
+        ),
     ))
 }
 
@@ -291,10 +305,12 @@ pub async fn search_pastes(
             .pastes
             .search(&query.q, limit, normalized_folder_id, normalized_language)?;
     let metas: Vec<PasteMeta> = pastes.iter().map(PasteMeta::from).collect();
-    Ok(maybe_with_folder_deprecation_headers(
-        Json(metas),
-        folder_filter_used,
-        "GET /api/search?folder_id=...",
+    Ok(with_meta_only_response_shape(
+        maybe_with_folder_deprecation_headers(
+            Json(metas),
+            folder_filter_used,
+            "GET /api/search?folder_id=...",
+        ),
     ))
 }
 

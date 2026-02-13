@@ -102,12 +102,9 @@ impl PasteDb {
                 return Err(AppError::Serialization(err));
             }
         };
-        let previous = self.tree.insert(key, value)?;
-        if let Err(err) = index_writer(self, paste) {
-            self.rollback_create_after_index_failure(key, previous, paste);
-            return Err(err);
-        }
-        self.try_end_meta_index_mutation();
+        let _previous = self.tree.insert(key, value)?;
+        let index_result = index_writer(self, paste);
+        self.finalize_derived_index_write("create", paste.id.as_str(), index_result);
         Ok(())
     }
 
@@ -137,6 +134,20 @@ impl PasteDb {
     /// # Errors
     /// Returns an error if the update fails.
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
+        self.update_inner(id, update, |db, paste, previous| {
+            db.upsert_meta_and_index_from_paste(paste, previous)
+        })
+    }
+
+    fn update_inner<F>(
+        &self,
+        id: &str,
+        update: UpdatePasteRequest,
+        index_writer: F,
+    ) -> Result<Option<Paste>, AppError>
+    where
+        F: FnOnce(&Self, &Paste, Option<PasteMeta>) -> Result<(), AppError>,
+    {
         self.begin_meta_index_mutation()?;
         let update_error = Rc::new(RefCell::new(None));
         let update_error_in = Rc::clone(&update_error);
@@ -171,8 +182,9 @@ impl PasteDb {
         match result {
             Some(bytes) => {
                 let paste = deserialize_paste(&bytes)?;
-                self.upsert_meta_and_index_from_paste(&paste, old_meta.borrow_mut().take())?;
-                self.try_end_meta_index_mutation();
+                let previous = old_meta.borrow_mut().take();
+                let index_result = index_writer(self, &paste, previous);
+                self.finalize_derived_index_write("update", paste.id.as_str(), index_result);
                 Ok(Some(paste))
             }
             None => {
@@ -202,6 +214,24 @@ impl PasteDb {
         expected_folder_id: Option<&str>,
         update: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
+        self.update_if_folder_matches_inner(
+            id,
+            expected_folder_id,
+            update,
+            |db, paste, previous| db.upsert_meta_and_index_from_paste(paste, previous),
+        )
+    }
+
+    fn update_if_folder_matches_inner<F>(
+        &self,
+        id: &str,
+        expected_folder_id: Option<&str>,
+        update: UpdatePasteRequest,
+        index_writer: F,
+    ) -> Result<Option<Paste>, AppError>
+    where
+        F: FnOnce(&Self, &Paste, Option<PasteMeta>) -> Result<(), AppError>,
+    {
         self.begin_meta_index_mutation()?;
         let update_error = Rc::new(RefCell::new(None));
         let update_error_in = Rc::clone(&update_error);
@@ -250,8 +280,13 @@ impl PasteDb {
         match result {
             Some(bytes) => {
                 let paste = deserialize_paste(&bytes)?;
-                self.upsert_meta_and_index_from_paste(&paste, old_meta.borrow_mut().take())?;
-                self.try_end_meta_index_mutation();
+                let previous = old_meta.borrow_mut().take();
+                let index_result = index_writer(self, &paste, previous);
+                self.finalize_derived_index_write(
+                    "update_if_folder_matches",
+                    paste.id.as_str(),
+                    index_result,
+                );
                 Ok(Some(paste))
             }
             None => {
@@ -269,13 +304,24 @@ impl PasteDb {
     /// # Errors
     /// Returns an error if deletion fails or the deleted value cannot be decoded.
     pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
+        self.delete_and_return_inner(id, |db, meta| db.remove_meta_and_index(meta))
+    }
+
+    fn delete_and_return_inner<F>(
+        &self,
+        id: &str,
+        index_remover: F,
+    ) -> Result<Option<Paste>, AppError>
+    where
+        F: FnOnce(&Self, &PasteMeta) -> Result<(), AppError>,
+    {
         self.begin_meta_index_mutation()?;
         match self.tree.remove(id.as_bytes())? {
             Some(value) => {
                 let paste = deserialize_paste(&value)?;
                 let meta = PasteMeta::from(&paste);
-                self.remove_meta_and_index(&meta)?;
-                self.try_end_meta_index_mutation();
+                let index_result = index_remover(self, &meta);
+                self.finalize_derived_index_write("delete", paste.id.as_str(), index_result);
                 Ok(Some(paste))
             }
             None => {
@@ -442,7 +488,7 @@ impl PasteDb {
             return Ok(Vec::new());
         }
         let query_lower = query.to_lowercase();
-        let mut results = Vec::new();
+        let mut results: Vec<(i32, DateTime<Utc>, Paste)> = Vec::new();
         let language_filter = normalized_language_filter(language.as_deref());
 
         for item in self.tree.iter() {
@@ -461,32 +507,14 @@ impl PasteDb {
                 continue;
             }
 
-            let mut score = 0;
-            if paste.name.to_lowercase().contains(&query_lower) {
-                score += 10;
-            }
-            if paste
-                .tags
-                .iter()
-                .any(|t| t.to_lowercase().contains(&query_lower))
-            {
-                score += 5;
-            }
-            if paste.content.to_lowercase().contains(&query_lower) {
-                score += 1;
-            }
+            let score = score_paste_match(&paste, &query_lower);
 
             if score > 0 {
-                results.push((score, paste));
+                push_ranked_paste_top_k(&mut results, (score, paste.updated_at, paste), limit);
             }
         }
 
-        results.sort_by(|a, b| b.0.cmp(&a.0));
-        Ok(results
-            .into_iter()
-            .take(limit)
-            .map(|(_, paste)| paste)
-            .collect())
+        Ok(finalize_paste_search_results(results))
     }
 
     /// Search paste metadata by query with optional filters.
@@ -648,6 +676,28 @@ impl PasteDb {
         }
     }
 
+    fn finalize_derived_index_write(
+        &self,
+        operation: &str,
+        paste_id: &str,
+        index_result: Result<(), AppError>,
+    ) {
+        match index_result {
+            Ok(()) => self.try_end_meta_index_mutation(),
+            Err(err) => {
+                // Canonical paste writes are the source of truth. If derived metadata/index
+                // maintenance fails after the canonical mutation commits, keep the dirty marker
+                // set and continue so callers do not receive a false-negative failure.
+                tracing::warn!(
+                    operation,
+                    paste_id,
+                    error = %err,
+                    "Canonical write committed but metadata index update failed; leaving dirty marker set for canonical fallback/reconcile"
+                );
+            }
+        }
+    }
+
     fn upsert_meta_and_index_from_paste(
         &self,
         paste: &Paste,
@@ -686,55 +736,6 @@ impl PasteDb {
         let recency_key = index_key(meta.updated_at, meta.id.as_str());
         self.updated_tree.remove(recency_key)?;
         Ok(())
-    }
-
-    fn rollback_create_after_index_failure(
-        &self,
-        key: &[u8],
-        previous: Option<sled::IVec>,
-        inserted_paste: &Paste,
-    ) {
-        let inserted_meta = PasteMeta::from(inserted_paste);
-        if let Err(rollback_err) = self.remove_meta_and_index(&inserted_meta) {
-            tracing::error!(
-                "Failed to rollback paste metadata index after create failure: {}",
-                rollback_err
-            );
-        }
-
-        let previous_paste = previous
-            .as_ref()
-            .and_then(|bytes| match deserialize_paste(bytes) {
-                Ok(paste) => Some(paste),
-                Err(err) => {
-                    tracing::error!(
-                    "Failed to deserialize previous paste while rolling back create failure: {}",
-                    err
-                );
-                    None
-                }
-            });
-
-        let canonical_restored = match previous {
-            Some(previous_bytes) => self.tree.insert(key, previous_bytes).is_ok(),
-            None => self.tree.remove(key).is_ok(),
-        };
-        if !canonical_restored {
-            tracing::error!(
-                "Failed to rollback canonical paste row after metadata index create failure"
-            );
-            return;
-        }
-
-        if let Some(previous_paste) = previous_paste {
-            if let Err(rollback_err) = self.upsert_meta_and_index_from_paste(&previous_paste, None)
-            {
-                tracing::error!(
-                    "Failed to restore previous metadata index after create rollback: {}",
-                    rollback_err
-                );
-            }
-        }
     }
 
     fn meta_indexes_usable(&self) -> Result<bool, AppError> {
@@ -877,6 +878,63 @@ fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
         score += 2;
     }
     score
+}
+
+fn score_paste_match(paste: &Paste, query_lower: &str) -> i32 {
+    let mut score = 0;
+    if paste.name.to_lowercase().contains(query_lower) {
+        score += 10;
+    }
+    if paste
+        .tags
+        .iter()
+        .any(|tag| tag.to_lowercase().contains(query_lower))
+    {
+        score += 5;
+    }
+    if paste.content.to_lowercase().contains(query_lower) {
+        score += 1;
+    }
+    score
+}
+
+fn push_ranked_paste_top_k(
+    results: &mut Vec<(i32, DateTime<Utc>, Paste)>,
+    candidate: (i32, DateTime<Utc>, Paste),
+    limit: usize,
+) {
+    if limit == 0 {
+        return;
+    }
+    if results.len() < limit {
+        results.push(candidate);
+        return;
+    }
+
+    let Some((worst_idx, worst_entry)) = results
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)))
+    else {
+        results.push(candidate);
+        return;
+    };
+
+    let candidate_better = candidate.0 > worst_entry.0
+        || (candidate.0 == worst_entry.0 && candidate.1 > worst_entry.1);
+    if candidate_better {
+        results[worst_idx] = candidate;
+    }
+}
+
+fn finalize_paste_search_results(
+    mut ranked_results: Vec<(i32, DateTime<Utc>, Paste)>,
+) -> Vec<Paste> {
+    ranked_results.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    ranked_results
+        .into_iter()
+        .map(|(_, _, paste)| paste)
+        .collect()
 }
 
 fn finalize_meta_search_results(
@@ -1213,28 +1271,24 @@ mod tests {
     }
 
     #[test]
-    fn create_rolls_back_canonical_insert_when_index_write_fails() {
+    fn create_commits_canonical_row_when_index_write_fails() {
         let (paste_db, _dir) = setup_paste_db();
         let paste = Paste::new("content".to_string(), "name".to_string());
         let id = paste.id.clone();
-        let expected_index_key = super::index_key(paste.updated_at, paste.id.as_str());
 
         let result = paste_db.create_inner(&paste, |_db, _paste| {
             Err(AppError::DatabaseError(
                 "injected create index failure".to_string(),
             ))
         });
-        assert!(matches!(
-            result,
-            Err(AppError::DatabaseError(message)) if message == "injected create index failure"
-        ));
+        assert!(result.is_ok(), "canonical create should still succeed");
         assert!(
             paste_db
                 .tree
                 .get(id.as_bytes())
                 .expect("canonical lookup")
-                .is_none(),
-            "canonical row should roll back"
+                .is_some(),
+            "canonical row should remain committed"
         );
         assert!(
             paste_db
@@ -1242,15 +1296,7 @@ mod tests {
                 .get(id.as_bytes())
                 .expect("meta lookup")
                 .is_none(),
-            "metadata row should roll back"
-        );
-        assert!(
-            paste_db
-                .updated_tree
-                .get(expected_index_key)
-                .expect("updated lookup")
-                .is_none(),
-            "updated index row should roll back"
+            "derived metadata should remain stale until reconcile"
         );
         assert!(
             paste_db.meta_index_dirty_count().expect("dirty count") > 0,
@@ -1261,6 +1307,119 @@ mod tests {
                 .needs_reconcile_meta_indexes(false)
                 .expect("needs reconcile"),
             "dirty marker should force reconcile"
+        );
+        let metas = paste_db
+            .list_meta(10, None)
+            .expect("list metadata via canonical fallback");
+        assert!(
+            metas.iter().any(|meta| meta.id == id),
+            "canonical fallback should keep committed paste visible"
+        );
+    }
+
+    #[test]
+    fn update_commits_canonical_row_when_index_write_fails() {
+        let (paste_db, _dir) = setup_paste_db();
+        let paste = Paste::new("before".to_string(), "name".to_string());
+        let id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        let updated = paste_db
+            .update_inner(
+                id.as_str(),
+                UpdatePasteRequest {
+                    content: Some("after".to_string()),
+                    name: None,
+                    language: None,
+                    language_is_manual: None,
+                    folder_id: None,
+                    tags: None,
+                },
+                |_db, _paste, _previous| {
+                    Err(AppError::DatabaseError(
+                        "injected update index failure".to_string(),
+                    ))
+                },
+            )
+            .expect("update should still report success despite derived index failure")
+            .expect("paste should exist");
+        assert_eq!(updated.content, "after");
+
+        let canonical = paste_db
+            .get(id.as_str())
+            .expect("get paste")
+            .expect("paste should remain");
+        assert_eq!(canonical.content, "after");
+        assert!(
+            paste_db.meta_index_dirty_count().expect("dirty count") > 0,
+            "failed index write should keep dirty marker set"
+        );
+    }
+
+    #[test]
+    fn update_if_folder_matches_commits_when_index_write_fails() {
+        let (paste_db, _dir) = setup_paste_db();
+        let paste = Paste::new("before".to_string(), "name".to_string());
+        let id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        let moved = paste_db
+            .update_if_folder_matches_inner(
+                id.as_str(),
+                None,
+                UpdatePasteRequest {
+                    content: None,
+                    name: Some("moved".to_string()),
+                    language: None,
+                    language_is_manual: None,
+                    folder_id: Some("folder-x".to_string()),
+                    tags: None,
+                },
+                |_db, _paste, _previous| {
+                    Err(AppError::DatabaseError(
+                        "injected cas index failure".to_string(),
+                    ))
+                },
+            )
+            .expect("cas update should still report success")
+            .expect("paste should exist");
+        assert_eq!(moved.name, "moved");
+        assert_eq!(moved.folder_id.as_deref(), Some("folder-x"));
+
+        let canonical = paste_db
+            .get(id.as_str())
+            .expect("get paste")
+            .expect("paste should remain");
+        assert_eq!(canonical.folder_id.as_deref(), Some("folder-x"));
+        assert!(
+            paste_db.meta_index_dirty_count().expect("dirty count") > 0,
+            "failed derived index write should keep dirty marker set"
+        );
+    }
+
+    #[test]
+    fn delete_commits_canonical_removal_when_index_delete_fails() {
+        let (paste_db, _dir) = setup_paste_db();
+        let paste = Paste::new("body".to_string(), "name".to_string());
+        let id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        let deleted = paste_db
+            .delete_and_return_inner(id.as_str(), |_db, _meta| {
+                Err(AppError::DatabaseError(
+                    "injected delete index failure".to_string(),
+                ))
+            })
+            .expect("delete should still report success")
+            .expect("paste should be returned");
+        assert_eq!(deleted.id, id);
+        assert!(
+            paste_db.get(id.as_str()).expect("lookup").is_none(),
+            "canonical row should remain deleted"
+        );
+        assert!(
+            paste_db.meta_index_dirty_count().expect("dirty count") > 0,
+            "failed index delete should keep dirty marker set"
         );
     }
 

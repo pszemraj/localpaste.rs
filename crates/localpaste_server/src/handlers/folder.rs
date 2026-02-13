@@ -8,7 +8,34 @@ use axum::{
     response::Response,
     Json,
 };
-use localpaste_core::folder_ops::{delete_folder_tree_and_migrate, introduces_cycle};
+use localpaste_core::folder_ops::{
+    delete_folder_tree_and_migrate, folder_delete_order, introduces_cycle,
+};
+use std::collections::HashSet;
+
+fn first_locked_paste_in_folder_delete_set(
+    state: &AppState,
+    root_folder_id: &str,
+) -> Result<Option<String>, AppError> {
+    let folders = state.db.folders.list()?;
+    if !folders.iter().any(|folder| folder.id == root_folder_id) {
+        return Err(AppError::NotFound);
+    }
+
+    let delete_set: HashSet<String> = folder_delete_order(&folders, root_folder_id)
+        .into_iter()
+        .collect();
+    for locked_id in state.locks.locked_ids() {
+        if let Some(paste) = state.db.pastes.get(locked_id.as_str())? {
+            if let Some(folder_id) = paste.folder_id.as_ref() {
+                if delete_set.contains(folder_id) {
+                    return Ok(Some(locked_id));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
 
 /// Create a new folder.
 ///
@@ -138,6 +165,14 @@ pub async fn delete_folder(
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("DELETE /api/folder/:id");
+
+    if let Some(locked_id) = first_locked_paste_in_folder_delete_set(&state, &id)? {
+        return Err(AppError::Locked(format!(
+            "Folder delete would migrate locked paste '{}'; close it first.",
+            locked_id
+        ))
+        .into());
+    }
 
     let _ = delete_folder_tree_and_migrate(&state.db, &id)?;
 

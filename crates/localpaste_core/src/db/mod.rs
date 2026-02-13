@@ -364,6 +364,9 @@ impl TransactionOps {
                     }
                 }
                 Err(err) => {
+                    // PasteDb update methods treat metadata-index failures as best-effort and
+                    // return success once the canonical row is committed. An error here means
+                    // canonical compare-and-swap did not commit, so rolling back reservation is safe.
                     if folder_changing {
                         if let Some(new_id) = new_folder_id {
                             if let Err(rollback_err) = db.folders.update_count(new_id, -1) {

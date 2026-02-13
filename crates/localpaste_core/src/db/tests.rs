@@ -232,6 +232,32 @@ mod db_tests {
     }
 
     #[test]
+    fn test_paste_search_limit_keeps_best_ranked_matches() {
+        let (db, _temp) = setup_test_db();
+
+        let strongest = Paste::new(
+            "no query term in body".to_string(),
+            "needle-name".to_string(),
+        );
+        let medium = Paste::new(
+            "contains needle in content".to_string(),
+            "plain-a".to_string(),
+        );
+        let weak = Paste::new("also needle in content".to_string(), "plain-b".to_string());
+
+        db.pastes.create(&strongest).unwrap();
+        db.pastes.create(&medium).unwrap();
+        db.pastes.create(&weak).unwrap();
+
+        let results = db.pastes.search("needle", 1, None, None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].id, strongest.id,
+            "name/tag hits must outrank content-only hits under top-k limiting"
+        );
+    }
+
+    #[test]
     fn test_paste_search_meta_is_metadata_only() {
         let (db, _temp) = setup_test_db();
 

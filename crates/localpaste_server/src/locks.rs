@@ -39,4 +39,16 @@ impl PasteLockManager {
         let guard = self.inner.lock().expect("paste lock manager poisoned");
         guard.contains(id)
     }
+
+    /// Snapshot all currently locked paste ids.
+    ///
+    /// # Returns
+    /// A cloned list of locked paste identifiers.
+    ///
+    /// # Panics
+    /// Panics if the internal lock mutex is poisoned.
+    pub fn locked_ids(&self) -> Vec<String> {
+        let guard = self.inner.lock().expect("paste lock manager poisoned");
+        guard.iter().cloned().collect()
+    }
 }
