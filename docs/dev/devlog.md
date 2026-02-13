@@ -3,6 +3,7 @@
 This is the primary development workflow document.
 For topic-specific details, link to the canonical docs in `docs/README.md`.
 This is the canonical source for binary/build/run command matrices.
+Other docs should link here instead of repeating command matrices.
 
 ## Workspace Layout
 
@@ -66,10 +67,10 @@ For repeatable GUI perf validation, see [GUI perf protocol](gui-perf-protocol.md
 cargo fmt
 
 # 2) lint
-cargo clippy --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features
 
 # 3) tests
-cargo test
+cargo test --workspace
 
 # 4) runtime smoke (server + CLI CRUD)
 # start localpaste, run lpaste new/list/search/get/delete, then stop localpaste

@@ -2,16 +2,17 @@
 
 > These instructions apply to the headless localpaste server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
 > Security posture, bind policy, and public exposure guidance are canonical in [security.md](security.md).
+> Build/run command matrices for development are canonical in [dev/devlog.md](dev/devlog.md).
 
 ## Quick Start
 
 ```bash
 # Start in background
 nohup ./localpaste > ~/.cache/localpaste/server.log 2>&1 &
-
-# Stop gracefully (preserves database integrity)
-pkill localpaste
 ```
+
+For stop/restart/cleanup procedures, use the canonical commands in
+[Stopping LocalPaste Safely](#stopping-localpaste-safely).
 
 ## Process Management
 

@@ -49,7 +49,8 @@ Measured results (single run):
 
 Interpretation:
 
-- `list` and `search` are still O(n) over all pastes; expected to be higher at 10k.
+- These measurements are for historical API/CLI behavior from this phase.
+- Current rewrite GUI list/search no longer deserialize full content and use metadata/index projections (see [gui-perf-protocol.md](gui-perf-protocol.md)).
 
 ## Historical GUI Notes
 

@@ -110,20 +110,10 @@ server {
    ```
 
 2. **Monitoring**: Watch logs for unusual activity
-
-   ```bash
-   RUST_LOG=info ./localpaste 2>&1 | tee localpaste.log
-   ```
+   Use the canonical service/logging patterns in [deployment.md](deployment.md).
 
 3. **Backups**: Regular database backups
-
-   ```bash
-   # Use built-in backup command
-   ./localpaste --backup
-
-   # Or manual backup
-   cp -r ~/.cache/localpaste/db ~/.cache/localpaste/db.backup
-   ```
+   Use the backup and retention procedures in [deployment.md](deployment.md).
 
 4. **Access Control**: Use firewall rules
 

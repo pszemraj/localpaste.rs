@@ -15,18 +15,11 @@ LocalPaste provides:
 ## Quick Start
 
 ```bash
-# GUI
+# Desktop GUI
 cargo run -p localpaste_gui --bin localpaste-gui
-
-# API server
-cargo run -p localpaste_server --bin localpaste --release
-
-# CLI example
-cargo build -p localpaste_cli --bin lpaste --release
-"Hello, World!" | ./target/release/lpaste new
 ```
 
-For the full binary/build/run matrix, use the canonical dev workflow doc:
+Canonical build/run/validation command matrices are maintained in:
 [docs/dev/devlog.md](docs/dev/devlog.md).
 
 ## Configuration And Ops
