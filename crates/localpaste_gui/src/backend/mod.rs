@@ -15,6 +15,7 @@ mod tests {
     use localpaste_core::models::folder::Folder;
     use localpaste_core::models::paste::Paste;
     use localpaste_core::Database;
+    use std::thread;
     use std::time::Duration;
     use tempfile::TempDir;
 
@@ -76,6 +77,53 @@ mod tests {
         }
 
         drop(backend);
+    }
+
+    #[test]
+    fn backend_list_cache_refreshes_after_external_update() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let external_writer = db.share().expect("share db");
+        let seed = Paste::new("seed".to_string(), "seed".to_string());
+        db.pastes.create(&seed).expect("create seed");
+
+        let backend = spawn_backend(db);
+        backend
+            .cmd_tx
+            .send(CoreCmd::ListPastes {
+                limit: 10,
+                folder_id: None,
+            })
+            .expect("send initial list");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteList { items } => assert_eq!(items.len(), 1),
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        let external = Paste::new("external".to_string(), "external".to_string());
+        let external_id = external.id.clone();
+        external_writer
+            .pastes
+            .create(&external)
+            .expect("create external");
+
+        // Cache reuse should be bounded; identical list calls must eventually
+        // re-read storage so API/CLI changes become visible.
+        thread::sleep(Duration::from_millis(700));
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::ListPastes {
+                limit: 10,
+                folder_id: None,
+            })
+            .expect("send refreshed list");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteList { items } => {
+                assert_eq!(items.len(), 2);
+                assert!(items.iter().any(|item| item.id == external_id));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
     }
 
     #[test]
@@ -544,6 +592,39 @@ mod tests {
             .expect("send folders list");
         match recv_event(&backend.evt_rx) {
             CoreEvent::FoldersLoaded { items } => assert!(items.is_empty()),
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn backend_create_folder_trims_parent_id() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreateFolder {
+                name: "root".to_string(),
+                parent_id: None,
+            })
+            .expect("send create root");
+        let root = match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => folder,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreateFolder {
+                name: "child".to_string(),
+                parent_id: Some(format!("  {}  ", root.id)),
+            })
+            .expect("send create child");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::FolderSaved { folder } => {
+                assert_eq!(folder.name, "child");
+                assert_eq!(folder.parent_id.as_deref(), Some(root.id.as_str()));
+            }
             other => panic!("unexpected event: {:?}", other),
         }
     }

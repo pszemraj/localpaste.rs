@@ -10,7 +10,7 @@ use localpaste_core::{
     naming, Database,
 };
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{error, info};
 
 /// Handle for sending commands to, and receiving events from, the backend worker.
@@ -41,8 +41,10 @@ struct SearchCacheKey {
 struct QueryCache {
     list_key: Option<ListCacheKey>,
     list_items: Option<Vec<PasteSummary>>,
+    list_cached_at: Option<Instant>,
     search_key: Option<SearchCacheKey>,
     search_items: Option<Vec<PasteSummary>>,
+    search_cached_at: Option<Instant>,
     list_hits: u64,
     list_misses: u64,
     search_hits: u64,
@@ -54,17 +56,23 @@ impl QueryCache {
     fn invalidate(&mut self) {
         if self.list_key.is_some()
             || self.list_items.is_some()
+            || self.list_cached_at.is_some()
             || self.search_key.is_some()
             || self.search_items.is_some()
+            || self.search_cached_at.is_some()
         {
             self.list_key = None;
             self.list_items = None;
+            self.list_cached_at = None;
             self.search_key = None;
             self.search_items = None;
+            self.search_cached_at = None;
             self.invalidations = self.invalidations.saturating_add(1);
         }
     }
 }
+
+const QUERY_CACHE_MAX_AGE: Duration = Duration::from_millis(500);
 
 fn log_query_perf(
     enabled: bool,
@@ -120,18 +128,22 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             folder_id: folder_id.clone(),
                         };
                         if query_cache.list_key.as_ref() == Some(&key) {
-                            if let Some(items) = query_cache.list_items.clone() {
-                                query_cache.list_hits = query_cache.list_hits.saturating_add(1);
-                                log_query_perf(
-                                    perf_log_enabled,
-                                    &query_cache,
-                                    "list",
-                                    true,
-                                    started.elapsed().as_secs_f64() * 1000.0,
-                                    items.len(),
-                                );
-                                let _ = evt_tx.send(CoreEvent::PasteList { items });
-                                continue;
+                            if let (Some(items), Some(cached_at)) =
+                                (query_cache.list_items.clone(), query_cache.list_cached_at)
+                            {
+                                if cached_at.elapsed() <= QUERY_CACHE_MAX_AGE {
+                                    query_cache.list_hits = query_cache.list_hits.saturating_add(1);
+                                    log_query_perf(
+                                        perf_log_enabled,
+                                        &query_cache,
+                                        "list",
+                                        true,
+                                        started.elapsed().as_secs_f64() * 1000.0,
+                                        items.len(),
+                                    );
+                                    let _ = evt_tx.send(CoreEvent::PasteList { items });
+                                    continue;
+                                }
                             }
                         }
                         query_cache.list_misses = query_cache.list_misses.saturating_add(1);
@@ -141,6 +153,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                                     metas.iter().map(PasteSummary::from_meta).collect();
                                 query_cache.list_key = Some(key);
                                 query_cache.list_items = Some(items.clone());
+                                query_cache.list_cached_at = Some(Instant::now());
                                 log_query_perf(
                                     perf_log_enabled,
                                     &query_cache,
@@ -175,18 +188,24 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             language: language.clone(),
                         };
                         if query_cache.search_key.as_ref() == Some(&key) {
-                            if let Some(items) = query_cache.search_items.clone() {
-                                query_cache.search_hits = query_cache.search_hits.saturating_add(1);
-                                log_query_perf(
-                                    perf_log_enabled,
-                                    &query_cache,
-                                    "search",
-                                    true,
-                                    started.elapsed().as_secs_f64() * 1000.0,
-                                    items.len(),
-                                );
-                                let _ = evt_tx.send(CoreEvent::SearchResults { query, items });
-                                continue;
+                            if let (Some(items), Some(cached_at)) = (
+                                query_cache.search_items.clone(),
+                                query_cache.search_cached_at,
+                            ) {
+                                if cached_at.elapsed() <= QUERY_CACHE_MAX_AGE {
+                                    query_cache.search_hits =
+                                        query_cache.search_hits.saturating_add(1);
+                                    log_query_perf(
+                                        perf_log_enabled,
+                                        &query_cache,
+                                        "search",
+                                        true,
+                                        started.elapsed().as_secs_f64() * 1000.0,
+                                        items.len(),
+                                    );
+                                    let _ = evt_tx.send(CoreEvent::SearchResults { query, items });
+                                    continue;
+                                }
                             }
                         }
                         query_cache.search_misses = query_cache.search_misses.saturating_add(1);
@@ -196,6 +215,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                                     metas.iter().map(PasteSummary::from_meta).collect();
                                 query_cache.search_key = Some(key);
                                 query_cache.search_items = Some(items.clone());
+                                query_cache.search_cached_at = Some(Instant::now());
                                 log_query_perf(
                                     perf_log_enabled,
                                     &query_cache,
@@ -440,7 +460,9 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         }
                     },
                     CoreCmd::CreateFolder { name, parent_id } => {
-                        let normalized_parent = parent_id.filter(|pid| !pid.trim().is_empty());
+                        let normalized_parent = parent_id
+                            .map(|pid| pid.trim().to_string())
+                            .filter(|pid| !pid.is_empty());
                         if let Some(parent_id) = normalized_parent.as_deref() {
                             match db.folders.get(parent_id) {
                                 Ok(Some(_)) => {}
