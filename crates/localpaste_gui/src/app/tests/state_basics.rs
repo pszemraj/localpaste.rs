@@ -251,4 +251,12 @@ fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
         Some("Get paste failed: backend unavailable.")
     );
     assert!(app.pending_copy_action.is_none());
+    assert!(
+        !app.locks.is_locked("alpha"),
+        "failed reselect should not leak a stale lock"
+    );
+    assert!(
+        app.selected_id.is_none(),
+        "failed reselect should clear stale selection state"
+    );
 }

@@ -353,6 +353,7 @@ impl LocalPasteApp {
         self.last_edit_at = None;
         self.save_in_flight = false;
         if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
+            self.clear_selection();
             self.set_status("Get paste failed: backend unavailable.");
             return false;
         }
