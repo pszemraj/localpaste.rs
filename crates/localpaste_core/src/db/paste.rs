@@ -543,44 +543,15 @@ impl PasteDb {
                 return self.search_meta_from_canonical(query, limit, folder_id, language);
             }
 
-            if let Some(ref fid) = folder_id {
-                if meta.folder_id.as_ref() != Some(fid) {
-                    continue;
-                }
-            }
-            if !language_matches_filter(meta.language.as_deref(), language_filter.as_deref()) {
+            if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref()) {
                 continue;
             }
-
-            let mut score = 0;
-            if meta.name.to_lowercase().contains(&query_lower) {
-                score += 10;
-            }
-            if meta
-                .tags
-                .iter()
-                .any(|tag| tag.to_lowercase().contains(&query_lower))
-            {
-                score += 5;
-            }
-            if meta
-                .language
-                .as_ref()
-                .map(|lang| lang.to_lowercase().contains(&query_lower))
-                .unwrap_or(false)
-            {
-                score += 2;
-            }
+            let score = score_meta_match(&meta, &query_lower);
             if score > 0 {
                 results.push((score, meta.updated_at, meta));
             }
         }
-        results.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
-        Ok(results
-            .into_iter()
-            .take(limit)
-            .map(|(_, _, meta)| meta)
-            .collect())
+        Ok(finalize_meta_search_results(results, limit))
     }
 
     /// Rebuild metadata and recency indexes from the canonical `pastes` tree.
@@ -800,45 +771,15 @@ impl PasteDb {
             let paste = deserialize_paste(&value)?;
             let meta = PasteMeta::from(&paste);
 
-            if let Some(ref fid) = folder_id {
-                if meta.folder_id.as_ref() != Some(fid) {
-                    continue;
-                }
-            }
-            if !language_matches_filter(meta.language.as_deref(), language_filter.as_deref()) {
+            if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref()) {
                 continue;
             }
-
-            let mut score = 0;
-            if meta.name.to_lowercase().contains(&query_lower) {
-                score += 10;
-            }
-            if meta
-                .tags
-                .iter()
-                .any(|tag| tag.to_lowercase().contains(&query_lower))
-            {
-                score += 5;
-            }
-            if meta
-                .language
-                .as_ref()
-                .map(|lang| lang.to_lowercase().contains(&query_lower))
-                .unwrap_or(false)
-            {
-                score += 2;
-            }
+            let score = score_meta_match(&meta, &query_lower);
             if score > 0 {
                 results.push((score, meta.updated_at, meta));
             }
         }
-
-        results.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
-        Ok(results
-            .into_iter()
-            .take(limit)
-            .map(|(_, _, meta)| meta)
-            .collect())
+        Ok(finalize_meta_search_results(results, limit))
     }
 }
 
@@ -900,6 +841,54 @@ fn language_matches_filter(language: Option<&str>, filter: Option<&str>) -> bool
         .filter(|value| !value.is_empty())
         .map(|value| value.eq_ignore_ascii_case(filter))
         .unwrap_or(false)
+}
+
+fn meta_matches_filters(
+    meta: &PasteMeta,
+    folder_filter: Option<&str>,
+    language_filter: Option<&str>,
+) -> bool {
+    if let Some(folder_id) = folder_filter {
+        if meta.folder_id.as_deref() != Some(folder_id) {
+            return false;
+        }
+    }
+    language_matches_filter(meta.language.as_deref(), language_filter)
+}
+
+fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
+    let mut score = 0;
+    if meta.name.to_lowercase().contains(query_lower) {
+        score += 10;
+    }
+    if meta
+        .tags
+        .iter()
+        .any(|tag| tag.to_lowercase().contains(query_lower))
+    {
+        score += 5;
+    }
+    if meta
+        .language
+        .as_ref()
+        .map(|lang| lang.to_lowercase().contains(query_lower))
+        .unwrap_or(false)
+    {
+        score += 2;
+    }
+    score
+}
+
+fn finalize_meta_search_results(
+    mut ranked_results: Vec<(i32, DateTime<Utc>, PasteMeta)>,
+    limit: usize,
+) -> Vec<PasteMeta> {
+    ranked_results.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    ranked_results
+        .into_iter()
+        .take(limit)
+        .map(|(_, _, meta)| meta)
+        .collect()
 }
 
 fn folder_matches_expected(

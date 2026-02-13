@@ -41,7 +41,7 @@ use virtual_view::{VirtualCursor, VirtualSelectionState};
 ///
 /// Owns the UI state and communicates with the background worker via channels so
 /// the `update` loop never blocks on database I/O.
-pub struct LocalPasteApp {
+pub(crate) struct LocalPasteApp {
     backend: BackendHandle,
     all_pastes: Vec<PasteSummary>,
     pastes: Vec<PasteSummary>,
@@ -346,7 +346,7 @@ impl LocalPasteApp {
     /// # Errors
     /// Returns an error if the database path is invalid or the underlying store
     /// cannot be opened.
-    pub fn new() -> Result<Self, localpaste_core::AppError> {
+    pub(crate) fn new() -> Result<Self, localpaste_core::AppError> {
         let config = Config::from_env();
         let db_path = config.db_path.clone();
         let autosave_delay = Duration::from_millis(config.auto_save_interval);

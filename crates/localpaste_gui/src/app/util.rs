@@ -54,6 +54,12 @@ pub(super) fn status_language_filter_label(
         .to_string()
 }
 
+/// Formats clipboard/export content as a fenced code block.
+pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) -> String {
+    let lang = language.unwrap_or("text");
+    format!("```{}\n{}\n```", lang, content)
+}
+
 fn is_word_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
 }
@@ -102,7 +108,7 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
 
 #[cfg(test)]
 mod tests {
-    use super::status_language_filter_label;
+    use super::{format_fenced_code_block, status_language_filter_label};
 
     #[test]
     fn status_language_filter_label_prefers_active_filter() {
@@ -123,6 +129,18 @@ mod tests {
         assert_eq!(
             status_language_filter_label(Some("   "), Some("   ")),
             "Any"
+        );
+    }
+
+    #[test]
+    fn format_fenced_code_block_uses_language_or_text_default() {
+        assert_eq!(
+            format_fenced_code_block("let x = 1;", Some("rust")),
+            "```rust\nlet x = 1;\n```"
+        );
+        assert_eq!(
+            format_fenced_code_block("print('hi')", None),
+            "```text\nprint('hi')\n```"
         );
     }
 }

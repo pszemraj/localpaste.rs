@@ -1,5 +1,6 @@
 //! Command palette rendering and quick actions.
 
+use super::super::util::format_fenced_code_block;
 use super::super::*;
 use crate::backend::CoreCmd;
 use eframe::egui::{self, RichText};
@@ -174,8 +175,7 @@ impl LocalPasteApp {
                 } else {
                     (paste.content.clone(), paste.language.as_deref())
                 };
-                let lang = language.unwrap_or("text");
-                self.clipboard_outgoing = Some(format!("```{}\n{}\n```", lang, content));
+                self.clipboard_outgoing = Some(format_fenced_code_block(&content, language));
                 self.pending_copy_action = None;
                 self.set_status("Copied fenced code block.");
             }

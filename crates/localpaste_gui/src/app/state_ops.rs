@@ -1,6 +1,7 @@
 //! State transitions for backend events, selection, and autosave flow.
 
 use super::highlight::EditorLayoutCache;
+use super::util::format_fenced_code_block;
 use super::{
     LocalPasteApp, PaletteCopyAction, SaveStatus, SidebarCollection, StatusMessage, ToastMessage,
     PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
@@ -781,7 +782,7 @@ impl LocalPasteApp {
                 if id != paste.id {
                     return;
                 }
-                self.clipboard_outgoing = Some(format_fenced_block(
+                self.clipboard_outgoing = Some(format_fenced_code_block(
                     &paste.content,
                     paste.language.as_deref(),
                 ));
@@ -980,11 +981,6 @@ fn sanitize_filename(value: &str) -> String {
     }
 }
 
-fn format_fenced_block(content: &str, language: Option<&str>) -> String {
-    let lang = language.unwrap_or("text");
-    format!("```{}\n{}\n```", lang, content)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1007,14 +1003,5 @@ mod tests {
     fn sanitize_filename_replaces_reserved_chars_and_falls_back() {
         assert_eq!(sanitize_filename("bad<>:\"/\\|?*name"), "bad_________name");
         assert_eq!(sanitize_filename("   "), "localpaste-export");
-    }
-
-    #[test]
-    fn format_fenced_block_uses_language_or_text_default() {
-        assert_eq!(
-            format_fenced_block("let x = 1;", Some("rust")),
-            "```rust\nlet x = 1;\n```"
-        );
-        assert_eq!(format_fenced_block("hello", None), "```text\nhello\n```");
     }
 }

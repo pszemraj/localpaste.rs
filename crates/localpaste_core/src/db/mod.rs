@@ -213,14 +213,6 @@ pub fn localpaste_process_probe() -> ProcessProbeResult {
     ProcessProbeResult::Unknown
 }
 
-/// Check if another LocalPaste process is already running.
-///
-/// # Returns
-/// `true` when a matching process id (other than the current process) is found.
-pub fn is_localpaste_running() -> bool {
-    matches!(localpaste_process_probe(), ProcessProbeResult::Running)
-}
-
 /// Database handle with access to underlying sled trees.
 pub struct Database {
     pub db: Arc<Db>,
