@@ -370,6 +370,44 @@ fn select_paste_metadata_dirty_defers_switch_until_meta_save_ack() {
 }
 
 #[test]
+fn select_paste_rolls_back_pending_when_metadata_dispatch_fails_with_content_in_flight() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    drop(cmd_rx);
+
+    app.all_pastes.push(PasteSummary {
+        id: "beta".to_string(),
+        name: "Beta".to_string(),
+        language: None,
+        content_len: 4,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    });
+    app.pastes = app.all_pastes.clone();
+    app.metadata_dirty = true;
+    app.edit_name = "Alpha renamed".to_string();
+    app.save_status = SaveStatus::Dirty;
+    app.save_in_flight = true;
+    app.last_edit_at = Some(Instant::now());
+
+    assert!(!app.select_paste("beta".to_string()));
+    assert_eq!(app.selected_id.as_deref(), Some("alpha"));
+    assert!(app.pending_selection_id.is_none());
+    assert!(matches!(app.save_status, SaveStatus::Dirty));
+    assert!(!app.save_in_flight);
+    assert!(app.metadata_dirty);
+    assert!(!app.metadata_save_in_flight);
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Metadata save failed: backend unavailable.")
+    );
+}
+
+#[test]
 fn save_error_clears_pending_selection_and_keeps_current_selection() {
     let mut harness = make_app();
     harness.app.all_pastes.push(PasteSummary {

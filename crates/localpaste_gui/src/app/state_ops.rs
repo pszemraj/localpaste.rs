@@ -418,13 +418,31 @@ impl LocalPasteApp {
         }
         if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
             self.pending_selection_id = Some(id.clone());
-            if self.save_status == SaveStatus::Dirty {
+            let content_save_needed = self.save_status == SaveStatus::Dirty;
+            let metadata_save_needed = self.metadata_dirty;
+            if content_save_needed {
                 self.save_now();
             }
-            if self.metadata_dirty {
+            if metadata_save_needed {
                 self.save_metadata_now();
             }
-            if !self.save_in_flight && !self.metadata_save_in_flight {
+
+            let content_save_dispatched = !content_save_needed || self.save_in_flight;
+            let metadata_save_dispatched = !metadata_save_needed || self.metadata_save_in_flight;
+            if !content_save_dispatched || !metadata_save_dispatched {
+                // If one save dispatch succeeded and the next failed, treat the whole
+                // deferred switch attempt as failed and roll back save in-flight flags.
+                if content_save_needed && self.save_in_flight {
+                    self.save_in_flight = false;
+                    self.save_status = SaveStatus::Dirty;
+                    if self.last_edit_at.is_none() {
+                        self.last_edit_at = Some(Instant::now());
+                    }
+                }
+                if metadata_save_needed && self.metadata_save_in_flight {
+                    self.metadata_save_in_flight = false;
+                    self.metadata_dirty = true;
+                }
                 if let Some(pending) = self.pending_selection_id.take() {
                     self.clear_pending_copy_for(pending.as_str());
                 }
