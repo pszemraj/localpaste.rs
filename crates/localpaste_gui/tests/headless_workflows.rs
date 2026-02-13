@@ -4,7 +4,9 @@ use crossbeam_channel::Receiver;
 use localpaste_core::{
     db::TransactionOps, models::folder::Folder, models::paste::Paste, Config, Database,
 };
-use localpaste_gui::backend::{spawn_backend, spawn_backend_with_locks, CoreCmd, CoreEvent};
+use localpaste_gui::backend::{
+    spawn_backend, spawn_backend_with_locks, BackendHandle, CoreCmd, CoreEvent,
+};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
 use ropey::Rope;
 use serde_json::json;
@@ -12,6 +14,8 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+
+const TEST_MAX_PASTE_SIZE: usize = 10 * 1024 * 1024;
 
 fn recv_event(rx: &Receiver<CoreEvent>) -> CoreEvent {
     rx.recv_timeout(Duration::from_secs(2))
@@ -22,22 +26,58 @@ fn test_config(db_path: &str) -> Config {
     Config {
         db_path: db_path.to_string(),
         port: 0,
-        max_paste_size: 10 * 1024 * 1024,
+        max_paste_size: TEST_MAX_PASTE_SIZE,
         auto_save_interval: 2000,
         auto_backup: false,
     }
 }
 
+struct TestEnv {
+    _dir: TempDir,
+    db_path: String,
+    db: Database,
+}
+
+impl TestEnv {
+    fn new() -> Self {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        let db = Database::new(&db_path_str).expect("db");
+        Self {
+            _dir: dir,
+            db_path: db_path_str,
+            db,
+        }
+    }
+
+    fn start_server(&self, locks: Arc<PasteLockManager>) -> EmbeddedServer {
+        let state = AppState::with_locks(
+            test_config(&self.db_path),
+            self.db.share().expect("share db"),
+            locks,
+        );
+        EmbeddedServer::start(state, false).expect("server")
+    }
+
+    fn spawn_backend(&self) -> BackendHandle {
+        spawn_backend(self.db.share().expect("share db"), TEST_MAX_PASTE_SIZE)
+    }
+
+    fn spawn_backend_with_locks(&self, locks: Arc<PasteLockManager>) -> BackendHandle {
+        spawn_backend_with_locks(
+            self.db.share().expect("share db"),
+            TEST_MAX_PASTE_SIZE,
+            locks,
+        )
+    }
+}
+
 #[test]
 fn api_updates_are_visible_to_backend_list() {
-    let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = Database::new(&db_path_str).expect("db");
+    let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
-    let server_db = db.share().expect("share db");
-    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks);
-    let server = EmbeddedServer::start(state, false).expect("server");
+    let server = env.start_server(locks);
 
     let client = reqwest::blocking::Client::new();
     let url = format!("http://{}/api/paste", server.addr());
@@ -49,7 +89,7 @@ fn api_updates_are_visible_to_backend_list() {
         .json()
         .expect("parse response");
 
-    let backend = spawn_backend(db, 10 * 1024 * 1024);
+    let backend = env.spawn_backend();
     backend
         .cmd_tx
         .send(CoreCmd::ListPastes {
@@ -70,18 +110,13 @@ fn api_updates_are_visible_to_backend_list() {
 
 #[test]
 fn locked_paste_blocks_api_delete() {
-    let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = Database::new(&db_path_str).expect("db");
+    let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
-    let server_db = db.share().expect("share db");
-    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks.clone());
-    let server = EmbeddedServer::start(state, false).expect("server");
+    let server = env.start_server(locks.clone());
 
     let paste = Paste::new("locked content".to_string(), "locked".to_string());
     let paste_id = paste.id.clone();
-    db.pastes.create(&paste).expect("create paste");
+    env.db.pastes.create(&paste).expect("create paste");
 
     locks.lock(&paste_id);
 
@@ -98,18 +133,13 @@ fn locked_paste_blocks_api_delete() {
 
 #[test]
 fn locked_paste_blocks_api_update() {
-    let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = Database::new(&db_path_str).expect("db");
+    let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
-    let server_db = db.share().expect("share db");
-    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks.clone());
-    let server = EmbeddedServer::start(state, false).expect("server");
+    let server = env.start_server(locks.clone());
 
     let paste = Paste::new("locked content".to_string(), "locked".to_string());
     let paste_id = paste.id.clone();
-    db.pastes.create(&paste).expect("create paste");
+    env.db.pastes.create(&paste).expect("create paste");
 
     locks.lock(&paste_id);
 
@@ -134,12 +164,9 @@ fn locked_paste_blocks_api_update() {
 
 #[test]
 fn locked_descendant_blocks_backend_folder_delete() {
-    let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = Database::new(&db_path_str).expect("db");
+    let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
-    let backend = spawn_backend_with_locks(db, 10 * 1024 * 1024, locks.clone());
+    let backend = env.spawn_backend_with_locks(locks.clone());
 
     backend
         .cmd_tx
@@ -217,15 +244,10 @@ fn locked_descendant_blocks_backend_folder_delete() {
 
 #[test]
 fn metadata_update_persists_and_manual_auto_language_transitions_work() {
-    let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = Database::new(&db_path_str).expect("db");
+    let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
-    let server_db = db.share().expect("share db");
-    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks);
-    let _server = EmbeddedServer::start(state, false).expect("server");
-    let backend = spawn_backend(db, 10 * 1024 * 1024);
+    let _server = env.start_server(locks);
+    let backend = env.spawn_backend();
 
     backend
         .cmd_tx
@@ -315,15 +337,10 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
 
 #[test]
 fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
-    let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = Database::new(&db_path_str).expect("db");
+    let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
-    let server_db = db.share().expect("share db");
-    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks.clone());
-    let server = EmbeddedServer::start(state, false).expect("server");
-    let backend = spawn_backend_with_locks(db, 10 * 1024 * 1024, locks);
+    let server = env.start_server(locks.clone());
+    let backend = env.spawn_backend_with_locks(locks);
 
     backend
         .cmd_tx
@@ -401,32 +418,23 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
 
 #[test]
 fn backend_folder_move_and_api_folder_delete_race_preserves_folder_counts() {
-    let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = Database::new(&db_path_str).expect("db");
+    let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
-    let server_db = db.share().expect("share db");
-    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks.clone());
-    let server = EmbeddedServer::start(state, false).expect("server");
-    let backend = spawn_backend_with_locks(
-        db.share().expect("share backend db"),
-        10 * 1024 * 1024,
-        locks,
-    );
+    let server = env.start_server(locks.clone());
+    let backend = env.spawn_backend_with_locks(locks);
 
     let root = Folder::new("race-root".to_string());
     let root_id = root.id.clone();
-    db.folders.create(&root).expect("create root");
+    env.db.folders.create(&root).expect("create root");
 
     let target = Folder::new("race-target".to_string());
     let target_id = target.id.clone();
-    db.folders.create(&target).expect("create target");
+    env.db.folders.create(&target).expect("create target");
 
     let mut paste = Paste::new("race-content".to_string(), "race-paste".to_string());
     paste.folder_id = Some(root_id.clone());
     let paste_id = paste.id.clone();
-    TransactionOps::create_paste_with_folder(&db, &paste, &root_id)
+    TransactionOps::create_paste_with_folder(&env.db, &paste, &root_id)
         .expect("seed paste with folder");
 
     let delete_barrier = Arc::new(Barrier::new(2));
@@ -467,13 +475,14 @@ fn backend_folder_move_and_api_folder_delete_race_preserves_folder_counts() {
         delete_status
     );
 
-    let root_after = db.folders.get(&root_id).expect("root lookup");
+    let root_after = env.db.folders.get(&root_id).expect("root lookup");
     assert!(
         root_after.is_none(),
         "source folder should be deleted after race"
     );
 
-    let paste_after = db
+    let paste_after = env
+        .db
         .pastes
         .get(&paste_id)
         .expect("paste lookup")
@@ -484,12 +493,14 @@ fn backend_folder_move_and_api_folder_delete_race_preserves_folder_counts() {
         "paste must not remain in deleted folder"
     );
 
-    let target_after = db
+    let target_after = env
+        .db
         .folders
         .get(&target_id)
         .expect("target lookup")
         .expect("target folder exists");
-    let target_list_len = db
+    let target_list_len = env
+        .db
         .pastes
         .list(10, Some(target_id.clone()))
         .expect("target list")
@@ -502,15 +513,10 @@ fn backend_folder_move_and_api_folder_delete_race_preserves_folder_counts() {
 
 #[test]
 fn api_folder_changes_are_visible_to_backend_state() {
-    let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = Database::new(&db_path_str).expect("db");
+    let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
-    let server_db = db.share().expect("share db");
-    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks);
-    let server = EmbeddedServer::start(state, false).expect("server");
-    let backend = spawn_backend(db, 10 * 1024 * 1024);
+    let server = env.start_server(locks);
+    let backend = env.spawn_backend();
     let client = reqwest::blocking::Client::new();
 
     let folder_url = format!("http://{}/api/folder", server.addr());
@@ -589,10 +595,7 @@ fn api_folder_changes_are_visible_to_backend_state() {
 
 #[test]
 fn list_and_search_latency_stay_within_reasonable_headless_budget() {
-    let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let db = Database::new(&db_path_str).expect("db");
+    let env = TestEnv::new();
 
     for idx in 0..1500 {
         let content = if idx % 250 == 0 {
@@ -606,10 +609,10 @@ fn list_and_search_latency_stay_within_reasonable_headless_budget() {
             format!("item-{}", idx)
         };
         let paste = Paste::new(content, name);
-        db.pastes.create(&paste).expect("seed paste");
+        env.db.pastes.create(&paste).expect("seed paste");
     }
 
-    let backend = spawn_backend(db, 10 * 1024 * 1024);
+    let backend = env.spawn_backend();
 
     let list_start = Instant::now();
     backend

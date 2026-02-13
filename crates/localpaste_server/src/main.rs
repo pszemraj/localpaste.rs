@@ -7,6 +7,10 @@ use localpaste_server::db::ProcessProbeResult;
 use localpaste_server::{config::Config, db::Database, serve_router, AppState};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+fn has_flag(args: &[String], flag: &str) -> bool {
+    args.iter().any(|arg| arg == flag)
+}
+
 fn guard_force_unlock_probe(result: ProcessProbeResult) -> anyhow::Result<()> {
     match result {
         ProcessProbeResult::Running => {
@@ -36,14 +40,14 @@ async fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
 
-    if args.contains(&"--help".to_string()) {
+    if has_flag(&args, "--help") {
         print_help();
         return Ok(());
     }
 
     let config = Config::from_env();
 
-    if args.contains(&"--force-unlock".to_string()) {
+    if has_flag(&args, "--force-unlock") {
         guard_force_unlock_probe(localpaste_server::db::localpaste_process_probe())?;
 
         tracing::warn!("Force unlock requested");
@@ -66,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    if args.contains(&"--backup".to_string()) {
+    if has_flag(&args, "--backup") {
         run_backup(&config)?;
         if args.len() <= 2 {
             return Ok(());
