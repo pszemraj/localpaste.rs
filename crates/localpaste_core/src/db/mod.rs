@@ -150,9 +150,9 @@ pub fn localpaste_process_probe() -> ProcessProbeResult {
 pub fn localpaste_process_probe() -> ProcessProbeResult {
     use std::process::Command;
 
-    let output = Command::new("tasklist").arg("/FO").arg("CSV").output();
-    let Ok(output) = output else {
-        return ProcessProbeResult::Unknown;
+    let output = match Command::new("tasklist").arg("/FO").arg("CSV").output() {
+        Ok(output) => output,
+        Err(err) => return tasklist_error_probe_result(err.kind()),
     };
     if !output.status.success() {
         return ProcessProbeResult::Unknown;
@@ -187,6 +187,16 @@ pub fn localpaste_process_probe() -> ProcessProbeResult {
         ProcessProbeResult::Unknown
     } else {
         ProcessProbeResult::NotRunning
+    }
+}
+
+#[cfg(windows)]
+fn tasklist_error_probe_result(kind: std::io::ErrorKind) -> ProcessProbeResult {
+    if kind == std::io::ErrorKind::NotFound {
+        // Keep stale lock recovery reachable when tasklist is unavailable.
+        ProcessProbeResult::NotRunning
+    } else {
+        ProcessProbeResult::Unknown
     }
 }
 
@@ -591,6 +601,24 @@ mod process_detection_tests {
     fn unix_probe_keeps_unknown_for_non_notfound_pgrep_errors() {
         let err = std::io::Error::new(ErrorKind::PermissionDenied, "permission denied");
         let probe = pgrep_error_probe_result(&err);
+        assert_eq!(probe, ProcessProbeResult::Unknown);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod process_detection_windows_tests {
+    use super::{tasklist_error_probe_result, ProcessProbeResult};
+    use std::io::ErrorKind;
+
+    #[test]
+    fn windows_probe_treats_missing_tasklist_as_not_running() {
+        let probe = tasklist_error_probe_result(ErrorKind::NotFound);
+        assert_eq!(probe, ProcessProbeResult::NotRunning);
+    }
+
+    #[test]
+    fn windows_probe_keeps_unknown_for_other_tasklist_errors() {
+        let probe = tasklist_error_probe_result(ErrorKind::PermissionDenied);
         assert_eq!(probe, ProcessProbeResult::Unknown);
     }
 }

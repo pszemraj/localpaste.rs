@@ -95,7 +95,13 @@ impl PasteDb {
     {
         self.begin_meta_index_mutation()?;
         let key = paste.id.as_bytes();
-        let value = bincode::serialize(paste)?;
+        let value = match bincode::serialize(paste) {
+            Ok(value) => value,
+            Err(err) => {
+                self.try_end_meta_index_mutation();
+                return Err(AppError::Serialization(err));
+            }
+        };
         let previous = self.tree.insert(key, value)?;
         if let Err(err) = index_writer(self, paste) {
             self.rollback_create_after_index_failure(key, previous, paste);
@@ -158,6 +164,7 @@ impl PasteDb {
             }
         })?;
         if let Some(err) = update_error.borrow_mut().take() {
+            self.try_end_meta_index_mutation();
             return Err(err);
         }
 
@@ -232,6 +239,7 @@ impl PasteDb {
             }
         })?;
         if let Some(err) = update_error.borrow_mut().take() {
+            self.try_end_meta_index_mutation();
             return Err(err);
         }
         if folder_mismatch.get() {
@@ -978,7 +986,7 @@ mod tests {
         folder_matches_expected, PasteDb, META_INDEX_DIRTY_COUNT_KEY, META_INDEX_SCHEMA_VERSION,
         META_INDEX_VERSION_KEY,
     };
-    use crate::models::paste::Paste;
+    use crate::models::paste::{Paste, UpdatePasteRequest};
     use crate::AppError;
     use chrono::Duration;
     use std::cell::Cell;
@@ -1264,6 +1272,74 @@ mod tests {
                 .needs_reconcile_meta_indexes(false)
                 .expect("needs reconcile"),
             "dirty marker should force reconcile"
+        );
+    }
+
+    #[test]
+    fn update_error_does_not_leave_meta_index_dirty_marker_set() {
+        let (paste_db, _dir) = setup_paste_db();
+        let paste = Paste::new("body".to_string(), "name".to_string());
+        let paste_id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        paste_db
+            .tree
+            .insert(paste_id.as_bytes(), b"corrupt-paste-row")
+            .expect("corrupt canonical row");
+
+        let update = UpdatePasteRequest {
+            content: Some("updated".to_string()),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        };
+        let err = paste_db
+            .update(paste_id.as_str(), update)
+            .expect_err("corrupt row should fail update");
+        assert!(
+            matches!(err, AppError::Serialization(_)),
+            "expected serialization error for corrupt canonical row"
+        );
+        assert_eq!(
+            paste_db.meta_index_dirty_count().expect("dirty count"),
+            0,
+            "update errors without index mutation should not leave dirty marker set"
+        );
+    }
+
+    #[test]
+    fn update_if_folder_mismatch_error_does_not_leave_meta_index_dirty_marker_set() {
+        let (paste_db, _dir) = setup_paste_db();
+        let paste = Paste::new("body".to_string(), "name".to_string());
+        let paste_id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        paste_db
+            .tree
+            .insert(paste_id.as_bytes(), b"corrupt-paste-row")
+            .expect("corrupt canonical row");
+
+        let update = UpdatePasteRequest {
+            content: Some("updated".to_string()),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        };
+        let err = paste_db
+            .update_if_folder_matches(paste_id.as_str(), None, update)
+            .expect_err("corrupt row should fail update");
+        assert!(
+            matches!(err, AppError::Serialization(_)),
+            "expected serialization error for corrupt canonical row"
+        );
+        assert_eq!(
+            paste_db.meta_index_dirty_count().expect("dirty count"),
+            0,
+            "failed CAS update without index mutation should not leave dirty marker set"
         );
     }
 
