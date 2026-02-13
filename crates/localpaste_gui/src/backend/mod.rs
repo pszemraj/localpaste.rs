@@ -255,12 +255,13 @@ mod tests {
     }
 
     #[test]
-    fn backend_searches_and_lists_folders() {
+    fn backend_searches_metadata_and_lists_folders() {
         let TestDb { _dir: _guard, db } = setup_db();
         let root = localpaste_core::models::folder::Folder::new("Root".to_string());
         db.folders.create(&root).expect("create folder");
 
-        let paste = Paste::new("alpha rust beta".to_string(), "alpha".to_string());
+        // GUI backend search is metadata-only (name/tags/language), not full content.
+        let paste = Paste::new("alpha beta".to_string(), "rust-alpha".to_string());
         db.pastes.create(&paste).expect("create paste");
 
         let backend = spawn_backend(db);
