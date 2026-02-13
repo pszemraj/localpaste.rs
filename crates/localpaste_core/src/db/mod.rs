@@ -20,19 +20,31 @@ use std::sync::Arc;
 /// # Returns
 /// `true` when a matching process id (other than the current process) is found.
 #[cfg(unix)]
+fn pgrep_output_has_other_pid(stdout: &[u8], current_pid: u32) -> bool {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .any(|pid| pid != current_pid)
+}
+
+/// Check if another LocalPaste process is already running.
+///
+/// # Returns
+/// `true` when a matching process id (other than the current process) is found.
+#[cfg(unix)]
 pub fn is_localpaste_running() -> bool {
     use std::process::Command;
 
     let current_pid = std::process::id();
-    let output = Command::new("pgrep").arg("-f").arg("localpaste").output();
-
-    match output {
-        Ok(result) => String::from_utf8_lossy(&result.stdout)
-            .lines()
-            .filter_map(|line| line.trim().parse::<u32>().ok())
-            .any(|pid| pid != current_pid),
-        Err(_) => false,
-    }
+    ["localpaste", "localpaste-gui"].iter().any(|process_name| {
+        Command::new("pgrep")
+            .arg("-x")
+            .arg(process_name)
+            .output()
+            .ok()
+            .map(|result| pgrep_output_has_other_pid(&result.stdout, current_pid))
+            .unwrap_or(false)
+    })
 }
 
 /// Check if another LocalPaste process is already running.
@@ -388,5 +400,26 @@ impl Database {
     pub fn flush(&self) -> Result<(), AppError> {
         self.db.flush()?;
         Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod process_detection_tests {
+    use super::pgrep_output_has_other_pid;
+
+    #[test]
+    fn unix_pid_parser_ignores_current_pid_and_invalid_lines() {
+        let current_pid = 4242u32;
+        let stdout = b"garbage\n4242\n";
+        let has_other = pgrep_output_has_other_pid(stdout, current_pid);
+        assert!(!has_other);
+    }
+
+    #[test]
+    fn unix_pid_parser_detects_other_localpaste_pid() {
+        let current_pid = 4242u32;
+        let stdout = b"1111\n4242\n";
+        let has_other = pgrep_output_has_other_pid(stdout, current_pid);
+        assert!(has_other);
     }
 }

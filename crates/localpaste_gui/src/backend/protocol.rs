@@ -38,6 +38,8 @@ pub enum CoreCmd {
     },
     /// Delete a paste by id.
     DeletePaste { id: String },
+    /// Folder commands remain for API/core compatibility during deprecation rollout.
+    /// The rewrite GUI does not expose folder CRUD controls directly.
     /// Load all folders.
     ListFolders,
     /// Create a folder with optional parent.

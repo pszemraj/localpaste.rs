@@ -112,3 +112,12 @@ Lock recovery guidance (including what not to delete) lives in [docs/deployment.
 - Perf protocol: [gui-perf-protocol.md](gui-perf-protocol.md)
 - Virtual editor rollout plan: [virtual-editor-plan.md](virtual-editor-plan.md)
 - Rewrite parity checklist: [parity-checklist.md](parity-checklist.md)
+
+## Deferred TODO Backlog (2026-02-13 Cold-Eyes Audit)
+
+- [ ] Split `LocalPasteApp` into domain state groups (`EditorState`, `HighlightState`, `SearchState`, `UiState`) to reduce coupling and simplify test harness construction.
+- [ ] Extract the virtual input-routing/control-flow block from `LocalPasteApp::update` into a dedicated per-frame input pipeline API.
+- [ ] Add CI-friendly perf microbench coverage (list-from-metadata and highlight/layout path) to catch algorithmic regressions earlier than manual perf runs.
+- [ ] Evaluate post-sled storage options (`redb` and `rusqlite`) and document migration constraints around current CAS-style folder/paste update paths.
+- [ ] Revisit backend query cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
+- [ ] Replace process-list heuristics for stale-lock checks with PID-file ownership + liveness probing (exact process matching is now a stopgap hardening step).
