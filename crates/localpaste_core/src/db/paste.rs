@@ -576,7 +576,7 @@ impl PasteDb {
             }
             let score = score_meta_match(&meta, &query_lower);
             if score > 0 {
-                results.push((score, meta.updated_at, meta));
+                push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }
         }
         Ok(finalize_meta_search_results(results, limit))
@@ -777,7 +777,7 @@ impl PasteDb {
             }
             let score = score_meta_match(&meta, &query_lower);
             if score > 0 {
-                results.push((score, meta.updated_at, meta));
+                push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }
         }
         Ok(finalize_meta_search_results(results, limit))
@@ -901,6 +901,22 @@ fn score_paste_match(paste: &Paste, query_lower: &str) -> i32 {
 fn push_ranked_paste_top_k(
     results: &mut Vec<(i32, DateTime<Utc>, Paste)>,
     candidate: (i32, DateTime<Utc>, Paste),
+    limit: usize,
+) {
+    push_ranked_top_k(results, candidate, limit);
+}
+
+fn push_ranked_meta_top_k(
+    results: &mut Vec<(i32, DateTime<Utc>, PasteMeta)>,
+    candidate: (i32, DateTime<Utc>, PasteMeta),
+    limit: usize,
+) {
+    push_ranked_top_k(results, candidate, limit);
+}
+
+fn push_ranked_top_k<T>(
+    results: &mut Vec<(i32, DateTime<Utc>, T)>,
+    candidate: (i32, DateTime<Utc>, T),
     limit: usize,
 ) {
     if limit == 0 {
@@ -1030,8 +1046,8 @@ impl From<LegacyPaste> for Paste {
 #[cfg(test)]
 mod tests {
     use super::{
-        folder_matches_expected, PasteDb, META_INDEX_DIRTY_COUNT_KEY, META_INDEX_SCHEMA_VERSION,
-        META_INDEX_VERSION_KEY,
+        folder_matches_expected, push_ranked_meta_top_k, PasteDb, META_INDEX_DIRTY_COUNT_KEY,
+        META_INDEX_SCHEMA_VERSION, META_INDEX_VERSION_KEY,
     };
     use crate::models::paste::{Paste, UpdatePasteRequest};
     use crate::AppError;
@@ -1268,6 +1284,30 @@ mod tests {
             metas.into_iter().any(|meta| meta.id == paste_id),
             "canonical fallback should retain metadata search results"
         );
+    }
+
+    #[test]
+    fn metadata_top_k_accumulator_stays_bounded_by_limit() {
+        let mut ranked: Vec<(
+            i32,
+            chrono::DateTime<chrono::Utc>,
+            crate::models::paste::PasteMeta,
+        )> = Vec::new();
+        let limit = 5usize;
+
+        for idx in 0..100 {
+            let mut paste = Paste::new(format!("body-{idx}"), format!("name-{idx}"));
+            paste.updated_at = chrono::Utc::now() + Duration::seconds(idx);
+            let meta = crate::models::paste::PasteMeta::from(&paste);
+            let score = if idx % 10 == 0 { 10 } else { 1 };
+            push_ranked_meta_top_k(&mut ranked, (score, meta.updated_at, meta), limit);
+            assert!(
+                ranked.len() <= limit,
+                "metadata top-k accumulator must stay bounded by limit"
+            );
+        }
+
+        assert_eq!(ranked.len(), limit);
     }
 
     #[test]
