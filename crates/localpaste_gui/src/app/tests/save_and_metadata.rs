@@ -286,6 +286,30 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
 }
 
 #[test]
+fn paste_saved_during_active_search_forces_fresh_backend_search() {
+    let mut harness = make_app();
+    harness.app.search_query = "alpha".to_string();
+    harness.app.search_last_sent = "alpha".to_string();
+
+    let mut saved = Paste::new("updated body".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert!(
+        harness.app.search_last_sent.is_empty(),
+        "paste save should invalidate cached search query"
+    );
+
+    harness.app.maybe_dispatch_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "alpha"),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
 fn save_now_send_failure_restores_dirty_state() {
     let TestHarness {
         _dir: _guard,

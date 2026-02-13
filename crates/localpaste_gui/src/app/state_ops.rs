@@ -95,6 +95,12 @@ impl LocalPasteApp {
                 if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
+                if !self.search_query.trim().is_empty() {
+                    // Content saves can update metadata used by metadata-only search
+                    // (language auto-detect, recency ordering), so force redispatch.
+                    self.search_last_sent.clear();
+                    self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+                }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     let active_content = self.active_snapshot();
                     let has_newer_local_edits = active_content != paste.content;
