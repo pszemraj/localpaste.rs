@@ -40,6 +40,63 @@ fn paste_missing_non_selected_removes_list_entry() {
 }
 
 #[test]
+fn paste_load_failed_for_selected_clears_lock_and_selection() {
+    let mut harness = make_app();
+    harness.app.locks.lock("alpha");
+    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
+
+    harness.app.apply_event(CoreEvent::PasteLoadFailed {
+        id: "alpha".to_string(),
+        message: "Get failed: injected".to_string(),
+    });
+
+    assert!(
+        !harness.app.locks.is_locked("alpha"),
+        "selected paste lock should be released on load failure"
+    );
+    assert!(harness.app.selected_id.is_none());
+    assert!(harness.app.selected_paste.is_none());
+    assert!(harness.app.pending_copy_action.is_none());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Get failed: injected")
+    );
+}
+
+#[test]
+fn paste_load_failed_for_stale_id_does_not_unlock_current_selection() {
+    let mut harness = make_app();
+    harness.app.selected_id = Some("beta".to_string());
+    harness.app.selected_paste = Some(Paste::new("beta".to_string(), "Beta".to_string()));
+    harness.app.locks.lock("beta");
+    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
+
+    harness.app.apply_event(CoreEvent::PasteLoadFailed {
+        id: "alpha".to_string(),
+        message: "Get failed: stale".to_string(),
+    });
+
+    assert!(
+        harness.app.locks.is_locked("beta"),
+        "stale load failure should not unlock current selection"
+    );
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    assert!(harness.app.pending_copy_action.is_none());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Get failed: stale")
+    );
+}
+
+#[test]
 fn set_status_pushes_toast_feedback() {
     let mut harness = make_app();
     harness.app.set_status("Saved metadata.");

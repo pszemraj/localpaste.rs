@@ -70,6 +70,8 @@ pub enum CoreEvent {
     },
     /// Response containing the full paste payload requested by id.
     PasteLoaded { paste: Paste },
+    /// Loading a specific paste failed due to backend/storage error.
+    PasteLoadFailed { id: String, message: String },
     /// Response containing a newly created paste.
     PasteCreated { paste: Paste },
     /// Response confirming a paste was updated.

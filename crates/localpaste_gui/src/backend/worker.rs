@@ -245,11 +245,10 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         }
                         Err(err) => {
                             error!("backend get failed: {}", err);
-                            send_error(
-                                &evt_tx,
-                                CoreErrorSource::Other,
-                                format!("Get failed: {}", err),
-                            );
+                            let _ = evt_tx.send(CoreEvent::PasteLoadFailed {
+                                id,
+                                message: format!("Get failed: {}", err),
+                            });
                         }
                     },
                     CoreCmd::CreatePaste { content } => {

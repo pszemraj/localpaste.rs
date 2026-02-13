@@ -174,6 +174,7 @@ impl LocalPasteApp {
             CoreEvent::PasteMissing { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
+                self.clear_pending_copy_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                     self.set_status("Selected paste was deleted; list refreshed.");
@@ -181,6 +182,13 @@ impl LocalPasteApp {
                     self.set_status("Paste was deleted; list refreshed.");
                 }
                 self.request_refresh();
+            }
+            CoreEvent::PasteLoadFailed { id, message } => {
+                self.clear_pending_copy_for(id.as_str());
+                if self.selected_id.as_deref() == Some(id.as_str()) {
+                    self.clear_selection();
+                }
+                self.set_status(message);
             }
             CoreEvent::FoldersLoaded { items: _ } => {}
             CoreEvent::FolderSaved { folder: _ } | CoreEvent::FolderDeleted { id: _ } => {
@@ -635,6 +643,17 @@ impl LocalPasteApp {
                 self.pending_copy_action = None;
                 self.set_status("Copied fenced code block.");
             }
+        }
+    }
+
+    fn clear_pending_copy_for(&mut self, id: &str) {
+        let should_clear = matches!(
+            self.pending_copy_action.as_ref(),
+            Some(PaletteCopyAction::Raw(action_id) | PaletteCopyAction::Fenced(action_id))
+                if action_id == id
+        );
+        if should_clear {
+            self.pending_copy_action = None;
         }
     }
 }
