@@ -248,6 +248,44 @@ mod tests {
     use localpaste_core::Config;
     use localpaste_core::DEFAULT_PORT;
     use std::net::SocketAddr;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: Tests coordinate env mutation through env_lock.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                // SAFETY: Tests coordinate env mutation through env_lock.
+                unsafe {
+                    std::env::set_var(self.key, previous);
+                }
+            } else {
+                // SAFETY: Tests coordinate env mutation through env_lock.
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn listener_cors_port_uses_bound_listener_port() {
@@ -261,6 +299,7 @@ mod tests {
 
     #[test]
     fn resolve_bind_address_enforces_loopback_when_public_access_disabled() {
+        let _lock = env_lock().lock().expect("env lock");
         let config = Config {
             db_path: String::from("/tmp/localpaste-db"),
             port: 4040,
@@ -268,19 +307,15 @@ mod tests {
             auto_save_interval: 2000,
             auto_backup: false,
         };
-        unsafe {
-            std::env::set_var("BIND", "0.0.0.0:4040");
-        }
+        let _bind = EnvGuard::set("BIND", "0.0.0.0:4040");
         let resolved = resolve_bind_address(&config, false);
         assert_eq!(resolved.ip().to_string(), "127.0.0.1");
         assert_eq!(resolved.port(), 4040);
-        unsafe {
-            std::env::remove_var("BIND");
-        }
     }
 
     #[test]
     fn resolve_bind_address_allows_loopback_and_invalid_fallback() {
+        let _lock = env_lock().lock().expect("env lock");
         let config = Config {
             db_path: String::from("/tmp/localpaste-db"),
             port: 4041,
@@ -291,13 +326,8 @@ mod tests {
         let loopback = resolve_bind_address(&config, false);
         assert_eq!(loopback, SocketAddr::from(([127, 0, 0, 1], 4041)));
 
-        unsafe {
-            std::env::set_var("BIND", "bad:host");
-        }
+        let _bind = EnvGuard::set("BIND", "bad:host");
         let fallback = resolve_bind_address(&config, false);
         assert_eq!(fallback, SocketAddr::from(([127, 0, 0, 1], 4041)));
-        unsafe {
-            std::env::remove_var("BIND");
-        }
     }
 }
