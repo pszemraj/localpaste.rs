@@ -1,7 +1,10 @@
 //! Folder HTTP handlers.
 
 use super::deprecation::{warn_folder_deprecation, with_folder_deprecation_headers};
-use super::normalize::{normalize_optional_for_create, normalize_optional_for_update};
+use super::normalize::{
+    normalize_optional_for_create, normalize_optional_for_update,
+    validate_assignable_folder_for_request,
+};
 use crate::{error::HttpError, models::folder::*, AppError, AppState};
 use axum::{
     extract::{Path, State},
@@ -9,33 +12,8 @@ use axum::{
     Json,
 };
 use localpaste_core::folder_ops::{
-    delete_folder_tree_and_migrate, folder_delete_order, introduces_cycle,
+    delete_folder_tree_and_migrate, first_locked_paste_in_folder_delete_set, introduces_cycle,
 };
-use std::collections::HashSet;
-
-fn first_locked_paste_in_folder_delete_set(
-    state: &AppState,
-    root_folder_id: &str,
-) -> Result<Option<String>, AppError> {
-    let folders = state.db.folders.list()?;
-    if !folders.iter().any(|folder| folder.id == root_folder_id) {
-        return Err(AppError::NotFound);
-    }
-
-    let delete_set: HashSet<String> = folder_delete_order(&folders, root_folder_id)
-        .into_iter()
-        .collect();
-    for locked_id in state.locks.locked_ids() {
-        if let Some(paste) = state.db.pastes.get(locked_id.as_str())? {
-            if let Some(folder_id) = paste.folder_id.as_ref() {
-                if delete_set.contains(folder_id) {
-                    return Ok(Some(locked_id));
-                }
-            }
-        }
-    }
-    Ok(None)
-}
 
 /// Create a new folder.
 ///
@@ -56,13 +34,7 @@ pub async fn create_folder(
     req.parent_id = normalize_optional_for_create(req.parent_id);
 
     if let Some(ref parent_id) = req.parent_id {
-        if state.db.folders.get(parent_id)?.is_none() {
-            return Err(AppError::BadRequest(format!(
-                "Parent folder with id '{}' does not exist",
-                parent_id
-            ))
-            .into());
-        }
+        validate_assignable_folder_for_request(&state.db, parent_id, "Parent folder")?;
     }
 
     let folder = Folder::with_parent(req.name, req.parent_id);
@@ -131,6 +103,7 @@ pub async fn update_folder(
                 ))
                 .into());
             }
+            validate_assignable_folder_for_request(&state.db, parent_id, "Parent folder")?;
 
             if introduces_cycle(folders, &id, parent_id) {
                 return Err(AppError::BadRequest(
@@ -166,7 +139,9 @@ pub async fn delete_folder(
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("DELETE /api/folder/:id");
 
-    if let Some(locked_id) = first_locked_paste_in_folder_delete_set(&state, &id)? {
+    if let Some(locked_id) =
+        first_locked_paste_in_folder_delete_set(&state.db, &id, state.locks.locked_ids())?
+    {
         return Err(AppError::Locked(format!(
             "Folder delete would migrate locked paste '{}'; close it first.",
             locked_id

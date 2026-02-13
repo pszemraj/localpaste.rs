@@ -2,13 +2,14 @@
 
 use crate::{error::AppError, models::folder::*};
 use sled::Db;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 /// Accessor for the `folders` sled tree.
 pub struct FolderDb {
     tree: sled::Tree,
+    delete_markers: sled::Tree,
 }
 
 impl FolderDb {
@@ -21,7 +22,11 @@ impl FolderDb {
     /// Returns an error if the tree cannot be opened.
     pub fn new(db: Arc<Db>) -> Result<Self, AppError> {
         let tree = db.open_tree("folders")?;
-        Ok(Self { tree })
+        let delete_markers = db.open_tree("folders_deleting")?;
+        Ok(Self {
+            tree,
+            delete_markers,
+        })
     }
 
     /// Insert a new folder.
@@ -71,21 +76,8 @@ impl FolderDb {
         name: String,
         parent_id: Option<String>,
     ) -> Result<Option<Folder>, AppError> {
-        let update_error = Rc::new(RefCell::new(None));
-        let update_error_in = Rc::clone(&update_error);
-        let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
-            let name = name.clone();
-            let parent_id = parent_id.clone();
-            let bytes = old?;
-
-            let mut folder: Folder = match bincode::deserialize(bytes) {
-                Ok(folder) => folder,
-                Err(err) => {
-                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
-                    return Some(bytes.to_vec());
-                }
-            };
-            folder.name = name;
+        self.update_folder_record(id, move |folder| {
+            folder.name = name.clone();
             if let Some(ref pid) = parent_id {
                 folder.parent_id = if pid.is_empty() {
                     None
@@ -93,23 +85,8 @@ impl FolderDb {
                     Some(pid.clone())
                 };
             }
-
-            match bincode::serialize(&folder) {
-                Ok(encoded) => Some(encoded),
-                Err(err) => {
-                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
-                    Some(bytes.to_vec())
-                }
-            }
-        })?;
-        if let Some(err) = update_error.borrow_mut().take() {
-            return Err(err);
-        }
-
-        match result {
-            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
-            None => Ok(None),
-        }
+            Ok(())
+        })
     }
 
     /// Delete a folder by id.
@@ -120,7 +97,9 @@ impl FolderDb {
     /// # Errors
     /// Returns an error if deletion fails.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
-        Ok(self.tree.remove(id.as_bytes())?.is_some())
+        let removed = self.tree.remove(id.as_bytes())?.is_some();
+        let _ = self.delete_markers.remove(id.as_bytes())?;
+        Ok(removed)
     }
 
     /// List all folders.
@@ -154,15 +133,113 @@ impl FolderDb {
     /// Returns [`AppError::NotFound`] when the folder does not exist, or a storage/serialization
     /// error when the update fails.
     pub fn update_count(&self, id: &str, delta: i32) -> Result<(), AppError> {
-        let missing = Rc::new(Cell::new(false));
-        let missing_in = Rc::clone(&missing);
+        let updated = self.update_folder_record(id, move |folder| {
+            if delta > 0 {
+                folder.paste_count = folder.paste_count.saturating_add(delta as usize);
+            } else {
+                folder.paste_count = folder.paste_count.saturating_sub((-delta) as usize);
+            }
+            Ok(())
+        })?;
+        if updated.is_none() {
+            return Err(AppError::NotFound);
+        }
+        Ok(())
+    }
+
+    /// Set a folder paste count to an exact value.
+    ///
+    /// # Arguments
+    /// - `id`: Folder identifier.
+    /// - `count`: Exact canonical paste count.
+    ///
+    /// # Returns
+    /// `Ok(())` when the update is applied.
+    ///
+    /// # Errors
+    /// Returns [`AppError::NotFound`] when the folder does not exist, or a storage/serialization
+    /// error when the update fails.
+    pub fn set_count(&self, id: &str, count: usize) -> Result<(), AppError> {
+        let updated = self.update_folder_record(id, move |folder| {
+            folder.paste_count = count;
+            Ok(())
+        })?;
+        if updated.is_none() {
+            return Err(AppError::NotFound);
+        }
+        Ok(())
+    }
+
+    /// Mark folders as in-progress deletion targets.
+    ///
+    /// # Arguments
+    /// - `folder_ids`: Folder ids to mark.
+    ///
+    /// # Returns
+    /// `Ok(())` after all markers are persisted.
+    ///
+    /// # Errors
+    /// Returns an error if the marker tree write fails.
+    pub fn mark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
+        for folder_id in folder_ids {
+            let _ = self.delete_markers.insert(folder_id.as_bytes(), &[1u8])?;
+        }
+        Ok(())
+    }
+
+    /// Remove in-progress deletion markers from folders.
+    ///
+    /// # Arguments
+    /// - `folder_ids`: Folder ids to unmark.
+    ///
+    /// # Returns
+    /// `Ok(())` after marker removal completes.
+    ///
+    /// # Errors
+    /// Returns an error if marker removal fails.
+    pub fn unmark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
+        for folder_id in folder_ids {
+            let _ = self.delete_markers.remove(folder_id.as_bytes())?;
+        }
+        Ok(())
+    }
+
+    /// Check whether a folder is marked as being deleted.
+    ///
+    /// # Arguments
+    /// - `id`: Folder identifier.
+    ///
+    /// # Returns
+    /// `true` when deletion is in progress for the folder id.
+    ///
+    /// # Errors
+    /// Returns an error if marker lookup fails.
+    pub fn is_delete_marked(&self, id: &str) -> Result<bool, AppError> {
+        Ok(self.delete_markers.get(id.as_bytes())?.is_some())
+    }
+
+    /// Clear all in-progress delete markers.
+    ///
+    /// # Returns
+    /// `Ok(())` when marker state is fully reset.
+    ///
+    /// # Errors
+    /// Returns an error if marker tree clear fails.
+    pub fn clear_delete_markers(&self) -> Result<(), AppError> {
+        self.delete_markers.clear()?;
+        Ok(())
+    }
+
+    fn update_folder_record<F>(&self, id: &str, mutator: F) -> Result<Option<Folder>, AppError>
+    where
+        F: FnMut(&mut Folder) -> Result<(), AppError>,
+    {
         let update_error = Rc::new(RefCell::new(None));
         let update_error_in = Rc::clone(&update_error);
-        self.tree.fetch_and_update(id.as_bytes(), |old| {
-            let Some(bytes) = old else {
-                missing_in.set(true);
-                return None;
-            };
+        let mutator = Rc::new(RefCell::new(mutator));
+        let mutator_in = Rc::clone(&mutator);
+        let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
+            let bytes = old?;
 
             let mut folder: Folder = match bincode::deserialize(bytes) {
                 Ok(folder) => folder,
@@ -172,10 +249,9 @@ impl FolderDb {
                 }
             };
 
-            if delta > 0 {
-                folder.paste_count = folder.paste_count.saturating_add(delta as usize);
-            } else {
-                folder.paste_count = folder.paste_count.saturating_sub((-delta) as usize);
+            if let Err(err) = (mutator_in.borrow_mut())(&mut folder) {
+                *update_error_in.borrow_mut() = Some(err);
+                return Some(bytes.to_vec());
             }
 
             match bincode::serialize(&folder) {
@@ -186,13 +262,14 @@ impl FolderDb {
                 }
             }
         })?;
+
         if let Some(err) = update_error.borrow_mut().take() {
             return Err(err);
         }
-        if missing.get() {
-            return Err(AppError::NotFound);
-        }
 
-        Ok(())
+        match result {
+            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
+            None => Ok(None),
+        }
     }
 }

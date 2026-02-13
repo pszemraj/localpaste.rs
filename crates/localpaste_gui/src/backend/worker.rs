@@ -5,12 +5,14 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use localpaste_core::{
     config::env_flag_enabled,
     db::TransactionOps,
-    folder_ops::{delete_folder_tree_and_migrate, folder_delete_order, introduces_cycle},
+    folder_ops::{
+        delete_folder_tree_and_migrate, ensure_folder_assignable,
+        first_locked_paste_in_folder_delete_set, introduces_cycle,
+    },
     models::{folder::Folder, paste::UpdatePasteRequest},
     naming, AppError, Database,
 };
 use localpaste_server::PasteLockManager;
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -35,31 +37,6 @@ fn validate_paste_size(content: &str, max_paste_size: usize) -> Result<(), Strin
     } else {
         Ok(())
     }
-}
-
-fn first_locked_paste_in_folder_delete_set(
-    db: &Database,
-    locks: &PasteLockManager,
-    root_folder_id: &str,
-) -> Result<Option<String>, AppError> {
-    let folders = db.folders.list()?;
-    if !folders.iter().any(|folder| folder.id == root_folder_id) {
-        return Err(AppError::NotFound);
-    }
-
-    let delete_set: HashSet<String> = folder_delete_order(&folders, root_folder_id)
-        .into_iter()
-        .collect();
-    for locked_id in locks.locked_ids() {
-        if let Some(paste) = db.pastes.get(locked_id.as_str())? {
-            if let Some(folder_id) = paste.folder_id.as_ref() {
-                if delete_set.contains(folder_id) {
-                    return Ok(Some(locked_id));
-                }
-            }
-        }
-    }
-    Ok(None)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -503,28 +480,20 @@ pub fn spawn_backend_with_locks(
                         if let Some(folder_id) =
                             normalized_folder_id.as_ref().filter(|fid| !fid.is_empty())
                         {
-                            match db.folders.get(folder_id) {
-                                Ok(Some(_)) => {}
-                                Ok(None) => {
-                                    send_error(
-                                        &evt_tx,
-                                        CoreErrorSource::SaveMetadata,
-                                        format!(
-                                            "Metadata update failed: folder '{}' does not exist",
-                                            folder_id
-                                        ),
-                                    );
-                                    continue;
-                                }
-                                Err(err) => {
-                                    error!("backend folder lookup failed: {}", err);
-                                    send_error(
-                                        &evt_tx,
-                                        CoreErrorSource::SaveMetadata,
-                                        format!("Metadata update failed: {}", err),
-                                    );
-                                    continue;
-                                }
+                            if let Err(err) = ensure_folder_assignable(&db, folder_id) {
+                                let message = match err {
+                                    AppError::NotFound => format!(
+                                        "Metadata update failed: folder '{}' does not exist",
+                                        folder_id
+                                    ),
+                                    other => format!("Metadata update failed: {}", other),
+                                };
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::SaveMetadata,
+                                    message,
+                                );
+                                continue;
                             }
                         }
 
@@ -631,27 +600,20 @@ pub fn spawn_backend_with_locks(
                             .map(|pid| pid.trim().to_string())
                             .filter(|pid| !pid.is_empty());
                         if let Some(parent_id) = normalized_parent.as_deref() {
-                            match db.folders.get(parent_id) {
-                                Ok(Some(_)) => {}
-                                Ok(None) => {
-                                    send_error(
-                                        &evt_tx,
-                                        CoreErrorSource::Other,
-                                        format!(
-                                            "Create folder failed: parent '{}' does not exist",
-                                            parent_id
-                                        ),
-                                    );
-                                    continue;
-                                }
-                                Err(err) => {
-                                    send_error(
-                                        &evt_tx,
-                                        CoreErrorSource::Other,
-                                        format!("Create folder failed: {}", err),
-                                    );
-                                    continue;
-                                }
+                            if let Err(err) = ensure_folder_assignable(&db, parent_id) {
+                                let message = match err {
+                                    AppError::NotFound => format!(
+                                        "Create folder failed: parent '{}' does not exist",
+                                        parent_id
+                                    ),
+                                    other => format!("Create folder failed: {}", other),
+                                };
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    message,
+                                );
+                                continue;
                             }
                         }
 
@@ -719,6 +681,21 @@ pub fn spawn_backend_with_locks(
                                 );
                                 continue;
                             }
+                            if let Err(err) = ensure_folder_assignable(&db, parent_id) {
+                                let message = match err {
+                                    AppError::NotFound => format!(
+                                        "Update folder failed: parent '{}' does not exist",
+                                        parent_id
+                                    ),
+                                    other => format!("Update folder failed: {}", other),
+                                };
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    message,
+                                );
+                                continue;
+                            }
 
                             if introduces_cycle(&folders, &id, parent_id) {
                                 send_error(
@@ -753,7 +730,8 @@ pub fn spawn_backend_with_locks(
                         }
                     }
                     CoreCmd::DeleteFolder { id } => {
-                        match first_locked_paste_in_folder_delete_set(&db, &locks, &id) {
+                        match first_locked_paste_in_folder_delete_set(&db, &id, locks.locked_ids())
+                        {
                             Ok(Some(locked_id)) => {
                                 send_error(
                                     &evt_tx,

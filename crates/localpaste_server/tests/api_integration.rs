@@ -497,6 +497,74 @@ async fn test_invalid_folder_association() {
 }
 
 #[tokio::test]
+async fn test_server_rejects_assignments_to_delete_marked_folder() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("delete-marked.db");
+
+    let config = Config {
+        port: 0,
+        db_path: db_path.to_str().unwrap().to_string(),
+        max_paste_size: 10_000_000,
+        auto_save_interval: 2000,
+        auto_backup: false,
+    };
+
+    let db = Database::new(&config.db_path).unwrap();
+    let state = AppState::new(config, db);
+    let setup_state = state.clone();
+
+    let folder = Folder::new("Marked".to_string());
+    let folder_id = folder.id.clone();
+    setup_state.db.folders.create(&folder).unwrap();
+    setup_state
+        .db
+        .folders
+        .mark_deleting(std::slice::from_ref(&folder_id))
+        .unwrap();
+
+    let app = create_app(state, false);
+    let server = TestServer::new(app).unwrap();
+
+    let create_marked_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "body",
+            "name": "marked-create",
+            "folder_id": folder_id
+        }))
+        .await;
+    assert_eq!(
+        create_marked_response.status_code(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let seed_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "body",
+            "name": "seed"
+        }))
+        .await;
+    assert_eq!(seed_response.status_code(), StatusCode::OK);
+    let seed: serde_json::Value = seed_response.json();
+    let seed_id = seed["id"].as_str().unwrap();
+
+    let update_marked_response = server
+        .put(&format!("/api/paste/{}", seed_id))
+        .json(&json!({ "folder_id": folder_id }))
+        .await;
+    assert_eq!(
+        update_marked_response.status_code(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let after = server.get(&format!("/api/paste/{}", seed_id)).await;
+    assert_eq!(after.status_code(), StatusCode::OK);
+    let after_json: serde_json::Value = after.json();
+    assert!(after_json["folder_id"].is_null());
+}
+
+#[tokio::test]
 async fn test_whitespace_folder_ids_normalize_consistently() {
     let (server, _temp, _locks) = setup_test_server().await;
 

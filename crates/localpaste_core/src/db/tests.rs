@@ -712,6 +712,115 @@ mod db_tests {
     }
 
     #[test]
+    fn test_create_with_folder_injected_error_rolls_back_reservation_and_leaves_no_paste() {
+        let _lock = transaction_failpoint_test_lock()
+            .lock()
+            .expect("transaction failpoint lock");
+        let _guard = FailpointGuard;
+        let (db, _temp) = setup_test_db();
+
+        let folder = Folder::new("target-folder".to_string());
+        let folder_id = folder.id.clone();
+        db.folders.create(&folder).unwrap();
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(folder_id.clone());
+        let paste_id = paste.id.clone();
+
+        set_transaction_failpoint(Some(
+            TransactionFailpoint::CreateAfterDestinationReserveOnce,
+        ));
+        let result = TransactionOps::create_paste_with_folder(&db, &paste, &folder_id);
+        set_transaction_failpoint(None);
+
+        assert!(
+            matches!(result, Err(AppError::DatabaseError(message)) if message.contains("CreateAfterDestinationReserveOnce")),
+            "injected create failpoint should surface error"
+        );
+        assert!(
+            db.pastes.get(&paste_id).unwrap().is_none(),
+            "create error must not leave canonical paste row"
+        );
+        let folder_after = db.folders.get(&folder_id).unwrap().unwrap();
+        assert_eq!(
+            folder_after.paste_count, 0,
+            "destination reservation must rollback on create error"
+        );
+    }
+
+    #[test]
+    fn test_create_with_folder_rejects_destination_deleted_after_reservation_without_orphan() {
+        let _lock = transaction_failpoint_test_lock()
+            .lock()
+            .expect("transaction failpoint lock");
+        let _guard = FailpointGuard;
+        let (db, _temp) = setup_test_db();
+
+        let folder = Folder::new("target-folder".to_string());
+        let folder_id = folder.id.clone();
+        db.folders.create(&folder).unwrap();
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(folder_id.clone());
+        let paste_id = paste.id.clone();
+
+        set_transaction_failpoint(Some(
+            TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce,
+        ));
+        let result = TransactionOps::create_paste_with_folder(&db, &paste, &folder_id);
+        set_transaction_failpoint(None);
+
+        assert!(
+            matches!(result, Err(AppError::NotFound)),
+            "deleted destination must reject create"
+        );
+        assert!(
+            db.pastes.get(&paste_id).unwrap().is_none(),
+            "failed create must not leave an orphan paste assignment"
+        );
+        assert!(
+            db.folders.get(&folder_id).unwrap().is_none(),
+            "injected race removes destination folder"
+        );
+    }
+
+    #[test]
+    fn test_create_with_folder_destination_deleted_after_create_rolls_back_canonical_insert() {
+        let _lock = transaction_failpoint_test_lock()
+            .lock()
+            .expect("transaction failpoint lock");
+        let _guard = FailpointGuard;
+        let (db, _temp) = setup_test_db();
+
+        let folder = Folder::new("target-folder".to_string());
+        let folder_id = folder.id.clone();
+        db.folders.create(&folder).unwrap();
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(folder_id.clone());
+        let paste_id = paste.id.clone();
+
+        set_transaction_failpoint(Some(
+            TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce,
+        ));
+        let result = TransactionOps::create_paste_with_folder(&db, &paste, &folder_id);
+        set_transaction_failpoint(None);
+
+        assert!(
+            matches!(result, Err(AppError::NotFound)),
+            "create should fail when destination disappears after canonical insert"
+        );
+        assert!(
+            db.pastes.get(&paste_id).unwrap().is_none(),
+            "post-create destination loss must not leave orphan canonical row"
+        );
+        assert!(
+            db.folders.get(&folder_id).unwrap().is_none(),
+            "injected race removes destination folder"
+        );
+    }
+
+    #[test]
     fn test_delete_uses_folder_from_deleted_record_not_stale_context() {
         let (db, _temp) = setup_test_db();
 
@@ -1125,5 +1234,97 @@ mod db_tests {
             .expect("search fresh");
         assert_eq!(fresh_search.len(), 1);
         assert_eq!(fresh_search[0].id, fresh_id);
+    }
+
+    #[test]
+    fn test_database_new_reconciles_folder_count_drift() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        let db = Database::new(&db_path_str).unwrap();
+        let folder = Folder::new("count-drift-folder".to_string());
+        let folder_id = folder.id.clone();
+        db.folders.create(&folder).unwrap();
+
+        let mut paste_a = Paste::new("one".to_string(), "one".to_string());
+        paste_a.folder_id = Some(folder_id.clone());
+        let mut paste_b = Paste::new("two".to_string(), "two".to_string());
+        paste_b.folder_id = Some(folder_id.clone());
+        TransactionOps::create_paste_with_folder(&db, &paste_a, &folder_id).unwrap();
+        TransactionOps::create_paste_with_folder(&db, &paste_b, &folder_id).unwrap();
+
+        db.folders.set_count(&folder_id, 99).unwrap();
+        drop(db);
+
+        let reopened = Database::new(&db_path_str).unwrap();
+        let folder_after = reopened
+            .folders
+            .get(&folder_id)
+            .unwrap()
+            .expect("folder exists");
+        let canonical_count = reopened
+            .pastes
+            .list(100, Some(folder_id.clone()))
+            .unwrap()
+            .len();
+        assert_eq!(
+            folder_after.paste_count, canonical_count,
+            "startup reconcile must repair folder paste_count drift"
+        );
+    }
+
+    #[test]
+    fn test_database_new_reconciles_orphan_folder_refs() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        let db = Database::new(&db_path_str).unwrap();
+        let folder = Folder::new("orphan-folder".to_string());
+        let folder_id = folder.id.clone();
+        db.folders.create(&folder).unwrap();
+
+        let mut paste = Paste::new("orphan body".to_string(), "orphan".to_string());
+        paste.folder_id = Some(folder_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &folder_id).unwrap();
+
+        db.folders.delete(&folder_id).unwrap();
+        drop(db);
+
+        let reopened = Database::new(&db_path_str).unwrap();
+        let repaired = reopened
+            .pastes
+            .get(&paste_id)
+            .unwrap()
+            .expect("paste should still exist");
+        assert!(
+            repaired.folder_id.is_none(),
+            "startup reconcile must clear folder_id references to missing folders"
+        );
+    }
+
+    #[test]
+    fn test_database_new_clears_stale_folder_delete_markers() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        let db = Database::new(&db_path_str).unwrap();
+        let folder = Folder::new("marker-folder".to_string());
+        let folder_id = folder.id.clone();
+        db.folders.create(&folder).unwrap();
+        db.folders
+            .mark_deleting(std::slice::from_ref(&folder_id))
+            .unwrap();
+        assert!(db.folders.is_delete_marked(&folder_id).unwrap());
+        drop(db);
+
+        let reopened = Database::new(&db_path_str).unwrap();
+        assert!(
+            !reopened.folders.is_delete_marked(&folder_id).unwrap(),
+            "startup should clear stale folder delete markers"
+        );
     }
 }

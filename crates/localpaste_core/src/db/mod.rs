@@ -11,6 +11,7 @@ pub mod lock;
 pub mod paste;
 
 use crate::error::AppError;
+use crate::folder_ops::{ensure_folder_assignable, reconcile_folder_invariants};
 use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME};
 use sled::Db;
 use std::sync::Arc;
@@ -232,8 +233,12 @@ mod tests;
 pub struct TransactionOps;
 
 #[cfg(test)]
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TransactionFailpoint {
+    CreateAfterDestinationReserveOnce,
+    CreateDeleteDestinationAfterReserveOnce,
+    CreateDeleteDestinationAfterCanonicalCreateOnce,
     MoveAfterDestinationReserveOnce,
     MoveDeleteDestinationAfterReserveOnce,
 }
@@ -261,6 +266,14 @@ fn take_transaction_failpoint() -> Option<TransactionFailpoint> {
 }
 
 #[cfg(test)]
+fn restore_transaction_failpoint(failpoint: TransactionFailpoint) {
+    let mut slot = transaction_failpoint_slot()
+        .lock()
+        .expect("transaction failpoint lock poisoned");
+    *slot = Some(failpoint);
+}
+
+#[cfg(test)]
 fn apply_move_failpoint_after_destination_reserve(
     db: &Database,
     folder_changing: bool,
@@ -271,6 +284,12 @@ fn apply_move_failpoint_after_destination_reserve(
     };
 
     match failpoint {
+        TransactionFailpoint::CreateAfterDestinationReserveOnce
+        | TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce
+        | TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce => {
+            restore_transaction_failpoint(failpoint);
+            Ok(())
+        }
         TransactionFailpoint::MoveAfterDestinationReserveOnce => Err(AppError::DatabaseError(
             format!("Injected transaction failpoint: {:?}", failpoint),
         )),
@@ -280,6 +299,59 @@ fn apply_move_failpoint_after_destination_reserve(
                     db.folders.delete(new_id)?;
                 }
             }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+fn apply_create_failpoint_after_destination_reserve(
+    db: &Database,
+    folder_id: &str,
+) -> Result<(), AppError> {
+    let Some(failpoint) = take_transaction_failpoint() else {
+        return Ok(());
+    };
+
+    match failpoint {
+        TransactionFailpoint::CreateAfterDestinationReserveOnce => Err(AppError::DatabaseError(
+            format!("Injected transaction failpoint: {:?}", failpoint),
+        )),
+        TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce => {
+            db.folders.delete(folder_id)?;
+            Ok(())
+        }
+        TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce => {
+            restore_transaction_failpoint(failpoint);
+            Ok(())
+        }
+        TransactionFailpoint::MoveAfterDestinationReserveOnce
+        | TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce => {
+            restore_transaction_failpoint(failpoint);
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+fn apply_create_failpoint_after_canonical_create(
+    db: &Database,
+    folder_id: &str,
+) -> Result<(), AppError> {
+    let Some(failpoint) = take_transaction_failpoint() else {
+        return Ok(());
+    };
+
+    match failpoint {
+        TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce => {
+            db.folders.delete(folder_id)?;
+            Ok(())
+        }
+        TransactionFailpoint::CreateAfterDestinationReserveOnce
+        | TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce
+        | TransactionFailpoint::MoveAfterDestinationReserveOnce
+        | TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce => {
+            restore_transaction_failpoint(failpoint);
             Ok(())
         }
     }
@@ -303,16 +375,78 @@ impl TransactionOps {
         paste: &crate::models::paste::Paste,
         folder_id: &str,
     ) -> Result<(), AppError> {
-        // First update folder count atomically
+        ensure_folder_assignable(db, folder_id)?;
         db.folders.update_count(folder_id, 1)?;
 
-        // Then create paste - if this fails, rollback folder count
-        if let Err(e) = db.pastes.create(paste) {
-            // Best effort rollback - log but don't fail if rollback fails
+        #[cfg(test)]
+        if let Err(err) = apply_create_failpoint_after_destination_reserve(db, folder_id) {
             if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
-                tracing::error!("Failed to rollback folder count: {}", rollback_err);
+                if !matches!(rollback_err, AppError::NotFound) {
+                    tracing::error!(
+                        "Failed to rollback folder count after injected create failpoint: {}",
+                        rollback_err
+                    );
+                }
+            }
+            return Err(err);
+        }
+
+        if let Err(err) = ensure_folder_assignable(db, folder_id) {
+            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
+                if !matches!(rollback_err, AppError::NotFound) {
+                    tracing::error!(
+                        "Failed to rollback folder count after destination became unassignable: {}",
+                        rollback_err
+                    );
+                }
+            }
+            return Err(err);
+        }
+
+        if let Err(e) = db.pastes.create(paste) {
+            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
+                if !matches!(rollback_err, AppError::NotFound) {
+                    tracing::error!("Failed to rollback folder count: {}", rollback_err);
+                }
             }
             return Err(e);
+        }
+
+        #[cfg(test)]
+        if let Err(err) = apply_create_failpoint_after_canonical_create(db, folder_id) {
+            if let Err(delete_err) = db.pastes.delete(&paste.id) {
+                tracing::error!(
+                    "Failed to delete just-created paste after injected post-create failpoint: {}",
+                    delete_err
+                );
+            }
+            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
+                if !matches!(rollback_err, AppError::NotFound) {
+                    tracing::error!(
+                        "Failed to rollback folder count after injected post-create failpoint: {}",
+                        rollback_err
+                    );
+                }
+            }
+            return Err(err);
+        }
+
+        if let Err(err) = ensure_folder_assignable(db, folder_id) {
+            if let Err(delete_err) = db.pastes.delete(&paste.id) {
+                tracing::error!(
+                    "Failed to delete just-created paste after destination folder disappeared: {}",
+                    delete_err
+                );
+            }
+            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
+                if !matches!(rollback_err, AppError::NotFound) {
+                    tracing::error!(
+                        "Failed to rollback folder count after post-create destination check: {}",
+                        rollback_err
+                    );
+                }
+            }
+            return Err(err);
         }
 
         Ok(())
@@ -380,6 +514,7 @@ impl TransactionOps {
             // Reserve the destination count first so we can fail fast if the folder is gone.
             if folder_changing {
                 if let Some(new_id) = new_folder_id {
+                    ensure_folder_assignable(db, new_id)?;
                     db.folders.update_count(new_id, 1)?;
                 }
             }
@@ -404,7 +539,7 @@ impl TransactionOps {
             // Revalidate here so we don't commit a folder_id that no longer exists.
             if folder_changing {
                 if let Some(new_id) = new_folder_id {
-                    if db.folders.get(new_id)?.is_none() {
+                    if let Err(err) = ensure_folder_assignable(db, new_id) {
                         if let Err(err) = db.folders.update_count(new_id, -1) {
                             if !matches!(err, AppError::NotFound) {
                                 tracing::error!(
@@ -413,7 +548,7 @@ impl TransactionOps {
                                 );
                             }
                         }
-                        return Err(AppError::NotFound);
+                        return Err(err);
                     }
                 }
             }
@@ -423,7 +558,46 @@ impl TransactionOps {
                     .update_if_folder_matches(paste_id, old_folder_id, update_req.clone());
             match update_result {
                 Ok(Some(updated)) => {
-                    // Paste update succeeded; best-effort decrement of prior folder count.
+                    if folder_changing {
+                        if let Some(new_id) = new_folder_id {
+                            if let Err(err) = ensure_folder_assignable(db, new_id) {
+                                let revert_folder_value = old_folder_id
+                                    .map(ToString::to_string)
+                                    .unwrap_or_else(String::new);
+                                let revert_req = crate::models::paste::UpdatePasteRequest {
+                                    content: None,
+                                    name: None,
+                                    language: None,
+                                    language_is_manual: None,
+                                    folder_id: Some(revert_folder_value),
+                                    tags: None,
+                                };
+                                match db.pastes.update_if_folder_matches(
+                                    paste_id,
+                                    Some(new_id),
+                                    revert_req,
+                                ) {
+                                    Ok(_) => {}
+                                    Err(revert_err) => {
+                                        tracing::error!(
+                                            "Failed to revert paste folder after destination became unassignable: {}",
+                                            revert_err
+                                        );
+                                    }
+                                }
+                                if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
+                                    if !matches!(rollback_err, AppError::NotFound) {
+                                        tracing::error!(
+                                            "Failed to rollback destination reservation after post-commit destination check: {}",
+                                            rollback_err
+                                        );
+                                    }
+                                }
+                                return Err(err);
+                            }
+                        }
+                    }
+
                     if folder_changing {
                         if let Some(old_id) = old_folder_id {
                             if let Err(err) = db.folders.update_count(old_id, -1) {
@@ -617,6 +791,11 @@ impl Database {
             .pastes
             .needs_reconcile_meta_indexes(force_reindex)?
         {
+            database.pastes.reconcile_meta_indexes()?;
+        }
+        database.folders.clear_delete_markers()?;
+        reconcile_folder_invariants(&database)?;
+        if database.pastes.needs_reconcile_meta_indexes(false)? {
             database.pastes.reconcile_meta_indexes()?;
         }
         Ok(database)

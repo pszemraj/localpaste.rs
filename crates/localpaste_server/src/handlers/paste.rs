@@ -1,7 +1,10 @@
 //! Paste HTTP handlers.
 
 use super::deprecation::maybe_with_folder_deprecation_headers;
-use super::normalize::{normalize_optional_for_create, normalize_optional_for_update};
+use super::normalize::{
+    normalize_optional_for_create, normalize_optional_for_update,
+    validate_assignable_folder_for_request,
+};
 use crate::{error::HttpError, models::paste::*, naming, AppError, AppState};
 use axum::{
     extract::{Path, Query, State},
@@ -49,14 +52,7 @@ pub async fn create_paste(
     }
 
     if let Some(ref folder_id) = req.folder_id {
-        // Validate folder exists
-        if state.db.folders.get(folder_id)?.is_none() {
-            return Err(AppError::BadRequest(format!(
-                "Folder with id '{}' does not exist",
-                folder_id
-            ))
-            .into());
-        }
+        validate_assignable_folder_for_request(&state.db, folder_id, "Folder")?;
     }
 
     let name = req.name.unwrap_or_else(naming::generate_name);
@@ -152,12 +148,8 @@ pub async fn update_paste(
 
     // Validate new folder exists if specified
     if let Some(ref folder_id) = req.folder_id {
-        if !folder_id.is_empty() && state.db.folders.get(folder_id)?.is_none() {
-            return Err(AppError::BadRequest(format!(
-                "Folder with id '{}' does not exist",
-                folder_id
-            ))
-            .into());
+        if !folder_id.is_empty() {
+            validate_assignable_folder_for_request(&state.db, folder_id, "Folder")?;
         }
     }
 

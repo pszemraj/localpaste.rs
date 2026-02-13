@@ -23,11 +23,13 @@ use clap::Parser;
 use localpaste_core::{
     config::Config,
     db::{Database, TransactionOps},
+    folder_ops::delete_folder_tree_and_migrate,
     models::folder::Folder,
     models::paste::Paste,
     AppError,
 };
 use rand::prelude::*;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
@@ -548,6 +550,65 @@ fn persist_generated_paste(db: &Database, paste: &Paste) -> Result<(), AppError>
     }
 }
 
+fn clear_existing_data(db: &Database) -> Result<(usize, usize), AppError> {
+    let mut deleted_pastes = 0usize;
+    loop {
+        let pastes = db.pastes.list(10000, None)?;
+        if pastes.is_empty() {
+            break;
+        }
+        for paste in &pastes {
+            if TransactionOps::delete_paste_with_folder(db, &paste.id)? {
+                deleted_pastes = deleted_pastes.saturating_add(1);
+            }
+        }
+    }
+
+    let mut deleted_folders = 0usize;
+    loop {
+        let folders = db.folders.list()?;
+        let Some(next_folder) = folders.first() else {
+            break;
+        };
+        let deleted = delete_folder_tree_and_migrate(db, next_folder.id.as_str())?;
+        deleted_folders = deleted_folders.saturating_add(deleted.len());
+    }
+
+    Ok((deleted_pastes, deleted_folders))
+}
+
+fn assert_folder_invariants(db: &Database) -> Result<(), AppError> {
+    let folders = db.folders.list()?;
+    let mut folder_counts: HashMap<String, usize> = HashMap::new();
+    for folder in &folders {
+        folder_counts.insert(folder.id.clone(), 0);
+    }
+
+    for paste in db.pastes.list(usize::MAX, None)? {
+        if let Some(folder_id) = paste.folder_id {
+            let Some(count) = folder_counts.get_mut(folder_id.as_str()) else {
+                return Err(AppError::DatabaseError(format!(
+                    "paste {} references missing folder {}",
+                    paste.id, folder_id
+                )));
+            };
+            *count += 1;
+        }
+    }
+
+    for folder in folders {
+        let expected = folder_counts.get(folder.id.as_str()).copied().unwrap_or(0);
+        if folder.paste_count != expected {
+            return Err(AppError::DatabaseError(format!(
+                "folder {} count drift: expected {}, got {}",
+                folder.id, expected, folder.paste_count
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
@@ -564,28 +625,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.clear {
         println!("Clearing existing data...");
-        // Delete all pastes (loop until empty to handle large datasets)
-        let mut deleted_pastes = 0usize;
-        loop {
-            let pastes = db.pastes.list(10000, None)?;
-            if pastes.is_empty() {
-                break;
-            }
-            for paste in &pastes {
-                db.pastes.delete(&paste.id)?;
-            }
-            deleted_pastes += pastes.len();
-        }
-        // Delete all folders
-        let folders = db.folders.list()?;
-        for folder in &folders {
-            db.folders.delete(&folder.id)?;
-        }
+        let (deleted_pastes, deleted_folders) = clear_existing_data(&db)?;
+        assert_folder_invariants(&db)?;
         db.flush()?;
         println!(
             "Cleared {} pastes and {} folders",
-            deleted_pastes,
-            folders.len()
+            deleted_pastes, deleted_folders
         );
     }
 
@@ -675,6 +720,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    assert_folder_invariants(&db)?;
     db.flush()?;
 
     let elapsed = start.elapsed();
@@ -735,5 +781,47 @@ mod tests {
             persisted_folder.paste_count, 1,
             "folder count should track generated pastes"
         );
+    }
+
+    #[test]
+    fn tooling_generation_and_clear_preserve_folder_invariants() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+
+        let root = Folder::new("root".to_string());
+        let root_id = root.id.clone();
+        db.folders.create(&root).expect("create root");
+
+        let child = Folder::with_parent("child".to_string(), Some(root_id.clone()));
+        let child_id = child.id.clone();
+        db.folders.create(&child).expect("create child");
+
+        let mut in_root = Paste::new("a".to_string(), "a".to_string());
+        in_root.folder_id = Some(root_id.clone());
+        persist_generated_paste(&db, &in_root).expect("persist in root");
+
+        let mut in_child = Paste::new("b".to_string(), "b".to_string());
+        in_child.folder_id = Some(child_id.clone());
+        persist_generated_paste(&db, &in_child).expect("persist in child");
+
+        let unfiled = Paste::new("c".to_string(), "c".to_string());
+        persist_generated_paste(&db, &unfiled).expect("persist unfiled");
+
+        assert_folder_invariants(&db).expect("invariants after generation");
+
+        let (deleted_pastes, deleted_folders) = clear_existing_data(&db).expect("clear data");
+        assert_eq!(deleted_pastes, 3, "all generated pastes should be deleted");
+        assert_eq!(deleted_folders, 2, "all folders should be deleted");
+
+        assert!(
+            db.pastes.list(10, None).expect("list pastes").is_empty(),
+            "clear should remove canonical pastes"
+        );
+        assert!(
+            db.folders.list().expect("list folders").is_empty(),
+            "clear should remove all folders"
+        );
+        assert_folder_invariants(&db).expect("invariants after clear");
     }
 }

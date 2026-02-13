@@ -594,6 +594,77 @@ fn api_folder_changes_are_visible_to_backend_state() {
 }
 
 #[test]
+fn folder_delete_marker_rejects_new_assignments_server_and_gui() {
+    let env = TestEnv::new();
+    let locks = Arc::new(PasteLockManager::default());
+    let server = env.start_server(locks.clone());
+    let backend = env.spawn_backend_with_locks(locks);
+
+    let folder = Folder::new("delete-marked".to_string());
+    let folder_id = folder.id.clone();
+    env.db.folders.create(&folder).expect("create folder");
+    env.db
+        .folders
+        .mark_deleting(std::slice::from_ref(&folder_id))
+        .expect("mark deleting");
+
+    let client = reqwest::blocking::Client::new();
+    let create_url = format!("http://{}/api/paste", server.addr());
+    let api_create = client
+        .post(&create_url)
+        .json(&json!({
+            "content": "api-folder-create",
+            "name": "api-folder-create",
+            "folder_id": folder_id
+        }))
+        .send()
+        .expect("api create request");
+    assert_eq!(api_create.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::CreatePaste {
+            content: "gui-seed".to_string(),
+        })
+        .expect("create paste");
+    let paste_id = match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteCreated { paste } => paste.id,
+        other => panic!("unexpected event: {:?}", other),
+    };
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::UpdatePasteMeta {
+            id: paste_id.clone(),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: Some(folder_id.clone()),
+            tags: None,
+        })
+        .expect("send metadata update");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::Error { message, .. } => {
+            assert!(
+                message.contains("being deleted"),
+                "expected delete marker rejection, got: {}",
+                message
+            );
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::GetPaste { id: paste_id })
+        .expect("get paste");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteLoaded { paste } => assert!(paste.folder_id.is_none()),
+        other => panic!("unexpected event: {:?}", other),
+    }
+}
+
+#[test]
 fn list_and_search_latency_stay_within_reasonable_headless_budget() {
     let env = TestEnv::new();
 

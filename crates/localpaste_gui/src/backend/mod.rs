@@ -616,6 +616,63 @@ mod tests {
     }
 
     #[test]
+    fn backend_rejects_assignment_into_delete_marked_folder() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let folder = Folder::new("delete-marked".to_string());
+        let folder_id = folder.id.clone();
+        db.folders.create(&folder).expect("create folder");
+        db.folders
+            .mark_deleting(std::slice::from_ref(&folder_id))
+            .expect("mark folder deleting");
+
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste {
+                content: "seed".to_string(),
+            })
+            .expect("send create paste");
+        let paste_id = match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteCreated { paste } => paste.id,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteMeta {
+                id: paste_id.clone(),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(folder_id),
+                tags: None,
+            })
+            .expect("send metadata update");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::Error { source, message } => {
+                assert_eq!(source, CoreErrorSource::SaveMetadata);
+                assert!(
+                    message.contains("being deleted"),
+                    "expected delete-marker rejection message, got: {}",
+                    message
+                );
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::GetPaste { id: paste_id })
+            .expect("send get paste");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteLoaded { paste } => {
+                assert!(paste.folder_id.is_none(), "paste should remain unfiled");
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
     fn backend_folder_commands_enforce_parenting_rules_and_migrate_on_delete() {
         let TestDb { _dir: _guard, db } = setup_db();
         let backend = spawn_backend(db, 10 * 1024 * 1024);
