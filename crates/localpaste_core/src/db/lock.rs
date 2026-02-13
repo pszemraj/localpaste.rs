@@ -1,11 +1,7 @@
 //! Utilities for handling sled lock files safely.
 
 use crate::error::AppError;
-use crate::{
-    DB_LOCK_EXTENSION,
-    DB_LOCK_FILE_NAME,
-    DB_TREE_LOCK_FILE_NAME,
-};
+use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME, DB_TREE_LOCK_FILE_NAME};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -171,8 +167,11 @@ mod tests {
 
         let db_lock = db_path.join(DB_LOCK_FILE_NAME);
         let extra_lock = db_path.join(DB_TREE_LOCK_FILE_NAME);
-        let legacy_lock =
-            std::path::PathBuf::from(format!("{}.{}", db_path.to_string_lossy(), DB_LOCK_EXTENSION));
+        let legacy_lock = std::path::PathBuf::from(format!(
+            "{}.{}",
+            db_path.to_string_lossy(),
+            DB_LOCK_EXTENSION
+        ));
         std::fs::write(&db_lock, b"lock").expect("db lock");
         std::fs::write(&extra_lock, b"lock").expect("extra lock");
         std::fs::write(&legacy_lock, b"lock").expect("legacy lock");

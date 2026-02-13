@@ -21,8 +21,8 @@ use axum::{
 };
 use hyper::HeaderMap;
 use std::future::Future;
-use std::sync::Arc;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
@@ -245,8 +245,8 @@ pub async fn serve_router(
 mod tests {
     use super::listener_cors_port;
     use super::resolve_bind_address;
-    use localpaste_core::DEFAULT_PORT;
     use localpaste_core::Config;
+    use localpaste_core::DEFAULT_PORT;
     use std::net::SocketAddr;
 
     #[tokio::test]

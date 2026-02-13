@@ -2,10 +2,10 @@
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
+use localpaste_core::DEFAULT_CLI_SERVER_URL;
 use serde_json::Value;
 use std::io::{self, Read};
 use std::time::{Duration, Instant};
-use localpaste_core::DEFAULT_CLI_SERVER_URL;
 
 #[derive(Parser)]
 #[command(name = "lpaste", about = "LocalPaste CLI", version)]
@@ -403,8 +403,8 @@ mod tests {
         format_summary_output, normalize_server, paste_id_and_name,
     };
     use super::{Cli, Commands};
-    use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
     use clap::Parser;
+    use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
 
     #[test]
     fn normalize_server_rewrites_http_localhost() {
@@ -414,15 +414,13 @@ mod tests {
 
     #[test]
     fn normalize_server_preserves_https_localhost() {
-        let normalized =
-            normalize_server(format!("https://localhost:{}", DEFAULT_PORT));
+        let normalized = normalize_server(format!("https://localhost:{}", DEFAULT_PORT));
         assert_eq!(normalized, format!("https://localhost:{}", DEFAULT_PORT));
     }
 
     #[test]
     fn normalize_server_trims_trailing_slash() {
-        let normalized =
-            normalize_server(format!("http://127.0.0.1:{}/", DEFAULT_PORT));
+        let normalized = normalize_server(format!("http://127.0.0.1:{}/", DEFAULT_PORT));
         assert_eq!(normalized, format!("http://127.0.0.1:{}", DEFAULT_PORT));
     }
 
@@ -525,7 +523,7 @@ mod tests {
             &format!("http://127.0.0.1:{}/base", DEFAULT_PORT),
             &["api", "paste", "abc123"],
         )
-            .expect("api_url should build");
+        .expect("api_url should build");
         assert_eq!(
             url.as_str(),
             &format!("http://127.0.0.1:{}/base/api/paste/abc123", DEFAULT_PORT)

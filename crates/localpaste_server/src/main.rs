@@ -101,10 +101,16 @@ fn print_help() {
     println!("  --help            Show this help message");
     println!("\nEnvironment variables:");
     println!("  DB_PATH           Database path (default: ~/.cache/localpaste/db)");
-    println!("  PORT              Server port (default: {})", DEFAULT_PORT);
+    println!(
+        "  PORT              Server port (default: {})",
+        DEFAULT_PORT
+    );
     println!("  MAX_PASTE_SIZE    Maximum paste size in bytes (default: 10MB)");
     println!("  ALLOW_PUBLIC_ACCESS  Allow CORS from any origin");
-    println!("  BIND              Override bind address (e.g. 0.0.0.0:{})", DEFAULT_PORT);
+    println!(
+        "  BIND              Override bind address (e.g. 0.0.0.0:{})",
+        DEFAULT_PORT
+    );
 }
 
 fn run_backup(config: &Config) -> anyhow::Result<()> {

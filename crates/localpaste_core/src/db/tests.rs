@@ -734,7 +734,11 @@ mod db_tests {
 
         let move_result = mover.join().expect("mover join");
         let delete_result = deleter.join().expect("deleter join");
-        assert!(move_result.is_ok(), "move should not error: {:?}", move_result);
+        assert!(
+            move_result.is_ok(),
+            "move should not error: {:?}",
+            move_result
+        );
         assert!(
             delete_result.is_ok(),
             "delete should not error: {:?}",

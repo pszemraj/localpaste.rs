@@ -336,9 +336,7 @@ impl Database {
                             format!("cp -r {} {}.backup", path, path),
                             format!(
                                 "rm -f {0}/*.{1} {0}/{2} {0}.{1}",
-                                path,
-                                DB_LOCK_EXTENSION,
-                                DB_LOCK_FILE_NAME,
+                                path, DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME,
                             ),
                             format!("ls -la {}/*.backup.* | tail -1", parent),
                         )

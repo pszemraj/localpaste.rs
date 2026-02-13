@@ -6,9 +6,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::warn;
 
-use crate::constants::{
-    DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
-};
+use crate::constants::{DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT};
 
 /// Runtime configuration for LocalPaste.
 #[derive(Debug, Clone, Deserialize)]
@@ -157,7 +155,10 @@ impl Config {
             }),
             port: parse_env_number("PORT", DEFAULT_PORT),
             max_paste_size: parse_env_number("MAX_PASTE_SIZE", DEFAULT_MAX_PASTE_SIZE),
-            auto_save_interval: parse_env_number("AUTO_SAVE_INTERVAL", DEFAULT_AUTO_SAVE_INTERVAL_MS), // 2 seconds
+            auto_save_interval: parse_env_number(
+                "AUTO_SAVE_INTERVAL",
+                DEFAULT_AUTO_SAVE_INTERVAL_MS,
+            ), // 2 seconds
             auto_backup: env_flag_enabled("AUTO_BACKUP"), // Default to false - backups should be explicit
         }
     }
@@ -167,8 +168,7 @@ impl Config {
 mod tests {
     use super::{env_flag_enabled, parse_bool_env, parse_env_flag, Config};
     use crate::constants::{
-        DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_CLI_SERVER_URL, DEFAULT_MAX_PASTE_SIZE,
-        DEFAULT_PORT,
+        DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_CLI_SERVER_URL, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
     };
     use std::sync::{Mutex, OnceLock};
 
@@ -268,16 +268,16 @@ mod tests {
             ("LOCALPASTE_TEST_FLAG", "maybe", None),
         ];
 
-        assert_eq!(parse_bool_env("LOCALPASTE_TEST_FLAG", false), false);
-        assert_eq!(parse_bool_env("LOCALPASTE_TEST_FLAG", true), true);
+        assert!(!parse_bool_env("LOCALPASTE_TEST_FLAG", false));
+        assert!(parse_bool_env("LOCALPASTE_TEST_FLAG", true));
 
         for (key, value, expected) in cases {
             let _guard = EnvGuard::set(key, value);
             match expected {
                 Some(expected) => assert_eq!(parse_bool_env(key, false), expected),
                 None => {
-                    assert_eq!(parse_bool_env(key, false), false);
-                    assert_eq!(parse_bool_env(key, true), true);
+                    assert!(!parse_bool_env(key, false));
+                    assert!(parse_bool_env(key, true));
                 }
             }
         }
@@ -287,7 +287,13 @@ mod tests {
     fn config_auto_backup_obeys_bool_matrix_values() {
         let _lock = env_lock().lock().expect("env lock");
         let backup_key = "AUTO_BACKUP";
-        let values = [("1", true), ("0", false), ("true", true), ("false", false), ("", false)];
+        let values = [
+            ("1", true),
+            ("0", false),
+            ("true", true),
+            ("false", false),
+            ("", false),
+        ];
 
         for (value, expected) in values {
             let _flag = EnvGuard::set(backup_key, value);
