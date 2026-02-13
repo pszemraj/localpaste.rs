@@ -235,6 +235,7 @@ pub struct TransactionOps;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TransactionFailpoint {
     MoveAfterDestinationReserveOnce,
+    MoveDeleteDestinationAfterReserveOnce,
 }
 
 #[cfg(test)]
@@ -260,14 +261,28 @@ fn take_transaction_failpoint() -> Option<TransactionFailpoint> {
 }
 
 #[cfg(test)]
-fn maybe_trigger_transaction_failpoint(failpoint: TransactionFailpoint) -> Result<(), AppError> {
-    if take_transaction_failpoint() == Some(failpoint) {
-        return Err(AppError::DatabaseError(format!(
-            "Injected transaction failpoint: {:?}",
-            failpoint
-        )));
+fn apply_move_failpoint_after_destination_reserve(
+    db: &Database,
+    folder_changing: bool,
+    new_folder_id: Option<&str>,
+) -> Result<(), AppError> {
+    let Some(failpoint) = take_transaction_failpoint() else {
+        return Ok(());
+    };
+
+    match failpoint {
+        TransactionFailpoint::MoveAfterDestinationReserveOnce => Err(AppError::DatabaseError(
+            format!("Injected transaction failpoint: {:?}", failpoint),
+        )),
+        TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce => {
+            if folder_changing {
+                if let Some(new_id) = new_folder_id {
+                    db.folders.delete(new_id)?;
+                }
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 impl TransactionOps {
@@ -369,9 +384,9 @@ impl TransactionOps {
                 }
             }
             #[cfg(test)]
-            if let Err(err) = maybe_trigger_transaction_failpoint(
-                TransactionFailpoint::MoveAfterDestinationReserveOnce,
-            ) {
+            if let Err(err) =
+                apply_move_failpoint_after_destination_reserve(db, folder_changing, new_folder_id)
+            {
                 if folder_changing {
                     if let Some(new_id) = new_folder_id {
                         if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
@@ -383,6 +398,24 @@ impl TransactionOps {
                     }
                 }
                 return Err(err);
+            }
+
+            // The destination can disappear between reservation and the paste CAS.
+            // Revalidate here so we don't commit a folder_id that no longer exists.
+            if folder_changing {
+                if let Some(new_id) = new_folder_id {
+                    if db.folders.get(new_id)?.is_none() {
+                        if let Err(err) = db.folders.update_count(new_id, -1) {
+                            if !matches!(err, AppError::NotFound) {
+                                tracing::error!(
+                                    "Failed to rollback destination reservation after destination disappeared: {}",
+                                    err
+                                );
+                            }
+                        }
+                        return Err(AppError::NotFound);
+                    }
+                }
             }
 
             let update_result =

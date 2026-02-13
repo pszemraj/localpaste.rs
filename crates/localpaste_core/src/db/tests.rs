@@ -6,7 +6,7 @@ mod db_tests {
     use crate::error::AppError;
     use crate::models::{folder::*, paste::*};
     use chrono::Duration;
-    use std::sync::{Arc, Barrier};
+    use std::sync::{Arc, Barrier, Mutex, OnceLock};
     use std::thread;
     use tempfile::TempDir;
 
@@ -15,6 +15,19 @@ mod db_tests {
         let db_path = temp_dir.path().join("test.db");
         let db = Database::new(db_path.to_str().unwrap()).unwrap();
         (db, temp_dir)
+    }
+
+    fn transaction_failpoint_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct FailpointGuard;
+
+    impl Drop for FailpointGuard {
+        fn drop(&mut self) {
+            set_transaction_failpoint(None);
+        }
     }
 
     #[test]
@@ -568,6 +581,10 @@ mod db_tests {
 
     #[test]
     fn test_move_between_folders_injected_error_rolls_back_reservation_and_preserves_state() {
+        let _lock = transaction_failpoint_test_lock()
+            .lock()
+            .expect("transaction failpoint lock");
+        let _guard = FailpointGuard;
         let (db, _temp) = setup_test_db();
 
         let old_folder = Folder::new("old-folder".to_string());
@@ -626,6 +643,71 @@ mod db_tests {
         assert_eq!(
             new_after.paste_count, 0,
             "destination reservation must rollback on move error"
+        );
+    }
+
+    #[test]
+    fn test_move_between_folders_rejects_destination_deleted_after_reservation() {
+        let _lock = transaction_failpoint_test_lock()
+            .lock()
+            .expect("transaction failpoint lock");
+        let _guard = FailpointGuard;
+        let (db, _temp) = setup_test_db();
+
+        let old_folder = Folder::new("old-folder".to_string());
+        let old_folder_id = old_folder.id.clone();
+        db.folders.create(&old_folder).unwrap();
+
+        let new_folder = Folder::new("new-folder".to_string());
+        let new_folder_id = new_folder.id.clone();
+        db.folders.create(&new_folder).unwrap();
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(old_folder_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &old_folder_id).unwrap();
+
+        let update = UpdatePasteRequest {
+            content: None,
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: Some(new_folder_id.clone()),
+            tags: None,
+        };
+
+        set_transaction_failpoint(Some(
+            TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce,
+        ));
+        let result = TransactionOps::move_paste_between_folders(
+            &db,
+            &paste_id,
+            Some(new_folder_id.as_str()),
+            update,
+        );
+        set_transaction_failpoint(None);
+
+        assert!(
+            matches!(result, Err(AppError::NotFound)),
+            "destination deletion during move must reject the move"
+        );
+
+        let paste_after = db
+            .pastes
+            .get(&paste_id)
+            .expect("paste lookup")
+            .expect("paste exists");
+        assert_eq!(
+            paste_after.folder_id.as_deref(),
+            Some(old_folder_id.as_str()),
+            "failed move must preserve canonical folder assignment"
+        );
+
+        let old_after = db.folders.get(&old_folder_id).unwrap().unwrap();
+        assert_eq!(old_after.paste_count, 1);
+        assert!(
+            db.folders.get(&new_folder_id).unwrap().is_none(),
+            "injected race removes destination folder"
         );
     }
 
