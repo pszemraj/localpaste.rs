@@ -39,6 +39,12 @@ impl LocalPasteApp {
     pub(super) fn apply_event(&mut self, event: CoreEvent) {
         match event {
             CoreEvent::PasteList { items } => {
+                self.query_perf.list_results_applied =
+                    self.query_perf.list_results_applied.saturating_add(1);
+                if let Some(sent_at) = self.query_perf.list_last_sent_at.take() {
+                    self.query_perf.list_last_roundtrip_ms =
+                        Some(sent_at.elapsed().as_secs_f32() * 1000.0);
+                }
                 self.all_pastes = items;
                 if self.search_query.trim().is_empty() {
                     self.recompute_visible_pastes();
@@ -132,7 +138,15 @@ impl LocalPasteApp {
             CoreEvent::SearchResults { query, items } => {
                 // Drop stale search responses that no longer match the active query text.
                 if self.search_query.trim().is_empty() || query.trim() != self.search_query.trim() {
+                    self.query_perf.search_stale_drops =
+                        self.query_perf.search_stale_drops.saturating_add(1);
                     return;
+                }
+                self.query_perf.search_results_applied =
+                    self.query_perf.search_results_applied.saturating_add(1);
+                if let Some(sent_at) = self.query_perf.search_last_sent_at.take() {
+                    self.query_perf.search_last_roundtrip_ms =
+                        Some(sent_at.elapsed().as_secs_f32() * 1000.0);
                 }
                 self.pastes = self.filter_by_collection(&items);
                 self.ensure_selection_after_list_update();
@@ -195,6 +209,7 @@ impl LocalPasteApp {
     }
 
     pub(super) fn request_refresh(&mut self) {
+        let sent_at = Instant::now();
         if self
             .backend
             .cmd_tx
@@ -207,7 +222,9 @@ impl LocalPasteApp {
             self.set_status("List failed: backend unavailable.");
             return;
         }
-        self.last_refresh_at = Instant::now();
+        self.query_perf.list_requests_sent = self.query_perf.list_requests_sent.saturating_add(1);
+        self.query_perf.list_last_sent_at = Some(sent_at);
+        self.last_refresh_at = sent_at;
     }
 
     pub(super) fn set_search_query(&mut self, query: String) {
@@ -273,12 +290,16 @@ impl LocalPasteApp {
         }
 
         if self.search_last_sent == query {
+            self.query_perf.search_skipped_cached =
+                self.query_perf.search_skipped_cached.saturating_add(1);
             return;
         }
         let Some(last_input_at) = self.search_last_input_at else {
             return;
         };
         if last_input_at.elapsed() < SEARCH_DEBOUNCE {
+            self.query_perf.search_skipped_debounce =
+                self.query_perf.search_skipped_debounce.saturating_add(1);
             return;
         }
 
@@ -298,6 +319,9 @@ impl LocalPasteApp {
             return;
         }
         self.search_last_sent = query;
+        self.query_perf.search_requests_sent =
+            self.query_perf.search_requests_sent.saturating_add(1);
+        self.query_perf.search_last_sent_at = Some(Instant::now());
     }
 
     pub(super) fn select_paste(&mut self, id: String) -> bool {

@@ -109,6 +109,7 @@ pub struct LocalPasteApp {
     style_applied: bool,
     window_checked: bool,
     last_refresh_at: Instant,
+    query_perf: QueryPerfCounters,
     perf_log_enabled: bool,
     frame_samples: VecDeque<f32>,
     last_frame_at: Option<Instant>,
@@ -181,6 +182,21 @@ struct VirtualApplyResult {
     copied: bool,
     cut: bool,
     pasted: bool,
+}
+
+#[derive(Default, Debug, Clone)]
+struct QueryPerfCounters {
+    list_requests_sent: u64,
+    list_results_applied: u64,
+    list_last_roundtrip_ms: Option<f32>,
+    search_requests_sent: u64,
+    search_results_applied: u64,
+    search_stale_drops: u64,
+    search_skipped_cached: u64,
+    search_skipped_debounce: u64,
+    search_last_roundtrip_ms: Option<f32>,
+    list_last_sent_at: Option<Instant>,
+    search_last_sent_at: Option<Instant>,
 }
 
 struct InputTraceFrame<'a> {
@@ -405,6 +421,7 @@ impl LocalPasteApp {
             style_applied: false,
             window_checked: false,
             last_refresh_at: Instant::now(),
+            query_perf: QueryPerfCounters::default(),
             perf_log_enabled: env_flag_enabled("LOCALPASTE_EDITOR_PERF_LOG"),
             frame_samples: VecDeque::with_capacity(PERF_SAMPLE_CAP),
             last_frame_at: None,
@@ -479,15 +496,44 @@ impl LocalPasteApp {
         let mut sorted: Vec<f32> = self.frame_samples.iter().copied().collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let avg_ms = sorted.iter().sum::<f32>() / sorted.len() as f32;
+        let p50_idx = (sorted.len().saturating_sub(1)) / 2;
         let p95_idx = ((sorted.len() as f32 * 0.95).ceil() as usize).saturating_sub(1);
+        let p99_idx = ((sorted.len() as f32 * 0.99).ceil() as usize).saturating_sub(1);
+        let p50_ms = sorted.get(p50_idx).copied().unwrap_or(avg_ms);
         let p95_ms = sorted.get(p95_idx).copied().unwrap_or(avg_ms);
+        let p99_ms = sorted.get(p99_idx).copied().unwrap_or(avg_ms);
+        let worst_ms = sorted.last().copied().unwrap_or(avg_ms);
+        let slow_frames = sorted.iter().filter(|value| **value > 16.7).count();
         let fps = 1000.0 / avg_ms.max(0.001);
+        let history = self.virtual_editor_history.perf_stats();
         info!(
             target: "localpaste_gui::perf",
             avg_fps = fps,
+            avg_ms = avg_ms,
+            p50_ms = p50_ms,
             p95_ms = p95_ms,
+            p99_ms = p99_ms,
+            worst_ms = worst_ms,
+            slow_frames = slow_frames,
             samples = sorted.len(),
-            "virtual editor frame stats"
+            list_sent = self.query_perf.list_requests_sent,
+            list_applied = self.query_perf.list_results_applied,
+            list_last_ms = self.query_perf.list_last_roundtrip_ms.unwrap_or(0.0),
+            search_sent = self.query_perf.search_requests_sent,
+            search_applied = self.query_perf.search_results_applied,
+            search_stale_drops = self.query_perf.search_stale_drops,
+            search_skipped_cached = self.query_perf.search_skipped_cached,
+            search_skipped_debounce = self.query_perf.search_skipped_debounce,
+            search_last_ms = self.query_perf.search_last_roundtrip_ms.unwrap_or(0.0),
+            undo_len = history.undo_len,
+            redo_len = history.redo_len,
+            undo_bytes = history.undo_bytes,
+            redo_invalidations = history.redo_invalidations,
+            redo_hits = history.redo_hits,
+            redo_misses = history.redo_misses,
+            coalesced_edits = history.coalesced_edits,
+            trim_evictions = history.trim_evictions,
+            "local perf snapshot"
         );
     }
 }

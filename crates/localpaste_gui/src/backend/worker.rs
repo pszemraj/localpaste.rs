@@ -3,13 +3,15 @@
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use localpaste_core::{
+    config::env_flag_enabled,
     db::TransactionOps,
     folder_ops::{delete_folder_tree_and_migrate, introduces_cycle},
     models::{folder::Folder, paste::UpdatePasteRequest},
     naming, Database,
 };
 use std::thread;
-use tracing::error;
+use std::time::Instant;
+use tracing::{error, info};
 
 /// Handle for sending commands to, and receiving events from, the backend worker.
 pub struct BackendHandle {
@@ -19,6 +21,75 @@ pub struct BackendHandle {
 
 fn send_error(evt_tx: &Sender<CoreEvent>, source: CoreErrorSource, message: String) {
     let _ = evt_tx.send(CoreEvent::Error { source, message });
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ListCacheKey {
+    limit: usize,
+    folder_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SearchCacheKey {
+    query: String,
+    limit: usize,
+    folder_id: Option<String>,
+    language: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct QueryCache {
+    list_key: Option<ListCacheKey>,
+    list_items: Option<Vec<PasteSummary>>,
+    search_key: Option<SearchCacheKey>,
+    search_items: Option<Vec<PasteSummary>>,
+    list_hits: u64,
+    list_misses: u64,
+    search_hits: u64,
+    search_misses: u64,
+    invalidations: u64,
+}
+
+impl QueryCache {
+    fn invalidate(&mut self) {
+        if self.list_key.is_some()
+            || self.list_items.is_some()
+            || self.search_key.is_some()
+            || self.search_items.is_some()
+        {
+            self.list_key = None;
+            self.list_items = None;
+            self.search_key = None;
+            self.search_items = None;
+            self.invalidations = self.invalidations.saturating_add(1);
+        }
+    }
+}
+
+fn log_query_perf(
+    enabled: bool,
+    cache: &QueryCache,
+    op: &str,
+    cache_hit: bool,
+    elapsed_ms: f64,
+    items: usize,
+) {
+    if !enabled {
+        return;
+    }
+    info!(
+        target: "localpaste_gui::backend_perf",
+        op = op,
+        cache_hit = cache_hit,
+        elapsed_ms = elapsed_ms,
+        items = items,
+        list_hits = cache.list_hits,
+        list_misses = cache.list_misses,
+        search_hits = cache.search_hits,
+        search_misses = cache.search_misses,
+        cache_invalidations = cache.invalidations,
+        "backend list/search perf"
+    );
 }
 
 /// Spawn the backend worker thread that performs blocking database access.
@@ -38,12 +109,46 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
     thread::Builder::new()
         .name("localpaste-gui-backend".to_string())
         .spawn(move || {
+            let perf_log_enabled = env_flag_enabled("LOCALPASTE_BACKEND_PERF_LOG");
+            let mut query_cache = QueryCache::default();
             for cmd in cmd_rx.iter() {
                 match cmd {
                     CoreCmd::ListPastes { limit, folder_id } => {
+                        let started = Instant::now();
+                        let key = ListCacheKey {
+                            limit,
+                            folder_id: folder_id.clone(),
+                        };
+                        if query_cache.list_key.as_ref() == Some(&key) {
+                            if let Some(items) = query_cache.list_items.clone() {
+                                query_cache.list_hits = query_cache.list_hits.saturating_add(1);
+                                log_query_perf(
+                                    perf_log_enabled,
+                                    &query_cache,
+                                    "list",
+                                    true,
+                                    started.elapsed().as_secs_f64() * 1000.0,
+                                    items.len(),
+                                );
+                                let _ = evt_tx.send(CoreEvent::PasteList { items });
+                                continue;
+                            }
+                        }
+                        query_cache.list_misses = query_cache.list_misses.saturating_add(1);
                         match db.pastes.list_meta(limit, folder_id) {
                             Ok(metas) => {
-                                let items = metas.iter().map(PasteSummary::from_meta).collect();
+                                let items: Vec<PasteSummary> =
+                                    metas.iter().map(PasteSummary::from_meta).collect();
+                                query_cache.list_key = Some(key);
+                                query_cache.list_items = Some(items.clone());
+                                log_query_perf(
+                                    perf_log_enabled,
+                                    &query_cache,
+                                    "list",
+                                    false,
+                                    started.elapsed().as_secs_f64() * 1000.0,
+                                    items.len(),
+                                );
                                 let _ = evt_tx.send(CoreEvent::PasteList { items });
                             }
                             Err(err) => {
@@ -61,20 +166,56 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         limit,
                         folder_id,
                         language,
-                    } => match db.pastes.search_meta(&query, limit, folder_id, language) {
-                        Ok(metas) => {
-                            let items = metas.iter().map(PasteSummary::from_meta).collect();
-                            let _ = evt_tx.send(CoreEvent::SearchResults { query, items });
+                    } => {
+                        let started = Instant::now();
+                        let key = SearchCacheKey {
+                            query: query.clone(),
+                            limit,
+                            folder_id: folder_id.clone(),
+                            language: language.clone(),
+                        };
+                        if query_cache.search_key.as_ref() == Some(&key) {
+                            if let Some(items) = query_cache.search_items.clone() {
+                                query_cache.search_hits = query_cache.search_hits.saturating_add(1);
+                                log_query_perf(
+                                    perf_log_enabled,
+                                    &query_cache,
+                                    "search",
+                                    true,
+                                    started.elapsed().as_secs_f64() * 1000.0,
+                                    items.len(),
+                                );
+                                let _ = evt_tx.send(CoreEvent::SearchResults { query, items });
+                                continue;
+                            }
                         }
-                        Err(err) => {
-                            error!("backend search failed: {}", err);
-                            send_error(
-                                &evt_tx,
-                                CoreErrorSource::Other,
-                                format!("Search failed: {}", err),
-                            );
+                        query_cache.search_misses = query_cache.search_misses.saturating_add(1);
+                        match db.pastes.search_meta(&query, limit, folder_id, language) {
+                            Ok(metas) => {
+                                let items: Vec<PasteSummary> =
+                                    metas.iter().map(PasteSummary::from_meta).collect();
+                                query_cache.search_key = Some(key);
+                                query_cache.search_items = Some(items.clone());
+                                log_query_perf(
+                                    perf_log_enabled,
+                                    &query_cache,
+                                    "search",
+                                    false,
+                                    started.elapsed().as_secs_f64() * 1000.0,
+                                    items.len(),
+                                );
+                                let _ = evt_tx.send(CoreEvent::SearchResults { query, items });
+                            }
+                            Err(err) => {
+                                error!("backend search failed: {}", err);
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("Search failed: {}", err),
+                                );
+                            }
                         }
-                    },
+                    }
                     CoreCmd::GetPaste { id } => match db.pastes.get(&id) {
                         Ok(Some(paste)) => {
                             let _ = evt_tx.send(CoreEvent::PasteLoaded { paste });
@@ -97,6 +238,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         let paste = localpaste_core::models::paste::Paste::new(content, name);
                         match db.pastes.create(&paste) {
                             Ok(()) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::PasteCreated { paste });
                             }
                             Err(err) => {
@@ -120,9 +262,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         };
                         match db.pastes.update(&id, update) {
                             Ok(Some(paste)) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::PasteSaved { paste });
                             }
                             Ok(None) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::PasteMissing { id });
                             }
                             Err(err) => {
@@ -226,9 +370,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
 
                         match result {
                             Ok(Some(paste)) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::PasteMetaSaved { paste });
                             }
                             Ok(None) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::PasteMissing { id });
                             }
                             Err(err) => {
@@ -263,9 +409,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
 
                         match deleted {
                             Ok(true) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::PasteDeleted { id });
                             }
                             Ok(false) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::PasteMissing { id });
                             }
                             Err(err) => {
@@ -321,6 +469,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         let folder = Folder::with_parent(name, normalized_parent);
                         match db.folders.create(&folder) {
                             Ok(()) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::FolderSaved { folder });
                             }
                             Err(err) => {
@@ -394,6 +543,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
 
                         match db.folders.update(&id, name, parent_update) {
                             Ok(Some(folder)) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::FolderSaved { folder });
                             }
                             Ok(None) => {
@@ -416,6 +566,7 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                     CoreCmd::DeleteFolder { id } => {
                         match delete_folder_tree_and_migrate(&db, &id) {
                             Ok(_) => {
+                                query_cache.invalidate();
                                 let _ = evt_tx.send(CoreEvent::FolderDeleted { id });
                             }
                             Err(err) => {

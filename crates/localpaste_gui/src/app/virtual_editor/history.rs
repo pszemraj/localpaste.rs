@@ -47,12 +47,30 @@ fn op_bytes(op: &EditRecord) -> usize {
     op.deleted.len().saturating_add(op.inserted.len())
 }
 
+/// Snapshot of undo/redo history counters for local perf logging.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct HistoryPerfStats {
+    pub(crate) undo_len: usize,
+    pub(crate) redo_len: usize,
+    pub(crate) undo_bytes: usize,
+    pub(crate) redo_invalidations: u64,
+    pub(crate) coalesced_edits: u64,
+    pub(crate) trim_evictions: u64,
+    pub(crate) redo_hits: u64,
+    pub(crate) redo_misses: u64,
+}
+
 /// Operation-based undo/redo stack with bounded memory.
 #[derive(Debug)]
 pub(crate) struct VirtualEditorHistory {
     undo: Vec<EditRecord>,
     redo: Vec<EditRecord>,
     undo_bytes: usize,
+    redo_invalidations: u64,
+    coalesced_edits: u64,
+    trim_evictions: u64,
+    redo_hits: u64,
+    redo_misses: u64,
     max_ops: usize,
     max_bytes: usize,
     coalesce_window: Duration,
@@ -64,6 +82,11 @@ impl Default for VirtualEditorHistory {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_bytes: 0,
+            redo_invalidations: 0,
+            coalesced_edits: 0,
+            trim_evictions: 0,
+            redo_hits: 0,
+            redo_misses: 0,
             max_ops: DEFAULT_MAX_OPS,
             max_bytes: DEFAULT_MAX_BYTES,
             coalesce_window: DEFAULT_COALESCE_WINDOW,
@@ -77,7 +100,12 @@ impl VirtualEditorHistory {
         if edit.deleted.is_empty() && edit.inserted.is_empty() {
             return;
         }
-        self.redo.clear();
+        if !self.redo.is_empty() {
+            self.redo_invalidations = self
+                .redo_invalidations
+                .saturating_add(self.redo.len() as u64);
+            self.redo.clear();
+        }
         let incoming = EditRecord {
             start: edit.start,
             deleted: edit.deleted,
@@ -89,6 +117,7 @@ impl VirtualEditorHistory {
         };
         if let Some(last) = self.undo.last_mut() {
             if Self::can_coalesce(last, &incoming, self.coalesce_window) {
+                self.coalesced_edits = self.coalesced_edits.saturating_add(1);
                 self.undo_bytes = self.undo_bytes.saturating_sub(op_bytes(last));
                 last.inserted.push_str(incoming.inserted.as_str());
                 last.after_cursor = incoming.after_cursor;
@@ -125,6 +154,7 @@ impl VirtualEditorHistory {
             }
             let removed = self.undo.remove(0);
             self.undo_bytes = self.undo_bytes.saturating_sub(op_bytes(&removed));
+            self.trim_evictions = self.trim_evictions.saturating_add(1);
         }
     }
 
@@ -150,7 +180,11 @@ impl VirtualEditorHistory {
         buffer: &mut RopeBuffer,
         state: &mut VirtualEditorState,
     ) -> Option<VirtualEditDelta> {
-        let op = self.redo.pop()?;
+        let Some(op) = self.redo.pop() else {
+            self.redo_misses = self.redo_misses.saturating_add(1);
+            return None;
+        };
+        self.redo_hits = self.redo_hits.saturating_add(1);
         let deleted_chars = op.deleted.chars().count();
         let end = op.start.saturating_add(deleted_chars);
         let delta = buffer.replace_char_range(op.start..end, op.inserted.as_str());
@@ -159,6 +193,20 @@ impl VirtualEditorHistory {
         self.undo.push(op);
         self.trim_undo();
         delta
+    }
+
+    /// Return a point-in-time snapshot of history counters.
+    pub(crate) fn perf_stats(&self) -> HistoryPerfStats {
+        HistoryPerfStats {
+            undo_len: self.undo.len(),
+            redo_len: self.redo.len(),
+            undo_bytes: self.undo_bytes,
+            redo_invalidations: self.redo_invalidations,
+            coalesced_edits: self.coalesced_edits,
+            trim_evictions: self.trim_evictions,
+            redo_hits: self.redo_hits,
+            redo_misses: self.redo_misses,
+        }
     }
 
     #[cfg(test)]
@@ -223,5 +271,43 @@ mod tests {
         assert!(history.redo(&mut buffer, &mut state).is_some());
         assert_eq!(buffer.to_string(), "aXYZc");
         assert_eq!(history.redo_len(), 0);
+        let perf = history.perf_stats();
+        assert_eq!(perf.redo_hits, 1);
+        assert_eq!(perf.redo_misses, 0);
+    }
+
+    #[test]
+    fn redo_cache_invalidation_and_miss_are_counted() {
+        let mut buffer = RopeBuffer::new("ab");
+        let mut state = VirtualEditorState::default();
+        let mut history = VirtualEditorHistory::default();
+        let now = Instant::now();
+
+        let _ = buffer.replace_char_range(1..2, "X");
+        history.record_edit(RecordedEdit {
+            start: 1,
+            deleted: "b".to_string(),
+            inserted: "X".to_string(),
+            intent: EditIntent::Other,
+            before_cursor: 1,
+            after_cursor: 2,
+            at: now,
+        });
+        assert!(history.undo(&mut buffer, &mut state).is_some());
+
+        history.record_edit(RecordedEdit {
+            start: 1,
+            deleted: String::new(),
+            inserted: "y".to_string(),
+            intent: EditIntent::Insert,
+            before_cursor: 1,
+            after_cursor: 2,
+            at: now + Duration::from_millis(5),
+        });
+
+        let perf = history.perf_stats();
+        assert_eq!(perf.redo_invalidations, 1);
+        assert!(history.redo(&mut buffer, &mut state).is_none());
+        assert_eq!(history.perf_stats().redo_misses, 1);
     }
 }

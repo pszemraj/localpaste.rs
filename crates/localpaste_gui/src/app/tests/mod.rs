@@ -125,6 +125,7 @@ fn make_app() -> TestHarness {
         style_applied: false,
         window_checked: false,
         last_refresh_at: Instant::now(),
+        query_perf: QueryPerfCounters::default(),
         perf_log_enabled: false,
         frame_samples: VecDeque::with_capacity(PERF_SAMPLE_CAP),
         last_frame_at: None,
