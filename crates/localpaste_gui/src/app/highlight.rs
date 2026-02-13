@@ -167,10 +167,10 @@ impl EditorLayoutCache {
 
     fn build_galley(&mut self, request: BuildGalleyRequest<'_>) -> Arc<egui::Galley> {
         let mut job = if request.use_plain {
-            LayoutJob::simple(
-                request.text.to_owned(),
-                request.editor_font.clone(),
-                request.ui.visuals().text_color(),
+            plain_layout_job(
+                request.ui,
+                request.text,
+                request.editor_font,
                 request.wrap_width,
             )
         } else if let Some(render) = request.highlight_render {
@@ -185,10 +185,10 @@ impl EditorLayoutCache {
                 request.syntect,
             )
         } else {
-            LayoutJob::simple(
-                request.text.to_owned(),
-                request.editor_font.clone(),
-                request.ui.visuals().text_color(),
+            plain_layout_job(
+                request.ui,
+                request.text,
+                request.editor_font,
                 request.wrap_width,
             )
         };
@@ -220,12 +220,7 @@ impl EditorLayoutCache {
             .get(theme_key)
             .or_else(|| settings.ts.themes.values().next());
         let Some(theme) = theme else {
-            return LayoutJob::simple(
-                text.to_owned(),
-                editor_font.clone(),
-                ui.visuals().text_color(),
-                f32::INFINITY,
-            );
+            return plain_layout_job(ui, text, editor_font, f32::INFINITY);
         };
 
         let highlighter = Highlighter::new(theme);
@@ -260,36 +255,25 @@ impl EditorLayoutCache {
 
         for (idx, line) in lines.iter().enumerate() {
             let line_hash = new_hashes[idx];
-            let start_state_matches = if idx == 0 {
-                default_state.parse == parse_state && default_state.highlight == highlight_state
-            } else if prev_line_reused {
-                true
-            } else {
-                old_lines
-                    .get(idx - 1)
-                    .and_then(|line| line.as_ref())
-                    .map(|line| {
-                        line.end_state.parse == parse_state
-                            && line.end_state.highlight == highlight_state
-                    })
-                    .unwrap_or(false)
-            };
-            if start_state_matches {
-                let hash_matches = old_lines
-                    .get(idx)
-                    .and_then(|line| line.as_ref())
-                    .map(|line| line.hash == line_hash)
-                    .unwrap_or(false);
-                if hash_matches {
-                    let old_line = old_lines[idx].take().expect("checked Some");
-                    append_sections(&mut job, &old_line.sections, line_start);
-                    parse_state = old_line.end_state.parse.clone();
-                    highlight_state = old_line.end_state.highlight.clone();
-                    new_lines.push(old_line);
-                    line_start += line.len();
-                    prev_line_reused = true;
-                    continue;
-                }
+            if line_start_state_matches(
+                idx,
+                prev_line_reused,
+                &old_lines,
+                &parse_state,
+                &highlight_state,
+                &default_state,
+                |line: &HighlightLineCache| &line.end_state,
+            ) && line_hash_matches(&old_lines, idx, line_hash, |line: &HighlightLineCache| {
+                line.hash
+            }) {
+                let old_line = old_lines[idx].take().expect("checked Some");
+                append_sections(&mut job, &old_line.sections, line_start);
+                parse_state = old_line.end_state.parse.clone();
+                highlight_state = old_line.end_state.highlight.clone();
+                new_lines.push(old_line);
+                line_start += line.len();
+                prev_line_reused = true;
+                continue;
             }
 
             match parse_state.parse_line(line, &settings.ps) {
@@ -332,12 +316,7 @@ impl EditorLayoutCache {
                 }
                 Err(_) => {
                     // Fallback to plain layout on parse errors.
-                    job = LayoutJob::simple(
-                        text.to_owned(),
-                        editor_font.clone(),
-                        ui.visuals().text_color(),
-                        f32::INFINITY,
-                    );
+                    job = plain_layout_job(ui, text, editor_font, f32::INFINITY);
                     new_lines.clear();
                     break;
                 }
@@ -416,22 +395,9 @@ pub(super) fn build_virtual_line_job(
     use_plain: bool,
 ) -> LayoutJob {
     if use_plain || render_line.is_none() {
-        return LayoutJob::simple(
-            line.to_owned(),
-            editor_font.clone(),
-            ui.visuals().text_color(),
-            f32::INFINITY,
-        );
+        return plain_layout_job(ui, line, editor_font, f32::INFINITY);
     }
-
-    let Some(render_line) = render_line else {
-        return LayoutJob::simple(
-            line.to_owned(),
-            editor_font.clone(),
-            ui.visuals().text_color(),
-            f32::INFINITY,
-        );
-    };
+    let render_line = render_line.expect("render line checked above");
     let mut job = LayoutJob {
         text: line.to_owned(),
         ..Default::default()
@@ -538,6 +504,59 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
         section.byte_range = (section.byte_range.start + offset)..(section.byte_range.end + offset);
         job.sections.push(section);
     }
+}
+
+fn plain_layout_job(ui: &egui::Ui, text: &str, editor_font: &FontId, wrap_width: f32) -> LayoutJob {
+    LayoutJob::simple(
+        text.to_owned(),
+        editor_font.clone(),
+        ui.visuals().text_color(),
+        wrap_width,
+    )
+}
+
+fn line_start_state_matches<T, F>(
+    idx: usize,
+    prev_line_reused: bool,
+    old_lines: &[Option<T>],
+    parse_state: &ParseState,
+    highlight_state: &HighlightState,
+    default_state: &HighlightStateSnapshot,
+    end_state_for: F,
+) -> bool
+where
+    F: Fn(&T) -> &HighlightStateSnapshot,
+{
+    if idx == 0 {
+        return default_state.parse == *parse_state && default_state.highlight == *highlight_state;
+    }
+    if prev_line_reused {
+        return true;
+    }
+    old_lines
+        .get(idx - 1)
+        .and_then(|line| line.as_ref())
+        .map(|line| {
+            let end_state = end_state_for(line);
+            end_state.parse == *parse_state && end_state.highlight == *highlight_state
+        })
+        .unwrap_or(false)
+}
+
+fn line_hash_matches<T, F>(
+    old_lines: &[Option<T>],
+    idx: usize,
+    expected_hash: u64,
+    hash_for: F,
+) -> bool
+where
+    F: Fn(&T) -> u64,
+{
+    old_lines
+        .get(idx)
+        .and_then(|line| line.as_ref())
+        .map(|line| hash_for(line) == expected_hash)
+        .unwrap_or(false)
 }
 
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
@@ -861,39 +880,27 @@ fn highlight_in_worker(
 
     for (idx, line) in lines.iter().enumerate() {
         let line_hash = new_hashes[idx];
-        let start_state_matches = if idx == 0 {
-            default_state.parse == parse_state && default_state.highlight == highlight_state
-        } else if prev_line_reused {
-            true
-        } else {
-            old_lines
-                .get(idx - 1)
-                .and_then(|line| line.as_ref())
-                .map(|line| {
-                    line.end_state.parse == parse_state
-                        && line.end_state.highlight == highlight_state
-                })
-                .unwrap_or(false)
-        };
-
-        if start_state_matches {
-            let hash_matches = old_lines
-                .get(idx)
-                .and_then(|line| line.as_ref())
-                .map(|line| line.hash == line_hash)
-                .unwrap_or(false);
-            if hash_matches {
-                let old_line = old_lines[idx].take().expect("checked Some");
-                parse_state = old_line.end_state.parse.clone();
-                highlight_state = old_line.end_state.highlight.clone();
-                render_lines.push(HighlightRenderLine {
-                    len: old_line.len,
-                    spans: old_line.spans.clone(),
-                });
-                new_lines.push(old_line);
-                prev_line_reused = true;
-                continue;
-            }
+        if line_start_state_matches(
+            idx,
+            prev_line_reused,
+            &old_lines,
+            &parse_state,
+            &highlight_state,
+            &default_state,
+            |line: &HighlightWorkerLine| &line.end_state,
+        ) && line_hash_matches(&old_lines, idx, line_hash, |line: &HighlightWorkerLine| {
+            line.hash
+        }) {
+            let old_line = old_lines[idx].take().expect("checked Some");
+            parse_state = old_line.end_state.parse.clone();
+            highlight_state = old_line.end_state.highlight.clone();
+            render_lines.push(HighlightRenderLine {
+                len: old_line.len,
+                spans: old_line.spans.clone(),
+            });
+            new_lines.push(old_line);
+            prev_line_reused = true;
+            continue;
         }
 
         let mut spans = Vec::new();
