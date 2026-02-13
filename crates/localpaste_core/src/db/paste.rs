@@ -382,6 +382,69 @@ impl PasteDb {
         Ok(pastes)
     }
 
+    /// List canonical paste ids in a bounded batch.
+    ///
+    /// This helper avoids materializing a large `Vec<Paste>` when callers only need ids.
+    ///
+    /// # Arguments
+    /// - `limit`: Maximum number of ids to return.
+    /// - `folder_id`: Optional folder filter.
+    ///
+    /// # Returns
+    /// Up to `limit` canonical paste ids.
+    ///
+    /// # Errors
+    /// Returns an error if iteration or deserialization fails.
+    pub fn list_canonical_ids_batch(
+        &self,
+        limit: usize,
+        folder_id: Option<&str>,
+    ) -> Result<Vec<String>, AppError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut ids = Vec::with_capacity(limit);
+        for item in self.tree.iter() {
+            let (_, value) = item?;
+            let paste = deserialize_paste(&value)?;
+            if let Some(fid) = folder_id {
+                if paste.folder_id.as_deref() != Some(fid) {
+                    continue;
+                }
+            }
+            ids.push(paste.id);
+            if ids.len() >= limit {
+                break;
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Scan canonical rows and stream metadata to a callback.
+    ///
+    /// This helper bounds memory usage to one deserialized canonical row at a time.
+    ///
+    /// # Arguments
+    /// - `on_meta`: Called for each canonical row's [`PasteMeta`].
+    ///
+    /// # Returns
+    /// `Ok(())` after all canonical rows are scanned.
+    ///
+    /// # Errors
+    /// Returns iteration/deserialization errors or callback errors.
+    pub fn scan_canonical_meta<F>(&self, mut on_meta: F) -> Result<(), AppError>
+    where
+        F: FnMut(PasteMeta) -> Result<(), AppError>,
+    {
+        for item in self.tree.iter() {
+            let (_, value) = item?;
+            let paste = deserialize_paste(&value)?;
+            on_meta(PasteMeta::from(&paste))?;
+        }
+        Ok(())
+    }
+
     /// List paste metadata with an optional folder filter.
     ///
     /// # Arguments
@@ -596,16 +659,38 @@ impl PasteDb {
     /// Returns an error if index rebuild fails.
     pub fn reconcile_meta_indexes(&self) -> Result<(), AppError> {
         self.begin_meta_index_mutation()?;
-        self.meta_tree.clear()?;
-        self.updated_tree.clear()?;
-        for item in self.tree.iter() {
-            let (_, value) = item?;
-            let paste = deserialize_paste(&value)?;
-            self.upsert_meta_and_index_from_paste(&paste, None)?;
+
+        let rebuild_result = (|| -> Result<(), AppError> {
+            #[cfg(test)]
+            maybe_inject_reconcile_failpoint()?;
+            self.meta_tree.clear()?;
+            self.updated_tree.clear()?;
+            for item in self.tree.iter() {
+                let (_, value) = item?;
+                let paste = deserialize_paste(&value)?;
+                self.upsert_meta_and_index_from_paste(&paste, None)?;
+            }
+            self.meta_tree.flush()?;
+            self.updated_tree.flush()?;
+            Ok(())
+        })();
+
+        if let Err(err) = rebuild_result {
+            // Reconcile failed mid-flight: preserve degraded fallback by marking faulted
+            // and clear in-progress best-effort so startup/runtime does not get stuck.
+            self.mark_meta_index_faulted();
+            self.try_end_meta_index_mutation();
+            return Err(err);
         }
-        self.meta_tree.flush()?;
-        self.updated_tree.flush()?;
-        self.write_meta_index_state(META_INDEX_SCHEMA_VERSION, 0, false)?;
+
+        if let Err(err) = self.write_meta_index_state(META_INDEX_SCHEMA_VERSION, 0, false) {
+            // State write failed after rebuild. Keep canonical reads safe and mark
+            // indexes faulted so callers continue through bounded canonical fallback.
+            self.mark_meta_index_faulted();
+            self.try_end_meta_index_mutation();
+            return Err(err);
+        }
+
         Ok(())
     }
 
@@ -797,17 +882,16 @@ impl PasteDb {
         folder_id: Option<String>,
     ) -> Result<Vec<PasteMeta>, AppError> {
         let mut ranked: Vec<(DateTime<Utc>, PasteMeta)> = Vec::new();
-        for item in self.tree.iter() {
-            let (_, value) = item?;
-            let paste = deserialize_paste(&value)?;
-            if let Some(ref fid) = folder_id {
-                if paste.folder_id.as_ref() != Some(fid) {
-                    continue;
+        let folder_filter = folder_id.as_deref();
+        self.scan_canonical_meta(|meta| {
+            if let Some(fid) = folder_filter {
+                if meta.folder_id.as_deref() != Some(fid) {
+                    return Ok(());
                 }
             }
-            let meta = PasteMeta::from(&paste);
             push_recent_meta_top_k(&mut ranked, (meta.updated_at, meta), limit);
-        }
+            Ok(())
+        })?;
         Ok(finalize_recent_meta_results(ranked, limit))
     }
 
@@ -821,21 +905,39 @@ impl PasteDb {
         let query_lower = query.to_lowercase();
         let language_filter = normalized_language_filter(language.as_deref());
         let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
-        for item in self.tree.iter() {
-            let (_, value) = item?;
-            let paste = deserialize_paste(&value)?;
-            let meta = PasteMeta::from(&paste);
-
-            if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref()) {
-                continue;
+        let folder_filter = folder_id.as_deref();
+        self.scan_canonical_meta(|meta| {
+            if !meta_matches_filters(&meta, folder_filter, language_filter.as_deref()) {
+                return Ok(());
             }
             let score = score_meta_match(&meta, &query_lower);
             if score > 0 {
                 push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }
-        }
+            Ok(())
+        })?;
         Ok(finalize_meta_search_results(results, limit))
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static RECONCILE_FAILPOINT: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_reconcile_failpoint(enabled: bool) {
+    RECONCILE_FAILPOINT.with(|slot| slot.set(enabled));
+}
+
+#[cfg(test)]
+fn maybe_inject_reconcile_failpoint() -> Result<(), AppError> {
+    if RECONCILE_FAILPOINT.with(|slot| slot.get()) {
+        return Err(AppError::DatabaseError(
+            "Injected reconcile failpoint".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
@@ -1144,13 +1246,15 @@ impl From<LegacyPaste> for Paste {
 #[cfg(test)]
 mod tests {
     use super::{
-        folder_matches_expected, push_ranked_meta_top_k, PasteDb, META_INDEX_FAULTED_KEY,
-        META_INDEX_IN_PROGRESS_COUNT_KEY, META_INDEX_SCHEMA_VERSION, META_INDEX_VERSION_KEY,
+        folder_matches_expected, push_ranked_meta_top_k, set_reconcile_failpoint, PasteDb,
+        META_INDEX_FAULTED_KEY, META_INDEX_IN_PROGRESS_COUNT_KEY, META_INDEX_SCHEMA_VERSION,
+        META_INDEX_VERSION_KEY,
     };
     use crate::models::paste::{Paste, UpdatePasteRequest};
     use crate::AppError;
     use chrono::Duration;
     use std::cell::Cell;
+    use std::collections::HashSet;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -1437,6 +1541,141 @@ mod tests {
         }
 
         assert_eq!(ranked.len(), limit);
+    }
+
+    #[test]
+    fn list_canonical_ids_batch_honors_limit_and_folder_filter() {
+        let (paste_db, _dir) = setup_paste_db();
+
+        let mut in_folder_a = Paste::new("a".to_string(), "a".to_string());
+        in_folder_a.folder_id = Some("folder-a".to_string());
+        let in_folder_a_id = in_folder_a.id.clone();
+        paste_db
+            .create(&in_folder_a)
+            .expect("create folder-a paste");
+
+        let mut in_folder_b = Paste::new("b".to_string(), "b".to_string());
+        in_folder_b.folder_id = Some("folder-b".to_string());
+        let in_folder_b_id = in_folder_b.id.clone();
+        paste_db
+            .create(&in_folder_b)
+            .expect("create folder-b paste");
+
+        let mut in_folder_a_2 = Paste::new("c".to_string(), "c".to_string());
+        in_folder_a_2.folder_id = Some("folder-a".to_string());
+        let in_folder_a_2_id = in_folder_a_2.id.clone();
+        paste_db
+            .create(&in_folder_a_2)
+            .expect("create second folder-a paste");
+
+        let folder_a_ids = paste_db
+            .list_canonical_ids_batch(1, Some("folder-a"))
+            .expect("list folder-a ids");
+        assert_eq!(folder_a_ids.len(), 1);
+        assert!(
+            folder_a_ids[0] == in_folder_a_id || folder_a_ids[0] == in_folder_a_2_id,
+            "folder filter should only return matching canonical ids"
+        );
+
+        let folder_b_ids = paste_db
+            .list_canonical_ids_batch(10, Some("folder-b"))
+            .expect("list folder-b ids");
+        assert_eq!(folder_b_ids, vec![in_folder_b_id]);
+
+        let missing = paste_db
+            .list_canonical_ids_batch(10, Some("missing-folder"))
+            .expect("list missing folder ids");
+        assert!(missing.is_empty());
+
+        let zero_limit = paste_db
+            .list_canonical_ids_batch(0, None)
+            .expect("zero-limit ids");
+        assert!(zero_limit.is_empty());
+    }
+
+    #[test]
+    fn scan_canonical_meta_streams_all_rows() {
+        let (paste_db, _dir) = setup_paste_db();
+
+        let mut with_folder = Paste::new("a".to_string(), "a".to_string());
+        with_folder.folder_id = Some("folder-a".to_string());
+        let with_folder_id = with_folder.id.clone();
+        paste_db.create(&with_folder).expect("create folder paste");
+
+        let without_folder = Paste::new("b".to_string(), "b".to_string());
+        let without_folder_id = without_folder.id.clone();
+        paste_db
+            .create(&without_folder)
+            .expect("create unfiled paste");
+
+        let mut seen_ids = HashSet::new();
+        let mut folder_rows = 0usize;
+        paste_db
+            .scan_canonical_meta(|meta| {
+                if meta.folder_id.is_some() {
+                    folder_rows = folder_rows.saturating_add(1);
+                }
+                seen_ids.insert(meta.id);
+                Ok(())
+            })
+            .expect("scan canonical meta");
+
+        assert!(seen_ids.contains(&with_folder_id));
+        assert!(seen_ids.contains(&without_folder_id));
+        assert_eq!(folder_rows, 1);
+    }
+
+    struct ReconcileFailpointGuard;
+
+    impl Drop for ReconcileFailpointGuard {
+        fn drop(&mut self) {
+            set_reconcile_failpoint(false);
+        }
+    }
+
+    #[test]
+    fn reconcile_failure_marks_faulted_and_clears_in_progress() {
+        let _guard = ReconcileFailpointGuard;
+        let (paste_db, _dir) = setup_paste_db();
+        let paste = Paste::new("content".to_string(), "name".to_string());
+        let paste_id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        set_reconcile_failpoint(true);
+        let err = paste_db
+            .reconcile_meta_indexes()
+            .expect_err("failpoint should force reconcile error");
+        assert!(
+            matches!(err, AppError::DatabaseError(ref message) if message.contains("Injected reconcile failpoint")),
+            "unexpected reconcile error: {}",
+            err
+        );
+
+        assert!(
+            paste_db.meta_index_faulted().expect("faulted marker"),
+            "failed reconcile must mark metadata indexes faulted"
+        );
+        assert_eq!(
+            paste_db
+                .meta_index_in_progress_count()
+                .expect("in-progress marker"),
+            0,
+            "failed reconcile must clear in-progress state"
+        );
+        assert!(
+            paste_db
+                .needs_reconcile_meta_indexes(false)
+                .expect("needs reconcile"),
+            "failed reconcile should require follow-up reconcile"
+        );
+
+        let metas = paste_db
+            .list_meta(10, None)
+            .expect("metadata list via fallback");
+        assert!(
+            metas.iter().any(|meta| meta.id == paste_id),
+            "faulted indexes should preserve visibility via canonical fallback"
+        );
     }
 
     #[test]

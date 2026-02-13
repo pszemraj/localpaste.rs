@@ -186,12 +186,12 @@ pub fn delete_folder_tree_and_migrate(
 
 fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<(), AppError> {
     loop {
-        let pastes = db.pastes.list(100, Some(folder_id.to_string()))?;
-        if pastes.is_empty() {
+        let paste_ids = db.pastes.list_canonical_ids_batch(100, Some(folder_id))?;
+        if paste_ids.is_empty() {
             break;
         }
 
-        for paste in pastes {
+        for paste_id in paste_ids {
             let update = UpdatePasteRequest {
                 content: None,
                 name: None,
@@ -201,7 +201,7 @@ fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<()
                 tags: None,
             };
             let moved =
-                TransactionOps::move_paste_between_folders_locked(db, &paste.id, None, update)?;
+                TransactionOps::move_paste_between_folders_locked(db, &paste_id, None, update)?;
             if moved.is_none() {
                 continue;
             }
@@ -233,34 +233,41 @@ fn reconcile_meta_indexes_after_folder_delete(db: &Database) -> Result<(), AppEr
 /// # Errors
 /// Returns storage/serialization errors when reconciliation cannot complete.
 pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
+    // Keep folder-invariant repair serialized with folder-affecting transactions even if this
+    // helper is called outside startup in the future.
+    let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
     let folders = db.folders.list()?;
     let folder_id_set: HashSet<String> = folders.iter().map(|folder| folder.id.clone()).collect();
+    let mut orphan_ids = Vec::new();
+    let mut exact_counts: HashMap<String, usize> = HashMap::new();
 
-    let pastes = db.pastes.list(usize::MAX, None)?;
-    for paste in pastes {
-        let Some(folder_id) = paste.folder_id.as_deref() else {
-            continue;
+    db.pastes.scan_canonical_meta(|meta| {
+        let Some(folder_id) = meta.folder_id.as_deref() else {
+            return Ok(());
         };
         if folder_id_set.contains(folder_id) {
-            continue;
+            *exact_counts.entry(folder_id.to_string()).or_insert(0) += 1;
+        } else {
+            orphan_ids.push(meta.id);
         }
-        let update = UpdatePasteRequest {
-            content: None,
-            name: None,
-            language: None,
-            language_is_manual: None,
-            folder_id: Some(String::new()),
-            tags: None,
-        };
-        let _ = db.pastes.update(&paste.id, update)?;
+        Ok(())
+    })?;
+
+    const ORPHAN_REPAIR_BATCH: usize = 1024;
+    for chunk in orphan_ids.chunks(ORPHAN_REPAIR_BATCH) {
+        for paste_id in chunk {
+            let update = UpdatePasteRequest {
+                content: None,
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(String::new()),
+                tags: None,
+            };
+            let _ = db.pastes.update(paste_id, update)?;
+        }
     }
 
-    let mut exact_counts: HashMap<String, usize> = HashMap::new();
-    for paste in db.pastes.list(usize::MAX, None)? {
-        if let Some(folder_id) = paste.folder_id.as_deref() {
-            *exact_counts.entry(folder_id.to_string()).or_insert(0) += 1;
-        }
-    }
     for folder in db.folders.list()? {
         let count = exact_counts.get(folder.id.as_str()).copied().unwrap_or(0);
         db.folders.set_count(folder.id.as_str(), count)?;
@@ -326,15 +333,14 @@ mod tests {
 
     fn assert_folder_counts_match_canonical(db: &Database) {
         let mut canonical_counts: HashMap<String, usize> = HashMap::new();
-        for paste in db
-            .pastes
-            .list(usize::MAX, None)
-            .expect("list canonical pastes")
-        {
-            if let Some(folder_id) = paste.folder_id {
-                *canonical_counts.entry(folder_id).or_insert(0) += 1;
-            }
-        }
+        db.pastes
+            .scan_canonical_meta(|meta| {
+                if let Some(folder_id) = meta.folder_id {
+                    *canonical_counts.entry(folder_id).or_insert(0) += 1;
+                }
+                Ok(())
+            })
+            .expect("scan canonical pastes");
         for folder in db.folders.list().expect("list folders") {
             let expected = canonical_counts.remove(folder.id.as_str()).unwrap_or(0);
             assert_eq!(

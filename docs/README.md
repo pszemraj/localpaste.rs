@@ -18,6 +18,7 @@ Use these as canonical references. Other docs should link here instead of restat
 | Rewrite parity status + merge gate | [dev/parity-checklist.md](dev/parity-checklist.md) |
 | GUI perf validation protocol + thresholds | [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md) |
 | Virtual editor rollout/status | [dev/virtual-editor-plan.md](dev/virtual-editor-plan.md) |
+| Storage architecture follow-up plan | [dev/storage-split-plan.md](dev/storage-split-plan.md) |
 | UI visual tokens | [dev/ui-palette.md](dev/ui-palette.md) |
 | Folder invariants audit | [dev/folder-audit-matrix-2026-02-13.md](dev/folder-audit-matrix-2026-02-13.md) + [dev/folder-audit-report-2026-02-13.md](dev/folder-audit-report-2026-02-13.md) |
 
@@ -49,3 +50,4 @@ When updating docs:
 - [Performance baseline](dev/perf-baseline.md) - Historical baseline snapshot (superseded by the perf protocol; do not use as a gate).
 - [UI palette](dev/ui-palette.md) - Canonical color and typography tokens for the rewrite UI.
 - [Virtual editor plan](dev/virtual-editor-plan.md) - Historical rollout timeline (behavior/gates are tracked in GUI notes + parity checklist).
+- [Storage split plan](dev/storage-split-plan.md) - Design-complete follow-up plan for metadata/content split storage.

@@ -553,12 +553,12 @@ fn persist_generated_paste(db: &Database, paste: &Paste) -> Result<(), AppError>
 fn clear_existing_data(db: &Database) -> Result<(usize, usize), AppError> {
     let mut deleted_pastes = 0usize;
     loop {
-        let pastes = db.pastes.list(10000, None)?;
-        if pastes.is_empty() {
+        let paste_ids = db.pastes.list_canonical_ids_batch(1024, None)?;
+        if paste_ids.is_empty() {
             break;
         }
-        for paste in &pastes {
-            if TransactionOps::delete_paste_with_folder(db, &paste.id)? {
+        for paste_id in paste_ids {
+            if TransactionOps::delete_paste_with_folder(db, &paste_id)? {
                 deleted_pastes = deleted_pastes.saturating_add(1);
             }
         }
@@ -584,17 +584,18 @@ fn assert_folder_invariants(db: &Database) -> Result<(), AppError> {
         folder_counts.insert(folder.id.clone(), 0);
     }
 
-    for paste in db.pastes.list(usize::MAX, None)? {
-        if let Some(folder_id) = paste.folder_id {
+    db.pastes.scan_canonical_meta(|meta| {
+        if let Some(folder_id) = meta.folder_id {
             let Some(count) = folder_counts.get_mut(folder_id.as_str()) else {
                 return Err(AppError::DatabaseError(format!(
                     "paste {} references missing folder {}",
-                    paste.id, folder_id
+                    meta.id, folder_id
                 )));
             };
             *count += 1;
         }
-    }
+        Ok(())
+    })?;
 
     for folder in folders {
         let expected = folder_counts.get(folder.id.as_str()).copied().unwrap_or(0);

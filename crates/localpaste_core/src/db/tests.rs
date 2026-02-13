@@ -3,9 +3,11 @@
 #[cfg(test)]
 mod db_tests {
     use super::super::*;
+    use crate::db::paste::set_reconcile_failpoint;
     use crate::error::AppError;
     use crate::models::{folder::*, paste::*};
     use chrono::Duration;
+    use std::collections::HashMap;
     use std::sync::{Arc, Barrier, Mutex, OnceLock};
     use std::thread;
     use tempfile::TempDir;
@@ -22,6 +24,11 @@ mod db_tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    fn reconcile_failpoint_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
     struct FailpointGuard;
 
     impl Drop for FailpointGuard {
@@ -29,6 +36,40 @@ mod db_tests {
             set_transaction_failpoint(None);
             set_move_pause_hooks(None);
         }
+    }
+
+    struct ReconcileFailpointGuard;
+
+    impl Drop for ReconcileFailpointGuard {
+        fn drop(&mut self) {
+            set_reconcile_failpoint(false);
+        }
+    }
+
+    fn assert_folder_counts_match_canonical(db: &Database) {
+        let mut canonical_counts: HashMap<String, usize> = HashMap::new();
+        db.pastes
+            .scan_canonical_meta(|meta| {
+                if let Some(folder_id) = meta.folder_id {
+                    *canonical_counts.entry(folder_id).or_insert(0) += 1;
+                }
+                Ok(())
+            })
+            .expect("scan canonical meta");
+
+        for folder in db.folders.list().expect("list folders") {
+            let expected = canonical_counts.remove(folder.id.as_str()).unwrap_or(0);
+            assert_eq!(
+                folder.paste_count, expected,
+                "folder count drift for folder {}",
+                folder.id
+            );
+        }
+        assert!(
+            canonical_counts.is_empty(),
+            "canonical rows must not reference missing folders: {:?}",
+            canonical_counts.keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1399,6 +1440,151 @@ mod db_tests {
             repaired.folder_id.is_none(),
             "startup reconcile must clear folder_id references to missing folders"
         );
+    }
+
+    #[test]
+    fn test_database_new_continues_in_degraded_mode_when_meta_reconcile_fails() {
+        let _lock = reconcile_failpoint_test_lock()
+            .lock()
+            .expect("reconcile failpoint lock");
+        let _guard = ReconcileFailpointGuard;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        set_reconcile_failpoint(true);
+        let db = Database::new(&db_path_str)
+            .expect("startup should continue when metadata reconcile fails");
+        set_reconcile_failpoint(false);
+
+        let state_tree = db.db.open_tree("pastes_meta_state").unwrap();
+        let in_progress = state_tree
+            .get("in_progress_count")
+            .unwrap()
+            .expect("in-progress marker");
+        assert_eq!(
+            u64::from_be_bytes(in_progress.as_ref().try_into().expect("u64 marker bytes")),
+            0,
+            "failed startup reconcile must not leave in-progress stuck"
+        );
+        let faulted = state_tree.get("faulted").unwrap().expect("faulted marker");
+        assert_eq!(
+            faulted.as_ref(),
+            &[1u8],
+            "failed startup reconcile should mark metadata indexes faulted"
+        );
+        assert!(
+            db.pastes
+                .needs_reconcile_meta_indexes(false)
+                .expect("needs reconcile"),
+            "runtime should keep reconcile-needed marker in degraded startup mode"
+        );
+
+        let paste = Paste::new(
+            "degraded mode body".to_string(),
+            "degraded-mode".to_string(),
+        );
+        let paste_id = paste.id.clone();
+        db.pastes
+            .create(&paste)
+            .expect("create paste in degraded mode");
+        let listed = db.pastes.list_meta(10, None).expect("list meta fallback");
+        assert!(
+            listed.iter().any(|meta| meta.id == paste_id),
+            "degraded mode must keep canonical rows visible via fallback"
+        );
+    }
+
+    #[test]
+    fn test_reconcile_folder_invariants_and_move_are_linearized() {
+        let _lock = transaction_failpoint_test_lock()
+            .lock()
+            .expect("transaction failpoint lock");
+        let _guard = FailpointGuard;
+        let (db, _temp) = setup_test_db();
+
+        let source = Folder::new("source-folder".to_string());
+        let source_id = source.id.clone();
+        db.folders.create(&source).unwrap();
+
+        let destination = Folder::new("destination-folder".to_string());
+        let destination_id = destination.id.clone();
+        db.folders.create(&destination).unwrap();
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(source_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &source_id).unwrap();
+
+        let reached = Arc::new(Barrier::new(2));
+        let resume = Arc::new(Barrier::new(2));
+        set_move_pause_hooks(Some(MovePauseHooks {
+            reached: reached.clone(),
+            resume: resume.clone(),
+        }));
+
+        let mover_db = db.share().expect("share db");
+        let mover_paste_id = paste_id.clone();
+        let mover_destination = destination_id.clone();
+        let mover = thread::spawn(move || {
+            set_transaction_failpoint(Some(
+                TransactionFailpoint::MovePauseAfterDestinationReserveOnce,
+            ));
+            let update = UpdatePasteRequest {
+                content: None,
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(mover_destination.clone()),
+                tags: None,
+            };
+            let result = TransactionOps::move_paste_between_folders(
+                &mover_db,
+                &mover_paste_id,
+                Some(mover_destination.as_str()),
+                update,
+            );
+            set_transaction_failpoint(None);
+            result
+        });
+
+        // Move is paused while holding the folder transaction lock.
+        reached.wait();
+
+        let reconcile_db = db.share().expect("share db");
+        let reconciler =
+            thread::spawn(move || crate::folder_ops::reconcile_folder_invariants(&reconcile_db));
+
+        // Allow mover to finish and release the lock so reconcile can proceed.
+        resume.wait();
+
+        let move_result = mover.join().expect("mover join");
+        set_move_pause_hooks(None);
+        assert!(
+            matches!(move_result, Ok(Some(_))),
+            "move should commit successfully: {:?}",
+            move_result
+        );
+
+        let reconcile_result = reconciler.join().expect("reconciler join");
+        assert!(
+            reconcile_result.is_ok(),
+            "reconcile should succeed after lock handoff: {:?}",
+            reconcile_result
+        );
+
+        let current = db
+            .pastes
+            .get(&paste_id)
+            .expect("paste lookup")
+            .expect("paste exists");
+        assert_eq!(
+            current.folder_id.as_deref(),
+            Some(destination_id.as_str()),
+            "final folder assignment should remain valid after serialized reconcile"
+        );
+        assert_folder_counts_match_canonical(&db);
     }
 
     #[test]

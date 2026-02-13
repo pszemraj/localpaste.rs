@@ -98,10 +98,9 @@ fn pgrep_probe_result(args: &[&str], current_pid: u32) -> ProcessProbeResult {
 fn pgrep_error_probe_result(err: &std::io::Error) -> ProcessProbeResult {
     if err.kind() == std::io::ErrorKind::NotFound {
         // Missing probe tooling means liveness is unknown; treat as unsafe.
-        ProcessProbeResult::Unknown
-    } else {
-        ProcessProbeResult::Unknown
+        tracing::warn!("pgrep is unavailable; process ownership probe is unknown");
     }
+    ProcessProbeResult::Unknown
 }
 
 #[cfg(unix)]
@@ -198,10 +197,9 @@ pub fn localpaste_process_probe() -> ProcessProbeResult {
 fn tasklist_error_probe_result(kind: std::io::ErrorKind) -> ProcessProbeResult {
     if kind == std::io::ErrorKind::NotFound {
         // Missing probe tooling means liveness is unknown; treat as unsafe.
-        ProcessProbeResult::Unknown
-    } else {
-        ProcessProbeResult::Unknown
+        tracing::warn!("tasklist is unavailable; process ownership probe is unknown");
     }
+    ProcessProbeResult::Unknown
 }
 
 /// Probe for other LocalPaste processes.
@@ -393,6 +391,27 @@ fn apply_create_failpoint_after_canonical_create(
     }
 }
 
+fn rollback_destination_reservation(
+    db: &Database,
+    destination_folder_id: Option<&str>,
+    context: &str,
+    ignore_not_found: bool,
+) {
+    let Some(folder_id) = destination_folder_id else {
+        return;
+    };
+    if let Err(err) = db.folders.update_count(folder_id, -1) {
+        if ignore_not_found && matches!(err, AppError::NotFound) {
+            return;
+        }
+        tracing::error!(
+            "Failed to rollback destination folder count after {}: {}",
+            context,
+            err
+        );
+    }
+}
+
 impl TransactionOps {
     pub(crate) fn acquire_folder_txn_lock(
         db: &Database,
@@ -433,35 +452,27 @@ impl TransactionOps {
 
         #[cfg(test)]
         if let Err(err) = apply_create_failpoint_after_destination_reserve(db, folder_id) {
-            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
-                if !matches!(rollback_err, AppError::NotFound) {
-                    tracing::error!(
-                        "Failed to rollback folder count after injected create failpoint: {}",
-                        rollback_err
-                    );
-                }
-            }
+            rollback_destination_reservation(
+                db,
+                Some(folder_id),
+                "injected create failpoint",
+                true,
+            );
             return Err(err);
         }
 
         if let Err(err) = ensure_folder_assignable(db, folder_id) {
-            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
-                if !matches!(rollback_err, AppError::NotFound) {
-                    tracing::error!(
-                        "Failed to rollback folder count after destination became unassignable: {}",
-                        rollback_err
-                    );
-                }
-            }
+            rollback_destination_reservation(
+                db,
+                Some(folder_id),
+                "destination became unassignable before create",
+                true,
+            );
             return Err(err);
         }
 
         if let Err(e) = db.pastes.create(paste) {
-            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
-                if !matches!(rollback_err, AppError::NotFound) {
-                    tracing::error!("Failed to rollback folder count: {}", rollback_err);
-                }
-            }
+            rollback_destination_reservation(db, Some(folder_id), "canonical create failure", true);
             return Err(e);
         }
 
@@ -473,14 +484,12 @@ impl TransactionOps {
                     delete_err
                 );
             }
-            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
-                if !matches!(rollback_err, AppError::NotFound) {
-                    tracing::error!(
-                        "Failed to rollback folder count after injected post-create failpoint: {}",
-                        rollback_err
-                    );
-                }
-            }
+            rollback_destination_reservation(
+                db,
+                Some(folder_id),
+                "injected post-create failpoint",
+                true,
+            );
             return Err(err);
         }
 
@@ -491,14 +500,15 @@ impl TransactionOps {
                     delete_err
                 );
             }
-            if let Err(rollback_err) = db.folders.update_count(folder_id, -1) {
-                if !matches!(rollback_err, AppError::NotFound) {
-                    tracing::error!(
-                        "Failed to rollback folder count after post-create destination check: {}",
-                        rollback_err
-                    );
-                }
-            }
+            rollback_destination_reservation(
+                db,
+                Some(folder_id),
+                "post-create destination check",
+                true,
+            );
+            // Canonical create may have committed before this point. Returning Err is intentional:
+            // callers must retry because the destination became invalid and compensating actions
+            // were already attempted above.
             return Err(err);
         }
 
@@ -593,16 +603,12 @@ impl TransactionOps {
             if let Err(err) =
                 apply_move_failpoint_after_destination_reserve(db, folder_changing, new_folder_id)
             {
-                if folder_changing {
-                    if let Some(new_id) = new_folder_id {
-                        if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
-                            tracing::error!(
-                                "Failed to rollback destination folder count after injected failpoint: {}",
-                                rollback_err
-                            );
-                        }
-                    }
-                }
+                rollback_destination_reservation(
+                    db,
+                    if folder_changing { new_folder_id } else { None },
+                    "injected move failpoint",
+                    false,
+                );
                 return Err(err);
             }
 
@@ -611,14 +617,12 @@ impl TransactionOps {
             if folder_changing {
                 if let Some(new_id) = new_folder_id {
                     if let Err(err) = ensure_folder_assignable(db, new_id) {
-                        if let Err(err) = db.folders.update_count(new_id, -1) {
-                            if !matches!(err, AppError::NotFound) {
-                                tracing::error!(
-                                    "Failed to rollback destination reservation after destination disappeared: {}",
-                                    err
-                                );
-                            }
-                        }
+                        rollback_destination_reservation(
+                            db,
+                            Some(new_id),
+                            "destination disappeared before move CAS",
+                            true,
+                        );
                         return Err(err);
                     }
                 }
@@ -656,14 +660,15 @@ impl TransactionOps {
                                         );
                                     }
                                 }
-                                if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
-                                    if !matches!(rollback_err, AppError::NotFound) {
-                                        tracing::error!(
-                                            "Failed to rollback destination reservation after post-commit destination check: {}",
-                                            rollback_err
-                                        );
-                                    }
-                                }
+                                rollback_destination_reservation(
+                                    db,
+                                    Some(new_id),
+                                    "post-commit destination check",
+                                    true,
+                                );
+                                // Canonical CAS may have committed before this point. Returning Err
+                                // is intentional so callers observe that destination validation
+                                // failed and compensating revert/rollback was attempted.
                                 return Err(err);
                             }
                         }
@@ -683,16 +688,12 @@ impl TransactionOps {
                 }
                 Ok(None) => {
                     // Compare-and-swap mismatch or deletion. Roll back destination reservation.
-                    if folder_changing {
-                        if let Some(new_id) = new_folder_id {
-                            if let Err(err) = db.folders.update_count(new_id, -1) {
-                                tracing::error!(
-                                    "Failed to rollback destination folder count after conflict: {}",
-                                    err
-                                );
-                            }
-                        }
-                    }
+                    rollback_destination_reservation(
+                        db,
+                        if folder_changing { new_folder_id } else { None },
+                        "move conflict",
+                        false,
+                    );
 
                     if db.pastes.get(paste_id)?.is_none() {
                         return Ok(None);
@@ -702,16 +703,12 @@ impl TransactionOps {
                     // PasteDb update methods treat metadata-index failures as best-effort and
                     // return success once the canonical row is committed. An error here means
                     // canonical compare-and-swap did not commit, so rolling back reservation is safe.
-                    if folder_changing {
-                        if let Some(new_id) = new_folder_id {
-                            if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
-                                tracing::error!(
-                                    "Failed to rollback destination folder count after error: {}",
-                                    rollback_err
-                                );
-                            }
-                        }
-                    }
+                    rollback_destination_reservation(
+                        db,
+                        if folder_changing { new_folder_id } else { None },
+                        "move error",
+                        false,
+                    );
                     return Err(err);
                 }
             }
@@ -881,12 +878,26 @@ impl Database {
             .pastes
             .needs_reconcile_meta_indexes(force_reindex)?
         {
-            database.pastes.reconcile_meta_indexes()?;
+            // Metadata indexes are derived data. Startup continues in degraded mode when
+            // reconcile fails because canonical reads remain correct via bounded fallback.
+            if let Err(err) = database.pastes.reconcile_meta_indexes() {
+                tracing::error!(
+                    "Startup metadata reconcile failed (pre-folder-invariant phase); continuing in degraded mode: {}",
+                    err
+                );
+            }
         }
         database.folders.clear_delete_markers()?;
         reconcile_folder_invariants(&database)?;
         if database.pastes.needs_reconcile_meta_indexes(false)? {
-            database.pastes.reconcile_meta_indexes()?;
+            // Folder invariant repair may require metadata/index regeneration. Failure is still
+            // best-effort at startup; runtime stays correct via canonical fallback.
+            if let Err(err) = database.pastes.reconcile_meta_indexes() {
+                tracing::error!(
+                    "Startup metadata reconcile failed (post-folder-invariant phase); continuing in degraded mode: {}",
+                    err
+                );
+            }
         }
         Ok(database)
     }

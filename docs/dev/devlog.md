@@ -115,6 +115,7 @@ Lock recovery guidance (including what not to delete) lives in [docs/deployment.
 - Service management: [docs/deployment.md](../deployment.md)
 - Perf protocol: [gui-perf-protocol.md](gui-perf-protocol.md)
 - Virtual editor rollout plan: [virtual-editor-plan.md](virtual-editor-plan.md)
+- Storage split follow-up: [storage-split-plan.md](storage-split-plan.md)
 - Rewrite parity checklist: [parity-checklist.md](parity-checklist.md)
 - Folder audit matrix (2026-02-13): [folder-audit-matrix-2026-02-13.md](folder-audit-matrix-2026-02-13.md)
 - Folder audit report (2026-02-13): [folder-audit-report-2026-02-13.md](folder-audit-report-2026-02-13.md)
