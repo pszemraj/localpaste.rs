@@ -3,9 +3,9 @@
 #[cfg(test)]
 mod db_tests {
     use super::super::*;
-    use chrono::Duration;
     use crate::error::AppError;
     use crate::models::{folder::*, paste::*};
+    use chrono::Duration;
     use std::sync::{Arc, Barrier};
     use std::thread;
     use tempfile::TempDir;
@@ -243,7 +243,8 @@ mod db_tests {
         by_tag.language = None;
         by_tag.tags = vec!["rusty".to_string()];
 
-        let mut content_only = Paste::new("rust appears in content".to_string(), "plain".to_string());
+        let mut content_only =
+            Paste::new("rust appears in content".to_string(), "plain".to_string());
         content_only.language = None;
         content_only.tags = vec![];
 
@@ -301,6 +302,8 @@ mod db_tests {
         let updated_tree = db.db.open_tree("pastes_by_updated").unwrap();
         meta_tree.clear().unwrap();
         updated_tree.clear().unwrap();
+        drop(meta_tree);
+        drop(updated_tree);
         drop(db);
 
         let reopened = Database::new(&db_path_str).unwrap();

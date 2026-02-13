@@ -439,6 +439,9 @@ impl PasteDb {
 
     /// Rebuild metadata and recency indexes from the canonical `pastes` tree.
     ///
+    /// # Returns
+    /// `Ok(())` when indexes are rebuilt successfully.
+    ///
     /// # Errors
     /// Returns an error if index rebuild fails.
     pub fn reconcile_meta_indexes(&self) -> Result<(), AppError> {
