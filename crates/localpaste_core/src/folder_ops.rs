@@ -101,6 +101,7 @@ fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<()
         if metas.is_empty() {
             break;
         }
+        let mut saw_orphan_meta = false;
         for meta in metas {
             let update = UpdatePasteRequest {
                 content: None,
@@ -110,7 +111,14 @@ fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<()
                 folder_id: Some(String::new()), // normalized to None in PasteDb::update
                 tags: None,
             };
-            db.pastes.update(&meta.id, update)?;
+            if db.pastes.update(&meta.id, update)?.is_none() {
+                saw_orphan_meta = true;
+            }
+        }
+        if saw_orphan_meta {
+            // Metadata rows can outlive canonical rows after interrupted writes.
+            // Rebuilding indexes guarantees the next loop iteration can make progress.
+            db.pastes.reconcile_meta_indexes()?;
         }
     }
     Ok(())
@@ -171,5 +179,47 @@ mod tests {
 
         let moved = db.pastes.get(&paste.id).expect("get").expect("exists");
         assert_eq!(moved.folder_id, None);
+    }
+
+    #[test]
+    fn delete_tree_handles_orphaned_meta_rows() {
+        let (db, _dir) = setup_db();
+
+        let root = Folder::with_parent("root".to_string(), None);
+        db.folders.create(&root).expect("create root");
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(root.id.clone());
+        db.pastes.create(&paste).expect("create paste");
+
+        // Simulate interrupted write: canonical row removed while metadata/index rows remain.
+        db.db
+            .open_tree("pastes")
+            .expect("pastes tree")
+            .remove(paste.id.as_bytes())
+            .expect("remove canonical");
+        let stale = db
+            .pastes
+            .list_meta(10, Some(root.id.clone()))
+            .expect("list stale meta");
+        assert_eq!(
+            stale.len(),
+            1,
+            "stale metadata row should exist pre-reconcile"
+        );
+
+        let deleted = delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
+        assert_eq!(deleted, vec![root.id.clone()]);
+        assert!(
+            db.folders.get(&root.id).expect("folder lookup").is_none(),
+            "folder should be deleted despite stale metadata row"
+        );
+        assert!(
+            db.pastes
+                .list_meta(10, Some(root.id.clone()))
+                .expect("list after delete")
+                .is_empty(),
+            "metadata index should be reconciled to remove orphan row"
+        );
     }
 }
