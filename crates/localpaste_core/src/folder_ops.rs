@@ -97,12 +97,12 @@ pub fn delete_folder_tree_and_migrate(
 
 fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<(), AppError> {
     loop {
-        let metas = db.pastes.list_meta(100, Some(folder_id.to_string()))?;
-        if metas.is_empty() {
+        let pastes = db.pastes.list(100, Some(folder_id.to_string()))?;
+        if pastes.is_empty() {
             break;
         }
-        let mut saw_orphan_meta = false;
-        for meta in metas {
+
+        for paste in pastes {
             let update = UpdatePasteRequest {
                 content: None,
                 name: None,
@@ -111,15 +111,15 @@ fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<()
                 folder_id: Some(String::new()), // normalized to None in PasteDb::update
                 tags: None,
             };
-            if db.pastes.update(&meta.id, update)?.is_none() {
-                saw_orphan_meta = true;
-            }
+            db.pastes.update(&paste.id, update)?;
         }
-        if saw_orphan_meta {
-            // Metadata rows can outlive canonical rows after interrupted writes.
-            // Rebuilding indexes guarantees the next loop iteration can make progress.
-            db.pastes.reconcile_meta_indexes()?;
-        }
+    }
+    if !db
+        .pastes
+        .list_meta(1, Some(folder_id.to_string()))?
+        .is_empty()
+    {
+        db.pastes.reconcile_meta_indexes()?;
     }
     Ok(())
 }
@@ -220,6 +220,37 @@ mod tests {
                 .expect("list after delete")
                 .is_empty(),
             "metadata index should be reconciled to remove orphan row"
+        );
+    }
+
+    #[test]
+    fn delete_tree_migrates_when_metadata_row_is_missing() {
+        let (db, _dir) = setup_db();
+
+        let root = Folder::with_parent("root".to_string(), None);
+        db.folders.create(&root).expect("create root");
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(root.id.clone());
+        db.pastes.create(&paste).expect("create paste");
+
+        db.db
+            .open_tree("pastes_meta")
+            .expect("meta tree")
+            .remove(paste.id.as_bytes())
+            .expect("remove canonical");
+
+        let deleted = delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
+        assert_eq!(deleted, vec![root.id.clone()]);
+        let moved = db
+            .pastes
+            .get(&paste.id)
+            .expect("get paste")
+            .expect("paste should still exist");
+        assert_eq!(moved.folder_id, None);
+        assert!(
+            db.pastes.list(10, Some(root.id.clone())).expect("list").is_empty(),
+            "canonical rows for deleted folder should be migrated"
         );
     }
 }

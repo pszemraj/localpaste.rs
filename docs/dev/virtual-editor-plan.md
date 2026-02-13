@@ -1,17 +1,14 @@
 # Virtualized Editor Plan
 
-This document is the historical rollout log for the virtual editor.
-Normative current-state definitions live in canonical docs:
+This document is a historical rollout log for the virtual editor.
+Current operational definitions and merge-gate status are authoritative elsewhere:
 
-- runtime flags and behavior notes: [gui-notes.md](gui-notes.md)
-- release/perf validation gate: [gui-perf-protocol.md](gui-perf-protocol.md)
-- merge readiness and parity status: [parity-checklist.md](parity-checklist.md)
+- Runtime flags and editor behavior: [gui-notes.md](gui-notes.md)
+- Release/perf validation protocol: [gui-perf-protocol.md](gui-perf-protocol.md)
+- Merge readiness and parity status: [parity-checklist.md](parity-checklist.md)
+- Canonical documentation map: [../README.md](../README.md)
 
-## Current Product Position
-
-- `VirtualEditor` is the default editable path.
-- `TextEdit` remains available as a fallback via `LOCALPASTE_VIRTUAL_EDITOR=0`.
-- Scope is English-first editor UX for this cycle; multilingual/IME behavior is best-effort and non-blocking.
+This file is retained as a historical design timeline and should not be used as a behavioral reference.
 
 ## Rollout Timeline (Condensed)
 
@@ -26,8 +23,6 @@ Normative current-state definitions live in canonical docs:
 - Completed reliability hardening for selection, click semantics, staged highlight apply/drop, and focus-gated command routing.
 - Completed module decomposition of GUI app runtime paths to keep files maintainable.
 - Set virtual editor as default with explicit fallback switch.
-
-Detailed gate-level status is intentionally tracked only in [parity-checklist.md](parity-checklist.md).
 
 ## Post-Merge Follow-Up Themes
 
