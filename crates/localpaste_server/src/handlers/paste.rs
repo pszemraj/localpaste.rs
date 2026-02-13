@@ -1,34 +1,13 @@
 //! Paste HTTP handlers.
 
-use super::deprecation::{warn_folder_deprecation, with_folder_deprecation_headers};
+use super::deprecation::maybe_with_folder_deprecation_headers;
+use super::normalize::{normalize_optional_for_create, normalize_optional_for_update};
 use crate::{error::HttpError, models::paste::*, naming, AppError, AppState};
 use axum::{
     extract::{Path, Query, State},
-    response::{IntoResponse, Response},
+    response::Response,
     Json,
 };
-
-fn normalize_optional_id_for_create(id: Option<String>) -> Option<String> {
-    id.and_then(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
-fn normalize_optional_id_for_update(id: Option<String>) -> Option<String> {
-    id.map(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            String::new()
-        } else {
-            trimmed.to_string()
-        }
-    })
-}
 
 /// Create a new paste.
 ///
@@ -46,7 +25,7 @@ pub async fn create_paste(
     Json(mut req): Json<CreatePasteRequest>,
 ) -> Result<Response, HttpError> {
     let folder_field_used = req.folder_id.is_some();
-    req.folder_id = normalize_optional_id_for_create(req.folder_id);
+    req.folder_id = normalize_optional_for_create(req.folder_id);
 
     // Check paste size limit
     if req.content.len() > state.config.max_paste_size {
@@ -94,12 +73,11 @@ pub async fn create_paste(
         state.db.pastes.create(&paste)?;
     }
 
-    if folder_field_used {
-        warn_folder_deprecation("POST /api/paste with folder_id");
-        Ok(with_folder_deprecation_headers(Json(paste)))
-    } else {
-        Ok(Json(paste).into_response())
-    }
+    Ok(maybe_with_folder_deprecation_headers(
+        Json(paste),
+        folder_field_used,
+        "POST /api/paste with folder_id",
+    ))
 }
 
 /// Fetch a paste by id.
@@ -143,7 +121,7 @@ pub async fn update_paste(
     Json(mut req): Json<UpdatePasteRequest>,
 ) -> Result<Response, HttpError> {
     let folder_field_used = req.folder_id.is_some();
-    req.folder_id = normalize_optional_id_for_update(req.folder_id);
+    req.folder_id = normalize_optional_for_update(req.folder_id);
 
     // Check size limit if content is being updated
     if let Some(ref content) = req.content {
@@ -167,7 +145,7 @@ pub async fn update_paste(
         }
     }
 
-    if req.folder_id.is_some() {
+    let updated = if req.folder_id.is_some() {
         // Explicit folder operations (including clear-to-unfiled) use CAS-backed transaction
         // logic to avoid stale-read folder count drift under concurrent updates.
         let new_folder_id =
@@ -175,33 +153,27 @@ pub async fn update_paste(
                 .clone()
                 .and_then(|f| if f.is_empty() { None } else { Some(f) });
 
-        let updated = crate::db::TransactionOps::move_paste_between_folders(
+        crate::db::TransactionOps::move_paste_between_folders(
             &state.db,
             &id,
             new_folder_id.as_deref(),
             req,
         )?
-        .ok_or(AppError::NotFound)?;
-        if folder_field_used {
-            warn_folder_deprecation("PUT /api/paste/:id with folder_id");
-            Ok(with_folder_deprecation_headers(Json(updated)))
-        } else {
-            Ok(Json(updated).into_response())
-        }
+        .ok_or(AppError::NotFound)?
     } else {
         // folder_id not changing, just update the paste
-        let updated = state
+        state
             .db
             .pastes
             .update(&id, req)?
-            .ok_or(AppError::NotFound)?;
-        if folder_field_used {
-            warn_folder_deprecation("PUT /api/paste/:id with folder_id");
-            Ok(with_folder_deprecation_headers(Json(updated)))
-        } else {
-            Ok(Json(updated).into_response())
-        }
-    }
+            .ok_or(AppError::NotFound)?
+    };
+
+    Ok(maybe_with_folder_deprecation_headers(
+        Json(updated),
+        folder_field_used,
+        "PUT /api/paste/:id with folder_id",
+    ))
 }
 
 /// Delete a paste by id.
@@ -250,16 +222,15 @@ pub async fn list_pastes(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, HttpError> {
-    let normalized_folder_id = normalize_optional_id_for_create(query.folder_id);
+    let normalized_folder_id = normalize_optional_for_create(query.folder_id);
     let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
     let pastes = state.db.pastes.list(limit, normalized_folder_id)?;
-    if folder_filter_used {
-        warn_folder_deprecation("GET /api/pastes?folder_id=...");
-        Ok(with_folder_deprecation_headers(Json(pastes)))
-    } else {
-        Ok(Json(pastes).into_response())
-    }
+    Ok(maybe_with_folder_deprecation_headers(
+        Json(pastes),
+        folder_filter_used,
+        "GET /api/pastes?folder_id=...",
+    ))
 }
 
 /// List paste metadata with optional filters.
@@ -277,16 +248,15 @@ pub async fn list_pastes_meta(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, HttpError> {
-    let normalized_folder_id = normalize_optional_id_for_create(query.folder_id);
+    let normalized_folder_id = normalize_optional_for_create(query.folder_id);
     let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
     let metas = state.db.pastes.list_meta(limit, normalized_folder_id)?;
-    if folder_filter_used {
-        warn_folder_deprecation("GET /api/pastes/meta?folder_id=...");
-        Ok(with_folder_deprecation_headers(Json(metas)))
-    } else {
-        Ok(Json(metas).into_response())
-    }
+    Ok(maybe_with_folder_deprecation_headers(
+        Json(metas),
+        folder_filter_used,
+        "GET /api/pastes/meta?folder_id=...",
+    ))
 }
 
 /// Search pastes by query.
@@ -304,19 +274,18 @@ pub async fn search_pastes(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Response, HttpError> {
-    let normalized_folder_id = normalize_optional_id_for_create(query.folder_id);
+    let normalized_folder_id = normalize_optional_for_create(query.folder_id);
     let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
     let pastes = state
         .db
         .pastes
         .search(&query.q, limit, normalized_folder_id, query.language)?;
-    if folder_filter_used {
-        warn_folder_deprecation("GET /api/search?folder_id=...");
-        Ok(with_folder_deprecation_headers(Json(pastes)))
-    } else {
-        Ok(Json(pastes).into_response())
-    }
+    Ok(maybe_with_folder_deprecation_headers(
+        Json(pastes),
+        folder_filter_used,
+        "GET /api/search?folder_id=...",
+    ))
 }
 
 /// Search paste metadata by query.
@@ -336,7 +305,7 @@ pub async fn search_pastes_meta(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Response, HttpError> {
-    let normalized_folder_id = normalize_optional_id_for_create(query.folder_id);
+    let normalized_folder_id = normalize_optional_for_create(query.folder_id);
     let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
     let metas =
@@ -344,10 +313,9 @@ pub async fn search_pastes_meta(
             .db
             .pastes
             .search_meta(&query.q, limit, normalized_folder_id, query.language)?;
-    if folder_filter_used {
-        warn_folder_deprecation("GET /api/search/meta?folder_id=...");
-        Ok(with_folder_deprecation_headers(Json(metas)))
-    } else {
-        Ok(Json(metas).into_response())
-    }
+    Ok(maybe_with_folder_deprecation_headers(
+        Json(metas),
+        folder_filter_used,
+        "GET /api/search/meta?folder_id=...",
+    ))
 }

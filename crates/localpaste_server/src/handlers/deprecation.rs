@@ -26,6 +26,23 @@ where
     response
 }
 
+/// Conditionally attach folder deprecation warning+headers to a response.
+pub(super) fn maybe_with_folder_deprecation_headers<R>(
+    response: R,
+    folder_pathway_used: bool,
+    pathway: &str,
+) -> Response
+where
+    R: IntoResponse,
+{
+    if folder_pathway_used {
+        warn_folder_deprecation(pathway);
+        with_folder_deprecation_headers(response)
+    } else {
+        response.into_response()
+    }
+}
+
 /// Emit a structured warning when deprecated folder API behavior is used.
 pub(super) fn warn_folder_deprecation(pathway: &str) {
     tracing::warn!(
