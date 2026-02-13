@@ -15,104 +15,189 @@ use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME};
 use sled::Db;
 use std::sync::Arc;
 
+/// Process probe state used for lock-safety decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessProbeResult {
+    /// A matching LocalPaste process was positively identified.
+    Running,
+    /// No matching LocalPaste process was found.
+    NotRunning,
+    /// Probe tooling/parsing failed, so liveness is uncertain.
+    Unknown,
+}
+
 #[cfg(unix)]
 const UNIX_PGREP_EXACT_NAMES: &[&str] = &["localpaste", "localpaste-gui"];
 #[cfg(unix)]
 const UNIX_PGREP_CMDLINE_NAMES: &[&str] = &["generate-test-data"];
 
-/// Check if another LocalPaste process is already running.
-///
-/// # Returns
-/// `true` when a matching process id (other than the current process) is found.
 #[cfg(unix)]
-fn pgrep_output_has_other_pid(stdout: &[u8], current_pid: u32) -> bool {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse::<u32>().ok())
-        .any(|pid| pid != current_pid)
+fn merge_probe_result(left: ProcessProbeResult, right: ProcessProbeResult) -> ProcessProbeResult {
+    use ProcessProbeResult::{NotRunning, Running, Unknown};
+    match (left, right) {
+        (Running, _) | (_, Running) => Running,
+        (Unknown, _) | (_, Unknown) => Unknown,
+        (NotRunning, NotRunning) => NotRunning,
+    }
 }
 
 #[cfg(unix)]
-fn pgrep_exact_name_has_other_pid(process_name: &str, current_pid: u32) -> bool {
-    use std::process::Command;
+fn pgrep_output_probe_result(stdout: &[u8], current_pid: u32) -> ProcessProbeResult {
+    let mut saw_pid = false;
+    let mut saw_invalid = false;
 
-    Command::new("pgrep")
-        .arg("-x")
-        .arg(process_name)
-        .output()
-        .ok()
-        .map(|result| pgrep_output_has_other_pid(&result.stdout, current_pid))
-        .unwrap_or(false)
+    for line in String::from_utf8_lossy(stdout).lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match trimmed.parse::<u32>() {
+            Ok(pid) => {
+                saw_pid = true;
+                if pid != current_pid {
+                    return ProcessProbeResult::Running;
+                }
+            }
+            Err(_) => saw_invalid = true,
+        }
+    }
+
+    if saw_invalid && !saw_pid {
+        ProcessProbeResult::Unknown
+    } else {
+        ProcessProbeResult::NotRunning
+    }
 }
 
 #[cfg(unix)]
-fn pgrep_cmdline_has_other_pid(binary_name: &str, current_pid: u32) -> bool {
+fn pgrep_probe_result(args: &[&str], current_pid: u32) -> ProcessProbeResult {
     use std::process::Command;
 
+    let output = match Command::new("pgrep").args(args).output() {
+        Ok(output) => output,
+        Err(_) => return ProcessProbeResult::Unknown,
+    };
+
+    if output.status.success() {
+        return pgrep_output_probe_result(&output.stdout, current_pid);
+    }
+
+    if output.status.code() == Some(1) {
+        ProcessProbeResult::NotRunning
+    } else {
+        ProcessProbeResult::Unknown
+    }
+}
+
+#[cfg(unix)]
+fn pgrep_exact_name_probe_result(process_name: &str, current_pid: u32) -> ProcessProbeResult {
+    pgrep_probe_result(&["-x", process_name], current_pid)
+}
+
+#[cfg(unix)]
+fn pgrep_cmdline_probe_result(binary_name: &str, current_pid: u32) -> ProcessProbeResult {
     let pattern = format!(r"(^|[/ ]){}($|[[:space:]])", binary_name);
-    Command::new("pgrep")
-        .arg("-f")
-        .arg(pattern)
-        .output()
-        .ok()
-        .map(|result| pgrep_output_has_other_pid(&result.stdout, current_pid))
-        .unwrap_or(false)
+    pgrep_probe_result(&["-f", pattern.as_str()], current_pid)
 }
 
-/// Check if another LocalPaste process is already running.
+/// Probe for other LocalPaste processes.
 ///
 /// # Returns
-/// `true` when a matching process id (other than the current process) is found.
+/// A tri-state result describing known running, known not-running, or unknown.
+///
+/// # Errors
+/// This probe is best-effort and never returns an error; uncertainty is reported as
+/// [`ProcessProbeResult::Unknown`].
 #[cfg(unix)]
-pub fn is_localpaste_running() -> bool {
+pub fn localpaste_process_probe() -> ProcessProbeResult {
     let current_pid = std::process::id();
-    UNIX_PGREP_EXACT_NAMES
+    let exact_probe = UNIX_PGREP_EXACT_NAMES
         .iter()
-        .any(|name| pgrep_exact_name_has_other_pid(name, current_pid))
-        || UNIX_PGREP_CMDLINE_NAMES
-            .iter()
-            .any(|name| pgrep_cmdline_has_other_pid(name, current_pid))
+        .fold(ProcessProbeResult::NotRunning, |result, name| {
+            merge_probe_result(result, pgrep_exact_name_probe_result(name, current_pid))
+        });
+    let cmdline_probe = UNIX_PGREP_CMDLINE_NAMES
+        .iter()
+        .fold(ProcessProbeResult::NotRunning, |result, name| {
+            merge_probe_result(result, pgrep_cmdline_probe_result(name, current_pid))
+        });
+    merge_probe_result(exact_probe, cmdline_probe)
 }
 
-/// Check if another LocalPaste process is already running.
+/// Probe for other LocalPaste processes.
 ///
 /// # Returns
-/// `true` when a matching process id (other than the current process) is found.
+/// A tri-state result describing known running, known not-running, or unknown.
+///
+/// # Errors
+/// This probe is best-effort and never returns an error; uncertainty is reported as
+/// [`ProcessProbeResult::Unknown`].
 ///
 /// # Panics
 /// This function does not intentionally panic.
 #[cfg(windows)]
-pub fn is_localpaste_running() -> bool {
+pub fn localpaste_process_probe() -> ProcessProbeResult {
     use std::process::Command;
 
     let output = Command::new("tasklist").arg("/FO").arg("CSV").output();
     let Ok(output) = output else {
-        return false;
+        return ProcessProbeResult::Unknown;
     };
+    if !output.status.success() {
+        return ProcessProbeResult::Unknown;
+    }
 
     let current_pid = std::process::id();
     let csv = String::from_utf8_lossy(&output.stdout);
-    csv.lines().skip(1).any(|line| {
+    let mut saw_invalid = false;
+    for line in csv.lines().skip(1) {
         let parts: Vec<&str> = line.trim().trim_matches('"').split("\",\"").collect();
         if parts.len() < 2 {
-            return false;
+            saw_invalid = true;
+            continue;
         }
         let process_name = parts[0].to_ascii_lowercase();
-        let pid = parts[1].parse::<u32>().ok();
-        (process_name == "localpaste.exe"
+        let pid = match parts[1].parse::<u32>() {
+            Ok(pid) => pid,
+            Err(_) => {
+                saw_invalid = true;
+                continue;
+            }
+        };
+        if (process_name == "localpaste.exe"
             || process_name == "localpaste-gui.exe"
             || process_name == "generate-test-data.exe")
-            && pid.map(|pid| pid != current_pid).unwrap_or(false)
-    })
+            && pid != current_pid
+        {
+            return ProcessProbeResult::Running;
+        }
+    }
+    if saw_invalid {
+        ProcessProbeResult::Unknown
+    } else {
+        ProcessProbeResult::NotRunning
+    }
+}
+
+/// Probe for other LocalPaste processes.
+///
+/// # Returns
+/// Returns `Unknown` on unsupported platforms.
+///
+/// # Errors
+/// This probe is best-effort and never returns an error; unsupported platforms
+/// are classified as [`ProcessProbeResult::Unknown`].
+#[cfg(not(any(unix, windows)))]
+pub fn localpaste_process_probe() -> ProcessProbeResult {
+    ProcessProbeResult::Unknown
 }
 
 /// Check if another LocalPaste process is already running.
 ///
 /// # Returns
-/// Always returns `false` on unsupported platforms.
-#[cfg(not(any(unix, windows)))]
+/// `true` when a matching process id (other than the current process) is found.
 pub fn is_localpaste_running() -> bool {
-    false
+    matches!(localpaste_process_probe(), ProcessProbeResult::Running)
 }
 
 /// Database handle with access to underlying sled trees.
@@ -340,65 +425,77 @@ impl Database {
                 // This is sled's internal lock, not our lock file
                 // It means another process has the database open
 
-                // Check if there's actually another LocalPaste process
-                if is_localpaste_running() {
-                    return Err(AppError::DatabaseError(
-                        "Another LocalPaste instance is already running.\n\
-                        Please close it first, or set DB_PATH to use a different database location."
-                            .to_string(),
-                    ));
-                } else {
-                    let parent = std::path::Path::new(path)
-                        .parent()
-                        .unwrap_or(std::path::Path::new("."))
-                        .display()
-                        .to_string();
-                    let wildcard = format!("{}\\*.{}", path, DB_LOCK_EXTENSION);
-                    let (backup_cmd, remove_cmd, restore_cmd) = if cfg!(windows) {
-                        (
-                            format!(
-                                "Copy-Item -Recurse -Force \"{}\" \"{}.backup\"",
-                                path, path
-                            ),
-                            format!(
-                                "Remove-Item -Force \"{}\",\"{}\\\\{}\",\"{}.{}\"",
-                                wildcard,
-                                path,
-                                DB_LOCK_FILE_NAME,
-                                path,
-                                DB_LOCK_EXTENSION
-                            ),
-                            format!(
-                                "Get-ChildItem \"{}\\*.backup.*\" | Sort-Object LastWriteTime | Select-Object -Last 1",
-                                parent
-                            ),
-                        )
-                    } else {
-                        (
-                            format!("cp -r {} {}.backup", path, path),
-                            format!(
-                                "rm -f {0}/*.{1} {0}/{2} {0}.{1}",
-                                path, DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME,
-                            ),
-                            format!("ls -la {}/*.backup.* | tail -1", parent),
-                        )
-                    };
+                // Uncertain liveness must remain conservative to avoid data corruption.
+                match localpaste_process_probe() {
+                    ProcessProbeResult::Running => {
+                        return Err(AppError::DatabaseError(
+                            "Another LocalPaste instance is already running.\n\
+                            Please close it first, or set DB_PATH to use a different database location."
+                                .to_string(),
+                        ));
+                    }
+                    ProcessProbeResult::Unknown => {
+                        return Err(AppError::DatabaseError(
+                            "Database appears to be locked, but LocalPaste process ownership could not be verified.\n\
+                            Treat this as potentially active usage; do not force unlock.\n\
+                            Close any localpaste/localpaste-gui/generate-test-data processes, then retry,\n\
+                            or set DB_PATH to a different location."
+                                .to_string(),
+                        ));
+                    }
+                    ProcessProbeResult::NotRunning => {
+                        let parent = std::path::Path::new(path)
+                            .parent()
+                            .unwrap_or(std::path::Path::new("."))
+                            .display()
+                            .to_string();
+                        let wildcard = format!("{}\\*.{}", path, DB_LOCK_EXTENSION);
+                        let (backup_cmd, remove_cmd, restore_cmd) = if cfg!(windows) {
+                            (
+                                format!(
+                                    "Copy-Item -Recurse -Force \"{}\" \"{}.backup\"",
+                                    path, path
+                                ),
+                                format!(
+                                    "Remove-Item -Force \"{}\",\"{}\\\\{}\",\"{}.{}\"",
+                                    wildcard,
+                                    path,
+                                    DB_LOCK_FILE_NAME,
+                                    path,
+                                    DB_LOCK_EXTENSION
+                                ),
+                                format!(
+                                    "Get-ChildItem \"{}\\*.backup.*\" | Sort-Object LastWriteTime | Select-Object -Last 1",
+                                    parent
+                                ),
+                            )
+                        } else {
+                            (
+                                format!("cp -r {} {}.backup", path, path),
+                                format!(
+                                    "rm -f {0}/*.{1} {0}/{2} {0}.{1}",
+                                    path, DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME,
+                                ),
+                                format!("ls -la {}/*.backup.* | tail -1", parent),
+                            )
+                        };
 
-                    return Err(AppError::DatabaseError(format!(
-                        "Database appears to be locked.\n\
-                        Another process may still be using it, or a previous crash left a stale lock.\n\
-                        If you just started the localpaste server for CLI tests, stop it before starting the GUI,\n\
-                        or set DB_PATH to a different location.\n\n\
-                        To recover from a stale lock:\n\
-                        1. {}\n\
-                        2. {}\n\
-                        3. Try starting again\n\n\
-                        If that doesn't work, restore from auto-backup:\n\
-                        {}\n\
-                        Or use:\n\
-                        localpaste --force-unlock",
-                        backup_cmd, remove_cmd, restore_cmd
-                    )));
+                        return Err(AppError::DatabaseError(format!(
+                            "Database appears to be locked.\n\
+                            Another process may still be using it, or a previous crash left a stale lock.\n\
+                            If you just started the localpaste server for CLI tests, stop it before starting the GUI,\n\
+                            or set DB_PATH to a different location.\n\n\
+                            To recover from a stale lock:\n\
+                            1. {}\n\
+                            2. {}\n\
+                            3. Try starting again\n\n\
+                            If that doesn't work, restore from auto-backup:\n\
+                            {}\n\
+                            Or use:\n\
+                            localpaste --force-unlock",
+                            backup_cmd, remove_cmd, restore_cmd
+                        )));
+                    }
                 }
             }
             Err(e) => return Err(AppError::DatabaseError(e.to_string())),
@@ -434,22 +531,30 @@ impl Database {
 
 #[cfg(all(test, unix))]
 mod process_detection_tests {
-    use super::{pgrep_output_has_other_pid, UNIX_PGREP_CMDLINE_NAMES};
+    use super::{pgrep_output_probe_result, ProcessProbeResult, UNIX_PGREP_CMDLINE_NAMES};
 
     #[test]
     fn unix_pid_parser_ignores_current_pid_and_invalid_lines() {
         let current_pid = 4242u32;
         let stdout = b"garbage\n4242\n";
-        let has_other = pgrep_output_has_other_pid(stdout, current_pid);
-        assert!(!has_other);
+        let probe = pgrep_output_probe_result(stdout, current_pid);
+        assert_eq!(probe, ProcessProbeResult::NotRunning);
     }
 
     #[test]
     fn unix_pid_parser_detects_other_localpaste_pid() {
         let current_pid = 4242u32;
         let stdout = b"1111\n4242\n";
-        let has_other = pgrep_output_has_other_pid(stdout, current_pid);
-        assert!(has_other);
+        let probe = pgrep_output_probe_result(stdout, current_pid);
+        assert_eq!(probe, ProcessProbeResult::Running);
+    }
+
+    #[test]
+    fn unix_pid_parser_marks_unknown_when_output_is_unparseable() {
+        let current_pid = 4242u32;
+        let stdout = b"not-a-pid\nalso-bad\n";
+        let probe = pgrep_output_probe_result(stdout, current_pid);
+        assert_eq!(probe, ProcessProbeResult::Unknown);
     }
 
     #[test]

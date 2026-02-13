@@ -5,6 +5,7 @@ use localpaste_core::models::{
     folder::Folder,
     paste::{Paste, PasteMeta},
 };
+use ropey::Rope;
 
 /// Commands issued by the UI thread for the backend worker to execute.
 #[derive(Debug)]
@@ -29,6 +30,10 @@ pub enum CoreCmd {
     CreatePaste { content: String },
     /// Persist updated content for an existing paste.
     UpdatePaste { id: String, content: String },
+    /// Persist updated content for an existing paste using a rope snapshot.
+    ///
+    /// This keeps rope->string materialization off the UI thread.
+    UpdatePasteVirtual { id: String, content: Rope },
     /// Persist metadata changes for an existing paste.
     UpdatePasteMeta {
         id: String,

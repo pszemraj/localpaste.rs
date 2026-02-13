@@ -107,6 +107,7 @@ pub struct LocalPasteApp {
     save_status: SaveStatus,
     last_edit_at: Option<Instant>,
     save_in_flight: bool,
+    save_request_revision: Option<u64>,
     autosave_delay: Duration,
     shortcut_help_open: bool,
     focus_editor_next: bool,
@@ -363,7 +364,7 @@ impl LocalPasteApp {
         let server_addr = server.addr();
         let server_used_fallback = server.used_fallback();
 
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, config.max_paste_size);
         let highlight_worker = spawn_highlight_worker();
 
         let mut app = Self {
@@ -424,6 +425,7 @@ impl LocalPasteApp {
             save_status: SaveStatus::Saved,
             last_edit_at: None,
             save_in_flight: false,
+            save_request_revision: None,
             autosave_delay,
             shortcut_help_open: false,
             focus_editor_next: false,

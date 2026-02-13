@@ -3,8 +3,26 @@
 use std::sync::Arc;
 
 use localpaste_core::DEFAULT_PORT;
+use localpaste_server::db::ProcessProbeResult;
 use localpaste_server::{config::Config, db::Database, serve_router, AppState};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+fn guard_force_unlock_probe(result: ProcessProbeResult) -> anyhow::Result<()> {
+    match result {
+        ProcessProbeResult::Running => {
+            anyhow::bail!(
+                "Refusing --force-unlock while a LocalPaste process appears to be running"
+            );
+        }
+        // Uncertain owner detection is treated as unsafe by default.
+        ProcessProbeResult::Unknown => {
+            anyhow::bail!(
+                "Refusing --force-unlock because process ownership could not be verified"
+            );
+        }
+        ProcessProbeResult::NotRunning => Ok(()),
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,11 +44,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env();
 
     if args.contains(&"--force-unlock".to_string()) {
-        if localpaste_server::db::is_localpaste_running() {
-            anyhow::bail!(
-                "Refusing --force-unlock while a LocalPaste process appears to be running"
-            );
-        }
+        guard_force_unlock_probe(localpaste_server::db::localpaste_process_probe())?;
 
         tracing::warn!("Force unlock requested");
         if std::path::Path::new(&config.db_path).exists() {
@@ -156,5 +170,30 @@ async fn shutdown_signal(db: Arc<Database>) {
         tracing::error!("Failed to flush database: {}", err);
     } else {
         tracing::info!("Database flushed successfully");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{guard_force_unlock_probe, ProcessProbeResult};
+
+    #[test]
+    fn force_unlock_guard_rejects_unknown_probe_results() {
+        let err = guard_force_unlock_probe(ProcessProbeResult::Unknown)
+            .expect_err("unknown probe should reject force unlock");
+        assert!(err.to_string().contains("could not be verified"));
+    }
+
+    #[test]
+    fn force_unlock_guard_rejects_running_probe_results() {
+        let err = guard_force_unlock_probe(ProcessProbeResult::Running)
+            .expect_err("running probe should reject force unlock");
+        assert!(err.to_string().contains("appears to be running"));
+    }
+
+    #[test]
+    fn force_unlock_guard_allows_not_running_probe_results() {
+        guard_force_unlock_probe(ProcessProbeResult::NotRunning)
+            .expect("not-running probe should allow force unlock");
     }
 }

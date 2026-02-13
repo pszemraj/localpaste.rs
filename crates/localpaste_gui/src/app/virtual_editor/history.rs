@@ -143,8 +143,7 @@ impl VirtualEditorHistory {
         if !previous.deleted.is_empty() || !next.deleted.is_empty() {
             return false;
         }
-        let prev_inserted_chars = previous.inserted.chars().count();
-        next.start == previous.start.saturating_add(prev_inserted_chars)
+        next.start == previous.after_cursor
     }
 
     fn trim_undo(&mut self) {

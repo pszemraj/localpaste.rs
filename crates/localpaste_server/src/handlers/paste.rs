@@ -120,6 +120,10 @@ pub async fn update_paste(
     Path(id): Path<String>,
     Json(mut req): Json<UpdatePasteRequest>,
 ) -> Result<Response, HttpError> {
+    if state.locks.is_locked(&id) {
+        return Err(AppError::Locked("Paste is currently open for editing.".to_string()).into());
+    }
+
     let folder_field_used = req.folder_id.is_some();
     req.folder_id = normalize_optional_for_update(req.folder_id);
 
@@ -225,7 +229,8 @@ pub async fn list_pastes(
     let normalized_folder_id = normalize_optional_for_create(query.folder_id);
     let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
-    let pastes = state.db.pastes.list(limit, normalized_folder_id)?;
+    // This route intentionally returns metadata only to cap payload size.
+    let pastes = state.db.pastes.list_meta(limit, normalized_folder_id)?;
     Ok(maybe_with_folder_deprecation_headers(
         Json(pastes),
         folder_filter_used,
@@ -277,12 +282,15 @@ pub async fn search_pastes(
     let normalized_folder_id = normalize_optional_for_create(query.folder_id);
     let folder_filter_used = normalized_folder_id.is_some();
     let limit = query.limit.unwrap_or(50).min(100);
+    // Preserve content-match semantics from canonical search while returning
+    // metadata rows to avoid large full-content responses.
     let pastes = state
         .db
         .pastes
         .search(&query.q, limit, normalized_folder_id, query.language)?;
+    let metas: Vec<PasteMeta> = pastes.iter().map(PasteMeta::from).collect();
     Ok(maybe_with_folder_deprecation_headers(
-        Json(pastes),
+        Json(metas),
         folder_filter_used,
         "GET /api/search?folder_id=...",
     ))

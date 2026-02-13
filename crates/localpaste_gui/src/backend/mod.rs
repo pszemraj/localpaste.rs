@@ -15,6 +15,7 @@ mod tests {
     use localpaste_core::models::folder::Folder;
     use localpaste_core::models::paste::Paste;
     use localpaste_core::Database;
+    use ropey::Rope;
     use std::thread;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -58,7 +59,7 @@ mod tests {
         db.pastes.create(&paste1).expect("create paste1");
         db.pastes.create(&paste2).expect("create paste2");
 
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
         backend
             .cmd_tx
             .send(CoreCmd::ListPastes {
@@ -86,7 +87,7 @@ mod tests {
         let seed = Paste::new("seed".to_string(), "seed".to_string());
         db.pastes.create(&seed).expect("create seed");
 
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
         backend
             .cmd_tx
             .send(CoreCmd::ListPastes {
@@ -133,7 +134,7 @@ mod tests {
         let paste_id = paste.id.clone();
         db.pastes.create(&paste).expect("create paste");
 
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
         backend
             .cmd_tx
             .send(CoreCmd::GetPaste {
@@ -168,7 +169,7 @@ mod tests {
     #[test]
     fn backend_creates_updates_and_deletes_paste() {
         let TestDb { _dir: _guard, db } = setup_db();
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
 
         backend
             .cmd_tx
@@ -215,9 +216,104 @@ mod tests {
     }
 
     #[test]
+    fn backend_virtual_update_persists_content() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste {
+                content: "hello".to_string(),
+            })
+            .expect("send create");
+        let created_id = match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteCreated { paste } => paste.id,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteVirtual {
+                id: created_id.clone(),
+                content: Rope::from_str("virtual-updated"),
+            })
+            .expect("send virtual update");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteSaved { paste } => {
+                assert_eq!(paste.id, created_id);
+                assert_eq!(paste.content, "virtual-updated");
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn backend_rejects_oversize_create_and_update() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db, 8);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste {
+                content: "123456789".to_string(),
+            })
+            .expect("send oversize create");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::Error { source, message } => {
+                assert_eq!(source, CoreErrorSource::Other);
+                assert!(message.contains("maximum of 8 bytes"));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste {
+                content: "ok".to_string(),
+            })
+            .expect("send valid create");
+        let created_id = match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteCreated { paste } => {
+                assert_eq!(paste.content, "ok");
+                paste.id
+            }
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePaste {
+                id: created_id.clone(),
+                content: "123456789".to_string(),
+            })
+            .expect("send oversize update");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::Error { source, message } => {
+                assert_eq!(source, CoreErrorSource::SaveContent);
+                assert!(message.contains("maximum of 8 bytes"));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::GetPaste {
+                id: created_id.clone(),
+            })
+            .expect("send get");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteLoaded { paste } => {
+                assert_eq!(paste.id, created_id);
+                assert_eq!(paste.content, "ok");
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
     fn backend_delete_paste_updates_folder_count() {
         let TestDb { _dir: _guard, db } = setup_db();
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
 
         backend
             .cmd_tx
@@ -312,7 +408,7 @@ mod tests {
         let paste = Paste::new("alpha beta".to_string(), "rust-alpha".to_string());
         db.pastes.create(&paste).expect("create paste");
 
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
         backend
             .cmd_tx
             .send(CoreCmd::SearchPastes {
@@ -361,7 +457,7 @@ mod tests {
             ))
             .expect("create beta");
 
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
         backend
             .cmd_tx
             .send(CoreCmd::SearchPalette {
@@ -383,7 +479,7 @@ mod tests {
     #[test]
     fn backend_updates_paste_metadata() {
         let TestDb { _dir: _guard, db } = setup_db();
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
 
         backend
             .cmd_tx
@@ -522,7 +618,7 @@ mod tests {
     #[test]
     fn backend_folder_commands_enforce_parenting_rules_and_migrate_on_delete() {
         let TestDb { _dir: _guard, db } = setup_db();
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
 
         backend
             .cmd_tx
@@ -634,7 +730,7 @@ mod tests {
     #[test]
     fn backend_create_folder_trims_parent_id() {
         let TestDb { _dir: _guard, db } = setup_db();
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
 
         backend
             .cmd_tx
@@ -670,7 +766,7 @@ mod tests {
         let root = Folder::new("root".to_string());
         let root_id = root.id.clone();
         db.folders.create(&root).expect("create folder");
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
 
         backend
             .cmd_tx
@@ -686,7 +782,7 @@ mod tests {
     #[test]
     fn backend_update_folder_preserves_parent_unless_clear_is_explicit() {
         let TestDb { _dir: _guard, db } = setup_db();
-        let backend = spawn_backend(db);
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
 
         backend
             .cmd_tx

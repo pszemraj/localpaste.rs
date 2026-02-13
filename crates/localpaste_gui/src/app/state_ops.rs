@@ -15,25 +15,36 @@ use std::time::Instant;
 use tracing::warn;
 
 impl LocalPasteApp {
-    fn send_update_paste_or_mark_failed(
-        &mut self,
-        id: String,
-        content: String,
-        mode: &str,
-    ) -> bool {
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::UpdatePaste { id, content })
-            .is_ok()
-        {
+    fn send_update_paste_or_mark_failed(&mut self, command: CoreCmd, mode: &str) -> bool {
+        if self.backend.cmd_tx.send(command).is_ok() {
             return true;
         }
         self.save_in_flight = false;
         self.save_status = SaveStatus::Dirty;
+        self.save_request_revision = None;
         self.last_edit_at = Some(Instant::now());
         self.set_status(format!("{mode} failed: backend unavailable."));
         false
+    }
+
+    fn dispatch_content_save(&mut self, id: String, mode: &str) -> bool {
+        self.save_request_revision = Some(self.active_revision());
+        self.save_in_flight = true;
+        self.save_status = SaveStatus::Saving;
+
+        let command = if self.is_virtual_editor_mode() {
+            CoreCmd::UpdatePasteVirtual {
+                id,
+                content: self.virtual_editor_buffer.rope().clone(),
+            }
+        } else {
+            CoreCmd::UpdatePaste {
+                id,
+                content: self.selected_content.to_string(),
+            }
+        };
+
+        self.send_update_paste_or_mark_failed(command, mode)
     }
 
     pub(super) fn apply_event(&mut self, event: CoreEvent) {
@@ -65,6 +76,7 @@ impl LocalPasteApp {
                     self.save_status = SaveStatus::Saved;
                     self.last_edit_at = None;
                     self.save_in_flight = false;
+                    self.save_request_revision = None;
                     self.metadata_save_in_flight = false;
                 }
             }
@@ -84,11 +96,13 @@ impl LocalPasteApp {
                 self.save_status = SaveStatus::Saved;
                 self.last_edit_at = None;
                 self.save_in_flight = false;
+                self.save_request_revision = None;
                 self.metadata_save_in_flight = false;
                 self.focus_editor_next = true;
                 self.set_status("Created new paste.");
             }
             CoreEvent::PasteSaved { paste } => {
+                let requested_revision = self.save_request_revision.take();
                 if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste.id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
@@ -102,14 +116,17 @@ impl LocalPasteApp {
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
-                    let active_content = self.active_snapshot();
-                    let has_newer_local_edits = active_content != paste.content;
+                    let has_newer_local_edits = if self.is_virtual_editor_mode() {
+                        requested_revision
+                            .map(|revision| self.active_revision() != revision)
+                            .unwrap_or(false)
+                    } else {
+                        self.selected_content.as_str() != paste.content
+                    };
                     if !self.metadata_dirty && !self.metadata_save_in_flight {
                         self.sync_editor_metadata(&paste);
                     }
-                    let mut updated = paste;
-                    updated.content = active_content;
-                    self.selected_paste = Some(updated);
+                    self.selected_paste = Some(paste);
                     self.save_in_flight = false;
                     if has_newer_local_edits {
                         // Keep autosave armed when this ack corresponds to an older snapshot.
@@ -232,6 +249,7 @@ impl LocalPasteApp {
                             self.save_status = SaveStatus::Dirty;
                         }
                         self.save_in_flight = false;
+                        self.save_request_revision = None;
                         if let Some(pending) = self.pending_selection_id.take() {
                             self.clear_pending_copy_for(pending.as_str());
                         }
@@ -435,6 +453,7 @@ impl LocalPasteApp {
                 if content_save_needed && self.save_in_flight {
                     self.save_in_flight = false;
                     self.save_status = SaveStatus::Dirty;
+                    self.save_request_revision = None;
                     if self.last_edit_at.is_none() {
                         self.last_edit_at = Some(Instant::now());
                     }
@@ -476,6 +495,7 @@ impl LocalPasteApp {
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
+        self.save_request_revision = None;
         if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
             self.clear_selection();
             self.set_status("Get paste failed: backend unavailable.");
@@ -520,6 +540,7 @@ impl LocalPasteApp {
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
+        self.save_request_revision = None;
     }
 
     pub(super) fn set_status(&mut self, text: impl Into<String>) {
@@ -596,10 +617,7 @@ impl LocalPasteApp {
         let Some(id) = self.selected_id.clone() else {
             return;
         };
-        let content = self.active_snapshot();
-        self.save_in_flight = true;
-        self.save_status = SaveStatus::Saving;
-        let _sent = self.send_update_paste_or_mark_failed(id, content, "Autosave");
+        let _sent = self.dispatch_content_save(id, "Autosave");
     }
 
     pub(super) fn save_now(&mut self) {
@@ -609,10 +627,7 @@ impl LocalPasteApp {
         let Some(id) = self.selected_id.clone() else {
             return;
         };
-        let content = self.active_snapshot();
-        self.save_in_flight = true;
-        self.save_status = SaveStatus::Saving;
-        let _sent = self.send_update_paste_or_mark_failed(id, content, "Save");
+        let _sent = self.dispatch_content_save(id, "Save");
     }
 
     pub(super) fn save_metadata_now(&mut self) {

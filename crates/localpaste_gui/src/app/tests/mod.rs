@@ -123,6 +123,7 @@ fn make_app() -> TestHarness {
         save_status: SaveStatus::Saved,
         last_edit_at: None,
         save_in_flight: false,
+        save_request_revision: None,
         autosave_delay: Duration::from_millis(2000),
         shortcut_help_open: false,
         focus_editor_next: false,

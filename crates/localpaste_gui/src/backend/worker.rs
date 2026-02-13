@@ -23,6 +23,17 @@ fn send_error(evt_tx: &Sender<CoreEvent>, source: CoreErrorSource, message: Stri
     let _ = evt_tx.send(CoreEvent::Error { source, message });
 }
 
+fn validate_paste_size(content: &str, max_paste_size: usize) -> Result<(), String> {
+    if content.len() > max_paste_size {
+        Err(format!(
+            "Paste size exceeds maximum of {} bytes",
+            max_paste_size
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ListCacheKey {
     limit: usize,
@@ -107,12 +118,16 @@ fn log_query_perf(
 /// All I/O stays off the UI thread; the worker replies with [`CoreEvent`] values
 /// that are polled each frame.
 ///
+/// # Arguments
+/// - `db`: Open database handle shared by backend command handlers.
+/// - `max_paste_size`: Maximum allowed paste content size in bytes.
+///
 /// # Returns
 /// A [`BackendHandle`] containing the command sender and event receiver.
 ///
 /// # Panics
 /// Panics if the worker thread cannot be spawned.
-pub fn spawn_backend(db: Database) -> BackendHandle {
+pub fn spawn_backend(db: Database, max_paste_size: usize) -> BackendHandle {
     let (cmd_tx, cmd_rx) = unbounded();
     let (evt_tx, evt_rx) = unbounded();
 
@@ -313,6 +328,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         }
                     },
                     CoreCmd::CreatePaste { content } => {
+                        if let Err(message) = validate_paste_size(content.as_str(), max_paste_size)
+                        {
+                            send_error(&evt_tx, CoreErrorSource::Other, message);
+                            continue;
+                        }
                         let inferred = localpaste_core::models::paste::detect_language(&content);
                         let name = naming::generate_name_for_content(&content, inferred.as_deref());
                         let paste = localpaste_core::models::paste::Paste::new(content, name);
@@ -332,6 +352,11 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                         }
                     }
                     CoreCmd::UpdatePaste { id, content } => {
+                        if let Err(message) = validate_paste_size(content.as_str(), max_paste_size)
+                        {
+                            send_error(&evt_tx, CoreErrorSource::SaveContent, message);
+                            continue;
+                        }
                         let update = UpdatePasteRequest {
                             content: Some(content),
                             name: None,
@@ -351,6 +376,40 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                             }
                             Err(err) => {
                                 error!("backend update failed: {}", err);
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::SaveContent,
+                                    format!("Update failed: {}", err),
+                                );
+                            }
+                        }
+                    }
+                    CoreCmd::UpdatePasteVirtual { id, content } => {
+                        let content = content.to_string();
+                        if let Err(message) = validate_paste_size(content.as_str(), max_paste_size)
+                        {
+                            send_error(&evt_tx, CoreErrorSource::SaveContent, message);
+                            continue;
+                        }
+                        let update = UpdatePasteRequest {
+                            content: Some(content),
+                            name: None,
+                            language: None,
+                            language_is_manual: None,
+                            folder_id: None,
+                            tags: None,
+                        };
+                        match db.pastes.update(&id, update) {
+                            Ok(Some(paste)) => {
+                                query_cache.invalidate();
+                                let _ = evt_tx.send(CoreEvent::PasteSaved { paste });
+                            }
+                            Ok(None) => {
+                                query_cache.invalidate();
+                                let _ = evt_tx.send(CoreEvent::PasteMissing { id });
+                            }
+                            Err(err) => {
+                                error!("backend virtual update failed: {}", err);
                                 send_error(
                                     &evt_tx,
                                     CoreErrorSource::SaveContent,

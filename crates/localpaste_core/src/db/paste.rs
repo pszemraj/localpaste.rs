@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sled::Db;
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -342,17 +343,59 @@ impl PasteDb {
         if limit == 0 {
             return Ok(Vec::new());
         }
+        if !self.meta_indexes_usable()? {
+            tracing::warn!("Metadata indexes are dirty/unavailable; listing from canonical tree");
+            return self.list_meta_from_canonical(limit, folder_id);
+        }
+
         let mut metas = Vec::with_capacity(limit);
+        let mut seen_ids = HashSet::with_capacity(limit);
         for item in self.updated_tree.iter() {
             let (_, value) = item?;
             let id = match std::str::from_utf8(value.as_ref()) {
                 Ok(id) => id,
-                Err(_) => continue,
+                Err(_) => {
+                    tracing::warn!(
+                        "Metadata updated index contains non-UTF8 id; listing from canonical tree"
+                    );
+                    return self.list_meta_from_canonical(limit, folder_id);
+                }
             };
-            let Some(meta_bytes) = self.meta_tree.get(id.as_bytes())? else {
+            if !seen_ids.insert(id.to_string()) {
                 continue;
+            }
+            let Some(meta_bytes) = self.meta_tree.get(id.as_bytes())? else {
+                tracing::warn!(
+                    "Metadata index missing meta row for id '{}'; listing from canonical tree",
+                    id
+                );
+                return self.list_meta_from_canonical(limit, folder_id);
             };
-            let meta = deserialize_meta(&meta_bytes)?;
+            let meta = match deserialize_meta(&meta_bytes) {
+                Ok(meta) => meta,
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to decode metadata row for id '{}': {}; listing from canonical tree",
+                        id,
+                        err
+                    );
+                    return self.list_meta_from_canonical(limit, folder_id);
+                }
+            };
+            if meta.id != id {
+                tracing::warn!(
+                    "Metadata id mismatch for updated index id '{}'; listing from canonical tree",
+                    id
+                );
+                return self.list_meta_from_canonical(limit, folder_id);
+            }
+            if self.tree.get(id.as_bytes())?.is_none() {
+                tracing::warn!(
+                    "Metadata row for id '{}' has no canonical paste; listing from canonical tree",
+                    id
+                );
+                return self.list_meta_from_canonical(limit, folder_id);
+            }
             if let Some(ref fid) = folder_id {
                 if meta.folder_id.as_ref() != Some(fid) {
                     continue;
@@ -460,11 +503,32 @@ impl PasteDb {
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
+        if !self.meta_indexes_usable()? {
+            tracing::warn!("Metadata indexes are dirty/unavailable; searching via canonical tree");
+            return self.search_meta_from_canonical(query, limit, folder_id, language);
+        }
+
         let query_lower = query.to_lowercase();
         let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
         for item in self.meta_tree.iter() {
             let (_, value) = item?;
-            let meta = deserialize_meta(&value)?;
+            let meta = match deserialize_meta(&value) {
+                Ok(meta) => meta,
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to decode metadata row during search: {}; falling back to canonical tree",
+                        err
+                    );
+                    return self.search_meta_from_canonical(query, limit, folder_id, language);
+                }
+            };
+            if self.tree.get(meta.id.as_bytes())?.is_none() {
+                tracing::warn!(
+                    "Metadata search encountered ghost row for id '{}'; falling back to canonical tree",
+                    meta.id
+                );
+                return self.search_meta_from_canonical(query, limit, folder_id, language);
+            }
 
             if let Some(ref fid) = folder_id {
                 if meta.folder_id.as_ref() != Some(fid) {
@@ -616,13 +680,17 @@ impl PasteDb {
         meta: &PasteMeta,
         previous: Option<&PasteMeta>,
     ) -> Result<(), AppError> {
-        if let Some(previous) = previous {
-            self.remove_index_entry(previous)?;
-        }
         let meta_bytes = bincode::serialize(meta)?;
         self.meta_tree.insert(meta.id.as_bytes(), meta_bytes)?;
         let recency_key = index_key(meta.updated_at, meta.id.as_str());
-        self.updated_tree.insert(recency_key, meta.id.as_bytes())?;
+        self.updated_tree
+            .insert(recency_key.clone(), meta.id.as_bytes())?;
+        if let Some(previous) = previous {
+            let previous_key = index_key(previous.updated_at, previous.id.as_str());
+            if previous_key != recency_key {
+                self.updated_tree.remove(previous_key)?;
+            }
+        }
         Ok(())
     }
 
@@ -685,6 +753,82 @@ impl PasteDb {
                 );
             }
         }
+    }
+
+    fn meta_indexes_usable(&self) -> Result<bool, AppError> {
+        if self.meta_index_schema_version()? != Some(META_INDEX_SCHEMA_VERSION) {
+            return Ok(false);
+        }
+        if self.meta_index_dirty_count()? > 0 {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    fn list_meta_from_canonical(
+        &self,
+        limit: usize,
+        folder_id: Option<String>,
+    ) -> Result<Vec<PasteMeta>, AppError> {
+        self.list(limit, folder_id)
+            .map(|pastes| pastes.iter().map(PasteMeta::from).collect())
+    }
+
+    fn search_meta_from_canonical(
+        &self,
+        query: &str,
+        limit: usize,
+        folder_id: Option<String>,
+        language: Option<String>,
+    ) -> Result<Vec<PasteMeta>, AppError> {
+        let query_lower = query.to_lowercase();
+        let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
+        for item in self.tree.iter() {
+            let (_, value) = item?;
+            let paste = deserialize_paste(&value)?;
+            let meta = PasteMeta::from(&paste);
+
+            if let Some(ref fid) = folder_id {
+                if meta.folder_id.as_ref() != Some(fid) {
+                    continue;
+                }
+            }
+            if let Some(ref lang_filter) = language {
+                if meta.language.as_ref() != Some(lang_filter) {
+                    continue;
+                }
+            }
+
+            let mut score = 0;
+            if meta.name.to_lowercase().contains(&query_lower) {
+                score += 10;
+            }
+            if meta
+                .tags
+                .iter()
+                .any(|tag| tag.to_lowercase().contains(&query_lower))
+            {
+                score += 5;
+            }
+            if meta
+                .language
+                .as_ref()
+                .map(|lang| lang.to_lowercase().contains(&query_lower))
+                .unwrap_or(false)
+            {
+                score += 2;
+            }
+            if score > 0 {
+                results.push((score, meta.updated_at, meta));
+            }
+        }
+
+        results.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+        Ok(results
+            .into_iter()
+            .take(limit)
+            .map(|(_, _, meta)| meta)
+            .collect())
     }
 }
 
@@ -816,6 +960,7 @@ mod tests {
     };
     use crate::models::paste::Paste;
     use crate::AppError;
+    use chrono::Duration;
     use std::cell::Cell;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -943,6 +1088,111 @@ mod tests {
         assert!(!paste_db
             .needs_reconcile_meta_indexes(false)
             .expect("needs reconcile"));
+    }
+
+    #[test]
+    fn list_meta_falls_back_to_canonical_when_index_is_inconsistent() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        let paste = Paste::new("fallback body".to_string(), "fallback-name".to_string());
+        let paste_id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        paste_db
+            .meta_tree
+            .remove(paste_id.as_bytes())
+            .expect("remove meta row");
+
+        let metas = paste_db
+            .list_meta(10, None)
+            .expect("list metadata fallback");
+        assert!(
+            metas.into_iter().any(|meta| meta.id == paste_id),
+            "canonical fallback should retain visibility of canonical rows"
+        );
+    }
+
+    #[test]
+    fn list_meta_omits_ghost_rows_when_canonical_row_is_missing() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        let paste = Paste::new("ghost".to_string(), "ghost".to_string());
+        let paste_id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        paste_db
+            .tree
+            .remove(paste_id.as_bytes())
+            .expect("remove canonical row");
+        assert!(
+            paste_db
+                .meta_tree
+                .get(paste_id.as_bytes())
+                .expect("meta lookup")
+                .is_some(),
+            "meta row should remain to simulate ghost entry"
+        );
+
+        let metas = paste_db
+            .list_meta(10, None)
+            .expect("list metadata fallback");
+        assert!(
+            metas.into_iter().all(|meta| meta.id != paste_id),
+            "canonical fallback should hide ghost metadata rows"
+        );
+    }
+
+    #[test]
+    fn list_meta_dedupes_duplicate_updated_index_entries() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        let paste = Paste::new("body".to_string(), "duplicate-index".to_string());
+        let paste_id = paste.id.clone();
+        let updated_at = paste.updated_at;
+        paste_db.create(&paste).expect("create paste");
+
+        let stale_key = super::index_key(updated_at - Duration::seconds(60), paste_id.as_str());
+        paste_db
+            .updated_tree
+            .insert(stale_key, paste_id.as_bytes())
+            .expect("inject duplicate updated index entry");
+
+        let metas = paste_db.list_meta(10, None).expect("list metadata");
+        let duplicate_count = metas.iter().filter(|meta| meta.id == paste_id).count();
+        assert_eq!(
+            duplicate_count, 1,
+            "duplicate updated entries must dedupe by id"
+        );
+    }
+
+    #[test]
+    fn search_meta_falls_back_to_canonical_when_meta_decode_fails() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        let paste = Paste::new("body".to_string(), "needle-meta".to_string());
+        let paste_id = paste.id.clone();
+        paste_db.create(&paste).expect("create paste");
+
+        paste_db
+            .meta_tree
+            .insert(paste_id.as_bytes(), b"corrupt-meta")
+            .expect("corrupt metadata row");
+
+        let metas = paste_db
+            .search_meta("needle", 10, None, None)
+            .expect("search metadata fallback");
+        assert!(
+            metas.into_iter().any(|meta| meta.id == paste_id),
+            "canonical fallback should retain metadata search results"
+        );
     }
 
     #[test]

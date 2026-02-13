@@ -219,6 +219,8 @@ async fn test_paste_with_folder() {
     let pastes: Vec<serde_json::Value> = list_response.json();
     assert_eq!(pastes.len(), 1);
     assert_eq!(pastes[0]["folder_id"], folder_id);
+    assert!(pastes[0].get("content").is_none());
+    assert!(pastes[0].get("content_len").is_some());
 
     let list_meta_response = server
         .get(&format!("/api/pastes/meta?folder_id={}", folder_id))
@@ -278,11 +280,8 @@ async fn test_paste_search() {
     assert_eq!(search_response.status_code(), StatusCode::OK);
     let results: Vec<serde_json::Value> = search_response.json();
     assert_eq!(results.len(), 1);
-    assert!(results[0]["content"]
-        .as_str()
-        .unwrap()
-        .to_lowercase()
-        .contains("rust"));
+    assert_eq!(results[0]["name"], "rust-paste");
+    assert!(results[0].get("content").is_none());
 }
 
 #[tokio::test]
@@ -321,6 +320,9 @@ async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
     assert_eq!(full_search_response.status_code(), StatusCode::OK);
     let full_results: Vec<serde_json::Value> = full_search_response.json();
     assert_eq!(full_results.len(), 2);
+    assert!(full_results
+        .iter()
+        .all(|item| item.get("content").is_none() && item.get("content_len").is_some()));
 
     let meta_search_response = server.get("/api/search/meta?q=needle").await;
     assert_eq!(meta_search_response.status_code(), StatusCode::OK);
@@ -615,4 +617,42 @@ async fn test_delete_locked_paste_rejected() {
     locks.unlock(&paste_id);
     let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
     assert_eq!(delete_response.status_code(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_update_locked_paste_rejected() {
+    let (server, _temp, locks) = setup_test_server().await;
+
+    let create_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "Locked content",
+            "name": "locked-paste"
+        }))
+        .await;
+    assert_eq!(create_response.status_code(), StatusCode::OK);
+    let paste: serde_json::Value = create_response.json();
+    let paste_id = paste["id"].as_str().unwrap().to_string();
+
+    locks.lock(&paste_id);
+
+    let update_response = server
+        .put(&format!("/api/paste/{}", paste_id))
+        .json(&json!({
+            "content": "new body"
+        }))
+        .await;
+    assert_eq!(update_response.status_code(), StatusCode::LOCKED);
+
+    locks.unlock(&paste_id);
+
+    let update_response = server
+        .put(&format!("/api/paste/{}", paste_id))
+        .json(&json!({
+            "content": "new body"
+        }))
+        .await;
+    assert_eq!(update_response.status_code(), StatusCode::OK);
+    let updated: serde_json::Value = update_response.json();
+    assert_eq!(updated["content"], "new body");
 }

@@ -204,8 +204,8 @@ mod tests {
             .expect("list stale meta");
         assert_eq!(
             stale.len(),
-            1,
-            "stale metadata row should exist pre-reconcile"
+            0,
+            "metadata listing should fall back to canonical rows and hide stale ghost entries"
         );
 
         let deleted = delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
@@ -249,7 +249,10 @@ mod tests {
             .expect("paste should still exist");
         assert_eq!(moved.folder_id, None);
         assert!(
-            db.pastes.list(10, Some(root.id.clone())).expect("list").is_empty(),
+            db.pastes
+                .list(10, Some(root.id.clone()))
+                .expect("list")
+                .is_empty(),
             "canonical rows for deleted folder should be migrated"
         );
     }

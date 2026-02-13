@@ -275,14 +275,29 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
     assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
     assert!(!harness.app.save_in_flight);
     assert!(harness.app.last_edit_at.is_some());
-    assert_eq!(
-        harness
-            .app
-            .selected_paste
-            .as_ref()
-            .map(|paste| paste.content.as_str()),
-        Some("edited-during-save")
-    );
+    assert_eq!(harness.app.selected_content.as_str(), "edited-during-save");
+}
+
+#[test]
+fn virtual_editor_autosave_dispatches_rope_snapshot_command() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.virtual_editor_buffer.reset("virtual-content");
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.save_in_flight = false;
+    harness.app.last_edit_at =
+        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+
+    harness.app.maybe_autosave();
+    assert!(matches!(harness.app.save_status, SaveStatus::Saving));
+    assert!(harness.app.save_in_flight);
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePasteVirtual { id, content } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(content.to_string(), "virtual-content");
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
 }
 
 #[test]

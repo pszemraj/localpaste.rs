@@ -45,7 +45,7 @@ fn api_updates_are_visible_to_backend_list() {
         .json()
         .expect("parse response");
 
-    let backend = spawn_backend(db);
+    let backend = spawn_backend(db, 10 * 1024 * 1024);
     backend
         .cmd_tx
         .send(CoreCmd::ListPastes {
@@ -102,7 +102,7 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
     let server_db = db.share().expect("share db");
     let state = AppState::with_locks(test_config(&db_path_str), server_db, locks);
     let _server = EmbeddedServer::start(state, false).expect("server");
-    let backend = spawn_backend(db);
+    let backend = spawn_backend(db, 10 * 1024 * 1024);
 
     backend
         .cmd_tx
@@ -200,7 +200,7 @@ fn api_folder_changes_are_visible_to_backend_state() {
     let server_db = db.share().expect("share db");
     let state = AppState::with_locks(test_config(&db_path_str), server_db, locks);
     let server = EmbeddedServer::start(state, false).expect("server");
-    let backend = spawn_backend(db);
+    let backend = spawn_backend(db, 10 * 1024 * 1024);
     let client = reqwest::blocking::Client::new();
 
     let folder_url = format!("http://{}/api/folder", server.addr());
@@ -299,7 +299,7 @@ fn list_and_search_latency_stay_within_reasonable_headless_budget() {
         db.pastes.create(&paste).expect("seed paste");
     }
 
-    let backend = spawn_backend(db);
+    let backend = spawn_backend(db, 10 * 1024 * 1024);
 
     let list_start = Instant::now();
     backend
