@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 const META_STATE_TREE_NAME: &str = "pastes_meta_state";
 const META_INDEX_VERSION_KEY: &[u8] = b"version";
-const META_INDEX_SCHEMA_VERSION: u32 = 1;
+const META_INDEX_DIRTY_COUNT_KEY: &[u8] = b"dirty_count";
+const META_INDEX_SCHEMA_VERSION: u32 = 2;
 
 /// Accessor for the `pastes` sled tree.
 pub struct PasteDb {
@@ -53,10 +54,14 @@ impl PasteDb {
         if marker_version != Some(META_INDEX_SCHEMA_VERSION) {
             return Ok(true);
         }
+        if self.meta_index_dirty_count()? > 0 {
+            return Ok(true);
+        }
 
         let pastes_empty = self.tree.is_empty();
         let meta_empty = self.meta_tree.is_empty();
         let updated_empty = self.updated_tree.is_empty();
+        let paste_len = self.tree.len();
 
         if !pastes_empty && (meta_empty || updated_empty) {
             return Ok(true);
@@ -64,7 +69,7 @@ impl PasteDb {
         if pastes_empty && (!meta_empty || !updated_empty) {
             return Ok(true);
         }
-        if !pastes_empty && self.has_meta_index_inconsistency()? {
+        if self.meta_tree.len() != paste_len || self.updated_tree.len() != paste_len {
             return Ok(true);
         }
         Ok(false)
@@ -87,6 +92,7 @@ impl PasteDb {
     where
         F: FnOnce(&Self, &Paste) -> Result<(), AppError>,
     {
+        self.begin_meta_index_mutation()?;
         let key = paste.id.as_bytes();
         let value = bincode::serialize(paste)?;
         let previous = self.tree.insert(key, value)?;
@@ -94,6 +100,7 @@ impl PasteDb {
             self.rollback_create_after_index_failure(key, previous, paste);
             return Err(err);
         }
+        self.try_end_meta_index_mutation();
         Ok(())
     }
 
@@ -123,6 +130,7 @@ impl PasteDb {
     /// # Errors
     /// Returns an error if the update fails.
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
+        self.begin_meta_index_mutation()?;
         let update_error = Rc::new(RefCell::new(None));
         let update_error_in = Rc::clone(&update_error);
         let old_meta = Rc::new(RefCell::new(None));
@@ -156,9 +164,13 @@ impl PasteDb {
             Some(bytes) => {
                 let paste = deserialize_paste(&bytes)?;
                 self.upsert_meta_and_index_from_paste(&paste, old_meta.borrow_mut().take())?;
+                self.try_end_meta_index_mutation();
                 Ok(Some(paste))
             }
-            None => Ok(None),
+            None => {
+                self.try_end_meta_index_mutation();
+                Ok(None)
+            }
         }
     }
 
@@ -182,6 +194,7 @@ impl PasteDb {
         expected_folder_id: Option<&str>,
         update: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
+        self.begin_meta_index_mutation()?;
         let update_error = Rc::new(RefCell::new(None));
         let update_error_in = Rc::clone(&update_error);
         let old_meta = Rc::new(RefCell::new(None));
@@ -221,6 +234,7 @@ impl PasteDb {
             return Err(err);
         }
         if folder_mismatch.get() {
+            self.try_end_meta_index_mutation();
             return Ok(None);
         }
 
@@ -228,9 +242,13 @@ impl PasteDb {
             Some(bytes) => {
                 let paste = deserialize_paste(&bytes)?;
                 self.upsert_meta_and_index_from_paste(&paste, old_meta.borrow_mut().take())?;
+                self.try_end_meta_index_mutation();
                 Ok(Some(paste))
             }
-            None => Ok(None),
+            None => {
+                self.try_end_meta_index_mutation();
+                Ok(None)
+            }
         }
     }
 
@@ -242,14 +260,19 @@ impl PasteDb {
     /// # Errors
     /// Returns an error if deletion fails or the deleted value cannot be decoded.
     pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
+        self.begin_meta_index_mutation()?;
         match self.tree.remove(id.as_bytes())? {
             Some(value) => {
                 let paste = deserialize_paste(&value)?;
                 let meta = PasteMeta::from(&paste);
                 self.remove_meta_and_index(&meta)?;
+                self.try_end_meta_index_mutation();
                 Ok(Some(paste))
             }
-            None => Ok(None),
+            None => {
+                self.try_end_meta_index_mutation();
+                Ok(None)
+            }
         }
     }
 
@@ -493,6 +516,7 @@ impl PasteDb {
     /// # Errors
     /// Returns an error if index rebuild fails.
     pub fn reconcile_meta_indexes(&self) -> Result<(), AppError> {
+        self.begin_meta_index_mutation()?;
         self.meta_tree.clear()?;
         self.updated_tree.clear()?;
         for item in self.tree.iter() {
@@ -502,7 +526,7 @@ impl PasteDb {
         }
         self.meta_tree.flush()?;
         self.updated_tree.flush()?;
-        self.write_meta_index_schema_version()?;
+        self.write_meta_index_state(META_INDEX_SCHEMA_VERSION, 0)?;
         Ok(())
     }
 
@@ -522,73 +546,60 @@ impl PasteDb {
         Ok(Some(u32::from_be_bytes(bytes)))
     }
 
-    fn write_meta_index_schema_version(&self) -> Result<(), AppError> {
+    fn meta_index_dirty_count(&self) -> Result<u64, AppError> {
+        let Some(raw) = self.meta_state_tree.get(META_INDEX_DIRTY_COUNT_KEY)? else {
+            return Ok(0);
+        };
+        if raw.len() != std::mem::size_of::<u64>() {
+            tracing::warn!(
+                "Metadata index dirty marker has invalid length {}; forcing reconcile",
+                raw.len()
+            );
+            return Ok(1);
+        }
+        let mut bytes = [0u8; std::mem::size_of::<u64>()];
+        bytes.copy_from_slice(raw.as_ref());
+        Ok(u64::from_be_bytes(bytes))
+    }
+
+    fn write_meta_index_state(&self, version: u32, dirty_count: u64) -> Result<(), AppError> {
+        self.meta_state_tree
+            .insert(META_INDEX_VERSION_KEY, version.to_be_bytes().to_vec())?;
         self.meta_state_tree.insert(
-            META_INDEX_VERSION_KEY,
-            META_INDEX_SCHEMA_VERSION.to_be_bytes().to_vec(),
+            META_INDEX_DIRTY_COUNT_KEY,
+            dirty_count.to_be_bytes().to_vec(),
         )?;
         self.meta_state_tree.flush()?;
         Ok(())
     }
 
-    fn has_meta_index_inconsistency(&self) -> Result<bool, AppError> {
-        let paste_len = self.tree.len();
-        if self.meta_tree.len() != paste_len || self.updated_tree.len() != paste_len {
-            return Ok(true);
+    fn begin_meta_index_mutation(&self) -> Result<(), AppError> {
+        let _ = self
+            .meta_state_tree
+            .update_and_fetch(META_INDEX_DIRTY_COUNT_KEY, |old| {
+                let current = decode_dirty_count(old);
+                Some(current.saturating_add(1).to_be_bytes().to_vec())
+            })?;
+        Ok(())
+    }
+
+    fn end_meta_index_mutation(&self) -> Result<(), AppError> {
+        let _ = self
+            .meta_state_tree
+            .update_and_fetch(META_INDEX_DIRTY_COUNT_KEY, |old| {
+                let current = decode_dirty_count(old);
+                Some(current.saturating_sub(1).to_be_bytes().to_vec())
+            })?;
+        Ok(())
+    }
+
+    fn try_end_meta_index_mutation(&self) {
+        if let Err(err) = self.end_meta_index_mutation() {
+            tracing::warn!(
+                "Failed to clear metadata index dirty marker after successful mutation: {}",
+                err
+            );
         }
-
-        for item in self.tree.iter() {
-            let (id_bytes, value) = item?;
-            let paste = deserialize_paste(&value)?;
-
-            let Some(meta_bytes) = self.meta_tree.get(id_bytes.as_ref())? else {
-                return Ok(true);
-            };
-            let meta = match deserialize_meta(&meta_bytes) {
-                Ok(meta) => meta,
-                Err(_) => return Ok(true),
-            };
-            let expected_meta = PasteMeta::from(&paste);
-            if meta != expected_meta {
-                return Ok(true);
-            }
-
-            let recency_key = index_key(meta.updated_at, meta.id.as_str());
-            match self.updated_tree.get(&recency_key)? {
-                Some(index_value) if index_value.as_ref() == id_bytes.as_ref() => {}
-                _ => return Ok(true),
-            }
-        }
-
-        for item in self.meta_tree.iter() {
-            let (id_bytes, value) = item?;
-            if self.tree.get(id_bytes.as_ref())?.is_none() {
-                return Ok(true);
-            }
-            let meta = match deserialize_meta(&value) {
-                Ok(meta) => meta,
-                Err(_) => return Ok(true),
-            };
-            if meta.id.as_bytes() != id_bytes.as_ref() {
-                return Ok(true);
-            }
-        }
-
-        for item in self.updated_tree.iter() {
-            let (recency_key, value) = item?;
-            let Some(meta_bytes) = self.meta_tree.get(value.as_ref())? else {
-                return Ok(true);
-            };
-            let meta = match deserialize_meta(&meta_bytes) {
-                Ok(meta) => meta,
-                Err(_) => return Ok(true),
-            };
-            if index_key(meta.updated_at, meta.id.as_str()) != recency_key.as_ref() {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
     }
 
     fn upsert_meta_and_index_from_paste(
@@ -746,6 +757,18 @@ fn deserialize_meta(bytes: &[u8]) -> Result<PasteMeta, bincode::Error> {
     bincode::deserialize(bytes)
 }
 
+fn decode_dirty_count(raw: Option<&[u8]>) -> u64 {
+    let Some(raw) = raw else {
+        return 0;
+    };
+    if raw.len() != std::mem::size_of::<u64>() {
+        return 0;
+    }
+    let mut bytes = [0u8; std::mem::size_of::<u64>()];
+    bytes.copy_from_slice(raw);
+    u64::from_be_bytes(bytes)
+}
+
 fn index_key(updated_at: DateTime<Utc>, id: &str) -> Vec<u8> {
     let millis = updated_at.timestamp_millis().max(0) as u64;
     let reverse = u64::MAX.saturating_sub(millis);
@@ -788,7 +811,8 @@ impl From<LegacyPaste> for Paste {
 #[cfg(test)]
 mod tests {
     use super::{
-        folder_matches_expected, PasteDb, META_INDEX_SCHEMA_VERSION, META_INDEX_VERSION_KEY,
+        folder_matches_expected, PasteDb, META_INDEX_DIRTY_COUNT_KEY, META_INDEX_SCHEMA_VERSION,
+        META_INDEX_VERSION_KEY,
     };
     use crate::models::paste::Paste;
     use crate::AppError;
@@ -902,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn needs_reconcile_detects_corrupt_meta_row_with_matching_tree_sizes() {
+    fn needs_reconcile_skips_deep_scan_when_markers_are_clean() {
         let (paste_db, _dir) = setup_paste_db();
         paste_db
             .reconcile_meta_indexes()
@@ -916,7 +940,7 @@ mod tests {
             .expect("insert corrupt meta");
         assert_eq!(paste_db.tree.len(), paste_db.meta_tree.len());
         assert_eq!(paste_db.tree.len(), paste_db.updated_tree.len());
-        assert!(paste_db
+        assert!(!paste_db
             .needs_reconcile_meta_indexes(false)
             .expect("needs reconcile"));
     }
@@ -961,6 +985,16 @@ mod tests {
                 .is_none(),
             "updated index row should roll back"
         );
+        assert!(
+            paste_db.meta_index_dirty_count().expect("dirty count") > 0,
+            "failed index write should keep dirty marker set"
+        );
+        assert!(
+            paste_db
+                .needs_reconcile_meta_indexes(false)
+                .expect("needs reconcile"),
+            "dirty marker should force reconcile"
+        );
     }
 
     #[test]
@@ -977,6 +1011,15 @@ mod tests {
         assert_eq!(
             u32::from_be_bytes(marker.as_ref().try_into().expect("version bytes")),
             META_INDEX_SCHEMA_VERSION
+        );
+        let dirty = paste_db
+            .meta_state_tree
+            .get(META_INDEX_DIRTY_COUNT_KEY)
+            .expect("dirty lookup")
+            .expect("dirty marker");
+        assert_eq!(
+            u64::from_be_bytes(dirty.as_ref().try_into().expect("dirty bytes")),
+            0
         );
         assert!(!paste_db
             .needs_reconcile_meta_indexes(false)

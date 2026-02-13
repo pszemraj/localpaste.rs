@@ -286,6 +286,124 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
 }
 
 #[test]
+fn select_paste_dirty_defers_switch_until_content_save_ack() {
+    let mut harness = make_app();
+    harness.app.all_pastes.push(PasteSummary {
+        id: "beta".to_string(),
+        name: "Beta".to_string(),
+        language: None,
+        content_len: 4,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    });
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.selected_content.reset("edited".to_string());
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.last_edit_at = Some(Instant::now());
+
+    assert!(harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePaste { id, content } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(content, "edited");
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    let mut saved = Paste::new("edited".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert!(harness.app.pending_selection_id.is_none());
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn select_paste_metadata_dirty_defers_switch_until_meta_save_ack() {
+    let mut harness = make_app();
+    harness.app.all_pastes.push(PasteSummary {
+        id: "beta".to_string(),
+        name: "Beta".to_string(),
+        language: None,
+        content_len: 4,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    });
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.metadata_dirty = true;
+    harness.app.edit_name = "Alpha renamed".to_string();
+    harness.app.edit_tags = "tag-a".to_string();
+
+    assert!(harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePasteMeta { id, .. } => assert_eq!(id, "alpha"),
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    let mut saved = Paste::new("content".to_string(), "Alpha renamed".to_string());
+    saved.id = "alpha".to_string();
+    saved.tags = vec!["tag-a".to_string()];
+    harness
+        .app
+        .apply_event(CoreEvent::PasteMetaSaved { paste: saved });
+
+    assert!(harness.app.pending_selection_id.is_none());
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn save_error_clears_pending_selection_and_keeps_current_selection() {
+    let mut harness = make_app();
+    harness.app.all_pastes.push(PasteSummary {
+        id: "beta".to_string(),
+        name: "Beta".to_string(),
+        language: None,
+        content_len: 4,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    });
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.selected_content.reset("edited".to_string());
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.last_edit_at = Some(Instant::now());
+
+    assert!(harness.app.select_paste("beta".to_string()));
+    let _ = recv_cmd(&harness.cmd_rx);
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+
+    harness.app.apply_event(CoreEvent::Error {
+        source: CoreErrorSource::SaveContent,
+        message: "Update failed: injected".to_string(),
+    });
+
+    assert!(harness.app.pending_selection_id.is_none());
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
 fn paste_saved_during_active_search_forces_fresh_backend_search() {
     let mut harness = make_app();
     harness.app.search_query = "alpha".to_string();

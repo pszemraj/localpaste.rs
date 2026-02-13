@@ -72,6 +72,8 @@ impl QueryCache {
     }
 }
 
+// List/search cache entries intentionally expire quickly so out-of-band
+// mutations (embedded API/CLI) become visible without requiring local invalidation.
 const QUERY_CACHE_MAX_AGE: Duration = Duration::from_millis(500);
 
 fn log_query_perf(
@@ -232,6 +234,65 @@ pub fn spawn_backend(db: Database) -> BackendHandle {
                                     &evt_tx,
                                     CoreErrorSource::Other,
                                     format!("Search failed: {}", err),
+                                );
+                            }
+                        }
+                    }
+                    CoreCmd::SearchPalette { query, limit } => {
+                        let started = Instant::now();
+                        let key = SearchCacheKey {
+                            query: query.clone(),
+                            limit,
+                            folder_id: None,
+                            language: None,
+                        };
+                        if query_cache.search_key.as_ref() == Some(&key) {
+                            if let (Some(items), Some(cached_at)) = (
+                                query_cache.search_items.clone(),
+                                query_cache.search_cached_at,
+                            ) {
+                                if cached_at.elapsed() <= QUERY_CACHE_MAX_AGE {
+                                    query_cache.search_hits =
+                                        query_cache.search_hits.saturating_add(1);
+                                    log_query_perf(
+                                        perf_log_enabled,
+                                        &query_cache,
+                                        "palette_search",
+                                        true,
+                                        started.elapsed().as_secs_f64() * 1000.0,
+                                        items.len(),
+                                    );
+                                    let _ = evt_tx
+                                        .send(CoreEvent::PaletteSearchResults { query, items });
+                                    continue;
+                                }
+                            }
+                        }
+                        query_cache.search_misses = query_cache.search_misses.saturating_add(1);
+                        match db.pastes.search_meta(&query, limit, None, None) {
+                            Ok(metas) => {
+                                let items: Vec<PasteSummary> =
+                                    metas.iter().map(PasteSummary::from_meta).collect();
+                                query_cache.search_key = Some(key);
+                                query_cache.search_items = Some(items.clone());
+                                query_cache.search_cached_at = Some(Instant::now());
+                                log_query_perf(
+                                    perf_log_enabled,
+                                    &query_cache,
+                                    "palette_search",
+                                    false,
+                                    started.elapsed().as_secs_f64() * 1000.0,
+                                    items.len(),
+                                );
+                                let _ =
+                                    evt_tx.send(CoreEvent::PaletteSearchResults { query, items });
+                            }
+                            Err(err) => {
+                                error!("backend palette search failed: {}", err);
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("Palette search failed: {}", err),
                                 );
                             }
                         }

@@ -63,7 +63,11 @@ pub struct LocalPasteApp {
     command_palette_open: bool,
     command_palette_query: String,
     command_palette_selected: usize,
+    palette_search_results: Vec<PasteSummary>,
+    palette_search_last_sent: String,
+    palette_search_last_input_at: Option<Instant>,
     pending_copy_action: Option<PaletteCopyAction>,
+    pending_selection_id: Option<String>,
     clipboard_outgoing: Option<String>,
     selected_content: EditorBuffer,
     editor_cache: EditorLayoutCache,
@@ -152,6 +156,7 @@ pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 720.0];
 pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
+const PALETTE_SEARCH_LIMIT: usize = 40;
 const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(150);
 const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
 const HIGHLIGHT_APPLY_IDLE: Duration = Duration::from_millis(200);
@@ -383,7 +388,11 @@ impl LocalPasteApp {
             command_palette_open: false,
             command_palette_query: String::new(),
             command_palette_selected: 0,
+            palette_search_results: Vec::new(),
+            palette_search_last_sent: String::new(),
+            palette_search_last_input_at: None,
             pending_copy_action: None,
+            pending_selection_id: None,
             clipboard_outgoing: None,
             selected_content: EditorBuffer::new(String::new()),
             editor_cache: EditorLayoutCache::default(),
@@ -673,6 +682,9 @@ impl eframe::App for LocalPasteApp {
                 self.command_palette_open = !self.command_palette_open;
                 self.command_palette_query.clear();
                 self.command_palette_selected = 0;
+                self.palette_search_results.clear();
+                self.palette_search_last_sent.clear();
+                self.palette_search_last_input_at = None;
             }
             if input.modifiers.command
                 && (input.key_pressed(egui::Key::I) || input.key_pressed(egui::Key::P))
@@ -854,6 +866,7 @@ impl eframe::App for LocalPasteApp {
         self.render_status_bar(ctx);
         self.render_toasts(ctx);
 
+        self.maybe_dispatch_palette_search();
         self.maybe_dispatch_search();
         self.maybe_autosave();
         if self.last_refresh_at.elapsed() >= AUTO_REFRESH_INTERVAL {

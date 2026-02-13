@@ -2,7 +2,6 @@
 
 use super::super::*;
 use crate::backend::CoreCmd;
-use chrono::Utc;
 use eframe::egui::{self, RichText};
 
 impl LocalPasteApp {
@@ -23,21 +22,30 @@ impl LocalPasteApp {
             .default_width(680.0)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
             .show(ctx, |ui| {
+                let mut query_buf = self.command_palette_query.clone();
                 let query_resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.command_palette_query)
+                    egui::TextEdit::singleline(&mut query_buf)
                         .hint_text("Type to search... (Enter=open, Esc=close)"),
                 );
                 query_resp.request_focus();
+                if query_resp.changed() {
+                    self.set_command_palette_query(query_buf);
+                }
 
                 if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                     self.command_palette_open = false;
                     return;
                 }
 
-                let results = self.rank_palette_results();
+                let results = self.palette_results();
                 if results.is_empty() {
                     ui.add_space(8.0);
-                    ui.label(RichText::new("No results").color(COLOR_TEXT_MUTED));
+                    let query = self.command_palette_query.trim();
+                    if !query.is_empty() && self.palette_search_last_sent != query {
+                        ui.label(RichText::new("Searching...").color(COLOR_TEXT_MUTED));
+                    } else {
+                        ui.label(RichText::new("No results").color(COLOR_TEXT_MUTED));
+                    }
                     return;
                 }
                 if self.command_palette_selected >= results.len() {
@@ -159,72 +167,11 @@ impl LocalPasteApp {
         }
     }
 
-    pub(crate) fn rank_palette_results(&self) -> Vec<PasteSummary> {
-        let query = self.command_palette_query.trim().to_ascii_lowercase();
-        if query.is_empty() {
-            let mut items = self.all_pastes.clone();
-            items.sort_by(|a, b| {
-                b.updated_at.cmp(&a.updated_at).then_with(|| {
-                    a.name
-                        .to_ascii_lowercase()
-                        .cmp(&b.name.to_ascii_lowercase())
-                })
-            });
-            items.truncate(30);
-            return items;
+    fn palette_results(&self) -> Vec<PasteSummary> {
+        if self.command_palette_query.trim().is_empty() {
+            return self.all_pastes.iter().take(30).cloned().collect();
         }
-
-        let now = Utc::now();
-        let mut scored: Vec<(i64, PasteSummary)> = self
-            .all_pastes
-            .iter()
-            .filter_map(|item| {
-                let name = item.name.to_ascii_lowercase();
-                let mut score: i64 = 0;
-
-                if name.starts_with(query.as_str()) {
-                    score += 1000;
-                } else if name.contains(query.as_str()) {
-                    score += 700;
-                }
-                if item
-                    .language
-                    .as_ref()
-                    .map(|lang| lang.to_ascii_lowercase().contains(query.as_str()))
-                    .unwrap_or(false)
-                {
-                    score += 250;
-                }
-                if item
-                    .tags
-                    .iter()
-                    .any(|tag| tag.to_ascii_lowercase().contains(query.as_str()))
-                {
-                    score += 250;
-                }
-                if score == 0 {
-                    return None;
-                }
-
-                let age_days = (now - item.updated_at).num_days().max(0);
-                score += (30 - age_days.min(30)) * 5;
-                Some((score, item.clone()))
-            })
-            .collect();
-
-        scored.sort_by(|(score_a, item_a), (score_b, item_b)| {
-            score_b
-                .cmp(score_a)
-                .then_with(|| item_b.updated_at.cmp(&item_a.updated_at))
-                .then_with(|| {
-                    item_a
-                        .name
-                        .to_ascii_lowercase()
-                        .cmp(&item_b.name.to_ascii_lowercase())
-                })
-        });
-        scored.truncate(40);
-        scored.into_iter().map(|(_, item)| item).collect()
+        self.palette_search_results.clone()
     }
 
     pub(crate) fn send_palette_delete(&mut self, id: String) {

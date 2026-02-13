@@ -3,10 +3,10 @@
 use super::highlight::EditorLayoutCache;
 use super::{
     LocalPasteApp, PaletteCopyAction, SaveStatus, SidebarCollection, StatusMessage, ToastMessage,
-    SEARCH_DEBOUNCE, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
+    PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{Duration as ChronoDuration, Local, Utc};
 use localpaste_core::{
     models::paste::Paste, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
 };
@@ -122,6 +122,7 @@ impl LocalPasteApp {
                         self.last_edit_at = None;
                     }
                 }
+                self.try_apply_pending_selection();
             }
             CoreEvent::PasteMetaSaved { paste } => {
                 self.metadata_save_in_flight = false;
@@ -143,6 +144,7 @@ impl LocalPasteApp {
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
                 self.ensure_selection_after_list_update();
+                self.try_apply_pending_selection();
             }
             CoreEvent::SearchResults { query, items } => {
                 // Drop stale search responses that no longer match the active query text.
@@ -159,6 +161,19 @@ impl LocalPasteApp {
                 }
                 self.pastes = self.filter_by_collection(&items);
                 self.ensure_selection_after_list_update();
+            }
+            CoreEvent::PaletteSearchResults { query, items } => {
+                if !self.command_palette_open
+                    || self.command_palette_query.trim().is_empty()
+                    || query.trim() != self.command_palette_query.trim()
+                {
+                    return;
+                }
+                self.palette_search_results = items;
+                if self.command_palette_selected >= self.palette_search_results.len() {
+                    self.command_palette_selected =
+                        self.palette_search_results.len().saturating_sub(1);
+                }
             }
             CoreEvent::PasteDeleted { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);
@@ -203,6 +218,9 @@ impl LocalPasteApp {
                     CoreErrorSource::SaveMetadata if self.metadata_save_in_flight => {
                         self.metadata_dirty = true;
                         self.metadata_save_in_flight = false;
+                        if let Some(pending) = self.pending_selection_id.take() {
+                            self.clear_pending_copy_for(pending.as_str());
+                        }
                         if message.to_ascii_lowercase().contains("metadata") {
                             self.set_status(message);
                         } else {
@@ -214,6 +232,9 @@ impl LocalPasteApp {
                             self.save_status = SaveStatus::Dirty;
                         }
                         self.save_in_flight = false;
+                        if let Some(pending) = self.pending_selection_id.take() {
+                            self.clear_pending_copy_for(pending.as_str());
+                        }
                         self.set_status(message);
                     }
                     _ => self.set_status(message),
@@ -247,6 +268,19 @@ impl LocalPasteApp {
         }
         self.search_query = query;
         self.search_last_input_at = Some(Instant::now());
+    }
+
+    pub(super) fn set_command_palette_query(&mut self, query: String) {
+        if self.command_palette_query == query {
+            return;
+        }
+        self.command_palette_query = query;
+        self.command_palette_selected = 0;
+        self.palette_search_last_input_at = Some(Instant::now());
+        if self.command_palette_query.trim().is_empty() {
+            self.palette_search_last_sent.clear();
+            self.palette_search_results.clear();
+        }
     }
 
     pub(super) fn set_active_collection(&mut self, collection: SidebarCollection) {
@@ -338,7 +372,71 @@ impl LocalPasteApp {
         self.query_perf.search_last_sent_at = Some(Instant::now());
     }
 
+    pub(super) fn maybe_dispatch_palette_search(&mut self) {
+        if !self.command_palette_open {
+            return;
+        }
+
+        let query = self.command_palette_query.trim().to_string();
+        if query.is_empty() {
+            if !self.palette_search_last_sent.is_empty() || !self.palette_search_results.is_empty()
+            {
+                self.palette_search_last_sent.clear();
+                self.palette_search_results.clear();
+            }
+            return;
+        }
+
+        if self.palette_search_last_sent == query {
+            return;
+        }
+        let Some(last_input_at) = self.palette_search_last_input_at else {
+            return;
+        };
+        if last_input_at.elapsed() < SEARCH_DEBOUNCE {
+            return;
+        }
+
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::SearchPalette {
+                query: query.clone(),
+                limit: PALETTE_SEARCH_LIMIT,
+            })
+            .is_err()
+        {
+            self.set_status("Command palette search failed: backend unavailable.");
+            return;
+        }
+        self.palette_search_last_sent = query;
+    }
+
     pub(super) fn select_paste(&mut self, id: String) -> bool {
+        if self.selected_id.as_deref() == Some(id.as_str()) {
+            return true;
+        }
+        if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
+            self.pending_selection_id = Some(id.clone());
+            if self.save_status == SaveStatus::Dirty {
+                self.save_now();
+            }
+            if self.metadata_dirty {
+                self.save_metadata_now();
+            }
+            if !self.save_in_flight && !self.metadata_save_in_flight {
+                if let Some(pending) = self.pending_selection_id.take() {
+                    self.clear_pending_copy_for(pending.as_str());
+                }
+                return false;
+            }
+            self.set_status("Saving current paste before switching...");
+            return true;
+        }
+        self.apply_selection_now(id)
+    }
+
+    fn apply_selection_now(&mut self, id: String) -> bool {
         if let Some(prev) = self.selected_id.take() {
             self.locks.unlock(&prev);
         }
@@ -368,7 +466,23 @@ impl LocalPasteApp {
         true
     }
 
+    fn try_apply_pending_selection(&mut self) {
+        if self.save_in_flight || self.metadata_save_in_flight {
+            return;
+        }
+        if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
+            return;
+        }
+        let Some(pending) = self.pending_selection_id.take() else {
+            return;
+        };
+        let _ = self.apply_selection_now(pending);
+    }
+
     pub(super) fn clear_selection(&mut self) {
+        if let Some(pending) = self.pending_selection_id.take() {
+            self.clear_pending_copy_for(pending.as_str());
+        }
         if let Some(prev) = self.selected_id.take() {
             self.locks.unlock(&prev);
         }
@@ -555,7 +669,7 @@ impl LocalPasteApp {
 
     fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
         let now = Utc::now();
-        let today = now.date_naive();
+        let today_local = Local::now().date_naive();
         let week_cutoff = now - ChronoDuration::days(7);
         let recent_cutoff = now - ChronoDuration::days(30);
         items
@@ -563,7 +677,9 @@ impl LocalPasteApp {
             .filter(|item| {
                 let collection_match = match &self.active_collection {
                     SidebarCollection::All => true,
-                    SidebarCollection::Today => item.updated_at.date_naive() == today,
+                    SidebarCollection::Today => {
+                        item.updated_at.with_timezone(&Local).date_naive() == today_local
+                    }
                     SidebarCollection::Week => item.updated_at >= week_cutoff,
                     SidebarCollection::Recent => item.updated_at >= recent_cutoff,
                     SidebarCollection::Unfiled => item.folder_id.is_none(),

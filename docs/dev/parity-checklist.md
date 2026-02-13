@@ -27,6 +27,7 @@ Codebase audit against this checklist found:
 - Sidebar navigation now defaults to smart faceted filters (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) instead of folder-tree-first navigation.
 - Rewrite GUI no longer provides folder metadata/edit pathways (no folder create/rename/delete/move controls).
 - Folder APIs remain available in core/server but now emit deprecation warning headers in API responses.
+- Backend list/search cache is intentionally short-lived (500ms TTL) to bound staleness for embedded API/CLI out-of-band mutations.
 
 ---
 
@@ -76,6 +77,7 @@ Codebase audit against this checklist found:
 - [x] Smart collections + secondary language filter (smart facets in sidebar + language filter in status bar) [Replace]
 - [x] Keyboard navigation (up/down, enter)
 - [x] GUI list/search projections are metadata-index backed (no full-content deserialization on sidebar refresh/search)
+- [x] Sidebar list uses bounded window (`DEFAULT_LIST_PASTES_LIMIT=512`); global discovery is provided by search + command palette
 
 ## Phase 4: Editor + Autosave
 
@@ -146,6 +148,7 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protoc
 
 - [x] Folder APIs remain available in core/server (deprecated via API warning headers), while folder controls are removed from the rewrite GUI in favor of smart filters
 - [x] Folder delete migrates pastes to unfiled (API/core behavior)
+- [x] No folder visibility/edit surfaces are planned in rewrite GUI scope (intentional product decision, not parity gap)
 
 ## UX + Theme
 

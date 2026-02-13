@@ -21,6 +21,8 @@ pub enum CoreCmd {
         folder_id: Option<String>,
         language: Option<String>,
     },
+    /// Search metadata globally for command palette discovery.
+    SearchPalette { query: String, limit: usize },
     /// Load a single paste by id for display in the editor pane.
     GetPaste { id: String },
     /// Create a new paste with the provided content.
@@ -65,6 +67,11 @@ pub enum CoreEvent {
     PasteList { items: Vec<PasteSummary> },
     /// Response containing ranked search results.
     SearchResults {
+        query: String,
+        items: Vec<PasteSummary>,
+    },
+    /// Response containing command palette search results.
+    PaletteSearchResults {
         query: String,
         items: Vec<PasteSummary>,
     },

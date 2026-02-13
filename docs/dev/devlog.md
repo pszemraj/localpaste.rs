@@ -57,6 +57,11 @@ cargo run -p localpaste_server --bin localpaste --release
 ./target/release/lpaste --help
 ```
 
+Topology note:
+- `localpaste-gui` owns the DB lock for its `DB_PATH` and hosts an embedded API endpoint for compatibility.
+- Do not run `localpaste` concurrently on the same `DB_PATH` as the GUI.
+- Use standalone `localpaste` for headless/server-only operation.
+
 For editor-mode flags and tracing env vars, see [GUI notes](gui-notes.md).
 For repeatable GUI perf validation, see [GUI perf protocol](gui-perf-protocol.md).
 
@@ -102,6 +107,7 @@ Current deprecation and parity status is tracked in [parity-checklist.md](parity
 - Backend store: sled.
 - Default DB path: `~/.cache/localpaste/db`.
 - Use `DB_PATH` for isolated test runs.
+- GUI sidebar list window is capped at `DEFAULT_LIST_PASTES_LIMIT` (`512`); use search/command palette for global discovery.
 
 Lock recovery guidance (including what not to delete) lives in [docs/deployment.md](../deployment.md).
 

@@ -6,6 +6,8 @@ Use this protocol for release-gate evidence and regression checks.
 ## Scope
 
 - English-first editor workflows only.
+- Runtime topology for this protocol: the GUI owns the DB lock and runs the embedded API endpoint in-process.
+- Do not run standalone `localpaste` concurrently against the same `DB_PATH` while running GUI perf checks.
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
   - average FPS `>= 45`
@@ -22,7 +24,7 @@ Use this protocol for release-gate evidence and regression checks.
 ## Prereqs
 
 ```powershell
-cargo build -p localpaste_server --bin localpaste --release
+cargo build -p localpaste_tools --bin generate-test-data --release
 cargo build -p localpaste_gui --bin localpaste-gui --release
 ```
 
@@ -41,12 +43,11 @@ $env:LOCALPASTE_EDITOR_INPUT_TRACE = "1"
 $env:LOCALPASTE_HIGHLIGHT_TRACE = "1"
 
 cargo run -p localpaste_tools --bin generate-test-data -- --clear --count 10000 --folders 50
-cargo run -p localpaste_server --bin localpaste --release
-# in a second terminal:
 cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
-If you only need seed + API verification, run the generator and server steps without launching the GUI.
+While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks.
+For standalone server-only smoke/perf validation, use AGENTS.md API/core smoke flow with `localpaste` + `lpaste`.
 
 ## Dataset Expectations
 
@@ -56,6 +57,7 @@ The canonical runbook seeds a large mixed dataset via `generate-test-data`:
 - weighted content-size distribution (small/medium/large/very large)
 - language-diverse snippets plus folder/tag metadata
 - GUI sidebar list/search path reads metadata/index projections (content loads only on paste open)
+- Sidebar list window is capped by `DEFAULT_LIST_PASTES_LIMIT` (`512`); command palette and search are the global discovery paths.
 
 ## Manual Verification Checklist
 

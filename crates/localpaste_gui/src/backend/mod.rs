@@ -346,6 +346,41 @@ mod tests {
     }
 
     #[test]
+    fn backend_palette_search_returns_metadata_matches() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        db.pastes
+            .create(&Paste::new(
+                "fn main() {}".to_string(),
+                "alpha-entry".to_string(),
+            ))
+            .expect("create alpha");
+        db.pastes
+            .create(&Paste::new(
+                "println!(\"hello\")".to_string(),
+                "beta-entry".to_string(),
+            ))
+            .expect("create beta");
+
+        let backend = spawn_backend(db);
+        backend
+            .cmd_tx
+            .send(CoreCmd::SearchPalette {
+                query: "alpha".to_string(),
+                limit: 10,
+            })
+            .expect("send palette search");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PaletteSearchResults { query, items } => {
+                assert_eq!(query, "alpha");
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].name, "alpha-entry");
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
     fn backend_updates_paste_metadata() {
         let TestDb { _dir: _guard, db } = setup_db();
         let backend = spawn_backend(db);

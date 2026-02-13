@@ -87,33 +87,80 @@ fn paste_list_filters_recent_collection() {
 }
 
 #[test]
-fn command_palette_ranking_prefers_prefix() {
+fn maybe_dispatch_palette_search_requires_debounce_and_dedupes() {
     let mut harness = make_app();
-    harness.app.all_pastes = vec![
-        PasteSummary {
-            id: "1".to_string(),
-            name: "alpha parser".to_string(),
-            language: Some("rust".to_string()),
-            content_len: 100,
-            updated_at: Utc::now(),
-            folder_id: None,
-            tags: vec!["core".to_string()],
-        },
-        PasteSummary {
-            id: "2".to_string(),
-            name: "parser alpha".to_string(),
-            language: Some("rust".to_string()),
-            content_len: 100,
-            updated_at: Utc::now(),
-            folder_id: None,
-            tags: vec!["core".to_string()],
-        },
-    ];
-    harness.app.command_palette_query = "alpha".to_string();
+    harness.app.command_palette_open = true;
+    harness.app.set_command_palette_query("alpha".to_string());
 
-    let ranked = harness.app.rank_palette_results();
-    assert_eq!(ranked.len(), 2);
-    assert_eq!(ranked[0].id, "1");
+    harness.app.palette_search_last_input_at = Some(Instant::now());
+    harness.app.maybe_dispatch_palette_search();
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+
+    harness.app.palette_search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_palette_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPalette { query, limit } => {
+            assert_eq!(query, "alpha");
+            assert_eq!(limit, PALETTE_SEARCH_LIMIT);
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    harness.app.maybe_dispatch_palette_search();
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
+    let mut harness = make_app();
+    harness.app.command_palette_open = true;
+    harness.app.set_command_palette_query("legacy".to_string());
+    harness.app.all_pastes = vec![PasteSummary {
+        id: "alpha".to_string(),
+        name: "Alpha".to_string(),
+        language: None,
+        content_len: 7,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    }];
+
+    harness.app.apply_event(CoreEvent::PaletteSearchResults {
+        query: "other".to_string(),
+        items: vec![PasteSummary {
+            id: "stale".to_string(),
+            name: "Stale".to_string(),
+            language: None,
+            content_len: 1,
+            updated_at: Utc::now(),
+            folder_id: None,
+            tags: Vec::new(),
+        }],
+    });
+    assert!(harness.app.palette_search_results.is_empty());
+
+    harness.app.apply_event(CoreEvent::PaletteSearchResults {
+        query: "legacy".to_string(),
+        items: vec![PasteSummary {
+            id: "old-id".to_string(),
+            name: "Legacy note".to_string(),
+            language: None,
+            content_len: 8,
+            updated_at: Utc::now(),
+            folder_id: None,
+            tags: Vec::new(),
+        }],
+    });
+
+    assert_eq!(harness.app.palette_search_results.len(), 1);
+    assert_eq!(harness.app.palette_search_results[0].id, "old-id");
 }
 
 #[test]

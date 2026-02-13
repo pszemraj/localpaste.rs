@@ -1,6 +1,6 @@
 //! Central editor panel rendering for TextEdit, virtual preview, and virtual editor modes.
 
-use super::super::highlight::hash_bytes;
+use super::super::highlight::{hash_bytes, hash_text_chunks};
 use super::super::*;
 use eframe::egui;
 
@@ -173,10 +173,7 @@ impl LocalPasteApp {
                 let content_hash = if is_large {
                     0
                 } else if self.is_virtual_editor_mode() {
-                    let snapshot = self.active_snapshot();
-                    let hash = hash_bytes(snapshot.as_bytes());
-                    content_snapshot_for_dispatch = Some(snapshot);
-                    hash
+                    hash_text_chunks(self.virtual_editor_buffer.rope().chunks())
                 } else {
                     hash_bytes(self.selected_content.as_str().as_bytes())
                 };
