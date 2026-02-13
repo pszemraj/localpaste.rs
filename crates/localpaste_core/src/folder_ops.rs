@@ -92,6 +92,11 @@ pub fn delete_folder_tree_and_migrate(
         db.folders.delete(folder_id)?;
     }
 
+    // list_meta can temporarily mask stale rows by falling back to canonical data.
+    // Rebuild indexes from canonical rows so folder deletions do not leave persistent
+    // metadata/index ghosts that force repeated runtime fallback scans.
+    db.pastes.reconcile_meta_indexes()?;
+
     Ok(delete_order)
 }
 
@@ -113,13 +118,6 @@ fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<()
             };
             db.pastes.update(&paste.id, update)?;
         }
-    }
-    if !db
-        .pastes
-        .list_meta(1, Some(folder_id.to_string()))?
-        .is_empty()
-    {
-        db.pastes.reconcile_meta_indexes()?;
     }
     Ok(())
 }
@@ -220,6 +218,23 @@ mod tests {
                 .expect("list after delete")
                 .is_empty(),
             "metadata index should be reconciled to remove orphan row"
+        );
+        let meta_tree = db.db.open_tree("pastes_meta").expect("meta tree");
+        assert!(
+            meta_tree
+                .get(paste.id.as_bytes())
+                .expect("meta lookup")
+                .is_none(),
+            "reconcile should remove orphaned metadata row"
+        );
+        let updated_tree = db.db.open_tree("pastes_by_updated").expect("updated tree");
+        let stale_updated_ref = updated_tree
+            .iter()
+            .filter_map(|item| item.ok())
+            .any(|(_, value)| value.as_ref() == paste.id.as_bytes());
+        assert!(
+            !stale_updated_ref,
+            "reconcile should remove orphaned recency-index references"
         );
     }
 

@@ -75,7 +75,7 @@ fn pgrep_probe_result(args: &[&str], current_pid: u32) -> ProcessProbeResult {
 
     let output = match Command::new("pgrep").args(args).output() {
         Ok(output) => output,
-        Err(_) => return ProcessProbeResult::Unknown,
+        Err(err) => return pgrep_error_probe_result(&err),
     };
 
     if output.status.success() {
@@ -83,6 +83,17 @@ fn pgrep_probe_result(args: &[&str], current_pid: u32) -> ProcessProbeResult {
     }
 
     if output.status.code() == Some(1) {
+        ProcessProbeResult::NotRunning
+    } else {
+        ProcessProbeResult::Unknown
+    }
+}
+
+#[cfg(unix)]
+fn pgrep_error_probe_result(err: &std::io::Error) -> ProcessProbeResult {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        // Minimal Unix environments may not ship `pgrep`; treat that as a recoverable
+        // "not running" fallback so stale lock recovery is not permanently blocked.
         ProcessProbeResult::NotRunning
     } else {
         ProcessProbeResult::Unknown
@@ -531,7 +542,11 @@ impl Database {
 
 #[cfg(all(test, unix))]
 mod process_detection_tests {
-    use super::{pgrep_output_probe_result, ProcessProbeResult, UNIX_PGREP_CMDLINE_NAMES};
+    use super::{
+        pgrep_error_probe_result, pgrep_output_probe_result, ProcessProbeResult,
+        UNIX_PGREP_CMDLINE_NAMES,
+    };
+    use std::io::ErrorKind;
 
     #[test]
     fn unix_pid_parser_ignores_current_pid_and_invalid_lines() {
@@ -563,5 +578,19 @@ mod process_detection_tests {
             UNIX_PGREP_CMDLINE_NAMES.contains(&"generate-test-data"),
             "process allowlist for lock-owner detection must include tooling writers"
         );
+    }
+
+    #[test]
+    fn unix_probe_treats_missing_pgrep_as_not_running() {
+        let err = std::io::Error::new(ErrorKind::NotFound, "pgrep not found");
+        let probe = pgrep_error_probe_result(&err);
+        assert_eq!(probe, ProcessProbeResult::NotRunning);
+    }
+
+    #[test]
+    fn unix_probe_keeps_unknown_for_non_notfound_pgrep_errors() {
+        let err = std::io::Error::new(ErrorKind::PermissionDenied, "permission denied");
+        let probe = pgrep_error_probe_result(&err);
+        assert_eq!(probe, ProcessProbeResult::Unknown);
     }
 }
