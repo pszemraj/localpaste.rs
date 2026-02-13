@@ -11,7 +11,7 @@ mod virtual_editor;
 mod virtual_ops;
 mod virtual_view;
 
-use crate::backend::{spawn_backend, BackendHandle, PasteSummary};
+use crate::backend::{spawn_backend_with_locks, BackendHandle, PasteSummary};
 use editor::{EditorBuffer, EditorLineIndex, EditorMode};
 use eframe::egui::{self, text::CCursor, Color32, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
@@ -364,7 +364,7 @@ impl LocalPasteApp {
         let server_addr = server.addr();
         let server_used_fallback = server.used_fallback();
 
-        let backend = spawn_backend(db, config.max_paste_size);
+        let backend = spawn_backend_with_locks(db, config.max_paste_size, locks.clone());
         let highlight_worker = spawn_highlight_worker();
 
         let mut app = Self {

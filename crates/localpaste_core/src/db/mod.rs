@@ -14,6 +14,8 @@ use crate::error::AppError;
 use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME};
 use sled::Db;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 
 /// Process probe state used for lock-safety decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,6 +231,45 @@ mod tests;
 /// and rollback logic to maintain consistency across trees.
 pub struct TransactionOps;
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransactionFailpoint {
+    MoveAfterDestinationReserveOnce,
+}
+
+#[cfg(test)]
+fn transaction_failpoint_slot() -> &'static Mutex<Option<TransactionFailpoint>> {
+    static SLOT: OnceLock<Mutex<Option<TransactionFailpoint>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) fn set_transaction_failpoint(failpoint: Option<TransactionFailpoint>) {
+    let mut slot = transaction_failpoint_slot()
+        .lock()
+        .expect("transaction failpoint lock poisoned");
+    *slot = failpoint;
+}
+
+#[cfg(test)]
+fn take_transaction_failpoint() -> Option<TransactionFailpoint> {
+    transaction_failpoint_slot()
+        .lock()
+        .expect("transaction failpoint lock poisoned")
+        .take()
+}
+
+#[cfg(test)]
+fn maybe_trigger_transaction_failpoint(failpoint: TransactionFailpoint) -> Result<(), AppError> {
+    if take_transaction_failpoint() == Some(failpoint) {
+        return Err(AppError::DatabaseError(format!(
+            "Injected transaction failpoint: {:?}",
+            failpoint
+        )));
+    }
+    Ok(())
+}
+
 impl TransactionOps {
     /// Atomically create a paste and update folder count
     ///
@@ -326,6 +367,22 @@ impl TransactionOps {
                 if let Some(new_id) = new_folder_id {
                     db.folders.update_count(new_id, 1)?;
                 }
+            }
+            #[cfg(test)]
+            if let Err(err) = maybe_trigger_transaction_failpoint(
+                TransactionFailpoint::MoveAfterDestinationReserveOnce,
+            ) {
+                if folder_changing {
+                    if let Some(new_id) = new_folder_id {
+                        if let Err(rollback_err) = db.folders.update_count(new_id, -1) {
+                            tracing::error!(
+                                "Failed to rollback destination folder count after injected failpoint: {}",
+                                rollback_err
+                            );
+                        }
+                    }
+                }
+                return Err(err);
             }
 
             let update_result =

@@ -1,11 +1,15 @@
 //! Headless integration tests for GUI/backend workflows against the embedded API.
 
 use crossbeam_channel::Receiver;
-use localpaste_core::{models::paste::Paste, Config, Database};
-use localpaste_gui::backend::{spawn_backend, CoreCmd, CoreEvent};
+use localpaste_core::{
+    db::TransactionOps, models::folder::Folder, models::paste::Paste, Config, Database,
+};
+use localpaste_gui::backend::{spawn_backend, spawn_backend_with_locks, CoreCmd, CoreEvent};
 use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
+use ropey::Rope;
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
+use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -129,6 +133,89 @@ fn locked_paste_blocks_api_update() {
 }
 
 #[test]
+fn locked_descendant_blocks_backend_folder_delete() {
+    let dir = TempDir::new().expect("temp dir");
+    let db_path = dir.path().join("db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let db = Database::new(&db_path_str).expect("db");
+    let locks = Arc::new(PasteLockManager::default());
+    let backend = spawn_backend_with_locks(db, 10 * 1024 * 1024, locks.clone());
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::CreateFolder {
+            name: "locked-root".to_string(),
+            parent_id: None,
+        })
+        .expect("create folder");
+    let folder_id = match recv_event(&backend.evt_rx) {
+        CoreEvent::FolderSaved { folder } => folder.id,
+        other => panic!("unexpected event: {:?}", other),
+    };
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::CreatePaste {
+            content: "locked body".to_string(),
+        })
+        .expect("create paste");
+    let paste_id = match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteCreated { paste } => paste.id,
+        other => panic!("unexpected event: {:?}", other),
+    };
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::UpdatePasteMeta {
+            id: paste_id.clone(),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: Some(folder_id.clone()),
+            tags: None,
+        })
+        .expect("assign folder");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteMetaSaved { paste } => {
+            assert_eq!(paste.folder_id.as_deref(), Some(folder_id.as_str()));
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    locks.lock(&paste_id);
+    backend
+        .cmd_tx
+        .send(CoreCmd::DeleteFolder {
+            id: folder_id.clone(),
+        })
+        .expect("delete folder");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::Error { message, .. } => {
+            assert!(
+                message.contains("locked paste"),
+                "expected lock rejection, got: {}",
+                message
+            );
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::GetPaste {
+            id: paste_id.clone(),
+        })
+        .expect("get locked paste");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteLoaded { paste } => {
+            assert_eq!(paste.id, paste_id);
+            assert_eq!(paste.folder_id.as_deref(), Some(folder_id.as_str()));
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+}
+
+#[test]
 fn metadata_update_persists_and_manual_auto_language_transitions_work() {
     let dir = TempDir::new().expect("temp dir");
     let db_path = dir.path().join("db");
@@ -224,6 +311,193 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
         }
         other => panic!("unexpected event: {:?}", other),
     }
+}
+
+#[test]
+fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
+    let dir = TempDir::new().expect("temp dir");
+    let db_path = dir.path().join("db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let db = Database::new(&db_path_str).expect("db");
+    let locks = Arc::new(PasteLockManager::default());
+    let server_db = db.share().expect("share db");
+    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks.clone());
+    let server = EmbeddedServer::start(state, false).expect("server");
+    let backend = spawn_backend_with_locks(db, 10 * 1024 * 1024, locks);
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::CreatePaste {
+            content: "race-seed".to_string(),
+        })
+        .expect("create seed");
+    let paste_id = match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteCreated { paste } => paste.id,
+        other => panic!("unexpected event: {:?}", other),
+    };
+
+    let delete_barrier = Arc::new(Barrier::new(2));
+    let delete_barrier_thread = delete_barrier.clone();
+    let delete_url = format!("http://{}/api/paste/{}", server.addr(), paste_id);
+    let delete_thread = thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        delete_barrier_thread.wait();
+        client
+            .delete(delete_url.as_str())
+            .send()
+            .expect("delete request")
+            .status()
+    });
+
+    delete_barrier.wait();
+    backend
+        .cmd_tx
+        .send(CoreCmd::UpdatePasteVirtual {
+            id: paste_id.clone(),
+            content: Rope::from_str("race-virtual-update"),
+        })
+        .expect("send virtual update");
+
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteSaved { .. } | CoreEvent::PasteMissing { .. } => {}
+        other => panic!("unexpected backend race result: {:?}", other),
+    }
+
+    let delete_status = delete_thread.join().expect("delete join");
+    assert!(
+        delete_status.is_success(),
+        "delete request should complete successfully, got {}",
+        delete_status
+    );
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::GetPaste {
+            id: paste_id.clone(),
+        })
+        .expect("get after race");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteMissing { id } => assert_eq!(id, paste_id),
+        other => panic!("unexpected post-race get result: {:?}", other),
+    }
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::ListPastes {
+            limit: 20,
+            folder_id: None,
+        })
+        .expect("list after race");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteList { items } => {
+            assert!(
+                items.iter().all(|item| item.id != paste_id),
+                "deleted paste must not appear in metadata list"
+            );
+        }
+        other => panic!("unexpected post-race list result: {:?}", other),
+    }
+}
+
+#[test]
+fn backend_folder_move_and_api_folder_delete_race_preserves_folder_counts() {
+    let dir = TempDir::new().expect("temp dir");
+    let db_path = dir.path().join("db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let db = Database::new(&db_path_str).expect("db");
+    let locks = Arc::new(PasteLockManager::default());
+    let server_db = db.share().expect("share db");
+    let state = AppState::with_locks(test_config(&db_path_str), server_db, locks.clone());
+    let server = EmbeddedServer::start(state, false).expect("server");
+    let backend = spawn_backend_with_locks(
+        db.share().expect("share backend db"),
+        10 * 1024 * 1024,
+        locks,
+    );
+
+    let root = Folder::new("race-root".to_string());
+    let root_id = root.id.clone();
+    db.folders.create(&root).expect("create root");
+
+    let target = Folder::new("race-target".to_string());
+    let target_id = target.id.clone();
+    db.folders.create(&target).expect("create target");
+
+    let mut paste = Paste::new("race-content".to_string(), "race-paste".to_string());
+    paste.folder_id = Some(root_id.clone());
+    let paste_id = paste.id.clone();
+    TransactionOps::create_paste_with_folder(&db, &paste, &root_id)
+        .expect("seed paste with folder");
+
+    let delete_barrier = Arc::new(Barrier::new(2));
+    let delete_barrier_thread = delete_barrier.clone();
+    let delete_url = format!("http://{}/api/folder/{}", server.addr(), root_id);
+    let delete_thread = thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        delete_barrier_thread.wait();
+        client
+            .delete(delete_url.as_str())
+            .send()
+            .expect("delete folder request")
+            .status()
+    });
+
+    delete_barrier.wait();
+    backend
+        .cmd_tx
+        .send(CoreCmd::UpdatePasteMeta {
+            id: paste_id.clone(),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: Some(target_id.clone()),
+            tags: None,
+        })
+        .expect("send move metadata");
+
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteMetaSaved { .. } | CoreEvent::Error { .. } => {}
+        other => panic!("unexpected metadata race event: {:?}", other),
+    }
+
+    let delete_status = delete_thread.join().expect("delete join");
+    assert!(
+        delete_status.is_success(),
+        "folder delete should complete successfully, got {}",
+        delete_status
+    );
+
+    let root_after = db.folders.get(&root_id).expect("root lookup");
+    assert!(
+        root_after.is_none(),
+        "source folder should be deleted after race"
+    );
+
+    let paste_after = db
+        .pastes
+        .get(&paste_id)
+        .expect("paste lookup")
+        .expect("paste should remain visible");
+    assert_ne!(
+        paste_after.folder_id.as_deref(),
+        Some(root_id.as_str()),
+        "paste must not remain in deleted folder"
+    );
+
+    let target_after = db
+        .folders
+        .get(&target_id)
+        .expect("target lookup")
+        .expect("target folder exists");
+    let target_list_len = db
+        .pastes
+        .list(10, Some(target_id.clone()))
+        .expect("target list")
+        .len();
+    assert_eq!(
+        target_after.paste_count, target_list_len,
+        "folder count must match canonical ownership after race"
+    );
 }
 
 #[test]

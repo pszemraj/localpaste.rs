@@ -301,6 +301,53 @@ fn virtual_editor_autosave_dispatches_rope_snapshot_command() {
 }
 
 #[test]
+fn real_backend_virtual_save_error_updates_ui_state() {
+    let mut harness = make_app();
+    let dir = TempDir::new().expect("temp dir");
+    let db_path = dir.path().join("db");
+    let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+    harness.app.backend = crate::backend::spawn_backend(db, 8);
+
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.virtual_editor_buffer.reset("123456789");
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.save_in_flight = false;
+    harness.app.last_edit_at =
+        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+
+    harness.app.maybe_autosave();
+    assert!(harness.app.save_in_flight);
+    assert!(matches!(harness.app.save_status, SaveStatus::Saving));
+
+    let event = harness
+        .app
+        .backend
+        .evt_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("expected backend error event");
+    match &event {
+        CoreEvent::Error { source, message } => {
+            assert_eq!(*source, CoreErrorSource::SaveContent);
+            assert!(message.contains("maximum of 8 bytes"));
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    harness.app.apply_event(event);
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(!harness.app.save_in_flight);
+    assert!(harness.app.save_request_revision.is_none());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Paste size exceeds maximum of 8 bytes")
+    );
+}
+
+#[test]
 fn select_paste_dirty_defers_switch_until_content_save_ack() {
     let mut harness = make_app();
     harness.app.all_pastes.push(PasteSummary {

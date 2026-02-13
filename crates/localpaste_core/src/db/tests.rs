@@ -567,6 +567,69 @@ mod db_tests {
     }
 
     #[test]
+    fn test_move_between_folders_injected_error_rolls_back_reservation_and_preserves_state() {
+        let (db, _temp) = setup_test_db();
+
+        let old_folder = Folder::new("old-folder".to_string());
+        let old_folder_id = old_folder.id.clone();
+        db.folders.create(&old_folder).unwrap();
+
+        let new_folder = Folder::new("new-folder".to_string());
+        let new_folder_id = new_folder.id.clone();
+        db.folders.create(&new_folder).unwrap();
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(old_folder_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &old_folder_id).unwrap();
+
+        let update = UpdatePasteRequest {
+            content: None,
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: Some(new_folder_id.clone()),
+            tags: None,
+        };
+
+        set_transaction_failpoint(Some(TransactionFailpoint::MoveAfterDestinationReserveOnce));
+        let result = TransactionOps::move_paste_between_folders(
+            &db,
+            &paste_id,
+            Some(new_folder_id.as_str()),
+            update,
+        );
+        set_transaction_failpoint(None);
+
+        assert!(
+            matches!(result, Err(AppError::DatabaseError(message)) if message.contains("Injected transaction failpoint")),
+            "failpoint should force a deterministic move error"
+        );
+
+        let unchanged = db
+            .pastes
+            .get(&paste_id)
+            .expect("paste lookup")
+            .expect("paste exists");
+        assert_eq!(
+            unchanged.folder_id.as_deref(),
+            Some(old_folder_id.as_str()),
+            "failed move should preserve canonical folder assignment"
+        );
+
+        let old_after = db.folders.get(&old_folder_id).unwrap().unwrap();
+        let new_after = db.folders.get(&new_folder_id).unwrap().unwrap();
+        assert_eq!(
+            old_after.paste_count, 1,
+            "old folder count should remain unchanged after failed move"
+        );
+        assert_eq!(
+            new_after.paste_count, 0,
+            "destination reservation must rollback on move error"
+        );
+    }
+
+    #[test]
     fn test_delete_uses_folder_from_deleted_record_not_stale_context() {
         let (db, _temp) = setup_test_db();
 
@@ -626,6 +689,26 @@ mod db_tests {
         assert!(
             matches!(result, Err(AppError::NotFound)),
             "missing folder should return NotFound"
+        );
+    }
+
+    #[test]
+    fn test_folder_update_preserves_corrupt_record_on_error() {
+        let (db, _temp) = setup_test_db();
+        let tree = db.db.open_tree("folders").unwrap();
+        let folder_id = "corrupt-folder-update-id";
+        tree.insert(folder_id.as_bytes(), b"not-a-folder").unwrap();
+
+        let result = db
+            .folders
+            .update(folder_id, "renamed".to_string(), Some(String::new()));
+        assert!(
+            matches!(result, Err(AppError::Serialization(_))),
+            "corrupt folder value should surface serialization error"
+        );
+        assert!(
+            tree.get(folder_id.as_bytes()).unwrap().is_some(),
+            "corrupt record should not be deleted by failed folder update"
         );
     }
 
@@ -858,5 +941,107 @@ mod db_tests {
                 assert_eq!(new_after.paste_count, 0);
             }
         }
+    }
+
+    #[test]
+    fn test_database_new_reconciles_derived_only_rows_on_startup() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        let db = Database::new(&db_path_str).unwrap();
+        let paste = Paste::new("ghost".to_string(), "ghost".to_string());
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).unwrap();
+
+        let canonical_tree = db.db.open_tree("pastes").unwrap();
+        canonical_tree.remove(paste_id.as_bytes()).unwrap();
+        drop(canonical_tree);
+        drop(db);
+
+        let reopened = Database::new(&db_path_str).unwrap();
+        assert!(
+            reopened.pastes.get(&paste_id).unwrap().is_none(),
+            "canonical row should remain deleted"
+        );
+        assert!(
+            reopened
+                .pastes
+                .list_meta(10, None)
+                .unwrap()
+                .into_iter()
+                .all(|meta| meta.id != paste_id),
+            "startup reconcile should remove ghost metadata rows"
+        );
+
+        let meta_tree = reopened.db.open_tree("pastes_meta").unwrap();
+        assert!(
+            meta_tree.get(paste_id.as_bytes()).unwrap().is_none(),
+            "metadata tree should not retain derived-only row after startup reconcile"
+        );
+        let updated_tree = reopened.db.open_tree("pastes_by_updated").unwrap();
+        let has_updated_ref = updated_tree
+            .iter()
+            .filter_map(|item| item.ok())
+            .any(|(_, value)| value.as_ref() == paste_id.as_bytes());
+        assert!(
+            !has_updated_ref,
+            "recency index should not retain derived-only references after startup reconcile"
+        );
+    }
+
+    #[test]
+    fn test_equal_length_index_mismatch_does_not_leak_stale_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        let db = Database::new(&db_path_str).unwrap();
+        let stale = Paste::new("stale body".to_string(), "alpha-stale".to_string());
+        let stale_id = stale.id.clone();
+        db.pastes.create(&stale).unwrap();
+
+        let fresh = Paste::new("fresh body".to_string(), "beta-fresh".to_string());
+        let fresh_id = fresh.id.clone();
+        let canonical_tree = db.db.open_tree("pastes").unwrap();
+        canonical_tree.remove(stale_id.as_bytes()).unwrap();
+        canonical_tree
+            .insert(
+                fresh_id.as_bytes(),
+                bincode::serialize(&fresh).expect("serialize fresh"),
+            )
+            .unwrap();
+        drop(canonical_tree);
+        drop(db);
+
+        let reopened = Database::new(&db_path_str).unwrap();
+        assert!(
+            !reopened
+                .pastes
+                .needs_reconcile_meta_indexes(false)
+                .expect("needs reconcile"),
+            "startup marker/length checks currently miss equal-length semantic mismatches"
+        );
+
+        let listed = reopened.pastes.list_meta(10, None).expect("list meta");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, fresh_id);
+        assert_eq!(listed[0].name, "beta-fresh");
+
+        let stale_search = reopened
+            .pastes
+            .search_meta("alpha-stale", 10, None, None)
+            .expect("search stale");
+        assert!(
+            stale_search.is_empty(),
+            "stale metadata should not leak through search results"
+        );
+
+        let fresh_search = reopened
+            .pastes
+            .search_meta("beta-fresh", 10, None, None)
+            .expect("search fresh");
+        assert_eq!(fresh_search.len(), 1);
+        assert_eq!(fresh_search[0].id, fresh_id);
     }
 }

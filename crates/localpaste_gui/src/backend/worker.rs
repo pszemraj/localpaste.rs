@@ -5,10 +5,13 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use localpaste_core::{
     config::env_flag_enabled,
     db::TransactionOps,
-    folder_ops::{delete_folder_tree_and_migrate, introduces_cycle},
+    folder_ops::{delete_folder_tree_and_migrate, folder_delete_order, introduces_cycle},
     models::{folder::Folder, paste::UpdatePasteRequest},
-    naming, Database,
+    naming, AppError, Database,
 };
+use localpaste_server::PasteLockManager;
+use std::collections::HashSet;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{error, info};
@@ -32,6 +35,31 @@ fn validate_paste_size(content: &str, max_paste_size: usize) -> Result<(), Strin
     } else {
         Ok(())
     }
+}
+
+fn first_locked_paste_in_folder_delete_set(
+    db: &Database,
+    locks: &PasteLockManager,
+    root_folder_id: &str,
+) -> Result<Option<String>, AppError> {
+    let folders = db.folders.list()?;
+    if !folders.iter().any(|folder| folder.id == root_folder_id) {
+        return Err(AppError::NotFound);
+    }
+
+    let delete_set: HashSet<String> = folder_delete_order(&folders, root_folder_id)
+        .into_iter()
+        .collect();
+    for locked_id in locks.locked_ids() {
+        if let Some(paste) = db.pastes.get(locked_id.as_str())? {
+            if let Some(folder_id) = paste.folder_id.as_ref() {
+                if delete_set.contains(folder_id) {
+                    return Ok(Some(locked_id));
+                }
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +156,26 @@ fn log_query_perf(
 /// # Panics
 /// Panics if the worker thread cannot be spawned.
 pub fn spawn_backend(db: Database, max_paste_size: usize) -> BackendHandle {
+    spawn_backend_with_locks(db, max_paste_size, Arc::new(PasteLockManager::default()))
+}
+
+/// Spawn the backend worker thread with a shared lock manager.
+///
+/// # Arguments
+/// - `db`: Open database handle shared by backend command handlers.
+/// - `max_paste_size`: Maximum allowed paste content size in bytes.
+/// - `locks`: Shared paste lock manager used for lock-aware bulk operations.
+///
+/// # Returns
+/// A [`BackendHandle`] containing the command sender and event receiver.
+///
+/// # Panics
+/// Panics if the worker thread cannot be spawned.
+pub fn spawn_backend_with_locks(
+    db: Database,
+    max_paste_size: usize,
+    locks: Arc<PasteLockManager>,
+) -> BackendHandle {
     let (cmd_tx, cmd_rx) = unbounded();
     let (evt_tx, evt_rx) = unbounded();
 
@@ -705,6 +753,30 @@ pub fn spawn_backend(db: Database, max_paste_size: usize) -> BackendHandle {
                         }
                     }
                     CoreCmd::DeleteFolder { id } => {
+                        match first_locked_paste_in_folder_delete_set(&db, &locks, &id) {
+                            Ok(Some(locked_id)) => {
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!(
+                                        "Delete folder failed: folder delete would migrate locked paste '{}'; close it first.",
+                                        locked_id
+                                    ),
+                                );
+                                continue;
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                error!("backend delete folder lock precheck failed: {}", err);
+                                send_error(
+                                    &evt_tx,
+                                    CoreErrorSource::Other,
+                                    format!("Delete folder failed: {}", err),
+                                );
+                                continue;
+                            }
+                        }
+
                         match delete_folder_tree_and_migrate(&db, &id) {
                             Ok(_) => {
                                 query_cache.invalidate();
