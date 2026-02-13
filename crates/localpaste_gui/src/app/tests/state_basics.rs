@@ -201,6 +201,38 @@ fn palette_copy_send_failure_when_selected_paste_missing_is_cleared() {
 }
 
 #[test]
+fn palette_copy_raw_for_loaded_selection_sets_clipboard() {
+    let mut harness = make_app();
+    if let Some(paste) = harness.app.selected_paste.as_mut() {
+        paste.id = "alpha".to_string();
+    }
+    harness.app.pending_copy_action = None;
+
+    harness.app.queue_palette_copy("alpha".to_string(), false);
+
+    assert_eq!(harness.app.clipboard_outgoing.as_deref(), Some("content"));
+    assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
+fn palette_copy_fenced_for_loaded_selection_sets_language_block() {
+    let mut harness = make_app();
+    if let Some(paste) = harness.app.selected_paste.as_mut() {
+        paste.id = "alpha".to_string();
+        paste.language = Some("rust".to_string());
+    }
+    harness.app.pending_copy_action = None;
+
+    harness.app.queue_palette_copy("alpha".to_string(), true);
+
+    assert_eq!(
+        harness.app.clipboard_outgoing.as_deref(),
+        Some("```rust\ncontent\n```")
+    );
+    assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
 fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
     let TestHarness {
         _dir: _guard,

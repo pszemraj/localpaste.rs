@@ -159,6 +159,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::LockManager;
+    use crate::error::AppError;
     use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME, DB_TREE_LOCK_FILE_NAME};
     use tempfile::TempDir;
 
@@ -194,5 +195,30 @@ mod tests {
         let manager = LockManager::new(&db_path.to_string_lossy());
         let removed = manager.force_unlock().expect("force unlock");
         assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn force_unlock_reports_error_for_unremovable_lock_path() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        std::fs::create_dir_all(&db_path).expect("db dir");
+
+        let lock_dir = db_path.join(DB_LOCK_FILE_NAME);
+        std::fs::create_dir_all(&lock_dir).expect("lock dir");
+
+        let manager = LockManager::new(&db_path.to_string_lossy());
+        let err = manager
+            .force_unlock()
+            .expect_err("directory lock path should fail removal");
+        match err {
+            AppError::DatabaseError(message) => {
+                assert!(
+                    message.contains("Failed to force remove lock"),
+                    "unexpected error: {}",
+                    message
+                );
+            }
+            other => panic!("unexpected error variant: {:?}", other),
+        }
     }
 }

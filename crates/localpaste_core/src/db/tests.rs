@@ -379,6 +379,19 @@ mod db_tests {
     }
 
     #[test]
+    fn test_database_new_reports_error_for_corrupt_storage_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("not-a-db-file");
+        std::fs::write(&db_path, b"not-a-sled-db").unwrap();
+
+        let result = Database::new(db_path.to_str().unwrap());
+        assert!(
+            matches!(result, Err(AppError::DatabaseError(_))),
+            "opening a non-directory/non-db path should return a database error"
+        );
+    }
+
+    #[test]
     fn test_folder_crud() {
         let (db, _temp) = setup_test_db();
 
@@ -667,6 +680,85 @@ mod db_tests {
                 assert_eq!(b_after.paste_count, 1);
             }
             other => panic!("paste moved to unexpected folder: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_concurrent_move_and_delete_keep_folder_counts_consistent() {
+        let (db, _temp) = setup_test_db();
+
+        let old_folder = Folder::new("old-folder".to_string());
+        let old_folder_id = old_folder.id.clone();
+        db.folders.create(&old_folder).unwrap();
+
+        let new_folder = Folder::new("new-folder".to_string());
+        let new_folder_id = new_folder.id.clone();
+        db.folders.create(&new_folder).unwrap();
+
+        let mut paste = Paste::new("concurrent".to_string(), "move-delete".to_string());
+        paste.folder_id = Some(old_folder_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &old_folder_id).unwrap();
+
+        let mover_db = db.share().unwrap();
+        let deleter_db = db.share().unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+
+        let mover_barrier = barrier.clone();
+        let mover_paste_id = paste_id.clone();
+        let mover_folder_id = new_folder_id.clone();
+        let mover = thread::spawn(move || {
+            mover_barrier.wait();
+            let update = UpdatePasteRequest {
+                content: None,
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(mover_folder_id.clone()),
+                tags: None,
+            };
+            TransactionOps::move_paste_between_folders(
+                &mover_db,
+                &mover_paste_id,
+                Some(mover_folder_id.as_str()),
+                update,
+            )
+        });
+
+        let deleter_barrier = barrier;
+        let deleter_paste_id = paste_id.clone();
+        let deleter = thread::spawn(move || {
+            deleter_barrier.wait();
+            TransactionOps::delete_paste_with_folder(&deleter_db, &deleter_paste_id)
+        });
+
+        let move_result = mover.join().expect("mover join");
+        let delete_result = deleter.join().expect("deleter join");
+        assert!(move_result.is_ok(), "move should not error: {:?}", move_result);
+        assert!(
+            delete_result.is_ok(),
+            "delete should not error: {:?}",
+            delete_result
+        );
+
+        let old_after = db.folders.get(&old_folder_id).unwrap().unwrap();
+        let new_after = db.folders.get(&new_folder_id).unwrap().unwrap();
+        let maybe_paste = db.pastes.get(&paste_id).unwrap();
+
+        match maybe_paste {
+            Some(paste) => {
+                assert_eq!(
+                    paste.folder_id.as_deref(),
+                    Some(new_folder_id.as_str()),
+                    "remaining paste should only exist in destination folder"
+                );
+                assert_eq!(old_after.paste_count, 0);
+                assert_eq!(new_after.paste_count, 1);
+            }
+            None => {
+                assert_eq!(old_after.paste_count, 0);
+                assert_eq!(new_after.paste_count, 0);
+            }
         }
     }
 }
