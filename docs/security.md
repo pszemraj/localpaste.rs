@@ -51,6 +51,9 @@ If you need to expose LocalPaste publicly, follow these steps:
 ### 1. Enable Public Binding
 
 ```bash
+# Build the server binary once
+cargo build -p localpaste_server --bin localpaste --release
+
 # Bind to all interfaces (requires ALLOW_PUBLIC_ACCESS)
 export BIND=0.0.0.0:38411
 
@@ -58,7 +61,7 @@ export BIND=0.0.0.0:38411
 export ALLOW_PUBLIC_ACCESS=1
 
 # Run the server
-./localpaste
+./target/release/localpaste
 ```
 
 ### 2. Security Checklist

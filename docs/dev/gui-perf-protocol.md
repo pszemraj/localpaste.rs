@@ -36,6 +36,7 @@ $env:PORT = "38973"
 $env:LP_SERVER = "http://127.0.0.1:$env:PORT"
 $env:LOCALPASTE_VIRTUAL_EDITOR = "1"
 $env:LOCALPASTE_EDITOR_PERF_LOG = "1"
+$env:LOCALPASTE_BACKEND_PERF_LOG = "1"
 $env:LOCALPASTE_EDITOR_INPUT_TRACE = "1"
 $env:LOCALPASTE_HIGHLIGHT_TRACE = "1"
 
@@ -68,6 +69,7 @@ The canonical runbook seeds a large mixed dataset via `generate-test-data`:
 8. Trace sanity (when enabled):
    - input trace: deterministic `virtual input frame` routing outcomes
    - highlight trace: deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) with stale staged renders dropped.
+   - backend perf trace: list/search cache hit+miss counters and per-query latency logs (`localpaste_gui::backend_perf` target).
 
 ## Related Docs
 

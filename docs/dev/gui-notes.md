@@ -9,7 +9,8 @@ For perf validation steps/gates, use [gui-perf-protocol.md](gui-perf-protocol.md
 - `LOCALPASTE_VIRTUAL_PREVIEW=1`: force read-only virtual preview mode.
 - `LOCALPASTE_VIRTUAL_EDITOR=1`: force editable virtual mode (default behavior).
 - `LOCALPASTE_VIRTUAL_EDITOR=0`: force `TextEdit` fallback kill-switch.
-- `LOCALPASTE_EDITOR_PERF_LOG=1`: periodic FPS + p95 frame logs.
+- `LOCALPASTE_EDITOR_PERF_LOG=1`: periodic local frame snapshots (`avg/p50/p95/p99/worst`) plus list/search and redo-cache counters.
+- `LOCALPASTE_BACKEND_PERF_LOG=1`: local backend list/search cache hit/miss and latency logs.
 - `LOCALPASTE_EDITOR_INPUT_TRACE=1`: virtual input routing trace.
 - `LOCALPASTE_HIGHLIGHT_TRACE=1`: highlight request/apply/drop lifecycle trace.
 - Boolean flags accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
