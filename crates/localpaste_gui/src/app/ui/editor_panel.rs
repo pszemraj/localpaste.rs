@@ -1,7 +1,7 @@
 //! Central editor panel rendering for TextEdit, virtual preview, and virtual editor modes.
 
-use super::super::*;
 use super::super::highlight::hash_bytes;
+use super::super::*;
 use eframe::egui;
 
 impl LocalPasteApp {
@@ -182,7 +182,6 @@ impl LocalPasteApp {
                     && self.should_request_highlight(
                         revision,
                         text_len,
-                        content_hash,
                         &language_hint,
                         theme_key,
                         debounce_active,

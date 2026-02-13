@@ -93,7 +93,8 @@ impl WrapLayoutCache {
     ///
     /// Returns `false` when the cache cannot be safely patched in-place.
     pub(crate) fn apply_delta(&mut self, buffer: &RopeBuffer, delta: VirtualEditDelta) -> bool {
-        if self.line_metrics.is_empty() || self.prefix_heights.len() != self.line_metrics.len() + 1 {
+        if self.line_metrics.is_empty() || self.prefix_heights.len() != self.line_metrics.len() + 1
+        {
             return false;
         }
         if self.char_width_bits == 0 || self.line_height_bits == 0 {
@@ -130,7 +131,12 @@ impl WrapLayoutCache {
 
         let mut replacement = Vec::with_capacity(new_count);
         for line in old_start..=delta.new_end_line {
-            replacement.push(measure_line(buffer, line, self.wrap_cols.max(1), line_height));
+            replacement.push(measure_line(
+                buffer,
+                line,
+                self.wrap_cols.max(1),
+                line_height,
+            ));
         }
 
         self.line_metrics
@@ -268,7 +274,9 @@ mod tests {
         cache.rebuild(&buffer, 20.0, 10.0, 5.0);
         let first_before = cache.line_metrics(0).expect("line 0");
 
-        let delta = buffer.replace_char_range(7..9, "longer-line").expect("delta");
+        let delta = buffer
+            .replace_char_range(7..9, "longer-line")
+            .expect("delta");
         assert!(cache.apply_delta(&buffer, delta));
         assert!(!cache.needs_rebuild(buffer.revision(), 20.0, 10.0, 5.0, buffer.line_count()));
         assert_eq!(cache.line_metrics(0), Some(first_before));

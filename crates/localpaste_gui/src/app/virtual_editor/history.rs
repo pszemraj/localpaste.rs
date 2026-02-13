@@ -134,9 +134,7 @@ impl VirtualEditorHistory {
         buffer: &mut RopeBuffer,
         state: &mut VirtualEditorState,
     ) -> Option<VirtualEditDelta> {
-        let Some(op) = self.undo.pop() else {
-            return None;
-        };
+        let op = self.undo.pop()?;
         self.undo_bytes = self.undo_bytes.saturating_sub(op_bytes(&op));
         let inserted_chars = op.inserted.chars().count();
         let end = op.start.saturating_add(inserted_chars);
@@ -152,9 +150,7 @@ impl VirtualEditorHistory {
         buffer: &mut RopeBuffer,
         state: &mut VirtualEditorState,
     ) -> Option<VirtualEditDelta> {
-        let Some(op) = self.redo.pop() else {
-            return None;
-        };
+        let op = self.redo.pop()?;
         let deleted_chars = op.deleted.chars().count();
         let end = op.start.saturating_add(deleted_chars);
         let delta = buffer.replace_char_range(op.start..end, op.inserted.as_str());

@@ -184,7 +184,6 @@ impl LocalPasteApp {
         &self,
         revision: u64,
         text_len: usize,
-        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         debounce_active: bool,
@@ -194,6 +193,7 @@ impl LocalPasteApp {
             self.trace_highlight("skip_request", "plain threshold exceeded");
             return false;
         }
+        let content_hash = self.active_text_hash();
         if let Some(pending) = &self.highlight_pending {
             if pending.matches(
                 revision,

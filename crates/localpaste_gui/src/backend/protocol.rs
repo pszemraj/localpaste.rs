@@ -118,6 +118,9 @@ impl PasteSummary {
     }
 
     /// Build a summary from a metadata record.
+    ///
+    /// # Returns
+    /// A list-row payload containing metadata-only fields.
     pub fn from_meta(meta: &PasteMeta) -> Self {
         Self {
             id: meta.id.clone(),

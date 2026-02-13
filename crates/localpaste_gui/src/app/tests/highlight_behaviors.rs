@@ -1,7 +1,7 @@
 //! Highlight cache/render alignment tests for editor and staged-highlight flows.
 
-use super::*;
 use super::super::highlight::hash_bytes;
+use super::*;
 
 #[test]
 fn highlight_cache_reuses_layout_when_unchanged() {
@@ -343,7 +343,6 @@ fn highlight_request_skips_when_staged_matches() {
     let should = harness.app.should_request_highlight(
         0,
         harness.app.selected_content.len(),
-        hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         "py",
         "base16-mocha.dark",
         false,
