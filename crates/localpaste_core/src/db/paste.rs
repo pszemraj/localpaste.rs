@@ -8,11 +8,16 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
+const META_STATE_TREE_NAME: &str = "pastes_meta_state";
+const META_INDEX_VERSION_KEY: &[u8] = b"version";
+const META_INDEX_SCHEMA_VERSION: u32 = 1;
+
 /// Accessor for the `pastes` sled tree.
 pub struct PasteDb {
     tree: sled::Tree,
     meta_tree: sled::Tree,
     updated_tree: sled::Tree,
+    meta_state_tree: sled::Tree,
 }
 
 impl PasteDb {
@@ -27,11 +32,39 @@ impl PasteDb {
         let tree = db.open_tree("pastes")?;
         let meta_tree = db.open_tree("pastes_meta")?;
         let updated_tree = db.open_tree("pastes_by_updated")?;
+        let meta_state_tree = db.open_tree(META_STATE_TREE_NAME)?;
         Ok(Self {
             tree,
             meta_tree,
             updated_tree,
+            meta_state_tree,
         })
+    }
+
+    pub(crate) fn needs_reconcile_meta_indexes(
+        &self,
+        force_reindex: bool,
+    ) -> Result<bool, AppError> {
+        if force_reindex {
+            tracing::warn!("LOCALPASTE_REINDEX is enabled; forcing metadata index reconcile");
+            return Ok(true);
+        }
+        let marker_version = self.meta_index_schema_version()?;
+        if marker_version != Some(META_INDEX_SCHEMA_VERSION) {
+            return Ok(true);
+        }
+
+        let pastes_empty = self.tree.is_empty();
+        let meta_empty = self.meta_tree.is_empty();
+        let updated_empty = self.updated_tree.is_empty();
+
+        if !pastes_empty && (meta_empty || updated_empty) {
+            return Ok(true);
+        }
+        if pastes_empty && (!meta_empty || !updated_empty) {
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Insert a new paste.
@@ -454,6 +487,32 @@ impl PasteDb {
         }
         self.meta_tree.flush()?;
         self.updated_tree.flush()?;
+        self.write_meta_index_schema_version()?;
+        Ok(())
+    }
+
+    fn meta_index_schema_version(&self) -> Result<Option<u32>, AppError> {
+        let Some(raw) = self.meta_state_tree.get(META_INDEX_VERSION_KEY)? else {
+            return Ok(None);
+        };
+        if raw.len() != std::mem::size_of::<u32>() {
+            tracing::warn!(
+                "Metadata index state marker has invalid length {}; forcing reconcile",
+                raw.len()
+            );
+            return Ok(None);
+        }
+        let mut bytes = [0u8; std::mem::size_of::<u32>()];
+        bytes.copy_from_slice(raw.as_ref());
+        Ok(Some(u32::from_be_bytes(bytes)))
+    }
+
+    fn write_meta_index_schema_version(&self) -> Result<(), AppError> {
+        self.meta_state_tree.insert(
+            META_INDEX_VERSION_KEY,
+            META_INDEX_SCHEMA_VERSION.to_be_bytes().to_vec(),
+        )?;
+        self.meta_state_tree.flush()?;
         Ok(())
     }
 
@@ -604,8 +663,21 @@ impl From<LegacyPaste> for Paste {
 
 #[cfg(test)]
 mod tests {
-    use super::folder_matches_expected;
+    use super::{
+        folder_matches_expected, PasteDb, META_INDEX_SCHEMA_VERSION, META_INDEX_VERSION_KEY,
+    };
+    use crate::models::paste::Paste;
     use std::cell::Cell;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    fn setup_paste_db() -> (PasteDb, TempDir) {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        let db = Arc::new(sled::open(db_path).expect("open sled"));
+        let paste_db = PasteDb::new(db).expect("open paste db");
+        (paste_db, dir)
+    }
 
     #[test]
     fn folder_mismatch_state_tracks_latest_retry_attempt() {
@@ -626,5 +698,71 @@ mod tests {
             &mismatch
         ));
         assert!(!mismatch.get());
+    }
+
+    #[test]
+    fn needs_reconcile_detects_missing_marker() {
+        let (paste_db, _dir) = setup_paste_db();
+        assert!(paste_db.meta_tree.is_empty());
+        assert!(paste_db.updated_tree.is_empty());
+        assert!(paste_db
+            .meta_state_tree
+            .get(META_INDEX_VERSION_KEY)
+            .expect("state lookup")
+            .is_none());
+        assert!(paste_db
+            .needs_reconcile_meta_indexes(false)
+            .expect("needs reconcile"));
+    }
+
+    #[test]
+    fn needs_reconcile_detects_missing_index_rows_with_marker() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        let paste = Paste::new("hello".to_string(), "hello".to_string());
+        paste_db.create(&paste).expect("create paste");
+
+        paste_db.meta_tree.clear().expect("clear meta");
+        assert!(paste_db
+            .meta_state_tree
+            .get(META_INDEX_VERSION_KEY)
+            .expect("state lookup")
+            .is_some());
+        assert!(paste_db
+            .needs_reconcile_meta_indexes(false)
+            .expect("needs reconcile"));
+    }
+
+    #[test]
+    fn needs_reconcile_returns_false_when_marker_and_indexes_are_healthy() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        let marker = paste_db
+            .meta_state_tree
+            .get(META_INDEX_VERSION_KEY)
+            .expect("state lookup")
+            .expect("state marker");
+        assert_eq!(
+            u32::from_be_bytes(marker.as_ref().try_into().expect("version bytes")),
+            META_INDEX_SCHEMA_VERSION
+        );
+        assert!(!paste_db
+            .needs_reconcile_meta_indexes(false)
+            .expect("needs reconcile"));
+    }
+
+    #[test]
+    fn needs_reconcile_honors_force_reindex_flag() {
+        let (paste_db, _dir) = setup_paste_db();
+        paste_db
+            .reconcile_meta_indexes()
+            .expect("initial reconcile writes marker");
+        assert!(paste_db
+            .needs_reconcile_meta_indexes(true)
+            .expect("needs reconcile"));
     }
 }

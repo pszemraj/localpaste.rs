@@ -338,7 +338,12 @@ fn list_and_search_latency_stay_within_reasonable_headless_budget() {
         } else {
             format!("payload {} filler", idx)
         };
-        let paste = Paste::new(content, format!("item-{}", idx));
+        let name = if idx % 250 == 0 {
+            format!("needle-item-{}", idx)
+        } else {
+            format!("item-{}", idx)
+        };
+        let paste = Paste::new(content, name);
         db.pastes.create(&paste).expect("seed paste");
     }
 

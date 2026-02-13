@@ -57,7 +57,10 @@ impl LocalPasteApp {
                         }
                         ui.separator();
                         if ui
-                            .add_enabled(self.metadata_dirty, egui::Button::new("Apply"))
+                            .add_enabled(
+                                self.metadata_dirty && !self.metadata_save_in_flight,
+                                egui::Button::new("Apply"),
+                            )
                             .clicked()
                         {
                             apply_metadata = true;

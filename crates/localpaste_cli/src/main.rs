@@ -58,6 +58,9 @@ enum Commands {
     Search {
         query: String,
     },
+    SearchMeta {
+        query: String,
+    },
     Delete {
         id: String,
     },
@@ -286,7 +289,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::List { limit } => {
             let request_start = Instant::now();
             let res = client
-                .get(format!("{}/api/pastes", server))
+                .get(format!("{}/api/pastes/meta", server))
                 .query(&[("limit", limit)])
                 .send()
                 .await?;
@@ -335,6 +338,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", output);
             }
         }
+        Commands::SearchMeta { query } => {
+            let request_start = Instant::now();
+            let res = client
+                .get(format!("{}/api/search/meta", server))
+                .query(&[("q", query.as_str())])
+                .send()
+                .await?;
+            let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "Search metadata").await;
+
+            let parse_start = Instant::now();
+            let pastes: Vec<Value> = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+
+            log_timing_parts(timing, "search-meta", request_elapsed, Some(parse_elapsed));
+            let output = match format_summary_output(&pastes, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("Search metadata failed: {}", message);
+                    std::process::exit(1);
+                }
+            };
+            if !output.is_empty() {
+                println!("{}", output);
+            }
+        }
         Commands::Delete { id } => {
             let endpoint = match api_url(&server, &["api", "paste", id.as_str()]) {
                 Ok(url) => url,
@@ -372,6 +401,8 @@ mod tests {
         api_url, error_message_for_response, format_delete_output, format_get_output,
         format_summary_output, normalize_server, paste_id_and_name,
     };
+    use super::{Cli, Commands};
+    use clap::Parser;
 
     #[test]
     fn normalize_server_rewrites_http_localhost() {
@@ -478,5 +509,15 @@ mod tests {
         let url = api_url("http://127.0.0.1:38411/base", &["api", "paste", "abc123"])
             .expect("api_url should build");
         assert_eq!(url.as_str(), "http://127.0.0.1:38411/base/api/paste/abc123");
+    }
+
+    #[test]
+    fn cli_parses_search_meta_subcommand() {
+        let cli = Cli::try_parse_from(["lpaste", "search-meta", "needle"])
+            .expect("cli should parse search-meta");
+        match cli.command {
+            Commands::SearchMeta { query } => assert_eq!(query, "needle"),
+            _ => panic!("expected search-meta command"),
+        }
     }
 }

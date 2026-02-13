@@ -36,6 +36,7 @@ impl LocalPasteApp {
                     self.save_status = SaveStatus::Saved;
                     self.last_edit_at = None;
                     self.save_in_flight = false;
+                    self.metadata_save_in_flight = false;
                 }
             }
             CoreEvent::PasteCreated { paste } => {
@@ -54,6 +55,7 @@ impl LocalPasteApp {
                 self.save_status = SaveStatus::Saved;
                 self.last_edit_at = None;
                 self.save_in_flight = false;
+                self.metadata_save_in_flight = false;
                 self.focus_editor_next = true;
                 self.set_status("Created new paste.");
             }
@@ -67,7 +69,9 @@ impl LocalPasteApp {
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     let active_content = self.active_snapshot();
                     let has_newer_local_edits = active_content != paste.content;
-                    self.sync_editor_metadata(&paste);
+                    if !self.metadata_dirty && !self.metadata_save_in_flight {
+                        self.sync_editor_metadata(&paste);
+                    }
                     let mut updated = paste;
                     updated.content = active_content;
                     self.selected_paste = Some(updated);
@@ -85,6 +89,7 @@ impl LocalPasteApp {
                 }
             }
             CoreEvent::PasteMetaSaved { paste } => {
+                self.metadata_save_in_flight = false;
                 if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste.id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
@@ -140,7 +145,18 @@ impl LocalPasteApp {
             }
             CoreEvent::Error { message } => {
                 warn!("backend error: {}", message);
-                self.set_status(message);
+                let status_message = if self.metadata_save_in_flight {
+                    self.metadata_dirty = true;
+                    self.metadata_save_in_flight = false;
+                    if message.to_ascii_lowercase().contains("metadata") {
+                        message.clone()
+                    } else {
+                        format!("Metadata save failed: {}", message)
+                    }
+                } else {
+                    message.clone()
+                };
+                self.set_status(status_message);
                 if self.save_status == SaveStatus::Saving {
                     self.save_status = SaveStatus::Dirty;
                 }
@@ -251,6 +267,7 @@ impl LocalPasteApp {
         self.edit_language_is_manual = false;
         self.edit_tags.clear();
         self.metadata_dirty = false;
+        self.metadata_save_in_flight = false;
         self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
         self.editor_cache = EditorLayoutCache::default();
@@ -273,6 +290,7 @@ impl LocalPasteApp {
         self.edit_language_is_manual = false;
         self.edit_tags.clear();
         self.metadata_dirty = false;
+        self.metadata_save_in_flight = false;
         self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
         self.editor_cache = EditorLayoutCache::default();
@@ -370,7 +388,7 @@ impl LocalPasteApp {
     }
 
     pub(super) fn save_metadata_now(&mut self) {
-        if !self.metadata_dirty {
+        if !self.metadata_dirty || self.metadata_save_in_flight {
             return;
         }
         let Some(id) = self.selected_id.clone() else {
@@ -382,15 +400,23 @@ impl LocalPasteApp {
             None
         };
         let tags = Some(parse_tags_csv(self.edit_tags.as_str()));
-        let _ = self.backend.cmd_tx.send(CoreCmd::UpdatePasteMeta {
-            id,
-            name: Some(self.edit_name.clone()),
-            language,
-            language_is_manual: Some(self.edit_language_is_manual),
-            folder_id: None,
-            tags,
-        });
-        self.metadata_dirty = false;
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteMeta {
+                id,
+                name: Some(self.edit_name.clone()),
+                language,
+                language_is_manual: Some(self.edit_language_is_manual),
+                folder_id: None,
+                tags,
+            })
+            .is_err()
+        {
+            self.set_status("Metadata save failed: backend unavailable.");
+            return;
+        }
+        self.metadata_save_in_flight = true;
     }
 
     pub(super) fn export_selected_paste(&mut self) {

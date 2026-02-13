@@ -312,6 +312,73 @@ mod db_tests {
     }
 
     #[test]
+    fn test_database_new_reconciles_when_meta_marker_missing() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        let db = Database::new(&db_path_str).unwrap();
+        let state_tree = db.db.open_tree("pastes_meta_state").unwrap();
+        assert!(state_tree.get("version").unwrap().is_some());
+        state_tree.remove("version").unwrap();
+        drop(state_tree);
+        drop(db);
+
+        let reopened = Database::new(&db_path_str).unwrap();
+        let reopened_state = reopened.db.open_tree("pastes_meta_state").unwrap();
+        assert!(
+            reopened_state.get("version").unwrap().is_some(),
+            "missing marker should be recreated during startup reconcile"
+        );
+    }
+
+    #[test]
+    fn test_database_new_force_reindex_repairs_corrupt_meta_rows() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        let db = Database::new(&db_path_str).unwrap();
+        let paste = Paste::new("force reindex".to_string(), "force-reindex".to_string());
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).unwrap();
+
+        let meta_tree = db.db.open_tree("pastes_meta").unwrap();
+        meta_tree
+            .insert(paste_id.as_bytes(), b"corrupt-meta")
+            .unwrap();
+        drop(meta_tree);
+        drop(db);
+
+        struct EnvGuard {
+            key: &'static str,
+            previous: Option<String>,
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                if let Some(value) = self.previous.take() {
+                    std::env::set_var(self.key, value);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+
+        let guard = EnvGuard {
+            key: "LOCALPASTE_REINDEX",
+            previous: std::env::var("LOCALPASTE_REINDEX").ok(),
+        };
+        std::env::set_var(guard.key, "1");
+
+        let reopened = Database::new(&db_path_str).unwrap();
+        let metas = reopened.pastes.list_meta(10, None).unwrap();
+        assert!(
+            metas.into_iter().any(|meta| meta.id == paste_id),
+            "forced reindex should rebuild metadata entries"
+        );
+    }
+
+    #[test]
     fn test_folder_crud() {
         let (db, _temp) = setup_test_db();
 

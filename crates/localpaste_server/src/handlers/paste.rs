@@ -262,6 +262,33 @@ pub async fn list_pastes(
     }
 }
 
+/// List paste metadata with optional filters.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `query`: List query parameters.
+///
+/// # Returns
+/// Metadata rows as JSON.
+///
+/// # Errors
+/// Returns an error if listing fails.
+pub async fn list_pastes_meta(
+    State(state): State<AppState>,
+    Query(query): Query<ListQuery>,
+) -> Result<Response, HttpError> {
+    let normalized_folder_id = normalize_optional_id_for_create(query.folder_id);
+    let folder_filter_used = normalized_folder_id.is_some();
+    let limit = query.limit.unwrap_or(50).min(100);
+    let metas = state.db.pastes.list_meta(limit, normalized_folder_id)?;
+    if folder_filter_used {
+        warn_folder_deprecation("GET /api/pastes/meta?folder_id=...");
+        Ok(with_folder_deprecation_headers(Json(metas)))
+    } else {
+        Ok(Json(metas).into_response())
+    }
+}
+
 /// Search pastes by query.
 ///
 /// # Arguments
@@ -289,5 +316,38 @@ pub async fn search_pastes(
         Ok(with_folder_deprecation_headers(Json(pastes)))
     } else {
         Ok(Json(pastes).into_response())
+    }
+}
+
+/// Search paste metadata by query.
+///
+/// Metadata search matches name/tags/language and does not scan content.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `query`: Search query parameters.
+///
+/// # Returns
+/// Matching metadata rows as JSON.
+///
+/// # Errors
+/// Returns an error if search fails.
+pub async fn search_pastes_meta(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Response, HttpError> {
+    let normalized_folder_id = normalize_optional_id_for_create(query.folder_id);
+    let folder_filter_used = normalized_folder_id.is_some();
+    let limit = query.limit.unwrap_or(50).min(100);
+    let metas =
+        state
+            .db
+            .pastes
+            .search_meta(&query.q, limit, normalized_folder_id, query.language)?;
+    if folder_filter_used {
+        warn_folder_deprecation("GET /api/search/meta?folder_id=...");
+        Ok(with_folder_deprecation_headers(Json(metas)))
+    } else {
+        Ok(Json(metas).into_response())
     }
 }

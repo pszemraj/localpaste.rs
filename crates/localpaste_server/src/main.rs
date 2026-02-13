@@ -82,7 +82,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    tracing::info!("LocalPaste running at http://{}", bind_addr);
+    let actual_addr = listener.local_addr().unwrap_or(bind_addr);
+    tracing::info!("LocalPaste running at http://{}", actual_addr);
 
     let db = state.db.clone();
     serve_router(listener, state, allow_public, shutdown_signal(db)).await?;

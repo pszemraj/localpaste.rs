@@ -3,6 +3,8 @@
 use serde::Deserialize;
 use std::env;
 use std::path::PathBuf;
+use std::str::FromStr;
+use tracing::warn;
 
 /// Runtime configuration for LocalPaste.
 #[derive(Debug, Clone, Deserialize)]
@@ -70,6 +72,34 @@ pub fn parse_env_flag(value: &str) -> Option<bool> {
     }
 }
 
+fn parse_env_number<T>(name: &str, default: T) -> T
+where
+    T: FromStr + Copy + std::fmt::Display,
+    <T as FromStr>::Err: std::fmt::Display,
+{
+    let Ok(value) = env::var(name) else {
+        return default;
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        warn!(
+            "Environment variable {} is empty; using default {}",
+            name, default
+        );
+        return default;
+    }
+    match trimmed.parse::<T>() {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            warn!(
+                "Invalid value for {}='{}': {}. Using default {}",
+                name, value, err, default
+            );
+            default
+        }
+    }
+}
+
 /// Read a boolean flag from the environment.
 ///
 /// Missing or unrecognized values are treated as `false`.
@@ -80,10 +110,19 @@ pub fn parse_env_flag(value: &str) -> Option<bool> {
 /// # Returns
 /// `true` when the value is a recognized truthy value.
 pub fn env_flag_enabled(name: &str) -> bool {
-    env::var(name)
-        .ok()
-        .and_then(|value| parse_env_flag(&value))
-        .unwrap_or(false)
+    let Ok(value) = env::var(name) else {
+        return false;
+    };
+    match parse_env_flag(&value) {
+        Some(enabled) => enabled,
+        None => {
+            warn!(
+                "Invalid value for {}='{}'; expected 1/0/true/false/yes/no/on/off. Using false.",
+                name, value
+            );
+            false
+        }
+    }
 }
 
 impl Config {
@@ -98,18 +137,9 @@ impl Config {
                 let cache_dir = home.join(".cache").join("localpaste");
                 cache_dir.join("db").to_string_lossy().to_string()
             }),
-            port: env::var("PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(38411),
-            max_paste_size: env::var("MAX_PASTE_SIZE")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(10 * 1024 * 1024), // 10MB default
-            auto_save_interval: env::var("AUTO_SAVE_INTERVAL")
-                .ok()
-                .and_then(|i| i.parse().ok())
-                .unwrap_or(2000), // 2 seconds
+            port: parse_env_number("PORT", 38411),
+            max_paste_size: parse_env_number("MAX_PASTE_SIZE", 10 * 1024 * 1024), // 10MB default
+            auto_save_interval: parse_env_number("AUTO_SAVE_INTERVAL", 2000),     // 2 seconds
             auto_backup: env_flag_enabled("AUTO_BACKUP"), // Default to false - backups should be explicit
         }
     }
@@ -117,7 +147,45 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_env_flag;
+    use super::{env_flag_enabled, parse_env_flag, Config};
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: Tests coordinate env mutation via `env_lock` to avoid races.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                // SAFETY: Tests coordinate env mutation via `env_lock` to avoid races.
+                unsafe {
+                    std::env::set_var(self.key, previous);
+                }
+            } else {
+                // SAFETY: Tests coordinate env mutation via `env_lock` to avoid races.
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     #[test]
     fn parse_env_flag_accepts_truthy_values() {
@@ -137,5 +205,25 @@ mod tests {
     fn parse_env_flag_rejects_unknown_values() {
         assert_eq!(parse_env_flag("maybe"), None);
         assert_eq!(parse_env_flag("enabled"), None);
+    }
+
+    #[test]
+    fn config_from_env_invalid_numeric_values_fall_back_to_defaults() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _port = EnvGuard::set("PORT", "not-a-number");
+        let _max = EnvGuard::set("MAX_PASTE_SIZE", "-1");
+        let _interval = EnvGuard::set("AUTO_SAVE_INTERVAL", "wat");
+
+        let config = Config::from_env();
+        assert_eq!(config.port, 38411);
+        assert_eq!(config.max_paste_size, 10 * 1024 * 1024);
+        assert_eq!(config.auto_save_interval, 2000);
+    }
+
+    #[test]
+    fn env_flag_enabled_treats_invalid_value_as_false() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _flag = EnvGuard::set("LOCALPASTE_TEST_FLAG", "maybe");
+        assert!(!env_flag_enabled("LOCALPASTE_TEST_FLAG"));
     }
 }

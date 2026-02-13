@@ -109,7 +109,10 @@ impl LocalPasteApp {
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     if ui
-                        .add_enabled(self.metadata_dirty, egui::Button::new("Save Metadata"))
+                        .add_enabled(
+                            self.metadata_dirty && !self.metadata_save_in_flight,
+                            egui::Button::new("Save Metadata"),
+                        )
                         .clicked()
                     {
                         self.save_metadata_now();

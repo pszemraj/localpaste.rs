@@ -7,10 +7,17 @@ Use this protocol for release-gate evidence and regression checks.
 
 - English-first editor workflows only.
 - Primary perf scenario: `perf-scroll-5k-lines`.
-- Gate thresholds:
+- Manual release-gate thresholds:
   - average FPS `>= 45`
   - p95 frame time `<= 25 ms`
   - no multi-second plain fallback during newline-burst editing.
+
+## Automated Test Budget (CI/Headless)
+
+- Automated headless tests use a broad regression budget, not release gating:
+  - list latency `< 5s`
+  - search latency `< 5s`
+- Source: `crates/localpaste_gui/tests/headless_workflows.rs` (`list_and_search_latency_stay_within_reasonable_headless_budget`).
 
 ## Prereqs
 

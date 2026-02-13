@@ -219,6 +219,28 @@ async fn test_paste_with_folder() {
     let pastes: Vec<serde_json::Value> = list_response.json();
     assert_eq!(pastes.len(), 1);
     assert_eq!(pastes[0]["folder_id"], folder_id);
+
+    let list_meta_response = server
+        .get(&format!("/api/pastes/meta?folder_id={}", folder_id))
+        .await;
+    assert_eq!(list_meta_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&list_meta_response);
+    let metas: Vec<serde_json::Value> = list_meta_response.json();
+    assert_eq!(metas.len(), 1);
+    assert_eq!(metas[0]["folder_id"], folder_id);
+    assert!(metas[0].get("content").is_none());
+
+    let search_meta_response = server
+        .get(&format!(
+            "/api/search/meta?q=folder-paste&folder_id={}",
+            folder_id
+        ))
+        .await;
+    assert_eq!(search_meta_response.status_code(), StatusCode::OK);
+    assert_folder_deprecation_headers(&search_meta_response);
+    let search_meta: Vec<serde_json::Value> = search_meta_response.json();
+    assert_eq!(search_meta.len(), 1);
+    assert_eq!(search_meta[0]["folder_id"], folder_id);
 }
 
 #[tokio::test]
@@ -261,6 +283,51 @@ async fn test_paste_search() {
         .unwrap()
         .to_lowercase()
         .contains("rust"));
+}
+
+#[tokio::test]
+async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
+    let (server, _temp, _locks) = setup_test_server().await;
+
+    // Content-only match (should be excluded from /api/search/meta).
+    server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "needle-in-content only",
+            "name": "content-only"
+        }))
+        .await;
+
+    // Name/tag match (should be included by /api/search/meta).
+    let tagged_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "plain text",
+            "name": "needle-name",
+            "tags": ["needle-tag"]
+        }))
+        .await;
+    assert_eq!(tagged_response.status_code(), StatusCode::OK);
+
+    let list_meta_response = server.get("/api/pastes/meta?limit=10").await;
+    assert_eq!(list_meta_response.status_code(), StatusCode::OK);
+    let list_meta: Vec<serde_json::Value> = list_meta_response.json();
+    assert!(!list_meta.is_empty());
+    assert!(list_meta
+        .iter()
+        .all(|item| item.get("content").is_none() && item.get("content_len").is_some()));
+
+    let full_search_response = server.get("/api/search?q=needle").await;
+    assert_eq!(full_search_response.status_code(), StatusCode::OK);
+    let full_results: Vec<serde_json::Value> = full_search_response.json();
+    assert_eq!(full_results.len(), 2);
+
+    let meta_search_response = server.get("/api/search/meta?q=needle").await;
+    assert_eq!(meta_search_response.status_code(), StatusCode::OK);
+    let meta_results: Vec<serde_json::Value> = meta_search_response.json();
+    assert_eq!(meta_results.len(), 1);
+    assert_eq!(meta_results[0]["name"], "needle-name");
+    assert!(meta_results[0].get("content").is_none());
 }
 
 #[tokio::test]
@@ -405,6 +472,33 @@ async fn test_whitespace_folder_ids_normalize_consistently() {
     assert_eq!(whitespace_search_response.status_code(), StatusCode::OK);
     let whitespace_search: Vec<serde_json::Value> = whitespace_search_response.json();
     assert_eq!(whitespace_search.len(), all_search.len());
+
+    let all_meta_list_response = server.get("/api/pastes/meta?limit=20").await;
+    assert_eq!(all_meta_list_response.status_code(), StatusCode::OK);
+    let all_meta_list: Vec<serde_json::Value> = all_meta_list_response.json();
+
+    let whitespace_meta_list_response = server
+        .get("/api/pastes/meta?limit=20&folder_id=%20%20%20")
+        .await;
+    assert_eq!(whitespace_meta_list_response.status_code(), StatusCode::OK);
+    let whitespace_meta_list: Vec<serde_json::Value> = whitespace_meta_list_response.json();
+    assert_eq!(whitespace_meta_list.len(), all_meta_list.len());
+
+    let all_meta_search_response = server
+        .get("/api/search/meta?q=whitespace-audit&limit=20")
+        .await;
+    assert_eq!(all_meta_search_response.status_code(), StatusCode::OK);
+    let all_meta_search: Vec<serde_json::Value> = all_meta_search_response.json();
+
+    let whitespace_meta_search_response = server
+        .get("/api/search/meta?q=whitespace-audit&limit=20&folder_id=%20%20%20")
+        .await;
+    assert_eq!(
+        whitespace_meta_search_response.status_code(),
+        StatusCode::OK
+    );
+    let whitespace_meta_search: Vec<serde_json::Value> = whitespace_meta_search_response.json();
+    assert_eq!(whitespace_meta_search.len(), all_meta_search.len());
 }
 
 #[tokio::test]

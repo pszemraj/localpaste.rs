@@ -56,7 +56,8 @@ fn save_metadata_now_sends_manual_language_and_normalized_tags() {
     harness.app.edit_tags = "rust, CLI, rust, cli, ".to_string();
 
     harness.app.save_metadata_now();
-    assert!(!harness.app.metadata_dirty);
+    assert!(harness.app.metadata_dirty);
+    assert!(harness.app.metadata_save_in_flight);
 
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::UpdatePasteMeta {
@@ -91,6 +92,8 @@ fn save_metadata_now_auto_language_clears_override_without_folder_edits() {
     harness.app.edit_tags = String::new();
 
     harness.app.save_metadata_now();
+    assert!(harness.app.metadata_dirty);
+    assert!(harness.app.metadata_save_in_flight);
 
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::UpdatePasteMeta {
@@ -105,6 +108,49 @@ fn save_metadata_now_auto_language_clears_override_without_folder_edits() {
         }
         other => panic!("unexpected command: {:?}", other),
     }
+}
+
+#[test]
+fn metadata_save_success_clears_dirty_state_on_ack() {
+    let mut harness = make_app();
+    harness.app.metadata_dirty = true;
+    harness.app.edit_name = "Acked".to_string();
+    harness.app.save_metadata_now();
+    let _ = recv_cmd(&harness.cmd_rx);
+
+    let mut paste = Paste::new("content".to_string(), "Acked".to_string());
+    paste.id = "alpha".to_string();
+    harness.app.apply_event(CoreEvent::PasteMetaSaved {
+        paste: paste.clone(),
+    });
+
+    assert!(!harness.app.metadata_dirty);
+    assert!(!harness.app.metadata_save_in_flight);
+    assert_eq!(harness.app.edit_name, "Acked");
+}
+
+#[test]
+fn metadata_save_error_preserves_dirty_state_and_clears_in_flight() {
+    let mut harness = make_app();
+    harness.app.metadata_dirty = true;
+    harness.app.edit_name = "Will Retry".to_string();
+    harness.app.save_metadata_now();
+    let _ = recv_cmd(&harness.cmd_rx);
+
+    harness.app.apply_event(CoreEvent::Error {
+        message: "disk full".to_string(),
+    });
+
+    assert!(harness.app.metadata_dirty);
+    assert!(!harness.app.metadata_save_in_flight);
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Metadata save failed: disk full")
+    );
 }
 
 #[test]

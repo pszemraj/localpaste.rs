@@ -13,7 +13,7 @@ For perf validation steps/gates, use [gui-perf-protocol.md](gui-perf-protocol.md
 - `LOCALPASTE_EDITOR_INPUT_TRACE=1`: virtual input routing trace.
 - `LOCALPASTE_HIGHLIGHT_TRACE=1`: highlight request/apply/drop lifecycle trace.
 - Boolean flags accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
-- Unrecognized flag values are ignored with a warning and treated as unset.
+- Unrecognized flag values emit a warning and are treated as unset/false (shared parser behavior across core/server/gui env flags).
 
 ## Stable Behavior Notes
 

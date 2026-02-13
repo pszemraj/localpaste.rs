@@ -358,7 +358,13 @@ impl Database {
             folders: folder::FolderDb::new(db.clone())?,
             db,
         };
-        database.pastes.reconcile_meta_indexes()?;
+        let force_reindex = crate::config::env_flag_enabled("LOCALPASTE_REINDEX");
+        if database
+            .pastes
+            .needs_reconcile_meta_indexes(force_reindex)?
+        {
+            database.pastes.reconcile_meta_indexes()?;
+        }
         Ok(database)
     }
 

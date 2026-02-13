@@ -1,13 +1,7 @@
 //! Small UI helpers for labels and word selection.
 
-pub(super) fn env_value_enabled(value: &str) -> bool {
-    localpaste_core::config::parse_env_flag(value).unwrap_or(false)
-}
-
 pub(super) fn env_flag_enabled(name: &str) -> bool {
-    std::env::var(name)
-        .map(|value| env_value_enabled(&value))
-        .unwrap_or(false)
+    localpaste_core::config::env_flag_enabled(name)
 }
 
 /// Formats the language label shown in the UI, falling back to auto/plain.
