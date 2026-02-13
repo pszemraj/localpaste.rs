@@ -312,7 +312,7 @@ mod tests {
     use super::*;
     use crate::{db::TransactionOps, models::paste::Paste};
     use std::collections::HashMap;
-    use std::sync::{Arc, Barrier};
+    use std::sync::{Arc, Barrier, Mutex, OnceLock};
     use std::thread;
     use tempfile::TempDir;
 
@@ -329,6 +329,11 @@ mod tests {
         fn drop(&mut self) {
             set_delete_reconcile_failpoint(false);
         }
+    }
+
+    fn delete_reconcile_failpoint_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     fn assert_folder_counts_match_canonical(db: &Database) {
@@ -548,6 +553,9 @@ mod tests {
 
     #[test]
     fn delete_tree_returns_success_when_post_commit_reconcile_fails() {
+        let _lock = delete_reconcile_failpoint_test_lock()
+            .lock()
+            .expect("delete reconcile failpoint test lock");
         let _guard = DeleteReconcileFailpointGuard;
         let (db, _dir) = setup_db();
 
