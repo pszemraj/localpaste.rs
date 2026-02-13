@@ -37,6 +37,17 @@ pkill -f localpaste && pkill -f "cargo run" && sleep 2
 
 ⚠️ **Important**: Avoid using `kill -9` as it prevents graceful shutdown and can leave database locks. See [dev/devlog.md](dev/devlog.md) for development lock-handling guidance.
 
+### Lock Safety And Force Unlock
+
+This section is the canonical operational guidance for lock recovery.
+Security policy context remains in [security.md](security.md).
+
+- LocalPaste now uses a process-lifetime owner lock file (`db.owner.lock`) in the DB directory.
+- Startup acquires that owner lock before opening sled; a second writer on the same `DB_PATH` is rejected.
+- `--force-unlock` is conservative by default and will refuse when lock ownership is uncertain.
+- Use `--force-unlock` only after all LocalPaste processes are confirmed stopped and a backup has been taken.
+- Prefer changing `DB_PATH` for isolated tests over forcing unlock on a shared working directory.
+
 ## Linux (systemd)
 
 ### System-wide Service

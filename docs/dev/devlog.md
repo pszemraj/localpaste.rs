@@ -90,19 +90,13 @@ Parity/release gate status is tracked in [parity-checklist.md](parity-checklist.
 
 Authoritative route wiring lives in `crates/localpaste_server/src/lib.rs`.
 Authoritative request/response behavior lives in `crates/localpaste_server/src/handlers/paste.rs`.
-Use this section as orientation only.
+Use this section as orientation only and avoid copying route-by-route behavior here.
 
-| Route | Response shape | Notes |
-| --- | --- | --- |
-| `POST /api/paste` | `Paste` | create |
-| `GET /api/paste/:id` | `Paste` | full content fetch |
-| `PUT /api/paste/:id` | `Paste` | blocked with `423` when paste is locked by GUI |
-| `DELETE /api/paste/:id` | `{ success: true }` | blocked with `423` when paste is locked by GUI |
-| `GET /api/pastes` | `Vec<PasteMeta>` | metadata-only list for bounded payloads |
-| `GET /api/pastes/meta` | `Vec<PasteMeta>` | explicit metadata list endpoint |
-| `GET /api/search?q=...` | `Vec<PasteMeta>` | preserves content-match semantics, returns metadata rows |
-| `GET /api/search/meta?q=...` | `Vec<PasteMeta>` | metadata-only match (name/tags/language) |
-| `POST/GET/PUT/DELETE /api/folder...` | folder payloads | deprecated; emits warning headers |
+Key shape expectations:
+- `/api/pastes` and `/api/pastes/meta` return metadata rows (`PasteMeta`).
+- `/api/search` preserves content-match semantics but returns metadata rows (`PasteMeta`).
+- `/api/search/meta` performs metadata-only matching (name/tags/language).
+- Folder routes are deprecated and emit warning headers.
 
 Current deprecation and parity status is tracked in [parity-checklist.md](parity-checklist.md).
 
@@ -132,4 +126,4 @@ Lock recovery guidance (including what not to delete) lives in [docs/deployment.
 - [ ] Add CI-friendly perf microbench coverage (list-from-metadata and highlight/layout path) to catch algorithmic regressions earlier than manual perf runs.
 - [ ] Evaluate post-sled storage options (`redb` and `rusqlite`) and document migration constraints around current CAS-style folder/paste update paths.
 - [ ] Revisit backend query cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
-- [ ] Replace process-list heuristics for stale-lock checks with PID-file ownership + liveness probing (exact process matching is now a stopgap hardening step).
+- [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or fully retired now that owner-lock probing is the primary lock-safety mechanism.

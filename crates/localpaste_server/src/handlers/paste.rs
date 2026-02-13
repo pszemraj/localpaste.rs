@@ -24,6 +24,39 @@ fn with_meta_only_response_shape(mut response: Response) -> Response {
     response
 }
 
+fn normalized_limit(limit: Option<usize>) -> usize {
+    limit.unwrap_or(50).min(100)
+}
+
+fn normalize_folder_filter_for_query(folder_id: Option<String>) -> (Option<String>, bool) {
+    let normalized = normalize_optional_for_create(folder_id);
+    let used = normalized.is_some();
+    (normalized, used)
+}
+
+fn normalize_search_filters_for_query(
+    query: &SearchQuery,
+) -> (usize, Option<String>, Option<String>, bool) {
+    let limit = normalized_limit(query.limit);
+    let normalized_language = normalize_optional_for_create(query.language.clone());
+    let (normalized_folder_id, folder_filter_used) =
+        normalize_folder_filter_for_query(query.folder_id.clone());
+    (
+        limit,
+        normalized_folder_id,
+        normalized_language,
+        folder_filter_used,
+    )
+}
+
+fn with_folder_metadata_response(response: Response, include_meta_shape_header: bool) -> Response {
+    if include_meta_shape_header {
+        with_meta_only_response_shape(response)
+    } else {
+        response
+    }
+}
+
 /// Create a new paste.
 ///
 /// # Arguments
@@ -230,18 +263,17 @@ pub async fn list_pastes(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, HttpError> {
-    let normalized_folder_id = normalize_optional_for_create(query.folder_id);
-    let folder_filter_used = normalized_folder_id.is_some();
-    let limit = query.limit.unwrap_or(50).min(100);
+    let limit = normalized_limit(query.limit);
+    let (normalized_folder_id, folder_filter_used) =
+        normalize_folder_filter_for_query(query.folder_id);
     // This route intentionally returns metadata only to cap payload size.
     let pastes = state.db.pastes.list_meta(limit, normalized_folder_id)?;
-    Ok(with_meta_only_response_shape(
-        maybe_with_folder_deprecation_headers(
-            Json(pastes),
-            folder_filter_used,
-            "GET /api/pastes?folder_id=...",
-        ),
-    ))
+    let response = maybe_with_folder_deprecation_headers(
+        Json(pastes),
+        folder_filter_used,
+        "GET /api/pastes?folder_id=...",
+    );
+    Ok(with_folder_metadata_response(response, true))
 }
 
 /// List paste metadata with optional filters.
@@ -259,15 +291,16 @@ pub async fn list_pastes_meta(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, HttpError> {
-    let normalized_folder_id = normalize_optional_for_create(query.folder_id);
-    let folder_filter_used = normalized_folder_id.is_some();
-    let limit = query.limit.unwrap_or(50).min(100);
+    let limit = normalized_limit(query.limit);
+    let (normalized_folder_id, folder_filter_used) =
+        normalize_folder_filter_for_query(query.folder_id);
     let metas = state.db.pastes.list_meta(limit, normalized_folder_id)?;
-    Ok(maybe_with_folder_deprecation_headers(
+    let response = maybe_with_folder_deprecation_headers(
         Json(metas),
         folder_filter_used,
         "GET /api/pastes/meta?folder_id=...",
-    ))
+    );
+    Ok(with_folder_metadata_response(response, false))
 }
 
 /// Search pastes by query.
@@ -285,10 +318,8 @@ pub async fn search_pastes(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Response, HttpError> {
-    let normalized_language = normalize_optional_for_create(query.language);
-    let normalized_folder_id = normalize_optional_for_create(query.folder_id);
-    let folder_filter_used = normalized_folder_id.is_some();
-    let limit = query.limit.unwrap_or(50).min(100);
+    let (limit, normalized_folder_id, normalized_language, folder_filter_used) =
+        normalize_search_filters_for_query(&query);
     // Preserve content-match semantics from canonical search while returning
     // metadata rows to avoid large full-content responses.
     let metas =
@@ -296,13 +327,12 @@ pub async fn search_pastes(
             .db
             .pastes
             .search(&query.q, limit, normalized_folder_id, normalized_language)?;
-    Ok(with_meta_only_response_shape(
-        maybe_with_folder_deprecation_headers(
-            Json(metas),
-            folder_filter_used,
-            "GET /api/search?folder_id=...",
-        ),
-    ))
+    let response = maybe_with_folder_deprecation_headers(
+        Json(metas),
+        folder_filter_used,
+        "GET /api/search?folder_id=...",
+    );
+    Ok(with_folder_metadata_response(response, true))
 }
 
 /// Search paste metadata by query.
@@ -322,18 +352,17 @@ pub async fn search_pastes_meta(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Response, HttpError> {
-    let normalized_language = normalize_optional_for_create(query.language);
-    let normalized_folder_id = normalize_optional_for_create(query.folder_id);
-    let folder_filter_used = normalized_folder_id.is_some();
-    let limit = query.limit.unwrap_or(50).min(100);
+    let (limit, normalized_folder_id, normalized_language, folder_filter_used) =
+        normalize_search_filters_for_query(&query);
     let metas =
         state
             .db
             .pastes
             .search_meta(&query.q, limit, normalized_folder_id, normalized_language)?;
-    Ok(maybe_with_folder_deprecation_headers(
+    let response = maybe_with_folder_deprecation_headers(
         Json(metas),
         folder_filter_used,
         "GET /api/search/meta?folder_id=...",
-    ))
+    );
+    Ok(with_folder_metadata_response(response, false))
 }

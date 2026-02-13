@@ -11,9 +11,9 @@ Use these as canonical references. Other docs should link here instead of restat
 | --- | --- |
 | Product/project overview | [../README.md](../README.md) |
 | Security posture + public exposure | [security.md](security.md) |
-| Service/background operation | [deployment.md](deployment.md) |
+| Service/background operation + lock recovery procedure | [deployment.md](deployment.md) |
 | Development workflow (build/run/test/debug) | [dev/devlog.md](dev/devlog.md) |
-| API route behavior/response shape | [../crates/localpaste_server/src/handlers/paste.rs](../crates/localpaste_server/src/handlers/paste.rs) + [dev/devlog.md](dev/devlog.md) quick summary |
+| API route behavior/response shape | [../crates/localpaste_server/src/handlers/paste.rs](../crates/localpaste_server/src/handlers/paste.rs) |
 | GUI runtime flags + behavior notes | [dev/gui-notes.md](dev/gui-notes.md) |
 | Rewrite parity status + merge gate | [dev/parity-checklist.md](dev/parity-checklist.md) |
 | GUI perf validation protocol + thresholds | [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md) |

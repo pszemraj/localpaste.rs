@@ -6,6 +6,7 @@ use localpaste_server::{
     create_app, models::folder::Folder, AppState, Config, Database, PasteLockManager,
 };
 use serde_json::json;
+use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -19,17 +20,21 @@ fn assert_meta_only_shape_header(response: &axum_test::TestResponse) {
     response.assert_header("x-localpaste-response-shape", "meta-only");
 }
 
-async fn setup_test_server() -> (TestServer, TempDir, Arc<PasteLockManager>) {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-
-    let config = Config {
+fn test_config_for_db_path(db_path: &Path) -> Config {
+    Config {
         port: 0, // Let OS assign port
         db_path: db_path.to_str().unwrap().to_string(),
         max_paste_size: 10_000_000,
         auto_save_interval: 2000,
         auto_backup: false, // Disable auto-backup in tests
-    };
+    }
+}
+
+async fn setup_test_server() -> (TestServer, TempDir, Arc<PasteLockManager>) {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test.db");
+
+    let config = test_config_for_db_path(&db_path);
 
     let db = Database::new(&config.db_path).unwrap();
     let locks = Arc::new(PasteLockManager::default());
@@ -500,14 +505,7 @@ async fn test_invalid_folder_association() {
 async fn test_server_rejects_assignments_to_delete_marked_folder() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("delete-marked.db");
-
-    let config = Config {
-        port: 0,
-        db_path: db_path.to_str().unwrap().to_string(),
-        max_paste_size: 10_000_000,
-        auto_save_interval: 2000,
-        auto_backup: false,
-    };
+    let config = test_config_for_db_path(&db_path);
 
     let db = Database::new(&config.db_path).unwrap();
     let state = AppState::new(config, db);
@@ -748,14 +746,7 @@ async fn test_update_folder_rejects_cycle() {
 async fn test_delete_folder_with_cycle_completes() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("cycle.db");
-
-    let config = Config {
-        port: 0,
-        db_path: db_path.to_str().unwrap().to_string(),
-        max_paste_size: 10_000_000,
-        auto_save_interval: 2000,
-        auto_backup: false,
-    };
+    let config = test_config_for_db_path(&db_path);
 
     let db = Database::new(&config.db_path).unwrap();
     let state = AppState::new(config, db);

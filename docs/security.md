@@ -22,6 +22,7 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 - **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options
 - **Request size limits**: Enforced at transport layer (default: 10MB)
 - **Graceful shutdown**: Database flush on exit to prevent data loss
+- **Single-writer owner lock**: Process-lifetime `db.owner.lock` prevents concurrent writers on the same `DB_PATH`
 
 ## Environment Variables
 
@@ -45,6 +46,14 @@ The following headers are automatically set:
 - `X-Frame-Options: DENY`: Prevents clickjacking
 
 To add a referrer policy, configure your reverse proxy or extend the Axum middleware layer.
+
+### Lock Management Policy
+
+Operational lock-recovery procedures are canonical in [deployment.md](deployment.md).
+Security expectation:
+
+- Treat uncertain lock ownership as unsafe.
+- Do not classify "probe/tooling unavailable" as "safe to force unlock".
 
 ## Public Exposure (Not Recommended)
 
