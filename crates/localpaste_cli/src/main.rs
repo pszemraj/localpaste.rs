@@ -518,6 +518,30 @@ mod tests {
         }
     }
 
+    fn with_discovery_env<T>(
+        label: &str,
+        lp_server: Option<&str>,
+        test: impl FnOnce(&DiscoveryTestEnv) -> T,
+    ) -> T {
+        let _lock = env_lock().lock().expect("env lock");
+        let env = DiscoveryTestEnv::new(label, lp_server);
+        test(&env)
+    }
+
+    fn bind_reachable_discovery(env: &DiscoveryTestEnv) -> (String, TcpListener) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let discovered = format!("http://{}", listener.local_addr().expect("listener addr"));
+        env.write_discovery(discovered.as_str());
+        (discovered, listener)
+    }
+
+    fn assert_resolve_server_falls_back_to_default(label: &str, discovery: &str) {
+        with_discovery_env(label, None, |env| {
+            env.write_discovery(discovery);
+            assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
+        });
+    }
+
     #[test]
     fn normalize_server_matrix() {
         let cases = [
@@ -656,74 +680,58 @@ mod tests {
 
     #[test]
     fn resolve_server_prefers_explicit_over_discovery() {
-        let _lock = env_lock().lock().expect("env lock");
-        let env = DiscoveryTestEnv::new("explicit", None);
-        env.write_discovery("http://127.0.0.1:45555");
-
-        assert_eq!(
-            resolve_server(Some("http://127.0.0.1:45556".to_string())),
-            "http://127.0.0.1:45556"
-        );
+        with_discovery_env("explicit", None, |env| {
+            env.write_discovery("http://127.0.0.1:45555");
+            assert_eq!(
+                resolve_server(Some("http://127.0.0.1:45556".to_string())),
+                "http://127.0.0.1:45556"
+            );
+        });
     }
 
     #[test]
     fn resolve_server_uses_discovery_when_explicit_missing() {
-        let _lock = env_lock().lock().expect("env lock");
-        let env = DiscoveryTestEnv::new("discovery", None);
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
-        let discovered = format!("http://{}", listener.local_addr().expect("listener addr"));
-        env.write_discovery(discovered.as_str());
-
-        assert_eq!(resolve_server(None), discovered);
+        with_discovery_env("discovery", None, |env| {
+            let (discovered, _listener) = bind_reachable_discovery(env);
+            assert_eq!(resolve_server(None), discovered);
+        });
     }
 
     #[test]
     fn resolve_server_falls_back_to_default_when_discovery_invalid() {
-        let _lock = env_lock().lock().expect("env lock");
-        let env = DiscoveryTestEnv::new("invalid", None);
-        env.write_discovery("not a url");
-
-        assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
+        assert_resolve_server_falls_back_to_default("invalid", "not a url");
     }
 
     #[test]
     fn resolve_server_falls_back_to_default_when_discovery_unreachable() {
-        let _lock = env_lock().lock().expect("env lock");
-        let env = DiscoveryTestEnv::new("stale", None);
         // Unknown scheme is parseable but has no known default port, so reachability
         // check always treats it as unavailable.
-        env.write_discovery("custom-scheme://discovery-host");
-        assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
+        assert_resolve_server_falls_back_to_default("stale", "custom-scheme://discovery-host");
     }
 
     #[test]
     fn discovered_server_file_returns_none_when_reachability_check_fails() {
-        let _lock = env_lock().lock().expect("env lock");
-        let env = DiscoveryTestEnv::new("stub-unreachable", None);
-        env.write_discovery("http://127.0.0.1:45555");
-
-        let discovered = discovered_server_from_file_with_reachability(|_| false);
-        assert!(discovered.is_none());
+        with_discovery_env("stub-unreachable", None, |env| {
+            env.write_discovery("http://127.0.0.1:45555");
+            let discovered = discovered_server_from_file_with_reachability(|_| false);
+            assert!(discovered.is_none());
+        });
     }
 
     #[test]
     fn resolve_server_treats_blank_explicit_override_as_absent() {
-        let _lock = env_lock().lock().expect("env lock");
-        let env = DiscoveryTestEnv::new("blank-explicit", None);
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
-        let discovered = format!("http://{}", listener.local_addr().expect("listener addr"));
-        env.write_discovery(discovered.as_str());
-
-        assert_eq!(resolve_server(Some("   ".to_string())), discovered);
+        with_discovery_env("blank-explicit", None, |env| {
+            let (discovered, _listener) = bind_reachable_discovery(env);
+            assert_eq!(resolve_server(Some("   ".to_string())), discovered);
+        });
     }
 
     #[test]
     fn lp_server_env_value_beats_discovery_file() {
-        let _lock = env_lock().lock().expect("env lock");
-        let env = DiscoveryTestEnv::new("env", Some("http://127.0.0.1:47777"));
-        env.write_discovery("http://127.0.0.1:48888");
-
-        let cli = Cli::parse_from(["lpaste", "list"]);
-        assert_eq!(resolve_server(cli.server), "http://127.0.0.1:47777");
+        with_discovery_env("env", Some("http://127.0.0.1:47777"), |env| {
+            env.write_discovery("http://127.0.0.1:48888");
+            let cli = Cli::parse_from(["lpaste", "list"]);
+            assert_eq!(resolve_server(cli.server), "http://127.0.0.1:47777");
+        });
     }
 }

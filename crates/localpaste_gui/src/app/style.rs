@@ -26,7 +26,7 @@ const FONT_0XPROTO_BYTES: &[u8] = include_bytes!(concat!(
     "/../../assets/fonts/0xProto/0xProto-Regular-NL.ttf"
 ));
 
-pub(super) fn selection_fill_color() -> Color32 {
+fn selection_fill_color() -> Color32 {
     Color32::from_rgba_unmultiplied(
         COLOR_SELECTION_FILL_RGBA[0],
         COLOR_SELECTION_FILL_RGBA[1],

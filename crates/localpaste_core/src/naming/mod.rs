@@ -190,36 +190,6 @@ pub fn generate_name() -> String {
     format!("{}-{}", adj, noun)
 }
 
-/// Generate a unique name, with collision handling.
-///
-/// Tries base name first, then appends a random suffix if needed.
-///
-/// # Returns
-/// A name that does not collide according to `exists_check`.
-pub fn generate_unique_name<F>(exists_check: F) -> String
-where
-    F: Fn(&str) -> bool,
-{
-    // Try up to 5 times with just adjective-noun
-    for _ in 0..5 {
-        let name = generate_name();
-        if !exists_check(&name) {
-            return name;
-        }
-    }
-
-    // If still colliding, append a random suffix
-    let mut rng = rand::thread_rng();
-    loop {
-        let base = generate_name();
-        let suffix: u32 = rng.gen_range(1000..9999);
-        let name = format!("{}-{}", base, suffix);
-        if !exists_check(&name) {
-            return name;
-        }
-    }
-}
-
 /// Derive a human-readable paste name from content.
 ///
 /// Returns `None` when content is empty or no meaningful line can be extracted.

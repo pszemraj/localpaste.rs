@@ -2,6 +2,28 @@
 
 use super::*;
 
+fn assert_delete_send_failure_keeps_lock_and_status(
+    delete_action: impl FnOnce(&mut crate::app::LocalPasteApp),
+) {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    app.locks
+        .acquire("alpha", &app.lock_owner_id)
+        .expect("acquire alpha lock");
+    drop(cmd_rx);
+
+    delete_action(&mut app);
+
+    assert!(app.locks.is_locked("alpha").expect("is_locked"));
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Delete failed: backend unavailable.")
+    );
+}
+
 #[test]
 fn paste_missing_clears_selection_and_removes_list_entry() {
     let mut harness = make_app();
@@ -224,44 +246,14 @@ fn create_new_paste_send_failure_shows_error_status() {
 
 #[test]
 fn delete_selected_send_failure_keeps_lock_and_shows_error_status() {
-    let TestHarness {
-        _dir: _guard,
-        mut app,
-        cmd_rx,
-    } = make_app();
-    app.locks
-        .acquire("alpha", &app.lock_owner_id)
-        .expect("acquire alpha lock");
-    drop(cmd_rx);
-
-    app.delete_selected();
-
-    assert!(app.locks.is_locked("alpha").expect("is_locked"));
-    assert_eq!(
-        app.status.as_ref().map(|status| status.text.as_str()),
-        Some("Delete failed: backend unavailable.")
-    );
+    assert_delete_send_failure_keeps_lock_and_status(|app| app.delete_selected());
 }
 
 #[test]
 fn palette_delete_send_failure_keeps_lock_and_shows_error_status() {
-    let TestHarness {
-        _dir: _guard,
-        mut app,
-        cmd_rx,
-    } = make_app();
-    app.locks
-        .acquire("alpha", &app.lock_owner_id)
-        .expect("acquire alpha lock");
-    drop(cmd_rx);
-
-    app.send_palette_delete("alpha".to_string());
-
-    assert!(app.locks.is_locked("alpha").expect("is_locked"));
-    assert_eq!(
-        app.status.as_ref().map(|status| status.text.as_str()),
-        Some("Delete failed: backend unavailable.")
-    );
+    assert_delete_send_failure_keeps_lock_and_status(|app| {
+        app.send_palette_delete("alpha".to_string());
+    });
 }
 
 #[test]

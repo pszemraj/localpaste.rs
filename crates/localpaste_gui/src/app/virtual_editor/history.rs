@@ -260,6 +260,35 @@ impl VirtualEditorHistory {
 mod tests {
     use super::*;
 
+    fn assert_contiguous_delete_coalesces(
+        intent: EditIntent,
+        edits: [(usize, &str, usize, usize); 2],
+    ) {
+        let mut buffer = RopeBuffer::new("abcde");
+        let mut state = VirtualEditorState::default();
+        let mut history = VirtualEditorHistory::default();
+        let now = Instant::now();
+
+        for (index, (start, deleted, before_cursor, after_cursor)) in edits.into_iter().enumerate()
+        {
+            let end = start.saturating_add(deleted.chars().count());
+            let _ = buffer.replace_char_range(start..end, "");
+            history.record_edit(RecordedEdit {
+                start,
+                deleted: deleted.to_string(),
+                inserted: String::new(),
+                intent,
+                before_cursor,
+                after_cursor,
+                at: now + Duration::from_millis((index as u64) * 10),
+            });
+        }
+
+        assert_eq!(history.undo_len(), 1);
+        assert!(history.undo(&mut buffer, &mut state).is_some());
+        assert_eq!(buffer.to_string(), "abcde");
+    }
+
     #[test]
     fn coalesces_adjacent_typing() {
         let mut history = VirtualEditorHistory::default();
@@ -349,68 +378,18 @@ mod tests {
 
     #[test]
     fn coalesces_contiguous_backspace_deletes() {
-        let mut buffer = RopeBuffer::new("abcde");
-        let mut state = VirtualEditorState::default();
-        let mut history = VirtualEditorHistory::default();
-        let now = Instant::now();
-
-        let _ = buffer.replace_char_range(4..5, "");
-        history.record_edit(RecordedEdit {
-            start: 4,
-            deleted: "e".to_string(),
-            inserted: String::new(),
-            intent: EditIntent::DeleteBackward,
-            before_cursor: 5,
-            after_cursor: 4,
-            at: now,
-        });
-        let _ = buffer.replace_char_range(3..4, "");
-        history.record_edit(RecordedEdit {
-            start: 3,
-            deleted: "d".to_string(),
-            inserted: String::new(),
-            intent: EditIntent::DeleteBackward,
-            before_cursor: 4,
-            after_cursor: 3,
-            at: now + Duration::from_millis(10),
-        });
-
-        assert_eq!(history.undo_len(), 1);
-        assert!(history.undo(&mut buffer, &mut state).is_some());
-        assert_eq!(buffer.to_string(), "abcde");
+        assert_contiguous_delete_coalesces(
+            EditIntent::DeleteBackward,
+            [(4, "e", 5, 4), (3, "d", 4, 3)],
+        );
     }
 
     #[test]
     fn coalesces_contiguous_forward_deletes() {
-        let mut buffer = RopeBuffer::new("abcde");
-        let mut state = VirtualEditorState::default();
-        let mut history = VirtualEditorHistory::default();
-        let now = Instant::now();
-
-        let _ = buffer.replace_char_range(2..3, "");
-        history.record_edit(RecordedEdit {
-            start: 2,
-            deleted: "c".to_string(),
-            inserted: String::new(),
-            intent: EditIntent::DeleteForward,
-            before_cursor: 2,
-            after_cursor: 2,
-            at: now,
-        });
-        let _ = buffer.replace_char_range(2..3, "");
-        history.record_edit(RecordedEdit {
-            start: 2,
-            deleted: "d".to_string(),
-            inserted: String::new(),
-            intent: EditIntent::DeleteForward,
-            before_cursor: 2,
-            after_cursor: 2,
-            at: now + Duration::from_millis(10),
-        });
-
-        assert_eq!(history.undo_len(), 1);
-        assert!(history.undo(&mut buffer, &mut state).is_some());
-        assert_eq!(buffer.to_string(), "abcde");
+        assert_contiguous_delete_coalesces(
+            EditIntent::DeleteForward,
+            [(2, "c", 2, 2), (2, "d", 2, 2)],
+        );
     }
 
     #[test]
