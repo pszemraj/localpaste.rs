@@ -7,8 +7,37 @@ use localpaste_server::db::ProcessProbeResult;
 use localpaste_server::{config::Config, db::Database, serve_router, AppState};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-fn has_flag(args: &[String], flag: &str) -> bool {
-    args.iter().any(|arg| arg == flag)
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct CliFlags {
+    help: bool,
+    force_unlock: bool,
+    backup: bool,
+    user_arg_count: usize,
+}
+
+fn parse_cli_flags(args: &[String]) -> anyhow::Result<CliFlags> {
+    let mut flags = CliFlags::default();
+    for arg in args.iter().skip(1) {
+        flags.user_arg_count = flags.user_arg_count.saturating_add(1);
+        match arg.as_str() {
+            "--help" => flags.help = true,
+            "--force-unlock" => flags.force_unlock = true,
+            "--backup" => flags.backup = true,
+            value if value.starts_with('-') => {
+                anyhow::bail!(
+                    "Unknown option: '{}'. Use --help to see supported options.",
+                    value
+                );
+            }
+            value => {
+                anyhow::bail!(
+                    "Unexpected positional argument: '{}'. Use --help to see supported options.",
+                    value
+                );
+            }
+        }
+    }
+    Ok(flags)
 }
 
 fn guard_force_unlock_probe(result: ProcessProbeResult) -> anyhow::Result<()> {
@@ -39,8 +68,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
+    let cli_flags = parse_cli_flags(&args)?;
 
-    if has_flag(&args, "--help") {
+    if cli_flags.help {
         print_help();
         return Ok(());
     }
@@ -48,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env();
     let db_exists_before_open = std::path::Path::new(&config.db_path).exists();
 
-    if has_flag(&args, "--force-unlock") {
+    if cli_flags.force_unlock {
         guard_force_unlock_probe(localpaste_server::db::localpaste_process_probe())?;
         // Hold owner lock for the full unlock operation to avoid TOCTOU races.
         let _owner_lock_guard =
@@ -69,14 +99,14 @@ async fn main() -> anyhow::Result<()> {
         } else {
             tracing::info!("Removed {} lock file(s)", removed_count);
         }
-        if args.len() <= 2 {
+        if cli_flags.user_arg_count <= 1 {
             return Ok(());
         }
     }
 
-    if has_flag(&args, "--backup") {
+    if cli_flags.backup {
         run_backup(&config)?;
-        if args.len() <= 2 {
+        if cli_flags.user_arg_count <= 1 {
             return Ok(());
         }
     }
@@ -189,7 +219,7 @@ async fn shutdown_signal(db: Arc<Database>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{guard_force_unlock_probe, ProcessProbeResult};
+    use super::{guard_force_unlock_probe, parse_cli_flags, CliFlags, ProcessProbeResult};
 
     #[test]
     fn force_unlock_guard_rejects_unknown_probe_results() {
@@ -209,5 +239,38 @@ mod tests {
     fn force_unlock_guard_allows_not_running_probe_results() {
         guard_force_unlock_probe(ProcessProbeResult::NotRunning)
             .expect("not-running probe should allow force unlock");
+    }
+
+    #[test]
+    fn parse_cli_flags_rejects_unknown_options() {
+        let args = vec!["localpaste".to_string(), "--force-unlok".to_string()];
+        let err = parse_cli_flags(&args).expect_err("unknown option should be rejected");
+        assert!(err.to_string().contains("Unknown option"));
+    }
+
+    #[test]
+    fn parse_cli_flags_rejects_positional_arguments() {
+        let args = vec!["localpaste".to_string(), "backup".to_string()];
+        let err = parse_cli_flags(&args).expect_err("positional argument should be rejected");
+        assert!(err.to_string().contains("Unexpected positional argument"));
+    }
+
+    #[test]
+    fn parse_cli_flags_accepts_supported_options() {
+        let args = vec![
+            "localpaste".to_string(),
+            "--force-unlock".to_string(),
+            "--backup".to_string(),
+        ];
+        let flags = parse_cli_flags(&args).expect("known options should parse");
+        assert_eq!(
+            flags,
+            CliFlags {
+                help: false,
+                force_unlock: true,
+                backup: true,
+                user_arg_count: 2,
+            }
+        );
     }
 }
