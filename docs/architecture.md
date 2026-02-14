@@ -22,6 +22,21 @@ Workspace crates:
 - [`crates/localpaste_cli`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_cli): HTTP client and endpoint discovery logic.
 - [`crates/localpaste_tools`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_tools): test data generation and line-count checks.
 
+```mermaid
+flowchart LR
+    GUI["localpaste-gui"] -->|"commands/events"| GUIB["GUI backend worker"]
+    GUI -->|"embedded API"| ES["EmbeddedServer (axum)"]
+    CLI["lpaste"] -->|"HTTP"| ES
+    CLI -->|"HTTP"| HS["localpaste (headless server)"]
+    TOOLS["generate-test-data / check-loc"] --> CORE["localpaste_core"]
+    ES --> CORE
+    HS --> CORE
+    GUIB --> CORE
+    CORE --> DB[("sled DB")]
+    GUI --> DISC[".api-addr discovery file"]
+    CLI --> DISC
+```
+
 ## 2) Runtime Topologies
 
 ### GUI-Primary Topology
@@ -52,6 +67,31 @@ CLI behavior in this mode:
 Important invariant:
 
 - Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` concurrently.
+
+```mermaid
+sequenceDiagram
+    participant GUI as localpaste-gui
+    participant API as Embedded API
+    participant FS as Filesystem
+    participant CLI as lpaste
+
+    GUI->>FS: acquire owner lock + open DB
+    GUI->>API: bind loopback listener
+    GUI->>FS: write .api-addr
+    CLI->>CLI: check --server / LP_SERVER
+    alt explicit endpoint provided
+        CLI->>API: send request to explicit endpoint
+    else no explicit endpoint
+        CLI->>FS: read .api-addr
+        CLI->>API: probe /api/pastes/meta?limit=1
+        CLI->>CLI: validate LocalPaste identity headers
+        alt probe valid
+            CLI->>API: use discovered endpoint
+        else probe invalid/stale
+            CLI->>CLI: fall back to default local endpoint
+        end
+    end
+```
 
 ## 3) Storage Design
 
@@ -91,6 +131,21 @@ Core transaction helper:
 Folder shared operations and reconcile:
 
 - [`crates/localpaste_core/src/folder_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/folder_ops.rs)
+
+```mermaid
+flowchart TD
+    W["Write request (create/update/delete/move)"] --> C["Write canonical tree(s)"]
+    C --> D["Update derived indexes (meta/updated)"]
+    D --> E{"Derived write succeeds?"}
+    E -- yes --> OK["Return success"]
+    E -- no --> M["Mark metadata state faulted / needs reconcile"]
+    M --> OK
+
+    R["Read request (list/search/meta)"] --> H{"Index healthy?"}
+    H -- yes --> I["Read from metadata/index trees"]
+    H -- no --> F["Fallback to canonical rows"]
+    F --> Q["Optionally trigger reconcile path"]
+```
 
 ## 5) Read And Write Paths
 
@@ -152,6 +207,21 @@ Relevant code:
 - [`crates/localpaste_gui/src/app/state_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/state_ops.rs)
 - [`crates/localpaste_gui/src/app/shutdown.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/shutdown.rs)
 - [`crates/localpaste_gui/src/backend/worker.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/backend/worker.rs)
+
+```mermaid
+sequenceDiagram
+    participant UI as GUI App
+    participant W as Backend Worker
+    participant DB as sled DB
+
+    UI->>UI: detect dirty content/metadata on exit
+    UI->>W: enqueue final content save (forced)
+    UI->>W: enqueue final metadata save (forced)
+    UI->>W: send Shutdown{flush=true}
+    W->>DB: process queued saves in order
+    W->>DB: flush()
+    W-->>UI: ShutdownComplete
+```
 
 ## 9) Discovery And Trust
 
