@@ -1,49 +1,53 @@
-//! Backup and restore helpers for sled databases.
+//! Backup and restore helpers for redb databases.
 
-use super::fs_copy::copy_dir_recursive;
+use super::tables::REDB_FILE_NAME;
 use super::time_util::unix_timestamp_seconds;
 use crate::error::AppError;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-/// Backup manager using sled's native export/import functionality
+/// Backup manager for a database path.
 pub struct BackupManager {
     db_path: PathBuf,
+    db_file_path: PathBuf,
 }
 
 impl BackupManager {
     /// Create a backup manager for the database path.
-    ///
-    /// # Returns
-    /// A new [`BackupManager`] bound to `db_path`.
     pub fn new(db_path: &str) -> Self {
+        let db_path = PathBuf::from(db_path);
+        let db_file_path = db_path.join(REDB_FILE_NAME);
         Self {
-            db_path: PathBuf::from(db_path),
+            db_path,
+            db_file_path,
         }
     }
 
-    /// Create a backup by copying the database directory.
+    /// Create a backup by copying `data.redb` while holding a write transaction.
     ///
-    /// Since sled's export/import is for version migrations, we use directory copy.
-    ///
-    /// # Returns
-    /// The backup path, or an empty string if the database path does not exist.
-    ///
-    /// # Errors
-    /// Returns an error if copying files fails.
-    pub fn create_backup(&self, _db: &sled::Db) -> Result<String, AppError> {
-        let timestamp = unix_timestamp_seconds(SystemTime::now())?;
-
-        let backup_path = self.db_path.with_extension(format!("backup.{}", timestamp));
-
-        // For sled, the best backup is a copy of the directory after flush
-        if self.db_path.exists() {
-            copy_dir_recursive(&self.db_path, &backup_path)?;
-            tracing::info!("Created database backup at: {:?}", backup_path);
-            Ok(backup_path.to_string_lossy().to_string())
-        } else {
-            Ok(String::new())
+    /// Holding a write transaction blocks concurrent writers, guaranteeing a
+    /// consistent on-disk snapshot for the copy operation.
+    pub fn create_backup(&self, db: &redb::Database) -> Result<String, AppError> {
+        if !self.db_file_path.exists() {
+            return Ok(String::new());
         }
+
+        let timestamp = unix_timestamp_seconds(SystemTime::now())?;
+        let backup_path = self.db_path.with_extension(format!("backup.{}.redb", timestamp));
+
+        let write_txn = db.begin_write()?;
+        std::fs::copy(&self.db_file_path, &backup_path).map_err(|err| {
+            AppError::StorageMessage(format!(
+                "Failed to copy '{}' to '{}': {}",
+                self.db_file_path.display(),
+                backup_path.display(),
+                err
+            ))
+        })?;
+        drop(write_txn);
+
+        tracing::info!("Created database backup at: {:?}", backup_path);
+        Ok(backup_path.to_string_lossy().to_string())
     }
 }
 
