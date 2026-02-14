@@ -46,14 +46,16 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let config = Config::from_env();
+    let db_exists_before_open = std::path::Path::new(&config.db_path).exists();
 
     if has_flag(&args, "--force-unlock") {
-        guard_force_unlock_probe(localpaste_server::db::lock::probe_owner_lock(
-            &config.db_path,
-        ))?;
+        guard_force_unlock_probe(localpaste_server::db::localpaste_process_probe())?;
+        // Hold owner lock for the full unlock operation to avoid TOCTOU races.
+        let _owner_lock_guard =
+            localpaste_server::db::lock::acquire_owner_lock_for_lifetime(&config.db_path)?;
 
         tracing::warn!("Force unlock requested");
-        if std::path::Path::new(&config.db_path).exists() {
+        if db_exists_before_open {
             let backup_path =
                 localpaste_server::db::lock::LockManager::backup_database(&config.db_path)?;
             if !backup_path.is_empty() {
@@ -79,14 +81,18 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    if config.auto_backup && std::path::Path::new(&config.db_path).exists() {
-        if let Err(err) = localpaste_server::db::lock::LockManager::backup_database(&config.db_path)
-        {
+    let database = Database::new(&config.db_path)?;
+
+    if config.auto_backup && db_exists_before_open {
+        if let Err(err) = database.flush() {
+            tracing::warn!("Failed to flush database before auto-backup: {}", err);
+        }
+        let backup_manager = localpaste_server::db::backup::BackupManager::new(&config.db_path);
+        if let Err(err) = backup_manager.create_backup(database.db.as_ref()) {
             tracing::warn!("Failed to create auto-backup: {}", err);
         }
     }
 
-    let database = Database::new(&config.db_path)?;
     let state = AppState::new(config.clone(), database);
 
     let allow_public = localpaste_server::config::env_flag_enabled("ALLOW_PUBLIC_ACCESS");

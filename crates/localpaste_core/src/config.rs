@@ -167,44 +167,7 @@ impl Config {
 mod tests {
     use super::{env_flag_enabled, parse_bool_env, parse_env_flag, Config};
     use crate::constants::{DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT};
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = std::env::var(key).ok();
-            // SAFETY: Tests coordinate env mutation via `env_lock` to avoid races.
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(previous) = &self.previous {
-                // SAFETY: Tests coordinate env mutation via `env_lock` to avoid races.
-                unsafe {
-                    std::env::set_var(self.key, previous);
-                }
-            } else {
-                // SAFETY: Tests coordinate env mutation via `env_lock` to avoid races.
-                unsafe {
-                    std::env::remove_var(self.key);
-                }
-            }
-        }
-    }
+    use crate::env::{env_lock, EnvGuard};
 
     #[test]
     fn parse_env_flag_accepts_truthy_values() {

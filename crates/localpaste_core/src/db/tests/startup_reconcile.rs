@@ -1,6 +1,7 @@
 //! Startup reconciliation and degraded-mode behavior tests.
 
 use super::*;
+use crate::env::{env_lock, EnvGuard};
 
 #[test]
 fn test_database_new_reconciles_missing_meta_indexes() {
@@ -49,6 +50,7 @@ fn test_database_new_reconciles_when_meta_marker_missing() {
 
 #[test]
 fn test_database_new_force_reindex_repairs_corrupt_meta_rows() {
+    let _lock = env_lock().lock().expect("env lock");
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.db");
     let db_path_str = db_path.to_str().unwrap().to_string();
@@ -65,25 +67,7 @@ fn test_database_new_force_reindex_repairs_corrupt_meta_rows() {
     drop(meta_tree);
     drop(db);
 
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<String>,
-    }
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = self.previous.take() {
-                std::env::set_var(self.key, value);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
-    }
-
-    let guard = EnvGuard {
-        key: "LOCALPASTE_REINDEX",
-        previous: std::env::var("LOCALPASTE_REINDEX").ok(),
-    };
-    std::env::set_var(guard.key, "1");
+    let _reindex_guard = EnvGuard::set("LOCALPASTE_REINDEX", "1");
 
     let reopened = Database::new(&db_path_str).unwrap();
     let metas = reopened.pastes.list_meta(10, None).unwrap();

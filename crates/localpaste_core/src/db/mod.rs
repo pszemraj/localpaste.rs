@@ -13,8 +13,8 @@ mod transactions;
 
 use crate::error::AppError;
 use crate::folder_ops::reconcile_folder_invariants;
-use crate::{DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME};
 use sled::Db;
+use std::io::ErrorKind;
 use std::sync::{Arc, Mutex};
 
 pub use transactions::TransactionOps;
@@ -230,6 +230,22 @@ pub struct Database {
 #[cfg(test)]
 mod tests;
 
+fn is_sled_lock_contention(error: &sled::Error) -> bool {
+    if let sled::Error::Io(io_error) = error {
+        if matches!(
+            io_error.kind(),
+            ErrorKind::WouldBlock | ErrorKind::PermissionDenied | ErrorKind::AlreadyExists
+        ) {
+            return true;
+        }
+    }
+    // Fallback for sled backends/platforms that report lock contention through `Other`.
+    error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("could not acquire lock")
+}
+
 impl Database {
     fn from_shared_with_coordination(
         db: Arc<Db>,
@@ -296,7 +312,7 @@ impl Database {
         // Try to open database - sled handles its own locking
         let db = match sled::open(path) {
             Ok(db) => Arc::new(db),
-            Err(e) if e.to_string().contains("could not acquire lock") => {
+            Err(e) if is_sled_lock_contention(&e) => {
                 // This is sled's internal lock, not our lock file
                 // It means another process has the database open
 
@@ -319,57 +335,16 @@ impl Database {
                         ));
                     }
                     ProcessProbeResult::NotRunning => {
-                        let parent = std::path::Path::new(path)
-                            .parent()
-                            .unwrap_or(std::path::Path::new("."))
-                            .display()
-                            .to_string();
-                        let wildcard = format!("{}\\*.{}", path, DB_LOCK_EXTENSION);
-                        let (backup_cmd, remove_cmd, restore_cmd) = if cfg!(windows) {
-                            (
-                                format!(
-                                    "Copy-Item -Recurse -Force \"{}\" \"{}.backup\"",
-                                    path, path
-                                ),
-                                format!(
-                                    "Remove-Item -Force \"{}\",\"{}\\\\{}\",\"{}.{}\"",
-                                    wildcard,
-                                    path,
-                                    DB_LOCK_FILE_NAME,
-                                    path,
-                                    DB_LOCK_EXTENSION
-                                ),
-                                format!(
-                                    "Get-ChildItem \"{}\\*.backup.*\" | Sort-Object LastWriteTime | Select-Object -Last 1",
-                                    parent
-                                ),
-                            )
-                        } else {
-                            (
-                                format!("cp -r {} {}.backup", path, path),
-                                format!(
-                                    "rm -f {0}/*.{1} {0}/{2} {0}.{1}",
-                                    path, DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME,
-                                ),
-                                format!("ls -la {}/*.backup.* | tail -1", parent),
-                            )
-                        };
-
-                        return Err(AppError::DatabaseError(format!(
+                        return Err(AppError::DatabaseError(
                             "Database appears to be locked.\n\
                             Another process may still be using it, or a previous crash left a stale lock.\n\
                             If you just started the localpaste server for CLI tests, stop it before starting the GUI,\n\
                             or set DB_PATH to a different location.\n\n\
-                            To recover from a stale lock:\n\
-                            1. {}\n\
-                            2. {}\n\
-                            3. Try starting again\n\n\
-                            If that doesn't work, restore from auto-backup:\n\
-                            {}\n\
-                            Or use:\n\
-                            localpaste --force-unlock",
-                            backup_cmd, remove_cmd, restore_cmd
-                        )));
+                            Do not manually delete lock files while ownership is uncertain.\n\
+                            Use the guarded recovery command instead:\n\
+                            localpaste --force-unlock"
+                                .to_string(),
+                        ));
                     }
                 }
             }
@@ -495,5 +470,29 @@ mod process_detection_windows_tests {
     fn windows_probe_keeps_unknown_for_other_tasklist_errors() {
         let probe = tasklist_error_probe_result(ErrorKind::PermissionDenied);
         assert_eq!(probe, ProcessProbeResult::Unknown);
+    }
+}
+
+#[cfg(test)]
+mod lock_contention_tests {
+    use super::is_sled_lock_contention;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn lock_contention_detects_structured_io_kinds() {
+        let err = sled::Error::Io(Error::from(ErrorKind::WouldBlock));
+        assert!(is_sled_lock_contention(&err));
+    }
+
+    #[test]
+    fn lock_contention_uses_message_fallback_for_other_kind() {
+        let err = sled::Error::Io(Error::other("could not acquire lock on database"));
+        assert!(is_sled_lock_contention(&err));
+    }
+
+    #[test]
+    fn lock_contention_keeps_non_lock_errors_false() {
+        let err = sled::Error::Io(Error::other("disk is full"));
+        assert!(!is_sled_lock_contention(&err));
     }
 }

@@ -10,6 +10,7 @@ pub mod backend;
 use app::LocalPasteApp;
 use eframe::egui;
 use localpaste_core::config::env_flag_enabled;
+use localpaste_core::env::remove_env_var;
 use tracing_subscriber::EnvFilter;
 
 const DESKTOP_ICON_PNG: &[u8] = include_bytes!(concat!(
@@ -21,7 +22,7 @@ fn suppress_vulkan_loader_debug() {
     if env_flag_enabled("LOCALPASTE_KEEP_VK_DEBUG") {
         return;
     }
-    std::env::remove_var("VK_LOADER_DEBUG");
+    remove_env_var("VK_LOADER_DEBUG");
 }
 
 fn init_tracing() {

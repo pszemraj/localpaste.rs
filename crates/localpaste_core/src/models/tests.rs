@@ -114,6 +114,13 @@ mod model_tests {
     }
 
     #[test]
+    fn test_detect_language_handles_large_payload_without_losing_prefix_signal() {
+        let mut content = String::from("pub fn main() {\n    let value = 42;\n}\n");
+        content.push_str(&"x".repeat(256 * 1024));
+        assert_eq!(paste::detect_language(&content), Some("rust".to_string()));
+    }
+
+    #[test]
     fn test_paste_request_validation() {
         let valid_req = paste::CreatePasteRequest {
             content: "test".to_string(),

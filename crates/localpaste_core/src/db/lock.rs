@@ -163,6 +163,17 @@ pub fn probe_owner_lock(db_path: &str) -> ProcessProbeResult {
     }
 }
 
+fn unix_timestamp_seconds(now: SystemTime) -> Result<u64, AppError> {
+    now.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|err| {
+            AppError::DatabaseError(format!(
+                "Failed to compute backup timestamp from system clock: {}",
+                err
+            ))
+        })
+}
+
 /// Lock file manager for handling database locks gracefully
 pub struct LockManager {
     db_path: PathBuf,
@@ -185,7 +196,6 @@ impl LockManager {
         let mut lock_paths = vec![
             self.db_path.join(DB_LOCK_FILE_NAME),
             self.db_path.join(DB_TREE_LOCK_FILE_NAME),
-            self.db_path.join(DB_OWNER_LOCK_FILE_NAME),
             self.legacy_lock_path.clone(),
         ];
 
@@ -208,7 +218,12 @@ impl LockManager {
                     .and_then(|ext| ext.to_str())
                     .map(|ext| ext.eq_ignore_ascii_case(DB_LOCK_EXTENSION))
                     .unwrap_or(false);
-                if is_lock {
+                let is_owner_lock = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name == DB_OWNER_LOCK_FILE_NAME)
+                    .unwrap_or(false);
+                if is_lock && !is_owner_lock {
                     lock_paths.push(path);
                 }
             }
@@ -217,6 +232,43 @@ impl LockManager {
         lock_paths.sort();
         lock_paths.dedup();
         Ok(lock_paths)
+    }
+
+    fn ensure_lock_file_is_unlockable(lock_path: &Path) -> Result<(), AppError> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(lock_path)
+            .map_err(|err| {
+                AppError::DatabaseError(format!(
+                    "Refusing to remove lock '{}': unable to open for lock validation: {}",
+                    lock_path.display(),
+                    err
+                ))
+            })?;
+
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                file.unlock().map_err(|err| {
+                    AppError::DatabaseError(format!(
+                        "Refusing to remove lock '{}': failed to release validation lock: {}",
+                        lock_path.display(),
+                        err
+                    ))
+                })?;
+                Ok(())
+            }
+            Err(err) if lock_conflict_error(&err) => Err(AppError::DatabaseError(format!(
+                "Refusing to remove lock '{}': it appears to be held by another process",
+                lock_path.display()
+            ))),
+            Err(err) => Err(AppError::DatabaseError(format!(
+                "Refusing to remove lock '{}': lock validation failed: {}",
+                lock_path.display(),
+                err
+            ))),
+        }
     }
 
     /// Force unlock (use with caution!).
@@ -232,6 +284,7 @@ impl LockManager {
             if !lock_path.exists() {
                 continue;
             }
+            Self::ensure_lock_file_is_unlockable(&lock_path)?;
             tracing::warn!("Force removing lock file: {:?}", lock_path);
             fs::remove_file(&lock_path).map_err(|err| {
                 AppError::DatabaseError(format!(
@@ -251,19 +304,13 @@ impl LockManager {
     ///
     /// # Errors
     /// Returns an error if the backup copy fails.
-    ///
-    /// # Panics
-    /// Panics if the system clock is before `UNIX_EPOCH`.
     pub fn backup_database(db_path: &str) -> Result<String, AppError> {
         let db_path = Path::new(db_path);
         if !db_path.exists() {
             return Ok(String::new());
         }
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = unix_timestamp_seconds(SystemTime::now())?;
 
         let backup_path = db_path.with_extension(format!("backup.{}", timestamp));
 
@@ -281,6 +328,13 @@ impl LockManager {
     }
 }
 
+fn lock_conflict_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::PermissionDenied
+    ) || matches!(err.raw_os_error(), Some(32 | 33))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{acquire_owner_lock_for_lifetime, owner_lock_path, probe_owner_lock, LockManager};
@@ -289,6 +343,9 @@ mod tests {
     use crate::{
         DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME, DB_OWNER_LOCK_FILE_NAME, DB_TREE_LOCK_FILE_NAME,
     };
+    use fs2::FileExt;
+    use std::fs::OpenOptions;
+    use std::time::{Duration, UNIX_EPOCH};
     use tempfile::TempDir;
 
     #[test]
@@ -313,10 +370,10 @@ mod tests {
         let manager = LockManager::new(&db_path.to_string_lossy());
         let removed = manager.force_unlock().expect("force unlock");
 
-        assert_eq!(removed, 4);
+        assert_eq!(removed, 3);
         assert!(!db_lock.exists());
         assert!(!extra_lock.exists());
-        assert!(!owner_lock.exists());
+        assert!(owner_lock.exists());
         assert!(!legacy_lock.exists());
     }
 
@@ -347,13 +404,46 @@ mod tests {
         match err {
             AppError::DatabaseError(message) => {
                 assert!(
-                    message.contains("Failed to force remove lock"),
+                    message.contains("unable to open for lock validation"),
                     "unexpected error: {}",
                     message
                 );
             }
             other => panic!("unexpected error variant: {:?}", other),
         }
+    }
+
+    #[test]
+    fn force_unlock_refuses_when_lock_is_held() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        std::fs::create_dir_all(&db_path).expect("db dir");
+        let db_lock = db_path.join(DB_LOCK_FILE_NAME);
+        std::fs::write(&db_lock, b"lock").expect("db lock");
+
+        let held = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&db_lock)
+            .expect("open db lock");
+        held.try_lock_exclusive().expect("hold db lock");
+
+        let manager = LockManager::new(&db_path.to_string_lossy());
+        let err = manager
+            .force_unlock()
+            .expect_err("active lock should block force unlock");
+        match err {
+            AppError::DatabaseError(message) => {
+                assert!(
+                    message.contains("appears to be held by another process"),
+                    "unexpected error: {}",
+                    message
+                );
+            }
+            other => panic!("unexpected error variant: {:?}", other),
+        }
+        assert!(db_lock.exists(), "active lock file must remain untouched");
+        held.unlock().expect("release db lock");
     }
 
     #[test]
@@ -395,5 +485,22 @@ mod tests {
     fn owner_lock_path_appends_owner_lock_filename() {
         let path = owner_lock_path("some-db");
         assert!(path.ends_with(DB_OWNER_LOCK_FILE_NAME));
+    }
+
+    #[test]
+    fn backup_timestamp_reports_error_for_pre_epoch_clock() {
+        let pre_epoch = UNIX_EPOCH - Duration::from_secs(1);
+        let err =
+            super::unix_timestamp_seconds(pre_epoch).expect_err("pre-epoch time should not panic");
+        match err {
+            AppError::DatabaseError(message) => {
+                assert!(
+                    message.contains("Failed to compute backup timestamp"),
+                    "unexpected error: {}",
+                    message
+                );
+            }
+            other => panic!("unexpected error variant: {:?}", other),
+        }
     }
 }

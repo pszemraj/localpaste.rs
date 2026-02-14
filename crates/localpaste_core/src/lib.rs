@@ -6,6 +6,8 @@ pub mod config;
 pub mod constants;
 /// Database access layer and transactions.
 pub mod db;
+/// Process-global environment mutation helpers.
+pub mod env;
 /// Application error types (storage/domain).
 pub mod error;
 /// Shared folder tree operations.

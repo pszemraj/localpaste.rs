@@ -82,17 +82,19 @@ impl Paste {
     /// A new [`Paste`] instance.
     pub fn new(content: String, name: String) -> Self {
         let now = Utc::now();
+        let language = detect_language(&content);
+        let is_markdown = content.contains("```") || content.contains('#');
         Self {
             id: Uuid::new_v4().to_string(),
             name,
-            content: content.clone(),
-            language: detect_language(&content),
+            content,
+            language,
             language_is_manual: false,
             folder_id: None,
             created_at: now,
             updated_at: now,
             tags: Vec::new(),
-            is_markdown: content.contains("```") || content.contains('#'),
+            is_markdown,
         }
     }
 }
@@ -114,25 +116,29 @@ impl From<&Paste> for PasteMeta {
 
 /// Best-effort language detection based on simple heuristics.
 ///
-/// For large content, the caller should sample the first ~10KB before calling.
+/// Detection samples only the first portion of text to keep allocation and scan
+/// costs bounded for large pastes.
 ///
 /// # Returns
 /// Detected language identifier, or `None` if unknown.
 pub fn detect_language(content: &str) -> Option<String> {
+    const SAMPLE_MAX_BYTES: usize = 64 * 1024;
+    const SAMPLE_MAX_LINES: usize = 512;
+
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return None;
     }
-
-    let lower = trimmed.to_lowercase();
-    let lines: Vec<&str> = trimmed.lines().collect();
+    let sample = utf8_prefix(trimmed, SAMPLE_MAX_BYTES);
+    let lower = sample.to_ascii_lowercase();
+    let lines = || sample.lines().take(SAMPLE_MAX_LINES);
 
     // JSON: structural check without full parsing (avoids expensive serde_json)
-    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+    if sample.starts_with('{') || sample.starts_with('[') {
         // Look for JSON-like structure: balanced braces, quotes, colons
-        if (trimmed.ends_with('}') || trimmed.ends_with(']'))
-            && trimmed.contains('"')
-            && (trimmed.contains(':') || trimmed.starts_with('['))
+        if (sample.ends_with('}') || sample.ends_with(']'))
+            && sample.contains('"')
+            && (sample.contains(':') || sample.starts_with('['))
         {
             return Some("json".to_string());
         }
@@ -148,7 +154,7 @@ pub fn detect_language(content: &str) -> Option<String> {
     }
 
     if lower.starts_with("<?xml")
-        || (trimmed.starts_with('<') && lower.contains("</") && !lower.contains("<html"))
+        || (sample.starts_with('<') && lower.contains("</") && !lower.contains("<html"))
     {
         return Some("xml".to_string());
     }
@@ -162,8 +168,7 @@ pub fn detect_language(content: &str) -> Option<String> {
         return Some("shell".to_string());
     }
 
-    let yaml_pairs = lines
-        .iter()
+    let yaml_pairs = lines()
         .filter(|l| {
             let t = l.trim();
             if t.is_empty() || t.starts_with('#') {
@@ -172,16 +177,15 @@ pub fn detect_language(content: &str) -> Option<String> {
             (t.starts_with("- ") || t.contains(": ")) && !t.contains('{')
         })
         .count();
-    if (lower.starts_with("---") || yaml_pairs >= 2) && !trimmed.contains('{') {
+    if (lower.starts_with("---") || yaml_pairs >= 2) && !sample.contains('{') {
         return Some("yaml".to_string());
     }
 
-    let has_toml_header = lines.iter().any(|l| {
+    let has_toml_header = lines().any(|l| {
         let t = l.trim();
         t.starts_with('[') && t.ends_with(']') && t.len() > 2
     });
-    let toml_assignments = lines
-        .iter()
+    let toml_assignments = lines()
         .filter(|l| {
             let t = l.trim();
             if t.is_empty() || t.starts_with('#') || t.starts_with('[') {
@@ -194,15 +198,15 @@ pub fn detect_language(content: &str) -> Option<String> {
         return Some("toml".to_string());
     }
 
-    let markdown_heading = lines.iter().any(|l| {
+    let markdown_heading = lines().any(|l| {
         let t = l.trim_start();
         t.starts_with("# ") || t.starts_with("## ") || t.starts_with("### ") || t.starts_with("> ")
     });
-    let markdown_list = lines.iter().any(|l| {
+    let markdown_list = lines().any(|l| {
         let t = l.trim_start();
         (t.starts_with("- ") || t.starts_with("* ")) && !t.contains(": ")
     });
-    if trimmed.contains("```") || lower.contains("](") || markdown_heading || markdown_list {
+    if sample.contains("```") || lower.contains("](") || markdown_heading || markdown_list {
         return Some("markdown".to_string());
     }
 
@@ -384,4 +388,15 @@ pub fn detect_language(content: &str) -> Option<String> {
     }
 
     None
+}
+
+fn utf8_prefix(content: &str, max_bytes: usize) -> &str {
+    if content.len() <= max_bytes {
+        return content;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !content.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    &content[..end]
 }

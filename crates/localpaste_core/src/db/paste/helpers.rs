@@ -316,17 +316,78 @@ struct LegacyPaste {
 
 impl From<LegacyPaste> for Paste {
     fn from(old: LegacyPaste) -> Self {
+        let LegacyPaste {
+            id,
+            name,
+            content,
+            language,
+            folder_id,
+            created_at,
+            updated_at,
+            tags,
+            is_markdown,
+        } = old;
+        let language_is_manual =
+            infer_legacy_language_is_manual(content.as_str(), language.as_deref());
         Self {
-            id: old.id,
-            name: old.name,
-            content: old.content,
-            language: old.language.clone(),
-            language_is_manual: old.language.is_some(),
-            folder_id: old.folder_id,
-            created_at: old.created_at,
-            updated_at: old.updated_at,
-            tags: old.tags,
-            is_markdown: old.is_markdown,
+            id,
+            name,
+            content,
+            language,
+            language_is_manual,
+            folder_id,
+            created_at,
+            updated_at,
+            tags,
+            is_markdown,
         }
+    }
+}
+
+fn infer_legacy_language_is_manual(content: &str, stored_language: Option<&str>) -> bool {
+    let Some(stored) = stored_language
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    let inferred = detect_language(content);
+    inferred
+        .as_deref()
+        .map(|value| !value.eq_ignore_ascii_case(stored))
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{infer_legacy_language_is_manual, LegacyPaste, Paste};
+    use chrono::Utc;
+
+    #[test]
+    fn legacy_language_manual_flag_preserves_auto_detected_values() {
+        let legacy = LegacyPaste {
+            id: "legacy-id".to_string(),
+            name: "legacy".to_string(),
+            content: "pub fn main() {\n    let x = 1;\n    println!(\"hello\");\n}".to_string(),
+            language: Some("rust".to_string()),
+            folder_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            tags: Vec::new(),
+            is_markdown: false,
+        };
+        let migrated: Paste = legacy.into();
+        assert!(
+            !migrated.language_is_manual,
+            "matching inferred language should remain auto-detected after migration"
+        );
+    }
+
+    #[test]
+    fn legacy_language_manual_flag_marks_divergent_language_as_manual() {
+        assert!(
+            infer_legacy_language_is_manual("fn main() {}", Some("python")),
+            "divergent legacy language should be treated as manual override"
+        );
     }
 }

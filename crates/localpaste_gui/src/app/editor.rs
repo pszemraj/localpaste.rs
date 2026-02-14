@@ -346,6 +346,7 @@ pub(super) fn editor_buffer_revision(text: &dyn egui::TextBuffer) -> Option<u64>
 mod tests {
     use super::*;
     use eframe::egui::TextBuffer;
+    use localpaste_core::env::{env_lock, remove_env_var, set_env_var, EnvGuard};
 
     #[test]
     fn editor_buffer_maintains_rope_after_edits() {
@@ -360,50 +361,38 @@ mod tests {
 
     #[test]
     fn editor_mode_env_matrix() {
+        let _lock = env_lock().lock().expect("env lock");
         let preview_key = "LOCALPASTE_VIRTUAL_PREVIEW";
         let editor_key = "LOCALPASTE_VIRTUAL_EDITOR";
-        let old_preview = std::env::var(preview_key).ok();
-        let old_editor = std::env::var(editor_key).ok();
-        std::env::remove_var(preview_key);
-        std::env::remove_var(editor_key);
+        let _preview_restore = EnvGuard::remove(preview_key);
+        let _editor_restore = EnvGuard::remove(editor_key);
 
         // Default mode is the editable virtual editor.
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
 
         // Read-only preview can be forced for diagnostics.
-        std::env::set_var(preview_key, "1");
+        set_env_var(preview_key, "1");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
 
         // Explicit virtual editor flag wins over preview.
-        std::env::set_var(editor_key, "1");
+        set_env_var(editor_key, "1");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
 
         // Explicitly disabling virtual editor falls back to preview/textedit.
-        std::env::set_var(editor_key, "0");
+        set_env_var(editor_key, "0");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
 
-        std::env::set_var(preview_key, "1");
-        std::env::set_var(editor_key, "enabled");
+        set_env_var(preview_key, "1");
+        set_env_var(editor_key, "enabled");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
 
-        std::env::set_var(editor_key, "enabled");
-        std::env::set_var(preview_key, "0");
+        set_env_var(editor_key, "enabled");
+        set_env_var(preview_key, "0");
         assert_eq!(EditorMode::from_env(), EditorMode::TextEdit);
 
-        std::env::remove_var(editor_key);
-        std::env::set_var(preview_key, "0");
+        remove_env_var(editor_key);
+        set_env_var(preview_key, "0");
         assert_eq!(EditorMode::from_env(), EditorMode::TextEdit);
-
-        if let Some(value) = old_preview {
-            std::env::set_var(preview_key, value);
-        } else {
-            std::env::remove_var(preview_key);
-        }
-        if let Some(value) = old_editor {
-            std::env::set_var(editor_key, value);
-        } else {
-            std::env::remove_var(editor_key);
-        }
     }
 
     #[test]

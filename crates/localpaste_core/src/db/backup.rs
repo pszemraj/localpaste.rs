@@ -5,6 +5,17 @@ use crate::error::AppError;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn unix_timestamp_seconds(now: SystemTime) -> Result<u64, AppError> {
+    now.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|err| {
+            AppError::DatabaseError(format!(
+                "Failed to compute backup timestamp from system clock: {}",
+                err
+            ))
+        })
+}
+
 /// Backup manager using sled's native export/import functionality
 pub struct BackupManager {
     db_path: PathBuf,
@@ -30,14 +41,8 @@ impl BackupManager {
     ///
     /// # Errors
     /// Returns an error if copying files fails.
-    ///
-    /// # Panics
-    /// Panics if the system clock is before `UNIX_EPOCH`.
     pub fn create_backup(&self, _db: &sled::Db) -> Result<String, AppError> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = unix_timestamp_seconds(SystemTime::now())?;
 
         let backup_path = self.db_path.with_extension(format!("backup.{}", timestamp));
 
@@ -48,6 +53,29 @@ impl BackupManager {
             Ok(backup_path.to_string_lossy().to_string())
         } else {
             Ok(String::new())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unix_timestamp_seconds;
+    use crate::error::AppError;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn backup_timestamp_reports_error_for_pre_epoch_clock() {
+        let pre_epoch = UNIX_EPOCH - Duration::from_secs(1);
+        let err = unix_timestamp_seconds(pre_epoch).expect_err("pre-epoch time should fail");
+        match err {
+            AppError::DatabaseError(message) => {
+                assert!(
+                    message.contains("Failed to compute backup timestamp"),
+                    "unexpected error: {}",
+                    message
+                );
+            }
+            other => panic!("unexpected error variant: {:?}", other),
         }
     }
 }
