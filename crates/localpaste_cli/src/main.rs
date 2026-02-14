@@ -5,6 +5,7 @@ use clap_complete::{generate, Shell};
 use localpaste_core::DEFAULT_CLI_SERVER_URL;
 use serde_json::Value;
 use std::io::{self, Read};
+use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
@@ -199,6 +200,26 @@ fn normalize_server(server: String) -> String {
     server
 }
 
+fn discovery_server_is_reachable(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let Some(port) = url.port_or_known_default() else {
+        return false;
+    };
+
+    let timeout = Duration::from_millis(250);
+    let Ok(addrs) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    for addr in addrs {
+        if std::net::TcpStream::connect_timeout(&addr, timeout).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
 fn discovered_server_from_file() -> Option<String> {
     let path = localpaste_core::config::api_addr_file_path_from_env_or_default();
     let raw = std::fs::read_to_string(path).ok()?;
@@ -206,7 +227,10 @@ fn discovered_server_from_file() -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    if reqwest::Url::parse(trimmed).is_err() {
+    // Treat stale discovery entries as absent so the CLI can fall back
+    // to the default endpoint when the discovered server is no longer up.
+    let url = reqwest::Url::parse(trimmed).ok()?;
+    if !discovery_server_is_reachable(&url) {
         return None;
     }
     Some(trimmed.to_string())
@@ -421,6 +445,7 @@ mod tests {
     use localpaste_core::config::api_addr_file_path_from_env_or_default;
     use localpaste_core::env::{env_lock, EnvGuard};
     use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
+    use std::net::TcpListener;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct DiscoveryTestEnv {
@@ -619,9 +644,11 @@ mod tests {
     fn resolve_server_uses_discovery_when_explicit_missing() {
         let _lock = env_lock().lock().expect("env lock");
         let env = DiscoveryTestEnv::new("discovery", None);
-        env.write_discovery("http://127.0.0.1:46666");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let discovered = format!("http://{}", listener.local_addr().expect("listener addr"));
+        env.write_discovery(discovered.as_str());
 
-        assert_eq!(resolve_server(None), "http://127.0.0.1:46666");
+        assert_eq!(resolve_server(None), discovered);
     }
 
     #[test]
@@ -630,6 +657,19 @@ mod tests {
         let env = DiscoveryTestEnv::new("invalid", None);
         env.write_discovery("not a url");
 
+        assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
+    }
+
+    #[test]
+    fn resolve_server_falls_back_to_default_when_discovery_unreachable() {
+        let _lock = env_lock().lock().expect("env lock");
+        let env = DiscoveryTestEnv::new("stale", None);
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let stale_endpoint = format!("http://{}", listener.local_addr().expect("listener addr"));
+        drop(listener);
+
+        env.write_discovery(stale_endpoint.as_str());
         assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
     }
 

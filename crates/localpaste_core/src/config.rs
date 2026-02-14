@@ -2,7 +2,6 @@
 
 use serde::Deserialize;
 use std::env;
-use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::warn;
@@ -89,7 +88,8 @@ pub fn db_path_from_env_or_default() -> String {
 
 /// Resolve the discovery-file path for a given database path.
 ///
-/// The discovery file is stored next to the configured DB directory.
+/// The discovery file is stored inside the configured DB directory so
+/// different DB paths cannot overwrite each other's discovery state.
 ///
 /// # Arguments
 /// - `db_path`: Database path used by LocalPaste.
@@ -98,11 +98,10 @@ pub fn db_path_from_env_or_default() -> String {
 /// Path to the `.api-addr` discovery file.
 pub fn api_addr_file_path_for_db_path(db_path: &str) -> PathBuf {
     let db_path = PathBuf::from(expand_tilde(db_path.to_string()));
-    let parent = db_path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    parent.join(API_ADDR_FILE_NAME)
+    if db_path.as_os_str().is_empty() {
+        return PathBuf::from(".").join(API_ADDR_FILE_NAME);
+    }
+    db_path.join(API_ADDR_FILE_NAME)
 }
 
 /// Resolve the discovery-file path using env/default DB path rules.
@@ -220,8 +219,12 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{env_flag_enabled, parse_bool_env, parse_env_flag, Config};
-    use crate::constants::{DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT};
+    use super::{
+        api_addr_file_path_for_db_path, env_flag_enabled, parse_bool_env, parse_env_flag, Config,
+    };
+    use crate::constants::{
+        API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
+    };
     use crate::env::{env_lock, EnvGuard};
     use std::path::PathBuf;
 
@@ -316,6 +319,22 @@ mod tests {
             let config = Config::from_env();
             assert_eq!(config.auto_backup, expected, "value: {value}");
         }
+    }
+
+    #[test]
+    fn api_addr_discovery_path_is_unique_per_db_path() {
+        let parent = std::env::temp_dir().join("localpaste-config-discovery");
+        let db_a = parent.join("db-a");
+        let db_b = parent.join("db-b");
+        let db_a_string = db_a.to_string_lossy().to_string();
+        let db_b_string = db_b.to_string_lossy().to_string();
+
+        let path_a = api_addr_file_path_for_db_path(db_a_string.as_str());
+        let path_b = api_addr_file_path_for_db_path(db_b_string.as_str());
+
+        assert_eq!(path_a, db_a.join(API_ADDR_FILE_NAME));
+        assert_eq!(path_b, db_b.join(API_ADDR_FILE_NAME));
+        assert_ne!(path_a, path_b);
     }
 
     #[cfg(target_os = "windows")]
