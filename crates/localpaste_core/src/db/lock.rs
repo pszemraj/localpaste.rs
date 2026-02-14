@@ -72,17 +72,11 @@ pub fn acquire_owner_lock_for_lifetime(db_path: &str) -> Result<OwnerLockGuard, 
 
     match file.try_lock_exclusive() {
         Ok(()) => Ok(OwnerLockGuard { file, lock_path }),
-        Err(err)
-            if matches!(
-                err.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::PermissionDenied
-            ) =>
-        {
-            Err(AppError::StorageMessage(format!(
-                "Database owner lock '{}' is already held by another LocalPaste writer.",
-                lock_path.display()
-            )))
-        }
+        Err(err) if lock_conflict_error(&err) => Err(AppError::StorageMessage(format!(
+            "Database owner lock '{}' is already held by another LocalPaste writer: {}",
+            lock_path.display(),
+            err
+        ))),
         Err(err) => Err(AppError::StorageMessage(format!(
             "Failed to acquire owner lock '{}': {}",
             lock_path.display(),
@@ -104,23 +98,28 @@ pub fn acquire_owner_lock_for_lifetime(db_path: &str) -> Result<OwnerLockGuard, 
 pub fn probe_owner_lock(db_path: &str) -> ProcessProbeResult {
     let lock_path = owner_lock_path(db_path);
     if let Some(parent) = lock_path.parent() {
-        if let Err(err) = fs::create_dir_all(parent) {
+        if parent.exists() && !parent.is_dir() {
             tracing::warn!(
-                "Owner-lock probe failed creating parent '{}': {}",
-                parent.display(),
-                err
+                "Owner-lock probe found non-directory parent '{}'",
+                parent.display()
             );
             return ProcessProbeResult::Unknown;
         }
     }
+    if !lock_path.exists() {
+        return ProcessProbeResult::NotRunning;
+    }
+
     let file = match OpenOptions::new()
-        .create(true)
         .read(true)
         .write(true)
         .truncate(false)
         .open(&lock_path)
     {
         Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return ProcessProbeResult::NotRunning;
+        }
         Err(err) => {
             tracing::warn!(
                 "Owner-lock probe failed opening '{}': {}",
@@ -144,14 +143,7 @@ pub fn probe_owner_lock(db_path: &str) -> ProcessProbeResult {
                 ProcessProbeResult::NotRunning
             }
         }
-        Err(err)
-            if matches!(
-                err.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::PermissionDenied
-            ) =>
-        {
-            ProcessProbeResult::Running
-        }
+        Err(err) if lock_conflict_error(&err) => ProcessProbeResult::Running,
         Err(err) => {
             tracing::warn!(
                 "Owner-lock probe failed locking '{}': {}",
@@ -181,46 +173,16 @@ impl LockManager {
         }
     }
 
-    fn known_lock_paths(&self) -> Result<Vec<PathBuf>, AppError> {
+    fn known_lock_paths(&self) -> Vec<PathBuf> {
         let mut lock_paths = vec![
             self.db_path.join(DB_LOCK_FILE_NAME),
             self.db_path.join(DB_TREE_LOCK_FILE_NAME),
             self.legacy_lock_path.clone(),
         ];
 
-        if self.db_path.is_dir() {
-            for entry in fs::read_dir(&self.db_path).map_err(|err| {
-                AppError::StorageMessage(format!(
-                    "Failed to inspect database directory for lock files: {}",
-                    err
-                ))
-            })? {
-                let entry = entry.map_err(|err| {
-                    AppError::StorageMessage(format!(
-                        "Failed to inspect database directory entry: {}",
-                        err
-                    ))
-                })?;
-                let path = entry.path();
-                let is_lock = path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| ext.eq_ignore_ascii_case(DB_LOCK_EXTENSION))
-                    .unwrap_or(false);
-                let is_owner_lock = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map(|name| name == DB_OWNER_LOCK_FILE_NAME)
-                    .unwrap_or(false);
-                if is_lock && !is_owner_lock {
-                    lock_paths.push(path);
-                }
-            }
-        }
-
         lock_paths.sort();
         lock_paths.dedup();
-        Ok(lock_paths)
+        lock_paths
     }
 
     fn ensure_lock_file_is_unlockable(lock_path: &Path) -> Result<(), AppError> {
@@ -230,8 +192,15 @@ impl LockManager {
             .truncate(false)
             .open(lock_path)
             .map_err(|err| {
+                if lock_conflict_error(&err) {
+                    return AppError::StorageMessage(format!(
+                        "Refusing to remove lock '{}': it appears to be held by another process: {}",
+                        lock_path.display(),
+                        err
+                    ));
+                }
                 AppError::StorageMessage(format!(
-                    "Refusing to remove lock '{}': unable to open for lock validation: {}",
+                    "Refusing to remove lock '{}': unable to open for validation: {}",
                     lock_path.display(),
                     err
                 ))
@@ -249,8 +218,9 @@ impl LockManager {
                 Ok(())
             }
             Err(err) if lock_conflict_error(&err) => Err(AppError::StorageMessage(format!(
-                "Refusing to remove lock '{}': it appears to be held by another process",
-                lock_path.display()
+                "Refusing to remove lock '{}': it appears to be held by another process: {}",
+                lock_path.display(),
+                err
             ))),
             Err(err) => Err(AppError::StorageMessage(format!(
                 "Refusing to remove lock '{}': lock validation failed: {}",
@@ -268,17 +238,23 @@ impl LockManager {
     /// # Errors
     /// Returns an error if lock discovery or file removal fails.
     pub fn force_unlock(&self) -> Result<usize, AppError> {
+        let candidate_paths: Vec<PathBuf> = self
+            .known_lock_paths()
+            .into_iter()
+            .filter(|path| path.exists())
+            .collect();
+        for lock_path in &candidate_paths {
+            Self::ensure_lock_file_is_unlockable(lock_path)?;
+        }
+
         let mut removed_count = 0usize;
-        for lock_path in self.known_lock_paths()? {
-            if !lock_path.exists() {
-                continue;
-            }
-            Self::ensure_lock_file_is_unlockable(&lock_path)?;
+        for lock_path in candidate_paths {
             tracing::warn!("Force removing lock file: {:?}", lock_path);
             fs::remove_file(&lock_path).map_err(|err| {
                 AppError::StorageMessage(format!(
-                    "Failed to force remove lock {:?}: {}",
-                    lock_path, err
+                    "Failed to force remove lock '{}': {}",
+                    lock_path.display(),
+                    err
                 ))
             })?;
             removed_count += 1;
@@ -318,10 +294,8 @@ impl LockManager {
 }
 
 fn lock_conflict_error(err: &std::io::Error) -> bool {
-    matches!(
-        err.kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::PermissionDenied
-    ) || matches!(err.raw_os_error(), Some(32 | 33))
+    matches!(err.kind(), std::io::ErrorKind::WouldBlock)
+        || matches!(err.raw_os_error(), Some(32 | 33))
 }
 
 #[cfg(test)]
@@ -393,13 +367,35 @@ mod tests {
         match err {
             AppError::StorageMessage(message) => {
                 assert!(
-                    message.contains("unable to open for lock validation"),
+                    message.contains("unable to open for validation"),
                     "unexpected error: {}",
                     message
                 );
             }
             other => panic!("unexpected error variant: {:?}", other),
         }
+    }
+
+    #[test]
+    fn force_unlock_does_not_remove_unrelated_lock_files() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        std::fs::create_dir_all(&db_path).expect("db dir");
+
+        let db_lock = db_path.join(DB_LOCK_FILE_NAME);
+        let unrelated_lock = db_path.join("random.lock");
+        std::fs::write(&db_lock, b"lock").expect("db lock");
+        std::fs::write(&unrelated_lock, b"lock").expect("unrelated lock");
+
+        let manager = LockManager::new(&db_path.to_string_lossy());
+        let removed = manager.force_unlock().expect("force unlock");
+
+        assert_eq!(removed, 1);
+        assert!(!db_lock.exists());
+        assert!(
+            unrelated_lock.exists(),
+            "unrelated .lock file should remain untouched"
+        );
     }
 
     #[test]
@@ -436,6 +432,37 @@ mod tests {
     }
 
     #[test]
+    fn force_unlock_preflight_aborts_without_partial_removal() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        std::fs::create_dir_all(&db_path).expect("db dir");
+        let db_lock = db_path.join(DB_LOCK_FILE_NAME);
+        let tree_lock = db_path.join(DB_TREE_LOCK_FILE_NAME);
+        std::fs::write(&db_lock, b"db lock").expect("db lock");
+        std::fs::write(&tree_lock, b"tree lock").expect("tree lock");
+
+        let held = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&db_lock)
+            .expect("open db lock");
+        held.try_lock_exclusive().expect("hold db lock");
+
+        let manager = LockManager::new(&db_path.to_string_lossy());
+        let err = manager
+            .force_unlock()
+            .expect_err("held candidate should abort preflight");
+        assert!(matches!(err, AppError::StorageMessage(_)));
+        assert!(db_lock.exists(), "held lock should remain");
+        assert!(
+            tree_lock.exists(),
+            "unlockable lock should not be removed when preflight fails"
+        );
+
+        held.unlock().expect("release db lock");
+    }
+
+    #[test]
     fn owner_lock_probe_reports_not_running_when_lock_is_free() {
         let dir = TempDir::new().expect("temp dir");
         let db_path = dir.path().join("db");
@@ -468,6 +495,21 @@ mod tests {
 
         let probe = probe_owner_lock(&db_file.to_string_lossy());
         assert_eq!(probe, ProcessProbeResult::Unknown);
+    }
+
+    #[test]
+    fn owner_lock_probe_does_not_create_missing_directories() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("missing").join("db");
+        let parent = db_path.parent().expect("db parent").to_path_buf();
+        assert!(!parent.exists(), "test precondition: parent must be absent");
+
+        let probe = probe_owner_lock(&db_path.to_string_lossy());
+        assert_eq!(probe, ProcessProbeResult::NotRunning);
+        assert!(
+            !parent.exists(),
+            "probe_owner_lock should not create directories as a side effect"
+        );
     }
 
     #[test]

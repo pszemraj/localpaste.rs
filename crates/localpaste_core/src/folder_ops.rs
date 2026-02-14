@@ -147,8 +147,40 @@ pub fn delete_folder_tree_and_migrate(
     db: &Database,
     root_id: &str,
 ) -> Result<Vec<String>, AppError> {
-    let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
-    delete_folder_tree_and_migrate_locked(db, root_id)
+    delete_folder_tree_and_migrate_guarded(db, root_id, |_| Ok(()))
+}
+
+/// Deletes a folder tree while holding an external guard for affected paste ids.
+///
+/// The caller-provided `acquire_guard` callback executes while the folder
+/// transaction lock is held and receives the exact canonical paste ids that
+/// belong to the delete set. The returned guard is held for the full migration
+/// and delete flow.
+///
+/// # Arguments
+/// - `db`: Open database handle.
+/// - `root_id`: Root folder id to delete.
+/// - `acquire_guard`: Callback that acquires an external guard for affected ids.
+///
+/// # Returns
+/// Deleted folder ids in execution order (children first, root last).
+///
+/// # Errors
+/// Returns [`AppError::NotFound`] when `root_id` does not exist, or any error
+/// returned by `acquire_guard` / storage mutations.
+pub fn delete_folder_tree_and_migrate_guarded<G, F>(
+    db: &Database,
+    root_id: &str,
+    acquire_guard: F,
+) -> Result<Vec<String>, AppError>
+where
+    F: FnOnce(&[String]) -> Result<G, AppError>,
+{
+    let _folder_guard = TransactionOps::acquire_folder_txn_lock(db)?;
+    let delete_order = folder_delete_order_for_root_locked(db, root_id)?;
+    let affected_paste_ids = collect_affected_paste_ids_locked(db, &delete_order)?;
+    let _external_guard = acquire_guard(&affected_paste_ids)?;
+    delete_folder_tree_and_migrate_with_order_locked(db, delete_order)
 }
 
 /// Deletes a folder tree only when no currently locked paste would be migrated.
@@ -174,17 +206,22 @@ pub fn delete_folder_tree_and_migrate_if_unlocked<I>(
 where
     I: IntoIterator<Item = String>,
 {
-    let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
-    if let Some(locked_id) = first_locked_paste_in_folder_delete_set(db, root_id, locked_ids)? {
-        return Err(AppError::Locked(format!(
-            "Folder delete would migrate locked paste '{}'; close it first.",
-            locked_id
-        )));
-    }
-    delete_folder_tree_and_migrate_locked(db, root_id)
+    let locked_set: HashSet<String> = locked_ids.into_iter().collect();
+    delete_folder_tree_and_migrate_guarded(db, root_id, |affected_paste_ids| {
+        if let Some(locked_id) = affected_paste_ids
+            .iter()
+            .find(|paste_id| locked_set.contains(paste_id.as_str()))
+        {
+            return Err(AppError::Locked(format!(
+                "Folder delete would migrate locked paste '{}'; close it first.",
+                locked_id
+            )));
+        }
+        Ok(())
+    })
 }
 
-fn delete_folder_tree_and_migrate_locked(
+fn folder_delete_order_for_root_locked(
     db: &Database,
     root_id: &str,
 ) -> Result<Vec<String>, AppError> {
@@ -192,8 +229,35 @@ fn delete_folder_tree_and_migrate_locked(
     if !folders.iter().any(|f| f.id == root_id) {
         return Err(AppError::NotFound);
     }
+    Ok(folder_delete_order(&folders, root_id))
+}
 
-    let delete_order = folder_delete_order(&folders, root_id);
+fn collect_affected_paste_ids_locked(
+    db: &Database,
+    delete_order: &[String],
+) -> Result<Vec<String>, AppError> {
+    let delete_set: HashSet<&str> = delete_order.iter().map(|id| id.as_str()).collect();
+    let mut affected_paste_ids = Vec::new();
+    db.pastes.scan_canonical_meta(|meta| {
+        if meta
+            .folder_id
+            .as_deref()
+            .map(|folder_id| delete_set.contains(folder_id))
+            .unwrap_or(false)
+        {
+            affected_paste_ids.push(meta.id);
+        }
+        Ok(())
+    })?;
+    affected_paste_ids.sort();
+    affected_paste_ids.dedup();
+    Ok(affected_paste_ids)
+}
+
+fn delete_folder_tree_and_migrate_with_order_locked(
+    db: &Database,
+    delete_order: Vec<String>,
+) -> Result<Vec<String>, AppError> {
     db.folders.mark_deleting(&delete_order)?;
     let result = (|| {
         for folder_id in &delete_order {
@@ -447,6 +511,54 @@ mod tests {
             db.folders.get(&root.id).expect("folder lookup").is_some(),
             "folder should remain when delete is blocked"
         );
+    }
+
+    #[test]
+    fn delete_tree_guarded_can_reject_using_affected_paste_ids() {
+        let (db, _dir) = setup_db();
+
+        let root = Folder::with_parent("root".to_string(), None);
+        let child = Folder::with_parent("child".to_string(), Some(root.id.clone()));
+        db.folders.create(&root).expect("create root");
+        db.folders.create(&child).expect("create child");
+
+        let mut in_scope = Paste::new("in-scope".to_string(), "name".to_string());
+        in_scope.folder_id = Some(child.id.clone());
+        db.pastes.create(&in_scope).expect("create in-scope paste");
+
+        let out_of_scope = Paste::new("out-of-scope".to_string(), "name".to_string());
+        db.pastes
+            .create(&out_of_scope)
+            .expect("create out-of-scope paste");
+
+        let err = delete_folder_tree_and_migrate_guarded(&db, &root.id, |affected_paste_ids| {
+            assert!(
+                affected_paste_ids.contains(&in_scope.id),
+                "guard should receive descendant paste ids"
+            );
+            assert!(
+                !affected_paste_ids.contains(&out_of_scope.id),
+                "guard should exclude unrelated paste ids"
+            );
+            Err::<(), AppError>(AppError::Locked("guard rejected delete".to_string()))
+        })
+        .expect_err("guard should reject delete");
+
+        assert!(matches!(err, AppError::Locked(_)));
+        assert!(
+            db.folders.get(&root.id).expect("root lookup").is_some(),
+            "root folder should remain after guarded rejection"
+        );
+        assert!(
+            db.folders.get(&child.id).expect("child lookup").is_some(),
+            "child folder should remain after guarded rejection"
+        );
+        let in_scope_after = db
+            .pastes
+            .get(&in_scope.id)
+            .expect("in-scope lookup")
+            .expect("in-scope paste still exists");
+        assert_eq!(in_scope_after.folder_id.as_deref(), Some(child.id.as_str()));
     }
 
     #[test]

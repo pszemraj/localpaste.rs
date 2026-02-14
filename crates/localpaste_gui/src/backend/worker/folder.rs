@@ -4,7 +4,7 @@ use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
     folder_ops::{
-        delete_folder_tree_and_migrate_if_unlocked, ensure_folder_assignable, introduces_cycle,
+        delete_folder_tree_and_migrate_guarded, ensure_folder_assignable, introduces_cycle,
     },
     models::folder::Folder,
     AppError,
@@ -164,9 +164,27 @@ pub(super) fn handle_update_folder(
 }
 
 pub(super) fn handle_delete_folder(state: &mut WorkerState, id: String) {
-    let delete_result = state.locks.with_locked_ids(|locked_ids| {
-        delete_folder_tree_and_migrate_if_unlocked(&state.db, &id, locked_ids)
-    });
+    let delete_result =
+        delete_folder_tree_and_migrate_guarded(&state.db, &id, |affected_paste_ids| {
+            state
+                .locks
+                .begin_batch_mutation(affected_paste_ids.iter())
+                .map_err(|err| match err {
+                    localpaste_server::PasteLockError::Held { paste_id }
+                    | localpaste_server::PasteLockError::Mutating { paste_id } => {
+                        AppError::Locked(format!(
+                            "Folder delete would migrate locked paste '{}'; close it first.",
+                            paste_id
+                        ))
+                    }
+                    localpaste_server::PasteLockError::Poisoned => {
+                        AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
+                    }
+                    localpaste_server::PasteLockError::NotHeld { .. } => {
+                        AppError::StorageMessage(format!("Unexpected paste lock state: {}", err))
+                    }
+                })
+        });
 
     match delete_result {
         Ok(_) => {

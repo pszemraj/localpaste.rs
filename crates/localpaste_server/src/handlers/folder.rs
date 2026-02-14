@@ -11,7 +11,7 @@ use axum::{
     response::Response,
     Json,
 };
-use localpaste_core::folder_ops::{delete_folder_tree_and_migrate_if_unlocked, introduces_cycle};
+use localpaste_core::folder_ops::{delete_folder_tree_and_migrate_guarded, introduces_cycle};
 
 /// Create a new folder.
 ///
@@ -137,10 +137,23 @@ pub async fn delete_folder(
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("DELETE /api/folder/:id");
 
-    // Hold the lock-manager mutex for the entire delete flow so lock state cannot
-    // change between lock-check and transactional folder migration.
-    let _ = state.locks.with_locked_ids(|locked_ids| {
-        delete_folder_tree_and_migrate_if_unlocked(&state.db, &id, locked_ids)
+    let _ = delete_folder_tree_and_migrate_guarded(&state.db, &id, |affected_paste_ids| {
+        state
+            .locks
+            .begin_batch_mutation(affected_paste_ids.iter())
+            .map_err(|err| match err {
+                crate::PasteLockError::Held { paste_id }
+                | crate::PasteLockError::Mutating { paste_id } => AppError::Locked(format!(
+                    "Folder delete would migrate locked paste '{}'; close it first.",
+                    paste_id
+                )),
+                crate::PasteLockError::Poisoned => {
+                    AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
+                }
+                crate::PasteLockError::NotHeld { .. } => {
+                    AppError::StorageMessage(format!("Unexpected paste lock state: {}", err))
+                }
+            })
     })?;
 
     Ok(with_folder_deprecation_headers(Json(
