@@ -1,787 +1,147 @@
-//! Unit tests for paste storage operations.
-
-use super::{
-    folder_matches_expected, push_ranked_meta_top_k, set_reconcile_failpoint, PasteDb,
-    META_INDEX_FAULTED_KEY, META_INDEX_IN_PROGRESS_COUNT_KEY, META_INDEX_SCHEMA_VERSION,
-    META_INDEX_VERSION_KEY,
-};
+use super::PasteDb;
+use crate::db::tables::{PASTES, PASTES_BY_UPDATED, PASTES_META, REDB_FILE_NAME};
 use crate::models::paste::{Paste, UpdatePasteRequest};
-use crate::AppError;
-use chrono::Duration;
-use std::collections::HashSet;
+use redb::{ReadableDatabase, ReadableTable};
 use std::sync::Arc;
 use tempfile::TempDir;
 
-fn setup_paste_db() -> (PasteDb, TempDir) {
+fn setup_paste_db() -> (Arc<redb::Database>, PasteDb, TempDir) {
     let dir = TempDir::new().expect("temp dir");
-    let db_path = dir.path().join("db");
-    let db = Arc::new(sled::open(db_path).expect("open sled"));
-    let paste_db = PasteDb::new(db).expect("open paste db");
-    (paste_db, dir)
+    let db_file = dir.path().join(REDB_FILE_NAME);
+    let db = Arc::new(redb::Database::create(db_file).expect("create redb"));
+    let paste_db = PasteDb::new(db.clone()).expect("paste db");
+    (db, paste_db, dir)
 }
 
 #[test]
-fn update_recomputes_markdown_without_hash_false_positives() {
-    let (paste_db, _dir) = setup_paste_db();
-    let paste = Paste::new("plain".to_string(), "name".to_string());
-    let id = paste.id.clone();
-    paste_db.create(&paste).expect("create paste");
+fn create_get_update_delete_roundtrip() {
+    let (_db, paste_db, _dir) = setup_paste_db();
 
+    let paste = Paste::new("hello".to_string(), "name".to_string());
+    let paste_id = paste.id.clone();
+    paste_db.create(&paste).expect("create");
+
+    let loaded = paste_db.get(&paste_id).expect("get").expect("exists");
+    assert_eq!(loaded.content, "hello");
+    assert_eq!(loaded.name, "name");
+
+    let update = UpdatePasteRequest {
+        content: Some("updated".to_string()),
+        name: Some("renamed".to_string()),
+        language: None,
+        language_is_manual: None,
+        folder_id: None,
+        tags: Some(vec!["tag".to_string()]),
+    };
     let updated = paste_db
-        .update(
-            id.as_str(),
-            UpdatePasteRequest {
-                content: Some("#[derive(Debug)]\nstruct Example;".to_string()),
-                name: None,
-                language: None,
-                language_is_manual: None,
-                folder_id: None,
-                tags: None,
-            },
-        )
-        .expect("update should succeed")
-        .expect("paste should exist");
+        .update(&paste_id, update)
+        .expect("update")
+        .expect("updated");
+    assert_eq!(updated.content, "updated");
+    assert_eq!(updated.name, "renamed");
+    assert_eq!(updated.tags, vec!["tag".to_string()]);
 
-    assert!(
-        !updated.is_markdown,
-        "hash-prefixed non-markdown syntax should not set markdown flag"
-    );
+    assert!(paste_db.delete(&paste_id).expect("delete"));
+    assert!(paste_db.get(&paste_id).expect("lookup").is_none());
 }
 
 #[test]
-fn folder_mismatch_state_tracks_latest_retry_attempt() {
-    let mut mismatch = false;
+fn list_meta_orders_by_updated_desc() {
+    let (_db, paste_db, _dir) = setup_paste_db();
+    let now = chrono::Utc::now();
 
-    // First attempt mismatches expected folder.
-    assert!(!folder_matches_expected(
-        Some("folder-a"),
-        Some("folder-b"),
-        &mut mismatch
-    ));
-    assert!(mismatch);
+    let mut older = Paste::new("old".to_string(), "old".to_string());
+    older.updated_at = now - chrono::Duration::minutes(5);
+    let older_id = older.id.clone();
 
-    // Retry attempt matches; state must be cleared for final evaluation.
-    assert!(folder_matches_expected(
-        Some("folder-a"),
-        Some("folder-a"),
-        &mut mismatch
-    ));
-    assert!(!mismatch);
+    let mut newer = Paste::new("new".to_string(), "new".to_string());
+    newer.updated_at = now;
+    let newer_id = newer.id.clone();
+
+    paste_db.create(&older).expect("create older");
+    paste_db.create(&newer).expect("create newer");
+
+    let metas = paste_db.list_meta(10, None).expect("list meta");
+    assert_eq!(metas.len(), 2);
+    assert_eq!(metas[0].id, newer_id);
+    assert_eq!(metas[1].id, older_id);
 }
 
 #[test]
-fn needs_reconcile_detects_missing_marker() {
-    let (paste_db, _dir) = setup_paste_db();
-    assert!(paste_db.meta_tree.is_empty());
-    assert!(paste_db.updated_tree.is_empty());
-    assert!(paste_db
-        .meta_state_tree
-        .get(META_INDEX_VERSION_KEY)
-        .expect("state lookup")
-        .is_none());
-    assert!(paste_db
-        .needs_reconcile_meta_indexes(false)
-        .expect("needs reconcile"));
-}
+fn create_rejects_duplicate_id() {
+    let (_db, paste_db, _dir) = setup_paste_db();
 
-#[test]
-fn needs_reconcile_detects_missing_index_rows_with_marker() {
-    let (paste_db, _dir) = setup_paste_db();
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("initial reconcile writes marker");
-    let paste = Paste::new("hello".to_string(), "hello".to_string());
-    paste_db.create(&paste).expect("create paste");
-
-    paste_db.meta_tree.clear().expect("clear meta");
-    assert!(paste_db
-        .meta_state_tree
-        .get(META_INDEX_VERSION_KEY)
-        .expect("state lookup")
-        .is_some());
-    assert!(paste_db
-        .needs_reconcile_meta_indexes(false)
-        .expect("needs reconcile"));
-}
-
-#[test]
-fn needs_reconcile_detects_partial_non_empty_metadata_drift() {
-    let (paste_db, _dir) = setup_paste_db();
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("initial reconcile writes marker");
-    let first = Paste::new("first".to_string(), "first".to_string());
-    let second = Paste::new("second".to_string(), "second".to_string());
+    let mut first = Paste::new("one".to_string(), "one".to_string());
+    first.id = "duplicate-id".to_string();
     paste_db.create(&first).expect("create first");
-    paste_db.create(&second).expect("create second");
 
-    paste_db
-        .meta_tree
-        .remove(first.id.as_bytes())
-        .expect("remove first meta");
-    paste_db
-        .updated_tree
-        .remove(super::helpers::index_key(
-            first.updated_at,
-            first.id.as_str(),
-        ))
-        .expect("remove first updated index");
-
+    let mut second = Paste::new("two".to_string(), "two".to_string());
+    second.id = "duplicate-id".to_string();
+    let err = paste_db.create(&second).expect_err("duplicate create should fail");
     assert!(
-        !paste_db.meta_tree.is_empty(),
-        "meta tree should remain non-empty"
-    );
-    assert!(
-        !paste_db.updated_tree.is_empty(),
-        "updated tree should remain non-empty"
-    );
-    assert!(
-        paste_db
-            .meta_state_tree
-            .get(META_INDEX_VERSION_KEY)
-            .expect("state lookup")
-            .is_some(),
-        "version marker should remain present"
-    );
-    assert!(paste_db
-        .needs_reconcile_meta_indexes(false)
-        .expect("needs reconcile"));
-}
-
-#[test]
-fn needs_reconcile_skips_deep_scan_when_markers_are_clean() {
-    let (paste_db, _dir) = setup_paste_db();
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("initial reconcile writes marker");
-    let paste = Paste::new("hello".to_string(), "hello".to_string());
-    paste_db.create(&paste).expect("create paste");
-
-    paste_db
-        .meta_tree
-        .insert(paste.id.as_bytes(), b"corrupt-meta-row")
-        .expect("insert corrupt meta");
-    assert_eq!(paste_db.tree.len(), paste_db.meta_tree.len());
-    assert_eq!(paste_db.tree.len(), paste_db.updated_tree.len());
-    assert!(!paste_db
-        .needs_reconcile_meta_indexes(false)
-        .expect("needs reconcile"));
-}
-
-#[test]
-fn metadata_queries_fall_back_to_canonical_when_derived_rows_are_missing_or_corrupt() {
-    enum MetadataQueryCase {
-        ListMetaMissingDerivedRow,
-        SearchMetaCorruptDerivedRow,
-    }
-
-    let cases = [
-        MetadataQueryCase::ListMetaMissingDerivedRow,
-        MetadataQueryCase::SearchMetaCorruptDerivedRow,
-    ];
-
-    for case in cases {
-        let (paste_db, _dir) = setup_paste_db();
-        paste_db
-            .reconcile_meta_indexes()
-            .expect("initial reconcile writes marker");
-        let paste = Paste::new("fallback body".to_string(), "needle-meta".to_string());
-        let paste_id = paste.id.clone();
-        paste_db.create(&paste).expect("create paste");
-
-        let metas = match case {
-            MetadataQueryCase::ListMetaMissingDerivedRow => {
-                paste_db
-                    .meta_tree
-                    .remove(paste_id.as_bytes())
-                    .expect("remove meta row");
-                paste_db
-                    .list_meta(10, None)
-                    .expect("list metadata fallback")
-            }
-            MetadataQueryCase::SearchMetaCorruptDerivedRow => {
-                paste_db
-                    .meta_tree
-                    .insert(paste_id.as_bytes(), b"corrupt-meta")
-                    .expect("corrupt metadata row");
-                paste_db
-                    .search_meta("needle", 10, None, None)
-                    .expect("search metadata fallback")
-            }
-        };
-
-        assert!(
-            metas.into_iter().any(|meta| meta.id == paste_id),
-            "canonical fallback should retain visibility of canonical rows"
-        );
-    }
-}
-
-#[test]
-fn metadata_hot_paths_do_not_deserialize_canonical_paste_bodies_when_indexes_are_usable() {
-    let (paste_db, _dir) = setup_paste_db();
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("initial reconcile writes marker");
-    let paste = Paste::new("body".to_string(), "hot-path-meta".to_string());
-    let paste_id = paste.id.clone();
-    paste_db.create(&paste).expect("create paste");
-
-    // Corrupt canonical bytes directly. Indexed metadata rows remain intact,
-    // so list/search metadata paths should stay on the metadata fast path and
-    // avoid canonical deserialization.
-    paste_db
-        .tree
-        .insert(paste_id.as_bytes(), b"corrupt-canonical-row")
-        .expect("rewrite canonical row with corrupt bytes");
-
-    let listed = paste_db
-        .list_meta(10, None)
-        .expect("list metadata should not decode canonical body");
-    let listed_meta = listed
-        .iter()
-        .find(|meta| meta.id == paste_id)
-        .expect("metadata row should remain visible");
-    assert_eq!(
-        listed_meta.name, "hot-path-meta",
-        "list_meta should return metadata projection without canonical body decode"
-    );
-
-    let searched = paste_db
-        .search_meta("hot-path-meta", 10, None, None)
-        .expect("search metadata should not decode canonical body");
-    assert!(
-        searched.iter().any(|meta| meta.id == paste_id),
-        "search_meta should remain metadata-only on healthy indexes"
-    );
-}
-
-#[test]
-fn list_meta_omits_ghost_rows_when_canonical_row_is_missing() {
-    let (paste_db, _dir) = setup_paste_db();
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("initial reconcile writes marker");
-    let paste = Paste::new("ghost".to_string(), "ghost".to_string());
-    let paste_id = paste.id.clone();
-    paste_db.create(&paste).expect("create paste");
-
-    paste_db
-        .tree
-        .remove(paste_id.as_bytes())
-        .expect("remove canonical row");
-    assert!(
-        paste_db
-            .meta_tree
-            .get(paste_id.as_bytes())
-            .expect("meta lookup")
-            .is_some(),
-        "meta row should remain to simulate ghost entry"
-    );
-
-    let metas = paste_db
-        .list_meta(10, None)
-        .expect("list metadata fallback");
-    assert!(
-        metas.into_iter().all(|meta| meta.id != paste_id),
-        "canonical fallback should hide ghost metadata rows"
-    );
-}
-
-#[test]
-fn list_meta_dedupes_duplicate_updated_index_entries() {
-    let (paste_db, _dir) = setup_paste_db();
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("initial reconcile writes marker");
-    let paste = Paste::new("body".to_string(), "duplicate-index".to_string());
-    let paste_id = paste.id.clone();
-    let updated_at = paste.updated_at;
-    paste_db.create(&paste).expect("create paste");
-
-    let stale_key =
-        super::helpers::index_key(updated_at - Duration::seconds(60), paste_id.as_str());
-    paste_db
-        .updated_tree
-        .insert(stale_key, paste_id.as_bytes())
-        .expect("inject duplicate updated index entry");
-
-    let metas = paste_db.list_meta(10, None).expect("list metadata");
-    let duplicate_count = metas.iter().filter(|meta| meta.id == paste_id).count();
-    assert_eq!(
-        duplicate_count, 1,
-        "duplicate updated entries must dedupe by id"
-    );
-}
-
-#[test]
-fn list_meta_treats_in_progress_marker_as_degraded_and_falls_back_to_canonical() {
-    let (paste_db, _dir) = setup_paste_db();
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("initial reconcile writes marker");
-    let paste = Paste::new("body".to_string(), "indexed-only".to_string());
-    let paste_id = paste.id.clone();
-    paste_db.create(&paste).expect("create paste");
-
-    paste_db
-        .meta_state_tree
-        .insert(
-            META_INDEX_IN_PROGRESS_COUNT_KEY,
-            1u64.to_be_bytes().to_vec(),
-        )
-        .expect("set in-progress marker");
-
-    // If list_meta falls back to canonical rows, this injected corruption would fail decode.
-    paste_db
-        .tree
-        .insert(paste_id.as_bytes(), b"corrupt-canonical-row")
-        .expect("corrupt canonical row");
-
-    let err = paste_db
-        .list_meta(10, None)
-        .expect_err("in-progress marker should force canonical fallback");
-    assert!(
-        matches!(err, AppError::Serialization(_)),
-        "fallback path should surface canonical decode errors"
-    );
-}
-
-#[test]
-fn metadata_top_k_accumulator_stays_bounded_by_limit() {
-    let mut ranked: Vec<(
-        i32,
-        chrono::DateTime<chrono::Utc>,
-        crate::models::paste::PasteMeta,
-    )> = Vec::new();
-    let limit = 5usize;
-
-    for idx in 0..100 {
-        let mut paste = Paste::new(format!("body-{idx}"), format!("name-{idx}"));
-        paste.updated_at = chrono::Utc::now() + Duration::seconds(idx);
-        let meta = crate::models::paste::PasteMeta::from(&paste);
-        let score = if idx % 10 == 0 { 10 } else { 1 };
-        push_ranked_meta_top_k(&mut ranked, (score, meta.updated_at, meta), limit);
-        assert!(
-            ranked.len() <= limit,
-            "metadata top-k accumulator must stay bounded by limit"
-        );
-    }
-
-    assert_eq!(ranked.len(), limit);
-}
-
-#[test]
-fn list_canonical_ids_batch_honors_limit_and_folder_filter() {
-    let (paste_db, _dir) = setup_paste_db();
-
-    let mut in_folder_a = Paste::new("a".to_string(), "a".to_string());
-    in_folder_a.folder_id = Some("folder-a".to_string());
-    let in_folder_a_id = in_folder_a.id.clone();
-    paste_db
-        .create(&in_folder_a)
-        .expect("create folder-a paste");
-
-    let mut in_folder_b = Paste::new("b".to_string(), "b".to_string());
-    in_folder_b.folder_id = Some("folder-b".to_string());
-    let in_folder_b_id = in_folder_b.id.clone();
-    paste_db
-        .create(&in_folder_b)
-        .expect("create folder-b paste");
-
-    let mut in_folder_a_2 = Paste::new("c".to_string(), "c".to_string());
-    in_folder_a_2.folder_id = Some("folder-a".to_string());
-    let in_folder_a_2_id = in_folder_a_2.id.clone();
-    paste_db
-        .create(&in_folder_a_2)
-        .expect("create second folder-a paste");
-
-    let folder_a_ids = paste_db
-        .list_canonical_ids_batch(1, Some("folder-a"))
-        .expect("list folder-a ids");
-    assert_eq!(folder_a_ids.len(), 1);
-    assert!(
-        folder_a_ids[0] == in_folder_a_id || folder_a_ids[0] == in_folder_a_2_id,
-        "folder filter should only return matching canonical ids"
-    );
-
-    let folder_b_ids = paste_db
-        .list_canonical_ids_batch(10, Some("folder-b"))
-        .expect("list folder-b ids");
-    assert_eq!(folder_b_ids, vec![in_folder_b_id]);
-
-    let missing = paste_db
-        .list_canonical_ids_batch(10, Some("missing-folder"))
-        .expect("list missing folder ids");
-    assert!(missing.is_empty());
-
-    let zero_limit = paste_db
-        .list_canonical_ids_batch(0, None)
-        .expect("zero-limit ids");
-    assert!(zero_limit.is_empty());
-}
-
-#[test]
-fn scan_canonical_meta_streams_all_rows() {
-    let (paste_db, _dir) = setup_paste_db();
-
-    let mut with_folder = Paste::new("a".to_string(), "a".to_string());
-    with_folder.folder_id = Some("folder-a".to_string());
-    let with_folder_id = with_folder.id.clone();
-    paste_db.create(&with_folder).expect("create folder paste");
-
-    let without_folder = Paste::new("b".to_string(), "b".to_string());
-    let without_folder_id = without_folder.id.clone();
-    paste_db
-        .create(&without_folder)
-        .expect("create unfiled paste");
-
-    let mut seen_ids = HashSet::new();
-    let mut folder_rows = 0usize;
-    paste_db
-        .scan_canonical_meta(|meta| {
-            if meta.folder_id.is_some() {
-                folder_rows = folder_rows.saturating_add(1);
-            }
-            seen_ids.insert(meta.id);
-            Ok(())
-        })
-        .expect("scan canonical meta");
-
-    assert!(seen_ids.contains(&with_folder_id));
-    assert!(seen_ids.contains(&without_folder_id));
-    assert_eq!(folder_rows, 1);
-}
-
-struct ReconcileFailpointGuard;
-
-impl Drop for ReconcileFailpointGuard {
-    fn drop(&mut self) {
-        set_reconcile_failpoint(false);
-    }
-}
-
-#[test]
-fn reconcile_failure_marks_faulted_and_clears_in_progress() {
-    let _guard = ReconcileFailpointGuard;
-    let (paste_db, _dir) = setup_paste_db();
-    let paste = Paste::new("content".to_string(), "name".to_string());
-    let paste_id = paste.id.clone();
-    paste_db.create(&paste).expect("create paste");
-
-    set_reconcile_failpoint(true);
-    let err = paste_db
-        .reconcile_meta_indexes()
-        .expect_err("failpoint should force reconcile error");
-    assert!(
-        matches!(err, AppError::StorageMessage(ref message) if message.contains("Injected reconcile failpoint")),
-        "unexpected reconcile error: {}",
+        matches!(err, crate::AppError::StorageMessage(ref msg) if msg.contains("already exists")),
+        "unexpected error: {}",
         err
     );
-
-    assert!(
-        paste_db.meta_index_faulted().expect("faulted marker"),
-        "failed reconcile must mark metadata indexes faulted"
-    );
-    assert_eq!(
-        paste_db
-            .meta_index_in_progress_count()
-            .expect("in-progress marker"),
-        0,
-        "failed reconcile must clear in-progress state"
-    );
-    assert!(
-        paste_db
-            .needs_reconcile_meta_indexes(false)
-            .expect("needs reconcile"),
-        "failed reconcile should require follow-up reconcile"
-    );
-
-    let metas = paste_db
-        .list_meta(10, None)
-        .expect("metadata list via fallback");
-    assert!(
-        metas.iter().any(|meta| meta.id == paste_id),
-        "faulted indexes should preserve visibility via canonical fallback"
-    );
 }
 
 #[test]
-fn canonical_write_paths_commit_when_derived_index_mutation_fails() {
-    enum DerivedFailureCase {
-        Create,
-        Update,
-        UpdateIfFolderMatches,
-        Delete,
+fn aborted_write_transaction_leaves_no_partial_rows() {
+    let (db, _paste_db, _dir) = setup_paste_db();
+    let paste = Paste::new("atomic".to_string(), "atomic".to_string());
+    let encoded = bincode::serialize(&paste).expect("serialize");
+
+    {
+        let write_txn = db.begin_write().expect("begin write");
+        let mut pastes = write_txn.open_table(PASTES).expect("open pastes");
+        pastes
+            .insert(paste.id.as_str(), encoded.as_slice())
+            .expect("insert canonical");
+        // Intentionally do not commit.
     }
 
-    let cases = [
-        DerivedFailureCase::Create,
-        DerivedFailureCase::Update,
-        DerivedFailureCase::UpdateIfFolderMatches,
-        DerivedFailureCase::Delete,
-    ];
+    let read_txn = db.begin_read().expect("begin read");
+    let pastes = read_txn.open_table(PASTES).expect("open pastes");
+    let metas = read_txn.open_table(PASTES_META).expect("open metas");
+    let updated = read_txn
+        .open_table(PASTES_BY_UPDATED)
+        .expect("open updated");
 
-    for case in cases {
-        let (paste_db, _dir) = setup_paste_db();
-        match case {
-            DerivedFailureCase::Create => {
-                let paste = Paste::new("content".to_string(), "name".to_string());
-                let id = paste.id.clone();
-                let result = paste_db.create_inner(&paste, |_db, _paste| {
-                    Err(AppError::StorageMessage(
-                        "injected create index failure".to_string(),
-                    ))
-                });
-                assert!(result.is_ok(), "canonical create should still succeed");
-                assert!(
-                    paste_db
-                        .tree
-                        .get(id.as_bytes())
-                        .expect("canonical lookup")
-                        .is_some(),
-                    "canonical row should remain committed"
-                );
-                assert!(
-                    paste_db
-                        .meta_tree
-                        .get(id.as_bytes())
-                        .expect("meta lookup")
-                        .is_none(),
-                    "derived metadata should remain stale until reconcile"
-                );
-                assert!(
-                    paste_db
-                        .needs_reconcile_meta_indexes(false)
-                        .expect("needs reconcile"),
-                    "faulted marker should force reconcile"
-                );
-                let metas = paste_db
-                    .list_meta(10, None)
-                    .expect("list metadata via canonical fallback");
-                assert!(
-                    metas.iter().any(|meta| meta.id == id),
-                    "canonical fallback should keep committed paste visible"
-                );
-            }
-            DerivedFailureCase::Update => {
-                let paste = Paste::new("before".to_string(), "name".to_string());
-                let id = paste.id.clone();
-                paste_db.create(&paste).expect("create paste");
-
-                let updated = paste_db
-                    .update_inner(
-                        id.as_str(),
-                        UpdatePasteRequest {
-                            content: Some("after".to_string()),
-                            name: None,
-                            language: None,
-                            language_is_manual: None,
-                            folder_id: None,
-                            tags: None,
-                        },
-                        |_db, _paste, _previous| {
-                            Err(AppError::StorageMessage(
-                                "injected update index failure".to_string(),
-                            ))
-                        },
-                    )
-                    .expect("update should still report success despite derived index failure")
-                    .expect("paste should exist");
-                assert_eq!(updated.content, "after");
-
-                let canonical = paste_db
-                    .get(id.as_str())
-                    .expect("get paste")
-                    .expect("paste should remain");
-                assert_eq!(canonical.content, "after");
-            }
-            DerivedFailureCase::UpdateIfFolderMatches => {
-                let paste = Paste::new("before".to_string(), "name".to_string());
-                let id = paste.id.clone();
-                paste_db.create(&paste).expect("create paste");
-
-                let moved = paste_db
-                    .update_if_folder_matches_inner(
-                        id.as_str(),
-                        None,
-                        UpdatePasteRequest {
-                            content: None,
-                            name: Some("moved".to_string()),
-                            language: None,
-                            language_is_manual: None,
-                            folder_id: Some("folder-x".to_string()),
-                            tags: None,
-                        },
-                        |_db, _paste, _previous| {
-                            Err(AppError::StorageMessage(
-                                "injected cas index failure".to_string(),
-                            ))
-                        },
-                    )
-                    .expect("cas update should still report success")
-                    .expect("paste should exist");
-                assert_eq!(moved.name, "moved");
-                assert_eq!(moved.folder_id.as_deref(), Some("folder-x"));
-
-                let canonical = paste_db
-                    .get(id.as_str())
-                    .expect("get paste")
-                    .expect("paste should remain");
-                assert_eq!(canonical.folder_id.as_deref(), Some("folder-x"));
-            }
-            DerivedFailureCase::Delete => {
-                let paste = Paste::new("body".to_string(), "name".to_string());
-                let id = paste.id.clone();
-                paste_db.create(&paste).expect("create paste");
-
-                let deleted = paste_db
-                    .delete_and_return_inner(id.as_str(), |_db, _meta| {
-                        Err(AppError::StorageMessage(
-                            "injected delete index failure".to_string(),
-                        ))
-                    })
-                    .expect("delete should still report success")
-                    .expect("paste should be returned");
-                assert_eq!(deleted.id, id);
-                assert!(
-                    paste_db.get(id.as_str()).expect("lookup").is_none(),
-                    "canonical row should remain deleted"
-                );
-            }
-        }
-
-        assert!(
-            paste_db.meta_index_faulted().expect("faulted marker"),
-            "failed derived index mutation should set faulted marker"
-        );
-        assert_eq!(
-            paste_db
-                .meta_index_in_progress_count()
-                .expect("in-progress count"),
-            0,
-            "failed derived index mutation should still clear in-progress marker"
-        );
-    }
+    assert!(pastes.get(paste.id.as_str()).expect("get canonical").is_none());
+    assert!(metas.get(paste.id.as_str()).expect("get meta").is_none());
+    let has_updated = updated
+        .iter()
+        .expect("iter updated")
+        .any(|entry| entry.expect("entry").0.value().1 == paste.id.as_str());
+    assert!(!has_updated);
 }
 
 #[test]
-fn reconcile_clears_faulted_marker_after_index_write_failure() {
-    let (paste_db, _dir) = setup_paste_db();
-    let paste = Paste::new("content".to_string(), "name".to_string());
+fn search_distinguishes_content_vs_meta_queries() {
+    let (_db, paste_db, _dir) = setup_paste_db();
 
-    let result = paste_db.create_inner(&paste, |_db, _paste| {
-        Err(AppError::StorageMessage(
-            "injected create index failure".to_string(),
-        ))
-    });
-    assert!(result.is_ok(), "canonical create should still succeed");
+    let by_name = Paste::new("body".to_string(), "needle-name".to_string());
+    let content_only = Paste::new("needle-in-content".to_string(), "plain".to_string());
+    paste_db.create(&by_name).expect("create by-name");
+    paste_db.create(&content_only).expect("create content-only");
+
+    let content_results = paste_db.search("needle", 10, None, None).expect("search");
     assert!(
-        paste_db.meta_index_faulted().expect("faulted marker"),
-        "failure should mark indexes as faulted"
+        content_results.iter().any(|meta| meta.id == by_name.id),
+        "name match should be found in canonical search"
     );
-
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("reconcile should clear fault marker");
     assert!(
-        !paste_db.meta_index_faulted().expect("faulted marker"),
-        "reconcile should clear fault marker"
+        content_results.iter().any(|meta| meta.id == content_only.id),
+        "content match should be found in canonical search"
     );
-}
 
-#[test]
-fn update_paths_do_not_leave_meta_index_state_marked_on_canonical_decode_error() {
-    enum UpdatePath {
-        Direct,
-        Cas,
-    }
-
-    let paths = [UpdatePath::Direct, UpdatePath::Cas];
-    for path in paths {
-        let (paste_db, _dir) = setup_paste_db();
-        let paste = Paste::new("body".to_string(), "name".to_string());
-        let paste_id = paste.id.clone();
-        paste_db.create(&paste).expect("create paste");
-
-        paste_db
-            .tree
-            .insert(paste_id.as_bytes(), b"corrupt-paste-row")
-            .expect("corrupt canonical row");
-
-        let update = UpdatePasteRequest {
-            content: Some("updated".to_string()),
-            name: None,
-            language: None,
-            language_is_manual: None,
-            folder_id: None,
-            tags: None,
-        };
-        let err = match path {
-            UpdatePath::Direct => paste_db.update(paste_id.as_str(), update),
-            UpdatePath::Cas => paste_db.update_if_folder_matches(paste_id.as_str(), None, update),
-        }
-        .expect_err("corrupt row should fail update");
-        assert!(
-            matches!(err, AppError::Serialization(_)),
-            "expected serialization error for corrupt canonical row"
-        );
-        assert_eq!(
-            paste_db
-                .meta_index_in_progress_count()
-                .expect("in-progress count"),
-            0,
-            "update errors without index mutation should not leave in-progress marker set"
-        );
-        assert!(
-            !paste_db.meta_index_faulted().expect("faulted marker"),
-            "update errors without index mutation should not mark indexes as faulted"
-        );
-    }
-}
-
-#[test]
-fn needs_reconcile_returns_false_when_marker_and_indexes_are_healthy() {
-    let (paste_db, _dir) = setup_paste_db();
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("initial reconcile writes marker");
-    let marker = paste_db
-        .meta_state_tree
-        .get(META_INDEX_VERSION_KEY)
-        .expect("state lookup")
-        .expect("state marker");
-    assert_eq!(
-        u32::from_be_bytes(marker.as_ref().try_into().expect("version bytes")),
-        META_INDEX_SCHEMA_VERSION
+    let meta_results = paste_db.search_meta("needle", 10, None, None).expect("meta");
+    assert!(
+        meta_results.iter().any(|meta| meta.id == by_name.id),
+        "name match should be found in metadata search"
     );
-    let in_progress = paste_db
-        .meta_state_tree
-        .get(META_INDEX_IN_PROGRESS_COUNT_KEY)
-        .expect("in-progress lookup")
-        .expect("in-progress marker");
-    assert_eq!(
-        u64::from_be_bytes(in_progress.as_ref().try_into().expect("in-progress bytes")),
-        0
+    assert!(
+        !meta_results.iter().any(|meta| meta.id == content_only.id),
+        "content-only match should not be found in metadata search"
     );
-    let faulted = paste_db
-        .meta_state_tree
-        .get(META_INDEX_FAULTED_KEY)
-        .expect("faulted lookup")
-        .expect("faulted marker");
-    assert_eq!(faulted.as_ref(), &[0u8]);
-    assert!(!paste_db
-        .needs_reconcile_meta_indexes(false)
-        .expect("needs reconcile"));
-}
-
-#[test]
-fn needs_reconcile_honors_force_reindex_flag() {
-    let (paste_db, _dir) = setup_paste_db();
-    paste_db
-        .reconcile_meta_indexes()
-        .expect("initial reconcile writes marker");
-    assert!(paste_db
-        .needs_reconcile_meta_indexes(true)
-        .expect("needs reconcile"));
 }
