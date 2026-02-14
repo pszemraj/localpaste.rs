@@ -158,6 +158,55 @@ fn paste_list_filters_recent_collection() {
 }
 
 #[test]
+fn paste_saved_reprojects_non_search_results_for_active_language_filter() {
+    let mut harness = make_app();
+    let now = Utc::now();
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![
+            PasteSummary {
+                id: "alpha".to_string(),
+                name: "Alpha".to_string(),
+                language: Some("rust".to_string()),
+                content_len: 7,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+            PasteSummary {
+                id: "beta".to_string(),
+                name: "Beta".to_string(),
+                language: Some("rust".to_string()),
+                content_len: 7,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+        ],
+    });
+    harness
+        .app
+        .set_active_language_filter(Some("rust".to_string()));
+    harness.app.save_status = SaveStatus::Saving;
+    harness.app.save_in_flight = true;
+
+    let mut saved = Paste::new("content".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+    saved.language = Some("python".to_string());
+    saved.language_is_manual = true;
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, "beta");
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
 fn maybe_dispatch_palette_search_requires_debounce_and_dedupes() {
     let mut harness = make_app();
     harness.app.command_palette_open = true;

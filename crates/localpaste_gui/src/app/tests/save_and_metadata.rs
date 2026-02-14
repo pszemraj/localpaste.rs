@@ -413,6 +413,82 @@ fn select_paste_dirty_defers_switch_until_content_save_ack() {
 }
 
 #[test]
+fn select_paste_while_content_save_in_flight_queues_pending_without_switching() {
+    let mut harness = make_app();
+    harness.app.all_pastes.push(PasteSummary {
+        id: "beta".to_string(),
+        name: "Beta".to_string(),
+        language: None,
+        content_len: 4,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    });
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.save_status = SaveStatus::Saving;
+    harness.app.save_in_flight = true;
+
+    assert!(harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_intent() {
+    let mut harness = make_app();
+    harness.app.all_pastes.push(PasteSummary {
+        id: "beta".to_string(),
+        name: "Beta".to_string(),
+        language: None,
+        content_len: 4,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    });
+    harness.app.all_pastes.push(PasteSummary {
+        id: "gamma".to_string(),
+        name: "Gamma".to_string(),
+        language: None,
+        content_len: 4,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    });
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.save_status = SaveStatus::Saving;
+    harness.app.save_in_flight = true;
+    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("beta".to_string()));
+
+    assert!(harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+    assert!(harness.app.pending_copy_action.is_some());
+    assert!(harness.app.select_paste("gamma".to_string()));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("gamma"));
+    assert!(
+        harness.app.pending_copy_action.is_none(),
+        "replacing pending target should clear copy intent bound to replaced id"
+    );
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+
+    let mut saved = Paste::new("content".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert!(harness.app.pending_selection_id.is_none());
+    assert_eq!(harness.app.selected_id.as_deref(), Some("gamma"));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "gamma"),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
 fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() {
     let mut harness = make_app();
     harness.app.selected_content.reset("edited-old".to_string());
@@ -451,6 +527,74 @@ fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() 
         CoreCmd::GetPaste { id } => assert_eq!(id, "new-id"),
         other => panic!("unexpected command: {:?}", other),
     }
+}
+
+#[test]
+fn metadata_ack_preserves_newer_local_edits_typed_after_dispatch() {
+    let mut harness = make_app();
+    harness.app.metadata_dirty = true;
+    harness.app.edit_name = "Initial Name".to_string();
+    harness.app.edit_language = Some("python".to_string());
+    harness.app.edit_language_is_manual = true;
+    harness.app.edit_tags = "alpha,beta".to_string();
+    harness.app.save_metadata_now();
+    let _ = recv_cmd(&harness.cmd_rx);
+    assert!(harness.app.metadata_save_in_flight);
+
+    harness.app.edit_name = "Locally Newer Name".to_string();
+    harness.app.edit_tags = "alpha,beta,gamma".to_string();
+    harness.app.metadata_dirty = true;
+
+    let mut ack = Paste::new("content".to_string(), "Initial Name".to_string());
+    ack.id = "alpha".to_string();
+    ack.language = Some("python".to_string());
+    ack.language_is_manual = true;
+    ack.tags = vec!["alpha".to_string(), "beta".to_string()];
+    harness
+        .app
+        .apply_event(CoreEvent::PasteMetaSaved { paste: ack });
+
+    assert!(!harness.app.metadata_save_in_flight);
+    assert!(harness.app.metadata_save_request.is_none());
+    assert!(harness.app.metadata_dirty);
+    assert_eq!(harness.app.edit_name, "Locally Newer Name");
+    assert_eq!(harness.app.edit_tags, "alpha,beta,gamma");
+    assert_eq!(
+        harness
+            .app
+            .selected_paste
+            .as_ref()
+            .map(|paste| paste.name.as_str()),
+        Some("Initial Name")
+    );
+}
+
+#[test]
+fn metadata_ack_clears_dirty_state_when_draft_matches_dispatched_request() {
+    let mut harness = make_app();
+    harness.app.metadata_dirty = true;
+    harness.app.edit_name = "Acked".to_string();
+    harness.app.edit_language = Some("rust".to_string());
+    harness.app.edit_language_is_manual = true;
+    harness.app.edit_tags = "one,two".to_string();
+    harness.app.save_metadata_now();
+    let _ = recv_cmd(&harness.cmd_rx);
+    assert!(harness.app.metadata_save_in_flight);
+
+    let mut ack = Paste::new("content".to_string(), "Acked".to_string());
+    ack.id = "alpha".to_string();
+    ack.language = Some("rust".to_string());
+    ack.language_is_manual = true;
+    ack.tags = vec!["one".to_string(), "two".to_string()];
+    harness
+        .app
+        .apply_event(CoreEvent::PasteMetaSaved { paste: ack });
+
+    assert!(!harness.app.metadata_dirty);
+    assert!(!harness.app.metadata_save_in_flight);
+    assert!(harness.app.metadata_save_request.is_none());
+    assert_eq!(harness.app.edit_name, "Acked");
+    assert_eq!(harness.app.edit_tags, "one, two");
 }
 
 #[test]

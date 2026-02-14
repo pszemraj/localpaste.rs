@@ -77,6 +77,7 @@ fn make_app() -> TestHarness {
         edit_tags: String::new(),
         metadata_dirty: false,
         metadata_save_in_flight: false,
+        metadata_save_request: None,
         search_query: String::new(),
         search_last_input_at: None,
         search_last_sent: String::new(),

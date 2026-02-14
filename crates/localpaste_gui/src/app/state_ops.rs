@@ -5,8 +5,9 @@ mod filters;
 use super::highlight::EditorLayoutCache;
 use super::util::format_fenced_code_block;
 use super::{
-    LocalPasteApp, PaletteCopyAction, SaveStatus, SidebarCollection, StatusMessage, ToastMessage,
-    PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
+    LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus, SidebarCollection,
+    StatusMessage, ToastMessage, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE, STATUS_TTL, TOAST_LIMIT,
+    TOAST_TTL,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Local, Utc};
@@ -92,6 +93,7 @@ impl LocalPasteApp {
                     self.save_in_flight = false;
                     self.save_request_revision = None;
                     self.metadata_save_in_flight = false;
+                    self.metadata_save_request = None;
                 }
             }
             CoreEvent::PasteCreated { paste } => {
@@ -114,6 +116,7 @@ impl LocalPasteApp {
                     self.save_in_flight = false;
                     self.save_request_revision = None;
                     self.metadata_save_in_flight = false;
+                    self.metadata_save_request = None;
                     self.focus_editor_next = true;
                     self.set_status("Created new paste.");
                 }
@@ -159,15 +162,28 @@ impl LocalPasteApp {
                         self.last_edit_at = None;
                     }
                 }
+                if self.search_query.trim().is_empty() {
+                    // Keep smart collections/language filtering in sync with save-driven
+                    // summary changes (language auto-detect, updated_at ordering).
+                    self.recompute_visible_pastes();
+                }
                 self.try_apply_pending_selection();
+                if self.search_query.trim().is_empty() {
+                    self.ensure_selection_after_list_update();
+                }
             }
             CoreEvent::PasteMetaSaved { paste } => {
+                let requested_metadata = self.metadata_save_request.take();
                 self.metadata_save_in_flight = false;
                 if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste.id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
-                    self.sync_editor_metadata(&paste);
+                    if self.metadata_matches_request(requested_metadata.as_ref()) {
+                        self.sync_editor_metadata(&paste);
+                    } else {
+                        self.metadata_dirty = true;
+                    }
                     self.selected_paste = Some(paste.clone());
                 }
                 if self.search_query.trim().is_empty() {
@@ -269,6 +285,7 @@ impl LocalPasteApp {
                     CoreErrorSource::SaveMetadata if self.metadata_save_in_flight => {
                         self.metadata_dirty = true;
                         self.metadata_save_in_flight = false;
+                        self.metadata_save_request = None;
                         if let Some(pending) = self.pending_selection_id.take() {
                             self.clear_pending_copy_for(pending.as_str());
                         }
@@ -465,7 +482,7 @@ impl LocalPasteApp {
             return true;
         }
         if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
-            self.pending_selection_id = Some(id.clone());
+            self.queue_pending_selection(id);
             let content_save_needed = self.save_status == SaveStatus::Dirty;
             let metadata_save_needed = self.metadata_dirty;
             if content_save_needed {
@@ -491,6 +508,7 @@ impl LocalPasteApp {
                 if metadata_save_needed && self.metadata_save_in_flight {
                     self.metadata_save_in_flight = false;
                     self.metadata_dirty = true;
+                    self.metadata_save_request = None;
                 }
                 if let Some(pending) = self.pending_selection_id.take() {
                     self.clear_pending_copy_for(pending.as_str());
@@ -500,7 +518,24 @@ impl LocalPasteApp {
             self.set_status("Saving current paste before switching...");
             return true;
         }
+        let save_in_progress = self.save_in_flight
+            || self.metadata_save_in_flight
+            || self.save_status == SaveStatus::Saving;
+        if save_in_progress {
+            self.queue_pending_selection(id);
+            self.set_status("Saving current paste before switching...");
+            return true;
+        }
         self.apply_selection_now(id)
+    }
+
+    fn queue_pending_selection(&mut self, id: String) {
+        if self.pending_selection_id.as_deref() == Some(id.as_str()) {
+            return;
+        }
+        if let Some(replaced) = self.pending_selection_id.replace(id) {
+            self.clear_pending_copy_for(replaced.as_str());
+        }
     }
 
     fn apply_selection_now(&mut self, id: String) -> bool {
@@ -516,6 +551,7 @@ impl LocalPasteApp {
         self.edit_tags.clear();
         self.metadata_dirty = false;
         self.metadata_save_in_flight = false;
+        self.metadata_save_request = None;
         self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
         self.editor_cache = EditorLayoutCache::default();
@@ -536,6 +572,9 @@ impl LocalPasteApp {
 
     fn try_apply_pending_selection(&mut self) {
         if self.save_in_flight || self.metadata_save_in_flight {
+            return;
+        }
+        if self.save_status == SaveStatus::Saving {
             return;
         }
         if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
@@ -561,6 +600,7 @@ impl LocalPasteApp {
         self.edit_tags.clear();
         self.metadata_dirty = false;
         self.metadata_save_in_flight = false;
+        self.metadata_save_request = None;
         self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
         self.editor_cache = EditorLayoutCache::default();
@@ -667,12 +707,14 @@ impl LocalPasteApp {
         let Some(id) = self.selected_id.clone() else {
             return;
         };
+        let request = self.metadata_draft_snapshot();
         let language = if self.edit_language_is_manual {
             self.edit_language.clone()
         } else {
             None
         };
         let tags = Some(parse_tags_csv(self.edit_tags.as_str()));
+        self.metadata_save_request = None;
         if self
             .backend
             .cmd_tx
@@ -690,6 +732,7 @@ impl LocalPasteApp {
             return;
         }
         self.metadata_save_in_flight = true;
+        self.metadata_save_request = Some(request);
     }
 
     pub(super) fn export_selected_paste(&mut self) {
@@ -785,6 +828,21 @@ impl LocalPasteApp {
         } else {
             self.clear_selection();
         }
+    }
+
+    fn metadata_draft_snapshot(&self) -> MetadataDraftSnapshot {
+        MetadataDraftSnapshot {
+            name: self.edit_name.clone(),
+            language: self.edit_language.clone(),
+            language_is_manual: self.edit_language_is_manual,
+            tags_csv: self.edit_tags.clone(),
+        }
+    }
+
+    fn metadata_matches_request(&self, request: Option<&MetadataDraftSnapshot>) -> bool {
+        request
+            .map(|snapshot| self.metadata_draft_snapshot() == *snapshot)
+            .unwrap_or(!self.metadata_dirty)
     }
 
     pub(super) fn sync_editor_metadata(&mut self, paste: &Paste) {

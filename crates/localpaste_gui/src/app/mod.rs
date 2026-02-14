@@ -53,6 +53,7 @@ pub(crate) struct LocalPasteApp {
     edit_tags: String,
     metadata_dirty: bool,
     metadata_save_in_flight: bool,
+    metadata_save_request: Option<MetadataDraftSnapshot>,
     search_query: String,
     search_last_input_at: Option<Instant>,
     search_last_sent: String,
@@ -180,6 +181,14 @@ struct StatusMessage {
 struct ToastMessage {
     text: String,
     expires_at: Instant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MetadataDraftSnapshot {
+    name: String,
+    language: Option<String>,
+    language_is_manual: bool,
+    tags_csv: String,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -379,6 +388,7 @@ impl LocalPasteApp {
             edit_tags: String::new(),
             metadata_dirty: false,
             metadata_save_in_flight: false,
+            metadata_save_request: None,
             search_query: String::new(),
             search_last_input_at: None,
             search_last_sent: String::new(),
