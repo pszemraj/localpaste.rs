@@ -1,12 +1,12 @@
 //! Helper functions shared by paste storage operations.
 
+#[cfg(test)]
+use crate::error::AppError;
 use crate::models::paste::*;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::cell::Cell;
-
 #[cfg(test)]
-use crate::error::AppError;
+use std::cell::Cell;
 
 #[cfg(test)]
 thread_local! {
@@ -249,13 +249,13 @@ fn contains_case_insensitive(haystack: &str, query_lower: &str) -> bool {
 pub(super) fn folder_matches_expected(
     current_folder_id: Option<&str>,
     expected_folder_id: Option<&str>,
-    folder_mismatch: &Cell<bool>,
+    folder_mismatch: &mut bool,
 ) -> bool {
     // update_and_fetch may retry the closure under contention; mismatch tracking
     // must represent only the latest attempt.
-    folder_mismatch.set(false);
+    *folder_mismatch = false;
     if current_folder_id != expected_folder_id {
-        folder_mismatch.set(true);
+        *folder_mismatch = true;
         return false;
     }
     true

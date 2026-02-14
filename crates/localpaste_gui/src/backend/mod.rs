@@ -7,7 +7,9 @@ mod protocol;
 mod worker;
 
 pub use protocol::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
-pub use worker::{spawn_backend, spawn_backend_with_locks, BackendHandle};
+pub use worker::{
+    spawn_backend, spawn_backend_with_locks, spawn_backend_with_locks_and_owner, BackendHandle,
+};
 
 #[cfg(test)]
 mod tests {

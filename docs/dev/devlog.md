@@ -135,3 +135,4 @@ Lock recovery guidance (including what not to delete) lives in [docs/deployment.
 - [ ] Evaluate post-sled storage options (`redb` and `rusqlite`) and document migration constraints around current CAS-style folder/paste update paths.
 - [ ] Revisit backend query cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or fully retired now that owner-lock probing is the primary lock-safety mechanism.
+- [ ] Replace `PasteDb` `update_and_fetch` closure side-channel error handling with an explicit CAS-oriented update pipeline (no no-op closure writes on serialization errors).

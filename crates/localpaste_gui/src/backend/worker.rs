@@ -7,7 +7,7 @@ mod query;
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use localpaste_core::{config::env_flag_enabled, Database};
-use localpaste_server::PasteLockManager;
+use localpaste_server::{LockOwnerId, PasteLockManager};
 use std::sync::Arc;
 use std::thread;
 
@@ -22,6 +22,7 @@ struct WorkerState {
     evt_tx: Sender<CoreEvent>,
     max_paste_size: usize,
     locks: Arc<PasteLockManager>,
+    lock_owner_id: LockOwnerId,
     perf_log_enabled: bool,
     query_cache: query::QueryCache,
 }
@@ -156,6 +157,33 @@ pub fn spawn_backend_with_locks(
     max_paste_size: usize,
     locks: Arc<PasteLockManager>,
 ) -> BackendHandle {
+    spawn_backend_with_locks_and_owner(
+        db,
+        max_paste_size,
+        locks,
+        LockOwnerId::new("gui-backend-worker"),
+    )
+}
+
+/// Spawn the backend worker thread with a shared lock manager and owner id.
+///
+/// # Arguments
+/// - `db`: Open database handle shared by backend command handlers.
+/// - `max_paste_size`: Maximum allowed paste content size in bytes.
+/// - `locks`: Shared paste lock manager used for lock-aware operations.
+/// - `lock_owner_id`: Owner id representing this backend's in-process GUI owner.
+///
+/// # Returns
+/// A [`BackendHandle`] containing the command sender and event receiver.
+///
+/// # Panics
+/// Panics if the worker thread cannot be spawned.
+pub fn spawn_backend_with_locks_and_owner(
+    db: Database,
+    max_paste_size: usize,
+    locks: Arc<PasteLockManager>,
+    lock_owner_id: LockOwnerId,
+) -> BackendHandle {
     let (cmd_tx, cmd_rx) = unbounded();
     let (evt_tx, evt_rx) = unbounded();
 
@@ -167,6 +195,7 @@ pub fn spawn_backend_with_locks(
                 evt_tx,
                 max_paste_size,
                 locks,
+                lock_owner_id,
                 perf_log_enabled: env_flag_enabled("LOCALPASTE_BACKEND_PERF_LOG"),
                 query_cache: query::QueryCache::default(),
             };

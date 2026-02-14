@@ -137,6 +137,61 @@ fn locked_paste_blocks_api_delete() {
 }
 
 #[test]
+fn backend_delete_rejects_foreign_lock_holder_and_preserves_paste() {
+    let env = TestEnv::new();
+    let locks = Arc::new(PasteLockManager::default());
+    let backend = env.spawn_backend_with_locks(locks.clone());
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::CreatePaste {
+            content: "locked body".to_string(),
+        })
+        .expect("create paste");
+    let paste_id = match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteCreated { paste } => paste.id,
+        other => panic!("unexpected event: {:?}", other),
+    };
+
+    let foreign_owner = LockOwnerId::new("foreign-owner".to_string());
+    locks
+        .acquire(&paste_id, &foreign_owner)
+        .expect("acquire foreign lock holder");
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::DeletePaste {
+            id: paste_id.clone(),
+        })
+        .expect("send delete");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::Error { message, .. } => {
+            assert!(
+                message.contains("open for editing"),
+                "expected lock rejection, got: {}",
+                message
+            );
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::GetPaste {
+            id: paste_id.clone(),
+        })
+        .expect("send get after rejected delete");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteLoaded { paste } => assert_eq!(paste.id, paste_id),
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    locks
+        .release(&paste_id, &foreign_owner)
+        .expect("release foreign lock holder");
+}
+
+#[test]
 fn locked_paste_blocks_api_update() {
     let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());

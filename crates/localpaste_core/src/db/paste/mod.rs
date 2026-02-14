@@ -5,9 +5,7 @@ mod helpers;
 use crate::{error::AppError, models::paste::*};
 use chrono::{DateTime, Utc};
 use sled::Db;
-use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use self::helpers::{
@@ -164,32 +162,32 @@ impl PasteDb {
         F: FnOnce(&Self, &Paste, Option<PasteMeta>) -> Result<(), AppError>,
     {
         self.begin_meta_index_mutation()?;
-        let update_error = Rc::new(RefCell::new(None));
-        let update_error_in = Rc::clone(&update_error);
-        let old_meta = Rc::new(RefCell::new(None));
-        let old_meta_in = Rc::clone(&old_meta);
-        let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
+        // `update_and_fetch` retries the closure under contention but cannot return
+        // a typed error. Capture parse/encode failures and surface them after the call.
+        let mut update_error: Option<AppError> = None;
+        let mut old_meta: Option<PasteMeta> = None;
+        let result = self.tree.update_and_fetch(id.as_bytes(), |old| {
             let bytes = old?;
 
             let mut paste = match deserialize_paste(bytes) {
                 Ok(paste) => paste,
                 Err(err) => {
-                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    update_error = Some(AppError::Serialization(err));
                     return Some(bytes.to_vec());
                 }
             };
 
-            *old_meta_in.borrow_mut() = Some(PasteMeta::from(&paste));
+            old_meta = Some(PasteMeta::from(&paste));
             apply_update_request(&mut paste, &update);
             match bincode::serialize(&paste) {
                 Ok(encoded) => Some(encoded),
                 Err(err) => {
-                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    update_error = Some(AppError::Serialization(err));
                     Some(bytes.to_vec())
                 }
             }
         })?;
-        if let Some(err) = update_error.borrow_mut().take() {
+        if let Some(err) = update_error.take() {
             self.try_end_meta_index_mutation();
             return Err(err);
         }
@@ -197,7 +195,7 @@ impl PasteDb {
         match result {
             Some(bytes) => {
                 let paste = deserialize_paste(&bytes)?;
-                let previous = old_meta.borrow_mut().take();
+                let previous = old_meta.take();
                 let index_result = index_writer(self, &paste, previous);
                 self.finalize_derived_index_write("update", paste.id.as_str(), index_result);
                 Ok(Some(paste))
@@ -248,19 +246,18 @@ impl PasteDb {
         F: FnOnce(&Self, &Paste, Option<PasteMeta>) -> Result<(), AppError>,
     {
         self.begin_meta_index_mutation()?;
-        let update_error = Rc::new(RefCell::new(None));
-        let update_error_in = Rc::clone(&update_error);
-        let old_meta = Rc::new(RefCell::new(None));
-        let old_meta_in = Rc::clone(&old_meta);
-        let folder_mismatch = Rc::new(Cell::new(false));
-        let folder_mismatch_in = Rc::clone(&folder_mismatch);
-        let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
+        // `update_and_fetch` retries the closure under contention but cannot return
+        // a typed error. Capture parse/encode failures and surface them after the call.
+        let mut update_error: Option<AppError> = None;
+        let mut old_meta: Option<PasteMeta> = None;
+        let mut folder_mismatch = false;
+        let result = self.tree.update_and_fetch(id.as_bytes(), |old| {
             let bytes = old?;
 
             let mut paste = match deserialize_paste(bytes) {
                 Ok(paste) => paste,
                 Err(err) => {
-                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    update_error = Some(AppError::Serialization(err));
                     return Some(bytes.to_vec());
                 }
             };
@@ -268,26 +265,26 @@ impl PasteDb {
             if !folder_matches_expected(
                 paste.folder_id.as_deref(),
                 expected_folder_id,
-                &folder_mismatch_in,
+                &mut folder_mismatch,
             ) {
                 return Some(bytes.to_vec());
             }
 
-            *old_meta_in.borrow_mut() = Some(PasteMeta::from(&paste));
+            old_meta = Some(PasteMeta::from(&paste));
             apply_update_request(&mut paste, &update);
             match bincode::serialize(&paste) {
                 Ok(encoded) => Some(encoded),
                 Err(err) => {
-                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
+                    update_error = Some(AppError::Serialization(err));
                     Some(bytes.to_vec())
                 }
             }
         })?;
-        if let Some(err) = update_error.borrow_mut().take() {
+        if let Some(err) = update_error.take() {
             self.try_end_meta_index_mutation();
             return Err(err);
         }
-        if folder_mismatch.get() {
+        if folder_mismatch {
             self.try_end_meta_index_mutation();
             return Ok(None);
         }
@@ -295,7 +292,7 @@ impl PasteDb {
         match result {
             Some(bytes) => {
                 let paste = deserialize_paste(&bytes)?;
-                let previous = old_meta.borrow_mut().take();
+                let previous = old_meta.take();
                 let index_result = index_writer(self, &paste, previous);
                 self.finalize_derived_index_write(
                     "update_if_folder_matches",

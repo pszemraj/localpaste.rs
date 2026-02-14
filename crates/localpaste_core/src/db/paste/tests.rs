@@ -8,7 +8,6 @@ use super::{
 use crate::models::paste::{Paste, UpdatePasteRequest};
 use crate::AppError;
 use chrono::Duration;
-use std::cell::Cell;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -51,23 +50,23 @@ fn update_recomputes_markdown_without_hash_false_positives() {
 
 #[test]
 fn folder_mismatch_state_tracks_latest_retry_attempt() {
-    let mismatch = Cell::new(false);
+    let mut mismatch = false;
 
     // First attempt mismatches expected folder.
     assert!(!folder_matches_expected(
         Some("folder-a"),
         Some("folder-b"),
-        &mismatch
+        &mut mismatch
     ));
-    assert!(mismatch.get());
+    assert!(mismatch);
 
     // Retry attempt matches; state must be cleared for final evaluation.
     assert!(folder_matches_expected(
         Some("folder-a"),
         Some("folder-a"),
-        &mismatch
+        &mut mismatch
     ));
-    assert!(!mismatch.get());
+    assert!(!mismatch);
 }
 
 #[test]

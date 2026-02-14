@@ -3,6 +3,7 @@
 mod editor;
 mod highlight;
 mod highlight_flow;
+mod shutdown;
 mod state_ops;
 mod style;
 mod ui;
@@ -11,7 +12,7 @@ mod virtual_editor;
 mod virtual_ops;
 mod virtual_view;
 
-use crate::backend::{spawn_backend_with_locks, BackendHandle, PasteSummary};
+use crate::backend::{spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary};
 use editor::{EditorBuffer, EditorLineIndex, EditorMode};
 use eframe::egui::{self, text::CCursor, Color32, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
@@ -170,7 +171,7 @@ const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 8.0;
 const DRAG_AUTOSCROLL_EDGE_DISTANCE: f32 = 24.0;
 const DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME: f32 = 0.5;
 const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
-const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
+const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const VIRTUAL_OVERSCAN_LINES: usize = 3;
@@ -389,7 +390,13 @@ impl LocalPasteApp {
         let server_addr = server.addr();
         let server_used_fallback = server.used_fallback();
 
-        let backend = spawn_backend_with_locks(db, config.max_paste_size, locks.clone());
+        let lock_owner_id = next_lock_owner_id();
+        let backend = spawn_backend_with_locks_and_owner(
+            db,
+            config.max_paste_size,
+            locks.clone(),
+            lock_owner_id.clone(),
+        );
         let highlight_worker = spawn_highlight_worker();
 
         let mut app = Self {
@@ -443,7 +450,7 @@ impl LocalPasteApp {
             syntect: SyntectSettings::default(),
             db_path,
             locks,
-            lock_owner_id: next_lock_owner_id(),
+            lock_owner_id,
             _server: server,
             server_addr,
             server_used_fallback,
@@ -598,29 +605,6 @@ impl LocalPasteApp {
             trim_evictions = history.trim_evictions,
             "local perf snapshot"
         );
-    }
-
-    fn flush_pending_saves_for_shutdown(&mut self) {
-        if self.save_status == SaveStatus::Dirty && !self.save_in_flight {
-            self.save_now();
-        }
-        if self.metadata_dirty && !self.metadata_save_in_flight {
-            self.save_metadata_now();
-        }
-        let deadline = Instant::now() + SHUTDOWN_SAVE_FLUSH_TIMEOUT;
-        while (self.save_in_flight || self.metadata_save_in_flight) && Instant::now() < deadline {
-            let wait_for = deadline
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(25));
-            if wait_for.is_zero() {
-                break;
-            }
-            match self.backend.evt_rx.recv_timeout(wait_for) {
-                Ok(event) => self.apply_event(event),
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-            }
-        }
     }
 }
 

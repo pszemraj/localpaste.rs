@@ -115,6 +115,8 @@ pub(super) fn handle_update_paste_meta(
     folder_id: Option<String>,
     tags: Option<Vec<String>>,
 ) {
+    // Intentionally gate metadata operations on paste existence before validating
+    // destination folders so missing-paste responses are not masked by folder errors.
     let _existing = match state.db.pastes.get(&id) {
         Ok(Some(paste)) => paste,
         Ok(None) => {
@@ -195,14 +197,17 @@ pub(super) fn handle_update_paste_meta(
 }
 
 pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
-    let _existing = match state.db.pastes.get(&id) {
-        Ok(Some(paste)) => paste,
-        Ok(None) => {
-            let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
-            return;
-        }
+    let _mutation_guard = match state
+        .locks
+        .begin_mutation_ignoring_owner(id.as_str(), &state.lock_owner_id)
+        .map_err(|err| {
+            localpaste_server::locks::map_paste_mutation_lock_error(
+                err,
+                "Paste is currently open for editing.",
+            )
+        }) {
+        Ok(guard) => guard,
         Err(err) => {
-            error!("backend delete failed during lookup: {}", err);
             send_error(
                 &state.evt_tx,
                 CoreErrorSource::Other,

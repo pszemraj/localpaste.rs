@@ -249,6 +249,51 @@ impl PasteLockManager {
         self.begin_batch_mutation([paste_id])
     }
 
+    /// Begin a mutation guard while allowing a specific owner to already hold the paste.
+    ///
+    /// This is used by in-process GUI workflows that hold an edit lock and then
+    /// issue a local mutation (for example delete) through the backend worker.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Target paste id to guard.
+    /// - `owner_id`: Owner allowed to already hold `paste_id`.
+    ///
+    /// # Returns
+    /// A guard that blocks competing mutations on `paste_id` until dropped.
+    ///
+    /// # Errors
+    /// Returns an error when `paste_id` is already mutating, held by any owner
+    /// other than `owner_id`, or lock state is poisoned.
+    pub fn begin_mutation_ignoring_owner<'a>(
+        &'a self,
+        paste_id: &str,
+        owner_id: &LockOwnerId,
+    ) -> Result<PasteMutationGuard<'a>, PasteLockError> {
+        let mut state = self.state()?;
+        if state.mutating_pastes.contains(paste_id) {
+            return Err(PasteLockError::Mutating {
+                paste_id: paste_id.to_string(),
+            });
+        }
+        if let Some(holders) = state.holders_by_paste.get(paste_id) {
+            let held_by_other_owner = match holders.len() {
+                0 => false,
+                1 => !holders.contains(owner_id),
+                _ => true,
+            };
+            if held_by_other_owner {
+                return Err(PasteLockError::Held {
+                    paste_id: paste_id.to_string(),
+                });
+            }
+        }
+        state.mutating_pastes.insert(paste_id.to_string());
+        Ok(PasteMutationGuard {
+            manager: self,
+            paste_ids: vec![paste_id.to_string()],
+        })
+    }
+
     /// Begin a mutation guard for multiple paste ids.
     ///
     /// Fails if any target id is currently held or already mutating.
@@ -400,6 +445,51 @@ mod tests {
             .acquire("gamma", &owner_a)
             .expect("gamma should not be blocked");
         assert!(locks.is_locked("gamma").expect("is_locked"));
+    }
+
+    #[test]
+    fn begin_mutation_ignoring_owner_allows_matching_holder() {
+        let locks = PasteLockManager::default();
+        let owner_a = owner("owner-a");
+        locks.acquire("alpha", &owner_a).expect("owner-a acquires");
+
+        let guard = locks
+            .begin_mutation_ignoring_owner("alpha", &owner_a)
+            .expect("matching owner hold should be allowed");
+        let blocked = locks
+            .acquire("alpha", &owner_a)
+            .expect_err("guarded id should reject acquire while mutating");
+        assert!(matches!(blocked, PasteLockError::Mutating { .. }));
+        drop(guard);
+
+        assert!(
+            locks.is_locked("alpha").expect("is_locked"),
+            "original owner hold should remain after mutation guard drop"
+        );
+        locks.release("alpha", &owner_a).expect("release lock");
+    }
+
+    #[test]
+    fn begin_mutation_ignoring_owner_rejects_foreign_or_shared_holders() {
+        let locks = PasteLockManager::default();
+        let owner_a = owner("owner-a");
+        let owner_b = owner("owner-b");
+
+        locks.acquire("alpha", &owner_a).expect("owner-a acquires");
+        let foreign_err = match locks.begin_mutation_ignoring_owner("alpha", &owner_b) {
+            Ok(_) => panic!("foreign owner hold should block mutation"),
+            Err(err) => err,
+        };
+        assert!(matches!(foreign_err, PasteLockError::Held { .. }));
+
+        locks
+            .acquire("alpha", &owner_b)
+            .expect("owner-b also acquires");
+        let shared_err = match locks.begin_mutation_ignoring_owner("alpha", &owner_a) {
+            Ok(_) => panic!("shared holders should block mutation"),
+            Err(err) => err,
+        };
+        assert!(matches!(shared_err, PasteLockError::Held { .. }));
     }
 
     #[test]
