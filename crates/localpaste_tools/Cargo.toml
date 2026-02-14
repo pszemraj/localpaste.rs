@@ -1,0 +1,31 @@
+[package]
+name = "localpaste_tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "generate-test-data"
+path = "src/main.rs"
+
+[[bin]]
+name = "check-loc"
+path = "src/bin/check-loc.rs"
+
+[dependencies]
+localpaste_core = { path = "../localpaste_core" }
+clap = { workspace = true, features = ["derive"] }
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+quote = "1.0"
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
+syn = { version = "2.0", features = ["full", "visit"] }
+walkdir = "2.5"
+toml = "0.8"
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt"] }
+
+[dev-dependencies]
+tempfile.workspace = true

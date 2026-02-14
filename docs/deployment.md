@@ -1,37 +1,63 @@
 # Running LocalPaste as a Background Service
 
-> These instructions apply to the headless localpaste server. The desktop GUI (localpaste-gui) is intended to be launched manually.
+> These instructions apply to the headless `localpaste` server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
+> This is the canonical service-operation runbook. Other docs should link here for stop/restart/lock-recovery guidance instead of duplicating procedures.
+> Security posture, bind policy, and public exposure guidance are canonical in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
+> Build/run command matrices for development are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ## Quick Start
 
-```bash
-# Start in background
-nohup ./localpaste > ~/.cache/localpaste/server.log 2>&1 &
+Build/install commands are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+The examples below assume the server binary is available at `$HOME/.cargo/bin/localpaste` (the default `cargo install` location on Unix-like systems).
 
-# Stop gracefully (preserves database integrity)
-pkill localpaste
+```bash
+mkdir -p ~/.cache/localpaste
+nohup "$HOME/.cargo/bin/localpaste" > ~/.cache/localpaste/server.log 2>&1 &
+echo $! > ~/.cache/localpaste/localpaste.pid
 ```
+
+Important runtime rule:
+- Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` at the same time.
+
+For stop/restart/cleanup procedures, use [Stopping LocalPaste Safely](#stopping-localpaste-safely).
 
 ## Process Management
 
 ### Stopping LocalPaste Safely
 
 ```bash
-# Graceful shutdown (recommended - allows database cleanup)
-pkill -f localpaste
-pkill -f "cargo run"
+# Preferred path: stop by recorded PID
+if [ -f ~/.cache/localpaste/localpaste.pid ]; then
+  kill -TERM "$(cat ~/.cache/localpaste/localpaste.pid)" 2>/dev/null || true
+  rm -f ~/.cache/localpaste/localpaste.pid
+fi
 
-# Check if port is still in use
-lsof -i :3030
+# Fallback: stop by process name
+pkill -x localpaste || true
 
-# Full cleanup (if processes are stuck)
-pkill -f localpaste && pkill -f "cargo run" && sleep 2
+# Dev fallback (only if you started it via cargo run)
+pkill -f "cargo run -p localpaste_server --bin localpaste" || true
 
-# ONLY if absolutely necessary (may leave database locks):
-# lsof -t -i :3030 | xargs kill -9 2>/dev/null
+# Verify port release
+lsof -i :38411
+
+# Last resort ONLY (can leave lock state requiring recovery):
+# lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
 
-⚠️ **Important**: Avoid using `kill -9` as it prevents graceful shutdown and can leave database locks. See [dev.md](dev.md#database-lock-error) for recovery steps if locks occur.
+Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown and can require lock recovery.
+
+### Lock Safety And Force Unlock
+
+This section is the canonical operational guidance for lock recovery.
+Security policy context remains in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
+Lock behavior semantics are canonical in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
+
+- LocalPaste uses a process-lifetime owner lock file (`db.owner.lock`) in the DB directory.
+- Startup acquires that owner lock before opening sled; a second writer on the same `DB_PATH` is rejected.
+- `--force-unlock` is conservative by default and refuses uncertain ownership states.
+- Use `--force-unlock` only after all LocalPaste processes are confirmed stopped and a backup has been taken.
+- Prefer changing `DB_PATH` for isolated tests over forcing unlock on a shared working directory.
 
 ## Linux (systemd)
 
@@ -47,7 +73,7 @@ After=network.target
 [Service]
 Type=simple
 User=username
-ExecStart=/home/username/.local/bin/localpaste
+ExecStart=/usr/local/bin/localpaste
 Restart=on-failure
 Environment="RUST_LOG=info"
 
@@ -56,6 +82,7 @@ WantedBy=multi-user.target
 ```
 
 ```bash
+sudo systemctl daemon-reload
 sudo systemctl enable localpaste
 sudo systemctl start localpaste
 ```
@@ -70,7 +97,7 @@ Description=LocalPaste
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/localpaste
+ExecStart=%h/.cargo/bin/localpaste
 Restart=on-failure
 
 [Install]
@@ -78,6 +105,7 @@ WantedBy=default.target
 ```
 
 ```bash
+systemctl --user daemon-reload
 systemctl --user enable localpaste
 systemctl --user start localpaste
 ```
@@ -96,7 +124,7 @@ Create `~/Library/LaunchAgents/rs.localpaste.plist`:
     <string>rs.localpaste</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/username/.local/bin/localpaste</string>
+        <string>/Users/username/.cargo/bin/localpaste</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -107,44 +135,25 @@ Create `~/Library/LaunchAgents/rs.localpaste.plist`:
 ```
 
 ```bash
-launchctl load ~/Library/LaunchAgents/rs.localpaste.plist
-launchctl start rs.localpaste
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/rs.localpaste.plist
+launchctl kickstart -k "gui/$(id -u)/rs.localpaste"
 ```
 
 ## Windows
 
 ### Task Scheduler
 
-1. Open Task Scheduler
-2. Create Basic Task
-3. Trigger: "When I log on"
-4. Action: Start `C:\Users\username\.local\bin\localpaste.exe`
+1. Open Task Scheduler.
+2. Create Basic Task.
+3. Trigger: `When I log on`.
+4. Action: start `C:\Users\username\.cargo\bin\localpaste.exe`.
 
 ### PowerShell
 
 ```powershell
-$Action = New-ScheduledTaskAction -Execute "$env:USERPROFILE\.local\bin\localpaste.exe"
+$Action = New-ScheduledTaskAction -Execute "$env:USERPROFILE\.cargo\bin\localpaste.exe"
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
 Register-ScheduledTask -TaskName "LocalPaste" -Action $Action -Trigger $Trigger
-```
-
-## Docker
-
-```dockerfile
-FROM rust:slim as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-COPY --from=builder /app/target/release/localpaste /usr/local/bin/
-EXPOSE 3030
-CMD ["localpaste"]
-```
-
-```bash
-docker build -t localpaste .
-docker run -d -p 127.0.0.1:3030:3030 -v localpaste-data:/data localpaste
 ```
 
 ## Common Patterns
@@ -162,7 +171,7 @@ With cron:
 
 ```bash
 # Add to crontab
-*/5 * * * * pgrep localpaste || nohup /path/to/localpaste &
+*/5 * * * * pgrep -x localpaste >/dev/null || nohup /path/to/localpaste >/dev/null 2>&1 &
 ```
 
 ### Log Rotation
@@ -181,6 +190,22 @@ With cron:
 ### Health Check
 
 ```bash
-# Simple health check
-curl -f http://127.0.0.1:3030/api/pastes?limit=1 || echo "Service down"
+curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "Service down"
 ```
+
+## Embedded API Address Discovery (.api-addr)
+
+This section is operational-only. Canonical discovery/trust behavior is defined in:
+
+- [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md) (discovery + trust model)
+- [`crates/localpaste_cli/src/main.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_cli/src/main.rs) (actual endpoint resolution logic)
+
+Operational summary:
+
+- GUI sessions write the active embedded API endpoint to `.api-addr`.
+- `lpaste` checks `.api-addr` only when `--server` and `LP_SERVER` are unset.
+- Discovered endpoints must pass LocalPaste identity validation; stale/hijacked entries are ignored.
+- If discovery validation fails, `lpaste` falls back to the default local endpoint.
+- Use `lpaste --no-discovery ...` to disable discovery fallback.
+- Use explicit `--server` or `LP_SERVER` when you need deterministic endpoint targeting.
+- If `lpaste` cannot connect while resolved via `default`, treat mixed-version default endpoint mismatch as likely and set `--server`/`LP_SERVER` explicitly.

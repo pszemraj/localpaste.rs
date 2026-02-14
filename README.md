@@ -1,116 +1,38 @@
 # LocalPaste.rs
 
-![Status](https://img.shields.io/badge/status-active-success.svg?style=for-the-badge)
-
 A fast, localhost-only pastebin with a modern editor, built in Rust.
 
-![LocalPaste Screenshot](assets/ui.jpg)
+![LocalPaste Screenshot](https://github.com/pszemraj/localpaste.rs/blob/main/assets/ui.jpg)
 
----
+## What It Is
 
-## Features
+LocalPaste provides:
 
-- **Native Desktop App** - egui-based editor with palette-matched theming
-- **Automatic Language Detection** - cached detection + offline syntax highlighting
-- **Auto-Save** - debounce to disk; manual export for sharing
-- **Semantic Naming** - auto-generates memorable names (e.g., "mythic-ruby")
-- **Folder Organization** - nested folders with context dialogs and cycle-safe parenting
-- **Keyboard Shortcuts** - Ctrl/Cmd+S (save), Ctrl/Cmd+N (new), Ctrl/Cmd+Delete (delete), Ctrl/Cmd+F or Ctrl/Cmd+K (filter)
-- **Zero Runtime Dependencies** - single binary, embedded Sled database
+- Native desktop GUI (`localpaste-gui`) as the primary UX
+- Headless API server (`localpaste`) for automation/integration
+- CLI client (`lpaste`) for terminal workflows
+
+Runtime note:
+- `localpaste-gui` opens and owns the DB path, and runs an embedded API endpoint for compatibility while GUI is open.
+- `localpaste` is the headless alternative and should not be run concurrently on the same `DB_PATH` as the GUI.
 
 ## Quick Start
 
-LocalPaste.rs provides multiple ways to interact with your pastes:
-
-- `localpaste-gui` - Native egui desktop application (primary experience, bundles the API)
-- `localpaste` - Axum HTTP API server (headless, JSON only)
-- `lpaste` - Command-line interface for terminal usage
-
-### Run the Desktop App
-
 ```bash
-cargo run --bin localpaste-gui --features="gui"
+# Desktop GUI
+cargo run -p localpaste_gui --bin localpaste-gui
 ```
 
-Add `--release` once you’re ready to ship or benchmark; during development the command above starts the latest GUI build immediately.
+Canonical build/run/validation command matrices are maintained in:
+[docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
-### Run the Web Server / API
+## Configuration And Ops
 
-```bash
-# Run with cargo (development)
-cargo run --bin localpaste --release
-
-# Or build and run the binary (production)
-cargo build --release
-./target/release/localpaste
-```
-
-The server exposes a JSON API on <http://localhost:3030>. Use the CLI or your own tooling to interact with it.
-
-## CLI Usage
-
-The CLI tool (`lpaste`) interacts with the running server (or the desktop app, which hosts the same API locally):
-
-```bash
-# Build the CLI binary (requires the `cli` feature)
-cargo build --release --bin lpaste --features cli
-
-# List all pastes
-./target/release/lpaste list
-
-# Create a new paste
-echo "Hello, World!" | ./target/release/lpaste new
-
-# Get a specific paste
-./target/release/lpaste get <paste-id>
-
-# Search pastes
-./target/release/lpaste search "rust"
-
-# Delete a paste
-./target/release/lpaste delete <paste-id>
-```
-
-## Configuration
-
-Copy `.env.example` to `.env` to customize settings:
-
-```bash
-cp .env.example .env
-```
-
-Available environment variables:
-
-- `PORT` - Server port (default: 3030)
-- `DB_PATH` - Database path (default: ~/.cache/localpaste/db)
-- `MAX_PASTE_SIZE` - Maximum paste size in bytes (default: 10MB)
-- `AUTO_BACKUP` - Enable automatic backups on startup (default: false)
-- `RUST_LOG` - Logging level (default: info)
-
-For advanced configuration and security settings, see [docs/security.md](docs/security.md).
-
-## Running as a Background Service
-
-LocalPaste can run automatically in the background. See [docs/deployment.md](docs/deployment.md) for headless/server instructions:
-
-- systemd (Linux)
-- launchd (macOS)
-- Task Scheduler (Windows)
-- Docker setup
-- Process managers (PM2, Supervisor)
-- Auto-restart scripts
-
-## Development
-
-See [docs/dev.md](docs/dev.md) for development documentation, including desktop build steps.
-
-## Architecture
-
-- **Backend**: Axum web framework with Sled embedded database
-- **Desktop Frontend**: egui/eframe (Rust native) with cached syntax highlighting
-- **Web Frontend**: Legacy static assets (optional, served by `localpaste`)
-- **Storage**: Embedded Sled database (no external DB required)
-- **Deployment**: Per-platform binaries, GUI behind `--features gui`
+- System architecture walkthrough: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
+- Security and environment variables: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
+- Service/background operation: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
+- Locking semantics (owner lock + paste edit locks): [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
+- Documentation source-of-truth map: [docs/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md)
 
 ## License
 

@@ -1,0 +1,36 @@
+[package]
+name = "localpaste_gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "localpaste-gui"
+path = "src/main.rs"
+
+[dependencies]
+localpaste_core = { path = "../localpaste_core" }
+localpaste_server = { path = "../localpaste_server" }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+crossbeam-channel = "0.5"
+eframe = { version = "0.33", features = ["wgpu", "persistence"] }
+egui_extras = { version = "0.33", features = ["syntect"] }
+syntect = "5.3"
+ropey = "1.6"
+unicode-segmentation = "1.11"
+chrono = { workspace = true, features = ["serde"] }
+rfd = "0.14"
+puffin = { version = "0.19", optional = true }
+
+[features]
+default = []
+debug-tools = []
+profile = ["puffin"]
+
+[dev-dependencies]
+tempfile.workspace = true
+reqwest = { workspace = true, features = ["json", "blocking"] }
+serde_json.workspace = true

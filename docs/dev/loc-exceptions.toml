@@ -1,0 +1,14 @@
+# LoC exceptions for check-loc.
+#
+# Each exception must include:
+# - path: workspace-relative Rust file path
+# - max_lines: temporary per-file cap for that path
+# - reason: concrete rationale for why the exception exists
+#
+# Example:
+# [[exceptions]]
+# path = "crates/localpaste_gui/src/app/mod.rs"
+# max_lines = 1200
+# reason = "Temporary during editor state extraction work"
+
+exceptions = []

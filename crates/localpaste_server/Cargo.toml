@@ -1,0 +1,32 @@
+[package]
+name = "localpaste_server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "localpaste"
+path = "src/main.rs"
+
+[dependencies]
+localpaste_core = { path = "../localpaste_core" }
+anyhow = "1.0"
+axum = { version = "0.7", features = ["macros", "tracing"] }
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = [
+    "cors",
+    "compression-gzip",
+    "trace",
+    "set-header",
+] }
+hyper = { version = "1.4", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+axum-test = "16.4.1"
+tempfile.workspace = true
