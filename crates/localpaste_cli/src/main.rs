@@ -418,6 +418,41 @@ impl ServerResolutionSource {
     }
 }
 
+fn default_resolution_connect_hint(source: ServerResolutionSource) -> Option<&'static str> {
+    match source {
+        ServerResolutionSource::Default => Some(
+            "Hint: CLI/server default endpoint mismatch is possible across mixed versions. Set --server (or LP_SERVER) explicitly.",
+        ),
+        ServerResolutionSource::Explicit | ServerResolutionSource::Discovery => None,
+    }
+}
+
+async fn send_or_exit(
+    request: reqwest::RequestBuilder,
+    action: &str,
+    source: ServerResolutionSource,
+    server: &str,
+) -> reqwest::Response {
+    match request.send().await {
+        Ok(response) => response,
+        Err(err) => {
+            eprintln!("{} failed: {}", action, err);
+            if err.is_connect() {
+                eprintln!(
+                    "{} failed: could not connect to '{}' (resolved via {}).",
+                    action,
+                    server,
+                    source.as_str()
+                );
+                if let Some(hint) = default_resolution_connect_hint(source) {
+                    eprintln!("{}", hint);
+                }
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
 fn resolve_server_with_source(
     server: Option<String>,
     allow_discovery: bool,
@@ -494,7 +529,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let request_start = Instant::now();
-            let res = client.post(endpoint).json(&body).send().await?;
+            let res = send_or_exit(
+                client.post(endpoint).json(&body),
+                "New",
+                source,
+                server.as_str(),
+            )
+            .await;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "New").await;
 
@@ -516,7 +557,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Get { id } => {
             let endpoint = api_url_or_exit(&server, "Get", &["api", "paste", id.as_str()]);
             let request_start = Instant::now();
-            let res = client.get(endpoint).send().await?;
+            let res = send_or_exit(client.get(endpoint), "Get", source, server.as_str()).await;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "Get").await;
 
@@ -537,11 +578,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::List { limit } => {
             let endpoint = api_url_or_exit(&server, "List", &["api", "pastes", "meta"]);
             let request_start = Instant::now();
-            let res = client
-                .get(endpoint)
-                .query(&[("limit", limit)])
-                .send()
-                .await?;
+            let res = send_or_exit(
+                client.get(endpoint).query(&[("limit", limit)]),
+                "List",
+                source,
+                server.as_str(),
+            )
+            .await;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "List").await;
 
@@ -564,11 +607,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Search { query } => {
             let endpoint = api_url_or_exit(&server, "Search", &["api", "search"]);
             let request_start = Instant::now();
-            let res = client
-                .get(endpoint)
-                .query(&[("q", query.as_str())])
-                .send()
-                .await?;
+            let res = send_or_exit(
+                client.get(endpoint).query(&[("q", query.as_str())]),
+                "Search",
+                source,
+                server.as_str(),
+            )
+            .await;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "Search").await;
 
@@ -591,11 +636,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::SearchMeta { query } => {
             let endpoint = api_url_or_exit(&server, "Search metadata", &["api", "search", "meta"]);
             let request_start = Instant::now();
-            let res = client
-                .get(endpoint)
-                .query(&[("q", query.as_str())])
-                .send()
-                .await?;
+            let res = send_or_exit(
+                client.get(endpoint).query(&[("q", query.as_str())]),
+                "Search metadata",
+                source,
+                server.as_str(),
+            )
+            .await;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "Search metadata").await;
 
@@ -618,7 +665,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Delete { id } => {
             let endpoint = api_url_or_exit(&server, "Delete", &["api", "paste", id.as_str()]);
             let request_start = Instant::now();
-            let res = client.delete(endpoint).send().await?;
+            let res =
+                send_or_exit(client.delete(endpoint), "Delete", source, server.as_str()).await;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "Delete").await;
             let parse_start = Instant::now();

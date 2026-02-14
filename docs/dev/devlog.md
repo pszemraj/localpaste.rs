@@ -62,7 +62,7 @@ Topology note:
 - `localpaste-gui` owns the DB lock for its `DB_PATH` and hosts an embedded API endpoint for compatibility.
 - Do not run `localpaste` concurrently on the same `DB_PATH` as the GUI.
 - Use standalone `localpaste` for headless/server-only operation.
-- Embedded GUI API writes the active endpoint to `.api-addr` in the parent directory of `DB_PATH`; `lpaste` auto-uses it when `--server` and `LP_SERVER` are unset (unless `--no-discovery` is set).
+- Embedded GUI API writes the active endpoint to `DB_PATH/.api-addr`; `lpaste` auto-uses it when `--server` and `LP_SERVER` are unset (unless `--no-discovery` is set).
 
 For editor-mode flags and tracing env vars, see [GUI notes](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md).
 For repeatable GUI perf validation, see [GUI perf protocol](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).

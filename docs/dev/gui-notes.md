@@ -7,6 +7,7 @@ For perf validation steps/gates, use [gui-perf-protocol.md](https://github.com/p
 ## Runtime Flags
 
 - `LOCALPASTE_VIRTUAL_PREVIEW=1`: force read-only virtual preview mode.
+- `LOCALPASTE_VIRTUAL_PREVIEW=0` (or empty): does not force preview and does not disable virtual editor by itself.
 - `LOCALPASTE_VIRTUAL_EDITOR=1`: force editable virtual mode (default behavior).
 - `LOCALPASTE_VIRTUAL_EDITOR=0`: force `TextEdit` fallback kill-switch.
 - `LOCALPASTE_EDITOR_PERF_LOG=1`: periodic local frame snapshots (`avg/p50/p95/p99/worst`) plus list/search and redo-cache counters.

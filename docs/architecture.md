@@ -46,7 +46,7 @@ flowchart LR
 1. Opens the DB at `DB_PATH`.
 2. Acquires process-lifetime owner lock.
 3. Starts an embedded API server on loopback.
-4. Writes embedded API endpoint to `.api-addr` next to the DB path parent.
+4. Writes embedded API endpoint to `DB_PATH/.api-addr`.
 5. Runs UI and backend worker in-process.
 
 CLI behavior in this mode:

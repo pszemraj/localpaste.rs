@@ -208,3 +208,4 @@ Operational summary:
 - If discovery validation fails, `lpaste` falls back to the default local endpoint.
 - Use `lpaste --no-discovery ...` to disable discovery fallback.
 - Use explicit `--server` or `LP_SERVER` when you need deterministic endpoint targeting.
+- If `lpaste` cannot connect while resolved via `default`, treat mixed-version default endpoint mismatch as likely and set `--server`/`LP_SERVER` explicitly.

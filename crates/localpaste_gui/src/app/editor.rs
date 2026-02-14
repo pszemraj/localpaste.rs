@@ -307,25 +307,16 @@ impl EditorMode {
     }
 
     pub(super) fn from_env() -> Self {
-        let preview_enabled = Self::parse_flag("LOCALPASTE_VIRTUAL_PREVIEW");
-        let editor_enabled = Self::parse_flag("LOCALPASTE_VIRTUAL_EDITOR");
+        // Preview is a force-on diagnostic mode only. Falsy preview values are
+        // treated as "not forcing preview" so they cannot silently disable
+        // the default virtual editor path.
+        if Self::parse_flag("LOCALPASTE_VIRTUAL_PREVIEW").unwrap_or(false) {
+            return Self::VirtualPreview;
+        }
 
-        match editor_enabled {
-            Some(true) => Self::VirtualEditor,
-            Some(false) => preview_enabled.map_or(Self::TextEdit, |enabled| {
-                if enabled {
-                    Self::VirtualPreview
-                } else {
-                    Self::TextEdit
-                }
-            }),
-            None => preview_enabled.map_or(Self::VirtualEditor, |enabled| {
-                if enabled {
-                    Self::VirtualPreview
-                } else {
-                    Self::TextEdit
-                }
-            }),
+        match Self::parse_flag("LOCALPASTE_VIRTUAL_EDITOR") {
+            Some(false) => Self::TextEdit,
+            Some(true) | None => Self::VirtualEditor,
         }
     }
 }
@@ -362,25 +353,38 @@ mod tests {
         set_env_var(preview_key, "1");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
 
-        // Explicit virtual editor flag wins over preview.
+        // Preview force-mode takes precedence over editor mode flag.
         set_env_var(editor_key, "1");
-        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
 
-        // Explicitly disabling virtual editor falls back to preview/textedit.
+        // Preview=true keeps preview regardless of editor kill-switch.
         set_env_var(editor_key, "0");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
 
+        // Invalid editor flag does not disable preview=true force mode.
         set_env_var(preview_key, "1");
         set_env_var(editor_key, "enabled");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
 
+        // Falsy preview does not force TextEdit; defaults stay virtual editor.
         set_env_var(editor_key, "enabled");
+        set_env_var(preview_key, "0");
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
+
+        // Explicit kill-switch still works when preview is not truthy.
+        set_env_var(editor_key, "0");
         set_env_var(preview_key, "0");
         assert_eq!(EditorMode::from_env(), EditorMode::TextEdit);
 
+        // Empty preview value is falsy and should not change default mode.
         remove_env_var(editor_key);
-        set_env_var(preview_key, "0");
-        assert_eq!(EditorMode::from_env(), EditorMode::TextEdit);
+        set_env_var(preview_key, "");
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
+
+        // With preview unset and editor unset, default remains virtual editor.
+        remove_env_var(preview_key);
+        remove_env_var(editor_key);
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
     }
 
     #[test]

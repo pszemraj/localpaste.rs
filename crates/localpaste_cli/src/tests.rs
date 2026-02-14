@@ -1,7 +1,7 @@
 //! Unit tests for the `lpaste` CLI entrypoint module.
 
 use super::{
-    api_url, discovered_server_from_file_with_reachability,
+    api_url, default_resolution_connect_hint, discovered_server_from_file_with_reachability,
     discovery_probe_response_looks_like_localpaste, error_message_for_response,
     format_delete_output, format_get_output, format_summary_output, normalize_server,
     paste_id_and_name, resolve_server, resolve_server_with_source, ServerResolutionSource,
@@ -418,4 +418,11 @@ fn lp_server_env_value_beats_discovery_file() {
         let cli = Cli::parse_from(["lpaste", "list"]);
         assert_eq!(resolve_server(cli.server), "http://127.0.0.1:47777");
     });
+}
+
+#[test]
+fn default_resolution_connect_hint_only_applies_to_default_source() {
+    assert!(default_resolution_connect_hint(ServerResolutionSource::Default).is_some());
+    assert!(default_resolution_connect_hint(ServerResolutionSource::Explicit).is_none());
+    assert!(default_resolution_connect_hint(ServerResolutionSource::Discovery).is_none());
 }

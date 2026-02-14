@@ -179,9 +179,11 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](https://github.
 
 Rewrite merge gate before release:
 
-- Phase 3 list performance is met (virtualized, 10k OK)
-- Phase 4 editor + autosave UX is complete
-- Phase 5 search + command palette is complete
-- Smart filters + language filter flows work end-to-end
-- Large-paste handling + highlight strategy is stable
-- GUI does not expose folder metadata/edit pathways
+- [x] Phase 3 list performance is met (virtualized, 10k OK)
+- [x] Phase 4 editor + autosave UX is complete
+- [x] Phase 5 search + command palette is complete
+- [x] Smart filters + language filter flows work end-to-end
+- [~] Large-paste handling + highlight strategy is stable (pending newline-burst highlight recovery manual perf recheck tracked above/backlog)
+- [x] GUI does not expose folder metadata/edit pathways
+
+Gate status: `[~]` (not yet fully signed off).
