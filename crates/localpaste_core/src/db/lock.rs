@@ -44,12 +44,12 @@ pub fn owner_lock_path(db_path: &str) -> PathBuf {
 /// [`OwnerLockGuard`] that keeps the owner lock held until dropped.
 ///
 /// # Errors
-/// Returns [`AppError::DatabaseError`] when the owner lock cannot be acquired.
+/// Returns [`AppError::StorageMessage`] when the owner lock cannot be acquired.
 pub fn acquire_owner_lock_for_lifetime(db_path: &str) -> Result<OwnerLockGuard, AppError> {
     let lock_path = owner_lock_path(db_path);
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent).map_err(|err| {
-            AppError::DatabaseError(format!(
+            AppError::StorageMessage(format!(
                 "Failed to prepare owner lock parent '{}': {}",
                 parent.display(),
                 err
@@ -63,7 +63,7 @@ pub fn acquire_owner_lock_for_lifetime(db_path: &str) -> Result<OwnerLockGuard, 
         .truncate(false)
         .open(&lock_path)
         .map_err(|err| {
-            AppError::DatabaseError(format!(
+            AppError::StorageMessage(format!(
                 "Failed to open owner lock '{}': {}",
                 lock_path.display(),
                 err
@@ -78,12 +78,12 @@ pub fn acquire_owner_lock_for_lifetime(db_path: &str) -> Result<OwnerLockGuard, 
                 std::io::ErrorKind::WouldBlock | std::io::ErrorKind::PermissionDenied
             ) =>
         {
-            Err(AppError::DatabaseError(format!(
+            Err(AppError::StorageMessage(format!(
                 "Database owner lock '{}' is already held by another LocalPaste writer.",
                 lock_path.display()
             )))
         }
-        Err(err) => Err(AppError::DatabaseError(format!(
+        Err(err) => Err(AppError::StorageMessage(format!(
             "Failed to acquire owner lock '{}': {}",
             lock_path.display(),
             err
@@ -190,13 +190,13 @@ impl LockManager {
 
         if self.db_path.is_dir() {
             for entry in fs::read_dir(&self.db_path).map_err(|err| {
-                AppError::DatabaseError(format!(
+                AppError::StorageMessage(format!(
                     "Failed to inspect database directory for lock files: {}",
                     err
                 ))
             })? {
                 let entry = entry.map_err(|err| {
-                    AppError::DatabaseError(format!(
+                    AppError::StorageMessage(format!(
                         "Failed to inspect database directory entry: {}",
                         err
                     ))
@@ -230,7 +230,7 @@ impl LockManager {
             .truncate(false)
             .open(lock_path)
             .map_err(|err| {
-                AppError::DatabaseError(format!(
+                AppError::StorageMessage(format!(
                     "Refusing to remove lock '{}': unable to open for lock validation: {}",
                     lock_path.display(),
                     err
@@ -240,7 +240,7 @@ impl LockManager {
         match file.try_lock_exclusive() {
             Ok(()) => {
                 file.unlock().map_err(|err| {
-                    AppError::DatabaseError(format!(
+                    AppError::StorageMessage(format!(
                         "Refusing to remove lock '{}': failed to release validation lock: {}",
                         lock_path.display(),
                         err
@@ -248,11 +248,11 @@ impl LockManager {
                 })?;
                 Ok(())
             }
-            Err(err) if lock_conflict_error(&err) => Err(AppError::DatabaseError(format!(
+            Err(err) if lock_conflict_error(&err) => Err(AppError::StorageMessage(format!(
                 "Refusing to remove lock '{}': it appears to be held by another process",
                 lock_path.display()
             ))),
-            Err(err) => Err(AppError::DatabaseError(format!(
+            Err(err) => Err(AppError::StorageMessage(format!(
                 "Refusing to remove lock '{}': lock validation failed: {}",
                 lock_path.display(),
                 err
@@ -276,7 +276,7 @@ impl LockManager {
             Self::ensure_lock_file_is_unlockable(&lock_path)?;
             tracing::warn!("Force removing lock file: {:?}", lock_path);
             fs::remove_file(&lock_path).map_err(|err| {
-                AppError::DatabaseError(format!(
+                AppError::StorageMessage(format!(
                     "Failed to force remove lock {:?}: {}",
                     lock_path, err
                 ))
@@ -308,7 +308,7 @@ impl LockManager {
             copy_dir_recursive(db_path, &backup_path)?;
         } else {
             fs::copy(db_path, &backup_path).map_err(|e| {
-                AppError::DatabaseError(format!("Failed to backup database: {}", e))
+                AppError::StorageMessage(format!("Failed to backup database: {}", e))
             })?;
         }
 
@@ -391,7 +391,7 @@ mod tests {
             .force_unlock()
             .expect_err("directory lock path should fail removal");
         match err {
-            AppError::DatabaseError(message) => {
+            AppError::StorageMessage(message) => {
                 assert!(
                     message.contains("unable to open for lock validation"),
                     "unexpected error: {}",
@@ -422,7 +422,7 @@ mod tests {
             .force_unlock()
             .expect_err("active lock should block force unlock");
         match err {
-            AppError::DatabaseError(message) => {
+            AppError::StorageMessage(message) => {
                 assert!(
                     message.contains("appears to be held by another process"),
                     "unexpected error: {}",
@@ -482,7 +482,7 @@ mod tests {
         let err =
             super::unix_timestamp_seconds(pre_epoch).expect_err("pre-epoch time should not panic");
         match err {
-            AppError::DatabaseError(message) => {
+            AppError::StorageMessage(message) => {
                 assert!(
                     message.contains("Failed to compute backup timestamp"),
                     "unexpected error: {}",

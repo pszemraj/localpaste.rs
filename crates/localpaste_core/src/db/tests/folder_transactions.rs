@@ -121,7 +121,7 @@ fn test_move_between_folders_injected_error_rolls_back_reservation_and_preserves
     set_transaction_failpoint(None);
 
     assert!(
-        matches!(result, Err(AppError::DatabaseError(message)) if message.contains("Injected transaction failpoint")),
+        matches!(result, Err(AppError::StorageMessage(message)) if message.contains("Injected transaction failpoint")),
         "failpoint should force a deterministic move error"
     );
 
@@ -331,7 +331,7 @@ fn test_create_with_folder_injected_error_rolls_back_reservation_and_leaves_no_p
     set_transaction_failpoint(None);
 
     assert!(
-        matches!(result, Err(AppError::DatabaseError(message)) if message.contains("CreateAfterDestinationReserveOnce")),
+        matches!(result, Err(AppError::StorageMessage(message)) if message.contains("CreateAfterDestinationReserveOnce")),
         "injected create failpoint should surface error"
     );
     assert!(

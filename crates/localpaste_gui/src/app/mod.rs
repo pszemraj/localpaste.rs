@@ -168,6 +168,7 @@ const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 8.0;
 const DRAG_AUTOSCROLL_EDGE_DISTANCE: f32 = 24.0;
 const DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME: f32 = 0.5;
 const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
+const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const VIRTUAL_OVERSCAN_LINES: usize = 3;
@@ -565,6 +566,29 @@ impl LocalPasteApp {
             "local perf snapshot"
         );
     }
+
+    fn flush_pending_saves_for_shutdown(&mut self) {
+        if self.save_status == SaveStatus::Dirty && !self.save_in_flight {
+            self.save_now();
+        }
+        if self.metadata_dirty && !self.metadata_save_in_flight {
+            self.save_metadata_now();
+        }
+        let deadline = Instant::now() + SHUTDOWN_SAVE_FLUSH_TIMEOUT;
+        while (self.save_in_flight || self.metadata_save_in_flight) && Instant::now() < deadline {
+            let wait_for = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(25));
+            if wait_for.is_zero() {
+                break;
+            }
+            match self.backend.evt_rx.recv_timeout(wait_for) {
+                Ok(event) => self.apply_event(event),
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+            }
+        }
+    }
 }
 
 impl eframe::App for LocalPasteApp {
@@ -907,6 +931,10 @@ impl eframe::App for LocalPasteApp {
             repaint_after = repaint_after.min(until);
         }
         ctx.request_repaint_after(repaint_after);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.flush_pending_saves_for_shutdown();
     }
 }
 

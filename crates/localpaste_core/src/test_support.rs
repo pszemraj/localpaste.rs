@@ -1,7 +1,5 @@
 //! Shared test-only helpers for localpaste_core.
 
-#![cfg(test)]
-
 use crate::Database;
 use std::collections::HashMap;
 

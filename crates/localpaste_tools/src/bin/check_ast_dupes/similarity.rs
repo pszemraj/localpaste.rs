@@ -30,11 +30,11 @@ pub(super) fn find_similarity_pairs(
         .collect();
     candidates.sort_by_key(|info| info.normalized_nodes.len());
 
-    for i in 0..candidates.len() {
-        let left = candidates[i];
+    for (i, left) in candidates.iter().enumerate() {
+        let left = *left;
         let left_len = left.normalized_nodes.len() as f64;
-        for j in (i + 1)..candidates.len() {
-            let right = candidates[j];
+        for right in candidates.iter().skip(i + 1) {
+            let right = *right;
             let right_len = right.normalized_nodes.len() as f64;
             let len_ratio = left_len / right_len;
             if len_ratio < LENGTH_RATIO_FLOOR {

@@ -768,3 +768,33 @@ fn autosave_send_failure_restores_dirty_state() {
         Some("Autosave failed: backend unavailable.")
     );
 }
+
+#[test]
+fn on_exit_dispatches_dirty_save_and_drop_releases_selected_lock() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    app.selected_content.reset("exit-save-content".to_string());
+    app.save_status = SaveStatus::Dirty;
+    app.save_in_flight = false;
+    app.last_edit_at = Some(Instant::now());
+    app.locks.lock("alpha");
+    let locks = app.locks.clone();
+
+    eframe::App::on_exit(&mut app, None);
+
+    match recv_cmd(&cmd_rx) {
+        CoreCmd::UpdatePaste { id, content } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(content, "exit-save-content");
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+    drop(app);
+    assert!(
+        !locks.is_locked("alpha"),
+        "drop should release the selected paste lock"
+    );
+}

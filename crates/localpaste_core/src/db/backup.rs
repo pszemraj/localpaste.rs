@@ -58,7 +58,7 @@ mod tests {
         let pre_epoch = UNIX_EPOCH - Duration::from_secs(1);
         let err = unix_timestamp_seconds(pre_epoch).expect_err("pre-epoch time should fail");
         match err {
-            AppError::DatabaseError(message) => {
+            AppError::StorageMessage(message) => {
                 assert!(
                     message.contains("Failed to compute backup timestamp"),
                     "unexpected error: {}",

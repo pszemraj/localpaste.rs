@@ -107,7 +107,7 @@ impl EmbeddedServer {
                     warn!("failed to flush database: {}", err);
                 }
             })
-            .map_err(|err| AppError::DatabaseError(format!("failed to spawn server: {}", err)))?;
+            .map_err(|err| AppError::StorageMessage(format!("failed to spawn server: {}", err)))?;
 
         let mut thread_handle = Some(thread);
 
@@ -128,7 +128,7 @@ impl EmbeddedServer {
                 if let Some(handle) = thread_handle.take() {
                     let _ = handle.join();
                 }
-                Err(AppError::DatabaseError(message))
+                Err(AppError::StorageMessage(message))
             }
             Err(_) => {
                 let _ = shutdown_tx.send(());

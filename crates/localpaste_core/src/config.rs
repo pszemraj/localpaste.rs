@@ -54,6 +54,24 @@ fn resolve_home_dir() -> Option<PathBuf> {
     std::env::current_dir().ok()
 }
 
+fn default_data_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+            if !local_app_data.trim().is_empty() {
+                return PathBuf::from(local_app_data).join("localpaste");
+            }
+        }
+    }
+
+    let home = resolve_home_dir().unwrap_or_else(|| PathBuf::from("."));
+    home.join(".cache").join("localpaste")
+}
+
+fn default_db_path() -> String {
+    default_data_dir().join("db").to_string_lossy().to_string()
+}
+
 /// Parse a boolean-like environment flag value.
 ///
 /// # Supported Values
@@ -147,11 +165,9 @@ impl Config {
     /// A populated [`Config`] with defaults applied when env vars are missing.
     pub fn from_env() -> Self {
         Self {
-            db_path: env::var("DB_PATH").map(expand_tilde).unwrap_or_else(|_| {
-                let home = resolve_home_dir().unwrap_or_else(|| PathBuf::from("."));
-                let cache_dir = home.join(".cache").join("localpaste");
-                cache_dir.join("db").to_string_lossy().to_string()
-            }),
+            db_path: env::var("DB_PATH")
+                .map(expand_tilde)
+                .unwrap_or_else(|_| default_db_path()),
             port: parse_env_number("PORT", DEFAULT_PORT),
             max_paste_size: parse_env_number("MAX_PASTE_SIZE", DEFAULT_MAX_PASTE_SIZE),
             auto_save_interval: parse_env_number(
@@ -168,6 +184,7 @@ mod tests {
     use super::{env_flag_enabled, parse_bool_env, parse_env_flag, Config};
     use crate::constants::{DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT};
     use crate::env::{env_lock, EnvGuard};
+    use std::path::PathBuf;
 
     #[test]
     fn parse_env_flag_accepts_truthy_values() {
@@ -260,5 +277,45 @@ mod tests {
             let config = Config::from_env();
             assert_eq!(config.auto_backup, expected, "value: {value}");
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn config_default_db_path_uses_localappdata_on_windows() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::remove("DB_PATH");
+        let _local_app_data = EnvGuard::set("LOCALAPPDATA", r"C:\Users\tester\AppData\Local");
+        let _home = EnvGuard::remove("HOME");
+        let _userprofile = EnvGuard::remove("USERPROFILE");
+        let _homedrive = EnvGuard::remove("HOMEDRIVE");
+        let _homepath = EnvGuard::remove("HOMEPATH");
+
+        let config = Config::from_env();
+        assert_eq!(
+            PathBuf::from(config.db_path),
+            PathBuf::from(r"C:\Users\tester\AppData\Local")
+                .join("localpaste")
+                .join("db")
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn config_default_db_path_uses_home_cache_on_non_windows() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::remove("DB_PATH");
+        let _home = EnvGuard::set("HOME", "/tmp/localpaste-home");
+        let _userprofile = EnvGuard::remove("USERPROFILE");
+        let _homedrive = EnvGuard::remove("HOMEDRIVE");
+        let _homepath = EnvGuard::remove("HOMEPATH");
+
+        let config = Config::from_env();
+        assert_eq!(
+            PathBuf::from(config.db_path),
+            PathBuf::from("/tmp/localpaste-home")
+                .join(".cache")
+                .join("localpaste")
+                .join("db")
+        );
     }
 }

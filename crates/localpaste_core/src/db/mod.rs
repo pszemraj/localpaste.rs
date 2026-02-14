@@ -320,14 +320,14 @@ impl Database {
                 // Uncertain liveness must remain conservative to avoid data corruption.
                 match localpaste_process_probe() {
                     ProcessProbeResult::Running => {
-                        return Err(AppError::DatabaseError(
+                        return Err(AppError::StorageMessage(
                             "Another LocalPaste instance is already running.\n\
                             Please close it first, or set DB_PATH to use a different database location."
                                 .to_string(),
                         ));
                     }
                     ProcessProbeResult::Unknown => {
-                        return Err(AppError::DatabaseError(
+                        return Err(AppError::StorageMessage(
                             "Database appears to be locked, but LocalPaste process ownership could not be verified.\n\
                             Treat this as potentially active usage; do not force unlock.\n\
                             Close any localpaste/localpaste-gui/generate-test-data processes, then retry,\n\
@@ -336,7 +336,7 @@ impl Database {
                         ));
                     }
                     ProcessProbeResult::NotRunning => {
-                        return Err(AppError::DatabaseError(
+                        return Err(AppError::StorageMessage(
                             "Database appears to be locked.\n\
                             Another process may still be using it, or a previous crash left a stale lock.\n\
                             If you just started the localpaste server for CLI tests, stop it before starting the GUI,\n\
@@ -349,7 +349,7 @@ impl Database {
                     }
                 }
             }
-            Err(e) => return Err(AppError::DatabaseError(e.to_string())),
+            Err(e) => return Err(AppError::Database(e)),
         };
 
         let database = Self {

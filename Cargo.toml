@@ -19,6 +19,6 @@ codegen-units = 8
 [profile.release]
 opt-level = "z"
 lto = true
-codegen-units = 8
+codegen-units = 1
 strip = true
 panic = "abort"

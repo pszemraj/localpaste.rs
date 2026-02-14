@@ -163,6 +163,31 @@ mod model_tests {
 
         let not_md = paste::Paste::new("just plain text".to_string(), "test".to_string());
         assert!(!not_md.is_markdown);
+
+        let rust_attr = paste::Paste::new(
+            "#[derive(Debug)]\nstruct Example;".to_string(),
+            "rust-attr".to_string(),
+        );
+        assert!(
+            !rust_attr.is_markdown,
+            "Rust attributes should not be treated as markdown headings"
+        );
+
+        let css_hex = paste::Paste::new(
+            "body {\n  color: #333;\n}".to_string(),
+            "css-hex".to_string(),
+        );
+        assert!(
+            !css_hex.is_markdown,
+            "CSS hex colors should not trigger markdown detection"
+        );
+
+        let shebang =
+            paste::Paste::new("#!/bin/bash\necho hello".to_string(), "script".to_string());
+        assert!(
+            !shebang.is_markdown,
+            "shell shebang/comments should not trigger markdown detection"
+        );
     }
 
     #[test]

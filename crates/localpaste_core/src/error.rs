@@ -4,11 +4,11 @@ use thiserror::Error;
 /// Top-level application error type.
 #[derive(Error, Debug)]
 pub enum AppError {
-    #[error("Database error: {0}")]
+    #[error("Database backend error: {0}")]
     Database(#[from] sled::Error),
 
-    #[error("Database error: {0}")]
-    DatabaseError(String),
+    #[error("Storage error: {0}")]
+    StorageMessage(String),
 
     #[error("Serialization error: {0}")]
     Serialization(#[from] bincode::Error),

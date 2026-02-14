@@ -22,6 +22,34 @@ fn setup_paste_db() -> (PasteDb, TempDir) {
 }
 
 #[test]
+fn update_recomputes_markdown_without_hash_false_positives() {
+    let (paste_db, _dir) = setup_paste_db();
+    let paste = Paste::new("plain".to_string(), "name".to_string());
+    let id = paste.id.clone();
+    paste_db.create(&paste).expect("create paste");
+
+    let updated = paste_db
+        .update(
+            id.as_str(),
+            UpdatePasteRequest {
+                content: Some("#[derive(Debug)]\nstruct Example;".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: None,
+                tags: None,
+            },
+        )
+        .expect("update should succeed")
+        .expect("paste should exist");
+
+    assert!(
+        !updated.is_markdown,
+        "hash-prefixed non-markdown syntax should not set markdown flag"
+    );
+}
+
+#[test]
 fn folder_mismatch_state_tracks_latest_retry_attempt() {
     let mismatch = Cell::new(false);
 
@@ -401,7 +429,7 @@ fn reconcile_failure_marks_faulted_and_clears_in_progress() {
         .reconcile_meta_indexes()
         .expect_err("failpoint should force reconcile error");
     assert!(
-        matches!(err, AppError::DatabaseError(ref message) if message.contains("Injected reconcile failpoint")),
+        matches!(err, AppError::StorageMessage(ref message) if message.contains("Injected reconcile failpoint")),
         "unexpected reconcile error: {}",
         err
     );
@@ -440,7 +468,7 @@ fn create_commits_canonical_row_when_index_write_fails() {
     let id = paste.id.clone();
 
     let result = paste_db.create_inner(&paste, |_db, _paste| {
-        Err(AppError::DatabaseError(
+        Err(AppError::StorageMessage(
             "injected create index failure".to_string(),
         ))
     });
@@ -493,7 +521,7 @@ fn reconcile_clears_faulted_marker_after_index_write_failure() {
     let paste = Paste::new("content".to_string(), "name".to_string());
 
     let result = paste_db.create_inner(&paste, |_db, _paste| {
-        Err(AppError::DatabaseError(
+        Err(AppError::StorageMessage(
             "injected create index failure".to_string(),
         ))
     });
@@ -531,7 +559,7 @@ fn update_commits_canonical_row_when_index_write_fails() {
                 tags: None,
             },
             |_db, _paste, _previous| {
-                Err(AppError::DatabaseError(
+                Err(AppError::StorageMessage(
                     "injected update index failure".to_string(),
                 ))
             },
@@ -577,7 +605,7 @@ fn update_if_folder_matches_commits_when_index_write_fails() {
                 tags: None,
             },
             |_db, _paste, _previous| {
-                Err(AppError::DatabaseError(
+                Err(AppError::StorageMessage(
                     "injected cas index failure".to_string(),
                 ))
             },
@@ -613,7 +641,7 @@ fn delete_commits_canonical_removal_when_index_delete_fails() {
 
     let deleted = paste_db
         .delete_and_return_inner(id.as_str(), |_db, _meta| {
-            Err(AppError::DatabaseError(
+            Err(AppError::StorageMessage(
                 "injected delete index failure".to_string(),
             ))
         })

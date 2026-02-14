@@ -7,7 +7,7 @@ pub(super) fn unix_timestamp_seconds(now: SystemTime) -> Result<u64, AppError> {
     now.duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .map_err(|err| {
-            AppError::DatabaseError(format!(
+            AppError::StorageMessage(format!(
                 "Failed to compute backup timestamp from system clock: {}",
                 err
             ))

@@ -587,7 +587,7 @@ fn assert_folder_invariants(db: &Database) -> Result<(), AppError> {
     db.pastes.scan_canonical_meta(|meta| {
         if let Some(folder_id) = meta.folder_id {
             let Some(count) = folder_counts.get_mut(folder_id.as_str()) else {
-                return Err(AppError::DatabaseError(format!(
+                return Err(AppError::StorageMessage(format!(
                     "paste {} references missing folder {}",
                     meta.id, folder_id
                 )));
@@ -600,7 +600,7 @@ fn assert_folder_invariants(db: &Database) -> Result<(), AppError> {
     for folder in folders {
         let expected = folder_counts.get(folder.id.as_str()).copied().unwrap_or(0);
         if folder.paste_count != expected {
-            return Err(AppError::DatabaseError(format!(
+            return Err(AppError::StorageMessage(format!(
                 "folder {} count drift: expected {}, got {}",
                 folder.id, expected, folder.paste_count
             )));

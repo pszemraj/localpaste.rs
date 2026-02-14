@@ -106,7 +106,7 @@ Current deprecation and parity status is tracked in [parity-checklist.md](parity
 ## Database Notes
 
 - Backend store: sled.
-- Default DB path: `~/.cache/localpaste/db`.
+- Default DB path: platform cache dir (`%LOCALAPPDATA%\\localpaste\\db` on Windows, `~/.cache/localpaste/db` elsewhere).
 - Use `DB_PATH` for isolated test runs.
 - GUI sidebar list window is capped at `DEFAULT_LIST_PASTES_LIMIT` (`512`); use search/command palette for global discovery.
 

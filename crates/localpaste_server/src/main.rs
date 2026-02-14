@@ -126,7 +126,9 @@ fn print_help() {
     println!("  --backup          Create a backup of the database");
     println!("  --help            Show this help message");
     println!("\nEnvironment variables:");
-    println!("  DB_PATH           Database path (default: ~/.cache/localpaste/db)");
+    println!(
+        "  DB_PATH           Database path (default: platform cache dir; Windows: %LOCALAPPDATA%\\\\localpaste\\\\db, Unix: ~/.cache/localpaste/db)"
+    );
     println!(
         "  PORT              Server port (default: {})",
         DEFAULT_PORT

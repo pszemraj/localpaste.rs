@@ -98,7 +98,7 @@ fn apply_move_failpoint_after_destination_reserve(
             restore_transaction_failpoint(failpoint);
             Ok(())
         }
-        TransactionFailpoint::MoveAfterDestinationReserveOnce => Err(AppError::DatabaseError(
+        TransactionFailpoint::MoveAfterDestinationReserveOnce => Err(AppError::StorageMessage(
             format!("Injected transaction failpoint: {:?}", failpoint),
         )),
         TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce => {
@@ -129,7 +129,7 @@ fn apply_create_failpoint_after_destination_reserve(
     };
 
     match failpoint {
-        TransactionFailpoint::CreateAfterDestinationReserveOnce => Err(AppError::DatabaseError(
+        TransactionFailpoint::CreateAfterDestinationReserveOnce => Err(AppError::StorageMessage(
             format!("Injected transaction failpoint: {:?}", failpoint),
         )),
         TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce => {
@@ -198,7 +198,7 @@ impl TransactionOps {
     ) -> Result<std::sync::MutexGuard<'_, ()>, AppError> {
         db.folder_txn_lock
             .lock()
-            .map_err(|_| AppError::DatabaseError("Folder transaction lock poisoned".to_string()))
+            .map_err(|_| AppError::StorageMessage("Folder transaction lock poisoned".to_string()))
     }
 
     /// Atomically create a paste and update folder count
@@ -494,7 +494,7 @@ impl TransactionOps {
             }
         }
 
-        Err(AppError::DatabaseError(
+        Err(AppError::StorageMessage(
             "Paste update conflicted repeatedly; please retry.".to_string(),
         ))
     }

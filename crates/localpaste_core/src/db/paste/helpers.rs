@@ -21,7 +21,7 @@ pub(crate) fn set_reconcile_failpoint(enabled: bool) {
 #[cfg(test)]
 pub(super) fn maybe_inject_reconcile_failpoint() -> Result<(), AppError> {
     if RECONCILE_FAILPOINT.with(|slot| slot.get()) {
-        return Err(AppError::DatabaseError(
+        return Err(AppError::StorageMessage(
             "Injected reconcile failpoint".to_string(),
         ));
     }
@@ -33,7 +33,7 @@ pub(super) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
 
     if let Some(content) = &update.content {
         paste.content = content.clone();
-        paste.is_markdown = paste.content.contains("```") || paste.content.contains('#');
+        paste.is_markdown = is_markdown_content(&paste.content);
         content_changed = true;
     }
     if let Some(name) = &update.name {

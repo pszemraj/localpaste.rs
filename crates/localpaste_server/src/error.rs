@@ -24,8 +24,12 @@ impl IntoResponse for HttpError {
             AppError::NotFound => (StatusCode::NOT_FOUND, "Not found"),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
             AppError::Locked(msg) => (StatusCode::LOCKED, msg.as_str()),
-            AppError::DatabaseError(msg) => {
-                tracing::error!("Database error: {}", msg);
+            AppError::Database(err) => {
+                tracing::error!("Database error: {}", err);
+                (StatusCode::INTERNAL_SERVER_ERROR, "Database error")
+            }
+            AppError::StorageMessage(msg) => {
+                tracing::error!("Storage error: {}", msg);
                 (StatusCode::INTERNAL_SERVER_ERROR, "Database error")
             }
             other => {

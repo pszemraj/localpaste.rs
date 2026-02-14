@@ -83,7 +83,7 @@ impl Paste {
     pub fn new(content: String, name: String) -> Self {
         let now = Utc::now();
         let language = detect_language(&content);
-        let is_markdown = content.contains("```") || content.contains('#');
+        let is_markdown = is_markdown_content(&content);
         Self {
             id: Uuid::new_v4().to_string(),
             name,
@@ -123,6 +123,58 @@ pub fn normalize_language_filter(language: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.to_ascii_lowercase())
+}
+
+fn is_markdown_heading_line(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut hash_count = 0usize;
+    while hash_count < bytes.len() && bytes[hash_count] == b'#' {
+        hash_count += 1;
+    }
+    if hash_count == 0 || hash_count > 6 {
+        return false;
+    }
+    bytes.get(hash_count) == Some(&b' ')
+}
+
+fn is_markdown_ordered_list_line(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut digits = 0usize;
+    while digits < bytes.len() && bytes[digits].is_ascii_digit() {
+        digits += 1;
+    }
+    if digits == 0 {
+        return false;
+    }
+    bytes.get(digits) == Some(&b'.') && bytes.get(digits + 1) == Some(&b' ')
+}
+
+fn is_markdown_list_line(line: &str) -> bool {
+    ((line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ "))
+        && !line.contains(": "))
+        || is_markdown_ordered_list_line(line)
+}
+
+/// Heuristic markdown detection used for persisted paste metadata.
+///
+/// This intentionally avoids broad character checks (such as raw `#`) that
+/// produce false positives in source/config formats.
+///
+/// # Returns
+/// `true` when the content appears to use markdown structure markers.
+pub fn is_markdown_content(content: &str) -> bool {
+    if content.trim().is_empty() {
+        return false;
+    }
+    if content.contains("```") || content.contains("](") {
+        return true;
+    }
+    content.lines().any(|line| {
+        let trimmed = line.trim_start();
+        is_markdown_heading_line(trimmed)
+            || trimmed.starts_with("> ")
+            || is_markdown_list_line(trimmed)
+    })
 }
 
 /// Best-effort language detection based on simple heuristics.
@@ -212,15 +264,7 @@ pub fn detect_language(content: &str) -> Option<String> {
         return Some("toml".to_string());
     }
 
-    let markdown_heading = lines().any(|l| {
-        let t = l.trim_start();
-        t.starts_with("# ") || t.starts_with("## ") || t.starts_with("### ") || t.starts_with("> ")
-    });
-    let markdown_list = lines().any(|l| {
-        let t = l.trim_start();
-        (t.starts_with("- ") || t.starts_with("* ")) && !t.contains(": ")
-    });
-    if sample.contains("```") || lower.contains("](") || markdown_heading || markdown_list {
+    if is_markdown_content(sample) {
         return Some("markdown".to_string());
     }
 

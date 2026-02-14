@@ -85,7 +85,7 @@ fn test_database_new_reports_error_for_corrupt_storage_path() {
 
     let result = Database::new(db_path.to_str().unwrap());
     assert!(
-        matches!(result, Err(AppError::DatabaseError(_))),
+        matches!(result, Err(AppError::StorageMessage(_))),
         "opening a non-directory/non-db path should return a database error"
     );
 }
