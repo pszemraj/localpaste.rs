@@ -9,16 +9,34 @@ members = [
 default-members = ["crates/localpaste_gui"]
 resolver = "2"
 
+[workspace.package]
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/pszemraj/localpaste.rs"
+
+[workspace.dependencies]
+chrono = "0.4"
+clap = "4.5"
+rand = "0.8"
+reqwest = "0.12"
+serde = "1.0"
+serde_json = "1.0"
+tempfile = "3.21"
+tokio = "1.40"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
 [profile.dev]
-codegen-units = 8
 incremental = true
 
-[profile.test]
-codegen-units = 8
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
+# Intentional: favor faster release builds and smaller artifacts over max optimization.
 opt-level = 2
 lto = true
 codegen-units = 1
 strip = true
-panic = "unwind"

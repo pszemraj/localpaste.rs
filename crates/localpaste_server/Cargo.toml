@@ -1,7 +1,10 @@
 [package]
 name = "localpaste_server"
-version = "0.4.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "localpaste"
@@ -18,12 +21,12 @@ tower-http = { version = "0.5", features = [
     "trace",
     "set-header",
 ] }
-tokio = { version = "1.40", features = ["full"] }
 hyper = { version = "1.4", features = ["full"] }
-serde_json = "1.0"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 axum-test = "16.4.1"
-tempfile = "3.21"
+tempfile.workspace = true
