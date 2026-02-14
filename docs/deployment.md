@@ -156,33 +156,6 @@ $Trigger = New-ScheduledTaskTrigger -AtLogOn
 Register-ScheduledTask -TaskName "LocalPaste" -Action $Action -Trigger $Trigger
 ```
 
-## Docker
-
-```dockerfile
-FROM rust:slim AS builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release -p localpaste_server --bin localpaste
-
-FROM debian:bookworm-slim
-COPY --from=builder /app/target/release/localpaste /usr/local/bin/localpaste
-ENV DB_PATH=/data/db
-VOLUME ["/data"]
-EXPOSE 38411
-CMD ["localpaste"]
-```
-
-```bash
-docker build -t localpaste .
-docker run -d \
-  --name localpaste \
-  -e RUST_LOG=info \
-  -e DB_PATH=/data/db \
-  -v localpaste-data:/data \
-  -p 127.0.0.1:38411:38411 \
-  localpaste
-```
-
 ## Common Patterns
 
 ### Auto-restart on Crash
@@ -222,12 +195,16 @@ curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "S
 
 ## Embedded API Address Discovery (.api-addr)
 
-Canonical behavior details are maintained in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
-Operationally:
+This section is operational-only. Canonical discovery/trust behavior is defined in:
+
+- [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md) (discovery + trust model)
+- [`crates/localpaste_cli/src/main.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_cli/src/main.rs) (actual endpoint resolution logic)
+
+Operational summary:
 
 - GUI sessions write the active embedded API endpoint to `.api-addr`.
 - `lpaste` checks `.api-addr` only when `--server` and `LP_SERVER` are unset.
-- Discovered endpoints must identify as LocalPaste (loopback URL plus LocalPaste response headers); stale or hijacked entries are ignored.
-- If discovery validation fails, `lpaste` falls back to its default server endpoint.
-- Discovery performs a short loopback TCP/HTTP identity probe; use `lpaste --no-discovery ...` to disable probe-based discovery fallback.
+- Discovered endpoints must pass LocalPaste identity validation; stale/hijacked entries are ignored.
+- If discovery validation fails, `lpaste` falls back to the default local endpoint.
+- Use `lpaste --no-discovery ...` to disable discovery fallback.
 - Use explicit `--server` or `LP_SERVER` when you need deterministic endpoint targeting.

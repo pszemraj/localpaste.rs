@@ -21,8 +21,8 @@ For any concept, keep one canonical definition and replace duplicate prose elsew
 | Engineering backlog | [docs/dev/backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md) |
 | Storage architecture follow-up plan | [docs/dev/storage-split-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/storage-split-plan.md) |
 | UI visual tokens | [docs/dev/ui-palette.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/ui-palette.md) |
-| Folder invariants audit matrix | [docs/dev/folder-audit-matrix-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-matrix-2026-02-13.md) |
-| Folder invariants audit report | [docs/dev/folder-audit-report-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-report-2026-02-13.md) |
+| Folder invariants audit details (historical) | [docs/dev/folder-audit-matrix-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-matrix-2026-02-13.md) |
+| Folder invariants audit summary (historical) | [docs/dev/folder-audit-report-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-report-2026-02-13.md) |
 
 ## Documentation Rules
 

@@ -92,30 +92,18 @@ cargo run -p localpaste_tools --bin check-loc -- --max-lines 1000 --warn-lines 9
 
 Parity/release gate status is tracked in [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md).
 
-## API Summary (High-Level)
+## Behavior Contracts
 
-Authoritative route wiring lives in
-[`crates/localpaste_server/src/lib.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/lib.rs).
-Authoritative request/response behavior lives in
-[`crates/localpaste_server/src/handlers/paste.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/paste.rs).
-Use this section as orientation only and avoid copying route-by-route behavior here.
+This file is intentionally command/workflow-focused. For runtime behavior contracts, use:
 
-Key shape expectations:
-- `/api/pastes` and `/api/pastes/meta` return metadata rows (`PasteMeta`).
-- `/api/search` preserves content-match semantics but returns metadata rows (`PasteMeta`).
-- `/api/search/meta` performs metadata-only matching (name/tags/language).
-- Folder routes are deprecated and emit warning headers.
-
-Current deprecation and parity status is tracked in [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md).
-
-## Database Notes
-
-- Backend store: sled.
-- Default DB path: platform cache dir (`%LOCALAPPDATA%\\localpaste\\db` on Windows, `~/.cache/localpaste/db` elsewhere).
-- Use `DB_PATH` for isolated test runs.
-- GUI sidebar list window is capped at `DEFAULT_LIST_PASTES_LIMIT` (`512`); use search/command palette for global discovery.
-
-Lock recovery guidance (including what not to delete) lives in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
+- System/runtime architecture: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
+- Security defaults and env policy: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
+- Service operation and lock recovery: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
+- Lock semantics and API `423 Locked` behavior: [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
+- Rewrite parity/deprecation status: [docs/dev/parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
+- API wiring + handler behavior in code:
+  - [`crates/localpaste_server/src/lib.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/lib.rs)
+  - [`crates/localpaste_server/src/handlers/paste.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/paste.rs)
 
 ## Related Docs
 
