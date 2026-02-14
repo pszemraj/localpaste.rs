@@ -4,26 +4,24 @@
 pub mod backup;
 /// Folder storage helpers.
 pub mod folder;
-mod fs_copy;
 /// Lock handling helpers.
 pub mod lock;
 /// Paste storage helpers.
 pub mod paste;
+/// Typed redb table definitions.
+pub mod tables;
 mod time_util;
 mod transactions;
 
+use crate::db::tables::REDB_FILE_NAME;
 use crate::error::AppError;
 use crate::folder_ops::reconcile_folder_invariants;
-use sled::Db;
+use redb::{Database as RedbDatabase, DatabaseError};
 use std::collections::HashMap;
-use std::io::ErrorKind;
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 pub use transactions::TransactionOps;
-#[cfg(test)]
-pub(crate) use transactions::{
-    set_move_pause_hooks, set_transaction_failpoint, MovePauseHooks, TransactionFailpoint,
-};
 
 /// Process probe state used for lock-safety decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +100,6 @@ fn pgrep_probe_result(args: &[&str], current_pid: u32) -> ProcessProbeResult {
 #[cfg(unix)]
 fn pgrep_error_probe_result(err: &std::io::Error) -> ProcessProbeResult {
     if err.kind() == std::io::ErrorKind::NotFound {
-        // Missing probe tooling means liveness is unknown; treat as unsafe.
         tracing::warn!("pgrep is unavailable; process ownership probe is unknown");
     }
     ProcessProbeResult::Unknown
@@ -120,13 +117,6 @@ fn pgrep_cmdline_probe_result(binary_name: &str, current_pid: u32) -> ProcessPro
 }
 
 /// Probe for other LocalPaste processes.
-///
-/// # Returns
-/// A tri-state result describing known running, known not-running, or unknown.
-///
-/// # Errors
-/// This probe is best-effort and never returns an error; uncertainty is reported as
-/// [`ProcessProbeResult::Unknown`].
 #[cfg(unix)]
 pub fn localpaste_process_probe() -> ProcessProbeResult {
     let current_pid = std::process::id();
@@ -144,16 +134,6 @@ pub fn localpaste_process_probe() -> ProcessProbeResult {
 }
 
 /// Probe for other LocalPaste processes.
-///
-/// # Returns
-/// A tri-state result describing known running, known not-running, or unknown.
-///
-/// # Errors
-/// This probe is best-effort and never returns an error; uncertainty is reported as
-/// [`ProcessProbeResult::Unknown`].
-///
-/// # Panics
-/// This function does not intentionally panic.
 #[cfg(windows)]
 pub fn localpaste_process_probe() -> ProcessProbeResult {
     use std::process::Command;
@@ -201,28 +181,20 @@ pub fn localpaste_process_probe() -> ProcessProbeResult {
 #[cfg(windows)]
 fn tasklist_error_probe_result(kind: std::io::ErrorKind) -> ProcessProbeResult {
     if kind == std::io::ErrorKind::NotFound {
-        // Missing probe tooling means liveness is unknown; treat as unsafe.
         tracing::warn!("tasklist is unavailable; process ownership probe is unknown");
     }
     ProcessProbeResult::Unknown
 }
 
 /// Probe for other LocalPaste processes.
-///
-/// # Returns
-/// Returns `Unknown` on unsupported platforms.
-///
-/// # Errors
-/// This probe is best-effort and never returns an error; unsupported platforms
-/// are classified as [`ProcessProbeResult::Unknown`].
 #[cfg(not(any(unix, windows)))]
 pub fn localpaste_process_probe() -> ProcessProbeResult {
     ProcessProbeResult::Unknown
 }
 
-/// Database handle with access to underlying sled trees.
+/// Database handle with access to underlying redb tables.
 pub struct Database {
-    pub db: Arc<Db>,
+    pub db: Arc<RedbDatabase>,
     pub pastes: paste::PasteDb,
     pub folders: folder::FolderDb,
     _owner_lock_guard: Option<Arc<lock::OwnerLockGuard>>,
@@ -232,30 +204,56 @@ pub struct Database {
 #[cfg(test)]
 mod tests;
 
-fn is_sled_lock_contention(error: &sled::Error) -> bool {
-    if let sled::Error::Io(io_error) = error {
-        if matches!(
-            io_error.kind(),
-            ErrorKind::WouldBlock | ErrorKind::PermissionDenied | ErrorKind::AlreadyExists
-        ) {
-            return true;
+fn looks_like_legacy_sled_layout(db_dir: &Path) -> Result<bool, AppError> {
+    const SLED_HINTS: &[&str] = &[
+        "blobs",
+        "conf",
+        "db",
+        "pastes",
+        "pastes_meta",
+        "pastes_by_updated",
+        "pastes_meta_state",
+        "folders",
+        "folders_deleting",
+        "db.lock",
+        "tree.lock",
+    ];
+
+    let entries = std::fs::read_dir(db_dir).map_err(|err| {
+        AppError::StorageMessage(format!(
+            "Failed to inspect database directory '{}': {}",
+            db_dir.display(),
+            err
+        ))
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|err| {
+            AppError::StorageMessage(format!(
+                "Failed to inspect database directory entry in '{}': {}",
+                db_dir.display(),
+                err
+            ))
+        })?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if SLED_HINTS.contains(&name.as_str()) || name.starts_with("snap.") {
+            return Ok(true);
+        }
+        if name.ends_with(".lock") && name != "db.owner.lock" {
+            return Ok(true);
         }
     }
-    // Fallback for sled backends/platforms that report lock contention through `Other`.
-    error
-        .to_string()
-        .to_ascii_lowercase()
-        .contains("could not acquire lock")
+
+    Ok(false)
 }
 
 impl Database {
-    fn shared_folder_txn_lock_for_db(db: &Arc<Db>) -> Result<Arc<Mutex<()>>, AppError> {
+    fn shared_folder_txn_lock_for_db(db: &Arc<RedbDatabase>) -> Result<Arc<Mutex<()>>, AppError> {
         static REGISTRY: OnceLock<Mutex<HashMap<usize, Weak<Mutex<()>>>>> = OnceLock::new();
         let registry = REGISTRY.get_or_init(|| Mutex::new(HashMap::new()));
         let mut registry_guard = registry.lock().map_err(|_| {
             AppError::StorageMessage("Shared folder transaction lock registry poisoned".to_string())
         })?;
-        // Prune stale entries so transient handles do not grow the registry forever.
         registry_guard.retain(|_, lock| lock.upgrade().is_some());
 
         let key = Arc::as_ptr(db) as usize;
@@ -269,7 +267,7 @@ impl Database {
     }
 
     fn from_shared_with_coordination(
-        db: Arc<Db>,
+        db: Arc<RedbDatabase>,
         owner_lock_guard: Option<Arc<lock::OwnerLockGuard>>,
         folder_txn_lock: Arc<Mutex<()>>,
     ) -> Result<Self, AppError> {
@@ -282,33 +280,13 @@ impl Database {
         })
     }
 
-    /// Build a database handle from an existing shared sled instance.
-    ///
-    /// This is used when multiple components in the same process need
-    /// independent helpers (trees) without reopening the database path.
-    ///
-    /// # Returns
-    /// A new [`Database`] wrapper that shares the underlying sled instance.
-    ///
-    /// # Errors
-    /// Returns an error if the required trees cannot be opened.
-    pub fn from_shared(db: Arc<Db>) -> Result<Self, AppError> {
-        // Reuse per-Db coordination lock so independently-created handles cannot
-        // bypass folder transaction serialization on the same shared sled instance.
+    /// Build a database handle from an existing shared redb instance.
+    pub fn from_shared(db: Arc<RedbDatabase>) -> Result<Self, AppError> {
         let folder_txn_lock = Self::shared_folder_txn_lock_for_db(&db)?;
         Self::from_shared_with_coordination(db, None, folder_txn_lock)
     }
 
     /// Clone this handle for another subsystem in the same process.
-    ///
-    /// This avoids a second `sled::open` call (which would contend for the
-    /// filesystem lock) while still providing separate tree handles.
-    ///
-    /// # Returns
-    /// A new [`Database`] that shares the underlying sled instance.
-    ///
-    /// # Errors
-    /// Returns an error if tree initialization fails.
     pub fn share(&self) -> Result<Self, AppError> {
         Self::from_shared_with_coordination(
             self.db.clone(),
@@ -317,62 +295,68 @@ impl Database {
         )
     }
 
-    /// Open the database and initialize trees.
-    ///
-    /// # Returns
-    /// A fully initialized [`Database`].
-    ///
-    /// # Errors
-    /// Returns an error if sled cannot open the database or trees.
+    /// Open the database and initialize tables.
     pub fn new(path: &str) -> Result<Self, AppError> {
-        // Ensure the data directory exists
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            std::fs::create_dir_all(parent).ok();
+        let db_dir = Path::new(path);
+        if db_dir.exists() && !db_dir.is_dir() {
+            return Err(AppError::StorageMessage(format!(
+                "DB_PATH '{}' must be a directory",
+                db_dir.display()
+            )));
         }
 
-        // Acquire process-lifetime owner lock before opening sled.
-        let owner_lock_guard = Some(Arc::new(lock::acquire_owner_lock_for_lifetime(path)?));
-
-        // Try to open database - sled handles its own locking
-        let db = match sled::open(path) {
-            Ok(db) => Arc::new(db),
-            Err(e) if is_sled_lock_contention(&e) => {
-                // This is sled's internal lock, not our lock file
-                // It means another process has the database open
-
-                // Uncertain liveness must remain conservative to avoid data corruption.
-                match localpaste_process_probe() {
-                    ProcessProbeResult::Running => {
-                        return Err(AppError::StorageMessage(
-                            "Another LocalPaste instance is already running.\n\
-                            Please close it first, or set DB_PATH to use a different database location."
-                                .to_string(),
-                        ));
-                    }
-                    ProcessProbeResult::Unknown => {
-                        return Err(AppError::StorageMessage(
-                            "Database appears to be locked, but LocalPaste process ownership could not be verified.\n\
-                            Treat this as potentially active usage; do not force unlock.\n\
-                            Close any localpaste/localpaste-gui/generate-test-data processes, then retry,\n\
-                            or set DB_PATH to a different location."
-                                .to_string(),
-                        ));
-                    }
-                    ProcessProbeResult::NotRunning => {
-                        return Err(AppError::StorageMessage(
-                            "Database appears to be locked.\n\
-                            Another process may still be using it, or a previous crash left a stale lock.\n\
-                            If you just started the localpaste server for CLI tests, stop it before starting the GUI,\n\
-                            or set DB_PATH to a different location.\n\n\
-                            Do not manually delete lock files while ownership is uncertain.\n\
-                            Use the guarded recovery command instead:\n\
-                            localpaste --force-unlock"
-                                .to_string(),
-                        ));
-                    }
-                }
+        if db_dir.exists() {
+            let db_file = db_dir.join(REDB_FILE_NAME);
+            if !db_file.exists() && looks_like_legacy_sled_layout(db_dir)? {
+                return Err(AppError::StorageMessage(format!(
+                    "Detected legacy sled database files in '{}' but '{}' is missing.\n\
+                    This build uses redb and cannot read sled data directly.\n\
+                    No automatic migration is bundled in this release.\n\
+                    Back up this directory, migrate it using a compatible sled->redb tool,\n\
+                    or set DB_PATH to a new empty directory.",
+                    db_dir.display(),
+                    db_file.display()
+                )));
             }
-            Err(e) => return Err(AppError::Database(e)),
+        }
+
+        std::fs::create_dir_all(db_dir).map_err(|err| {
+            AppError::StorageMessage(format!(
+                "Failed to create database directory '{}': {}",
+                db_dir.display(),
+                err
+            ))
+        })?;
+
+        let owner_lock_guard = Some(Arc::new(lock::acquire_owner_lock_for_lifetime(path)?));
+        let db_file = db_dir.join(REDB_FILE_NAME);
+        let db = match RedbDatabase::create(&db_file) {
+            Ok(db) => Arc::new(db),
+            Err(DatabaseError::DatabaseAlreadyOpen) => match localpaste_process_probe() {
+                ProcessProbeResult::Running => {
+                    return Err(AppError::StorageMessage(
+                        "Another LocalPaste instance is already running.\n\
+                        Please close it first, or set DB_PATH to use a different database location."
+                            .to_string(),
+                    ));
+                }
+                ProcessProbeResult::Unknown => {
+                    return Err(AppError::StorageMessage(
+                        "Database appears to be open, but LocalPaste process ownership could not be verified.\n\
+                        Treat this as potentially active usage. Close localpaste/localpaste-gui/\
+                        generate-test-data processes and retry, or set DB_PATH to a different location."
+                            .to_string(),
+                    ));
+                }
+                ProcessProbeResult::NotRunning => {
+                    return Err(AppError::StorageMessage(
+                        "Database appears to be open by another writer.\n\
+                        Stop other LocalPaste processes or set DB_PATH to a different location."
+                            .to_string(),
+                    ));
+                }
+            },
+            Err(err) => return Err(AppError::Database(err.into())),
         };
 
         let database = Self {
@@ -382,20 +366,7 @@ impl Database {
             _owner_lock_guard: owner_lock_guard,
             folder_txn_lock: Arc::new(Mutex::new(())),
         };
-        let force_reindex = crate::config::env_flag_enabled("LOCALPASTE_REINDEX");
-        if database
-            .pastes
-            .needs_reconcile_meta_indexes(force_reindex)?
-        {
-            // Metadata indexes are derived data. Startup continues in degraded mode when
-            // reconcile fails because canonical reads remain correct via bounded fallback.
-            if let Err(err) = database.pastes.reconcile_meta_indexes() {
-                tracing::error!(
-                    "Startup metadata reconcile failed (pre-folder-invariant phase); continuing in degraded mode: {}",
-                    err
-                );
-            }
-        }
+
         database.folders.clear_delete_markers()?;
         if let Err(err) = reconcile_folder_invariants(&database) {
             tracing::error!(
@@ -403,28 +374,12 @@ impl Database {
                 err
             );
         }
-        if database.pastes.needs_reconcile_meta_indexes(false)? {
-            // Folder invariant repair may require metadata/index regeneration. Failure is still
-            // best-effort at startup; runtime stays correct via canonical fallback.
-            if let Err(err) = database.pastes.reconcile_meta_indexes() {
-                tracing::error!(
-                    "Startup metadata reconcile failed (post-folder-invariant phase); continuing in degraded mode: {}",
-                    err
-                );
-            }
-        }
+
         Ok(database)
     }
 
-    /// Flush all pending writes to disk.
-    ///
-    /// # Returns
-    /// `Ok(())` after all pending writes are flushed.
-    ///
-    /// # Errors
-    /// Returns an error if sled fails to flush.
+    /// Compatibility no-op. redb durability is guaranteed on commit.
     pub fn flush(&self) -> Result<(), AppError> {
-        self.db.flush()?;
         Ok(())
     }
 }
@@ -462,7 +417,7 @@ mod process_detection_tests {
     }
 
     #[test]
-    fn unix_force_unlock_guard_includes_tooling_writer_processes() {
+    fn unix_probe_includes_tooling_writer_processes() {
         assert!(
             UNIX_PGREP_CMDLINE_NAMES.contains(&"generate-test-data"),
             "process allowlist for lock-owner detection must include tooling writers"
@@ -499,29 +454,5 @@ mod process_detection_windows_tests {
     fn windows_probe_keeps_unknown_for_other_tasklist_errors() {
         let probe = tasklist_error_probe_result(ErrorKind::PermissionDenied);
         assert_eq!(probe, ProcessProbeResult::Unknown);
-    }
-}
-
-#[cfg(test)]
-mod lock_contention_tests {
-    use super::is_sled_lock_contention;
-    use std::io::{Error, ErrorKind};
-
-    #[test]
-    fn lock_contention_detects_structured_io_kinds() {
-        let err = sled::Error::Io(Error::from(ErrorKind::WouldBlock));
-        assert!(is_sled_lock_contention(&err));
-    }
-
-    #[test]
-    fn lock_contention_uses_message_fallback_for_other_kind() {
-        let err = sled::Error::Io(Error::other("could not acquire lock on database"));
-        assert!(is_sled_lock_contention(&err));
-    }
-
-    #[test]
-    fn lock_contention_keeps_non_lock_errors_false() {
-        let err = sled::Error::Io(Error::other("disk is full"));
-        assert!(!is_sled_lock_contention(&err));
     }
 }

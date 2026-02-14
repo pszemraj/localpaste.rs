@@ -1,441 +1,177 @@
-//! Paste storage operations backed by sled.
+//! Paste storage operations backed by redb.
 
 mod helpers;
-mod state;
 
-use crate::{error::AppError, models::paste::*};
+use crate::{db::tables::*, error::AppError, models::paste::*};
 use chrono::{DateTime, Utc};
-use sled::Db;
-use std::collections::HashSet;
+use redb::{ReadableDatabase, ReadableTable};
 use std::sync::Arc;
 
 use self::helpers::{
-    apply_update_request, deserialize_meta, deserialize_paste, finalize_meta_search_results,
-    finalize_recent_meta_results, folder_matches_expected, language_matches_filter,
-    meta_matches_filters, push_ranked_meta_top_k, push_recent_meta_top_k, score_meta_match,
+    deserialize_meta, finalize_meta_search_results, folder_matches_expected,
+    language_matches_filter, meta_matches_filters, push_ranked_meta_top_k, score_meta_match,
     score_paste_match,
 };
 
-#[cfg(test)]
-pub(crate) use self::helpers::set_reconcile_failpoint;
+pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_timestamp_key};
 
-const META_STATE_TREE_NAME: &str = "pastes_meta_state";
-const META_INDEX_VERSION_KEY: &[u8] = b"version";
-const META_INDEX_IN_PROGRESS_COUNT_KEY: &[u8] = b"in_progress_count";
-const META_INDEX_FAULTED_KEY: &[u8] = b"faulted";
-const META_INDEX_SCHEMA_VERSION: u32 = 3;
-
-/// Accessor for the `pastes` sled tree.
+/// Accessor for paste-related redb tables.
 pub struct PasteDb {
-    tree: sled::Tree,
-    meta_tree: sled::Tree,
-    updated_tree: sled::Tree,
-    meta_state_tree: sled::Tree,
+    db: Arc<redb::Database>,
 }
 
-struct MetaIndexMutationGuard<'a> {
-    db: &'a PasteDb,
-    active: bool,
-}
-
-impl<'a> MetaIndexMutationGuard<'a> {
-    fn begin(db: &'a PasteDb) -> Result<Self, AppError> {
-        db.begin_meta_index_mutation()?;
-        Ok(Self { db, active: true })
-    }
-
-    fn finish(&mut self) {
-        if !self.active {
-            return;
-        }
-        self.db.try_end_meta_index_mutation();
-        self.active = false;
-    }
-
-    fn finish_with_derived_index_write(
-        &mut self,
-        operation: &str,
-        paste_id: &str,
-        index_result: Result<(), AppError>,
-    ) {
-        self.db
-            .finalize_derived_index_write(operation, paste_id, index_result);
-        self.active = false;
-    }
-}
-
-impl Drop for MetaIndexMutationGuard<'_> {
-    fn drop(&mut self) {
-        self.finish();
-    }
-}
 impl PasteDb {
-    /// Open the `pastes` tree.
-    ///
-    /// # Returns
-    /// A [`PasteDb`] bound to the `pastes` tree.
-    ///
-    /// # Errors
-    /// Returns an error if the tree cannot be opened.
-    pub fn new(db: Arc<Db>) -> Result<Self, AppError> {
-        let tree = db.open_tree("pastes")?;
-        let meta_tree = db.open_tree("pastes_meta")?;
-        let updated_tree = db.open_tree("pastes_by_updated")?;
-        let meta_state_tree = db.open_tree(META_STATE_TREE_NAME)?;
-        Ok(Self {
-            tree,
-            meta_tree,
-            updated_tree,
-            meta_state_tree,
-        })
+    /// Initialize paste tables if they do not exist yet.
+    pub fn new(db: Arc<redb::Database>) -> Result<Self, AppError> {
+        let write_txn = db.begin_write()?;
+        write_txn.open_table(PASTES)?;
+        write_txn.open_table(PASTES_META)?;
+        write_txn.open_table(PASTES_BY_UPDATED)?;
+        write_txn.commit()?;
+        Ok(Self { db })
     }
 
-    pub(crate) fn needs_reconcile_meta_indexes(
-        &self,
-        force_reindex: bool,
-    ) -> Result<bool, AppError> {
-        if force_reindex {
-            tracing::warn!("LOCALPASTE_REINDEX is enabled; forcing metadata index reconcile");
-            return Ok(true);
-        }
-        let marker_version = self.meta_index_schema_version()?;
-        if marker_version != Some(META_INDEX_SCHEMA_VERSION) {
-            return Ok(true);
-        }
-        if self.meta_index_faulted()? {
-            return Ok(true);
-        }
-        if self.meta_index_in_progress_count()? > 0 {
-            return Ok(true);
-        }
-
-        let pastes_empty = self.tree.is_empty();
-        let meta_empty = self.meta_tree.is_empty();
-        let updated_empty = self.updated_tree.is_empty();
-        let paste_len = self.tree.len();
-
-        if !pastes_empty && (meta_empty || updated_empty) {
-            return Ok(true);
-        }
-        if pastes_empty && (!meta_empty || !updated_empty) {
-            return Ok(true);
-        }
-        if self.meta_tree.len() != paste_len || self.updated_tree.len() != paste_len {
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
-    /// Insert a new paste.
-    ///
-    /// # Returns
-    /// `Ok(())` on success.
-    ///
-    /// # Errors
-    /// Returns an error if serialization or insertion fails.
     pub fn create(&self, paste: &Paste) -> Result<(), AppError> {
-        self.create_inner(paste, |db, paste| {
-            db.upsert_meta_and_index_from_paste(paste, None)
-        })
-    }
+        let encoded_paste = bincode::serialize(paste)?;
+        let meta = PasteMeta::from(paste);
+        let encoded_meta = bincode::serialize(&meta)?;
+        let recency_key = reverse_timestamp_key(paste.updated_at);
 
-    fn create_inner<F>(&self, paste: &Paste, index_writer: F) -> Result<(), AppError>
-    where
-        F: FnOnce(&Self, &Paste) -> Result<(), AppError>,
-    {
-        let mut mutation_guard = MetaIndexMutationGuard::begin(self)?;
-        let key = paste.id.as_bytes();
-        let value = bincode::serialize(paste)?;
-        let inserted = self
-            .tree
-            .compare_and_swap(key, None as Option<&[u8]>, Some(value))?;
-        if inserted.is_err() {
-            return Err(AppError::StorageMessage(format!(
-                "Paste id '{}' already exists",
-                paste.id
-            )));
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+
+            if pastes.get(paste.id.as_str())?.is_some() {
+                return Err(AppError::StorageMessage(format!(
+                    "Paste id '{}' already exists",
+                    paste.id
+                )));
+            }
+
+            pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
+            metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
+            updated.insert((recency_key, paste.id.as_str()), ())?;
         }
-        let index_result = index_writer(self, paste);
-        mutation_guard.finish_with_derived_index_write("create", paste.id.as_str(), index_result);
+        write_txn.commit()?;
         Ok(())
     }
 
-    /// Fetch a paste by id.
-    ///
-    /// # Returns
-    /// The paste if it exists.
-    ///
-    /// # Errors
-    /// Returns an error if the lookup fails.
     pub fn get(&self, id: &str) -> Result<Option<Paste>, AppError> {
-        match self.tree.get(id.as_bytes())? {
-            Some(value) => Ok(Some(deserialize_paste(&value)?)),
+        let read_txn = self.db.begin_read()?;
+        let pastes = read_txn.open_table(PASTES)?;
+        match pastes.get(id)? {
+            Some(value) => Ok(Some(deserialize_paste(value.value())?)),
             None => Ok(None),
         }
     }
 
-    /// Update a paste by id.
-    ///
-    /// # Arguments
-    /// - `id`: Paste identifier.
-    /// - `update`: Update payload to apply.
-    ///
-    /// # Returns
-    /// Updated paste if it exists.
-    ///
-    /// # Errors
-    /// Returns an error if the update fails.
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
-        self.update_inner(id, update, |db, paste, previous| {
-            db.upsert_meta_and_index_from_paste(paste, previous)
-        })
+        self.update_inner(id, None, update)
     }
 
-    fn update_inner<F>(
-        &self,
-        id: &str,
-        update: UpdatePasteRequest,
-        index_writer: F,
-    ) -> Result<Option<Paste>, AppError>
-    where
-        F: FnOnce(&Self, &Paste, Option<PasteMeta>) -> Result<(), AppError>,
-    {
-        let mut mutation_guard = MetaIndexMutationGuard::begin(self)?;
-        // `update_and_fetch` retries the closure under contention but cannot return
-        // a typed error. Capture parse/encode failures and surface them after the call.
-        let mut update_error: Option<AppError> = None;
-        let mut old_meta: Option<PasteMeta> = None;
-        let result = self.tree.update_and_fetch(id.as_bytes(), |old| {
-            let bytes = old?;
-
-            let mut paste = match deserialize_paste(bytes) {
-                Ok(paste) => paste,
-                Err(err) => {
-                    update_error = Some(AppError::Serialization(err));
-                    return Some(bytes.to_vec());
-                }
-            };
-
-            old_meta = Some(PasteMeta::from(&paste));
-            apply_update_request(&mut paste, &update);
-            match bincode::serialize(&paste) {
-                Ok(encoded) => Some(encoded),
-                Err(err) => {
-                    update_error = Some(AppError::Serialization(err));
-                    Some(bytes.to_vec())
-                }
-            }
-        })?;
-        if let Some(err) = update_error.take() {
-            return Err(err);
-        }
-
-        match result {
-            Some(bytes) => {
-                let paste = deserialize_paste(&bytes)?;
-                let previous = old_meta.take();
-                let index_result = index_writer(self, &paste, previous);
-                mutation_guard.finish_with_derived_index_write(
-                    "update",
-                    paste.id.as_str(),
-                    index_result,
-                );
-                Ok(Some(paste))
-            }
-            None => {
-                mutation_guard.finish();
-                Ok(None)
-            }
-        }
-    }
-
-    /// Update a paste only when its current folder matches `expected_folder_id`.
-    ///
-    /// This is used as a compare-and-swap guard for cross-tree folder count updates.
-    ///
-    /// # Arguments
-    /// - `id`: Paste identifier.
-    /// - `expected_folder_id`: Folder id expected to be on the current record.
-    /// - `update`: Update payload to apply when the expected folder matches.
-    ///
-    /// # Returns
-    /// Updated paste if it exists *and* the expected folder matches.
-    ///
-    /// # Errors
-    /// Returns an error if deserialization, serialization, or storage update fails.
     pub fn update_if_folder_matches(
         &self,
         id: &str,
         expected_folder_id: Option<&str>,
         update: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
-        self.update_if_folder_matches_inner(
-            id,
-            expected_folder_id,
-            update,
-            |db, paste, previous| db.upsert_meta_and_index_from_paste(paste, previous),
-        )
+        self.update_inner(id, Some(expected_folder_id), update)
     }
 
-    fn update_if_folder_matches_inner<F>(
+    fn update_inner(
         &self,
         id: &str,
-        expected_folder_id: Option<&str>,
+        expected_folder: Option<Option<&str>>,
         update: UpdatePasteRequest,
-        index_writer: F,
-    ) -> Result<Option<Paste>, AppError>
-    where
-        F: FnOnce(&Self, &Paste, Option<PasteMeta>) -> Result<(), AppError>,
-    {
-        let mut mutation_guard = MetaIndexMutationGuard::begin(self)?;
-        let mut update_error: Option<AppError> = None;
-        let mut old_meta: Option<PasteMeta> = None;
+    ) -> Result<Option<Paste>, AppError> {
+        let write_txn = self.db.begin_write()?;
         let mut folder_mismatch = false;
-        let result = self.tree.update_and_fetch(id.as_bytes(), |old| {
-            let bytes = old?;
+        let updated_paste = {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
 
-            let mut paste = match deserialize_paste(bytes) {
-                Ok(paste) => paste,
-                Err(err) => {
-                    update_error = Some(AppError::Serialization(err));
-                    return Some(bytes.to_vec());
-                }
+            let Some(old_guard) = pastes.get(id)? else {
+                return Ok(None);
             };
+            let mut paste = deserialize_paste(old_guard.value())?;
+            let old_folder = paste.folder_id.clone();
+            let old_recency_key = reverse_timestamp_key(paste.updated_at);
+            drop(old_guard);
 
-            if !folder_matches_expected(
-                paste.folder_id.as_deref(),
-                expected_folder_id,
-                &mut folder_mismatch,
-            ) {
-                return Some(bytes.to_vec());
-            }
-
-            old_meta = Some(PasteMeta::from(&paste));
-            apply_update_request(&mut paste, &update);
-            match bincode::serialize(&paste) {
-                Ok(encoded) => Some(encoded),
-                Err(err) => {
-                    update_error = Some(AppError::Serialization(err));
-                    Some(bytes.to_vec())
+            if let Some(expected) = expected_folder {
+                if !folder_matches_expected(old_folder.as_deref(), expected, &mut folder_mismatch) {
+                    return Ok(None);
                 }
             }
-        })?;
-        if let Some(err) = update_error.take() {
-            return Err(err);
-        }
+
+            apply_update_request(&mut paste, &update);
+
+            let encoded_paste = bincode::serialize(&paste)?;
+            let meta = PasteMeta::from(&paste);
+            let encoded_meta = bincode::serialize(&meta)?;
+            let new_recency_key = reverse_timestamp_key(paste.updated_at);
+
+            pastes.insert(id, encoded_paste.as_slice())?;
+            metas.insert(id, encoded_meta.as_slice())?;
+            if old_recency_key != new_recency_key {
+                let _ = updated.remove((old_recency_key, id))?;
+            }
+            updated.insert((new_recency_key, id), ())?;
+
+            Some(paste)
+        };
+
         if folder_mismatch {
-            mutation_guard.finish();
             return Ok(None);
         }
 
-        match result {
-            Some(bytes) => {
-                let paste = deserialize_paste(&bytes)?;
-                let previous = old_meta.take();
-                let index_result = index_writer(self, &paste, previous);
-                mutation_guard.finish_with_derived_index_write(
-                    "update_if_folder_matches",
-                    paste.id.as_str(),
-                    index_result,
-                );
-                Ok(Some(paste))
-            }
-            None => {
-                mutation_guard.finish();
-                Ok(None)
-            }
-        }
+        write_txn.commit()?;
+        Ok(updated_paste)
     }
 
-    /// Delete a paste by id.
-    ///
-    /// # Returns
-    /// Deleted paste if it existed.
-    ///
-    /// # Errors
-    /// Returns an error if deletion fails or the deleted value cannot be decoded.
     pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
-        self.delete_and_return_inner(id, |db, meta| db.remove_meta_and_index(meta))
+        let write_txn = self.db.begin_write()?;
+        let deleted = {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+
+            let Some(old_guard) = pastes.get(id)? else {
+                return Ok(None);
+            };
+            let paste = deserialize_paste(old_guard.value())?;
+            let recency_key = reverse_timestamp_key(paste.updated_at);
+            drop(old_guard);
+
+            let _ = updated.remove((recency_key, id))?;
+            let _ = pastes.remove(id)?;
+            let _ = metas.remove(id)?;
+            Some(paste)
+        };
+
+        write_txn.commit()?;
+        Ok(deleted)
     }
 
-    fn delete_and_return_inner<F>(
-        &self,
-        id: &str,
-        index_remover: F,
-    ) -> Result<Option<Paste>, AppError>
-    where
-        F: FnOnce(&Self, &PasteMeta) -> Result<(), AppError>,
-    {
-        let mut mutation_guard = MetaIndexMutationGuard::begin(self)?;
-        let mut delete_error: Option<AppError> = None;
-        let mut deleted_paste: Option<Paste> = None;
-        let _ = self.tree.update_and_fetch(id.as_bytes(), |old| {
-            delete_error = None;
-            deleted_paste = None;
-            let bytes = old?;
-            match deserialize_paste(bytes) {
-                Ok(paste) => {
-                    deleted_paste = Some(paste);
-                    None
-                }
-                Err(err) => {
-                    delete_error = Some(AppError::Serialization(err));
-                    Some(bytes.to_vec())
-                }
-            }
-        })?;
-        if let Some(err) = delete_error.take() {
-            return Err(err);
-        }
-
-        match deleted_paste {
-            Some(paste) => {
-                let meta = PasteMeta::from(&paste);
-                let index_result = index_remover(self, &meta);
-                mutation_guard.finish_with_derived_index_write(
-                    "delete",
-                    paste.id.as_str(),
-                    index_result,
-                );
-                Ok(Some(paste))
-            }
-            None => {
-                mutation_guard.finish();
-                Ok(None)
-            }
-        }
-    }
-
-    /// Delete a paste by id.
-    ///
-    /// # Returns
-    /// `true` if a paste was deleted.
-    ///
-    /// # Errors
-    /// Returns an error if deletion fails.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
         Ok(self.delete_and_return(id)?.is_some())
     }
 
-    /// List pastes with an optional folder filter.
-    ///
-    /// # Arguments
-    /// - `limit`: Maximum number of pastes to return.
-    /// - `folder_id`: Optional folder id to filter by.
-    ///
-    /// # Returns
-    /// Pastes sorted by most recently updated.
-    ///
-    /// # Errors
-    /// Returns an error if iteration fails.
     pub fn list(&self, limit: usize, folder_id: Option<String>) -> Result<Vec<Paste>, AppError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let read_txn = self.db.begin_read()?;
+        let pastes_table = read_txn.open_table(PASTES)?;
         let mut pastes = Vec::new();
 
-        // Collect all pastes (or filtered by folder)
-        for item in self.tree.iter() {
+        for item in pastes_table.iter()? {
             let (_, value) = item?;
-            let paste = deserialize_paste(&value)?;
-
+            let paste = deserialize_paste(value.value())?;
             if let Some(ref fid) = folder_id {
                 if paste.folder_id.as_ref() != Some(fid) {
                     continue;
@@ -444,28 +180,11 @@ impl PasteDb {
             pastes.push(paste);
         }
 
-        // Sort by updated_at in descending order (newest first)
         pastes.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
-
-        // Truncate to limit
         pastes.truncate(limit);
-
         Ok(pastes)
     }
 
-    /// List canonical paste ids in a bounded batch.
-    ///
-    /// This helper avoids materializing a large `Vec<Paste>` when callers only need ids.
-    ///
-    /// # Arguments
-    /// - `limit`: Maximum number of ids to return.
-    /// - `folder_id`: Optional folder filter.
-    ///
-    /// # Returns
-    /// Up to `limit` canonical paste ids.
-    ///
-    /// # Errors
-    /// Returns an error if iteration or deserialization fails.
     pub fn list_canonical_ids_batch(
         &self,
         limit: usize,
@@ -475,10 +194,13 @@ impl PasteDb {
             return Ok(Vec::new());
         }
 
+        let read_txn = self.db.begin_read()?;
+        let pastes_table = read_txn.open_table(PASTES)?;
         let mut ids = Vec::with_capacity(limit);
-        for item in self.tree.iter() {
+
+        for item in pastes_table.iter()? {
             let (_, value) = item?;
-            let paste = deserialize_paste(&value)?;
+            let paste = deserialize_paste(value.value())?;
             if let Some(fid) = folder_id {
                 if paste.folder_id.as_deref() != Some(fid) {
                     continue;
@@ -489,44 +211,24 @@ impl PasteDb {
                 break;
             }
         }
+
         Ok(ids)
     }
 
-    /// Scan canonical rows and stream metadata to a callback.
-    ///
-    /// This helper bounds memory usage to one deserialized canonical row at a time.
-    ///
-    /// # Arguments
-    /// - `on_meta`: Called for each canonical row's [`PasteMeta`].
-    ///
-    /// # Returns
-    /// `Ok(())` after all canonical rows are scanned.
-    ///
-    /// # Errors
-    /// Returns iteration/deserialization errors or callback errors.
     pub fn scan_canonical_meta<F>(&self, mut on_meta: F) -> Result<(), AppError>
     where
         F: FnMut(PasteMeta) -> Result<(), AppError>,
     {
-        for item in self.tree.iter() {
+        let read_txn = self.db.begin_read()?;
+        let pastes_table = read_txn.open_table(PASTES)?;
+        for item in pastes_table.iter()? {
             let (_, value) = item?;
-            let paste = deserialize_paste(&value)?;
+            let paste = deserialize_paste(value.value())?;
             on_meta(PasteMeta::from(&paste))?;
         }
         Ok(())
     }
 
-    /// List paste metadata with an optional folder filter.
-    ///
-    /// # Arguments
-    /// - `limit`: Maximum number of metadata rows to return.
-    /// - `folder_id`: Optional folder id to filter by.
-    ///
-    /// # Returns
-    /// Metadata rows sorted by most recently updated.
-    ///
-    /// # Errors
-    /// Returns an error if iteration or deserialization fails.
     pub fn list_meta(
         &self,
         limit: usize,
@@ -535,61 +237,19 @@ impl PasteDb {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        if !self.meta_indexes_usable()? {
-            tracing::warn!("Metadata indexes are dirty/unavailable; listing from canonical tree");
-            return self.list_meta_from_canonical(limit, folder_id);
-        }
+
+        let read_txn = self.db.begin_read()?;
+        let updated_table = read_txn.open_table(PASTES_BY_UPDATED)?;
+        let meta_table = read_txn.open_table(PASTES_META)?;
 
         let mut metas = Vec::with_capacity(limit);
-        let mut seen_ids = HashSet::with_capacity(limit);
-        for item in self.updated_tree.iter() {
-            let (_, value) = item?;
-            let id = match std::str::from_utf8(value.as_ref()) {
-                Ok(id) => id,
-                Err(_) => {
-                    tracing::warn!(
-                        "Metadata updated index contains non-UTF8 id; listing from canonical tree"
-                    );
-                    return self.list_meta_from_canonical(limit, folder_id);
-                }
-            };
-            if !seen_ids.insert(id.to_string()) {
+        for item in updated_table.iter()? {
+            let (key, _) = item?;
+            let (_, paste_id) = key.value();
+            let Some(meta_guard) = meta_table.get(paste_id)? else {
                 continue;
-            }
-            let Some(meta_bytes) = self.meta_tree.get(id.as_bytes())? else {
-                tracing::warn!(
-                    "Metadata index missing meta row for id '{}'; listing from canonical tree",
-                    id
-                );
-                return self.list_meta_from_canonical(limit, folder_id);
             };
-            let meta = match deserialize_meta(&meta_bytes) {
-                Ok(meta) => meta,
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to decode metadata row for id '{}': {}; listing from canonical tree",
-                        id,
-                        err
-                    );
-                    return self.list_meta_from_canonical(limit, folder_id);
-                }
-            };
-            if meta.id != id {
-                tracing::warn!(
-                    "Metadata id mismatch for updated index id '{}'; listing from canonical tree",
-                    id
-                );
-                return self.list_meta_from_canonical(limit, folder_id);
-            }
-            // Keep metadata list/search hot paths metadata-only: verify canonical
-            // key presence without deserializing full paste content.
-            if !self.tree.contains_key(id.as_bytes())? {
-                tracing::warn!(
-                    "Metadata row for id '{}' has no canonical paste; listing from canonical tree",
-                    id
-                );
-                return self.list_meta_from_canonical(limit, folder_id);
-            }
+            let meta = deserialize_meta(meta_guard.value())?;
             if let Some(ref fid) = folder_id {
                 if meta.folder_id.as_ref() != Some(fid) {
                     continue;
@@ -600,22 +260,10 @@ impl PasteDb {
                 break;
             }
         }
+
         Ok(metas)
     }
 
-    /// Search pastes by query with optional filters.
-    ///
-    /// # Arguments
-    /// - `query`: Search term.
-    /// - `limit`: Maximum number of results.
-    /// - `folder_id`: Optional folder filter.
-    /// - `language`: Optional language filter.
-    ///
-    /// # Returns
-    /// Matching metadata rows sorted by score and recency.
-    ///
-    /// # Errors
-    /// Returns an error if iteration fails.
     pub fn search(
         &self,
         query: &str,
@@ -627,28 +275,27 @@ impl PasteDb {
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
+
         let query_lower = query.to_lowercase();
-        let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
         let language_filter = normalize_language_filter(language.as_deref());
+        let read_txn = self.db.begin_read()?;
+        let pastes_table = read_txn.open_table(PASTES)?;
+        let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
 
-        for item in self.tree.iter() {
+        for item in pastes_table.iter()? {
             let (_, value) = item?;
-            let paste = deserialize_paste(&value)?;
+            let paste = deserialize_paste(value.value())?;
 
-            // Apply folder filter
             if let Some(ref fid) = folder_id {
                 if paste.folder_id.as_ref() != Some(fid) {
                     continue;
                 }
             }
-
-            // Apply language filter
             if !language_matches_filter(paste.language.as_deref(), language_filter.as_deref()) {
                 continue;
             }
 
             let score = score_paste_match(&paste, &query_lower);
-
             if score > 0 {
                 let meta = PasteMeta::from(&paste);
                 push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
@@ -658,21 +305,6 @@ impl PasteDb {
         Ok(finalize_meta_search_results(results, limit))
     }
 
-    /// Search paste metadata by query with optional filters.
-    ///
-    /// Metadata-only search matches name/tags/language and does not scan content.
-    ///
-    /// # Arguments
-    /// - `query`: Search term.
-    /// - `limit`: Maximum number of results.
-    /// - `folder_id`: Optional folder filter.
-    /// - `language`: Optional language filter.
-    ///
-    /// # Returns
-    /// Matching metadata rows sorted by score and recency.
-    ///
-    /// # Errors
-    /// Returns an error if iteration fails.
     pub fn search_meta(
         &self,
         query: &str,
@@ -684,52 +316,16 @@ impl PasteDb {
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
-        if !self.meta_indexes_usable()? {
-            tracing::warn!("Metadata indexes are dirty/unavailable; searching via canonical tree");
-            return self.search_meta_from_canonical(query, limit, folder_id, language);
-        }
 
         let query_lower = query.to_lowercase();
         let language_filter = normalize_language_filter(language.as_deref());
+        let read_txn = self.db.begin_read()?;
+        let meta_table = read_txn.open_table(PASTES_META)?;
         let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
-        for item in self.meta_tree.iter() {
-            let (key, value) = item?;
-            let key_id = match std::str::from_utf8(key.as_ref()) {
-                Ok(id) => id,
-                Err(_) => {
-                    tracing::warn!(
-                        "Metadata tree contains non-UTF8 id key; falling back to canonical tree"
-                    );
-                    return self.search_meta_from_canonical(query, limit, folder_id, language);
-                }
-            };
-            let meta = match deserialize_meta(&value) {
-                Ok(meta) => meta,
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to decode metadata row during search: {}; falling back to canonical tree",
-                        err
-                    );
-                    return self.search_meta_from_canonical(query, limit, folder_id, language);
-                }
-            };
-            if meta.id != key_id {
-                tracing::warn!(
-                    "Metadata key/id mismatch for key '{}'; falling back to canonical tree",
-                    key_id
-                );
-                return self.search_meta_from_canonical(query, limit, folder_id, language);
-            }
-            // Keep metadata list/search hot paths metadata-only: verify canonical
-            // key presence without deserializing full paste content.
-            if !self.tree.contains_key(key_id.as_bytes())? {
-                tracing::warn!(
-                    "Metadata search encountered ghost row for id '{}'; falling back to canonical tree",
-                    meta.id
-                );
-                return self.search_meta_from_canonical(query, limit, folder_id, language);
-            }
 
+        for item in meta_table.iter()? {
+            let (_, value) = item?;
+            let meta = deserialize_meta(value.value())?;
             if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref()) {
                 continue;
             }
@@ -738,108 +334,10 @@ impl PasteDb {
                 push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }
         }
+
         Ok(finalize_meta_search_results(results, limit))
     }
 
-    /// Rebuild metadata and recency indexes from the canonical `pastes` tree.
-    ///
-    /// # Returns
-    /// `Ok(())` when indexes are rebuilt successfully.
-    ///
-    /// # Errors
-    /// Returns an error if index rebuild fails.
-    pub fn reconcile_meta_indexes(&self) -> Result<(), AppError> {
-        self.begin_meta_index_mutation()?;
-
-        let rebuild_result = (|| -> Result<(), AppError> {
-            #[cfg(test)]
-            helpers::maybe_inject_reconcile_failpoint()?;
-            self.meta_tree.clear()?;
-            self.updated_tree.clear()?;
-            for item in self.tree.iter() {
-                let (_, value) = item?;
-                let paste = deserialize_paste(&value)?;
-                self.upsert_meta_and_index_from_paste(&paste, None)?;
-            }
-            self.meta_tree.flush()?;
-            self.updated_tree.flush()?;
-            Ok(())
-        })();
-
-        if let Err(err) = rebuild_result {
-            // Reconcile failed mid-flight: preserve degraded fallback by marking faulted
-            // and clear in-progress best-effort so startup/runtime does not get stuck.
-            self.mark_meta_index_faulted();
-            self.try_end_meta_index_mutation();
-            return Err(err);
-        }
-
-        if let Err(err) = self.write_meta_index_state(META_INDEX_SCHEMA_VERSION, 0, false) {
-            // State write failed after rebuild. Keep canonical reads safe and mark
-            // indexes faulted so callers continue through bounded canonical fallback.
-            self.mark_meta_index_faulted();
-            self.try_end_meta_index_mutation();
-            return Err(err);
-        }
-
-        Ok(())
-    }
-
-    fn meta_indexes_usable(&self) -> Result<bool, AppError> {
-        if self.meta_index_schema_version()? != Some(META_INDEX_SCHEMA_VERSION) {
-            return Ok(false);
-        }
-        if self.meta_index_in_progress_count()? > 0 {
-            return Ok(false);
-        }
-        if self.meta_index_faulted()? {
-            return Ok(false);
-        }
-        Ok(true)
-    }
-
-    fn list_meta_from_canonical(
-        &self,
-        limit: usize,
-        folder_id: Option<String>,
-    ) -> Result<Vec<PasteMeta>, AppError> {
-        let mut ranked: Vec<(DateTime<Utc>, PasteMeta)> = Vec::new();
-        let folder_filter = folder_id.as_deref();
-        self.scan_canonical_meta(|meta| {
-            if let Some(fid) = folder_filter {
-                if meta.folder_id.as_deref() != Some(fid) {
-                    return Ok(());
-                }
-            }
-            push_recent_meta_top_k(&mut ranked, (meta.updated_at, meta), limit);
-            Ok(())
-        })?;
-        Ok(finalize_recent_meta_results(ranked, limit))
-    }
-
-    fn search_meta_from_canonical(
-        &self,
-        query: &str,
-        limit: usize,
-        folder_id: Option<String>,
-        language: Option<String>,
-    ) -> Result<Vec<PasteMeta>, AppError> {
-        let query_lower = query.to_lowercase();
-        let language_filter = normalize_language_filter(language.as_deref());
-        let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
-        let folder_filter = folder_id.as_deref();
-        self.scan_canonical_meta(|meta| {
-            if !meta_matches_filters(&meta, folder_filter, language_filter.as_deref()) {
-                return Ok(());
-            }
-            let score = score_meta_match(&meta, &query_lower);
-            if score > 0 {
-                push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
-            }
-            Ok(())
-        })?;
-        Ok(finalize_meta_search_results(results, limit))
-    }
 }
 
 #[cfg(test)]

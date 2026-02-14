@@ -11,7 +11,7 @@ name = "localpaste_core"
 path = "src/lib.rs"
 
 [dependencies]
-sled = "0.34"
+redb = { version = "3", features = ["uuid"] }
 serde = { workspace = true, features = ["derive"] }
 bincode = "1.3"
 uuid = { version = "1.10", features = ["v4", "serde"] }
