@@ -183,17 +183,24 @@ fn default_cli_server_url_uses_default_port_constant() {
 }
 
 #[test]
-fn error_message_for_response_prefers_json_error_field() {
-    let status = reqwest::StatusCode::NOT_FOUND;
-    let message = error_message_for_response(status, r#"{"error":"Not found"}"#);
-    assert_eq!(message, "Not found");
-}
+fn error_message_for_response_matrix_covers_json_reason_and_passthrough() {
+    let cases = [
+        (
+            reqwest::StatusCode::NOT_FOUND,
+            r#"{"error":"Not found"}"#,
+            "Not found",
+        ),
+        (reqwest::StatusCode::BAD_REQUEST, "   ", "Bad Request"),
+        (
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            "raw failure body",
+            "raw failure body",
+        ),
+    ];
 
-#[test]
-fn error_message_for_response_uses_reason_for_empty_body() {
-    let status = reqwest::StatusCode::BAD_REQUEST;
-    let message = error_message_for_response(status, "   ");
-    assert_eq!(message, "Bad Request");
+    for (status, body, expected) in cases {
+        assert_eq!(error_message_for_response(status, body), expected);
+    }
 }
 
 #[test]
@@ -251,32 +258,27 @@ fn json_output_helpers_preserve_payload_shape() {
 }
 
 #[test]
-fn api_url_encodes_path_segments() {
-    let url = api_url(
-        &format!("http://127.0.0.1:{}", DEFAULT_PORT),
-        &["api", "paste", "id/with?reserved#chars"],
-    )
-    .expect("api_url should build");
-    assert_eq!(
-        url.as_str(),
-        &format!(
-            "http://127.0.0.1:{}/api/paste/id%2Fwith%3Freserved%23chars",
-            DEFAULT_PORT
-        )
-    );
-}
+fn api_url_matrix_covers_encoding_and_base_path_append() {
+    let cases = [
+        (
+            format!("http://127.0.0.1:{}", DEFAULT_PORT),
+            ["api", "paste", "id/with?reserved#chars"],
+            format!(
+                "http://127.0.0.1:{}/api/paste/id%2Fwith%3Freserved%23chars",
+                DEFAULT_PORT
+            ),
+        ),
+        (
+            format!("http://127.0.0.1:{}/base", DEFAULT_PORT),
+            ["api", "paste", "abc123"],
+            format!("http://127.0.0.1:{}/base/api/paste/abc123", DEFAULT_PORT),
+        ),
+    ];
 
-#[test]
-fn api_url_appends_segments_to_existing_base_path() {
-    let url = api_url(
-        &format!("http://127.0.0.1:{}/base", DEFAULT_PORT),
-        &["api", "paste", "abc123"],
-    )
-    .expect("api_url should build");
-    assert_eq!(
-        url.as_str(),
-        &format!("http://127.0.0.1:{}/base/api/paste/abc123", DEFAULT_PORT)
-    );
+    for (base, segments, expected) in cases {
+        let url = api_url(base.as_str(), &segments).expect("api_url should build");
+        assert_eq!(url.as_str(), expected);
+    }
 }
 
 #[test]
@@ -309,20 +311,18 @@ fn resolve_server_uses_discovery_when_explicit_missing() {
 }
 
 #[test]
-fn resolve_server_falls_back_to_default_when_discovery_invalid() {
-    assert_resolve_server_falls_back_to_default("invalid", "not a url");
-}
+fn resolve_server_fallback_matrix_for_invalid_unreachable_and_non_loopback_discovery() {
+    let cases = [
+        ("invalid", "not a url"),
+        // Unknown scheme is parseable but has no known default port, so reachability
+        // check always treats it as unavailable.
+        ("stale", "custom-scheme://discovery-host"),
+        ("non-loopback-host", "http://example.com:45555"),
+    ];
 
-#[test]
-fn resolve_server_falls_back_to_default_when_discovery_unreachable() {
-    // Unknown scheme is parseable but has no known default port, so reachability
-    // check always treats it as unavailable.
-    assert_resolve_server_falls_back_to_default("stale", "custom-scheme://discovery-host");
-}
-
-#[test]
-fn resolve_server_falls_back_to_default_when_discovery_is_non_loopback() {
-    assert_resolve_server_falls_back_to_default("non-loopback-host", "http://example.com:45555");
+    for (label, discovery) in cases {
+        assert_resolve_server_falls_back_to_default(label, discovery);
+    }
 }
 
 #[test]

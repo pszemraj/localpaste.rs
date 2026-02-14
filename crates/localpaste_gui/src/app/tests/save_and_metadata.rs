@@ -112,24 +112,36 @@ fn save_metadata_now_auto_language_clears_override_without_folder_edits() {
 }
 
 #[test]
-fn metadata_save_during_active_search_forces_fresh_backend_search() {
-    let mut harness = make_app();
-    harness.app.search_query = "alpha".to_string();
-    harness.app.search_last_sent = "alpha".to_string();
+fn save_events_during_active_search_force_fresh_backend_search() {
+    #[derive(Clone, Copy)]
+    enum SaveEventKind {
+        Metadata,
+        Content,
+    }
 
-    let mut paste = Paste::new("content".to_string(), "Alpha-renamed".to_string());
-    paste.id = "alpha".to_string();
-    harness.app.apply_event(CoreEvent::PasteMetaSaved { paste });
+    let events = [SaveEventKind::Metadata, SaveEventKind::Content];
+    for event in events {
+        let mut harness = make_app();
+        harness.app.search_query = "alpha".to_string();
+        harness.app.search_last_sent = "alpha".to_string();
 
-    assert!(
-        harness.app.search_last_sent.is_empty(),
-        "metadata save should invalidate cached search query"
-    );
+        let mut paste = Paste::new("updated body".to_string(), "Alpha-renamed".to_string());
+        paste.id = "alpha".to_string();
+        match event {
+            SaveEventKind::Metadata => harness.app.apply_event(CoreEvent::PasteMetaSaved { paste }),
+            SaveEventKind::Content => harness.app.apply_event(CoreEvent::PasteSaved { paste }),
+        }
 
-    harness.app.maybe_dispatch_search();
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "alpha"),
-        other => panic!("unexpected command: {:?}", other),
+        assert!(
+            harness.app.search_last_sent.is_empty(),
+            "save event should invalidate cached search query"
+        );
+
+        harness.app.maybe_dispatch_search();
+        match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "alpha"),
+            other => panic!("unexpected command: {:?}", other),
+        }
     }
 }
 
@@ -351,40 +363,75 @@ fn real_backend_virtual_save_error_updates_ui_state() {
 }
 
 #[test]
-fn select_paste_dirty_defers_switch_until_content_save_ack() {
-    let mut harness = make_app();
-    harness
-        .app
-        .all_pastes
-        .push(test_summary("beta", "Beta", None, 4));
-    harness.app.pastes = harness.app.all_pastes.clone();
-    harness.app.selected_content.reset("edited".to_string());
-    harness.app.save_status = SaveStatus::Dirty;
-    harness.app.last_edit_at = Some(Instant::now());
-
-    assert!(harness.app.select_paste("beta".to_string()));
-    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
-    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
-
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePaste { id, content } => {
-            assert_eq!(id, "alpha");
-            assert_eq!(content, "edited");
-        }
-        other => panic!("unexpected command: {:?}", other),
+fn select_paste_dirty_or_metadata_dirty_defers_switch_until_save_ack() {
+    #[derive(Clone, Copy)]
+    enum DeferredKind {
+        Content,
+        Metadata,
     }
 
-    let mut saved = Paste::new("edited".to_string(), "Alpha".to_string());
-    saved.id = "alpha".to_string();
-    harness
-        .app
-        .apply_event(CoreEvent::PasteSaved { paste: saved });
+    let cases = [DeferredKind::Content, DeferredKind::Metadata];
+    for kind in cases {
+        let mut harness = make_app();
+        harness
+            .app
+            .all_pastes
+            .push(test_summary("beta", "Beta", None, 4));
+        harness.app.pastes = harness.app.all_pastes.clone();
 
-    assert!(harness.app.pending_selection_id.is_none());
-    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
-        other => panic!("unexpected command: {:?}", other),
+        match kind {
+            DeferredKind::Content => {
+                harness.app.selected_content.reset("edited".to_string());
+                harness.app.save_status = SaveStatus::Dirty;
+                harness.app.last_edit_at = Some(Instant::now());
+            }
+            DeferredKind::Metadata => {
+                harness.app.metadata_dirty = true;
+                harness.app.edit_name = "Alpha renamed".to_string();
+                harness.app.edit_tags = "tag-a".to_string();
+            }
+        }
+
+        assert!(harness.app.select_paste("beta".to_string()));
+        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+        assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+
+        match (kind, recv_cmd(&harness.cmd_rx)) {
+            (DeferredKind::Content, CoreCmd::UpdatePaste { id, content }) => {
+                assert_eq!(id, "alpha");
+                assert_eq!(content, "edited");
+            }
+            (DeferredKind::Metadata, CoreCmd::UpdatePasteMeta { id, .. }) => {
+                assert_eq!(id, "alpha");
+            }
+            (_, other) => panic!("unexpected command: {:?}", other),
+        }
+
+        let mut saved = Paste::new(
+            match kind {
+                DeferredKind::Content => "edited".to_string(),
+                DeferredKind::Metadata => "content".to_string(),
+            },
+            "Alpha renamed".to_string(),
+        );
+        saved.id = "alpha".to_string();
+        if matches!(kind, DeferredKind::Metadata) {
+            saved.tags = vec!["tag-a".to_string()];
+            harness
+                .app
+                .apply_event(CoreEvent::PasteMetaSaved { paste: saved });
+        } else {
+            harness
+                .app
+                .apply_event(CoreEvent::PasteSaved { paste: saved });
+        }
+
+        assert!(harness.app.pending_selection_id.is_none());
+        assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+        match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+            other => panic!("unexpected command: {:?}", other),
+        }
     }
 }
 
@@ -611,130 +658,90 @@ fn metadata_ack_outcomes_depend_on_local_draft_divergence() {
 }
 
 #[test]
-fn select_paste_metadata_dirty_defers_switch_until_meta_save_ack() {
-    let mut harness = make_app();
-    harness
-        .app
-        .all_pastes
-        .push(test_summary("beta", "Beta", None, 4));
-    harness.app.pastes = harness.app.all_pastes.clone();
-    harness.app.metadata_dirty = true;
-    harness.app.edit_name = "Alpha renamed".to_string();
-    harness.app.edit_tags = "tag-a".to_string();
-
-    assert!(harness.app.select_paste("beta".to_string()));
-    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
-    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
-
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePasteMeta { id, .. } => assert_eq!(id, "alpha"),
-        other => panic!("unexpected command: {:?}", other),
+fn selection_switch_paths_keep_current_selection_when_new_lock_acquire_fails() {
+    #[derive(Clone, Copy)]
+    enum SwitchPath {
+        SelectLoadedPaste,
+        SelectPaste,
     }
 
-    let mut saved = Paste::new("content".to_string(), "Alpha renamed".to_string());
-    saved.id = "alpha".to_string();
-    saved.tags = vec!["tag-a".to_string()];
-    harness
-        .app
-        .apply_event(CoreEvent::PasteMetaSaved { paste: saved });
-
-    assert!(harness.app.pending_selection_id.is_none());
-    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn select_loaded_paste_keeps_current_selection_when_new_lock_acquire_fails() {
-    let mut harness = make_app();
-    let baseline_selected_id = harness.app.selected_id.clone().expect("selected id");
-    let baseline_selected_content = harness.app.selected_content.as_str().to_string();
-    let baseline_selected_paste_id = harness
-        .app
-        .selected_paste
-        .as_ref()
-        .map(|paste| paste.id.clone())
-        .expect("selected paste");
-    harness
-        .app
-        .all_pastes
-        .push(test_summary("beta", "Beta", None, 12));
-    harness.app.pastes = harness.app.all_pastes.clone();
-
-    let locks = harness.app.locks.clone();
-    let _mutation_guard = locks.begin_mutation("beta").expect("start mutation guard");
-
-    let mut beta = Paste::new("beta-content".to_string(), "Beta".to_string());
-    beta.id = "beta".to_string();
-    harness.app.select_loaded_paste(beta);
-
-    assert_eq!(
-        harness.app.selected_id.as_deref(),
-        Some(baseline_selected_id.as_str())
-    );
-    assert_eq!(
-        harness.app.selected_content.as_str(),
-        baseline_selected_content.as_str()
-    );
-    assert_eq!(
-        harness
+    let paths = [SwitchPath::SelectLoadedPaste, SwitchPath::SelectPaste];
+    for path in paths {
+        let mut harness = make_app();
+        let baseline_selected_id = harness.app.selected_id.clone().expect("selected id");
+        let baseline_selected_content = harness.app.selected_content.as_str().to_string();
+        let baseline_selected_paste_id = harness
             .app
             .selected_paste
             .as_ref()
-            .map(|paste| paste.id.as_str()),
-        Some(baseline_selected_paste_id.as_str())
-    );
-    assert_eq!(
+            .map(|paste| paste.id.clone())
+            .expect("selected paste");
         harness
             .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Lock acquire failed; close and reopen the paste.")
-    );
-}
+            .all_pastes
+            .push(test_summary("beta", "Beta", None, 12));
+        harness.app.pastes = harness.app.all_pastes.clone();
 
-#[test]
-fn select_paste_keeps_current_selection_and_lock_when_new_lock_acquire_fails() {
-    let mut harness = make_app();
-    harness
-        .app
-        .all_pastes
-        .push(test_summary("beta", "Beta", None, 12));
-    harness.app.pastes = harness.app.all_pastes.clone();
+        if matches!(path, SwitchPath::SelectPaste) {
+            harness
+                .app
+                .locks
+                .acquire("alpha", &harness.app.lock_owner_id)
+                .expect("acquire selected alpha lock");
+        }
 
-    harness
-        .app
-        .locks
-        .acquire("alpha", &harness.app.lock_owner_id)
-        .expect("acquire selected alpha lock");
-    let locks = harness.app.locks.clone();
-    let _mutation_guard = locks.begin_mutation("beta").expect("start mutation guard");
+        let locks = harness.app.locks.clone();
+        let _mutation_guard = locks.begin_mutation("beta").expect("start mutation guard");
 
-    assert!(
-        !harness.app.select_paste("beta".to_string()),
-        "lock acquisition failure should reject switching selection"
-    );
-    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
-    assert_eq!(harness.app.selected_content.as_str(), "content");
-    assert!(
-        locks.is_locked("alpha").expect("alpha lock state"),
-        "existing selection lock should remain held"
-    );
-    assert_eq!(
-        harness
-            .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Lock acquire failed; close and reopen the paste.")
-    );
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
+        match path {
+            SwitchPath::SelectLoadedPaste => {
+                let mut beta = Paste::new("beta-content".to_string(), "Beta".to_string());
+                beta.id = "beta".to_string();
+                harness.app.select_loaded_paste(beta);
+            }
+            SwitchPath::SelectPaste => {
+                assert!(
+                    !harness.app.select_paste("beta".to_string()),
+                    "lock acquisition failure should reject switching selection"
+                );
+                assert!(matches!(
+                    harness.cmd_rx.try_recv(),
+                    Err(TryRecvError::Empty)
+                ));
+            }
+        }
+
+        assert_eq!(
+            harness.app.selected_id.as_deref(),
+            Some(baseline_selected_id.as_str())
+        );
+        assert_eq!(
+            harness.app.selected_content.as_str(),
+            baseline_selected_content.as_str()
+        );
+        assert_eq!(
+            harness
+                .app
+                .selected_paste
+                .as_ref()
+                .map(|paste| paste.id.as_str()),
+            Some(baseline_selected_paste_id.as_str())
+        );
+        if matches!(path, SwitchPath::SelectPaste) {
+            assert!(
+                locks.is_locked("alpha").expect("alpha lock state"),
+                "existing selection lock should remain held"
+            );
+        }
+        assert_eq!(
+            harness
+                .app
+                .status
+                .as_ref()
+                .map(|status| status.text.as_str()),
+            Some("Lock acquire failed; close and reopen the paste.")
+        );
+    }
 }
 
 #[test]
@@ -794,30 +801,6 @@ fn save_error_clears_pending_selection_and_keeps_current_selection() {
         harness.cmd_rx.try_recv(),
         Err(TryRecvError::Empty)
     ));
-}
-
-#[test]
-fn paste_saved_during_active_search_forces_fresh_backend_search() {
-    let mut harness = make_app();
-    harness.app.search_query = "alpha".to_string();
-    harness.app.search_last_sent = "alpha".to_string();
-
-    let mut saved = Paste::new("updated body".to_string(), "Alpha".to_string());
-    saved.id = "alpha".to_string();
-    harness
-        .app
-        .apply_event(CoreEvent::PasteSaved { paste: saved });
-
-    assert!(
-        harness.app.search_last_sent.is_empty(),
-        "paste save should invalidate cached search query"
-    );
-
-    harness.app.maybe_dispatch_search();
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "alpha"),
-        other => panic!("unexpected command: {:?}", other),
-    }
 }
 
 #[test]

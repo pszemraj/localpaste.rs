@@ -571,52 +571,28 @@ async fn test_max_paste_size_allows_exact_content_limit_with_json_overhead() {
 }
 
 #[tokio::test]
-async fn test_strict_cors_allows_ipv6_loopback_origin() {
+async fn test_strict_cors_origin_matrix() {
     let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("strict-cors-ipv6.db");
+    let db_path = temp_dir.path().join("strict-cors-origins.db");
     let mut config = test_config_for_db_path(&db_path);
     config.port = 4055;
     let (server, _locks) = test_server_for_config(config);
-    let ipv6_origin = "http://[::1]:4055";
-    let ipv4_alias_origin = "http://127.0.0.2:4055";
-    let mismatched_port_origin = "http://127.0.0.1:9123";
+    let cases = [
+        ("http://[::1]:4055", true),
+        ("http://127.0.0.2:4055", true),
+        ("http://127.0.0.1:9123", false),
+        ("http://example.com:3000", false),
+    ];
 
-    let ipv6_response = server
-        .get("/api/pastes")
-        .add_header("origin", ipv6_origin)
-        .await;
-    assert_eq!(ipv6_response.status_code(), StatusCode::OK);
-    ipv6_response.assert_header("access-control-allow-origin", ipv6_origin);
-
-    let ipv4_alias_response = server
-        .get("/api/pastes")
-        .add_header("origin", ipv4_alias_origin)
-        .await;
-    assert_eq!(ipv4_alias_response.status_code(), StatusCode::OK);
-    ipv4_alias_response.assert_header("access-control-allow-origin", ipv4_alias_origin);
-
-    let mismatched_port_response = server
-        .get("/api/pastes")
-        .add_header("origin", mismatched_port_origin)
-        .await;
-    assert_eq!(mismatched_port_response.status_code(), StatusCode::OK);
-    assert!(!mismatched_port_response.contains_header("access-control-allow-origin"));
-}
-
-#[tokio::test]
-async fn test_strict_cors_rejects_non_loopback_origin() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("strict-cors-non-loopback.db");
-    let config = test_config_for_db_path(&db_path);
-    let (server, _locks) = test_server_for_config(config);
-
-    let response = server
-        .get("/api/pastes")
-        .add_header("origin", "http://example.com:3000")
-        .await;
-
-    assert_eq!(response.status_code(), StatusCode::OK);
-    assert!(!response.contains_header("access-control-allow-origin"));
+    for (origin, should_allow) in cases {
+        let response = server.get("/api/pastes").add_header("origin", origin).await;
+        assert_eq!(response.status_code(), StatusCode::OK);
+        if should_allow {
+            response.assert_header("access-control-allow-origin", origin);
+        } else {
+            assert!(!response.contains_header("access-control-allow-origin"));
+        }
+    }
 }
 
 #[tokio::test]
@@ -911,86 +887,78 @@ async fn test_delete_folder_with_cycle_completes() {
 }
 
 #[tokio::test]
-async fn test_delete_locked_paste_rejected() {
-    let (server, _temp, locks) = setup_test_server().await;
+async fn test_locked_paste_mutation_matrix_rejects_until_all_holders_release() {
+    #[derive(Clone, Copy)]
+    enum LockedMutationKind {
+        Delete,
+        Update,
+    }
 
-    // Create a paste
-    let create_response = server
-        .post("/api/paste")
-        .json(&json!({
-            "content": "Locked content",
-            "name": "locked-paste"
-        }))
-        .await;
+    async fn issue_locked_mutation(
+        server: &TestServer,
+        kind: LockedMutationKind,
+        paste_id: &str,
+    ) -> axum_test::TestResponse {
+        match kind {
+            LockedMutationKind::Delete => server.delete(&format!("/api/paste/{}", paste_id)).await,
+            LockedMutationKind::Update => {
+                server
+                    .put(&format!("/api/paste/{}", paste_id))
+                    .json(&json!({
+                        "content": "new body"
+                    }))
+                    .await
+            }
+        }
+    }
 
-    assert_eq!(create_response.status_code(), StatusCode::OK);
-    let paste: serde_json::Value = create_response.json();
-    let paste_id = paste["id"].as_str().unwrap().to_string();
-    let owner_a = LockOwnerId::new("paste-owner-a".to_string());
-    let owner_b = LockOwnerId::new("paste-owner-b".to_string());
+    let cases = [LockedMutationKind::Delete, LockedMutationKind::Update];
+    for kind in cases {
+        let (server, _temp, locks) = setup_test_server().await;
 
-    // Lock it as if two GUI sessions have it open.
-    locks
-        .acquire(&paste_id, &owner_a)
-        .expect("owner a acquires");
-    locks
-        .acquire(&paste_id, &owner_b)
-        .expect("owner b acquires");
+        let create_response = server
+            .post("/api/paste")
+            .json(&json!({
+                "content": "Locked content",
+                "name": "locked-paste"
+            }))
+            .await;
+        assert_eq!(create_response.status_code(), StatusCode::OK);
+        let paste: serde_json::Value = create_response.json();
+        let paste_id = paste["id"].as_str().unwrap().to_string();
+        let owner_a = LockOwnerId::new("owner-a".to_string());
 
-    // Attempt delete through API
-    let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
-    assert_eq!(delete_response.status_code(), StatusCode::LOCKED);
+        locks
+            .acquire(&paste_id, &owner_a)
+            .expect("owner a acquires");
 
-    // Releasing one holder should keep it locked.
-    locks
-        .release(&paste_id, &owner_a)
-        .expect("owner a releases");
-    let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
-    assert_eq!(delete_response.status_code(), StatusCode::LOCKED);
+        let locked_response = issue_locked_mutation(&server, kind, &paste_id).await;
+        assert_eq!(locked_response.status_code(), StatusCode::LOCKED);
 
-    // Unlock final holder and delete should work.
-    locks
-        .release(&paste_id, &owner_b)
-        .expect("owner b releases");
-    let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
-    assert_eq!(delete_response.status_code(), StatusCode::OK);
-}
+        if matches!(kind, LockedMutationKind::Delete) {
+            let owner_b = LockOwnerId::new("owner-b".to_string());
+            locks
+                .acquire(&paste_id, &owner_b)
+                .expect("owner b acquires");
+            locks
+                .release(&paste_id, &owner_a)
+                .expect("owner a releases");
+            let still_locked = issue_locked_mutation(&server, kind, &paste_id).await;
+            assert_eq!(still_locked.status_code(), StatusCode::LOCKED);
+            locks
+                .release(&paste_id, &owner_b)
+                .expect("owner b releases");
+        } else {
+            locks
+                .release(&paste_id, &owner_a)
+                .expect("owner a releases");
+        }
 
-#[tokio::test]
-async fn test_update_locked_paste_rejected() {
-    let (server, _temp, locks) = setup_test_server().await;
-
-    let create_response = server
-        .post("/api/paste")
-        .json(&json!({
-            "content": "Locked content",
-            "name": "locked-paste"
-        }))
-        .await;
-    assert_eq!(create_response.status_code(), StatusCode::OK);
-    let paste: serde_json::Value = create_response.json();
-    let paste_id = paste["id"].as_str().unwrap().to_string();
-    let owner = LockOwnerId::new("update-owner".to_string());
-
-    locks.acquire(&paste_id, &owner).expect("owner acquires");
-
-    let update_response = server
-        .put(&format!("/api/paste/{}", paste_id))
-        .json(&json!({
-            "content": "new body"
-        }))
-        .await;
-    assert_eq!(update_response.status_code(), StatusCode::LOCKED);
-
-    locks.release(&paste_id, &owner).expect("owner releases");
-
-    let update_response = server
-        .put(&format!("/api/paste/{}", paste_id))
-        .json(&json!({
-            "content": "new body"
-        }))
-        .await;
-    assert_eq!(update_response.status_code(), StatusCode::OK);
-    let updated: serde_json::Value = update_response.json();
-    assert_eq!(updated["content"], "new body");
+        let ok_response = issue_locked_mutation(&server, kind, &paste_id).await;
+        assert_eq!(ok_response.status_code(), StatusCode::OK);
+        if matches!(kind, LockedMutationKind::Update) {
+            let updated: serde_json::Value = ok_response.json();
+            assert_eq!(updated["content"], "new body");
+        }
+    }
 }
