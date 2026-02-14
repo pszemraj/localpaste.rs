@@ -15,8 +15,9 @@ mod transactions;
 use crate::error::AppError;
 use crate::folder_ops::reconcile_folder_invariants;
 use sled::Db;
+use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 pub use transactions::TransactionOps;
 #[cfg(test)]
@@ -248,6 +249,25 @@ fn is_sled_lock_contention(error: &sled::Error) -> bool {
 }
 
 impl Database {
+    fn shared_folder_txn_lock_for_db(db: &Arc<Db>) -> Result<Arc<Mutex<()>>, AppError> {
+        static REGISTRY: OnceLock<Mutex<HashMap<usize, Weak<Mutex<()>>>>> = OnceLock::new();
+        let registry = REGISTRY.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut registry_guard = registry.lock().map_err(|_| {
+            AppError::StorageMessage("Shared folder transaction lock registry poisoned".to_string())
+        })?;
+        // Prune stale entries so transient handles do not grow the registry forever.
+        registry_guard.retain(|_, lock| lock.upgrade().is_some());
+
+        let key = Arc::as_ptr(db) as usize;
+        if let Some(existing) = registry_guard.get(&key).and_then(Weak::upgrade) {
+            return Ok(existing);
+        }
+
+        let shared_lock = Arc::new(Mutex::new(()));
+        registry_guard.insert(key, Arc::downgrade(&shared_lock));
+        Ok(shared_lock)
+    }
+
     fn from_shared_with_coordination(
         db: Arc<Db>,
         owner_lock_guard: Option<Arc<lock::OwnerLockGuard>>,
@@ -273,7 +293,10 @@ impl Database {
     /// # Errors
     /// Returns an error if the required trees cannot be opened.
     pub fn from_shared(db: Arc<Db>) -> Result<Self, AppError> {
-        Self::from_shared_with_coordination(db, None, Arc::new(Mutex::new(())))
+        // Reuse per-Db coordination lock so independently-created handles cannot
+        // bypass folder transaction serialization on the same shared sled instance.
+        let folder_txn_lock = Self::shared_folder_txn_lock_for_db(&db)?;
+        Self::from_shared_with_coordination(db, None, folder_txn_lock)
     }
 
     /// Clone this handle for another subsystem in the same process.

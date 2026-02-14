@@ -697,6 +697,47 @@ fn select_loaded_paste_keeps_current_selection_when_new_lock_acquire_fails() {
 }
 
 #[test]
+fn select_paste_keeps_current_selection_and_lock_when_new_lock_acquire_fails() {
+    let mut harness = make_app();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 12));
+    harness.app.pastes = harness.app.all_pastes.clone();
+
+    harness
+        .app
+        .locks
+        .acquire("alpha", &harness.app.lock_owner_id)
+        .expect("acquire selected alpha lock");
+    let locks = harness.app.locks.clone();
+    let _mutation_guard = locks.begin_mutation("beta").expect("start mutation guard");
+
+    assert!(
+        !harness.app.select_paste("beta".to_string()),
+        "lock acquisition failure should reject switching selection"
+    );
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.selected_content.as_str(), "content");
+    assert!(
+        locks.is_locked("alpha").expect("alpha lock state"),
+        "existing selection lock should remain held"
+    );
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Lock acquire failed; close and reopen the paste.")
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
 fn select_paste_rolls_back_pending_when_metadata_dispatch_fails_with_content_in_flight() {
     let TestHarness {
         _dir: _guard,

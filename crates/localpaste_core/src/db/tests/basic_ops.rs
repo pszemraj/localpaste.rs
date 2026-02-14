@@ -9,6 +9,20 @@ fn test_create_database() {
 }
 
 #[test]
+fn from_shared_reuses_folder_transaction_lock_for_same_shared_db() {
+    let (db, _temp) = setup_test_db();
+    let shared = db.db.clone();
+
+    let handle_a = Database::from_shared(shared.clone()).expect("from_shared handle A");
+    let handle_b = Database::from_shared(shared).expect("from_shared handle B");
+
+    assert!(
+        Arc::ptr_eq(&handle_a.folder_txn_lock, &handle_b.folder_txn_lock),
+        "from_shared handles over the same Arc<Db> must share folder transaction lock"
+    );
+}
+
+#[test]
 fn test_paste_create_and_get() {
     let (db, _temp) = setup_test_db();
 

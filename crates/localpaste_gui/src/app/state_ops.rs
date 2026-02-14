@@ -547,13 +547,13 @@ impl LocalPasteApp {
     }
 
     fn apply_selection_now(&mut self, id: String) -> bool {
-        if let Some(prev) = self.selected_id.take() {
-            self.release_paste_lock(prev.as_str());
-        }
-        self.selected_id = Some(id.clone());
+        // Acquire target lock before releasing current selection lock so failed
+        // switches never drop the currently editable paste unexpectedly.
         if !self.acquire_paste_lock(id.as_str()) {
-            self.selected_id = None;
             return false;
+        }
+        if let Some(prev) = self.selected_id.replace(id.clone()) {
+            self.release_paste_lock(prev.as_str());
         }
         self.selected_paste = None;
         self.edit_name.clear();
