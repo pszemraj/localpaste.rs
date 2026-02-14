@@ -29,9 +29,13 @@ use tower_http::{
 };
 
 const JSON_BODY_OVERHEAD_BYTES: usize = 16 * 1024;
+const JSON_STRING_ESCAPE_EXPANSION_FACTOR: usize = 6;
 
 fn request_body_limit(max_paste_size: usize) -> usize {
-    max_paste_size.saturating_add(JSON_BODY_OVERHEAD_BYTES)
+    max_paste_size
+        // Worst-case JSON string expansion is \u00XX (6 bytes) per decoded byte.
+        .saturating_mul(JSON_STRING_ESCAPE_EXPANSION_FACTOR)
+        .saturating_add(JSON_BODY_OVERHEAD_BYTES)
 }
 
 /// Shared state passed to HTTP handlers.
@@ -155,6 +159,7 @@ fn create_app_with_cors_port(state: AppState, allow_public_access: bool, cors_po
             .allow_origin([
                 format!("http://localhost:{}", cors_port).parse().unwrap(),
                 format!("http://127.0.0.1:{}", cors_port).parse().unwrap(),
+                format!("http://[::1]:{}", cors_port).parse().unwrap(),
             ])
             .allow_methods([
                 axum::http::Method::GET,
@@ -186,8 +191,8 @@ fn create_app_with_cors_port(state: AppState, allow_public_access: bool, cors_po
         // Apply middleware
         .layer(
             tower::ServiceBuilder::new()
-                // Body limit includes JSON envelope overhead; content bytes are validated
-                // separately in handlers against `max_paste_size`.
+                // Body limit allows for worst-case JSON escaping. Decoded content bytes
+                // are validated separately in handlers against `max_paste_size`.
                 .layer(DefaultBodyLimit::max(request_body_limit(
                     state.config.max_paste_size,
                 )))

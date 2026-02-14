@@ -502,9 +502,16 @@ async fn test_max_paste_size_enforcement() {
         }))
         .await;
 
-    // Should fail with 413 Payload Too Large (or 400 Bad Request)
-    // The middleware layer returns 413 when the body limit is exceeded
-    assert_eq!(response.status_code(), StatusCode::PAYLOAD_TOO_LARGE);
+    // Oversized decoded content must be rejected by either middleware (413) or
+    // handler validation (400), depending on configured transport headroom.
+    assert!(
+        matches!(
+            response.status_code(),
+            StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE
+        ),
+        "expected BAD_REQUEST or PAYLOAD_TOO_LARGE, got {}",
+        response.status_code()
+    );
 }
 
 #[tokio::test]
@@ -514,31 +521,68 @@ async fn test_max_paste_size_allows_exact_content_limit_with_json_overhead() {
     let config = Config {
         port: 0,
         db_path: db_path.to_str().unwrap().to_string(),
-        max_paste_size: 64,
+        max_paste_size: 20_000,
         auto_save_interval: 2000,
         auto_backup: false,
     };
     let (server, _locks) = test_server_for_config(config);
 
-    let at_limit = "a".repeat(64);
+    // Quote-heavy content expands close to 2x in JSON (`\"` per decoded byte).
+    let at_limit = "\"".repeat(20_000);
     let at_limit_response = server
         .post("/api/paste")
         .json(&json!({
-            "content": at_limit,
+            "content": at_limit.clone(),
             "name": "at-limit"
         }))
         .await;
     assert_eq!(at_limit_response.status_code(), StatusCode::OK);
+    let created: serde_json::Value = at_limit_response.json();
+    let paste_id = created["id"].as_str().unwrap();
 
-    let above_limit = "a".repeat(65);
+    let update_at_limit_response = server
+        .put(&format!("/api/paste/{}", paste_id))
+        .json(&json!({
+            "content": at_limit
+        }))
+        .await;
+    assert_eq!(update_at_limit_response.status_code(), StatusCode::OK);
+
+    let above_limit = "\"".repeat(20_001);
     let above_limit_response = server
         .post("/api/paste")
         .json(&json!({
-            "content": above_limit,
+            "content": above_limit.clone(),
             "name": "above-limit"
         }))
         .await;
     assert_eq!(above_limit_response.status_code(), StatusCode::BAD_REQUEST);
+
+    let update_above_limit_response = server
+        .put(&format!("/api/paste/{}", paste_id))
+        .json(&json!({
+            "content": above_limit
+        }))
+        .await;
+    assert_eq!(
+        update_above_limit_response.status_code(),
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn test_strict_cors_allows_ipv6_loopback_origin() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("strict-cors-ipv6.db");
+    let mut config = test_config_for_db_path(&db_path);
+    config.port = 4055;
+    let (server, _locks) = test_server_for_config(config);
+    let origin = "http://[::1]:4055";
+
+    let response = server.get("/api/pastes").add_header("origin", origin).await;
+
+    assert_eq!(response.status_code(), StatusCode::OK);
+    response.assert_header("access-control-allow-origin", origin);
 }
 
 #[tokio::test]
