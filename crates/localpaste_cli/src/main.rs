@@ -407,21 +407,24 @@ mod tests {
     use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
 
     #[test]
-    fn normalize_server_rewrites_http_localhost() {
-        let normalized = normalize_server(DEFAULT_CLI_SERVER_URL.to_string());
-        assert_eq!(normalized, format!("http://127.0.0.1:{}", DEFAULT_PORT));
-    }
-
-    #[test]
-    fn normalize_server_preserves_https_localhost() {
-        let normalized = normalize_server(format!("https://localhost:{}", DEFAULT_PORT));
-        assert_eq!(normalized, format!("https://localhost:{}", DEFAULT_PORT));
-    }
-
-    #[test]
-    fn normalize_server_trims_trailing_slash() {
-        let normalized = normalize_server(format!("http://127.0.0.1:{}/", DEFAULT_PORT));
-        assert_eq!(normalized, format!("http://127.0.0.1:{}", DEFAULT_PORT));
+    fn normalize_server_matrix() {
+        let cases = [
+            (
+                DEFAULT_CLI_SERVER_URL.to_string(),
+                format!("http://127.0.0.1:{}", DEFAULT_PORT),
+            ),
+            (
+                format!("https://localhost:{}", DEFAULT_PORT),
+                format!("https://localhost:{}", DEFAULT_PORT),
+            ),
+            (
+                format!("http://127.0.0.1:{}/", DEFAULT_PORT),
+                format!("http://127.0.0.1:{}", DEFAULT_PORT),
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(normalize_server(input), expected);
+        }
     }
 
     #[test]
@@ -447,58 +450,57 @@ mod tests {
     }
 
     #[test]
-    fn paste_id_and_name_extracts_expected_fields() {
-        let paste = serde_json::json!({
-            "id": "abc123",
-            "name": "demo"
-        });
-
-        assert_eq!(paste_id_and_name(&paste), Some(("abc123", "demo")));
+    fn paste_id_and_name_requires_both_fields() {
+        let cases = [
+            (
+                serde_json::json!({
+                    "id": "abc123",
+                    "name": "demo"
+                }),
+                Some(("abc123", "demo")),
+            ),
+            (
+                serde_json::json!({
+                    "id": "abc123"
+                }),
+                None,
+            ),
+        ];
+        for (paste, expected) in cases {
+            assert_eq!(paste_id_and_name(&paste), expected);
+        }
     }
 
     #[test]
-    fn paste_id_and_name_rejects_missing_fields() {
-        let paste = serde_json::json!({
-            "id": "abc123"
-        });
-
-        assert_eq!(paste_id_and_name(&paste), None);
-    }
-
-    #[test]
-    fn summary_output_honors_json_mode() {
+    fn json_output_helpers_preserve_payload_shape() {
         let pastes = vec![serde_json::json!({
             "id": "abc123",
             "name": "demo"
         })];
-        let rendered = format_summary_output(&pastes, true).expect("json output should render");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&rendered).expect("rendered output should be valid json");
-        assert_eq!(parsed[0]["id"], "abc123");
-        assert_eq!(parsed[0]["name"], "demo");
-    }
-
-    #[test]
-    fn get_output_honors_json_mode() {
         let paste = serde_json::json!({
             "id": "abc123",
             "name": "demo",
             "content": "hello"
         });
-        let rendered = format_get_output(&paste, true).expect("json output should render");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&rendered).expect("rendered output should be valid json");
-        assert_eq!(parsed["content"], "hello");
-    }
-
-    #[test]
-    fn delete_output_honors_json_mode() {
         let response = serde_json::json!({ "success": true });
-        let rendered =
-            format_delete_output("abc123", &response, true).expect("json output should render");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&rendered).expect("rendered output should be valid json");
-        assert_eq!(parsed["success"], true);
+
+        let summary_rendered =
+            format_summary_output(&pastes, true).expect("summary json output should render");
+        let summary_parsed: serde_json::Value =
+            serde_json::from_str(&summary_rendered).expect("rendered summary should be valid json");
+        assert_eq!(summary_parsed[0]["id"], "abc123");
+        assert_eq!(summary_parsed[0]["name"], "demo");
+
+        let get_rendered = format_get_output(&paste, true).expect("get json output should render");
+        let get_parsed: serde_json::Value =
+            serde_json::from_str(&get_rendered).expect("rendered get should be valid json");
+        assert_eq!(get_parsed["content"], "hello");
+
+        let delete_rendered = format_delete_output("abc123", &response, true)
+            .expect("delete json output should render");
+        let delete_parsed: serde_json::Value =
+            serde_json::from_str(&delete_rendered).expect("rendered delete should be valid json");
+        assert_eq!(delete_parsed["success"], true);
     }
 
     #[test]

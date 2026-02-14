@@ -111,25 +111,19 @@ mod tests {
     use super::{format_fenced_code_block, status_language_filter_label};
 
     #[test]
-    fn status_language_filter_label_prefers_active_filter() {
-        assert_eq!(
-            status_language_filter_label(Some("rust"), Some("python")),
-            "rust"
-        );
-    }
-
-    #[test]
-    fn status_language_filter_label_falls_back_to_selected_language() {
-        assert_eq!(status_language_filter_label(None, Some("python")), "python");
-    }
-
-    #[test]
-    fn status_language_filter_label_uses_any_when_unknown() {
-        assert_eq!(status_language_filter_label(None, None), "Any");
-        assert_eq!(
-            status_language_filter_label(Some("   "), Some("   ")),
-            "Any"
-        );
+    fn status_language_filter_label_resolution_matrix() {
+        let cases = [
+            (Some("rust"), Some("python"), "rust"),
+            (None, Some("python"), "python"),
+            (None, None, "Any"),
+            (Some("   "), Some("   "), "Any"),
+        ];
+        for (active_filter, selected_language, expected) in cases {
+            assert_eq!(
+                status_language_filter_label(active_filter, selected_language),
+                expected
+            );
+        }
     }
 
     #[test]

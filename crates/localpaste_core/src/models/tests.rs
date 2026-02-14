@@ -18,94 +18,53 @@ mod model_tests {
     }
 
     #[test]
-    fn test_paste_detect_language_python() {
-        let paste = paste::Paste::new(
-            "def main():\n    import sys\n    print('hello')".to_string(),
-            "test".to_string(),
-        );
-        assert_eq!(paste.language, Some("python".to_string()));
-    }
+    fn test_paste_detect_language_matrix() {
+        let cases = [
+            (
+                "python",
+                "def main():\n    import sys\n    print('hello')",
+                "python",
+            ),
+            (
+                "rust",
+                "fn main() {\n    let x = 5;\n    println!(\"hello\");\n}",
+                "rust",
+            ),
+            (
+                "javascript",
+                "const hello = () => {\n    console.log('hello');\n}",
+                "javascript",
+            ),
+            ("json", "{\n  \"name\": \"test\",\n  \"value\": 123\n}", "json"),
+            (
+                "csharp",
+                "using System;\nnamespace Demo {\n    public class Program {\n        public static void Main(string[] args) {\n            Console.WriteLine(\"hi\");\n        }\n    }\n}",
+                "csharp",
+            ),
+            (
+                "html",
+                "<!DOCTYPE html>\n<html>\n  <body>\n    <h1>Hello</h1>\n  </body>\n</html>",
+                "html",
+            ),
+            ("css", "body {\n  color: #333;\n  margin: 0;\n}", "css"),
+            (
+                "shell",
+                "#!/bin/bash\nname=$1\necho \"Hello ${name}\"",
+                "shell",
+            ),
+            ("toml", "[tool]\nname = \"demo\"\nversion = \"0.1.0\"", "toml"),
+            ("yaml", "name: demo\nservices:\n  - web\n  - worker", "yaml"),
+        ];
 
-    #[test]
-    fn test_paste_detect_language_rust() {
-        let paste = paste::Paste::new(
-            "fn main() {\n    let x = 5;\n    println!(\"hello\");\n}".to_string(),
-            "test".to_string(),
-        );
-        assert_eq!(paste.language, Some("rust".to_string()));
-    }
-
-    #[test]
-    fn test_paste_detect_language_javascript() {
-        let paste = paste::Paste::new(
-            "const hello = () => {\n    console.log('hello');\n}".to_string(),
-            "test".to_string(),
-        );
-        assert_eq!(paste.language, Some("javascript".to_string()));
-    }
-
-    #[test]
-    fn test_paste_detect_language_json() {
-        let paste = paste::Paste::new(
-            "{\n  \"name\": \"test\",\n  \"value\": 123\n}".to_string(),
-            "test".to_string(),
-        );
-        assert_eq!(paste.language, Some("json".to_string()));
-    }
-
-    #[test]
-    fn test_paste_detect_language_csharp() {
-        let paste = paste::Paste::new(
-            "using System;\nnamespace Demo {\n    public class Program {\n        public static void Main(string[] args) {\n            Console.WriteLine(\"hi\");\n        }\n    }\n}"
-                .to_string(),
-            "csharp".to_string(),
-        );
-        assert_eq!(paste.language, Some("csharp".to_string()));
-    }
-
-    #[test]
-    fn test_paste_detect_language_html() {
-        let paste = paste::Paste::new(
-            "<!DOCTYPE html>\n<html>\n  <body>\n    <h1>Hello</h1>\n  </body>\n</html>".to_string(),
-            "html".to_string(),
-        );
-        assert_eq!(paste.language, Some("html".to_string()));
-    }
-
-    #[test]
-    fn test_paste_detect_language_css() {
-        let paste = paste::Paste::new(
-            "body {\n  color: #333;\n  margin: 0;\n}".to_string(),
-            "css".to_string(),
-        );
-        assert_eq!(paste.language, Some("css".to_string()));
-    }
-
-    #[test]
-    fn test_paste_detect_language_shell() {
-        let paste = paste::Paste::new(
-            "#!/bin/bash\nname=$1\necho \"Hello ${name}\"".to_string(),
-            "shell".to_string(),
-        );
-        assert_eq!(paste.language, Some("shell".to_string()));
-    }
-
-    #[test]
-    fn test_paste_detect_language_toml() {
-        let paste = paste::Paste::new(
-            "[tool]\nname = \"demo\"\nversion = \"0.1.0\"".to_string(),
-            "toml".to_string(),
-        );
-        assert_eq!(paste.language, Some("toml".to_string()));
-    }
-
-    #[test]
-    fn test_paste_detect_language_yaml() {
-        let paste = paste::Paste::new(
-            "name: demo\nservices:\n  - web\n  - worker".to_string(),
-            "yaml".to_string(),
-        );
-        assert_eq!(paste.language, Some("yaml".to_string()));
+        for (name, content, expected_language) in cases {
+            let paste = paste::Paste::new(content.to_string(), name.to_string());
+            assert_eq!(
+                paste.language.as_deref(),
+                Some(expected_language),
+                "language detection mismatch for case '{}'",
+                name
+            );
+        }
     }
 
     #[test]
