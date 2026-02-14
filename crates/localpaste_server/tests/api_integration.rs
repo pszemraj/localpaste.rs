@@ -574,10 +574,12 @@ async fn test_max_paste_size_allows_exact_content_limit_with_json_overhead() {
 async fn test_strict_cors_allows_ipv6_loopback_origin() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("strict-cors-ipv6.db");
-    let config = test_config_for_db_path(&db_path);
+    let mut config = test_config_for_db_path(&db_path);
+    config.port = 4055;
     let (server, _locks) = test_server_for_config(config);
     let ipv6_origin = "http://[::1]:4055";
-    let ipv4_alias_origin = "http://127.0.0.2:9123";
+    let ipv4_alias_origin = "http://127.0.0.2:4055";
+    let mismatched_port_origin = "http://127.0.0.1:9123";
 
     let ipv6_response = server
         .get("/api/pastes")
@@ -592,6 +594,13 @@ async fn test_strict_cors_allows_ipv6_loopback_origin() {
         .await;
     assert_eq!(ipv4_alias_response.status_code(), StatusCode::OK);
     ipv4_alias_response.assert_header("access-control-allow-origin", ipv4_alias_origin);
+
+    let mismatched_port_response = server
+        .get("/api/pastes")
+        .add_header("origin", mismatched_port_origin)
+        .await;
+    assert_eq!(mismatched_port_response.status_code(), StatusCode::OK);
+    assert!(!mismatched_port_response.contains_header("access-control-allow-origin"));
 }
 
 #[tokio::test]
