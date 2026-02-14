@@ -4,7 +4,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use localpaste_core::DEFAULT_CLI_SERVER_URL;
 use serde_json::Value;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 
@@ -213,7 +213,80 @@ fn normalize_server(server: String) -> String {
     server
 }
 
-fn discovery_server_is_reachable(url: &reqwest::Url) -> bool {
+fn discovery_probe_response_looks_like_localpaste(response: &[u8]) -> bool {
+    let Some(headers_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return false;
+    };
+    let headers = String::from_utf8_lossy(&response[..headers_end]);
+    let mut lines = headers.split("\r\n");
+    let status = lines.next().unwrap_or_default();
+    if !(status.starts_with("HTTP/1.1 200") || status.starts_with("HTTP/1.0 200")) {
+        return false;
+    }
+
+    let mut has_json_content_type = false;
+    let mut has_nosniff = false;
+    let mut has_frame_deny = false;
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim().to_ascii_lowercase();
+        let value = value.trim().to_ascii_lowercase();
+        match name.as_str() {
+            "content-type" => {
+                if value.contains("application/json") {
+                    has_json_content_type = true;
+                }
+            }
+            "x-content-type-options" => {
+                if value == "nosniff" {
+                    has_nosniff = true;
+                }
+            }
+            "x-frame-options" => {
+                if value == "deny" {
+                    has_frame_deny = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    has_json_content_type && has_nosniff && has_frame_deny
+}
+
+fn discovery_probe_host_header(host: &str, port: u16, scheme: &str) -> String {
+    let default_port = match scheme {
+        "http" => 80,
+        "https" => 443,
+        _ => return host.to_string(),
+    };
+    let host = if host.contains(':') && !host.starts_with('[') && !host.ends_with(']') {
+        format!("[{}]", host)
+    } else {
+        host.to_string()
+    };
+    if port == default_port {
+        host
+    } else {
+        format!("{}:{}", host, port)
+    }
+}
+
+fn discovery_server_is_localpaste(url: &reqwest::Url) -> bool {
+    if !url.scheme().eq_ignore_ascii_case("http") {
+        return false;
+    }
+
+    let Ok(mut probe_url) = api_url(url.as_str(), &["api", "pastes", "meta"]) else {
+        return false;
+    };
+    probe_url.query_pairs_mut().append_pair("limit", "1");
+
     let Some(host) = url.host_str() else {
         return false;
     };
@@ -221,12 +294,37 @@ fn discovery_server_is_reachable(url: &reqwest::Url) -> bool {
         return false;
     };
 
+    let mut request_target = probe_url.path().to_string();
+    if request_target.is_empty() {
+        request_target.push('/');
+    }
+    if let Some(query) = probe_url.query() {
+        request_target.push('?');
+        request_target.push_str(query);
+    }
+    let host_header = discovery_probe_host_header(host, port, url.scheme());
+    let probe_request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
+        request_target, host_header
+    );
+
     let timeout = Duration::from_millis(250);
     let Ok(addrs) = (host, port).to_socket_addrs() else {
         return false;
     };
     for addr in addrs {
-        if std::net::TcpStream::connect_timeout(&addr, timeout).is_ok() {
+        let Ok(mut stream) = std::net::TcpStream::connect_timeout(&addr, timeout) else {
+            continue;
+        };
+        let _ = stream.set_read_timeout(Some(timeout));
+        let _ = stream.set_write_timeout(Some(timeout));
+        if stream.write_all(probe_request.as_bytes()).is_err() {
+            continue;
+        }
+        let mut response = Vec::new();
+        if stream.read_to_end(&mut response).is_ok()
+            && discovery_probe_response_looks_like_localpaste(&response)
+        {
             return true;
         }
     }
@@ -243,8 +341,9 @@ where
     if trimmed.is_empty() {
         return None;
     }
-    // Treat stale discovery entries as absent so the CLI can fall back
-    // to the default endpoint when the discovered server is no longer up.
+    // Treat stale or hijacked discovery entries as absent so the CLI can
+    // fall back to the default endpoint unless the discovered service
+    // positively identifies as a LocalPaste API.
     let url = reqwest::Url::parse(trimmed).ok()?;
     if !is_reachable(&url) {
         return None;
@@ -253,7 +352,7 @@ where
 }
 
 fn discovered_server_from_file() -> Option<String> {
-    discovered_server_from_file_with_reachability(discovery_server_is_reachable)
+    discovered_server_from_file_with_reachability(discovery_server_is_localpaste)
 }
 
 fn explicit_server_override(server: Option<String>) -> Option<String> {
@@ -462,7 +561,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        api_url, discovered_server_from_file_with_reachability, error_message_for_response,
+        api_url, discovered_server_from_file_with_reachability,
+        discovery_probe_response_looks_like_localpaste, error_message_for_response,
         format_delete_output, format_get_output, format_summary_output, normalize_server,
         paste_id_and_name, resolve_server,
     };
@@ -471,7 +571,11 @@ mod tests {
     use localpaste_core::config::api_addr_file_path_from_env_or_default;
     use localpaste_core::env::{env_lock, EnvGuard};
     use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
+    use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct DiscoveryTestEnv {
@@ -533,6 +637,72 @@ mod tests {
         let discovered = format!("http://{}", listener.local_addr().expect("listener addr"));
         env.write_discovery(discovered.as_str());
         (discovered, listener)
+    }
+
+    struct LocalpasteProbeServer {
+        shutdown_tx: mpsc::Sender<()>,
+        worker: Option<thread::JoinHandle<()>>,
+    }
+
+    impl LocalpasteProbeServer {
+        fn new(listener: TcpListener) -> Self {
+            let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
+            listener
+                .set_nonblocking(true)
+                .expect("set listener non-blocking");
+            let worker = thread::spawn(move || loop {
+                if shutdown_rx.try_recv().is_ok() {
+                    break;
+                }
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+                        let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+                        let mut request_buf = [0_u8; 1024];
+                        let _ = stream.read(&mut request_buf);
+                        let body = "[]";
+                        let response = format!(
+                            "{}{}",
+                            concat!(
+                                "HTTP/1.1 200 OK\r\n",
+                                "Content-Type: application/json\r\n",
+                                "X-Content-Type-Options: nosniff\r\n",
+                                "X-Frame-Options: DENY\r\n",
+                                "Content-Length: "
+                            ),
+                            body.len()
+                        );
+                        let response = format!("{}\r\nConnection: close\r\n\r\n{}", response, body);
+                        let _ = stream.write_all(response.as_bytes());
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            });
+            Self {
+                shutdown_tx,
+                worker: Some(worker),
+            }
+        }
+    }
+
+    impl Drop for LocalpasteProbeServer {
+        fn drop(&mut self) {
+            let _ = self.shutdown_tx.send(());
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    fn bind_localpaste_discovery(env: &DiscoveryTestEnv) -> (String, LocalpasteProbeServer) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let discovered = format!("http://{}", listener.local_addr().expect("listener addr"));
+        env.write_discovery(discovered.as_str());
+        let server = LocalpasteProbeServer::new(listener);
+        (discovered, server)
     }
 
     fn assert_resolve_server_falls_back_to_default(label: &str, discovery: &str) {
@@ -692,7 +862,7 @@ mod tests {
     #[test]
     fn resolve_server_uses_discovery_when_explicit_missing() {
         with_discovery_env("discovery", None, |env| {
-            let (discovered, _listener) = bind_reachable_discovery(env);
+            let (discovered, _server) = bind_localpaste_discovery(env);
             assert_eq!(resolve_server(None), discovered);
         });
     }
@@ -710,6 +880,14 @@ mod tests {
     }
 
     #[test]
+    fn resolve_server_falls_back_to_default_when_discovery_is_non_localpaste_service() {
+        with_discovery_env("non-localpaste", None, |env| {
+            let (_discovered, _listener) = bind_reachable_discovery(env);
+            assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
+        });
+    }
+
+    #[test]
     fn discovered_server_file_returns_none_when_reachability_check_fails() {
         with_discovery_env("stub-unreachable", None, |env| {
             env.write_discovery("http://127.0.0.1:45555");
@@ -721,9 +899,34 @@ mod tests {
     #[test]
     fn resolve_server_treats_blank_explicit_override_as_absent() {
         with_discovery_env("blank-explicit", None, |env| {
-            let (discovered, _listener) = bind_reachable_discovery(env);
+            let (discovered, _server) = bind_localpaste_discovery(env);
             assert_eq!(resolve_server(Some("   ".to_string())), discovered);
         });
+    }
+
+    #[test]
+    fn discovery_identity_probe_requires_localpaste_headers() {
+        let valid = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "X-Content-Type-Options: nosniff\r\n",
+            "X-Frame-Options: DENY\r\n",
+            "\r\n",
+            "[]"
+        )
+        .as_bytes();
+        assert!(discovery_probe_response_looks_like_localpaste(valid));
+
+        let missing_headers = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "\r\n",
+            "[]"
+        )
+        .as_bytes();
+        assert!(!discovery_probe_response_looks_like_localpaste(
+            missing_headers
+        ));
     }
 
     #[test]
