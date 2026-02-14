@@ -169,21 +169,7 @@ pub(super) fn handle_delete_folder(state: &mut WorkerState, id: String) {
             state
                 .locks
                 .begin_batch_mutation(affected_paste_ids.iter())
-                .map_err(|err| match err {
-                    localpaste_server::PasteLockError::Held { paste_id }
-                    | localpaste_server::PasteLockError::Mutating { paste_id } => {
-                        AppError::Locked(format!(
-                            "Folder delete would migrate locked paste '{}'; close it first.",
-                            paste_id
-                        ))
-                    }
-                    localpaste_server::PasteLockError::Poisoned => {
-                        AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
-                    }
-                    localpaste_server::PasteLockError::NotHeld { .. } => {
-                        AppError::StorageMessage(format!("Unexpected paste lock state: {}", err))
-                    }
-                })
+                .map_err(localpaste_server::locks::map_folder_delete_lock_error)
         });
 
     match delete_result {

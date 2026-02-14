@@ -30,6 +30,7 @@ Canonical build/run/validation command matrices are maintained in:
 
 - Security and environment variables: [docs/security.md](docs/security.md)
 - Service/background operation: [docs/deployment.md](docs/deployment.md)
+- Locking semantics (owner lock + paste edit locks): [docs/dev/locking-model.md](docs/dev/locking-model.md)
 - Documentation source-of-truth map: [docs/README.md](docs/README.md)
 
 ## License

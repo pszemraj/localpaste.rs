@@ -31,5 +31,8 @@ For perf validation steps/gates, use [gui-perf-protocol.md](gui-perf-protocol.md
 
 ## Edit Locks
 
-- Opening a paste in GUI acquires a lock against API/CLI mutation for that paste id.
-- Locked pastes reject both API `PUT` and API `DELETE` with `423 Locked` until the lock is released by the GUI holder.
+Detailed lock semantics are canonical in [locking-model.md](locking-model.md).
+GUI-specific behavior remains:
+
+- Opening a paste in GUI acquires a paste edit lock for the app instance owner.
+- API `PUT`/`DELETE` against that paste return `423 Locked` while the lock is held.

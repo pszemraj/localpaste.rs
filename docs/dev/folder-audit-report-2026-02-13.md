@@ -2,7 +2,8 @@
 
 Audit order executed: `B -> C -> E -> D -> F -> A`.
 
-Matrix artifact: `docs/dev/folder-audit-matrix-2026-02-13.md`.
+Matrix artifact:
+[folder-audit-matrix-2026-02-13.md](folder-audit-matrix-2026-02-13.md).
 
 ## Validation Gate Results
 
@@ -58,7 +59,7 @@ API/core smoke executed against isolated DB path:
 
 - Risk: divergent lock precheck behavior for folder delete across server and GUI backend.
 - Remediation:
-  - Removed duplicate implementations and centralized on `core::folder_ops::first_locked_paste_in_folder_delete_set`.
+  - Removed duplicate implementations and centralized on `core::folder_ops::delete_folder_tree_and_migrate_guarded`.
   - Server + GUI now both call the same helper before delete-tree migration.
 - File references:
   - `crates/localpaste_core/src/folder_ops.rs`
@@ -144,7 +145,7 @@ Dead/semantic-duplicate behavior reduced:
 
 ## Recommended Remediation Order for Any Future Folder Work
 
-1. Keep all new mutation paths on shared core helpers (`ensure_folder_assignable`, `first_locked_paste_in_folder_delete_set`, transaction ops).
+1. Keep all new mutation paths on shared core helpers (`ensure_folder_assignable`, `delete_folder_tree_and_migrate_guarded`, transaction ops).
 2. Add deterministic failpoint coverage before changing transaction sequencing.
 3. Preserve startup reconcile execution order (`meta reconcile -> folder marker clear/reconcile -> meta recheck`).
 4. Require parity tests when touching both API handlers and GUI backend worker.

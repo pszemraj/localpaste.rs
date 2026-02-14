@@ -13,6 +13,7 @@ Use these as canonical references. Other docs should link here instead of restat
 | Security posture + public exposure | [security.md](security.md) |
 | Service/background operation + lock recovery procedure | [deployment.md](deployment.md) |
 | Development workflow (build/run/test/debug) | [dev/devlog.md](dev/devlog.md) |
+| Locking behavior (DB owner lock + paste edit locks) | [dev/locking-model.md](dev/locking-model.md) |
 | API route behavior/response shape | [../crates/localpaste_server/src/handlers/paste.rs](../crates/localpaste_server/src/handlers/paste.rs) |
 | GUI runtime flags + behavior notes | [dev/gui-notes.md](dev/gui-notes.md) |
 | Rewrite parity status + merge gate | [dev/parity-checklist.md](dev/parity-checklist.md) |
@@ -41,6 +42,7 @@ When updating docs:
 
 - [Devlog](dev/devlog.md) - Canonical build/run/test/debug workflow for contributors.
 - [GUI notes](dev/gui-notes.md) - Rewrite GUI flags and behavior-specific implementation notes.
+- [Locking model](dev/locking-model.md) - Canonical lock semantics for owner lock and paste edit lock behavior.
 - [GUI perf protocol](dev/gui-perf-protocol.md) - Canonical GUI perf validation procedure and thresholds.
 - [Parity checklist](dev/parity-checklist.md) - Canonical rewrite parity/merge-gate tracking.
 - [Folder audit matrix (2026-02-13)](dev/folder-audit-matrix-2026-02-13.md) - Canonical folder mutation-path inventory with guard/error-contract coverage.

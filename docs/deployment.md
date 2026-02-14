@@ -43,6 +43,7 @@ pkill -f localpaste && pkill -f "cargo run" && sleep 2
 
 This section is the canonical operational guidance for lock recovery.
 Security policy context remains in [security.md](security.md).
+Lock behavior semantics are canonical in [dev/locking-model.md](dev/locking-model.md).
 
 - LocalPaste now uses a process-lifetime owner lock file (`db.owner.lock`) in the DB directory.
 - Startup acquires that owner lock before opening sled; a second writer on the same `DB_PATH` is rejected.

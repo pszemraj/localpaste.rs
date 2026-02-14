@@ -61,7 +61,7 @@ Codebase audit against this checklist found:
 - [x] Core extracted to `localpaste_core`
 - [x] API/CLI builds use core without GUI deps
 - [x] Default port updated + documented
-- [x] API update/delete lock enforcement (blocked when paste open in GUI)
+- [x] API update/delete lock enforcement (blocked when paste open in GUI; lock semantics are canonical in [locking-model.md](locking-model.md))
 
 ## Phase 2: Native App Skeleton (Current)
 

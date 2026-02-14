@@ -57,20 +57,6 @@ fn with_folder_metadata_response(response: Response, include_meta_shape_header: 
     }
 }
 
-fn map_paste_mutation_error(err: crate::PasteLockError) -> AppError {
-    match err {
-        crate::PasteLockError::Held { .. } | crate::PasteLockError::Mutating { .. } => {
-            AppError::Locked("Paste is currently open for editing.".to_string())
-        }
-        crate::PasteLockError::Poisoned => {
-            AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
-        }
-        crate::PasteLockError::NotHeld { .. } => {
-            AppError::StorageMessage(format!("Unexpected paste lock state: {}", err))
-        }
-    }
-}
-
 fn list_meta_response(
     state: &AppState,
     query: ListQuery,
@@ -252,10 +238,9 @@ pub async fn update_paste(
         }
     }
 
-    let _mutation_guard = state
-        .locks
-        .begin_mutation(&id)
-        .map_err(map_paste_mutation_error)?;
+    let _mutation_guard = state.locks.begin_mutation(&id).map_err(|err| {
+        crate::locks::map_paste_mutation_lock_error(err, "Paste is currently open for editing.")
+    })?;
     let updated = if req.folder_id.is_some() {
         // Explicit folder operations (including clear-to-unfiled) use CAS-backed
         // transaction logic to avoid stale-read folder count drift under concurrency.
@@ -302,10 +287,9 @@ pub async fn delete_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let _mutation_guard = state
-        .locks
-        .begin_mutation(&id)
-        .map_err(map_paste_mutation_error)?;
+    let _mutation_guard = state.locks.begin_mutation(&id).map_err(|err| {
+        crate::locks::map_paste_mutation_lock_error(err, "Paste is currently open for editing.")
+    })?;
     // Use transaction-like operation for atomic folder count update.
     // The helper derives folder ownership from the deleted record to avoid stale-folder races.
     let deleted = crate::db::TransactionOps::delete_paste_with_folder(&state.db, &id)?;

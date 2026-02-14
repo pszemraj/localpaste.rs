@@ -32,46 +32,6 @@ pub fn ensure_folder_assignable(db: &Database, folder_id: &str) -> Result<(), Ap
     Ok(())
 }
 
-/// Find the first locked paste that would be affected by deleting `root_folder_id`.
-///
-/// # Arguments
-/// - `db`: Open database handle.
-/// - `root_folder_id`: Folder deletion root.
-/// - `locked_ids`: Locked paste ids from the caller's lock manager.
-///
-/// # Returns
-/// `Some(paste_id)` when a locked paste would be migrated; otherwise `None`.
-///
-/// # Errors
-/// Returns [`AppError::NotFound`] when root folder does not exist, or storage errors.
-pub fn first_locked_paste_in_folder_delete_set<I>(
-    db: &Database,
-    root_folder_id: &str,
-    locked_ids: I,
-) -> Result<Option<String>, AppError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let folders = db.folders.list()?;
-    if !folders.iter().any(|folder| folder.id == root_folder_id) {
-        return Err(AppError::NotFound);
-    }
-
-    let delete_set: HashSet<String> = folder_delete_order(&folders, root_folder_id)
-        .into_iter()
-        .collect();
-    for locked_id in locked_ids {
-        if let Some(paste) = db.pastes.get(locked_id.as_str())? {
-            if let Some(folder_id) = paste.folder_id.as_ref() {
-                if delete_set.contains(folder_id) {
-                    return Ok(Some(locked_id));
-                }
-            }
-        }
-    }
-    Ok(None)
-}
-
 /// Returns `true` if assigning `folder_id` under `new_parent_id` introduces a cycle.
 ///
 /// # Arguments
@@ -181,44 +141,6 @@ where
     let affected_paste_ids = collect_affected_paste_ids_locked(db, &delete_order)?;
     let _external_guard = acquire_guard(&affected_paste_ids)?;
     delete_folder_tree_and_migrate_with_order_locked(db, delete_order)
-}
-
-/// Deletes a folder tree only when no currently locked paste would be migrated.
-///
-/// The lock check and folder delete run under the same folder transaction lock.
-///
-/// # Arguments
-/// - `db`: Open database handle.
-/// - `root_id`: Root folder id to delete.
-/// - `locked_ids`: Current lock snapshot from the caller's lock manager.
-///
-/// # Returns
-/// Deleted folder ids in execution order (children first, root last).
-///
-/// # Errors
-/// Returns [`AppError::Locked`] when a locked paste would be migrated,
-/// [`AppError::NotFound`] when `root_id` does not exist, or storage errors.
-pub fn delete_folder_tree_and_migrate_if_unlocked<I>(
-    db: &Database,
-    root_id: &str,
-    locked_ids: I,
-) -> Result<Vec<String>, AppError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let locked_set: HashSet<String> = locked_ids.into_iter().collect();
-    delete_folder_tree_and_migrate_guarded(db, root_id, |affected_paste_ids| {
-        if let Some(locked_id) = affected_paste_ids
-            .iter()
-            .find(|paste_id| locked_set.contains(paste_id.as_str()))
-        {
-            return Err(AppError::Locked(format!(
-                "Folder delete would migrate locked paste '{}'; close it first.",
-                locked_id
-            )));
-        }
-        Ok(())
-    })
 }
 
 fn folder_delete_order_for_root_locked(
@@ -381,28 +303,27 @@ pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-fn delete_reconcile_failpoint_slot() -> &'static std::sync::Mutex<bool> {
-    static SLOT: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
-    SLOT.get_or_init(|| std::sync::Mutex::new(false))
+thread_local! {
+    static DELETE_RECONCILE_FAILPOINT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
 pub(crate) fn set_delete_reconcile_failpoint(enabled: bool) {
-    let mut slot = delete_reconcile_failpoint_slot()
-        .lock()
-        .expect("delete reconcile failpoint lock poisoned");
-    *slot = enabled;
+    DELETE_RECONCILE_FAILPOINT.with(|slot| slot.set(enabled));
 }
 
 #[cfg(test)]
 fn maybe_inject_delete_reconcile_failpoint(db: &Database) -> Result<(), AppError> {
-    let mut slot = delete_reconcile_failpoint_slot()
-        .lock()
-        .expect("delete reconcile failpoint lock poisoned");
-    if !*slot {
+    let enabled = DELETE_RECONCILE_FAILPOINT.with(|slot| {
+        let enabled = slot.get();
+        if enabled {
+            slot.set(false);
+        }
+        enabled
+    });
+    if !enabled {
         return Ok(());
     }
-    *slot = false;
     let tree = db.db.open_tree("pastes")?;
     tree.insert(
         b"folder-delete-reconcile-failpoint-row",
@@ -415,7 +336,7 @@ fn maybe_inject_delete_reconcile_failpoint(db: &Database) -> Result<(), AppError
 mod tests {
     use super::*;
     use crate::{db::TransactionOps, models::paste::Paste};
-    use std::sync::{Arc, Barrier, Mutex, OnceLock};
+    use std::sync::{Arc, Barrier};
     use std::thread;
     use tempfile::TempDir;
 
@@ -432,11 +353,6 @@ mod tests {
         fn drop(&mut self) {
             set_delete_reconcile_failpoint(false);
         }
-    }
-
-    fn delete_reconcile_failpoint_test_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     #[test]
@@ -484,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_tree_if_unlocked_rejects_locked_descendant() {
+    fn delete_tree_guarded_rejects_locked_descendant() {
         let (db, _dir) = setup_db();
 
         let root = Folder::with_parent("root".to_string(), None);
@@ -494,8 +410,20 @@ mod tests {
         paste.folder_id = Some(root.id.clone());
         db.pastes.create(&paste).expect("create paste");
 
-        let err = delete_folder_tree_and_migrate_if_unlocked(&db, &root.id, vec![paste.id.clone()])
-            .expect_err("locked descendant should block delete");
+        let locked_ids = HashSet::from([paste.id.clone()]);
+        let err = delete_folder_tree_and_migrate_guarded(&db, &root.id, |affected_paste_ids| {
+            if let Some(locked_id) = affected_paste_ids
+                .iter()
+                .find(|paste_id| locked_ids.contains(paste_id.as_str()))
+            {
+                return Err::<(), AppError>(AppError::Locked(format!(
+                    "Folder delete would migrate locked paste '{}'; close it first.",
+                    locked_id
+                )));
+            }
+            Ok(())
+        })
+        .expect_err("locked descendant should block delete");
         assert!(
             matches!(err, AppError::Locked(_)),
             "expected locked error, got {err}"
@@ -709,9 +637,6 @@ mod tests {
 
     #[test]
     fn delete_tree_returns_success_when_post_commit_reconcile_fails() {
-        let _lock = delete_reconcile_failpoint_test_lock()
-            .lock()
-            .expect("delete reconcile failpoint test lock");
         let _guard = DeleteReconcileFailpointGuard;
         let (db, _dir) = setup_db();
 

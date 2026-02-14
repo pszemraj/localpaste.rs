@@ -1,5 +1,6 @@
 //! In-memory paste edit locks shared between GUI and API handlers.
 
+use crate::AppError;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Mutex, MutexGuard};
@@ -65,6 +66,55 @@ impl fmt::Display for PasteLockError {
 }
 
 impl std::error::Error for PasteLockError {}
+
+/// Map a mutation lock error into a user-facing application error.
+///
+/// # Arguments
+/// - `err`: Lock manager error from mutation guard acquisition.
+/// - `locked_message`: Message returned for held/mutating lock rejections.
+///
+/// # Returns
+/// A mapped [`AppError`] suitable for API/GUI surfaces.
+pub fn map_paste_mutation_lock_error(
+    err: PasteLockError,
+    locked_message: &'static str,
+) -> AppError {
+    match err {
+        PasteLockError::Held { .. } | PasteLockError::Mutating { .. } => {
+            AppError::Locked(locked_message.to_string())
+        }
+        PasteLockError::Poisoned => {
+            AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
+        }
+        PasteLockError::NotHeld { .. } => {
+            AppError::StorageMessage(format!("Unexpected paste lock state: {}", err))
+        }
+    }
+}
+
+/// Map folder-delete lock errors into a consistent lock-rejection contract.
+///
+/// # Arguments
+/// - `err`: Lock manager error from batch mutation guard acquisition.
+///
+/// # Returns
+/// A mapped [`AppError`] with a stable folder-delete lock message.
+pub fn map_folder_delete_lock_error(err: PasteLockError) -> AppError {
+    match err {
+        PasteLockError::Held { paste_id } | PasteLockError::Mutating { paste_id } => {
+            AppError::Locked(format!(
+                "Folder delete would migrate locked paste '{}'; close it first.",
+                paste_id
+            ))
+        }
+        PasteLockError::Poisoned => {
+            AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
+        }
+        PasteLockError::NotHeld { .. } => {
+            AppError::StorageMessage(format!("Unexpected paste lock state: {}", err))
+        }
+    }
+}
 
 #[derive(Default)]
 struct LockState {

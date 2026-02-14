@@ -55,6 +55,7 @@ To add a referrer policy, configure your reverse proxy or extend the Axum middle
 ### Lock Management Policy
 
 Operational lock-recovery procedures are canonical in [deployment.md](deployment.md).
+Lock behavior semantics are canonical in [dev/locking-model.md](dev/locking-model.md).
 Security expectation:
 
 - Treat uncertain lock ownership as unsafe.

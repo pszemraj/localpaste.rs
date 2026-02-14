@@ -91,8 +91,10 @@ Parity/release gate status is tracked in [parity-checklist.md](parity-checklist.
 
 ## API Summary (High-Level)
 
-Authoritative route wiring lives in `crates/localpaste_server/src/lib.rs`.
-Authoritative request/response behavior lives in `crates/localpaste_server/src/handlers/paste.rs`.
+Authoritative route wiring lives in
+[`crates/localpaste_server/src/lib.rs`](../../crates/localpaste_server/src/lib.rs).
+Authoritative request/response behavior lives in
+[`crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs).
 Use this section as orientation only and avoid copying route-by-route behavior here.
 
 Key shape expectations:
@@ -116,6 +118,7 @@ Lock recovery guidance (including what not to delete) lives in [docs/deployment.
 
 - Security defaults and public exposure: [docs/security.md](../security.md)
 - Service management: [docs/deployment.md](../deployment.md)
+- Lock behavior model: [locking-model.md](locking-model.md)
 - Perf protocol: [gui-perf-protocol.md](gui-perf-protocol.md)
 - Virtual editor rollout plan: [virtual-editor-plan.md](virtual-editor-plan.md)
 - Storage split follow-up: [storage-split-plan.md](storage-split-plan.md)

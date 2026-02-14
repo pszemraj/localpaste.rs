@@ -141,19 +141,7 @@ pub async fn delete_folder(
         state
             .locks
             .begin_batch_mutation(affected_paste_ids.iter())
-            .map_err(|err| match err {
-                crate::PasteLockError::Held { paste_id }
-                | crate::PasteLockError::Mutating { paste_id } => AppError::Locked(format!(
-                    "Folder delete would migrate locked paste '{}'; close it first.",
-                    paste_id
-                )),
-                crate::PasteLockError::Poisoned => {
-                    AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
-                }
-                crate::PasteLockError::NotHeld { .. } => {
-                    AppError::StorageMessage(format!("Unexpected paste lock state: {}", err))
-                }
-            })
+            .map_err(crate::locks::map_folder_delete_lock_error)
     })?;
 
     Ok(with_folder_deprecation_headers(Json(
