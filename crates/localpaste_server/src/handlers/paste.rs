@@ -57,6 +57,20 @@ fn with_folder_metadata_response(response: Response, include_meta_shape_header: 
     }
 }
 
+fn map_paste_mutation_error(err: crate::PasteLockError) -> AppError {
+    match err {
+        crate::PasteLockError::Held { .. } | crate::PasteLockError::Mutating { .. } => {
+            AppError::Locked("Paste is currently open for editing.".to_string())
+        }
+        crate::PasteLockError::Poisoned => {
+            AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
+        }
+        crate::PasteLockError::NotHeld { .. } => {
+            AppError::StorageMessage(format!("Unexpected paste lock state: {}", err))
+        }
+    }
+}
+
 fn list_meta_response(
     state: &AppState,
     query: ListQuery,
@@ -238,30 +252,33 @@ pub async fn update_paste(
         }
     }
 
-    let updated = state
+    let _mutation_guard = state
         .locks
-        .with_unlocked(&id, || {
-            if req.folder_id.is_some() {
-                // Explicit folder operations (including clear-to-unfiled) use CAS-backed
-                // transaction logic to avoid stale-read folder count drift under concurrency.
-                let new_folder_id =
-                    req.folder_id
-                        .clone()
-                        .and_then(|f| if f.is_empty() { None } else { Some(f) });
+        .begin_mutation(&id)
+        .map_err(map_paste_mutation_error)?;
+    let updated = if req.folder_id.is_some() {
+        // Explicit folder operations (including clear-to-unfiled) use CAS-backed
+        // transaction logic to avoid stale-read folder count drift under concurrency.
+        let new_folder_id =
+            req.folder_id
+                .clone()
+                .and_then(|f| if f.is_empty() { None } else { Some(f) });
 
-                crate::db::TransactionOps::move_paste_between_folders(
-                    &state.db,
-                    &id,
-                    new_folder_id.as_deref(),
-                    req,
-                )?
-                .ok_or(AppError::NotFound)
-            } else {
-                // folder_id not changing, just update the paste
-                state.db.pastes.update(&id, req)?.ok_or(AppError::NotFound)
-            }
-        })
-        .map_err(|_| AppError::Locked("Paste is currently open for editing.".to_string()))??;
+        crate::db::TransactionOps::move_paste_between_folders(
+            &state.db,
+            &id,
+            new_folder_id.as_deref(),
+            req,
+        )?
+        .ok_or(AppError::NotFound)?
+    } else {
+        // folder_id not changing, just update the paste
+        state
+            .db
+            .pastes
+            .update(&id, req)?
+            .ok_or(AppError::NotFound)?
+    };
 
     Ok(maybe_with_folder_deprecation_headers(
         Json(updated),
@@ -285,15 +302,13 @@ pub async fn delete_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    // Keep lock check + mutation atomic with respect to lock/unlock transitions.
-    let deleted = state
+    let _mutation_guard = state
         .locks
-        .with_unlocked(&id, || {
-            // Use transaction-like operation for atomic folder count update.
-            // The helper derives folder ownership from the deleted record to avoid stale-folder races.
-            crate::db::TransactionOps::delete_paste_with_folder(&state.db, &id)
-        })
-        .map_err(|_| AppError::Locked("Paste is currently open for editing.".to_string()))??;
+        .begin_mutation(&id)
+        .map_err(map_paste_mutation_error)?;
+    // Use transaction-like operation for atomic folder count update.
+    // The helper derives folder ownership from the deleted record to avoid stale-folder races.
+    let deleted = crate::db::TransactionOps::delete_paste_with_folder(&state.db, &id)?;
 
     if deleted {
         Ok(Json(serde_json::json!({ "success": true })))

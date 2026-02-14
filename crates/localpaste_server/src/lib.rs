@@ -11,7 +11,7 @@ pub mod locks;
 
 pub use embedded::EmbeddedServer;
 pub use localpaste_core::{config, db, models, naming, AppError, Config, Database, DEFAULT_PORT};
-pub use locks::PasteLockManager;
+pub use locks::{LockOwnerId, PasteLockError, PasteLockManager, PasteMutationGuard};
 
 use axum::{
     extract::DefaultBodyLimit,

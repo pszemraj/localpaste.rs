@@ -6,6 +6,7 @@ use crate::backend::{CoreCmd, CoreEvent};
 use chrono::Utc;
 use crossbeam_channel::{unbounded, Receiver, TryRecvError};
 use eframe::egui::TextBuffer;
+use localpaste_server::LockOwnerId;
 use syntect::util::LinesWithEndings;
 use tempfile::TempDir;
 
@@ -112,6 +113,7 @@ fn make_app() -> TestHarness {
         syntect: SyntectSettings::default(),
         db_path: db_path_str,
         locks,
+        lock_owner_id: LockOwnerId::new("test-owner".to_string()),
         _server: server,
         server_addr,
         server_used_fallback,

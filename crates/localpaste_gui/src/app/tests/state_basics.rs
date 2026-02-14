@@ -37,7 +37,11 @@ fn paste_missing_non_selected_removes_list_entry() {
 #[test]
 fn paste_load_failed_for_selected_clears_lock_and_selection() {
     let mut harness = make_app();
-    harness.app.locks.lock("alpha");
+    harness
+        .app
+        .locks
+        .acquire("alpha", &harness.app.lock_owner_id)
+        .expect("acquire alpha lock");
     harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
 
     harness.app.apply_event(CoreEvent::PasteLoadFailed {
@@ -46,7 +50,7 @@ fn paste_load_failed_for_selected_clears_lock_and_selection() {
     });
 
     assert!(
-        !harness.app.locks.is_locked("alpha"),
+        !harness.app.locks.is_locked("alpha").expect("is_locked"),
         "selected paste lock should be released on load failure"
     );
     assert!(harness.app.selected_id.is_none());
@@ -67,7 +71,11 @@ fn paste_load_failed_for_stale_id_does_not_unlock_current_selection() {
     let mut harness = make_app();
     harness.app.selected_id = Some("beta".to_string());
     harness.app.selected_paste = Some(Paste::new("beta".to_string(), "Beta".to_string()));
-    harness.app.locks.lock("beta");
+    harness
+        .app
+        .locks
+        .acquire("beta", &harness.app.lock_owner_id)
+        .expect("acquire beta lock");
     harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
 
     harness.app.apply_event(CoreEvent::PasteLoadFailed {
@@ -76,7 +84,7 @@ fn paste_load_failed_for_stale_id_does_not_unlock_current_selection() {
     });
 
     assert!(
-        harness.app.locks.is_locked("beta"),
+        harness.app.locks.is_locked("beta").expect("is_locked"),
         "stale load failure should not unlock current selection"
     );
     assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
@@ -139,11 +147,15 @@ fn editor_buffer_tracks_char_len() {
 #[test]
 fn delete_selected_keeps_lock_until_delete_event() {
     let mut harness = make_app();
-    harness.app.locks.lock("alpha");
-    assert!(harness.app.locks.is_locked("alpha"));
+    harness
+        .app
+        .locks
+        .acquire("alpha", &harness.app.lock_owner_id)
+        .expect("acquire alpha lock");
+    assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
 
     harness.app.delete_selected();
-    assert!(harness.app.locks.is_locked("alpha"));
+    assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
 
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::DeletePaste { id } => assert_eq!(id, "alpha"),
@@ -153,7 +165,7 @@ fn delete_selected_keeps_lock_until_delete_event() {
     harness.app.apply_event(CoreEvent::PasteDeleted {
         id: "alpha".to_string(),
     });
-    assert!(!harness.app.locks.is_locked("alpha"));
+    assert!(!harness.app.locks.is_locked("alpha").expect("is_locked"));
 }
 
 #[test]
@@ -171,11 +183,15 @@ fn paste_deleted_clears_pending_copy_action_for_deleted_id() {
 #[test]
 fn palette_delete_keeps_lock_until_delete_event() {
     let mut harness = make_app();
-    harness.app.locks.lock("alpha");
-    assert!(harness.app.locks.is_locked("alpha"));
+    harness
+        .app
+        .locks
+        .acquire("alpha", &harness.app.lock_owner_id)
+        .expect("acquire alpha lock");
+    assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
 
     harness.app.send_palette_delete("alpha".to_string());
-    assert!(harness.app.locks.is_locked("alpha"));
+    assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
 
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::DeletePaste { id } => assert_eq!(id, "alpha"),
@@ -185,7 +201,7 @@ fn palette_delete_keeps_lock_until_delete_event() {
     harness.app.apply_event(CoreEvent::PasteDeleted {
         id: "alpha".to_string(),
     });
-    assert!(!harness.app.locks.is_locked("alpha"));
+    assert!(!harness.app.locks.is_locked("alpha").expect("is_locked"));
 }
 
 #[test]
@@ -213,12 +229,14 @@ fn delete_selected_send_failure_keeps_lock_and_shows_error_status() {
         mut app,
         cmd_rx,
     } = make_app();
-    app.locks.lock("alpha");
+    app.locks
+        .acquire("alpha", &app.lock_owner_id)
+        .expect("acquire alpha lock");
     drop(cmd_rx);
 
     app.delete_selected();
 
-    assert!(app.locks.is_locked("alpha"));
+    assert!(app.locks.is_locked("alpha").expect("is_locked"));
     assert_eq!(
         app.status.as_ref().map(|status| status.text.as_str()),
         Some("Delete failed: backend unavailable.")
@@ -232,12 +250,14 @@ fn palette_delete_send_failure_keeps_lock_and_shows_error_status() {
         mut app,
         cmd_rx,
     } = make_app();
-    app.locks.lock("alpha");
+    app.locks
+        .acquire("alpha", &app.lock_owner_id)
+        .expect("acquire alpha lock");
     drop(cmd_rx);
 
     app.send_palette_delete("alpha".to_string());
 
-    assert!(app.locks.is_locked("alpha"));
+    assert!(app.locks.is_locked("alpha").expect("is_locked"));
     assert_eq!(
         app.status.as_ref().map(|status| status.text.as_str()),
         Some("Delete failed: backend unavailable.")
@@ -375,7 +395,7 @@ fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
     );
     assert!(app.pending_copy_action.is_none());
     assert!(
-        !app.locks.is_locked("alpha"),
+        !app.locks.is_locked("alpha").expect("is_locked"),
         "failed reselect should not leak a stale lock"
     );
     assert!(

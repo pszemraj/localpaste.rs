@@ -3,7 +3,7 @@
 use axum::http::StatusCode;
 use axum_test::TestServer;
 use localpaste_server::{
-    create_app, models::folder::Folder, AppState, Config, Database, PasteLockManager,
+    create_app, models::folder::Folder, AppState, Config, Database, LockOwnerId, PasteLockManager,
 };
 use serde_json::json;
 use std::path::Path;
@@ -440,9 +440,15 @@ async fn test_delete_folder_rejects_when_descendant_paste_is_locked() {
     assert_eq!(paste_response.status_code(), StatusCode::OK);
     let paste: serde_json::Value = paste_response.json();
     let paste_id = paste["id"].as_str().unwrap().to_string();
+    let owner_a = LockOwnerId::new("folder-owner-a".to_string());
+    let owner_b = LockOwnerId::new("folder-owner-b".to_string());
 
-    locks.lock(&paste_id);
-    locks.lock(&paste_id);
+    locks
+        .acquire(&paste_id, &owner_a)
+        .expect("owner a acquires");
+    locks
+        .acquire(&paste_id, &owner_b)
+        .expect("owner b acquires");
 
     let delete_locked_response = server.delete(&format!("/api/folder/{}", folder_id)).await;
     assert_eq!(delete_locked_response.status_code(), StatusCode::LOCKED);
@@ -453,13 +459,17 @@ async fn test_delete_folder_rejects_when_descendant_paste_is_locked() {
     let still_foldered_json: serde_json::Value = still_foldered.json();
     assert_eq!(still_foldered_json["folder_id"], folder_id);
 
-    locks.unlock(&paste_id);
+    locks
+        .release(&paste_id, &owner_a)
+        .expect("owner a releases");
 
     // One holder still remains, so delete should continue to be rejected.
     let delete_still_locked = server.delete(&format!("/api/folder/{}", folder_id)).await;
     assert_eq!(delete_still_locked.status_code(), StatusCode::LOCKED);
 
-    locks.unlock(&paste_id);
+    locks
+        .release(&paste_id, &owner_b)
+        .expect("owner b releases");
 
     let delete_after_unlock = server.delete(&format!("/api/folder/{}", folder_id)).await;
     assert_eq!(delete_after_unlock.status_code(), StatusCode::OK);
@@ -798,22 +808,32 @@ async fn test_delete_locked_paste_rejected() {
     assert_eq!(create_response.status_code(), StatusCode::OK);
     let paste: serde_json::Value = create_response.json();
     let paste_id = paste["id"].as_str().unwrap().to_string();
+    let owner_a = LockOwnerId::new("paste-owner-a".to_string());
+    let owner_b = LockOwnerId::new("paste-owner-b".to_string());
 
     // Lock it as if two GUI sessions have it open.
-    locks.lock(&paste_id);
-    locks.lock(&paste_id);
+    locks
+        .acquire(&paste_id, &owner_a)
+        .expect("owner a acquires");
+    locks
+        .acquire(&paste_id, &owner_b)
+        .expect("owner b acquires");
 
     // Attempt delete through API
     let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
     assert_eq!(delete_response.status_code(), StatusCode::LOCKED);
 
     // Releasing one holder should keep it locked.
-    locks.unlock(&paste_id);
+    locks
+        .release(&paste_id, &owner_a)
+        .expect("owner a releases");
     let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
     assert_eq!(delete_response.status_code(), StatusCode::LOCKED);
 
     // Unlock final holder and delete should work.
-    locks.unlock(&paste_id);
+    locks
+        .release(&paste_id, &owner_b)
+        .expect("owner b releases");
     let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
     assert_eq!(delete_response.status_code(), StatusCode::OK);
 }
@@ -832,8 +852,9 @@ async fn test_update_locked_paste_rejected() {
     assert_eq!(create_response.status_code(), StatusCode::OK);
     let paste: serde_json::Value = create_response.json();
     let paste_id = paste["id"].as_str().unwrap().to_string();
+    let owner = LockOwnerId::new("update-owner".to_string());
 
-    locks.lock(&paste_id);
+    locks.acquire(&paste_id, &owner).expect("owner acquires");
 
     let update_response = server
         .put(&format!("/api/paste/{}", paste_id))
@@ -843,7 +864,7 @@ async fn test_update_locked_paste_rejected() {
         .await;
     assert_eq!(update_response.status_code(), StatusCode::LOCKED);
 
-    locks.unlock(&paste_id);
+    locks.release(&paste_id, &owner).expect("owner releases");
 
     let update_response = server
         .put(&format!("/api/paste/{}", paste_id))

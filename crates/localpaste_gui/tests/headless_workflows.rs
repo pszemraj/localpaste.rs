@@ -7,7 +7,7 @@ use localpaste_core::{
 use localpaste_gui::backend::{
     spawn_backend, spawn_backend_with_locks, BackendHandle, CoreCmd, CoreEvent,
 };
-use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
+use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
 use ropey::Rope;
 use serde_json::json;
 use std::sync::{Arc, Barrier};
@@ -117,15 +117,20 @@ fn locked_paste_blocks_api_delete() {
     let paste = Paste::new("locked content".to_string(), "locked".to_string());
     let paste_id = paste.id.clone();
     env.db.pastes.create(&paste).expect("create paste");
+    let owner = LockOwnerId::new("delete-owner".to_string());
 
-    locks.lock(&paste_id);
+    locks
+        .acquire(&paste_id, &owner)
+        .expect("acquire lock for delete test");
 
     let client = reqwest::blocking::Client::new();
     let url = format!("http://{}/api/paste/{}", server.addr(), paste_id);
     let resp = client.delete(&url).send().expect("delete request");
     assert_eq!(resp.status(), reqwest::StatusCode::LOCKED);
 
-    locks.unlock(&paste_id);
+    locks
+        .release(&paste_id, &owner)
+        .expect("release lock for delete test");
 
     let resp = client.delete(&url).send().expect("delete request");
     assert!(resp.status().is_success());
@@ -140,8 +145,11 @@ fn locked_paste_blocks_api_update() {
     let paste = Paste::new("locked content".to_string(), "locked".to_string());
     let paste_id = paste.id.clone();
     env.db.pastes.create(&paste).expect("create paste");
+    let owner = LockOwnerId::new("update-owner".to_string());
 
-    locks.lock(&paste_id);
+    locks
+        .acquire(&paste_id, &owner)
+        .expect("acquire lock for update test");
 
     let client = reqwest::blocking::Client::new();
     let url = format!("http://{}/api/paste/{}", server.addr(), paste_id);
@@ -152,7 +160,9 @@ fn locked_paste_blocks_api_update() {
         .expect("update request");
     assert_eq!(resp.status(), reqwest::StatusCode::LOCKED);
 
-    locks.unlock(&paste_id);
+    locks
+        .release(&paste_id, &owner)
+        .expect("release lock for update test");
 
     let resp = client
         .put(&url)
@@ -209,7 +219,10 @@ fn locked_descendant_blocks_backend_folder_delete() {
         other => panic!("unexpected event: {:?}", other),
     }
 
-    locks.lock(&paste_id);
+    let owner = LockOwnerId::new("folder-owner".to_string());
+    locks
+        .acquire(&paste_id, &owner)
+        .expect("acquire lock for folder delete test");
     backend
         .cmd_tx
         .send(CoreCmd::DeleteFolder {

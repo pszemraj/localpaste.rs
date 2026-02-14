@@ -1,211 +1,383 @@
 //! In-memory paste edit locks shared between GUI and API handlers.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::sync::{Mutex, MutexGuard};
 
-/// Error returned when an operation requires an unlocked paste id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LockCheckError {
-    Locked,
+/// Stable owner id used to scope edit locks to a specific client/session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LockOwnerId(String);
+
+impl LockOwnerId {
+    /// Construct an owner id from a caller-provided identifier.
+    ///
+    /// # Returns
+    /// A new [`LockOwnerId`] wrapping the provided identifier.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Return this owner id as a string slice.
+    ///
+    /// # Returns
+    /// The underlying owner id as `&str`.
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
 }
 
-/// Tracks which paste ids are currently open for editing.
+impl fmt::Display for LockOwnerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Lock-manager runtime errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasteLockError {
+    /// A paste is currently held by one or more owners.
+    Held { paste_id: String },
+    /// A paste is currently under an active mutation guard.
+    Mutating { paste_id: String },
+    /// Release attempted by an owner that does not hold the paste.
+    NotHeld {
+        paste_id: String,
+        owner_id: LockOwnerId,
+    },
+    /// Internal mutex state is poisoned.
+    Poisoned,
+}
+
+impl fmt::Display for PasteLockError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Held { paste_id } => write!(f, "paste '{paste_id}' is currently locked"),
+            Self::Mutating { paste_id } => {
+                write!(f, "paste '{paste_id}' is currently being mutated")
+            }
+            Self::NotHeld { paste_id, owner_id } => write!(
+                f,
+                "owner '{owner_id}' does not hold lock for paste '{paste_id}'"
+            ),
+            Self::Poisoned => write!(f, "paste lock manager state is poisoned"),
+        }
+    }
+}
+
+impl std::error::Error for PasteLockError {}
+
+#[derive(Default)]
+struct LockState {
+    holders_by_paste: HashMap<String, HashSet<LockOwnerId>>,
+    mutating_pastes: HashSet<String>,
+}
+
+/// Tracks lock holders and in-flight mutation guards for paste ids.
 #[derive(Default)]
 pub struct PasteLockManager {
-    // Ref-count by paste id so independent lock holders do not clear each other.
-    inner: Mutex<HashMap<String, usize>>,
+    inner: Mutex<LockState>,
+}
+
+/// Guard marking one or more paste ids as under mutation.
+///
+/// While this guard is alive, lock acquisition on the guarded ids is rejected.
+pub struct PasteMutationGuard<'a> {
+    manager: &'a PasteLockManager,
+    paste_ids: Vec<String>,
+}
+
+impl Drop for PasteMutationGuard<'_> {
+    fn drop(&mut self) {
+        match self.manager.inner.lock() {
+            Ok(mut state) => {
+                for paste_id in &self.paste_ids {
+                    state.mutating_pastes.remove(paste_id);
+                }
+            }
+            Err(_) => {
+                tracing::error!(
+                    "Failed to clear mutation guard for {:?}: lock manager poisoned",
+                    self.paste_ids
+                );
+            }
+        }
+    }
 }
 
 impl PasteLockManager {
-    /// Mark a paste as locked for editing.
-    ///
-    /// # Panics
-    /// Panics if the internal lock mutex is poisoned.
-    pub fn lock(&self, id: &str) {
-        let mut guard = self.inner.lock().expect("paste lock manager poisoned");
-        *guard.entry(id.to_string()).or_insert(0) += 1;
+    fn state(&self) -> Result<MutexGuard<'_, LockState>, PasteLockError> {
+        self.inner.lock().map_err(|_| PasteLockError::Poisoned)
     }
 
-    /// Remove a paste lock.
+    /// Acquire an edit lock for `paste_id` on behalf of `owner_id`.
     ///
-    /// # Panics
-    /// Panics if the internal lock mutex is poisoned.
-    pub fn unlock(&self, id: &str) {
-        let mut guard = self.inner.lock().expect("paste lock manager poisoned");
-        let Some(count) = guard.get_mut(id) else {
-            return;
-        };
-        if *count > 1 {
-            *count -= 1;
-        } else {
-            guard.remove(id);
-        }
-    }
-
-    /// Check if a paste is currently locked.
-    ///
-    /// # Returns
-    /// `true` if the paste id is locked for editing.
-    ///
-    /// # Panics
-    /// Panics if the internal lock mutex is poisoned.
-    pub fn is_locked(&self, id: &str) -> bool {
-        let guard = self.inner.lock().expect("paste lock manager poisoned");
-        guard.contains_key(id)
-    }
-
-    /// Execute `operation` only when `id` is currently unlocked.
-    ///
-    /// The lock-manager mutex is held for the duration of `operation`, making
-    /// the unlocked-check and operation atomic with respect to lock/unlock calls.
+    /// Acquisition is idempotent for the same owner and paste.
     ///
     /// # Arguments
-    /// - `id`: Paste identifier that must be unlocked for the operation to run.
-    /// - `operation`: Closure executed while the lock-manager mutex is held.
+    /// - `paste_id`: Target paste id to lock.
+    /// - `owner_id`: Caller/session owner id.
     ///
     /// # Returns
-    /// - `Ok(T)` when `operation` ran.
-    /// - `Err(LockCheckError::Locked)` when `id` was already locked.
+    /// `Ok(())` when the lock is acquired (or already held by `owner_id`).
     ///
     /// # Errors
-    /// Returns [`LockCheckError::Locked`] when `id` is already locked.
-    ///
-    /// # Panics
-    /// Panics if the internal lock mutex is poisoned.
-    pub fn with_unlocked<T, F>(&self, id: &str, operation: F) -> Result<T, LockCheckError>
-    where
-        F: FnOnce() -> T,
-    {
-        let guard = self.inner.lock().expect("paste lock manager poisoned");
-        if guard.contains_key(id) {
-            return Err(LockCheckError::Locked);
+    /// Returns [`PasteLockError::Mutating`] when `paste_id` is currently under
+    /// mutation, or [`PasteLockError::Poisoned`] when lock state is poisoned.
+    pub fn acquire(&self, paste_id: &str, owner_id: &LockOwnerId) -> Result<(), PasteLockError> {
+        let mut state = self.state()?;
+        if state.mutating_pastes.contains(paste_id) {
+            return Err(PasteLockError::Mutating {
+                paste_id: paste_id.to_string(),
+            });
         }
-        let result = operation();
-        drop(guard);
-        Ok(result)
+        state
+            .holders_by_paste
+            .entry(paste_id.to_string())
+            .or_default()
+            .insert(owner_id.clone());
+        Ok(())
     }
 
-    /// Execute `operation` while blocking lock/unlock transitions.
-    ///
-    /// This helper snapshots locked ids and runs `operation` while the lock-table
-    /// mutex remains held. Use it for lock-sensitive operations that must stay
-    /// atomic with respect to lock/unlock calls.
+    /// Release an edit lock for `paste_id` held by `owner_id`.
     ///
     /// # Arguments
-    /// - `operation`: Closure receiving the current locked id snapshot.
+    /// - `paste_id`: Target paste id to unlock.
+    /// - `owner_id`: Caller/session owner id.
     ///
     /// # Returns
-    /// The closure return value.
+    /// `Ok(())` when the owner lock is released.
     ///
-    /// # Panics
-    /// Panics if the internal lock mutex is poisoned.
-    pub fn with_locked_ids<T, F>(&self, operation: F) -> T
-    where
-        F: FnOnce(Vec<String>) -> T,
-    {
-        let guard = self.inner.lock().expect("paste lock manager poisoned");
-        let ids = guard.keys().cloned().collect();
-        let result = operation(ids);
-        drop(guard);
-        result
+    /// # Errors
+    /// Returns [`PasteLockError::NotHeld`] when `owner_id` does not currently
+    /// hold `paste_id`, or [`PasteLockError::Poisoned`] when lock state is
+    /// poisoned.
+    pub fn release(&self, paste_id: &str, owner_id: &LockOwnerId) -> Result<(), PasteLockError> {
+        let mut state = self.state()?;
+        let Some(holders) = state.holders_by_paste.get_mut(paste_id) else {
+            return Err(PasteLockError::NotHeld {
+                paste_id: paste_id.to_string(),
+                owner_id: owner_id.clone(),
+            });
+        };
+        if !holders.remove(owner_id) {
+            return Err(PasteLockError::NotHeld {
+                paste_id: paste_id.to_string(),
+                owner_id: owner_id.clone(),
+            });
+        }
+        if holders.is_empty() {
+            state.holders_by_paste.remove(paste_id);
+        }
+        Ok(())
     }
 
-    /// Snapshot all currently locked paste ids.
+    /// Check whether a paste is currently held by one or more owners.
     ///
     /// # Returns
-    /// A cloned list of locked paste identifiers.
+    /// `Ok(true)` when at least one owner currently holds `paste_id`.
     ///
-    /// # Panics
-    /// Panics if the internal lock mutex is poisoned.
-    pub fn locked_ids(&self) -> Vec<String> {
-        let guard = self.inner.lock().expect("paste lock manager poisoned");
-        guard.keys().cloned().collect()
+    /// # Errors
+    /// Returns [`PasteLockError::Poisoned`] when lock state is poisoned.
+    pub fn is_locked(&self, paste_id: &str) -> Result<bool, PasteLockError> {
+        let state = self.state()?;
+        Ok(state
+            .holders_by_paste
+            .get(paste_id)
+            .map(|holders| !holders.is_empty())
+            .unwrap_or(false))
+    }
+
+    /// Begin a mutation guard for one paste id.
+    ///
+    /// # Returns
+    /// A guard that blocks new lock acquisition on `paste_id` until dropped.
+    ///
+    /// # Errors
+    /// Returns an error when `paste_id` is held, already mutating, or lock
+    /// state is poisoned.
+    pub fn begin_mutation(&self, paste_id: &str) -> Result<PasteMutationGuard<'_>, PasteLockError> {
+        self.begin_batch_mutation([paste_id])
+    }
+
+    /// Begin a mutation guard for multiple paste ids.
+    ///
+    /// Fails if any target id is currently held or already mutating.
+    ///
+    /// # Returns
+    /// A guard that blocks new lock acquisition on all provided paste ids until
+    /// dropped.
+    ///
+    /// # Errors
+    /// Returns an error when any target id is held, already mutating, or lock
+    /// state is poisoned.
+    pub fn begin_batch_mutation<'a, I>(
+        &'a self,
+        paste_ids: I,
+    ) -> Result<PasteMutationGuard<'a>, PasteLockError>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let mut deduped_ids = Vec::new();
+        let mut seen = HashSet::new();
+        for id in paste_ids {
+            let id = id.as_ref();
+            if seen.insert(id.to_string()) {
+                deduped_ids.push(id.to_string());
+            }
+        }
+
+        let mut state = self.state()?;
+        for paste_id in &deduped_ids {
+            if state.mutating_pastes.contains(paste_id) {
+                return Err(PasteLockError::Mutating {
+                    paste_id: paste_id.clone(),
+                });
+            }
+            if state
+                .holders_by_paste
+                .get(paste_id)
+                .map(|holders| !holders.is_empty())
+                .unwrap_or(false)
+            {
+                return Err(PasteLockError::Held {
+                    paste_id: paste_id.clone(),
+                });
+            }
+        }
+        for paste_id in &deduped_ids {
+            state.mutating_pastes.insert(paste_id.clone());
+        }
+        Ok(PasteMutationGuard {
+            manager: self,
+            paste_ids: deduped_ids,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::PasteLockManager;
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Barrier,
-    };
+    use super::{LockOwnerId, PasteLockError, PasteLockManager};
+    use std::sync::Arc;
     use std::thread;
-    use std::time::Duration;
 
-    #[test]
-    fn with_unlocked_runs_operation_when_id_is_unlocked() {
-        let locks = PasteLockManager::default();
-        let ran = locks.with_unlocked("alpha", || 42).expect("should run");
-        assert_eq!(ran, 42);
+    fn owner(id: &str) -> LockOwnerId {
+        LockOwnerId::new(id.to_string())
     }
 
     #[test]
-    fn with_unlocked_rejects_operation_when_id_is_locked() {
+    fn two_owner_lock_lifecycle_requires_each_owner_to_release() {
         let locks = PasteLockManager::default();
-        locks.lock("alpha");
-        let result = locks.with_unlocked("alpha", || "never-run");
-        assert!(result.is_err(), "locked id should reject operation");
+        let owner_a = owner("owner-a");
+        let owner_b = owner("owner-b");
+
+        locks.acquire("alpha", &owner_a).expect("owner-a acquires");
+        locks.acquire("alpha", &owner_b).expect("owner-b acquires");
+        assert!(locks.is_locked("alpha").expect("is_locked"));
+
+        locks.release("alpha", &owner_a).expect("owner-a releases");
+        assert!(
+            locks.is_locked("alpha").expect("is_locked"),
+            "lock should remain while owner-b still holds it"
+        );
+
+        locks.release("alpha", &owner_b).expect("owner-b releases");
+        assert!(
+            !locks.is_locked("alpha").expect("is_locked"),
+            "lock should clear after all owners release"
+        );
     }
 
     #[test]
-    fn with_unlocked_holds_mutex_for_operation_duration() {
+    fn acquire_is_idempotent_for_same_owner() {
+        let locks = PasteLockManager::default();
+        let owner_a = owner("owner-a");
+        locks.acquire("alpha", &owner_a).expect("first acquire");
+        locks
+            .acquire("alpha", &owner_a)
+            .expect("idempotent acquire should succeed");
+        assert!(locks.is_locked("alpha").expect("is_locked"));
+        locks.release("alpha", &owner_a).expect("release");
+        assert!(
+            !locks.is_locked("alpha").expect("is_locked"),
+            "single release should clear idempotent duplicate acquire"
+        );
+    }
+
+    #[test]
+    fn release_with_non_holder_owner_returns_typed_error() {
+        let locks = PasteLockManager::default();
+        let owner_a = owner("owner-a");
+        let owner_b = owner("owner-b");
+        locks.acquire("alpha", &owner_a).expect("owner-a acquires");
+
+        let err = locks
+            .release("alpha", &owner_b)
+            .expect_err("owner-b should not be able to release owner-a lock");
+        assert!(matches!(err, PasteLockError::NotHeld { .. }));
+        assert!(locks.is_locked("alpha").expect("is_locked"));
+    }
+
+    #[test]
+    fn begin_mutation_blocks_target_acquire_but_not_other_ids() {
+        let locks = PasteLockManager::default();
+        let owner_a = owner("owner-a");
+        let _guard = locks.begin_mutation("alpha").expect("begin mutation");
+
+        let blocked = locks
+            .acquire("alpha", &owner_a)
+            .expect_err("guarded id should reject acquire");
+        assert!(matches!(blocked, PasteLockError::Mutating { .. }));
+        locks
+            .acquire("beta", &owner_a)
+            .expect("other ids should remain acquirable");
+        assert!(locks.is_locked("beta").expect("is_locked"));
+    }
+
+    #[test]
+    fn begin_batch_mutation_blocks_only_affected_ids() {
+        let locks = PasteLockManager::default();
+        let owner_a = owner("owner-a");
+        let _guard = locks
+            .begin_batch_mutation(["alpha", "beta"])
+            .expect("begin batch mutation");
+
+        let blocked_alpha = locks.acquire("alpha", &owner_a).expect_err("alpha blocked");
+        assert!(matches!(blocked_alpha, PasteLockError::Mutating { .. }));
+        let blocked_beta = locks.acquire("beta", &owner_a).expect_err("beta blocked");
+        assert!(matches!(blocked_beta, PasteLockError::Mutating { .. }));
+        locks
+            .acquire("gamma", &owner_a)
+            .expect("gamma should not be blocked");
+        assert!(locks.is_locked("gamma").expect("is_locked"));
+    }
+
+    #[test]
+    fn methods_return_poisoned_error_instead_of_panicking() {
         let locks = Arc::new(PasteLockManager::default());
-        let entered = Arc::new(Barrier::new(2));
-        let release = Arc::new(Barrier::new(2));
+        let poison_target = Arc::clone(&locks);
+        let _ = thread::spawn(move || {
+            let _guard = poison_target.inner.lock().expect("inner lock");
+            panic!("poison lock manager");
+        })
+        .join();
 
-        let worker_locks = Arc::clone(&locks);
-        let worker_entered = Arc::clone(&entered);
-        let worker_release = Arc::clone(&release);
-        let worker = thread::spawn(move || {
-            worker_locks
-                .with_unlocked("alpha", || {
-                    worker_entered.wait();
-                    worker_release.wait();
-                })
-                .expect("operation should run while unlocked");
-        });
-
-        entered.wait();
-
-        let locker_locks = Arc::clone(&locks);
-        let lock_completed = Arc::new(AtomicBool::new(false));
-        let lock_completed_worker = Arc::clone(&lock_completed);
-        let locker = thread::spawn(move || {
-            locker_locks.lock("alpha");
-            lock_completed_worker.store(true, Ordering::SeqCst);
-        });
-
-        thread::sleep(Duration::from_millis(50));
-        assert!(
-            !lock_completed.load(Ordering::SeqCst),
-            "lock() should block while with_unlocked closure is executing"
-        );
-
-        release.wait();
-        worker.join().expect("worker join");
-        locker.join().expect("locker join");
-
-        assert!(lock_completed.load(Ordering::SeqCst));
-        assert!(locks.is_locked("alpha"));
-    }
-
-    #[test]
-    fn lock_is_reference_counted_per_paste_id() {
-        let locks = PasteLockManager::default();
-        locks.lock("alpha");
-        locks.lock("alpha");
-
-        locks.unlock("alpha");
-        assert!(
+        let owner_a = owner("owner-a");
+        assert!(matches!(
+            locks.acquire("alpha", &owner_a),
+            Err(PasteLockError::Poisoned)
+        ));
+        assert!(matches!(
+            locks.release("alpha", &owner_a),
+            Err(PasteLockError::Poisoned)
+        ));
+        assert!(matches!(
             locks.is_locked("alpha"),
-            "one unlock should not clear another active holder"
-        );
-
-        locks.unlock("alpha");
-        assert!(
-            !locks.is_locked("alpha"),
-            "lock should clear after all holders release"
-        );
+            Err(PasteLockError::Poisoned)
+        ));
+        assert!(matches!(
+            locks.begin_mutation("alpha"),
+            Err(PasteLockError::Poisoned)
+        ));
     }
 }

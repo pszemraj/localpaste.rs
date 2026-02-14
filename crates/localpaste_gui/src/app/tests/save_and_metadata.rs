@@ -780,7 +780,9 @@ fn on_exit_dispatches_dirty_save_and_drop_releases_selected_lock() {
     app.save_status = SaveStatus::Dirty;
     app.save_in_flight = false;
     app.last_edit_at = Some(Instant::now());
-    app.locks.lock("alpha");
+    app.locks
+        .acquire("alpha", &app.lock_owner_id)
+        .expect("acquire alpha lock");
     let locks = app.locks.clone();
 
     eframe::App::on_exit(&mut app, None);
@@ -794,7 +796,7 @@ fn on_exit_dispatches_dirty_save_and_drop_releases_selected_lock() {
     }
     drop(app);
     assert!(
-        !locks.is_locked("alpha"),
+        !locks.is_locked("alpha").expect("is_locked"),
         "drop should release the selected paste lock"
     );
 }

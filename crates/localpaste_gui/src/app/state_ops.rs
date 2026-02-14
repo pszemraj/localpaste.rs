@@ -522,9 +522,9 @@ impl LocalPasteApp {
         let id = paste.id.clone();
         if self.selected_id.as_deref() != Some(id.as_str()) {
             if let Some(prev) = self.selected_id.replace(id.clone()) {
-                self.locks.unlock(&prev);
+                self.release_paste_lock(prev.as_str());
             }
-            self.locks.lock(&id);
+            let _ = self.acquire_paste_lock(id.as_str());
         }
         self.sync_editor_metadata(&paste);
         self.selected_content.reset(paste.content.clone());
@@ -545,10 +545,13 @@ impl LocalPasteApp {
 
     fn apply_selection_now(&mut self, id: String) -> bool {
         if let Some(prev) = self.selected_id.take() {
-            self.locks.unlock(&prev);
+            self.release_paste_lock(prev.as_str());
         }
         self.selected_id = Some(id.clone());
-        self.locks.lock(&id);
+        if !self.acquire_paste_lock(id.as_str()) {
+            self.selected_id = None;
+            return false;
+        }
         self.selected_paste = None;
         self.edit_name.clear();
         self.edit_language = None;
@@ -596,7 +599,7 @@ impl LocalPasteApp {
             self.clear_pending_copy_for(pending.as_str());
         }
         if let Some(prev) = self.selected_id.take() {
-            self.locks.unlock(&prev);
+            self.release_paste_lock(prev.as_str());
         }
         self.selected_paste = None;
         self.edit_name.clear();

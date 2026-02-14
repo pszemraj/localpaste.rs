@@ -22,10 +22,11 @@ use highlight::{
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
-use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
+use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use style::*;
@@ -100,6 +101,7 @@ pub(crate) struct LocalPasteApp {
     syntect: SyntectSettings,
     db_path: String,
     locks: Arc<PasteLockManager>,
+    lock_owner_id: LockOwnerId,
     _server: EmbeddedServer,
     server_addr: SocketAddr,
     server_used_fallback: bool,
@@ -174,6 +176,12 @@ const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const VIRTUAL_OVERSCAN_LINES: usize = 3;
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
+
+fn next_lock_owner_id() -> LockOwnerId {
+    static NEXT_OWNER_SEQ: AtomicU64 = AtomicU64::new(1);
+    let seq = NEXT_OWNER_SEQ.fetch_add(1, Ordering::Relaxed);
+    LockOwnerId::new(format!("gui-{}-{}", std::process::id(), seq))
+}
 
 struct StatusMessage {
     text: String,
@@ -435,6 +443,7 @@ impl LocalPasteApp {
             syntect: SyntectSettings::default(),
             db_path,
             locks,
+            lock_owner_id: next_lock_owner_id(),
             _server: server,
             server_addr,
             server_used_fallback,
@@ -469,6 +478,30 @@ impl LocalPasteApp {
         };
         app.request_refresh();
         Ok(app)
+    }
+
+    fn acquire_paste_lock(&mut self, id: &str) -> bool {
+        match self.locks.acquire(id, &self.lock_owner_id) {
+            Ok(()) => true,
+            Err(err) => {
+                warn!(
+                    "failed to acquire paste lock '{}' for GUI owner: {}",
+                    id, err
+                );
+                self.set_status("Lock acquire failed; close and reopen the paste.");
+                false
+            }
+        }
+    }
+
+    fn release_paste_lock(&mut self, id: &str) {
+        if let Err(err) = self.locks.release(id, &self.lock_owner_id) {
+            warn!(
+                "failed to release paste lock '{}' for GUI owner: {}",
+                id, err
+            );
+            self.set_status("Lock release failed; restart app if edits remain blocked.");
+        }
     }
 
     fn trace_input(&self, frame: InputTraceFrame<'_>) {
@@ -941,7 +974,9 @@ impl eframe::App for LocalPasteApp {
 impl Drop for LocalPasteApp {
     fn drop(&mut self) {
         if let Some(id) = self.selected_id.take() {
-            self.locks.unlock(&id);
+            if let Err(err) = self.locks.release(&id, &self.lock_owner_id) {
+                warn!("failed to release paste lock '{}' on drop: {}", id, err);
+            }
         }
     }
 }
