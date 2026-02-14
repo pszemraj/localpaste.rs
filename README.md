@@ -42,4 +42,4 @@ Use these repository documents as the source of truth:
 - Security: [docs/security.md](docs/security.md)
 - Deployment: [docs/deployment.md](docs/deployment.md)
 - Development log and architecture notes: [docs/dev/devlog.md](docs/dev/devlog.md)
-- Contribution and automation protocol: [AGENTS.md](AGENTS.md)
+- Development workflow and validation loop: [docs/dev/devlog.md](docs/dev/devlog.md)

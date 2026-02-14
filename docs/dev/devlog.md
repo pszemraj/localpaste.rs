@@ -85,7 +85,8 @@ cargo run -p localpaste_tools --bin check-loc -- --max-lines 1000 --warn-lines 9
 # cargo test -p <crate>
 
 # 6) runtime smoke (server + CLI CRUD)
-# run the AGENTS.md smoke flow for localpaste + lpaste
+# run isolated server+CLI CRUD flow with localpaste + lpaste
+# (new -> list -> search -> get -> delete), then verify persistence across restart
 ```
 
 Parity/release gate status is tracked in [parity-checklist.md](parity-checklist.md).

@@ -58,6 +58,5 @@ Treat this file as the central documentation index. Use the docs below as canoni
 - Product and usage overview: [README.md](../README.md)
 - Security model and controls: [docs/security.md](security.md)
 - Deployment and operations: [docs/deployment.md](deployment.md)
-- Development decisions and change log: [docs/dev/devlog.md](dev/devlog.md)
-- Contributor/agent operating protocol: [AGENTS.md](../AGENTS.md)
+- Development workflow, decisions, and change log: [docs/dev/devlog.md](dev/devlog.md)
 Non-canonical notes (for example scratch/ files, historical plans, or assistant-specific prompts) should clearly link back to these pages instead of restating requirements.

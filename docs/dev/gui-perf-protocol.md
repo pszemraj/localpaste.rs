@@ -49,7 +49,7 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
 While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks.
-For standalone server-only smoke/perf validation, use AGENTS.md API/core smoke flow with `localpaste` + `lpaste`.
+For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](devlog.md) with `localpaste` + `lpaste`.
 
 ## Dataset Expectations
 
