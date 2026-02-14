@@ -1,7 +1,7 @@
 # Plan-Aligned Rewrite Checklist
 
 This checklist tracks rewrite phases and merge-gate readiness for the native rewrite.
-Implementation context and sequencing live in [virtual-editor-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/virtual-editor-plan.md).
+Implementation context and system boundaries live in [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md) and [devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 Strict parity is NOT required - we only port or replace behaviors that match the plan and desired UX.
 
 Status key:
@@ -51,7 +51,7 @@ Codebase audit against this checklist found:
 
 ## Phase 0: Baseline & Guardrails
 
-- [x] Headless perf baseline documented ([perf-baseline.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/perf-baseline.md))
+- [x] Headless perf baseline documented in the active protocol ([gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md))
 - [x] Test data generator supports full clear + large datasets
 - [x] Manual profiler panel (profile feature, no puffin_egui)
 - [x] CLI timing flag for API request baselines
@@ -97,7 +97,7 @@ Codebase audit against this checklist found:
 
 - Release-gate rule: all items in this section must be `[x]` before claiming default-mode reliability sign-off.
 - Current rollout note: virtual editor remains the default mode, but reliability sign-off is explicitly pending while any gate item is `[~]` or `[ ]`.
-- Tracked follow-up: [devlog deferred TODO](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md#deferred-todo-backlog-2026-02-13-cold-eyes-audit) includes the pending manual newline-burst highlight perf recheck.
+- Tracked follow-up: [engineering backlog](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md) includes the pending manual newline-burst highlight perf recheck.
 
 - [x] Clipboard reliability (`Ctrl/Cmd+C/X/V`) with external paste verification
 - [x] `Ctrl/Cmd+V` non-regression: when app window is active but editor is unfocused, paste creates a new paste and does not mutate current editor content

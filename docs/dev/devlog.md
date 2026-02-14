@@ -4,6 +4,7 @@ This is the primary development workflow document.
 For topic-specific details, link to the canonical docs in [docs/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md).
 This is the canonical source for binary/build/run command matrices.
 Other docs should link here instead of repeating command matrices.
+System architecture context lives in [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md).
 
 ## Workspace Layout
 
@@ -118,28 +119,17 @@ Lock recovery guidance (including what not to delete) lives in [docs/deployment.
 
 ## Related Docs
 
+- System architecture: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
 - Security defaults and public exposure: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
 - Service management: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
 - Lock behavior model: [locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
 - Perf protocol: [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)
-- Virtual editor rollout plan: [virtual-editor-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/virtual-editor-plan.md)
 - Storage split follow-up: [storage-split-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/storage-split-plan.md)
 - Rewrite parity checklist: [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
+- Engineering backlog: [backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
 - Folder audit matrix (2026-02-13): [folder-audit-matrix-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-matrix-2026-02-13.md)
 - Folder audit report (2026-02-13): [folder-audit-report-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-report-2026-02-13.md)
 
-## Deferred TODO Backlog (2026-02-13 Cold-Eyes Audit)
+## Backlog
 
-- [ ] Split `LocalPasteApp` into domain state groups (`EditorState`, `HighlightState`, `SearchState`, `UiState`) to reduce coupling and simplify test harness construction.
-- [ ] Extract the virtual input-routing/control-flow block from `LocalPasteApp::update` into a dedicated per-frame input pipeline API.
-- [ ] Add CI-friendly perf microbench coverage (list-from-metadata and highlight/layout path) to catch algorithmic regressions earlier than manual perf runs.
-- [ ] Evaluate post-sled storage options (`redb` and `rusqlite`) and document migration constraints around current CAS-style folder/paste update paths.
-- [ ] Revisit backend query cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
-- [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or fully retired now that owner-lock probing is the primary lock-safety mechanism.
-- [ ] Replace `PasteDb` `update_and_fetch` closure side-channel error handling with an explicit CAS-oriented update pipeline (no no-op closure writes on serialization errors).
-- [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR` for validation builds/tests).
-- [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)) and flip parity checklist gate from `[~]` to `[x]`.
-- [ ] Enforce key/value identity checks for canonical paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
-- [ ] Narrow `PasteDb` mutation API so folder assignment changes cannot bypass folder-count transaction paths.
-- [ ] Track folder-count decrement failures with a persistent repair marker and run opportunistic `reconcile_folder_invariants` recovery in long-lived processes.
-- [ ] Add an explicit runtime reconcile entrypoint/scheduler for metadata indexes so degraded states are repaired without restart.
+Deferred technical work is tracked in [backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md).
