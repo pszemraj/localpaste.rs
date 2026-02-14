@@ -77,10 +77,13 @@ cargo clippy --workspace --all-targets --all-features
 # 3) full compile check
 cargo check --workspace --all-targets --all-features
 
-# 4) targeted tests for touched areas
+# 4) LoC policy check
+cargo run -p localpaste_tools --bin check-loc -- --max-lines 1000 --warn-lines 900
+
+# 5) targeted tests for touched areas
 # cargo test -p <crate>
 
-# 5) runtime smoke (server + CLI CRUD)
+# 6) runtime smoke (server + CLI CRUD)
 # run the AGENTS.md smoke flow for localpaste + lpaste
 ```
 
