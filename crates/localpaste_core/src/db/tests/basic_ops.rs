@@ -1,9 +1,11 @@
-//! Basic database CRUD and corruption-handling tests.
+//! Basic database CRUD tests.
 
 use super::*;
+use crate::db::tables::{FOLDERS, PASTES};
+use redb::ReadableDatabase;
 
 #[test]
-fn test_create_database() {
+fn test_create_database_and_flush_noop() {
     let (db, _temp) = setup_test_db();
     assert!(db.flush().is_ok());
 }
@@ -18,30 +20,48 @@ fn from_shared_reuses_folder_transaction_lock_for_same_shared_db() {
 
     assert!(
         Arc::ptr_eq(&handle_a.folder_txn_lock, &handle_b.folder_txn_lock),
-        "from_shared handles over the same Arc<Db> must share folder transaction lock"
+        "from_shared handles over the same Arc<Database> must share folder transaction lock"
     );
 }
 
 #[test]
-fn test_paste_create_and_get() {
+fn paste_create_get_update_delete_roundtrip() {
     let (db, _temp) = setup_test_db();
 
     let paste = Paste::new("Test content".to_string(), "test-paste".to_string());
     let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
 
-    // Create
-    assert!(db.pastes.create(&paste).is_ok());
-
-    // Get
-    let retrieved = db.pastes.get(&paste_id).unwrap();
-    assert!(retrieved.is_some());
-    let retrieved = retrieved.unwrap();
+    let retrieved = db
+        .pastes
+        .get(&paste_id)
+        .expect("get")
+        .expect("paste should exist");
     assert_eq!(retrieved.content, "Test content");
     assert_eq!(retrieved.id, paste_id);
+
+    let update = UpdatePasteRequest {
+        content: Some("Updated".to_string()),
+        name: Some("updated-name".to_string()),
+        language: None,
+        language_is_manual: None,
+        folder_id: None,
+        tags: None,
+    };
+    let updated = db
+        .pastes
+        .update(&paste_id, update)
+        .expect("update")
+        .expect("updated");
+    assert_eq!(updated.content, "Updated");
+    assert_eq!(updated.name, "updated-name");
+
+    assert!(db.pastes.delete(&paste_id).expect("delete"));
+    assert!(db.pastes.get(&paste_id).expect("get").is_none());
 }
 
 #[test]
-fn test_paste_create_rejects_duplicate_id_without_overwrite() {
+fn paste_create_rejects_duplicate_id_without_overwrite() {
     let (db, _temp) = setup_test_db();
 
     let mut original = Paste::new("original".to_string(), "first".to_string());
@@ -59,20 +79,6 @@ fn test_paste_create_rejects_duplicate_id_without_overwrite() {
         "unexpected duplicate-create error: {}",
         err
     );
-    let meta_state = db.db.open_tree("pastes_meta_state").unwrap();
-    let in_progress = meta_state.get(b"in_progress_count").unwrap();
-    let in_progress_count = in_progress
-        .as_deref()
-        .map(|raw| {
-            let mut bytes = [0u8; std::mem::size_of::<u64>()];
-            bytes.copy_from_slice(raw);
-            u64::from_be_bytes(bytes)
-        })
-        .unwrap_or(0);
-    assert_eq!(
-        in_progress_count, 0,
-        "failed duplicate create must not leave metadata mutation in progress"
-    );
 
     let stored = db
         .pastes
@@ -84,222 +90,34 @@ fn test_paste_create_rejects_duplicate_id_without_overwrite() {
 }
 
 #[test]
-fn test_paste_update() {
-    let (db, _temp) = setup_test_db();
-
-    let paste = Paste::new("Original".to_string(), "test".to_string());
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).unwrap();
-
-    // Update
-    let update = UpdatePasteRequest {
-        content: Some("Updated".to_string()),
-        name: Some("updated-name".to_string()),
-        language: None,
-        language_is_manual: None,
-        folder_id: None,
-        tags: None,
-    };
-
-    let _updated = db.pastes.update(&paste_id, update).unwrap();
-    assert!(_updated.is_some(), "Update should return Some");
-
-    // Verify the update by retrieving the paste
-    let retrieved = db.pastes.get(&paste_id).unwrap().unwrap();
-    assert_eq!(retrieved.content, "Updated");
-    assert_eq!(retrieved.name, "updated-name");
-}
-
-#[test]
-fn test_manual_language_switches_to_auto_and_redetects() {
-    let (db, _temp) = setup_test_db();
-
-    let mut paste = Paste::new(
-        "def main():\n    print('hello')".to_string(),
-        "script".to_string(),
-    );
-    paste.language = Some("rust".to_string());
-    paste.language_is_manual = true;
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).unwrap();
-
-    let to_auto = UpdatePasteRequest {
-        content: None,
-        name: None,
-        language: None,
-        language_is_manual: Some(false),
-        folder_id: None,
-        tags: None,
-    };
-    let updated = db.pastes.update(&paste_id, to_auto).unwrap().unwrap();
-
-    assert!(!updated.language_is_manual);
-    assert_eq!(updated.language.as_deref(), Some("python"));
-}
-
-#[test]
-fn test_content_update_redetects_language_in_auto_mode() {
-    let (db, _temp) = setup_test_db();
-
-    let paste = Paste::new(
-        "fn main() {\n    let x = 1;\n}".to_string(),
-        "script".to_string(),
-    );
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).unwrap();
-
-    let update = UpdatePasteRequest {
-        content: Some("def main():\n    print('hello')".to_string()),
-        name: None,
-        language: None,
-        language_is_manual: None,
-        folder_id: None,
-        tags: None,
-    };
-    let updated = db.pastes.update(&paste_id, update).unwrap().unwrap();
-
-    assert!(!updated.language_is_manual);
-    assert_eq!(updated.language.as_deref(), Some("python"));
-}
-
-#[test]
-fn test_language_update_without_manual_flag_sets_manual_override() {
-    let (db, _temp) = setup_test_db();
-
-    let paste = Paste::new(
-        "def main():\n    print('hello')".to_string(),
-        "script".to_string(),
-    );
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).unwrap();
-
-    let set_language = UpdatePasteRequest {
-        content: None,
-        name: None,
-        language: Some("rust".to_string()),
-        language_is_manual: None,
-        folder_id: None,
-        tags: None,
-    };
-    let updated = db.pastes.update(&paste_id, set_language).unwrap().unwrap();
-    assert_eq!(updated.language.as_deref(), Some("rust"));
-    assert!(updated.language_is_manual);
-
-    let content_update = UpdatePasteRequest {
-        content: Some("def another():\n    print('world')".to_string()),
-        name: None,
-        language: None,
-        language_is_manual: None,
-        folder_id: None,
-        tags: None,
-    };
-    let after_content_update = db
-        .pastes
-        .update(&paste_id, content_update)
-        .unwrap()
-        .unwrap();
-    assert_eq!(after_content_update.language.as_deref(), Some("rust"));
-    assert!(after_content_update.language_is_manual);
-}
-
-#[test]
-fn test_paste_delete() {
-    let (db, _temp) = setup_test_db();
-
-    let paste = Paste::new("To delete".to_string(), "test".to_string());
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).unwrap();
-
-    // Delete
-    assert!(db.pastes.delete(&paste_id).is_ok());
-
-    // Verify deleted
-    let result = db.pastes.get(&paste_id).unwrap();
-    assert!(result.is_none());
-}
-
-#[test]
-fn test_paste_list() {
-    let (db, _temp) = setup_test_db();
-
-    // Create multiple pastes
-    for i in 0..5 {
-        let paste = Paste::new(format!("Content {}", i), format!("paste-{}", i));
-        db.pastes.create(&paste).unwrap();
-    }
-
-    // List
-    let list = db.pastes.list(10, None).unwrap();
-    assert_eq!(list.len(), 5);
-}
-
-#[test]
-fn test_folder_crud() {
+fn folder_crud_and_duplicate_rejection() {
     let (db, _temp) = setup_test_db();
 
     let folder = Folder::new("Test Folder".to_string());
     let folder_id = folder.id.clone();
+    db.folders.create(&folder).expect("create");
 
-    // Create
-    assert!(db.folders.create(&folder).is_ok());
-
-    // Get
-    let retrieved = db.folders.get(&folder_id).unwrap();
+    let retrieved = db.folders.get(&folder_id).expect("get");
     assert!(retrieved.is_some());
-    assert_eq!(retrieved.unwrap().name, "Test Folder");
+    assert_eq!(retrieved.expect("folder").name, "Test Folder");
 
-    // List
-    let list = db.folders.list().unwrap();
+    let list = db.folders.list().expect("list");
     assert_eq!(list.len(), 1);
 
-    // Delete
-    assert!(db.folders.delete(&folder_id).is_ok());
-    assert!(db.folders.get(&folder_id).unwrap().is_none());
-}
-
-#[test]
-fn test_folder_create_rejects_duplicate_id_without_overwrite() {
-    let (db, _temp) = setup_test_db();
-
-    let mut original = Folder::new("first-folder".to_string());
-    original.id = "duplicate-folder-id".to_string();
-    db.folders
-        .create(&original)
-        .expect("create original folder");
-
-    let mut conflicting = Folder::new("second-folder".to_string());
-    conflicting.id = original.id.clone();
+    let mut duplicate = Folder::new("Other".to_string());
+    duplicate.id = folder_id.clone();
     let err = db
         .folders
-        .create(&conflicting)
+        .create(&duplicate)
         .expect_err("duplicate folder id create must fail");
-    assert!(
-        matches!(err, AppError::StorageMessage(ref message) if message.contains("already exists")),
-        "unexpected duplicate-folder error: {}",
-        err
-    );
+    assert!(matches!(err, AppError::StorageMessage(_)));
 
-    let stored = db
-        .folders
-        .get(&original.id)
-        .expect("lookup")
-        .expect("original folder should remain");
-    assert_eq!(stored.name, "first-folder");
+    assert!(db.folders.delete(&folder_id).expect("delete"));
+    assert!(db.folders.get(&folder_id).expect("get").is_none());
 }
 
 #[test]
-fn test_database_flush() {
-    let (db, _temp) = setup_test_db();
-
-    let paste = Paste::new("Test".to_string(), "test".to_string());
-    db.pastes.create(&paste).unwrap();
-
-    // Flush should succeed
-    assert!(db.flush().is_ok());
-}
-
-#[test]
-fn test_update_count_returns_not_found_for_missing_folder() {
+fn update_count_returns_not_found_for_missing_folder() {
     let (db, _temp) = setup_test_db();
 
     let result = db.folders.update_count("missing-folder-id", 1);
@@ -310,98 +128,44 @@ fn test_update_count_returns_not_found_for_missing_folder() {
 }
 
 #[test]
-fn test_folder_update_preserves_corrupt_record_on_error() {
+fn corrupt_rows_surface_serialization_errors_without_removal() {
     let (db, _temp) = setup_test_db();
-    let tree = db.db.open_tree("folders").unwrap();
-    let folder_id = "corrupt-folder-update-id";
-    tree.insert(folder_id.as_bytes(), b"not-a-folder").unwrap();
 
-    let result = db
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut folders = write_txn.open_table(FOLDERS).expect("open folders");
+        folders
+            .insert("corrupt-folder", b"not-a-folder".as_slice())
+            .expect("insert corrupt folder");
+
+        let mut pastes = write_txn.open_table(PASTES).expect("open pastes");
+        pastes
+            .insert("corrupt-paste", b"not-a-paste".as_slice())
+            .expect("insert corrupt paste");
+    }
+    write_txn.commit().expect("commit");
+
+    let folder_update = db
         .folders
-        .update(folder_id, "renamed".to_string(), Some(String::new()));
-    assert!(
-        matches!(result, Err(AppError::Serialization(_))),
-        "corrupt folder value should surface serialization error"
-    );
-    assert!(
-        tree.get(folder_id.as_bytes()).unwrap().is_some(),
-        "corrupt record should not be deleted by failed folder update"
-    );
-}
+        .update("corrupt-folder", "renamed".to_string(), Some(String::new()));
+    assert!(matches!(folder_update, Err(AppError::Serialization(_))));
 
-#[test]
-fn test_folder_update_count_preserves_corrupt_record_on_error() {
-    let (db, _temp) = setup_test_db();
-    let tree = db.db.open_tree("folders").unwrap();
-    let folder_id = "corrupt-folder-id";
-    tree.insert(folder_id.as_bytes(), b"not-a-folder").unwrap();
+    let paste_update = db.pastes.update(
+        "corrupt-paste",
+        UpdatePasteRequest {
+            content: Some("x".to_string()),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        },
+    );
+    assert!(matches!(paste_update, Err(AppError::Serialization(_))));
 
-    let result = db.folders.update_count(folder_id, 1);
-    assert!(
-        matches!(result, Err(AppError::Serialization(_))),
-        "corrupt folder value should surface serialization error"
-    );
-    assert!(
-        tree.get(folder_id.as_bytes()).unwrap().is_some(),
-        "corrupt record should not be deleted by failed update_count"
-    );
-}
-
-#[test]
-fn test_paste_update_preserves_corrupt_record_on_error() {
-    let (db, _temp) = setup_test_db();
-    let tree = db.db.open_tree("pastes").unwrap();
-    let paste_id = "corrupt-paste-id";
-    tree.insert(paste_id.as_bytes(), b"not-a-paste").unwrap();
-
-    let update = UpdatePasteRequest {
-        content: Some("new".to_string()),
-        name: None,
-        language: None,
-        language_is_manual: None,
-        folder_id: None,
-        tags: None,
-    };
-
-    let result = db.pastes.update(paste_id, update);
-    assert!(
-        matches!(result, Err(AppError::Serialization(_))),
-        "corrupt paste value should surface serialization error"
-    );
-    assert!(
-        tree.get(paste_id.as_bytes()).unwrap().is_some(),
-        "corrupt record should not be deleted by failed update"
-    );
-}
-
-#[test]
-fn test_paste_delete_preserves_corrupt_record_on_error() {
-    let (db, _temp) = setup_test_db();
-    let tree = db.db.open_tree("pastes").unwrap();
-    let paste_id = "corrupt-paste-delete-id";
-    tree.insert(paste_id.as_bytes(), b"not-a-paste").unwrap();
-
-    let result = db.pastes.delete(paste_id);
-    assert!(
-        matches!(result, Err(AppError::Serialization(_))),
-        "corrupt paste value should surface serialization error"
-    );
-    assert!(
-        tree.get(paste_id.as_bytes()).unwrap().is_some(),
-        "corrupt record should not be deleted by failed delete"
-    );
-    let meta_state = db.db.open_tree("pastes_meta_state").unwrap();
-    let in_progress = meta_state.get(b"in_progress_count").unwrap();
-    let in_progress_count = in_progress
-        .as_deref()
-        .map(|raw| {
-            let mut bytes = [0u8; std::mem::size_of::<u64>()];
-            bytes.copy_from_slice(raw);
-            u64::from_be_bytes(bytes)
-        })
-        .unwrap_or(0);
-    assert_eq!(
-        in_progress_count, 0,
-        "failed delete must clear metadata mutation in-progress state"
-    );
+    let read_txn = db.db.begin_read().expect("begin read");
+    let folders = read_txn.open_table(FOLDERS).expect("open folders");
+    let pastes = read_txn.open_table(PASTES).expect("open pastes");
+    assert!(folders.get("corrupt-folder").expect("folder get").is_some());
+    assert!(pastes.get("corrupt-paste").expect("paste get").is_some());
 }

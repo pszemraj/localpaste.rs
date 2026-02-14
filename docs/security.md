@@ -60,7 +60,7 @@ Lock behavior semantics are canonical in [docs/dev/locking-model.md](https://git
 Security expectation:
 
 - Treat uncertain lock ownership as unsafe.
-- Do not classify "probe/tooling unavailable" as "safe to force unlock".
+- Do not run multiple writers against the same `DB_PATH`.
 
 ## Public Exposure (Not Recommended)
 

@@ -45,19 +45,18 @@ lsof -i :38411
 # lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
 
-Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown and can require lock recovery.
+Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
 
-### Lock Safety And Force Unlock
+### Lock Safety
 
-This section is the canonical operational guidance for lock recovery.
+This section is the canonical operational guidance for writer coordination.
 Security policy context remains in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
 Lock behavior semantics are canonical in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
 
 - LocalPaste uses a process-lifetime owner lock file (`db.owner.lock`) in the DB directory.
-- Startup acquires that owner lock before opening sled; a second writer on the same `DB_PATH` is rejected.
-- `--force-unlock` is conservative by default and refuses uncertain ownership states.
-- Use `--force-unlock` only after all LocalPaste processes are confirmed stopped and a backup has been taken.
-- Prefer changing `DB_PATH` for isolated tests over forcing unlock on a shared working directory.
+- Startup acquires that owner lock before opening redb; a second writer on the same `DB_PATH` is rejected.
+- There is no `--force-unlock` mode. Stop the owning process and retry.
+- Prefer changing `DB_PATH` for isolated tests over sharing one working directory.
 
 ## Linux (systemd)
 
