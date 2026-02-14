@@ -112,25 +112,6 @@ fn save_metadata_now_auto_language_clears_override_without_folder_edits() {
 }
 
 #[test]
-fn metadata_save_success_clears_dirty_state_on_ack() {
-    let mut harness = make_app();
-    harness.app.metadata_dirty = true;
-    harness.app.edit_name = "Acked".to_string();
-    harness.app.save_metadata_now();
-    let _ = recv_cmd(&harness.cmd_rx);
-
-    let mut paste = Paste::new("content".to_string(), "Acked".to_string());
-    paste.id = "alpha".to_string();
-    harness.app.apply_event(CoreEvent::PasteMetaSaved {
-        paste: paste.clone(),
-    });
-
-    assert!(!harness.app.metadata_dirty);
-    assert!(!harness.app.metadata_save_in_flight);
-    assert_eq!(harness.app.edit_name, "Acked");
-}
-
-#[test]
 fn metadata_save_during_active_search_forces_fresh_backend_search() {
     let mut harness = make_app();
     harness.app.search_query = "alpha".to_string();
@@ -536,71 +517,97 @@ fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() 
 }
 
 #[test]
-fn metadata_ack_preserves_newer_local_edits_typed_after_dispatch() {
-    let mut harness = make_app();
-    harness.app.metadata_dirty = true;
-    harness.app.edit_name = "Initial Name".to_string();
-    harness.app.edit_language = Some("python".to_string());
-    harness.app.edit_language_is_manual = true;
-    harness.app.edit_tags = "alpha,beta".to_string();
-    harness.app.save_metadata_now();
-    let _ = recv_cmd(&harness.cmd_rx);
-    assert!(harness.app.metadata_save_in_flight);
+fn metadata_ack_outcomes_depend_on_local_draft_divergence() {
+    struct MetadataAckCase<'a> {
+        initial_name: &'a str,
+        initial_language: Option<&'a str>,
+        initial_tags_csv: &'a str,
+        local_name_after_dispatch: Option<&'a str>,
+        local_tags_after_dispatch: Option<&'a str>,
+        ack_name: &'a str,
+        ack_language: Option<&'a str>,
+        ack_tags: &'a [&'a str],
+        expect_dirty: bool,
+        expected_edit_name: &'a str,
+        expected_edit_tags: &'a str,
+        expected_selected_name: &'a str,
+    }
 
-    harness.app.edit_name = "Locally Newer Name".to_string();
-    harness.app.edit_tags = "alpha,beta,gamma".to_string();
-    harness.app.metadata_dirty = true;
+    let cases = [
+        MetadataAckCase {
+            initial_name: "Initial Name",
+            initial_language: Some("python"),
+            initial_tags_csv: "alpha,beta",
+            local_name_after_dispatch: Some("Locally Newer Name"),
+            local_tags_after_dispatch: Some("alpha,beta,gamma"),
+            ack_name: "Initial Name",
+            ack_language: Some("python"),
+            ack_tags: &["alpha", "beta"],
+            expect_dirty: true,
+            expected_edit_name: "Locally Newer Name",
+            expected_edit_tags: "alpha,beta,gamma",
+            expected_selected_name: "Initial Name",
+        },
+        MetadataAckCase {
+            initial_name: "Acked",
+            initial_language: Some("rust"),
+            initial_tags_csv: "one,two",
+            local_name_after_dispatch: None,
+            local_tags_after_dispatch: None,
+            ack_name: "Acked",
+            ack_language: Some("rust"),
+            ack_tags: &["one", "two"],
+            expect_dirty: false,
+            expected_edit_name: "Acked",
+            expected_edit_tags: "one, two",
+            expected_selected_name: "Acked",
+        },
+    ];
 
-    let mut ack = Paste::new("content".to_string(), "Initial Name".to_string());
-    ack.id = "alpha".to_string();
-    ack.language = Some("python".to_string());
-    ack.language_is_manual = true;
-    ack.tags = vec!["alpha".to_string(), "beta".to_string()];
-    harness
-        .app
-        .apply_event(CoreEvent::PasteMetaSaved { paste: ack });
+    for case in cases {
+        let mut harness = make_app();
+        harness.app.metadata_dirty = true;
+        harness.app.edit_name = case.initial_name.to_string();
+        harness.app.edit_language = case.initial_language.map(str::to_string);
+        harness.app.edit_language_is_manual = case.initial_language.is_some();
+        harness.app.edit_tags = case.initial_tags_csv.to_string();
+        harness.app.save_metadata_now();
+        let _ = recv_cmd(&harness.cmd_rx);
+        assert!(harness.app.metadata_save_in_flight);
 
-    assert!(!harness.app.metadata_save_in_flight);
-    assert!(harness.app.metadata_save_request.is_none());
-    assert!(harness.app.metadata_dirty);
-    assert_eq!(harness.app.edit_name, "Locally Newer Name");
-    assert_eq!(harness.app.edit_tags, "alpha,beta,gamma");
-    assert_eq!(
+        if let Some(local_name) = case.local_name_after_dispatch {
+            harness.app.edit_name = local_name.to_string();
+        }
+        if let Some(local_tags) = case.local_tags_after_dispatch {
+            harness.app.edit_tags = local_tags.to_string();
+        }
+        if case.local_name_after_dispatch.is_some() || case.local_tags_after_dispatch.is_some() {
+            harness.app.metadata_dirty = true;
+        }
+
+        let mut ack = Paste::new("content".to_string(), case.ack_name.to_string());
+        ack.id = "alpha".to_string();
+        ack.language = case.ack_language.map(str::to_string);
+        ack.language_is_manual = case.ack_language.is_some();
+        ack.tags = case.ack_tags.iter().map(|tag| (*tag).to_string()).collect();
         harness
             .app
-            .selected_paste
-            .as_ref()
-            .map(|paste| paste.name.as_str()),
-        Some("Initial Name")
-    );
-}
+            .apply_event(CoreEvent::PasteMetaSaved { paste: ack });
 
-#[test]
-fn metadata_ack_clears_dirty_state_when_draft_matches_dispatched_request() {
-    let mut harness = make_app();
-    harness.app.metadata_dirty = true;
-    harness.app.edit_name = "Acked".to_string();
-    harness.app.edit_language = Some("rust".to_string());
-    harness.app.edit_language_is_manual = true;
-    harness.app.edit_tags = "one,two".to_string();
-    harness.app.save_metadata_now();
-    let _ = recv_cmd(&harness.cmd_rx);
-    assert!(harness.app.metadata_save_in_flight);
-
-    let mut ack = Paste::new("content".to_string(), "Acked".to_string());
-    ack.id = "alpha".to_string();
-    ack.language = Some("rust".to_string());
-    ack.language_is_manual = true;
-    ack.tags = vec!["one".to_string(), "two".to_string()];
-    harness
-        .app
-        .apply_event(CoreEvent::PasteMetaSaved { paste: ack });
-
-    assert!(!harness.app.metadata_dirty);
-    assert!(!harness.app.metadata_save_in_flight);
-    assert!(harness.app.metadata_save_request.is_none());
-    assert_eq!(harness.app.edit_name, "Acked");
-    assert_eq!(harness.app.edit_tags, "one, two");
+        assert_eq!(harness.app.metadata_dirty, case.expect_dirty);
+        assert!(!harness.app.metadata_save_in_flight);
+        assert!(harness.app.metadata_save_request.is_none());
+        assert_eq!(harness.app.edit_name, case.expected_edit_name);
+        assert_eq!(harness.app.edit_tags, case.expected_edit_tags);
+        assert_eq!(
+            harness
+                .app
+                .selected_paste
+                .as_ref()
+                .map(|paste| paste.name.as_str()),
+            Some(case.expected_selected_name)
+        );
+    }
 }
 
 #[test]
@@ -642,6 +649,14 @@ fn select_paste_metadata_dirty_defers_switch_until_meta_save_ack() {
 #[test]
 fn select_loaded_paste_keeps_current_selection_when_new_lock_acquire_fails() {
     let mut harness = make_app();
+    let baseline_selected_id = harness.app.selected_id.clone().expect("selected id");
+    let baseline_selected_content = harness.app.selected_content.as_str().to_string();
+    let baseline_selected_paste_id = harness
+        .app
+        .selected_paste
+        .as_ref()
+        .map(|paste| paste.id.clone())
+        .expect("selected paste");
     harness
         .app
         .all_pastes
@@ -655,15 +670,21 @@ fn select_loaded_paste_keeps_current_selection_when_new_lock_acquire_fails() {
     beta.id = "beta".to_string();
     harness.app.select_loaded_paste(beta);
 
-    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
-    assert_eq!(harness.app.selected_content.as_str(), "content");
+    assert_eq!(
+        harness.app.selected_id.as_deref(),
+        Some(baseline_selected_id.as_str())
+    );
+    assert_eq!(
+        harness.app.selected_content.as_str(),
+        baseline_selected_content.as_str()
+    );
     assert_eq!(
         harness
             .app
             .selected_paste
             .as_ref()
             .map(|paste| paste.id.as_str()),
-        Some("alpha")
+        Some(baseline_selected_paste_id.as_str())
     );
     assert_eq!(
         harness
@@ -759,50 +780,53 @@ fn paste_saved_during_active_search_forces_fresh_backend_search() {
 }
 
 #[test]
-fn save_now_send_failure_restores_dirty_state() {
-    let TestHarness {
-        _dir: _guard,
-        mut app,
-        cmd_rx,
-    } = make_app();
-    drop(cmd_rx);
+fn save_dispatch_send_failure_restores_dirty_state_for_manual_and_autosave_paths() {
+    struct SaveFailureCase<'a> {
+        content: &'a str,
+        trigger_autosave: bool,
+        expected_status: &'a str,
+    }
 
-    app.selected_content.reset("manual-save".to_string());
-    app.save_status = SaveStatus::Dirty;
-    app.save_in_flight = false;
-    app.save_now();
+    let cases = [
+        SaveFailureCase {
+            content: "manual-save",
+            trigger_autosave: false,
+            expected_status: "Save failed: backend unavailable.",
+        },
+        SaveFailureCase {
+            content: "auto-save",
+            trigger_autosave: true,
+            expected_status: "Autosave failed: backend unavailable.",
+        },
+    ];
 
-    assert!(matches!(app.save_status, SaveStatus::Dirty));
-    assert!(!app.save_in_flight);
-    assert!(app.last_edit_at.is_some());
-    assert_eq!(
-        app.status.as_ref().map(|status| status.text.as_str()),
-        Some("Save failed: backend unavailable.")
-    );
-}
+    for case in cases {
+        let TestHarness {
+            _dir: _guard,
+            mut app,
+            cmd_rx,
+        } = make_app();
+        drop(cmd_rx);
 
-#[test]
-fn autosave_send_failure_restores_dirty_state() {
-    let TestHarness {
-        _dir: _guard,
-        mut app,
-        cmd_rx,
-    } = make_app();
-    drop(cmd_rx);
+        app.selected_content.reset(case.content.to_string());
+        app.save_status = SaveStatus::Dirty;
+        app.save_in_flight = false;
 
-    app.selected_content.reset("auto-save".to_string());
-    app.save_status = SaveStatus::Dirty;
-    app.save_in_flight = false;
-    app.last_edit_at = Some(Instant::now() - app.autosave_delay - Duration::from_millis(5));
-    app.maybe_autosave();
+        if case.trigger_autosave {
+            app.last_edit_at = Some(Instant::now() - app.autosave_delay - Duration::from_millis(5));
+            app.maybe_autosave();
+        } else {
+            app.save_now();
+        }
 
-    assert!(matches!(app.save_status, SaveStatus::Dirty));
-    assert!(!app.save_in_flight);
-    assert!(app.last_edit_at.is_some());
-    assert_eq!(
-        app.status.as_ref().map(|status| status.text.as_str()),
-        Some("Autosave failed: backend unavailable.")
-    );
+        assert!(matches!(app.save_status, SaveStatus::Dirty));
+        assert!(!app.save_in_flight);
+        assert!(app.last_edit_at.is_some());
+        assert_eq!(
+            app.status.as_ref().map(|status| status.text.as_str()),
+            Some(case.expected_status)
+        );
+    }
 }
 
 #[test]

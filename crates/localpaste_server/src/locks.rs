@@ -414,37 +414,50 @@ mod tests {
     }
 
     #[test]
-    fn begin_mutation_blocks_target_acquire_but_not_other_ids() {
-        let locks = PasteLockManager::default();
-        let owner_a = owner("owner-a");
-        let _guard = locks.begin_mutation("alpha").expect("begin mutation");
+    fn mutation_guards_block_only_guarded_ids_for_single_and_batch_paths() {
+        enum GuardCase<'a> {
+            Single(&'a str),
+            Batch([&'a str; 2]),
+        }
 
-        let blocked = locks
-            .acquire("alpha", &owner_a)
-            .expect_err("guarded id should reject acquire");
-        assert!(matches!(blocked, PasteLockError::Mutating { .. }));
-        locks
-            .acquire("beta", &owner_a)
-            .expect("other ids should remain acquirable");
-        assert!(locks.is_locked("beta").expect("is_locked"));
-    }
+        let cases = [
+            GuardCase::Single("alpha"),
+            GuardCase::Batch(["alpha", "beta"]),
+        ];
 
-    #[test]
-    fn begin_batch_mutation_blocks_only_affected_ids() {
-        let locks = PasteLockManager::default();
-        let owner_a = owner("owner-a");
-        let _guard = locks
-            .begin_batch_mutation(["alpha", "beta"])
-            .expect("begin batch mutation");
+        for case in cases {
+            let locks = PasteLockManager::default();
+            let owner_a = owner("owner-a");
 
-        let blocked_alpha = locks.acquire("alpha", &owner_a).expect_err("alpha blocked");
-        assert!(matches!(blocked_alpha, PasteLockError::Mutating { .. }));
-        let blocked_beta = locks.acquire("beta", &owner_a).expect_err("beta blocked");
-        assert!(matches!(blocked_beta, PasteLockError::Mutating { .. }));
-        locks
-            .acquire("gamma", &owner_a)
-            .expect("gamma should not be blocked");
-        assert!(locks.is_locked("gamma").expect("is_locked"));
+            match case {
+                GuardCase::Single(guarded_id) => {
+                    let _guard = locks.begin_mutation(guarded_id).expect("begin mutation");
+                    let blocked = locks
+                        .acquire(guarded_id, &owner_a)
+                        .expect_err("guarded id should reject acquire");
+                    assert!(matches!(blocked, PasteLockError::Mutating { .. }));
+                    locks
+                        .acquire("beta", &owner_a)
+                        .expect("other ids should remain acquirable");
+                    assert!(locks.is_locked("beta").expect("is_locked"));
+                }
+                GuardCase::Batch(guarded_ids) => {
+                    let _guard = locks
+                        .begin_batch_mutation(guarded_ids)
+                        .expect("begin batch mutation");
+                    for guarded_id in guarded_ids {
+                        let blocked = locks
+                            .acquire(guarded_id, &owner_a)
+                            .expect_err("guarded id should be blocked");
+                        assert!(matches!(blocked, PasteLockError::Mutating { .. }));
+                    }
+                    locks
+                        .acquire("gamma", &owner_a)
+                        .expect("unguarded ids should remain acquirable");
+                    assert!(locks.is_locked("gamma").expect("is_locked"));
+                }
+            }
+        }
     }
 
     #[test]

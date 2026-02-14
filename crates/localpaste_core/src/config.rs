@@ -229,23 +229,26 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn parse_env_flag_accepts_truthy_values() {
-        for value in ["1", "true", "TRUE", " yes ", "on"] {
-            assert_eq!(parse_env_flag(value), Some(true), "value: {}", value);
-        }
-    }
+    fn parse_env_flag_matrix_covers_truthy_falsy_and_unknown_values() {
+        let cases = [
+            ("1", Some(true)),
+            ("true", Some(true)),
+            ("TRUE", Some(true)),
+            (" yes ", Some(true)),
+            ("on", Some(true)),
+            ("", Some(false)),
+            ("0", Some(false)),
+            ("false", Some(false)),
+            ("FALSE", Some(false)),
+            (" no ", Some(false)),
+            ("off", Some(false)),
+            ("maybe", None),
+            ("enabled", None),
+        ];
 
-    #[test]
-    fn parse_env_flag_accepts_falsy_values() {
-        for value in ["", "0", "false", "FALSE", " no ", "off"] {
-            assert_eq!(parse_env_flag(value), Some(false), "value: {}", value);
+        for (value, expected) in cases {
+            assert_eq!(parse_env_flag(value), expected, "value: {}", value);
         }
-    }
-
-    #[test]
-    fn parse_env_flag_rejects_unknown_values() {
-        assert_eq!(parse_env_flag("maybe"), None);
-        assert_eq!(parse_env_flag("enabled"), None);
     }
 
     #[test]

@@ -25,47 +25,53 @@ fn test_paste_list_meta_orders_by_updated_and_honors_limit() {
 }
 
 #[test]
-fn test_paste_search() {
-    let (db, _temp) = setup_test_db();
+fn test_paste_search_respects_exact_match_and_top_k_ranking() {
+    enum SearchCase {
+        ExactMatch,
+        TopKRanking,
+    }
 
-    let paste1 = Paste::new("Rust is awesome".to_string(), "p1".to_string());
-    let paste2 = Paste::new("Python is great".to_string(), "p2".to_string());
-    let paste3 = Paste::new("JavaScript rocks".to_string(), "p3".to_string());
+    let cases = [SearchCase::ExactMatch, SearchCase::TopKRanking];
+    for case in cases {
+        let (db, _temp) = setup_test_db();
+        match case {
+            SearchCase::ExactMatch => {
+                let paste1 = Paste::new("Rust is awesome".to_string(), "p1".to_string());
+                let paste2 = Paste::new("Python is great".to_string(), "p2".to_string());
+                let paste3 = Paste::new("JavaScript rocks".to_string(), "p3".to_string());
 
-    db.pastes.create(&paste1).unwrap();
-    db.pastes.create(&paste2).unwrap();
-    db.pastes.create(&paste3).unwrap();
+                db.pastes.create(&paste1).unwrap();
+                db.pastes.create(&paste2).unwrap();
+                db.pastes.create(&paste3).unwrap();
 
-    // Search
-    let results = db.pastes.search("rust", 10, None, None).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, paste1.id);
-}
+                let results = db.pastes.search("rust", 10, None, None).unwrap();
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0].id, paste1.id);
+            }
+            SearchCase::TopKRanking => {
+                let strongest = Paste::new(
+                    "no query term in body".to_string(),
+                    "needle-name".to_string(),
+                );
+                let medium = Paste::new(
+                    "contains needle in content".to_string(),
+                    "plain-a".to_string(),
+                );
+                let weak = Paste::new("also needle in content".to_string(), "plain-b".to_string());
 
-#[test]
-fn test_paste_search_limit_keeps_best_ranked_matches() {
-    let (db, _temp) = setup_test_db();
+                db.pastes.create(&strongest).unwrap();
+                db.pastes.create(&medium).unwrap();
+                db.pastes.create(&weak).unwrap();
 
-    let strongest = Paste::new(
-        "no query term in body".to_string(),
-        "needle-name".to_string(),
-    );
-    let medium = Paste::new(
-        "contains needle in content".to_string(),
-        "plain-a".to_string(),
-    );
-    let weak = Paste::new("also needle in content".to_string(), "plain-b".to_string());
-
-    db.pastes.create(&strongest).unwrap();
-    db.pastes.create(&medium).unwrap();
-    db.pastes.create(&weak).unwrap();
-
-    let results = db.pastes.search("needle", 1, None, None).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(
-        results[0].id, strongest.id,
-        "name/tag hits must outrank content-only hits under top-k limiting"
-    );
+                let results = db.pastes.search("needle", 1, None, None).unwrap();
+                assert_eq!(results.len(), 1);
+                assert_eq!(
+                    results[0].id, strongest.id,
+                    "name/tag hits must outrank content-only hits under top-k limiting"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -96,51 +102,58 @@ fn test_paste_search_meta_is_metadata_only() {
 }
 
 #[test]
-fn test_paste_search_language_filter_is_case_insensitive_and_trimmed() {
-    let (db, _temp) = setup_test_db();
+fn test_search_language_filters_are_case_insensitive_and_trimmed_for_full_and_meta_queries() {
+    enum SearchKind {
+        Full,
+        Meta,
+    }
 
-    let mut python = Paste::new("def run():\n    pass".to_string(), "py".to_string());
-    python.language = Some("python".to_string());
-    python.language_is_manual = true;
+    let cases = [SearchKind::Full, SearchKind::Meta];
+    for case in cases {
+        let (db, _temp) = setup_test_db();
+        match case {
+            SearchKind::Full => {
+                let mut python = Paste::new("def run():\n    pass".to_string(), "py".to_string());
+                python.language = Some("python".to_string());
+                python.language_is_manual = true;
 
-    let mut rust = Paste::new("fn run() {}".to_string(), "rs".to_string());
-    rust.language = Some("rust".to_string());
-    rust.language_is_manual = true;
+                let mut rust = Paste::new("fn run() {}".to_string(), "rs".to_string());
+                rust.language = Some("rust".to_string());
+                rust.language_is_manual = true;
 
-    db.pastes.create(&python).unwrap();
-    db.pastes.create(&rust).unwrap();
+                db.pastes.create(&python).unwrap();
+                db.pastes.create(&rust).unwrap();
 
-    let results = db
-        .pastes
-        .search("run", 10, None, Some("  PyThOn  ".to_string()))
-        .unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, python.id);
-}
+                let results = db
+                    .pastes
+                    .search("run", 10, None, Some("  PyThOn  ".to_string()))
+                    .unwrap();
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0].id, python.id);
+            }
+            SearchKind::Meta => {
+                let mut python = Paste::new("hello".to_string(), "python-note".to_string());
+                python.language = Some("python".to_string());
+                python.language_is_manual = true;
+                python.tags = vec!["tips".to_string()];
 
-#[test]
-fn test_paste_search_meta_language_filter_is_case_insensitive_and_trimmed() {
-    let (db, _temp) = setup_test_db();
+                let mut rust = Paste::new("hello".to_string(), "rust-note".to_string());
+                rust.language = Some("rust".to_string());
+                rust.language_is_manual = true;
+                rust.tags = vec!["tips".to_string()];
 
-    let mut python = Paste::new("hello".to_string(), "python-note".to_string());
-    python.language = Some("python".to_string());
-    python.language_is_manual = true;
-    python.tags = vec!["tips".to_string()];
+                db.pastes.create(&python).unwrap();
+                db.pastes.create(&rust).unwrap();
 
-    let mut rust = Paste::new("hello".to_string(), "rust-note".to_string());
-    rust.language = Some("rust".to_string());
-    rust.language_is_manual = true;
-    rust.tags = vec!["tips".to_string()];
-
-    db.pastes.create(&python).unwrap();
-    db.pastes.create(&rust).unwrap();
-
-    let results = db
-        .pastes
-        .search_meta("tips", 10, None, Some(" PYTHON ".to_string()))
-        .unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, python.id);
+                let results = db
+                    .pastes
+                    .search_meta("tips", 10, None, Some(" PYTHON ".to_string()))
+                    .unwrap();
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0].id, python.id);
+            }
+        }
+    }
 }
 
 #[test]

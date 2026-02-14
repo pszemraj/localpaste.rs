@@ -223,37 +223,45 @@ mod tests {
     };
 
     #[test]
-    fn force_unlock_guard_rejects_unknown_probe_results() {
-        let err = guard_force_unlock_probe(ProcessProbeResult::Unknown)
-            .expect_err("unknown probe should reject force unlock");
-        assert!(err.to_string().contains("could not be verified"));
+    fn force_unlock_guard_matrix_covers_allowed_and_rejected_probe_results() {
+        let cases = [
+            (ProcessProbeResult::Unknown, Some("could not be verified")),
+            (ProcessProbeResult::Running, Some("appears to be running")),
+            (ProcessProbeResult::NotRunning, None),
+        ];
+
+        for (probe, expected_error) in cases {
+            match expected_error {
+                Some(message_fragment) => {
+                    let err = guard_force_unlock_probe(probe)
+                        .expect_err("probe result should reject force unlock");
+                    assert!(err.to_string().contains(message_fragment));
+                }
+                None => {
+                    guard_force_unlock_probe(probe)
+                        .expect("not-running probe should allow force unlock");
+                }
+            }
+        }
     }
 
     #[test]
-    fn force_unlock_guard_rejects_running_probe_results() {
-        let err = guard_force_unlock_probe(ProcessProbeResult::Running)
-            .expect_err("running probe should reject force unlock");
-        assert!(err.to_string().contains("appears to be running"));
-    }
+    fn parse_cli_flags_rejects_unknown_and_positional_arguments() {
+        let cases = [
+            (
+                vec!["localpaste".to_string(), "--force-unlok".to_string()],
+                "Unknown option",
+            ),
+            (
+                vec!["localpaste".to_string(), "backup".to_string()],
+                "Unexpected positional argument",
+            ),
+        ];
 
-    #[test]
-    fn force_unlock_guard_allows_not_running_probe_results() {
-        guard_force_unlock_probe(ProcessProbeResult::NotRunning)
-            .expect("not-running probe should allow force unlock");
-    }
-
-    #[test]
-    fn parse_cli_flags_rejects_unknown_options() {
-        let args = vec!["localpaste".to_string(), "--force-unlok".to_string()];
-        let err = parse_cli_flags(&args).expect_err("unknown option should be rejected");
-        assert!(err.to_string().contains("Unknown option"));
-    }
-
-    #[test]
-    fn parse_cli_flags_rejects_positional_arguments() {
-        let args = vec!["localpaste".to_string(), "backup".to_string()];
-        let err = parse_cli_flags(&args).expect_err("positional argument should be rejected");
-        assert!(err.to_string().contains("Unexpected positional argument"));
+        for (args, expected_fragment) in cases {
+            let err = parse_cli_flags(&args).expect_err("invalid args should be rejected");
+            assert!(err.to_string().contains(expected_fragment));
+        }
     }
 
     #[test]

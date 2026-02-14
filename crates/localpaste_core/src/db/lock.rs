@@ -463,38 +463,49 @@ mod tests {
     }
 
     #[test]
-    fn owner_lock_probe_reports_not_running_when_lock_is_free() {
-        let dir = TempDir::new().expect("temp dir");
-        let db_path = dir.path().join("db");
-        std::fs::create_dir_all(&db_path).expect("db dir");
+    fn owner_lock_probe_status_matrix_covers_free_held_and_unusable_paths() {
+        enum ProbeCase {
+            FreeDirectory,
+            HeldDirectory,
+            UnusablePath,
+        }
 
-        let probe = probe_owner_lock(&db_path.to_string_lossy());
-        assert_eq!(probe, ProcessProbeResult::NotRunning);
-    }
+        let cases = [
+            ProbeCase::FreeDirectory,
+            ProbeCase::HeldDirectory,
+            ProbeCase::UnusablePath,
+        ];
 
-    #[test]
-    fn owner_lock_probe_is_conservative_when_lock_is_held() {
-        let dir = TempDir::new().expect("temp dir");
-        let db_path = dir.path().join("db");
-        std::fs::create_dir_all(&db_path).expect("db dir");
-
-        let _guard = acquire_owner_lock_for_lifetime(&db_path.to_string_lossy())
-            .expect("acquire owner lock");
-        let probe = probe_owner_lock(&db_path.to_string_lossy());
-        assert!(
-            probe != ProcessProbeResult::NotRunning,
-            "held owner lock must not be classified as safe-not-running"
-        );
-    }
-
-    #[test]
-    fn owner_lock_probe_reports_unknown_when_owner_lock_path_is_unusable() {
-        let dir = TempDir::new().expect("temp dir");
-        let db_file = dir.path().join("db-as-file");
-        std::fs::write(&db_file, b"not a directory").expect("seed file");
-
-        let probe = probe_owner_lock(&db_file.to_string_lossy());
-        assert_eq!(probe, ProcessProbeResult::Unknown);
+        for case in cases {
+            match case {
+                ProbeCase::FreeDirectory => {
+                    let dir = TempDir::new().expect("temp dir");
+                    let db_path = dir.path().join("db");
+                    std::fs::create_dir_all(&db_path).expect("db dir");
+                    let probe = probe_owner_lock(&db_path.to_string_lossy());
+                    assert_eq!(probe, ProcessProbeResult::NotRunning);
+                }
+                ProbeCase::HeldDirectory => {
+                    let dir = TempDir::new().expect("temp dir");
+                    let db_path = dir.path().join("db");
+                    std::fs::create_dir_all(&db_path).expect("db dir");
+                    let _guard = acquire_owner_lock_for_lifetime(&db_path.to_string_lossy())
+                        .expect("acquire owner lock");
+                    let probe = probe_owner_lock(&db_path.to_string_lossy());
+                    assert!(
+                        probe != ProcessProbeResult::NotRunning,
+                        "held owner lock must not be classified as safe-not-running"
+                    );
+                }
+                ProbeCase::UnusablePath => {
+                    let dir = TempDir::new().expect("temp dir");
+                    let db_file = dir.path().join("db-as-file");
+                    std::fs::write(&db_file, b"not a directory").expect("seed file");
+                    let probe = probe_owner_lock(&db_file.to_string_lossy());
+                    assert_eq!(probe, ProcessProbeResult::Unknown);
+                }
+            }
+        }
     }
 
     #[test]

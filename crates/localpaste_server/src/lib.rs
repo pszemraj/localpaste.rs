@@ -302,25 +302,24 @@ mod tests {
     }
 
     #[test]
-    fn loopback_origin_detection_accepts_localhost_and_loopback_ips() {
-        assert!(is_loopback_origin(&HeaderValue::from_static(
-            "http://localhost:3000"
-        )));
-        assert!(is_loopback_origin(&HeaderValue::from_static(
-            "http://127.0.0.2:3000"
-        )));
-        assert!(is_loopback_origin(&HeaderValue::from_static(
-            "http://[::1]:3000"
-        )));
-    }
+    fn loopback_origin_detection_matrix_covers_valid_loopback_and_rejections() {
+        let cases = [
+            ("http://localhost:3000", true),
+            ("http://127.0.0.2:3000", true),
+            ("http://[::1]:3000", true),
+            ("http://example.com:3000", false),
+            ("null", false),
+            ("not-a-uri", false),
+        ];
 
-    #[test]
-    fn loopback_origin_detection_rejects_non_loopback_or_invalid_origins() {
-        assert!(!is_loopback_origin(&HeaderValue::from_static(
-            "http://example.com:3000"
-        )));
-        assert!(!is_loopback_origin(&HeaderValue::from_static("null")));
-        assert!(!is_loopback_origin(&HeaderValue::from_static("not-a-uri")));
+        for (origin, expected) in cases {
+            assert_eq!(
+                is_loopback_origin(&HeaderValue::from_static(origin)),
+                expected,
+                "origin: {}",
+                origin
+            );
+        }
     }
 
     #[test]

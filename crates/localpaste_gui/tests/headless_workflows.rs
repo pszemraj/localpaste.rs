@@ -144,31 +144,56 @@ fn backend_shutdown_drains_queued_update_and_persists_across_reopen() {
 }
 
 #[test]
-fn locked_paste_blocks_api_delete() {
+fn locked_paste_blocks_api_mutations_until_lock_is_released() {
+    enum MutationKind {
+        Delete,
+        Update,
+    }
+
     let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
     let server = env.start_server(locks.clone());
-
-    let paste = Paste::new("locked content".to_string(), "locked".to_string());
-    let paste_id = paste.id.clone();
-    env.db.pastes.create(&paste).expect("create paste");
-    let owner = LockOwnerId::new("delete-owner".to_string());
-
-    locks
-        .acquire(&paste_id, &owner)
-        .expect("acquire lock for delete test");
-
     let client = reqwest::blocking::Client::new();
-    let url = format!("http://{}/api/paste/{}", server.addr(), paste_id);
-    let resp = client.delete(&url).send().expect("delete request");
-    assert_eq!(resp.status(), reqwest::StatusCode::LOCKED);
 
-    locks
-        .release(&paste_id, &owner)
-        .expect("release lock for delete test");
+    let cases = [
+        (MutationKind::Delete, "delete-owner"),
+        (MutationKind::Update, "update-owner"),
+    ];
 
-    let resp = client.delete(&url).send().expect("delete request");
-    assert!(resp.status().is_success());
+    for (mutation, owner_id) in cases {
+        let paste = Paste::new("locked content".to_string(), "locked".to_string());
+        let paste_id = paste.id.clone();
+        env.db.pastes.create(&paste).expect("create paste");
+        let owner = LockOwnerId::new(owner_id.to_string());
+        locks
+            .acquire(&paste_id, &owner)
+            .expect("acquire lock for mutation test");
+
+        let url = format!("http://{}/api/paste/{}", server.addr(), paste_id);
+        let blocked = match mutation {
+            MutationKind::Delete => client.delete(&url).send().expect("delete request"),
+            MutationKind::Update => client
+                .put(&url)
+                .json(&json!({ "content": "updated" }))
+                .send()
+                .expect("update request"),
+        };
+        assert_eq!(blocked.status(), reqwest::StatusCode::LOCKED);
+
+        locks
+            .release(&paste_id, &owner)
+            .expect("release lock for mutation test");
+
+        let allowed = match mutation {
+            MutationKind::Delete => client.delete(&url).send().expect("delete request"),
+            MutationKind::Update => client
+                .put(&url)
+                .json(&json!({ "content": "updated" }))
+                .send()
+                .expect("update request"),
+        };
+        assert!(allowed.status().is_success());
+    }
 }
 
 #[test]
@@ -224,42 +249,6 @@ fn backend_delete_rejects_foreign_lock_holder_and_preserves_paste() {
     locks
         .release(&paste_id, &foreign_owner)
         .expect("release foreign lock holder");
-}
-
-#[test]
-fn locked_paste_blocks_api_update() {
-    let env = TestEnv::new();
-    let locks = Arc::new(PasteLockManager::default());
-    let server = env.start_server(locks.clone());
-
-    let paste = Paste::new("locked content".to_string(), "locked".to_string());
-    let paste_id = paste.id.clone();
-    env.db.pastes.create(&paste).expect("create paste");
-    let owner = LockOwnerId::new("update-owner".to_string());
-
-    locks
-        .acquire(&paste_id, &owner)
-        .expect("acquire lock for update test");
-
-    let client = reqwest::blocking::Client::new();
-    let url = format!("http://{}/api/paste/{}", server.addr(), paste_id);
-    let resp = client
-        .put(&url)
-        .json(&json!({ "content": "updated" }))
-        .send()
-        .expect("update request");
-    assert_eq!(resp.status(), reqwest::StatusCode::LOCKED);
-
-    locks
-        .release(&paste_id, &owner)
-        .expect("release lock for update test");
-
-    let resp = client
-        .put(&url)
-        .json(&json!({ "content": "updated" }))
-        .send()
-        .expect("update request");
-    assert!(resp.status().is_success());
 }
 
 #[test]

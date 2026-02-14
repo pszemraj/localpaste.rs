@@ -3,87 +3,100 @@
 use super::*;
 
 #[test]
-fn virtual_copy_reports_copied_without_text_mutation() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("abcdef");
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    harness.app.virtual_editor_state.set_cursor(1, len);
-    harness.app.virtual_editor_state.move_cursor(4, len, true);
-    let ctx = egui::Context::default();
+fn virtual_copy_and_cut_report_expected_mutation_state() {
+    struct ClipboardCase {
+        use_cut: bool,
+        expected_changed: bool,
+        expected_cut: bool,
+        expected_text: &'static str,
+    }
 
-    let result = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::Copy]);
-    assert!(!result.changed);
-    assert!(result.copied);
-    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "abcdef");
+    let cases = [
+        ClipboardCase {
+            use_cut: false,
+            expected_changed: false,
+            expected_cut: false,
+            expected_text: "abcdef",
+        },
+        ClipboardCase {
+            use_cut: true,
+            expected_changed: true,
+            expected_cut: true,
+            expected_text: "aef",
+        },
+    ];
+
+    for case in cases {
+        let mut harness = make_app();
+        harness.app.reset_virtual_editor("abcdef");
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        harness.app.virtual_editor_state.set_cursor(1, len);
+        harness.app.virtual_editor_state.move_cursor(4, len, true);
+        let ctx = egui::Context::default();
+        let command = if case.use_cut {
+            VirtualInputCommand::Cut
+        } else {
+            VirtualInputCommand::Copy
+        };
+
+        let result = harness.app.apply_virtual_commands(&ctx, &[command]);
+        assert_eq!(result.changed, case.expected_changed);
+        assert!(result.copied);
+        assert_eq!(result.cut, case.expected_cut);
+        assert_eq!(
+            harness.app.virtual_editor_buffer.to_string(),
+            case.expected_text
+        );
+    }
 }
 
 #[test]
-fn virtual_cut_reports_copy_and_removes_selected_text() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("abcdef");
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    harness.app.virtual_editor_state.set_cursor(1, len);
-    harness.app.virtual_editor_state.move_cursor(4, len, true);
-    let ctx = egui::Context::default();
+fn ime_commit_and_disable_clear_preedit_state_with_expected_buffer_results() {
+    struct ImeCase {
+        commit_text: Option<&'static str>,
+        expected_text: &'static str,
+    }
 
-    let result = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::Cut]);
-    assert!(result.changed);
-    assert!(result.copied);
-    assert!(result.cut);
-    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "aef");
-}
+    let cases = [
+        ImeCase {
+            commit_text: Some("日"),
+            expected_text: "a日b",
+        },
+        ImeCase {
+            commit_text: None,
+            expected_text: "ab",
+        },
+    ];
 
-#[test]
-fn ime_commit_replaces_preedit_and_clears_state() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("ab");
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    harness.app.virtual_editor_state.set_cursor(1, len);
-    let ctx = egui::Context::default();
+    for case in cases {
+        let mut harness = make_app();
+        harness.app.reset_virtual_editor("ab");
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        harness.app.virtual_editor_state.set_cursor(1, len);
+        let ctx = egui::Context::default();
 
-    let result = harness.app.apply_virtual_commands(
-        &ctx,
-        &[
+        let mut commands = vec![
             VirtualInputCommand::ImeEnabled,
             VirtualInputCommand::ImePreedit("に".to_string()),
-            VirtualInputCommand::ImeCommit("日".to_string()),
-            VirtualInputCommand::ImeDisabled,
-        ],
-    );
+        ];
+        if let Some(commit_text) = case.commit_text {
+            commands.push(VirtualInputCommand::ImeCommit(commit_text.to_string()));
+        }
+        commands.push(VirtualInputCommand::ImeDisabled);
 
-    assert!(result.changed);
-    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "a日b");
-    assert!(!harness.app.virtual_editor_state.ime.enabled);
-    assert!(harness.app.virtual_editor_state.ime.preedit_range.is_none());
-    assert!(harness.app.virtual_editor_state.ime.preedit_text.is_empty());
-}
+        let result = harness
+            .app
+            .apply_virtual_commands(&ctx, commands.as_slice());
 
-#[test]
-fn ime_disable_cancels_uncommitted_preedit_text() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("ab");
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    harness.app.virtual_editor_state.set_cursor(1, len);
-    let ctx = egui::Context::default();
-
-    let result = harness.app.apply_virtual_commands(
-        &ctx,
-        &[
-            VirtualInputCommand::ImeEnabled,
-            VirtualInputCommand::ImePreedit("に".to_string()),
-            VirtualInputCommand::ImeDisabled,
-        ],
-    );
-
-    assert!(result.changed);
-    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "ab");
-    assert!(!harness.app.virtual_editor_state.ime.enabled);
-    assert!(harness.app.virtual_editor_state.ime.preedit_range.is_none());
-    assert!(harness.app.virtual_editor_state.ime.preedit_text.is_empty());
+        assert!(result.changed);
+        assert_eq!(
+            harness.app.virtual_editor_buffer.to_string(),
+            case.expected_text
+        );
+        assert!(!harness.app.virtual_editor_state.ime.enabled);
+        assert!(harness.app.virtual_editor_state.ime.preedit_range.is_none());
+        assert!(harness.app.virtual_editor_state.ime.preedit_text.is_empty());
+    }
 }
 
 #[test]
@@ -272,21 +285,27 @@ fn virtual_click_counter_promotes_to_triple_and_resets() {
 }
 
 #[test]
-fn drag_autoscroll_delta_scrolls_up_when_pointer_above() {
-    let delta = drag_autoscroll_delta(80.0, 100.0, 220.0, 20.0);
-    assert!(delta > 0.0);
-}
+fn drag_autoscroll_delta_direction_matches_pointer_position() {
+    enum DeltaDirection {
+        Positive,
+        Negative,
+        Zero,
+    }
 
-#[test]
-fn drag_autoscroll_delta_scrolls_down_when_pointer_below() {
-    let delta = drag_autoscroll_delta(260.0, 100.0, 220.0, 20.0);
-    assert!(delta < 0.0);
-}
+    let cases = [
+        (80.0, DeltaDirection::Positive),
+        (260.0, DeltaDirection::Negative),
+        (150.0, DeltaDirection::Zero),
+    ];
 
-#[test]
-fn drag_autoscroll_delta_is_zero_inside_viewport() {
-    let delta = drag_autoscroll_delta(150.0, 100.0, 220.0, 20.0);
-    assert_eq!(delta, 0.0);
+    for (pointer_y, expected_direction) in cases {
+        let delta = drag_autoscroll_delta(pointer_y, 100.0, 220.0, 20.0);
+        match expected_direction {
+            DeltaDirection::Positive => assert!(delta > 0.0),
+            DeltaDirection::Negative => assert!(delta < 0.0),
+            DeltaDirection::Zero => assert_eq!(delta, 0.0),
+        }
+    }
 }
 
 #[test]
