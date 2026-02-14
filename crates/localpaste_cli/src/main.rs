@@ -11,9 +11,19 @@ use std::time::{Duration, Instant};
 #[derive(Parser)]
 #[command(name = "lpaste", about = "LocalPaste CLI", version)]
 struct Cli {
-    /// Server URL (can also be set via LP_SERVER env var)
+    /// Server URL (can also be set via LP_SERVER env var).
+    ///
+    /// Resolution order when unset: discovered `.api-addr` endpoint (unless
+    /// `--no-discovery`) then the default local endpoint.
     #[arg(short, long, env = "LP_SERVER")]
     server: Option<String>,
+
+    /// Disable `.api-addr` discovery/probing fallback.
+    ///
+    /// When set, `lpaste` uses only `--server`/`LP_SERVER` or the default
+    /// endpoint and performs no discovery network probe.
+    #[arg(long, global = true, default_value_t = false)]
+    no_discovery: bool,
 
     /// Output in JSON format
     #[arg(short, long, global = true)]
@@ -391,16 +401,58 @@ fn discovered_server_from_file() -> Option<String> {
     discovered_server_from_file_with_reachability(discovery_server_is_localpaste)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServerResolutionSource {
+    Explicit,
+    Discovery,
+    Default,
+}
+
+impl ServerResolutionSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            ServerResolutionSource::Explicit => "explicit-or-env",
+            ServerResolutionSource::Discovery => "discovery-file",
+            ServerResolutionSource::Default => "default",
+        }
+    }
+}
+
+fn resolve_server_with_source(
+    server: Option<String>,
+    allow_discovery: bool,
+) -> (String, ServerResolutionSource) {
+    if let Some(explicit) = localpaste_core::text::normalize_optional_nonempty(server) {
+        return (explicit, ServerResolutionSource::Explicit);
+    }
+    if allow_discovery {
+        if let Some(discovered) = discovered_server_from_file() {
+            return (discovered, ServerResolutionSource::Discovery);
+        }
+    }
+    (
+        DEFAULT_CLI_SERVER_URL.to_string(),
+        ServerResolutionSource::Default,
+    )
+}
+
+#[cfg(test)]
 fn resolve_server(server: Option<String>) -> String {
-    localpaste_core::text::normalize_optional_nonempty(server)
-        .or_else(discovered_server_from_file)
-        .unwrap_or_else(|| DEFAULT_CLI_SERVER_URL.to_string())
+    resolve_server_with_source(server, true).0
+}
+
+fn validate_server_base_or_exit(server: &str) {
+    if let Err(message) = api_url(server, &[]) {
+        eprintln!("Server resolution failed: {}", message);
+        std::process::exit(1);
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Cli {
         server,
+        no_discovery,
         json,
         timing,
         timeout,
@@ -417,7 +469,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout))
         .build()?;
-    let server = normalize_server(resolve_server(server));
+    let (resolved_server, source) = resolve_server_with_source(server, !no_discovery);
+    let server = normalize_server(resolved_server);
+    validate_server_base_or_exit(server.as_str());
+    if timing {
+        eprintln!("[server] resolved via {}", source.as_str());
+    }
 
     match command {
         Commands::Completions { .. } => unreachable!("completions handled before client setup"),

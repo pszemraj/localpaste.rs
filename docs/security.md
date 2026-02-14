@@ -36,11 +36,12 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 | Variable              | Default           | Description                                                                    |
 | --------------------- | ----------------- | ------------------------------------------------------------------------------ |
 | `PORT`                | `38411`           | Listener port used when `BIND` is unset                                        |
-| `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback ignored unless `ALLOW_PUBLIC_ACCESS` is set) |
+| `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback requires `ALLOW_PUBLIC_ACCESS=1`)            |
 | `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind                        |
 | `MAX_PASTE_SIZE`      | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend)          |
+| `AUTO_BACKUP`         | disabled          | Create DB backup on startup when existing DB is present                         |
 
-Invalid `BIND` values are treated as malformed and fall back to the `PORT`-based default.
+`localpaste` startup now fails fast on malformed `BIND`/`PORT`/size/boolean env values so invalid deployment configuration is explicit.
 
 ### Security Headers
 

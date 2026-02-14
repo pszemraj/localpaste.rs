@@ -52,6 +52,10 @@ struct Args {
     #[arg(long)]
     clear: bool,
 
+    /// Confirm destructive operations such as `--clear`
+    #[arg(short = 'y', long, requires = "clear")]
+    yes: bool,
+
     /// Print progress every N pastes
     #[arg(long, default_value = "100")]
     progress_interval: NonZeroUsize,
@@ -610,8 +614,19 @@ fn assert_folder_invariants(db: &Database) -> Result<(), AppError> {
     Ok(())
 }
 
+fn validate_args(args: &Args) -> Result<(), String> {
+    if args.clear && !args.yes {
+        return Err(
+            "--clear is destructive and deletes existing pastes/folders; rerun with --yes"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    validate_args(&args).map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
 
     // Initialize tracing for info output
     tracing_subscriber::fmt()
@@ -757,6 +772,20 @@ mod tests {
             parsed.is_err(),
             "progress interval of zero must be rejected"
         );
+    }
+
+    #[test]
+    fn clear_requires_yes_confirmation() {
+        let args = Args::try_parse_from(["generate-test-data", "--clear", "--count", "1"])
+            .expect("arg parse should succeed");
+        let err = validate_args(&args).expect_err("clear must require explicit confirmation");
+        assert!(err.contains("--yes"));
+    }
+
+    #[test]
+    fn yes_requires_clear_flag() {
+        let parsed = Args::try_parse_from(["generate-test-data", "--yes", "--count", "1"]);
+        assert!(parsed.is_err(), "--yes without --clear should be rejected");
     }
 
     #[test]

@@ -3,6 +3,7 @@
 use localpaste_core::DEFAULT_PORT;
 use localpaste_server::db::ProcessProbeResult;
 use localpaste_server::{config::Config, db::Database, serve_router, AppState};
+use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +58,26 @@ fn guard_force_unlock_probe(result: ProcessProbeResult) -> anyhow::Result<()> {
     }
 }
 
+fn validate_bind_override(allow_public_access: bool) -> anyhow::Result<()> {
+    let Ok(raw) = std::env::var("BIND") else {
+        return Ok(());
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("BIND is set but empty");
+    }
+    let parsed: SocketAddr = trimmed
+        .parse()
+        .map_err(|err| anyhow::anyhow!("Invalid BIND='{}': {}", raw, err))?;
+    if !allow_public_access && !parsed.ip().is_loopback() {
+        anyhow::bail!(
+            "BIND='{}' requires ALLOW_PUBLIC_ACCESS=1 for non-loopback addresses",
+            raw
+        );
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -75,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let config = Config::from_env();
+    let config = Config::from_env_strict().map_err(anyhow::Error::msg)?;
     let db_exists_before_open = std::path::Path::new(&config.db_path).exists();
 
     if cli_flags.force_unlock {
@@ -123,7 +144,10 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState::new(config.clone(), database);
 
-    let allow_public = localpaste_server::config::env_flag_enabled("ALLOW_PUBLIC_ACCESS");
+    let allow_public =
+        localpaste_server::config::parse_bool_env_strict("ALLOW_PUBLIC_ACCESS", false)
+            .map_err(anyhow::Error::msg)?;
+    validate_bind_override(allow_public)?;
     if allow_public {
         tracing::warn!("Public access enabled - server will accept requests from any origin");
     }
@@ -170,11 +194,18 @@ fn print_help() {
         DEFAULT_PORT
     );
     println!("  MAX_PASTE_SIZE    Maximum paste size in bytes (default: 10MB)");
+    println!(
+        "  AUTO_BACKUP       Create backup at startup when DB already exists (1/0/true/false)"
+    );
     println!("  ALLOW_PUBLIC_ACCESS  Allow CORS from any origin");
     println!(
         "  BIND              Override bind address (e.g. 0.0.0.0:{})",
         DEFAULT_PORT
     );
+    println!("  (malformed env values fail startup instead of silently defaulting)");
+    println!("\nSide effects:");
+    println!("  --backup          Flushes DB and writes a backup copy");
+    println!("  --force-unlock    Backs up DB before removing known lock files");
 }
 
 fn run_backup(config: &Config) -> anyhow::Result<()> {
@@ -218,9 +249,10 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        guard_force_unlock_probe, parse_cli_flags, runs_maintenance_mode, CliFlags,
-        ProcessProbeResult,
+        guard_force_unlock_probe, parse_cli_flags, runs_maintenance_mode, validate_bind_override,
+        CliFlags, ProcessProbeResult,
     };
+    use localpaste_core::env::{env_lock, EnvGuard};
 
     #[test]
     fn force_unlock_guard_matrix_covers_allowed_and_rejected_probe_results() {
@@ -296,5 +328,21 @@ mod tests {
         assert!(runs_maintenance_mode(backup_only));
         assert!(runs_maintenance_mode(unlock_only));
         assert!(!runs_maintenance_mode(none));
+    }
+
+    #[test]
+    fn validate_bind_override_rejects_invalid_and_non_loopback_without_public_access() {
+        let _lock = env_lock().lock().expect("env lock");
+
+        let _bind = EnvGuard::set("BIND", "not-an-addr");
+        let err = validate_bind_override(false).expect_err("invalid bind should fail");
+        assert!(err.to_string().contains("Invalid BIND"));
+        drop(_bind);
+
+        let _bind = EnvGuard::set("BIND", "0.0.0.0:38411");
+        let err = validate_bind_override(false).expect_err("non-loopback bind should fail");
+        assert!(err.to_string().contains("ALLOW_PUBLIC_ACCESS=1"));
+
+        validate_bind_override(true).expect("public access should allow non-loopback bind");
     }
 }

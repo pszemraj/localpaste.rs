@@ -52,8 +52,9 @@ flowchart LR
 CLI behavior in this mode:
 
 - `lpaste` prefers explicit `--server` / `LP_SERVER`.
-- If unset, it reads `.api-addr`, validates discovered endpoint identity, and only then uses it.
+- If unset and discovery is enabled, it reads `.api-addr`, validates discovered endpoint identity, and only then uses it.
 - If validation fails, it falls back to the default local endpoint.
+- `--no-discovery` disables `.api-addr` probing and uses only explicit/env/default resolution.
 
 ### Headless Topology
 

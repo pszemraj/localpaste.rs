@@ -157,6 +157,29 @@ pub fn parse_bool_env(name: &str, default: bool) -> bool {
     }
 }
 
+/// Parse a boolean-like environment value strictly.
+///
+/// # Arguments
+/// - `name`: environment variable name.
+/// - `default`: value when the variable is missing.
+///
+/// # Returns
+/// Parsed boolean when recognized, otherwise an error describing the malformed input.
+///
+/// # Errors
+/// Returns an error when the variable is present but not a recognized boolean token.
+pub fn parse_bool_env_strict(name: &str, default: bool) -> Result<bool, String> {
+    let Ok(value) = env::var(name) else {
+        return Ok(default);
+    };
+    parse_env_flag(&value).ok_or_else(|| {
+        format!(
+            "Invalid value for {}='{}'; expected 1/0/true/false/yes/no/on/off",
+            name, value
+        )
+    })
+}
+
 fn parse_env_number<T>(name: &str, default: T) -> T
 where
     T: FromStr + Copy + std::fmt::Display,
@@ -185,6 +208,23 @@ where
     }
 }
 
+fn parse_env_number_strict<T>(name: &str, default: T) -> Result<T, String>
+where
+    T: FromStr + Copy + std::fmt::Display,
+    <T as FromStr>::Err: std::fmt::Display,
+{
+    let Ok(value) = env::var(name) else {
+        return Ok(default);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!("Environment variable {} is empty", name));
+    }
+    trimmed
+        .parse::<T>()
+        .map_err(|err| format!("Invalid value for {}='{}': {}", name, value, err))
+}
+
 /// Read a boolean flag from the environment.
 ///
 /// Missing or unrecognized values are treated as `false`.
@@ -201,6 +241,10 @@ pub fn env_flag_enabled(name: &str) -> bool {
 impl Config {
     /// Load configuration from environment variables.
     ///
+    /// This permissive variant is intended for tooling/local workflows where
+    /// malformed env values should fall back to defaults. The headless server
+    /// entrypoint uses [`Config::from_env_strict`] for fail-fast startup.
+    ///
     /// # Returns
     /// A populated [`Config`] with defaults applied when env vars are missing.
     pub fn from_env() -> Self {
@@ -215,12 +259,46 @@ impl Config {
             auto_backup: env_flag_enabled("AUTO_BACKUP"), // Default to false - backups should be explicit
         }
     }
+
+    /// Load configuration from environment variables in strict mode.
+    ///
+    /// Missing variables still use defaults, but malformed values are rejected.
+    ///
+    /// # Returns
+    /// A populated [`Config`] when all provided env vars are valid.
+    ///
+    /// # Errors
+    /// Returns a descriptive message when any configured value is invalid.
+    pub fn from_env_strict() -> Result<Self, String> {
+        let db_path = match env::var("DB_PATH") {
+            Ok(value) => {
+                let expanded = expand_tilde(value);
+                if expanded.trim().is_empty() {
+                    return Err("Environment variable DB_PATH is empty".to_string());
+                }
+                expanded
+            }
+            Err(_) => default_db_path(),
+        };
+
+        Ok(Self {
+            db_path,
+            port: parse_env_number_strict("PORT", DEFAULT_PORT)?,
+            max_paste_size: parse_env_number_strict("MAX_PASTE_SIZE", DEFAULT_MAX_PASTE_SIZE)?,
+            auto_save_interval: parse_env_number_strict(
+                "AUTO_SAVE_INTERVAL",
+                DEFAULT_AUTO_SAVE_INTERVAL_MS,
+            )?,
+            auto_backup: parse_bool_env_strict("AUTO_BACKUP", false)?,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        api_addr_file_path_for_db_path, env_flag_enabled, parse_bool_env, parse_env_flag, Config,
+        api_addr_file_path_for_db_path, env_flag_enabled, parse_bool_env, parse_bool_env_strict,
+        parse_env_flag, Config,
     };
     use crate::constants::{
         API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
@@ -265,6 +343,19 @@ mod tests {
     }
 
     #[test]
+    fn config_from_env_strict_rejects_invalid_numeric_and_bool_values() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _port = EnvGuard::set("PORT", "not-a-number");
+        let err = Config::from_env_strict().expect_err("strict parse should fail");
+        assert!(err.contains("PORT"));
+
+        let _port = EnvGuard::remove("PORT");
+        let _backup = EnvGuard::set("AUTO_BACKUP", "maybe");
+        let err = Config::from_env_strict().expect_err("strict bool parse should fail");
+        assert!(err.contains("AUTO_BACKUP"));
+    }
+
+    #[test]
     fn env_flag_enabled_treats_invalid_value_as_false() {
         let _lock = env_lock().lock().expect("env lock");
         let _flag = EnvGuard::set("LOCALPASTE_TEST_FLAG", "maybe");
@@ -303,6 +394,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn parse_bool_env_strict_rejects_invalid_values() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _flag = EnvGuard::set("LOCALPASTE_TEST_FLAG", "maybe");
+        let err = parse_bool_env_strict("LOCALPASTE_TEST_FLAG", false)
+            .expect_err("strict bool parser should reject invalid values");
+        assert!(err.contains("LOCALPASTE_TEST_FLAG"));
     }
 
     #[test]

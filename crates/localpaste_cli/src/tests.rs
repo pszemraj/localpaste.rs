@@ -4,7 +4,7 @@ use super::{
     api_url, discovered_server_from_file_with_reachability,
     discovery_probe_response_looks_like_localpaste, error_message_for_response,
     format_delete_output, format_get_output, format_summary_output, normalize_server,
-    paste_id_and_name, resolve_server,
+    paste_id_and_name, resolve_server, resolve_server_with_source, ServerResolutionSource,
 };
 use super::{Cli, Commands};
 use clap::Parser;
@@ -292,6 +292,13 @@ fn cli_parses_search_meta_subcommand() {
 }
 
 #[test]
+fn cli_parses_no_discovery_flag() {
+    let cli = Cli::try_parse_from(["lpaste", "--no-discovery", "list"])
+        .expect("cli should parse no-discovery flag");
+    assert!(cli.no_discovery);
+}
+
+#[test]
 fn resolve_server_prefers_explicit_over_discovery() {
     with_discovery_env("explicit", None, |env| {
         env.write_discovery("http://127.0.0.1:45555");
@@ -307,6 +314,25 @@ fn resolve_server_uses_discovery_when_explicit_missing() {
     with_discovery_env("discovery", None, |env| {
         let (discovered, _server) = bind_localpaste_discovery(env);
         assert_eq!(resolve_server(None), discovered);
+    });
+}
+
+#[test]
+fn resolve_server_with_source_matrix_covers_precedence_and_no_discovery_mode() {
+    with_discovery_env("source-matrix", None, |env| {
+        let (discovered, _server) = bind_localpaste_discovery(env);
+
+        let explicit = resolve_server_with_source(Some("http://127.0.0.1:45556".to_string()), true);
+        assert_eq!(explicit.0, "http://127.0.0.1:45556");
+        assert_eq!(explicit.1, ServerResolutionSource::Explicit);
+
+        let discovered_source = resolve_server_with_source(None, true);
+        assert_eq!(discovered_source.0, discovered);
+        assert_eq!(discovered_source.1, ServerResolutionSource::Discovery);
+
+        let no_discovery = resolve_server_with_source(None, false);
+        assert_eq!(no_discovery.0, DEFAULT_CLI_SERVER_URL);
+        assert_eq!(no_discovery.1, ServerResolutionSource::Default);
     });
 }
 

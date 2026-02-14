@@ -229,4 +229,5 @@ Operationally:
 - `lpaste` checks `.api-addr` only when `--server` and `LP_SERVER` are unset.
 - Discovered endpoints must identify as LocalPaste (loopback URL plus LocalPaste response headers); stale or hijacked entries are ignored.
 - If discovery validation fails, `lpaste` falls back to its default server endpoint.
+- Discovery performs a short loopback TCP/HTTP identity probe; use `lpaste --no-discovery ...` to disable probe-based discovery fallback.
 - Use explicit `--server` or `LP_SERVER` when you need deterministic endpoint targeting.
