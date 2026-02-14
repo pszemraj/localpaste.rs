@@ -19,6 +19,13 @@ echo $! > ~/.cache/localpaste/localpaste.pid
 Important runtime rule:
 - Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` at the same time.
 
+## Storage Migration Note (v0.4.0)
+
+- LocalPaste now uses **redb** and stores data at `DB_PATH/data.redb`.
+- Existing **sled** data is not opened automatically by this build.
+- On startup, if `data.redb` is missing and legacy sled artifacts are detected, startup fails with an explicit migration-style error message.
+- There is no bundled auto-migrator in this branch/release line. Back up legacy data first, then migrate with an external compatible sled->redb tool, or choose a fresh empty `DB_PATH`.
+
 For stop/restart/cleanup procedures, use [Stopping LocalPaste Safely](#stopping-localpaste-safely).
 
 ## Process Management
