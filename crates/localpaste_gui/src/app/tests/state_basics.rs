@@ -162,6 +162,18 @@ fn delete_selected_keeps_lock_until_delete_event() {
 }
 
 #[test]
+fn paste_deleted_clears_pending_copy_action_for_deleted_id() {
+    let mut harness = make_app();
+    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".to_string(),
+    });
+
+    assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
 fn palette_delete_keeps_lock_until_delete_event() {
     let mut harness = make_app();
     harness.app.locks.lock("alpha");

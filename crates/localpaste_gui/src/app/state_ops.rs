@@ -5,9 +5,9 @@ mod filters;
 use super::highlight::EditorLayoutCache;
 use super::util::format_fenced_code_block;
 use super::{
-    LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus, SidebarCollection,
-    StatusMessage, ToastMessage, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE, STATUS_TTL, TOAST_LIMIT,
-    TOAST_TTL,
+    ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
+    SidebarCollection, StatusMessage, ToastMessage, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
+    STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Local, Utc};
@@ -79,47 +79,27 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteLoaded { paste } => {
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
-                    self.sync_editor_metadata(&paste);
-                    self.selected_content.reset(paste.content.clone());
-                    self.reset_virtual_editor(paste.content.as_str());
-                    self.editor_cache = EditorLayoutCache::default();
-                    self.editor_lines.reset();
-                    self.virtual_selection.clear();
-                    self.clear_highlight_state();
-                    self.selected_paste = Some(paste);
-                    self.try_complete_pending_copy();
-                    self.save_status = SaveStatus::Saved;
-                    self.last_edit_at = None;
-                    self.save_in_flight = false;
-                    self.save_request_revision = None;
-                    self.metadata_save_in_flight = false;
-                    self.metadata_save_request = None;
+                    self.select_loaded_paste(paste);
                 }
             }
             CoreEvent::PasteCreated { paste } => {
                 let summary = PasteSummary::from_paste(&paste);
                 self.all_pastes.insert(0, summary.clone());
                 self.pastes.insert(0, summary);
-                self.select_paste(paste.id.clone());
-                // Keep current editor/save state untouched when switching is deferred.
-                if self.selected_id.as_deref() == Some(paste.id.as_str()) {
-                    self.sync_editor_metadata(&paste);
-                    self.selected_content.reset(paste.content.clone());
-                    self.reset_virtual_editor(paste.content.as_str());
-                    self.editor_cache = EditorLayoutCache::default();
-                    self.editor_lines.reset();
-                    self.virtual_selection.clear();
-                    self.clear_highlight_state();
-                    self.selected_paste = Some(paste);
-                    self.save_status = SaveStatus::Saved;
-                    self.last_edit_at = None;
-                    self.save_in_flight = false;
-                    self.save_request_revision = None;
-                    self.metadata_save_in_flight = false;
-                    self.metadata_save_request = None;
-                    self.focus_editor_next = true;
-                    self.set_status("Created new paste.");
+                let has_unsaved_edits =
+                    self.save_status == SaveStatus::Dirty || self.metadata_dirty;
+                let save_in_progress = self.save_in_flight
+                    || self.metadata_save_in_flight
+                    || self.save_status == SaveStatus::Saving;
+                if has_unsaved_edits || save_in_progress {
+                    // Keep current editor/save state untouched when switching is deferred.
+                    self.select_paste(paste.id.clone());
+                    return;
                 }
+                self.select_loaded_paste(paste);
+                self.pending_selection_id = None;
+                self.focus_editor_next = true;
+                self.set_status("Created new paste.");
             }
             CoreEvent::PasteSaved { paste } => {
                 let requested_revision = self.save_request_revision.take();
@@ -189,8 +169,7 @@ impl LocalPasteApp {
                 if self.search_query.trim().is_empty() {
                     self.recompute_visible_pastes();
                 } else {
-                    let visible = self.pastes.clone();
-                    self.pastes = self.filter_by_collection(&visible);
+                    self.retain_search_results_for_active_filters();
                     // Metadata edits can change search inclusion/ranking; force a fresh
                     // backend search even when the query text itself is unchanged.
                     self.search_last_sent.clear();
@@ -245,6 +224,7 @@ impl LocalPasteApp {
             CoreEvent::PasteDeleted { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
+                self.clear_pending_copy_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                     self.set_status("Paste deleted.");
@@ -394,7 +374,9 @@ impl LocalPasteApp {
     pub(super) fn maybe_dispatch_search(&mut self) {
         let query = self.search_query.trim().to_string();
         if query.is_empty() {
-            if !self.search_last_sent.is_empty() {
+            let should_restore_list =
+                self.search_last_input_at.take().is_some() || !self.search_last_sent.is_empty();
+            if should_restore_list {
                 self.search_last_sent.clear();
                 self.recompute_visible_pastes();
                 self.ensure_selection_after_list_update();
@@ -538,6 +520,31 @@ impl LocalPasteApp {
         }
     }
 
+    fn select_loaded_paste(&mut self, paste: Paste) {
+        let id = paste.id.clone();
+        if self.selected_id.as_deref() != Some(id.as_str()) {
+            if let Some(prev) = self.selected_id.replace(id.clone()) {
+                self.locks.unlock(&prev);
+            }
+            self.locks.lock(&id);
+        }
+        self.sync_editor_metadata(&paste);
+        self.selected_content.reset(paste.content.clone());
+        self.reset_virtual_editor(paste.content.as_str());
+        self.editor_cache = EditorLayoutCache::default();
+        self.editor_lines.reset();
+        self.virtual_selection.clear();
+        self.clear_highlight_state();
+        self.selected_paste = Some(paste);
+        self.try_complete_pending_copy();
+        self.save_status = SaveStatus::Saved;
+        self.last_edit_at = None;
+        self.save_in_flight = false;
+        self.save_request_revision = None;
+        self.metadata_save_in_flight = false;
+        self.metadata_save_request = None;
+    }
+
     fn apply_selection_now(&mut self, id: String) -> bool {
         if let Some(prev) = self.selected_id.take() {
             self.locks.unlock(&prev);
@@ -636,6 +643,38 @@ impl LocalPasteApp {
         });
         while self.toasts.len() > TOAST_LIMIT {
             self.toasts.pop_front();
+        }
+    }
+
+    pub(super) fn poll_export_result(&mut self) {
+        let completion = {
+            let Some(rx) = self.export_result_rx.as_ref() else {
+                return;
+            };
+            match rx.try_recv() {
+                Ok(completion) => Some(completion),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.export_result_rx = None;
+                    self.set_status("Export failed: worker disconnected.");
+                    return;
+                }
+            }
+        };
+        let Some(completion) = completion else {
+            return;
+        };
+        self.export_result_rx = None;
+        match completion.result {
+            Ok(()) => {
+                self.set_status(format!(
+                    "Exported {} to {}",
+                    completion.paste_id, completion.path
+                ));
+            }
+            Err(err) => {
+                self.set_status(format!("Export failed: {}", err));
+            }
         }
     }
 
@@ -740,6 +779,10 @@ impl LocalPasteApp {
             self.set_status("Nothing selected to export.");
             return;
         };
+        if self.export_result_rx.is_some() {
+            self.set_status("Export already in progress.");
+            return;
+        }
         let extension = language_extension(self.edit_language.as_deref());
         let default_name = format!("{}.{}", sanitize_filename(&self.edit_name), extension);
         let dialog = rfd::FileDialog::new()
@@ -750,18 +793,21 @@ impl LocalPasteApp {
         };
 
         let content = self.active_snapshot();
-        match std::fs::write(&path, content) {
-            Ok(()) => {
-                self.set_status(format!(
-                    "Exported {} to {}",
-                    paste_id,
-                    path.to_string_lossy()
-                ));
-            }
-            Err(err) => {
-                self.set_status(format!("Export failed: {}", err));
-            }
-        }
+        let path_for_write = path.clone();
+        let completion = ExportCompletion {
+            paste_id,
+            path: path.to_string_lossy().to_string(),
+            result: Ok(()),
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.export_result_rx = Some(rx);
+        std::thread::spawn(move || {
+            let mut completion = completion;
+            completion.result =
+                std::fs::write(&path_for_write, content).map_err(|err| err.to_string());
+            let _ = tx.send(completion);
+        });
+        self.set_status("Export started...");
     }
 
     pub(super) fn selected_index(&self) -> Option<usize> {
@@ -773,41 +819,79 @@ impl LocalPasteApp {
         (None, self.active_language_filter.clone())
     }
 
+    fn matches_active_filters(
+        item: &PasteSummary,
+        active_collection: &SidebarCollection,
+        active_language_filter: Option<&str>,
+        today_local: chrono::NaiveDate,
+        week_cutoff: chrono::DateTime<Utc>,
+        recent_cutoff: chrono::DateTime<Utc>,
+    ) -> bool {
+        let collection_match = match active_collection {
+            SidebarCollection::All => true,
+            SidebarCollection::Today => {
+                item.updated_at.with_timezone(&Local).date_naive() == today_local
+            }
+            SidebarCollection::Week => item.updated_at >= week_cutoff,
+            SidebarCollection::Recent => item.updated_at >= recent_cutoff,
+            SidebarCollection::Unfiled => item.folder_id.is_none(),
+            SidebarCollection::Code => is_code_summary(item),
+            SidebarCollection::Config => is_config_summary(item),
+            SidebarCollection::Logs => is_log_summary(item),
+            SidebarCollection::Links => is_link_summary(item),
+        };
+        if !collection_match {
+            return false;
+        }
+        match active_language_filter {
+            None => true,
+            Some(lang) => item
+                .language
+                .as_deref()
+                .map(|value| value.eq_ignore_ascii_case(lang))
+                .unwrap_or(false),
+        }
+    }
+
     fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
         let now = Utc::now();
         let today_local = Local::now().date_naive();
         let week_cutoff = now - ChronoDuration::days(7);
         let recent_cutoff = now - ChronoDuration::days(30);
+        let active_language_filter = self.active_language_filter.as_deref();
         items
             .iter()
             .filter(|item| {
-                let collection_match = match &self.active_collection {
-                    SidebarCollection::All => true,
-                    SidebarCollection::Today => {
-                        item.updated_at.with_timezone(&Local).date_naive() == today_local
-                    }
-                    SidebarCollection::Week => item.updated_at >= week_cutoff,
-                    SidebarCollection::Recent => item.updated_at >= recent_cutoff,
-                    SidebarCollection::Unfiled => item.folder_id.is_none(),
-                    SidebarCollection::Code => is_code_summary(item),
-                    SidebarCollection::Config => is_config_summary(item),
-                    SidebarCollection::Logs => is_log_summary(item),
-                    SidebarCollection::Links => is_link_summary(item),
-                };
-                if !collection_match {
-                    return false;
-                }
-                match &self.active_language_filter {
-                    None => true,
-                    Some(lang) => item
-                        .language
-                        .as_deref()
-                        .map(|v| v.eq_ignore_ascii_case(lang))
-                        .unwrap_or(false),
-                }
+                Self::matches_active_filters(
+                    item,
+                    &self.active_collection,
+                    active_language_filter,
+                    today_local,
+                    week_cutoff,
+                    recent_cutoff,
+                )
             })
             .cloned()
             .collect()
+    }
+
+    fn retain_search_results_for_active_filters(&mut self) {
+        let now = Utc::now();
+        let today_local = Local::now().date_naive();
+        let week_cutoff = now - ChronoDuration::days(7);
+        let recent_cutoff = now - ChronoDuration::days(30);
+        let active_collection = self.active_collection.clone();
+        let active_language_filter = self.active_language_filter.clone();
+        self.pastes.retain(|item| {
+            Self::matches_active_filters(
+                item,
+                &active_collection,
+                active_language_filter.as_deref(),
+                today_local,
+                week_cutoff,
+                recent_cutoff,
+            )
+        });
     }
 
     fn recompute_visible_pastes(&mut self) {

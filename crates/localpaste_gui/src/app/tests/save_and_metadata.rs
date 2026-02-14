@@ -489,6 +489,32 @@ fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_inten
 }
 
 #[test]
+fn paste_created_without_unsaved_state_selects_inline_without_get_roundtrip() {
+    let mut harness = make_app();
+
+    let mut created = Paste::new("new-content".to_string(), "new-note".to_string());
+    created.id = "new-id".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteCreated { paste: created });
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
+    assert_eq!(harness.app.selected_content.as_str(), "new-content");
+    assert_eq!(
+        harness
+            .app
+            .selected_paste
+            .as_ref()
+            .map(|paste| paste.id.as_str()),
+        Some("new-id")
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
 fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() {
     let mut harness = make_app();
     harness.app.selected_content.reset("edited-old".to_string());

@@ -416,6 +416,50 @@ fn maybe_dispatch_search_applies_collection_filters() {
 }
 
 #[test]
+fn clearing_search_restores_list_even_after_cached_query_was_invalidated() {
+    let mut harness = make_app();
+    let now = Utc::now();
+    harness.app.all_pastes = vec![
+        PasteSummary {
+            id: "alpha".to_string(),
+            name: "Alpha".to_string(),
+            language: Some("rust".to_string()),
+            content_len: 7,
+            updated_at: now,
+            folder_id: None,
+            tags: Vec::new(),
+        },
+        PasteSummary {
+            id: "beta".to_string(),
+            name: "Beta".to_string(),
+            language: Some("rust".to_string()),
+            content_len: 4,
+            updated_at: now,
+            folder_id: None,
+            tags: Vec::new(),
+        },
+    ];
+    harness.app.pastes = vec![PasteSummary {
+        id: "search-only".to_string(),
+        name: "Search only".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 3,
+        updated_at: now,
+        folder_id: None,
+        tags: Vec::new(),
+    }];
+    harness.app.search_query = "rust".to_string();
+    harness.app.search_last_sent.clear();
+
+    harness.app.set_search_query(String::new());
+    harness.app.maybe_dispatch_search();
+
+    assert_eq!(harness.app.pastes.len(), 2);
+    assert_eq!(harness.app.pastes[0].id, "alpha");
+    assert_eq!(harness.app.pastes[1].id, "beta");
+}
+
+#[test]
 fn language_filter_stacks_with_primary_collection() {
     let mut harness = make_app();
     let now = Utc::now();

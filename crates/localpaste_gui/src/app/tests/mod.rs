@@ -121,6 +121,7 @@ fn make_app() -> TestHarness {
         server_used_fallback,
         status: None,
         toasts: VecDeque::with_capacity(TOAST_LIMIT),
+        export_result_rx: None,
         save_status: SaveStatus::Saved,
         last_edit_at: None,
         save_in_flight: false,

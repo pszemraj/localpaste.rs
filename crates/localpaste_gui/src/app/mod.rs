@@ -26,7 +26,7 @@ use localpaste_server::{AppState, EmbeddedServer, PasteLockManager};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use style::*;
 use tracing::{info, warn};
@@ -105,6 +105,7 @@ pub(crate) struct LocalPasteApp {
     server_used_fallback: bool,
     status: Option<StatusMessage>,
     toasts: VecDeque<ToastMessage>,
+    export_result_rx: Option<mpsc::Receiver<ExportCompletion>>,
     save_status: SaveStatus,
     last_edit_at: Option<Instant>,
     save_in_flight: bool,
@@ -181,6 +182,12 @@ struct StatusMessage {
 struct ToastMessage {
     text: String,
     expires_at: Instant,
+}
+
+struct ExportCompletion {
+    paste_id: String,
+    path: String,
+    result: Result<(), String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -432,6 +439,7 @@ impl LocalPasteApp {
             server_used_fallback,
             status: None,
             toasts: VecDeque::with_capacity(TOAST_LIMIT),
+            export_result_rx: None,
             save_status: SaveStatus::Saved,
             last_edit_at: None,
             save_in_flight: false,
@@ -596,6 +604,7 @@ impl eframe::App for LocalPasteApp {
         while let Ok(event) = self.backend.evt_rx.try_recv() {
             self.apply_event(event);
         }
+        self.poll_export_result();
 
         if let Some(text) = self.clipboard_outgoing.take() {
             ctx.send_cmd(egui::OutputCommand::CopyText(text));
