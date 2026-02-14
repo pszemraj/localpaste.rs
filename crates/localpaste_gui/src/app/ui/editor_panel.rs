@@ -876,6 +876,7 @@ impl LocalPasteApp {
                                 editor_cache.layout(EditorLayoutRequest {
                                     ui,
                                     text,
+                                    text_revision: Some(revision),
                                     wrap_width,
                                     language_hint: language_hint.as_str(),
                                     use_plain,

@@ -330,18 +330,6 @@ impl EditorMode {
     }
 }
 
-/// Returns the internal revision of an EditorBuffer-backed TextBuffer.
-pub(super) fn editor_buffer_revision(text: &dyn egui::TextBuffer) -> Option<u64> {
-    if text.type_id() == TypeId::of::<EditorBuffer>() {
-        let ptr = text as *const dyn egui::TextBuffer as *const EditorBuffer;
-        // Safety: we only cast when the type id matches.
-        let buffer = unsafe { &*ptr };
-        Some(buffer.revision)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

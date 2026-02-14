@@ -16,6 +16,7 @@ fn highlight_cache_reuses_layout_when_unchanged() {
             let _ = cache.layout(EditorLayoutRequest {
                 ui,
                 text: &buffer,
+                text_revision: Some(buffer.revision()),
                 wrap_width: 400.0,
                 language_hint: "py",
                 use_plain: false,
@@ -30,6 +31,7 @@ fn highlight_cache_reuses_layout_when_unchanged() {
             let _ = cache.layout(EditorLayoutRequest {
                 ui,
                 text: &buffer,
+                text_revision: Some(buffer.revision()),
                 wrap_width: 400.0,
                 language_hint: "py",
                 use_plain: false,
@@ -59,6 +61,7 @@ fn highlight_cache_updates_after_line_edit() {
             let _ = cache.layout(EditorLayoutRequest {
                 ui,
                 text: &buffer,
+                text_revision: Some(buffer.revision()),
                 wrap_width: 400.0,
                 language_hint: "py",
                 use_plain: false,
@@ -74,6 +77,7 @@ fn highlight_cache_updates_after_line_edit() {
             let _ = cache.layout(EditorLayoutRequest {
                 ui,
                 text: &buffer,
+                text_revision: Some(buffer.revision()),
                 wrap_width: 400.0,
                 language_hint: "py",
                 use_plain: false,

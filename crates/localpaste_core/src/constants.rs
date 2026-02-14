@@ -16,6 +16,8 @@ pub const DEFAULT_SEARCH_PASTES_LIMIT: usize = 512;
 
 /// Default base URL for CLI/API clients.
 pub const DEFAULT_CLI_SERVER_URL: &str = "http://localhost:38411";
+/// Discovery filename for the active embedded API address.
+pub const API_ADDR_FILE_NAME: &str = ".api-addr";
 
 /// Lock file names and patterns used by sled recovery.
 pub const DB_LOCK_FILE_NAME: &str = "db.lock";

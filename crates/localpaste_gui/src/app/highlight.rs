@@ -1,6 +1,5 @@
 //! Syntax highlighting caches and worker support for the native GUI editor.
 
-use super::editor::editor_buffer_revision;
 use super::util::env_flag_enabled;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui::{
@@ -37,6 +36,7 @@ pub(super) struct EditorLayoutCache {
 pub(super) struct EditorLayoutRequest<'a> {
     pub(super) ui: &'a egui::Ui,
     pub(super) text: &'a dyn egui::TextBuffer,
+    pub(super) text_revision: Option<u64>,
     pub(super) wrap_width: f32,
     pub(super) language_hint: &'a str,
     pub(super) use_plain: bool,
@@ -97,7 +97,7 @@ impl EditorLayoutCache {
     }
 
     pub(super) fn layout(&mut self, request: EditorLayoutRequest<'_>) -> Arc<egui::Galley> {
-        let Some(revision) = editor_buffer_revision(request.text) else {
+        let Some(revision) = request.text_revision else {
             return self.build_galley(BuildGalleyRequest {
                 ui: request.ui,
                 text: request.text.as_str(),

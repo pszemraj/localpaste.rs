@@ -11,13 +11,8 @@ use std::time::{Duration, Instant};
 #[command(name = "lpaste", about = "LocalPaste CLI", version)]
 struct Cli {
     /// Server URL (can also be set via LP_SERVER env var)
-    #[arg(
-        short,
-        long,
-        env = "LP_SERVER",
-        default_value = DEFAULT_CLI_SERVER_URL,
-    )]
-    server: String,
+    #[arg(short, long, env = "LP_SERVER")]
+    server: Option<String>,
 
     /// Output in JSON format
     #[arg(short, long, global = true)]
@@ -204,6 +199,25 @@ fn normalize_server(server: String) -> String {
     server
 }
 
+fn discovered_server_from_file() -> Option<String> {
+    let path = localpaste_core::config::api_addr_file_path_from_env_or_default();
+    let raw = std::fs::read_to_string(path).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if reqwest::Url::parse(trimmed).is_err() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn resolve_server(server: Option<String>) -> String {
+    server
+        .or_else(discovered_server_from_file)
+        .unwrap_or_else(|| DEFAULT_CLI_SERVER_URL.to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -212,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let timing = cli.timing;
     let json = cli.json;
-    let server = normalize_server(cli.server);
+    let server = normalize_server(resolve_server(cli.server));
     let command = cli.command;
 
     match command {
@@ -400,11 +414,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::{
         api_url, error_message_for_response, format_delete_output, format_get_output,
-        format_summary_output, normalize_server, paste_id_and_name,
+        format_summary_output, normalize_server, paste_id_and_name, resolve_server,
     };
     use super::{Cli, Commands};
     use clap::Parser;
+    use localpaste_core::config::api_addr_file_path_from_env_or_default;
+    use localpaste_core::env::{env_lock, EnvGuard};
     use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn normalize_server_matrix() {
@@ -540,5 +557,105 @@ mod tests {
             Commands::SearchMeta { query } => assert_eq!(query, "needle"),
             _ => panic!("expected search-meta command"),
         }
+    }
+
+    #[test]
+    fn resolve_server_prefers_explicit_over_discovery() {
+        let _lock = env_lock().lock().expect("env lock");
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("lpaste-cli-explicit-{}", nonce));
+        let db_path = db_path.join("db");
+        let db_path_string = db_path.to_string_lossy().to_string();
+        let _db_path_guard = EnvGuard::set("DB_PATH", db_path_string.as_str());
+        let _lp_server_guard = EnvGuard::remove("LP_SERVER");
+
+        let discovery = api_addr_file_path_from_env_or_default();
+        if let Some(parent) = discovery.parent() {
+            std::fs::create_dir_all(parent).expect("create discovery dir");
+        }
+        std::fs::write(&discovery, "http://127.0.0.1:45555").expect("write discovery");
+
+        assert_eq!(
+            resolve_server(Some("http://127.0.0.1:45556".to_string())),
+            "http://127.0.0.1:45556"
+        );
+
+        let _ = std::fs::remove_file(discovery);
+    }
+
+    #[test]
+    fn resolve_server_uses_discovery_when_explicit_missing() {
+        let _lock = env_lock().lock().expect("env lock");
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("lpaste-cli-discovery-{}", nonce));
+        let db_path = db_path.join("db");
+        let db_path_string = db_path.to_string_lossy().to_string();
+        let _db_path_guard = EnvGuard::set("DB_PATH", db_path_string.as_str());
+        let _lp_server_guard = EnvGuard::remove("LP_SERVER");
+
+        let discovery = api_addr_file_path_from_env_or_default();
+        if let Some(parent) = discovery.parent() {
+            std::fs::create_dir_all(parent).expect("create discovery dir");
+        }
+        std::fs::write(&discovery, "http://127.0.0.1:46666").expect("write discovery");
+
+        assert_eq!(resolve_server(None), "http://127.0.0.1:46666");
+
+        let _ = std::fs::remove_file(discovery);
+    }
+
+    #[test]
+    fn resolve_server_falls_back_to_default_when_discovery_invalid() {
+        let _lock = env_lock().lock().expect("env lock");
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("lpaste-cli-invalid-{}", nonce));
+        let db_path = db_path.join("db");
+        let db_path_string = db_path.to_string_lossy().to_string();
+        let _db_path_guard = EnvGuard::set("DB_PATH", db_path_string.as_str());
+        let _lp_server_guard = EnvGuard::remove("LP_SERVER");
+
+        let discovery = api_addr_file_path_from_env_or_default();
+        if let Some(parent) = discovery.parent() {
+            std::fs::create_dir_all(parent).expect("create discovery dir");
+        }
+        std::fs::write(&discovery, "not a url").expect("write discovery");
+
+        assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
+
+        let _ = std::fs::remove_file(discovery);
+    }
+
+    #[test]
+    fn lp_server_env_value_beats_discovery_file() {
+        let _lock = env_lock().lock().expect("env lock");
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("lpaste-cli-env-{}", nonce));
+        let db_path = db_path.join("db");
+        let db_path_string = db_path.to_string_lossy().to_string();
+        let _db_path_guard = EnvGuard::set("DB_PATH", db_path_string.as_str());
+        let _lp_server_guard = EnvGuard::set("LP_SERVER", "http://127.0.0.1:47777");
+
+        let discovery = api_addr_file_path_from_env_or_default();
+        if let Some(parent) = discovery.parent() {
+            std::fs::create_dir_all(parent).expect("create discovery dir");
+        }
+        std::fs::write(&discovery, "http://127.0.0.1:48888").expect("write discovery");
+
+        let cli = Cli::parse_from(["lpaste", "list"]);
+        assert_eq!(resolve_server(cli.server), "http://127.0.0.1:47777");
+
+        let _ = std::fs::remove_file(discovery);
     }
 }

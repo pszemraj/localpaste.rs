@@ -2,11 +2,14 @@
 
 use serde::Deserialize;
 use std::env;
+use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::warn;
 
-use crate::constants::{DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT};
+use crate::constants::{
+    API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
+};
 
 /// Runtime configuration for LocalPaste.
 #[derive(Debug, Clone, Deserialize)]
@@ -70,6 +73,44 @@ fn default_data_dir() -> PathBuf {
 
 fn default_db_path() -> String {
     default_data_dir().join("db").to_string_lossy().to_string()
+}
+
+/// Resolve the configured DB path, falling back to the default path.
+///
+/// This uses the same env/default rules as [`Config::from_env`].
+///
+/// # Returns
+/// The expanded `DB_PATH` value or the platform default path.
+pub fn db_path_from_env_or_default() -> String {
+    env::var("DB_PATH")
+        .map(expand_tilde)
+        .unwrap_or_else(|_| default_db_path())
+}
+
+/// Resolve the discovery-file path for a given database path.
+///
+/// The discovery file is stored next to the configured DB directory.
+///
+/// # Arguments
+/// - `db_path`: Database path used by LocalPaste.
+///
+/// # Returns
+/// Path to the `.api-addr` discovery file.
+pub fn api_addr_file_path_for_db_path(db_path: &str) -> PathBuf {
+    let db_path = PathBuf::from(expand_tilde(db_path.to_string()));
+    let parent = db_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    parent.join(API_ADDR_FILE_NAME)
+}
+
+/// Resolve the discovery-file path using env/default DB path rules.
+///
+/// # Returns
+/// Path to the `.api-addr` discovery file.
+pub fn api_addr_file_path_from_env_or_default() -> PathBuf {
+    api_addr_file_path_for_db_path(db_path_from_env_or_default().as_str())
 }
 
 /// Parse a boolean-like environment flag value.
@@ -165,9 +206,7 @@ impl Config {
     /// A populated [`Config`] with defaults applied when env vars are missing.
     pub fn from_env() -> Self {
         Self {
-            db_path: env::var("DB_PATH")
-                .map(expand_tilde)
-                .unwrap_or_else(|_| default_db_path()),
+            db_path: db_path_from_env_or_default(),
             port: parse_env_number("PORT", DEFAULT_PORT),
             max_paste_size: parse_env_number("MAX_PASTE_SIZE", DEFAULT_MAX_PASTE_SIZE),
             auto_save_interval: parse_env_number(

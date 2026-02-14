@@ -518,13 +518,15 @@ impl LocalPasteApp {
         }
     }
 
-    fn select_loaded_paste(&mut self, paste: Paste) {
+    pub(super) fn select_loaded_paste(&mut self, paste: Paste) {
         let id = paste.id.clone();
         if self.selected_id.as_deref() != Some(id.as_str()) {
+            if !self.acquire_paste_lock(id.as_str()) {
+                return;
+            }
             if let Some(prev) = self.selected_id.replace(id.clone()) {
                 self.release_paste_lock(prev.as_str());
             }
-            let _ = self.acquire_paste_lock(id.as_str());
         }
         self.sync_editor_metadata(&paste);
         self.selected_content.reset(paste.content.clone());

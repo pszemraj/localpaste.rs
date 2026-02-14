@@ -640,6 +640,42 @@ fn select_paste_metadata_dirty_defers_switch_until_meta_save_ack() {
 }
 
 #[test]
+fn select_loaded_paste_keeps_current_selection_when_new_lock_acquire_fails() {
+    let mut harness = make_app();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 12));
+    harness.app.pastes = harness.app.all_pastes.clone();
+
+    let locks = harness.app.locks.clone();
+    let _mutation_guard = locks.begin_mutation("beta").expect("start mutation guard");
+
+    let mut beta = Paste::new("beta-content".to_string(), "Beta".to_string());
+    beta.id = "beta".to_string();
+    harness.app.select_loaded_paste(beta);
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.selected_content.as_str(), "content");
+    assert_eq!(
+        harness
+            .app
+            .selected_paste
+            .as_ref()
+            .map(|paste| paste.id.as_str()),
+        Some("alpha")
+    );
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Lock acquire failed; close and reopen the paste.")
+    );
+}
+
+#[test]
 fn select_paste_rolls_back_pending_when_metadata_dispatch_fails_with_content_in_flight() {
     let TestHarness {
         _dir: _guard,

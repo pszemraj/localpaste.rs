@@ -2,6 +2,7 @@
 
 use super::buffer::{RopeBuffer, VirtualEditDelta};
 use super::state::VirtualEditorState;
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 const DEFAULT_MAX_OPS: usize = 500;
@@ -63,7 +64,7 @@ pub(crate) struct HistoryPerfStats {
 /// Operation-based undo/redo stack with bounded memory.
 #[derive(Debug)]
 pub(crate) struct VirtualEditorHistory {
-    undo: Vec<EditRecord>,
+    undo: VecDeque<EditRecord>,
     redo: Vec<EditRecord>,
     undo_bytes: usize,
     redo_invalidations: u64,
@@ -79,7 +80,7 @@ pub(crate) struct VirtualEditorHistory {
 impl Default for VirtualEditorHistory {
     fn default() -> Self {
         Self {
-            undo: Vec::new(),
+            undo: VecDeque::new(),
             redo: Vec::new(),
             undo_bytes: 0,
             redo_invalidations: 0,
@@ -115,20 +116,18 @@ impl VirtualEditorHistory {
             after_cursor: edit.after_cursor,
             at: edit.at,
         };
-        if let Some(last) = self.undo.last_mut() {
+        if let Some(last) = self.undo.back_mut() {
             if Self::can_coalesce(last, &incoming, self.coalesce_window) {
                 self.coalesced_edits = self.coalesced_edits.saturating_add(1);
                 self.undo_bytes = self.undo_bytes.saturating_sub(op_bytes(last));
-                last.inserted.push_str(incoming.inserted.as_str());
-                last.after_cursor = incoming.after_cursor;
-                last.at = incoming.at;
+                Self::coalesce_into(last, incoming);
                 self.undo_bytes = self.undo_bytes.saturating_add(op_bytes(last));
                 self.trim_undo();
                 return;
             }
         }
         self.undo_bytes = self.undo_bytes.saturating_add(op_bytes(&incoming));
-        self.undo.push(incoming);
+        self.undo.push_back(incoming);
         self.trim_undo();
     }
 
@@ -137,21 +136,59 @@ impl VirtualEditorHistory {
         {
             return false;
         }
-        if previous.intent != EditIntent::Insert {
-            return false;
+        match previous.intent {
+            EditIntent::Insert => {
+                if !previous.deleted.is_empty() || !next.deleted.is_empty() {
+                    return false;
+                }
+                next.start == previous.after_cursor
+            }
+            EditIntent::DeleteBackward => {
+                if !previous.inserted.is_empty() || !next.inserted.is_empty() {
+                    return false;
+                }
+                next.start.saturating_add(next.deleted.chars().count()) == previous.start
+            }
+            EditIntent::DeleteForward => {
+                if !previous.inserted.is_empty() || !next.inserted.is_empty() {
+                    return false;
+                }
+                next.start == previous.start
+            }
+            _ => false,
         }
-        if !previous.deleted.is_empty() || !next.deleted.is_empty() {
-            return false;
+    }
+
+    fn coalesce_into(previous: &mut EditRecord, next: EditRecord) {
+        match previous.intent {
+            EditIntent::Insert => {
+                previous.inserted.push_str(next.inserted.as_str());
+                previous.after_cursor = next.after_cursor;
+                previous.at = next.at;
+            }
+            EditIntent::DeleteBackward => {
+                let mut merged = String::with_capacity(next.deleted.len() + previous.deleted.len());
+                merged.push_str(next.deleted.as_str());
+                merged.push_str(previous.deleted.as_str());
+                previous.start = next.start;
+                previous.deleted = merged;
+                previous.after_cursor = next.after_cursor;
+                previous.at = next.at;
+            }
+            EditIntent::DeleteForward => {
+                previous.deleted.push_str(next.deleted.as_str());
+                previous.after_cursor = next.after_cursor;
+                previous.at = next.at;
+            }
+            _ => {}
         }
-        next.start == previous.after_cursor
     }
 
     fn trim_undo(&mut self) {
         while self.undo.len() > self.max_ops || self.undo_bytes > self.max_bytes {
-            if self.undo.is_empty() {
+            let Some(removed) = self.undo.pop_front() else {
                 break;
-            }
-            let removed = self.undo.remove(0);
+            };
             self.undo_bytes = self.undo_bytes.saturating_sub(op_bytes(&removed));
             self.trim_evictions = self.trim_evictions.saturating_add(1);
         }
@@ -163,7 +200,7 @@ impl VirtualEditorHistory {
         buffer: &mut RopeBuffer,
         state: &mut VirtualEditorState,
     ) -> Option<VirtualEditDelta> {
-        let op = self.undo.pop()?;
+        let op = self.undo.pop_back()?;
         self.undo_bytes = self.undo_bytes.saturating_sub(op_bytes(&op));
         let inserted_chars = op.inserted.chars().count();
         let end = op.start.saturating_add(inserted_chars);
@@ -189,7 +226,7 @@ impl VirtualEditorHistory {
         let delta = buffer.replace_char_range(op.start..end, op.inserted.as_str());
         state.set_cursor(op.after_cursor, buffer.len_chars());
         self.undo_bytes = self.undo_bytes.saturating_add(op_bytes(&op));
-        self.undo.push(op);
+        self.undo.push_back(op);
         self.trim_undo();
         delta
     }
@@ -308,5 +345,130 @@ mod tests {
         assert_eq!(perf.redo_invalidations, 1);
         assert!(history.redo(&mut buffer, &mut state).is_none());
         assert_eq!(history.perf_stats().redo_misses, 1);
+    }
+
+    #[test]
+    fn coalesces_contiguous_backspace_deletes() {
+        let mut buffer = RopeBuffer::new("abcde");
+        let mut state = VirtualEditorState::default();
+        let mut history = VirtualEditorHistory::default();
+        let now = Instant::now();
+
+        let _ = buffer.replace_char_range(4..5, "");
+        history.record_edit(RecordedEdit {
+            start: 4,
+            deleted: "e".to_string(),
+            inserted: String::new(),
+            intent: EditIntent::DeleteBackward,
+            before_cursor: 5,
+            after_cursor: 4,
+            at: now,
+        });
+        let _ = buffer.replace_char_range(3..4, "");
+        history.record_edit(RecordedEdit {
+            start: 3,
+            deleted: "d".to_string(),
+            inserted: String::new(),
+            intent: EditIntent::DeleteBackward,
+            before_cursor: 4,
+            after_cursor: 3,
+            at: now + Duration::from_millis(10),
+        });
+
+        assert_eq!(history.undo_len(), 1);
+        assert!(history.undo(&mut buffer, &mut state).is_some());
+        assert_eq!(buffer.to_string(), "abcde");
+    }
+
+    #[test]
+    fn coalesces_contiguous_forward_deletes() {
+        let mut buffer = RopeBuffer::new("abcde");
+        let mut state = VirtualEditorState::default();
+        let mut history = VirtualEditorHistory::default();
+        let now = Instant::now();
+
+        let _ = buffer.replace_char_range(2..3, "");
+        history.record_edit(RecordedEdit {
+            start: 2,
+            deleted: "c".to_string(),
+            inserted: String::new(),
+            intent: EditIntent::DeleteForward,
+            before_cursor: 2,
+            after_cursor: 2,
+            at: now,
+        });
+        let _ = buffer.replace_char_range(2..3, "");
+        history.record_edit(RecordedEdit {
+            start: 2,
+            deleted: "d".to_string(),
+            inserted: String::new(),
+            intent: EditIntent::DeleteForward,
+            before_cursor: 2,
+            after_cursor: 2,
+            at: now + Duration::from_millis(10),
+        });
+
+        assert_eq!(history.undo_len(), 1);
+        assert!(history.undo(&mut buffer, &mut state).is_some());
+        assert_eq!(buffer.to_string(), "abcde");
+    }
+
+    #[test]
+    fn does_not_coalesce_non_contiguous_backspace_deletes() {
+        let mut history = VirtualEditorHistory::default();
+        let now = Instant::now();
+
+        history.record_edit(RecordedEdit {
+            start: 4,
+            deleted: "x".to_string(),
+            inserted: String::new(),
+            intent: EditIntent::DeleteBackward,
+            before_cursor: 5,
+            after_cursor: 4,
+            at: now,
+        });
+        history.record_edit(RecordedEdit {
+            start: 1,
+            deleted: "y".to_string(),
+            inserted: String::new(),
+            intent: EditIntent::DeleteBackward,
+            before_cursor: 2,
+            after_cursor: 1,
+            at: now + Duration::from_millis(10),
+        });
+
+        assert_eq!(history.undo_len(), 2);
+    }
+
+    #[test]
+    fn trim_evicts_oldest_undo_operations() {
+        let mut buffer = RopeBuffer::new("");
+        let mut state = VirtualEditorState::default();
+        let mut history = VirtualEditorHistory::default();
+        let now = Instant::now();
+
+        for index in 0..=500 {
+            let inserted = if index == 0 { "A" } else { "b" };
+            let start = buffer.len_chars();
+            let _ = buffer.replace_char_range(start..start, inserted);
+            history.record_edit(RecordedEdit {
+                start,
+                deleted: String::new(),
+                inserted: inserted.to_string(),
+                intent: EditIntent::Other,
+                before_cursor: start,
+                after_cursor: start + 1,
+                at: now + Duration::from_millis(index as u64),
+            });
+        }
+
+        assert_eq!(history.undo_len(), 500);
+        assert_eq!(history.perf_stats().trim_evictions, 1);
+
+        for _ in 0..500 {
+            assert!(history.undo(&mut buffer, &mut state).is_some());
+        }
+        assert_eq!(buffer.to_string(), "A");
+        assert!(history.undo(&mut buffer, &mut state).is_none());
     }
 }

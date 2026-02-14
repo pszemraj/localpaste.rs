@@ -2,7 +2,9 @@
 
 use crate::{resolve_bind_address, serve_router, AppError, AppState};
 use std::{
+    fs,
     net::SocketAddr,
+    path::PathBuf,
     sync::mpsc,
     thread::{self, JoinHandle},
 };
@@ -15,6 +17,7 @@ pub struct EmbeddedServer {
     thread: Option<JoinHandle<()>>,
     addr: SocketAddr,
     used_fallback: bool,
+    api_addr_path: Option<PathBuf>,
 }
 
 impl EmbeddedServer {
@@ -33,6 +36,9 @@ impl EmbeddedServer {
     /// # Errors
     /// Returns an error if the runtime or server socket cannot be created.
     pub fn start(state: AppState, allow_public: bool) -> Result<Self, AppError> {
+        let api_addr_path =
+            localpaste_core::config::api_addr_file_path_for_db_path(&state.config.db_path);
+        let api_addr_path_for_thread = api_addr_path.clone();
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
 
@@ -80,6 +86,23 @@ impl EmbeddedServer {
                 };
 
                 let actual_addr = listener.local_addr().unwrap_or(bind_addr);
+                let api_addr = format!("http://{}", actual_addr);
+                if let Some(parent) = api_addr_path_for_thread.parent() {
+                    if let Err(err) = fs::create_dir_all(parent) {
+                        warn!(
+                            "failed to ensure API discovery directory '{}': {}",
+                            parent.display(),
+                            err
+                        );
+                    }
+                }
+                if let Err(err) = fs::write(&api_addr_path_for_thread, api_addr.as_bytes()) {
+                    warn!(
+                        "failed to write API discovery file '{}': {}",
+                        api_addr_path_for_thread.display(),
+                        err
+                    );
+                }
                 if used_fallback {
                     warn!(
                         "API listening on http://{} (auto port; {} was in use)",
@@ -121,6 +144,7 @@ impl EmbeddedServer {
                     thread: thread_handle.take(),
                     addr,
                     used_fallback,
+                    api_addr_path: Some(api_addr_path),
                 })
             }
             Ok(Err(message)) => {
@@ -159,6 +183,19 @@ impl EmbeddedServer {
 
 impl Drop for EmbeddedServer {
     fn drop(&mut self) {
+        if let Some(path) = self.api_addr_path.take() {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    warn!(
+                        "failed to remove API discovery file '{}': {}",
+                        path.display(),
+                        err
+                    );
+                }
+            }
+        }
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.send(());
         }
