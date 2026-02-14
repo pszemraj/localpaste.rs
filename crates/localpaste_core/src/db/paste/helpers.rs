@@ -70,13 +70,6 @@ pub(super) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
     paste.updated_at = Utc::now();
 }
 
-pub(super) fn normalized_language_filter(language: Option<&str>) -> Option<String> {
-    language
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase())
-}
-
 pub(super) fn language_matches_filter(language: Option<&str>, filter: Option<&str>) -> bool {
     let Some(filter) = filter else {
         return true;

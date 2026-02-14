@@ -136,11 +136,8 @@ fn apply_create_failpoint_after_destination_reserve(
             db.folders.delete(folder_id)?;
             Ok(())
         }
-        TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce => {
-            restore_transaction_failpoint(failpoint);
-            Ok(())
-        }
-        TransactionFailpoint::MoveAfterDestinationReserveOnce
+        TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce
+        | TransactionFailpoint::MoveAfterDestinationReserveOnce
         | TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce
         | TransactionFailpoint::MovePauseAfterDestinationReserveOnce => {
             restore_transaction_failpoint(failpoint);

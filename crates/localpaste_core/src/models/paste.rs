@@ -114,6 +114,17 @@ impl From<&Paste> for PasteMeta {
     }
 }
 
+/// Normalize an optional language filter value.
+///
+/// # Returns
+/// Lowercased language when non-empty after trimming, otherwise `None`.
+pub fn normalize_language_filter(language: Option<&str>) -> Option<String> {
+    language
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+}
+
 /// Best-effort language detection based on simple heuristics.
 ///
 /// Detection samples only the first portion of text to keep allocation and scan

@@ -1,20 +1,10 @@
 //! Backup and restore helpers for sled databases.
 
 use super::fs_copy::copy_dir_recursive;
+use super::time_util::unix_timestamp_seconds;
 use crate::error::AppError;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn unix_timestamp_seconds(now: SystemTime) -> Result<u64, AppError> {
-    now.duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .map_err(|err| {
-            AppError::DatabaseError(format!(
-                "Failed to compute backup timestamp from system clock: {}",
-                err
-            ))
-        })
-}
+use std::time::SystemTime;
 
 /// Backup manager using sled's native export/import functionality
 pub struct BackupManager {

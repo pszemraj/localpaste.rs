@@ -13,8 +13,8 @@ use std::sync::Arc;
 use self::helpers::{
     apply_update_request, decode_dirty_count, deserialize_meta, deserialize_paste,
     finalize_meta_search_results, finalize_recent_meta_results, folder_matches_expected, index_key,
-    language_matches_filter, meta_matches_filters, normalized_language_filter,
-    push_ranked_meta_top_k, push_recent_meta_top_k, score_meta_match, score_paste_match,
+    language_matches_filter, meta_matches_filters, push_ranked_meta_top_k, push_recent_meta_top_k,
+    score_meta_match, score_paste_match,
 };
 
 #[cfg(test)]
@@ -567,7 +567,7 @@ impl PasteDb {
         }
         let query_lower = query.to_lowercase();
         let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
-        let language_filter = normalized_language_filter(language.as_deref());
+        let language_filter = normalize_language_filter(language.as_deref());
 
         for item in self.tree.iter() {
             let (_, value) = item?;
@@ -628,7 +628,7 @@ impl PasteDb {
         }
 
         let query_lower = query.to_lowercase();
-        let language_filter = normalized_language_filter(language.as_deref());
+        let language_filter = normalize_language_filter(language.as_deref());
         let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
         for item in self.meta_tree.iter() {
             let (_, value) = item?;
@@ -771,24 +771,27 @@ impl PasteDb {
         Ok(())
     }
 
-    fn begin_meta_index_mutation(&self) -> Result<(), AppError> {
+    fn update_meta_index_in_progress(&self, increment: bool) -> Result<(), AppError> {
         let _ = self
             .meta_state_tree
             .update_and_fetch(META_INDEX_IN_PROGRESS_COUNT_KEY, |old| {
                 let current = decode_dirty_count(old);
-                Some(current.saturating_add(1).to_be_bytes().to_vec())
+                let next = if increment {
+                    current.saturating_add(1)
+                } else {
+                    current.saturating_sub(1)
+                };
+                Some(next.to_be_bytes().to_vec())
             })?;
         Ok(())
     }
 
+    fn begin_meta_index_mutation(&self) -> Result<(), AppError> {
+        self.update_meta_index_in_progress(true)
+    }
+
     fn end_meta_index_mutation(&self) -> Result<(), AppError> {
-        let _ = self
-            .meta_state_tree
-            .update_and_fetch(META_INDEX_IN_PROGRESS_COUNT_KEY, |old| {
-                let current = decode_dirty_count(old);
-                Some(current.saturating_sub(1).to_be_bytes().to_vec())
-            })?;
-        Ok(())
+        self.update_meta_index_in_progress(false)
     }
 
     fn mark_meta_index_faulted(&self) {
@@ -914,7 +917,7 @@ impl PasteDb {
         language: Option<String>,
     ) -> Result<Vec<PasteMeta>, AppError> {
         let query_lower = query.to_lowercase();
-        let language_filter = normalized_language_filter(language.as_deref());
+        let language_filter = normalize_language_filter(language.as_deref());
         let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
         let folder_filter = folder_id.as_deref();
         self.scan_canonical_meta(|meta| {

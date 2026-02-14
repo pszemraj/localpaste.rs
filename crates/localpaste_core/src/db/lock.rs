@@ -1,6 +1,6 @@
 //! Utilities for handling sled lock files safely.
 
-use super::{fs_copy::copy_dir_recursive, ProcessProbeResult};
+use super::{fs_copy::copy_dir_recursive, time_util::unix_timestamp_seconds, ProcessProbeResult};
 use crate::error::AppError;
 use crate::{
     DB_LOCK_EXTENSION, DB_LOCK_FILE_NAME, DB_OWNER_LOCK_FILE_NAME, DB_TREE_LOCK_FILE_NAME,
@@ -8,7 +8,7 @@ use crate::{
 use fs2::FileExt;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 /// Process-lifetime owner lock guard.
 ///
@@ -161,17 +161,6 @@ pub fn probe_owner_lock(db_path: &str) -> ProcessProbeResult {
             ProcessProbeResult::Unknown
         }
     }
-}
-
-fn unix_timestamp_seconds(now: SystemTime) -> Result<u64, AppError> {
-    now.duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .map_err(|err| {
-            AppError::DatabaseError(format!(
-                "Failed to compute backup timestamp from system clock: {}",
-                err
-            ))
-        })
 }
 
 /// Lock file manager for handling database locks gracefully
