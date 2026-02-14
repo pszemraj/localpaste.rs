@@ -3,6 +3,8 @@
 use super::{jaccard, normalize_path, Args, FunctionInfo};
 use std::cmp::Ordering;
 
+const LENGTH_RATIO_FLOOR: f64 = 0.65;
+
 #[derive(Debug)]
 pub(super) struct SimilarityFinding {
     pub(super) left_id: usize,
@@ -30,18 +32,14 @@ pub(super) fn find_similarity_pairs(
 
     for i in 0..candidates.len() {
         let left = candidates[i];
-        for right in candidates.iter().skip(i + 1) {
-            let right = *right;
-            let len_ratio = left
-                .normalized_nodes
-                .len()
-                .min(right.normalized_nodes.len()) as f64
-                / left
-                    .normalized_nodes
-                    .len()
-                    .max(right.normalized_nodes.len()) as f64;
-            if len_ratio < 0.65 {
-                continue;
+        let left_len = left.normalized_nodes.len() as f64;
+        for j in (i + 1)..candidates.len() {
+            let right = candidates[j];
+            let right_len = right.normalized_nodes.len() as f64;
+            let len_ratio = left_len / right_len;
+            if len_ratio < LENGTH_RATIO_FLOOR {
+                // Candidates are sorted by length; later entries are only longer.
+                break;
             }
 
             let (score, overlap, union) = jaccard(&left.shingles, &right.shingles);

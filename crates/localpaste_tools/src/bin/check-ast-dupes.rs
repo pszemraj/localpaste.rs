@@ -2,7 +2,7 @@
 //!
 //! Duplicate detection:
 //! - Function-level only.
-//! - AST node sequence normalization strips identifiers and literal values.
+//! - AST node sequence normalization anonymizes identifiers and literal values.
 //! - Jaccard similarity is computed over k-gram shingles.
 //!
 //! Likely-dead detection:
@@ -12,7 +12,7 @@
 
 use clap::Parser;
 use quote::ToTokens;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -175,8 +175,9 @@ fn run(args: Args) -> Result<(), String> {
     }
 
     let (duplicates, near_misses) = find_similarity_pairs(&functions, &args);
-    let dead = find_likely_dead_symbols(&functions, &args);
-    let visibility_tighten = find_visibility_tighten_candidates(&functions);
+    let resolved_calls = resolve_callers(&functions);
+    let dead = find_likely_dead_symbols(&functions, &resolved_calls, &args);
+    let visibility_tighten = find_visibility_tighten_candidates(&functions, &resolved_calls);
 
     println!(
         "scanned {} Rust files under {}",
@@ -258,10 +259,14 @@ fn parse_file_functions(
     Ok(collector.functions)
 }
 
-fn find_likely_dead_symbols(functions: &[FunctionInfo], args: &Args) -> Vec<DeadFinding> {
-    let resolved = resolve_callers(functions);
+fn find_likely_dead_symbols(
+    functions: &[FunctionInfo],
+    resolved: &[ResolvedCall],
+    args: &Args,
+) -> Vec<DeadFinding> {
     let mut incoming_total = vec![0usize; functions.len()];
     let mut unresolved_name_hits: HashMap<String, usize> = HashMap::new();
+    let mut outgoing_targets: Vec<Vec<usize>> = vec![Vec::new(); functions.len()];
 
     for call in resolved {
         if let Some(target_id) = call.target_id {
@@ -269,28 +274,53 @@ fn find_likely_dead_symbols(functions: &[FunctionInfo], args: &Args) -> Vec<Dead
                 continue;
             }
             incoming_total[target_id] += 1;
-        } else if let Some(name) = call.last_segment {
-            *unresolved_name_hits.entry(name).or_insert(0) += 1;
+            outgoing_targets[call.caller_id].push(target_id);
+        } else if let Some(name) = call.last_segment.as_ref() {
+            *unresolved_name_hits.entry(name.clone()).or_insert(0) += 1;
         }
     }
 
-    let mut dead = Vec::new();
+    let mut eligible_ids = vec![false; functions.len()];
     for info in functions {
-        if !eligible_for_dead_check(info, args) {
-            continue;
-        }
-        if unresolved_name_hits.contains_key(info.simple_name.as_str()) {
-            continue;
-        }
-        if incoming_total[info.id] == 0 {
-            dead.push(DeadFinding {
-                id: info.id,
-                refs_total: 0,
-                refs_outside_module: 0,
-            });
+        if eligible_for_dead_check(info, args)
+            && !unresolved_name_hits.contains_key(info.simple_name.as_str())
+        {
+            eligible_ids[info.id] = true;
         }
     }
 
+    let mut live_incoming = incoming_total;
+    let mut queue = VecDeque::new();
+    for info in functions {
+        if eligible_ids[info.id] && live_incoming[info.id] == 0 {
+            queue.push_back(info.id);
+        }
+    }
+
+    let mut dead_ids = HashSet::new();
+    while let Some(dead_id) = queue.pop_front() {
+        if !eligible_ids[dead_id] || !dead_ids.insert(dead_id) {
+            continue;
+        }
+        for callee_id in &outgoing_targets[dead_id] {
+            if !eligible_ids[*callee_id] || live_incoming[*callee_id] == 0 {
+                continue;
+            }
+            live_incoming[*callee_id] -= 1;
+            if live_incoming[*callee_id] == 0 {
+                queue.push_back(*callee_id);
+            }
+        }
+    }
+
+    let mut dead: Vec<DeadFinding> = dead_ids
+        .into_iter()
+        .map(|id| DeadFinding {
+            id,
+            refs_total: 0,
+            refs_outside_module: 0,
+        })
+        .collect();
     dead.sort_by(|left, right| {
         functions[left.id]
             .file
@@ -301,8 +331,10 @@ fn find_likely_dead_symbols(functions: &[FunctionInfo], args: &Args) -> Vec<Dead
     dead
 }
 
-fn find_visibility_tighten_candidates(functions: &[FunctionInfo]) -> Vec<DeadFinding> {
-    let resolved = resolve_callers(functions);
+fn find_visibility_tighten_candidates(
+    functions: &[FunctionInfo],
+    resolved: &[ResolvedCall],
+) -> Vec<DeadFinding> {
     let mut incoming_total = vec![0usize; functions.len()];
     let mut incoming_outside_module = vec![0usize; functions.len()];
 
