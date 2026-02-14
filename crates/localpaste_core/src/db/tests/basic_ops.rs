@@ -244,6 +244,36 @@ fn test_folder_crud() {
 }
 
 #[test]
+fn test_folder_create_rejects_duplicate_id_without_overwrite() {
+    let (db, _temp) = setup_test_db();
+
+    let mut original = Folder::new("first-folder".to_string());
+    original.id = "duplicate-folder-id".to_string();
+    db.folders
+        .create(&original)
+        .expect("create original folder");
+
+    let mut conflicting = Folder::new("second-folder".to_string());
+    conflicting.id = original.id.clone();
+    let err = db
+        .folders
+        .create(&conflicting)
+        .expect_err("duplicate folder id create must fail");
+    assert!(
+        matches!(err, AppError::StorageMessage(ref message) if message.contains("already exists")),
+        "unexpected duplicate-folder error: {}",
+        err
+    );
+
+    let stored = db
+        .folders
+        .get(&original.id)
+        .expect("lookup")
+        .expect("original folder should remain");
+    assert_eq!(stored.name, "first-folder");
+}
+
+#[test]
 fn test_database_flush() {
     let (db, _temp) = setup_test_db();
 

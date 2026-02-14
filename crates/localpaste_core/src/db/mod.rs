@@ -374,7 +374,12 @@ impl Database {
             }
         }
         database.folders.clear_delete_markers()?;
-        reconcile_folder_invariants(&database)?;
+        if let Err(err) = reconcile_folder_invariants(&database) {
+            tracing::error!(
+                "Startup folder invariant reconcile failed; continuing in degraded mode: {}",
+                err
+            );
+        }
         if database.pastes.needs_reconcile_meta_indexes(false)? {
             // Folder invariant repair may require metadata/index regeneration. Failure is still
             // best-effort at startup; runtime stays correct via canonical fallback.

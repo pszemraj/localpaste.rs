@@ -39,7 +39,15 @@ impl FolderDb {
     pub fn create(&self, folder: &Folder) -> Result<(), AppError> {
         let key = folder.id.as_bytes();
         let value = bincode::serialize(folder)?;
-        self.tree.insert(key, value)?;
+        let inserted = self
+            .tree
+            .compare_and_swap(key, None as Option<&[u8]>, Some(value))?;
+        if inserted.is_err() {
+            return Err(AppError::StorageMessage(format!(
+                "Folder id '{}' already exists",
+                folder.id
+            )));
+        }
         Ok(())
     }
 
@@ -181,8 +189,15 @@ impl FolderDb {
     /// # Errors
     /// Returns an error if the marker tree write fails.
     pub fn mark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
+        let mut marked: Vec<String> = Vec::with_capacity(folder_ids.len());
         for folder_id in folder_ids {
-            let _ = self.delete_markers.insert(folder_id.as_bytes(), &[1u8])?;
+            if let Err(err) = self.delete_markers.insert(folder_id.as_bytes(), &[1u8]) {
+                for rollback_id in marked {
+                    let _ = self.delete_markers.remove(rollback_id.as_bytes());
+                }
+                return Err(AppError::Database(err));
+            }
+            marked.push(folder_id.clone());
         }
         Ok(())
     }

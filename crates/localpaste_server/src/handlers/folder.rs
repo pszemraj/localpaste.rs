@@ -30,6 +30,7 @@ pub async fn create_folder(
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("POST /api/folder");
     req.parent_id = normalize_optional_for_create(req.parent_id);
+    let _folder_guard = crate::db::TransactionOps::acquire_folder_txn_lock(&state.db)?;
 
     if let Some(ref parent_id) = req.parent_id {
         validate_assignable_folder_for_request(&state.db, parent_id, "Parent folder")?;
@@ -76,6 +77,7 @@ pub async fn update_folder(
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("PUT /api/folder/:id");
     req.parent_id = normalize_optional_for_update(req.parent_id);
+    let _folder_guard = crate::db::TransactionOps::acquire_folder_txn_lock(&state.db)?;
 
     let folders = if req
         .parent_id

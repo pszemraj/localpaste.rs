@@ -121,7 +121,10 @@ fn needs_reconcile_detects_partial_non_empty_metadata_drift() {
         .expect("remove first meta");
     paste_db
         .updated_tree
-        .remove(super::index_key(first.updated_at, first.id.as_str()))
+        .remove(super::helpers::index_key(
+            first.updated_at,
+            first.id.as_str(),
+        ))
         .expect("remove first updated index");
 
     assert!(
@@ -190,6 +193,46 @@ fn list_meta_falls_back_to_canonical_when_index_is_inconsistent() {
 }
 
 #[test]
+fn list_meta_detects_semantic_meta_drift_and_falls_back_to_canonical() {
+    let (paste_db, _dir) = setup_paste_db();
+    paste_db
+        .reconcile_meta_indexes()
+        .expect("initial reconcile writes marker");
+    let paste = Paste::new("body".to_string(), "old-name".to_string());
+    let paste_id = paste.id.clone();
+    paste_db.create(&paste).expect("create paste");
+
+    let mut rewritten = paste.clone();
+    rewritten.name = "new-name".to_string();
+    rewritten.content = "rewritten body".to_string();
+    rewritten.updated_at += Duration::seconds(1);
+    paste_db
+        .tree
+        .insert(
+            paste_id.as_bytes(),
+            bincode::serialize(&rewritten).expect("serialize rewritten paste"),
+        )
+        .expect("rewrite canonical row only");
+
+    let metas = paste_db
+        .list_meta(10, None)
+        .expect("list metadata fallback");
+    let rewritten_meta = metas
+        .iter()
+        .find(|meta| meta.id == paste_id)
+        .expect("rewritten metadata row should be visible");
+    assert_eq!(
+        rewritten_meta.name, "new-name",
+        "stale derived metadata should not leak when canonical row changed"
+    );
+    assert_eq!(
+        rewritten_meta.content_len,
+        "rewritten body".len(),
+        "fallback should expose canonical content length"
+    );
+}
+
+#[test]
 fn list_meta_omits_ghost_rows_when_canonical_row_is_missing() {
     let (paste_db, _dir) = setup_paste_db();
     paste_db
@@ -232,7 +275,8 @@ fn list_meta_dedupes_duplicate_updated_index_entries() {
     let updated_at = paste.updated_at;
     paste_db.create(&paste).expect("create paste");
 
-    let stale_key = super::index_key(updated_at - Duration::seconds(60), paste_id.as_str());
+    let stale_key =
+        super::helpers::index_key(updated_at - Duration::seconds(60), paste_id.as_str());
     paste_db
         .updated_tree
         .insert(stale_key, paste_id.as_bytes())

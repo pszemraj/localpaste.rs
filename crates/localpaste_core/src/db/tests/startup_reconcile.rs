@@ -207,6 +207,64 @@ fn test_database_new_reconciles_orphan_folder_refs() {
 }
 
 #[test]
+fn test_database_new_reconciles_orphan_folder_parent_refs() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test.db");
+    let db_path_str = db_path.to_str().unwrap().to_string();
+
+    let db = Database::new(&db_path_str).unwrap();
+    let root = Folder::new("root".to_string());
+    let root_id = root.id.clone();
+    db.folders.create(&root).unwrap();
+
+    let child = Folder::with_parent("child".to_string(), Some(root_id.clone()));
+    let child_id = child.id.clone();
+    db.folders.create(&child).unwrap();
+
+    db.folders.delete(&root_id).unwrap();
+    drop(db);
+
+    let reopened = Database::new(&db_path_str).unwrap();
+    let repaired_child = reopened
+        .folders
+        .get(&child_id)
+        .unwrap()
+        .expect("child should still exist");
+    assert!(
+        repaired_child.parent_id.is_none(),
+        "startup reconcile must clear parent_id references to missing folders"
+    );
+}
+
+#[test]
+fn test_database_new_continues_when_folder_reconcile_hits_corrupt_canonical_row() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test.db");
+    let db_path_str = db_path.to_str().unwrap().to_string();
+
+    let db = Database::new(&db_path_str).unwrap();
+    let paste = Paste::new("corrupt-me".to_string(), "corrupt-me".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).unwrap();
+    db.db
+        .open_tree("pastes")
+        .unwrap()
+        .insert(paste_id.as_bytes(), b"corrupt-canonical-row")
+        .unwrap();
+    drop(db);
+
+    let reopened = Database::new(&db_path_str)
+        .expect("startup should continue even when folder reconcile sees corrupt canonical row");
+    assert!(
+        reopened
+            .pastes
+            .needs_reconcile_meta_indexes(false)
+            .expect("needs reconcile"),
+        "corrupt canonical row should keep metadata reconcile markers in degraded mode"
+    );
+}
+
+#[test]
 fn test_database_new_continues_in_degraded_mode_when_meta_reconcile_fails() {
     let _lock = reconcile_failpoint_test_lock()
         .lock()

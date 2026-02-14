@@ -193,7 +193,18 @@ fn rollback_destination_reservation(
 }
 
 impl TransactionOps {
-    pub(crate) fn acquire_folder_txn_lock(
+    /// Acquire the global folder-transaction lock.
+    ///
+    /// This lock serializes folder-affecting flows (folder delete trees, folder-targeted
+    /// paste create/move/delete operations, and folder-parent mutations) that cannot be
+    /// represented as a single sled cross-tree transaction.
+    ///
+    /// # Returns
+    /// A lock guard that must be held for the full critical section.
+    ///
+    /// # Errors
+    /// Returns [`AppError::StorageMessage`] when the lock is poisoned.
+    pub fn acquire_folder_txn_lock(
         db: &Database,
     ) -> Result<std::sync::MutexGuard<'_, ()>, AppError> {
         db.folder_txn_lock

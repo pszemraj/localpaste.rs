@@ -247,6 +247,48 @@ fn reconcile_meta_indexes_after_folder_delete(db: &Database) -> Result<(), AppEr
     db.pastes.reconcile_meta_indexes()
 }
 
+fn reconcile_folder_parent_invariants_locked(
+    db: &Database,
+    folders: &[Folder],
+) -> Result<(), AppError> {
+    let folder_ids: HashSet<&str> = folders.iter().map(|folder| folder.id.as_str()).collect();
+    let mut clear_parent_ids = HashSet::new();
+
+    for folder in folders {
+        let Some(parent_id) = folder.parent_id.as_deref() else {
+            continue;
+        };
+        let missing_parent = !folder_ids.contains(parent_id);
+        let self_parent = folder.id == parent_id;
+        let cyclic_parent = introduces_cycle(folders, folder.id.as_str(), parent_id);
+        if missing_parent || self_parent || cyclic_parent {
+            clear_parent_ids.insert(folder.id.clone());
+        }
+    }
+
+    if clear_parent_ids.is_empty() {
+        return Ok(());
+    }
+
+    for folder in folders {
+        if !clear_parent_ids.contains(folder.id.as_str()) {
+            continue;
+        }
+        if let Some(parent_id) = folder.parent_id.as_deref() {
+            tracing::warn!(
+                folder_id = %folder.id,
+                parent_id = %parent_id,
+                "Clearing invalid folder parent during startup reconcile"
+            );
+        }
+        let _ = db
+            .folders
+            .update(folder.id.as_str(), folder.name.clone(), Some(String::new()))?;
+    }
+
+    Ok(())
+}
+
 /// Reconcile folder invariants from canonical paste rows.
 ///
 /// Repairs two classes of drift:
@@ -262,6 +304,9 @@ pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
     // Keep folder-invariant repair serialized with folder-affecting transactions even if this
     // helper is called outside startup in the future.
     let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
+    let initial_folders = db.folders.list()?;
+    reconcile_folder_parent_invariants_locked(db, &initial_folders)?;
+
     let folders = db.folders.list()?;
     let folder_id_set: HashSet<String> = folders.iter().map(|folder| folder.id.clone()).collect();
     let mut orphan_ids = Vec::new();

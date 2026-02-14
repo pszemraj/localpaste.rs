@@ -3,6 +3,7 @@
 use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
+    db::TransactionOps,
     folder_ops::{
         delete_folder_tree_and_migrate_guarded, ensure_folder_assignable, introduces_cycle,
     },
@@ -32,6 +33,17 @@ pub(super) fn handle_create_folder(
     name: String,
     parent_id: Option<String>,
 ) {
+    let _folder_guard = match TransactionOps::acquire_folder_txn_lock(&state.db) {
+        Ok(guard) => guard,
+        Err(err) => {
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Create folder failed: {}", err),
+            );
+            return;
+        }
+    };
     let normalized_parent = parent_id
         .map(|pid| pid.trim().to_string())
         .filter(|pid| !pid.is_empty());
@@ -74,6 +86,17 @@ pub(super) fn handle_update_folder(
     name: String,
     parent_id: Option<String>,
 ) {
+    let _folder_guard = match TransactionOps::acquire_folder_txn_lock(&state.db) {
+        Ok(guard) => guard,
+        Err(err) => {
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Update folder failed: {}", err),
+            );
+            return;
+        }
+    };
     // Preserve API semantics:
     // - `None` => leave parent unchanged
     // - `Some(\"\")` => clear parent (top-level)
