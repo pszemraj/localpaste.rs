@@ -121,6 +121,25 @@ mod model_tests {
     }
 
     #[test]
+    fn test_detect_language_keeps_json_for_large_truncated_sample() {
+        let mut content = String::from("{\"items\":[");
+        for idx in 0..6000 {
+            if idx > 0 {
+                content.push(',');
+            }
+            content.push_str("{\"id\":");
+            content.push_str(idx.to_string().as_str());
+            content.push_str(",\"name\":\"entry\"}");
+        }
+        content.push_str("]}");
+        assert!(
+            content.len() > 64 * 1024,
+            "test fixture must exceed sampled prefix size"
+        );
+        assert_eq!(paste::detect_language(&content), Some("json".to_string()));
+    }
+
+    #[test]
     fn test_paste_request_validation() {
         let valid_req = paste::CreatePasteRequest {
             content: "test".to_string(),

@@ -135,10 +135,13 @@ pub fn detect_language(content: &str) -> Option<String> {
 
     // JSON: structural check without full parsing (avoids expensive serde_json)
     if sample.starts_with('{') || sample.starts_with('[') {
-        // Look for JSON-like structure: balanced braces, quotes, colons
-        if (sample.ends_with('}') || sample.ends_with(']'))
-            && sample.contains('"')
+        // When sampling truncates very large JSON payloads, the prefix may not end
+        // with the final closing delimiter. Keep large-document detection stable.
+        let sample_truncated = sample.len() < trimmed.len();
+        let looks_closed = sample.ends_with('}') || sample.ends_with(']');
+        if sample.contains('"')
             && (sample.contains(':') || sample.starts_with('['))
+            && (looks_closed || sample_truncated)
         {
             return Some("json".to_string());
         }
