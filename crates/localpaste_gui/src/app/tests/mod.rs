@@ -2,9 +2,9 @@
 
 use super::highlight::align_old_lines_by_hash;
 use super::*;
-use crate::backend::{CoreCmd, CoreEvent};
+use crate::backend::{BackendHandle, CoreCmd, CoreEvent};
 use chrono::Utc;
-use crossbeam_channel::{unbounded, Receiver, TryRecvError};
+use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use eframe::egui::TextBuffer;
 use localpaste_server::LockOwnerId;
 use syntect::util::LinesWithEndings;
@@ -152,6 +152,15 @@ fn make_app() -> TestHarness {
         app,
         cmd_rx,
     }
+}
+
+fn make_app_with_event_tx() -> (TestHarness, Sender<CoreEvent>) {
+    let mut harness = make_app();
+    let (cmd_tx, cmd_rx) = unbounded();
+    let (evt_tx, evt_rx) = unbounded();
+    harness.app.backend = BackendHandle::from_test_channels(cmd_tx, evt_rx);
+    harness.cmd_rx = cmd_rx;
+    (harness, evt_tx)
 }
 
 fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {

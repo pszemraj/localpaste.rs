@@ -96,6 +96,8 @@ Codebase audit against this checklist found:
 ### Virtual Editor Reliability Gates (Default Mode)
 
 - Release-gate rule: all items in this section must be `[x]` before claiming default-mode reliability sign-off.
+- Current rollout note: virtual editor remains the default mode, but reliability sign-off is explicitly pending while any gate item is `[~]` or `[ ]`.
+- Tracked follow-up: [devlog deferred TODO](devlog.md#deferred-todo-backlog-2026-02-13-cold-eyes-audit) includes the pending manual newline-burst highlight perf recheck.
 
 - [x] Clipboard reliability (`Ctrl/Cmd+C/X/V`) with external paste verification
 - [x] `Ctrl/Cmd+V` non-regression: when app window is active but editor is unfocused, paste creates a new paste and does not mutate current editor content

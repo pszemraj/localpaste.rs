@@ -8,24 +8,48 @@ const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl LocalPasteApp {
     pub(super) fn flush_pending_saves_for_shutdown(&mut self) {
-        let content_flush_requested = self.save_status == SaveStatus::Dirty && !self.save_in_flight;
-        if content_flush_requested {
-            self.save_now();
-            if self.save_status == SaveStatus::Dirty && !self.save_in_flight {
-                warn!("Shutdown flush could not dispatch content save.");
-            }
-        }
-
-        let metadata_flush_requested = self.metadata_dirty && !self.metadata_save_in_flight;
-        if metadata_flush_requested {
-            self.save_metadata_now();
-            if self.metadata_dirty && !self.metadata_save_in_flight {
-                warn!("Shutdown flush could not dispatch metadata save.");
-            }
-        }
-
+        let mut warned_content_dispatch_failure = false;
+        let mut warned_metadata_dispatch_failure = false;
         let deadline = Instant::now() + SHUTDOWN_SAVE_FLUSH_TIMEOUT;
-        while (self.save_in_flight || self.metadata_save_in_flight) && Instant::now() < deadline {
+
+        // Keep dispatching while dirty and draining while in flight: older save acks can
+        // legitimately leave the editor dirty again when newer local edits exist.
+        while Instant::now() < deadline {
+            if self.save_status == SaveStatus::Dirty && !self.save_in_flight {
+                self.save_now();
+                if self.save_status == SaveStatus::Dirty
+                    && !self.save_in_flight
+                    && !warned_content_dispatch_failure
+                {
+                    warn!("Shutdown flush could not dispatch content save.");
+                    warned_content_dispatch_failure = true;
+                }
+            }
+
+            if self.metadata_dirty && !self.metadata_save_in_flight {
+                self.save_metadata_now();
+                if self.metadata_dirty
+                    && !self.metadata_save_in_flight
+                    && !warned_metadata_dispatch_failure
+                {
+                    warn!("Shutdown flush could not dispatch metadata save.");
+                    warned_metadata_dispatch_failure = true;
+                }
+            }
+
+            let settled = !self.save_in_flight
+                && !self.metadata_save_in_flight
+                && self.save_status != SaveStatus::Dirty
+                && !self.metadata_dirty;
+            if settled {
+                break;
+            }
+
+            // Dirty state with no in-flight requests means dispatch is currently impossible.
+            if !self.save_in_flight && !self.metadata_save_in_flight {
+                break;
+            }
+
             let wait_for = deadline
                 .saturating_duration_since(Instant::now())
                 .min(Duration::from_millis(25));
@@ -39,12 +63,18 @@ impl LocalPasteApp {
             }
         }
 
-        if self.save_in_flight || self.metadata_save_in_flight {
+        if self.save_in_flight
+            || self.metadata_save_in_flight
+            || self.save_status == SaveStatus::Dirty
+            || self.metadata_dirty
+        {
             warn!(
                 save_in_flight = self.save_in_flight,
                 metadata_save_in_flight = self.metadata_save_in_flight,
+                save_status = ?self.save_status,
+                metadata_dirty = self.metadata_dirty,
                 timeout_ms = SHUTDOWN_SAVE_FLUSH_TIMEOUT.as_millis(),
-                "Shutdown flush timeout expired with saves still in flight."
+                "Shutdown flush exited with pending unsaved state."
             );
         }
 
