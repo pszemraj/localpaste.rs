@@ -238,6 +238,28 @@ fn palette_delete_send_failure_keeps_lock_and_shows_error_status() {
 }
 
 #[test]
+fn palette_open_failure_keeps_palette_open() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    drop(cmd_rx);
+
+    app.command_palette_open = true;
+    app.open_palette_selection("beta".to_string());
+
+    assert!(
+        app.command_palette_open,
+        "palette should stay open when open action fails"
+    );
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Get paste failed: backend unavailable.")
+    );
+}
+
+#[test]
 fn palette_copy_send_failure_when_selected_paste_missing_is_cleared() {
     let TestHarness {
         _dir: _guard,

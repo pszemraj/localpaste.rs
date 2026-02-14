@@ -104,8 +104,7 @@ impl LocalPasteApp {
             });
 
         if let Some(id) = pending_open {
-            self.select_paste(id);
-            self.command_palette_open = false;
+            self.open_palette_selection(id);
         }
         if let Some(id) = pending_delete {
             self.send_palette_delete(id);
@@ -201,5 +200,11 @@ impl LocalPasteApp {
             return;
         }
         self.command_palette_open = false;
+    }
+
+    pub(crate) fn open_palette_selection(&mut self, id: String) {
+        if self.select_paste(id) {
+            self.command_palette_open = false;
+        }
     }
 }
