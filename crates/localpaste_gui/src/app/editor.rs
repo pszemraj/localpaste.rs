@@ -397,27 +397,23 @@ mod tests {
 
     #[test]
     fn line_range_chars_includes_newline_for_non_terminal_lines() {
-        let buffer = EditorBuffer::new("one\ntwo\nthree".to_string());
-        let (start, end) = buffer.line_range_chars(5);
-        let selected: String = buffer
-            .as_str()
-            .chars()
-            .skip(start)
-            .take(end - start)
-            .collect();
-        assert_eq!(selected, "two\n");
+        assert_line_range_chars_selection("one\ntwo\nthree", 5, "two\n");
     }
 
     #[test]
     fn line_range_chars_excludes_missing_newline_for_last_line() {
-        let buffer = EditorBuffer::new("one\ntwo".to_string());
-        let (start, end) = buffer.line_range_chars(5);
+        assert_line_range_chars_selection("one\ntwo", 5, "two");
+    }
+
+    fn assert_line_range_chars_selection(text: &str, char_index: usize, expected: &str) {
+        let buffer = EditorBuffer::new(text.to_string());
+        let (start, end) = buffer.line_range_chars(char_index);
         let selected: String = buffer
             .as_str()
             .chars()
             .skip(start)
             .take(end - start)
             .collect();
-        assert_eq!(selected, "two");
+        assert_eq!(selected, expected);
     }
 }

@@ -142,51 +142,55 @@ fn editor_line_index_tracks_lines_and_trailing_newlines() {
     assert_eq!(index.line_without_newline(buffer.as_str(), 2), "");
 }
 
+fn assert_virtual_selection_text(
+    content: &str,
+    start: VirtualCursor,
+    end: VirtualCursor,
+    expected: &str,
+) {
+    let mut harness = make_app();
+    harness.app.selected_content.reset(content.to_string());
+    harness.app.virtual_selection.select_range(start, end);
+    let copied = harness.app.virtual_selection_text().expect("copied text");
+    assert_eq!(copied, expected);
+}
+
+fn assert_virtual_select_line_text(content: &str, line: usize, expected: &str) {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor(content);
+    harness.app.virtual_select_line(line);
+    let copied = harness.app.virtual_selected_text().expect("copied text");
+    assert_eq!(copied, expected);
+}
+
 #[test]
 fn virtual_selection_text_multiline_preserves_single_newlines() {
-    let mut harness = make_app();
-    harness
-        .app
-        .selected_content
-        .reset("alpha\nbeta\ngamma".to_string());
-    harness.app.virtual_selection.select_range(
+    assert_virtual_selection_text(
+        "alpha\nbeta\ngamma",
         VirtualCursor { line: 0, column: 2 },
         VirtualCursor { line: 2, column: 3 },
+        "pha\nbeta\ngam",
     );
-
-    let copied = harness.app.virtual_selection_text().expect("copied text");
-    assert_eq!(copied, "pha\nbeta\ngam");
 }
 
 #[test]
 fn virtual_selection_text_preserves_blank_line_boundaries() {
-    let mut harness = make_app();
-    harness.app.selected_content.reset("a\n\nb".to_string());
-    harness.app.virtual_selection.select_range(
+    assert_virtual_selection_text(
+        "a\n\nb",
         VirtualCursor { line: 0, column: 1 },
         VirtualCursor { line: 2, column: 0 },
+        "\n\n",
     );
-
-    let copied = harness.app.virtual_selection_text().expect("copied text");
-    assert_eq!(copied, "\n\n");
 }
 
 #[test]
 fn virtual_select_line_includes_newline_for_non_terminal_line() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("one\ntwo\nthree");
-    harness.app.virtual_select_line(1);
-    let copied = harness.app.virtual_selected_text().expect("copied text");
-    assert_eq!(copied, "two\n");
+    assert_virtual_select_line_text("one\ntwo\nthree", 1, "two\n");
 }
 
 #[test]
 fn virtual_select_line_last_line_excludes_missing_newline() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("one\ntwo");
-    harness.app.virtual_select_line(1);
-    let copied = harness.app.virtual_selected_text().expect("copied text");
-    assert_eq!(copied, "two");
+    assert_virtual_select_line_text("one\ntwo", 1, "two");
 }
 
 #[test]
