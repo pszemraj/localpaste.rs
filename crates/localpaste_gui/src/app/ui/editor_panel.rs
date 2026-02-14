@@ -106,7 +106,7 @@ impl LocalPasteApp {
                 }
                 if copy_link_requested {
                     self.clipboard_outgoing =
-                        Some(format!("http://{}/api/paste/{}", self.server_addr, id));
+                        Some(super::super::util::api_paste_link_for_copy(self.server_addr, &id));
                     self.set_status("Copied API paste link.");
                 }
                 if duplicate_requested {

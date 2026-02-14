@@ -502,6 +502,43 @@ async fn test_max_paste_size_enforcement() {
 }
 
 #[tokio::test]
+async fn test_max_paste_size_allows_exact_content_limit_with_json_overhead() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("body-limit-overhead.db");
+    let config = Config {
+        port: 0,
+        db_path: db_path.to_str().unwrap().to_string(),
+        max_paste_size: 64,
+        auto_save_interval: 2000,
+        auto_backup: false,
+    };
+    let db = Database::new(&config.db_path).unwrap();
+    let state = AppState::new(config, db);
+    let app = create_app(state, false);
+    let server = TestServer::new(app).unwrap();
+
+    let at_limit = "a".repeat(64);
+    let at_limit_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": at_limit,
+            "name": "at-limit"
+        }))
+        .await;
+    assert_eq!(at_limit_response.status_code(), StatusCode::OK);
+
+    let above_limit = "a".repeat(65);
+    let above_limit_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": above_limit,
+            "name": "above-limit"
+        }))
+        .await;
+    assert_eq!(above_limit_response.status_code(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn test_invalid_folder_association() {
     let (server, _temp, _locks) = setup_test_server().await;
 

@@ -60,6 +60,25 @@ pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) ->
     format!("```{}\n{}\n```", lang, content)
 }
 
+/// Builds a copyable API URL for the selected paste.
+///
+/// Unspecified bind addresses (0.0.0.0 / ::) are rewritten to loopback so the
+/// copied link is locally routable in browsers and external apps.
+pub(super) fn api_paste_link_for_copy(addr: std::net::SocketAddr, id: &str) -> String {
+    let routed = match addr.ip() {
+        std::net::IpAddr::V4(ip) if ip.is_unspecified() => std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            addr.port(),
+        ),
+        std::net::IpAddr::V6(ip) if ip.is_unspecified() => std::net::SocketAddr::new(
+            std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+            addr.port(),
+        ),
+        _ => addr,
+    };
+    format!("http://{}/api/paste/{}", routed, id)
+}
+
 fn is_word_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
 }
@@ -108,7 +127,7 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
 
 #[cfg(test)]
 mod tests {
-    use super::{format_fenced_code_block, status_language_filter_label};
+    use super::{api_paste_link_for_copy, format_fenced_code_block, status_language_filter_label};
 
     #[test]
     fn status_language_filter_label_resolution_matrix() {
@@ -136,5 +155,20 @@ mod tests {
             format_fenced_code_block("print('hi')", None),
             "```text\nprint('hi')\n```"
         );
+    }
+
+    #[test]
+    fn api_paste_link_for_copy_rewrites_unspecified_hosts() {
+        let v4 = api_paste_link_for_copy(
+            std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 38411),
+            "abc",
+        );
+        assert_eq!(v4, "http://127.0.0.1:38411/api/paste/abc");
+
+        let v6 = api_paste_link_for_copy(
+            std::net::SocketAddr::new(std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 38411),
+            "abc",
+        );
+        assert_eq!(v6, "http://[::1]:38411/api/paste/abc");
     }
 }

@@ -28,6 +28,12 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+const JSON_BODY_OVERHEAD_BYTES: usize = 16 * 1024;
+
+fn request_body_limit(max_paste_size: usize) -> usize {
+    max_paste_size.saturating_add(JSON_BODY_OVERHEAD_BYTES)
+}
+
 /// Shared state passed to HTTP handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -180,7 +186,11 @@ fn create_app_with_cors_port(state: AppState, allow_public_access: bool, cors_po
         // Apply middleware
         .layer(
             tower::ServiceBuilder::new()
-                .layer(DefaultBodyLimit::max(state.config.max_paste_size))
+                // Body limit includes JSON envelope overhead; content bytes are validated
+                // separately in handlers against `max_paste_size`.
+                .layer(DefaultBodyLimit::max(request_body_limit(
+                    state.config.max_paste_size,
+                )))
                 .layer(TraceLayer::new_for_http())
                 .layer(CompressionLayer::new())
                 .layer(cors)
