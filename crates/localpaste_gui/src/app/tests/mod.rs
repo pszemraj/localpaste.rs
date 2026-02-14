@@ -63,7 +63,7 @@ fn make_app() -> TestHarness {
     let server_used_fallback = server.used_fallback();
 
     let app = LocalPasteApp {
-        backend: BackendHandle { cmd_tx, evt_rx },
+        backend: BackendHandle::from_test_channels(cmd_tx, evt_rx),
         all_pastes: vec![test_summary("alpha", "Alpha", None, 7)],
         pastes: vec![test_summary("alpha", "Alpha", None, 7)],
         selected_id: Some("alpha".to_string()),

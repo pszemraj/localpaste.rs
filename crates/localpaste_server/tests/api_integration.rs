@@ -10,10 +10,13 @@ use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+const EXPECTED_FOLDER_DEPRECATION_WARNING: &str =
+    "299 - \"Folder APIs are deprecated; prefer tags, search, and smart filters\"";
+
 fn assert_folder_deprecation_headers(response: &axum_test::TestResponse) {
     response.assert_header("deprecation", "true");
     response.assert_contains_header("sunset");
-    response.assert_contains_header("warning");
+    response.assert_header("warning", EXPECTED_FOLDER_DEPRECATION_WARNING);
 }
 
 fn assert_meta_only_shape_header(response: &axum_test::TestResponse) {

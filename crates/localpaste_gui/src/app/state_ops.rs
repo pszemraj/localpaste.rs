@@ -256,6 +256,7 @@ impl LocalPasteApp {
             CoreEvent::FolderSaved { folder: _ } | CoreEvent::FolderDeleted { id: _ } => {
                 self.request_refresh();
             }
+            CoreEvent::ShutdownComplete { flush_result: _ } => {}
             CoreEvent::Error { source, message } => {
                 warn!("backend error ({:?}): {}", source, message);
                 // Only mutate save-in-flight state for the matching request class.

@@ -109,6 +109,41 @@ fn api_updates_are_visible_to_backend_list() {
 }
 
 #[test]
+fn backend_shutdown_drains_queued_update_and_persists_across_reopen() {
+    let dir = TempDir::new().expect("temp dir");
+    let db_path = dir.path().join("db");
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let db = Database::new(&db_path_str).expect("db");
+
+    let paste = Paste::new("before-close".to_string(), "shutdown-seed".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create seed paste");
+
+    let mut backend = spawn_backend(db.share().expect("share db"), TEST_MAX_PASTE_SIZE);
+    backend
+        .cmd_tx
+        .send(CoreCmd::UpdatePaste {
+            id: paste_id.clone(),
+            content: "after-close".to_string(),
+        })
+        .expect("send update before shutdown");
+
+    backend
+        .shutdown_and_join(true, Duration::from_secs(5))
+        .expect("shutdown backend");
+    drop(backend);
+    drop(db);
+
+    let reopened = Database::new(&db_path_str).expect("reopen db");
+    let persisted = reopened
+        .pastes
+        .get(&paste_id)
+        .expect("read persisted paste")
+        .expect("paste should exist");
+    assert_eq!(persisted.content, "after-close");
+}
+
+#[test]
 fn locked_paste_blocks_api_delete() {
     let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());

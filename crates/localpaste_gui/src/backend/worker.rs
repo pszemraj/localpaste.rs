@@ -5,16 +5,112 @@ mod paste;
 mod query;
 
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent};
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use localpaste_core::{config::env_flag_enabled, Database};
 use localpaste_server::{LockOwnerId, PasteLockManager};
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 /// Handle for sending commands to, and receiving events from, the backend worker.
 pub struct BackendHandle {
     pub cmd_tx: Sender<CoreCmd>,
     pub evt_rx: Receiver<CoreEvent>,
+    worker_join: Option<thread::JoinHandle<()>>,
+}
+
+impl BackendHandle {
+    /// Ask the backend worker to stop after draining queued commands.
+    ///
+    /// # Arguments
+    /// - `flush`: When `true`, request an explicit database flush before exit.
+    ///
+    /// # Returns
+    /// `Ok(())` after the shutdown command is queued.
+    ///
+    /// # Errors
+    /// Returns an error if the shutdown command cannot be sent.
+    pub fn request_shutdown(&self, flush: bool) -> Result<(), String> {
+        self.cmd_tx.send(CoreCmd::Shutdown { flush }).map_err(|_| {
+            "backend shutdown request failed: worker command channel closed".to_string()
+        })
+    }
+
+    /// Wait for shutdown acknowledgement and join the backend worker thread.
+    ///
+    /// # Arguments
+    /// - `flush`: When `true`, request an explicit database flush before exit.
+    /// - `timeout`: Maximum time to wait for `ShutdownComplete` acknowledgement.
+    ///
+    /// # Returns
+    /// `Ok(())` when shutdown is acknowledged and the worker thread is joined.
+    ///
+    /// # Errors
+    /// Returns an error when the worker fails to acknowledge shutdown in time,
+    /// reports a flush failure, or panics during join.
+    pub fn shutdown_and_join(&mut self, flush: bool, timeout: Duration) -> Result<(), String> {
+        if self.worker_join.is_none() {
+            return Ok(());
+        }
+        self.request_shutdown(flush)?;
+        let deadline = Instant::now() + timeout;
+        let mut saw_ack = false;
+
+        while Instant::now() < deadline {
+            let wait_for = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(25));
+            if wait_for.is_zero() {
+                break;
+            }
+            match self.evt_rx.recv_timeout(wait_for) {
+                Ok(CoreEvent::ShutdownComplete { flush_result }) => {
+                    saw_ack = true;
+                    if let Err(message) = flush_result {
+                        return Err(format!("backend shutdown flush failed: {}", message));
+                    }
+                    break;
+                }
+                Ok(_) => {}
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    return self.join_worker();
+                }
+            }
+        }
+
+        if !saw_ack {
+            return Err(format!(
+                "backend shutdown timed out after {} ms",
+                timeout.as_millis()
+            ));
+        }
+        self.join_worker()
+    }
+
+    /// Join the backend worker thread when this handle owns one.
+    ///
+    /// # Returns
+    /// `Ok(())` once the worker has been joined or when no join handle exists.
+    ///
+    /// # Errors
+    /// Returns an error if the worker thread panicked.
+    pub fn join_worker(&mut self) -> Result<(), String> {
+        let Some(join) = self.worker_join.take() else {
+            return Ok(());
+        };
+        join.join()
+            .map_err(|_| "backend worker thread panicked".to_string())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_test_channels(cmd_tx: Sender<CoreCmd>, evt_rx: Receiver<CoreEvent>) -> Self {
+        Self {
+            cmd_tx,
+            evt_rx,
+            worker_join: None,
+        }
+    }
 }
 
 struct WorkerState {
@@ -46,10 +142,11 @@ fn validate_paste_size(content: &str, max_paste_size: usize) -> Result<(), Strin
     validate_paste_size_bytes(content.len(), max_paste_size)
 }
 
-fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) {
+fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
     match cmd {
         CoreCmd::ListPastes { limit, folder_id } => {
             query::handle_list_pastes(state, limit, folder_id);
+            true
         }
         CoreCmd::SearchPastes {
             query,
@@ -66,21 +163,27 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) {
                 query,
                 limit,
             );
+            true
         }
         CoreCmd::SearchPalette { query, limit } => {
             query::handle_search(state, query::SearchRoute::Palette, query, limit);
+            true
         }
         CoreCmd::GetPaste { id } => {
             paste::handle_get_paste(state, id);
+            true
         }
         CoreCmd::CreatePaste { content } => {
             paste::handle_create_paste(state, content);
+            true
         }
         CoreCmd::UpdatePaste { id, content } => {
             paste::handle_update_paste(state, id, content);
+            true
         }
         CoreCmd::UpdatePasteVirtual { id, content } => {
             paste::handle_update_paste_virtual(state, id, content);
+            true
         }
         CoreCmd::UpdatePasteMeta {
             id,
@@ -99,15 +202,19 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) {
                 folder_id,
                 tags,
             );
+            true
         }
         CoreCmd::DeletePaste { id } => {
             paste::handle_delete_paste(state, id);
+            true
         }
         CoreCmd::ListFolders => {
             folder::handle_list_folders(state);
+            true
         }
         CoreCmd::CreateFolder { name, parent_id } => {
             folder::handle_create_folder(state, name, parent_id);
+            true
         }
         CoreCmd::UpdateFolder {
             id,
@@ -115,9 +222,22 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) {
             parent_id,
         } => {
             folder::handle_update_folder(state, id, name, parent_id);
+            true
         }
         CoreCmd::DeleteFolder { id } => {
             folder::handle_delete_folder(state, id);
+            true
+        }
+        CoreCmd::Shutdown { flush } => {
+            let flush_result = if flush {
+                state.db.flush().map_err(|err| err.to_string())
+            } else {
+                Ok(())
+            };
+            let _ = state
+                .evt_tx
+                .send(CoreEvent::ShutdownComplete { flush_result });
+            false
         }
     }
 }
@@ -187,7 +307,7 @@ pub fn spawn_backend_with_locks_and_owner(
     let (cmd_tx, cmd_rx) = unbounded();
     let (evt_tx, evt_rx) = unbounded();
 
-    thread::Builder::new()
+    let worker_join = thread::Builder::new()
         .name("localpaste-gui-backend".to_string())
         .spawn(move || {
             let mut state = WorkerState {
@@ -200,10 +320,16 @@ pub fn spawn_backend_with_locks_and_owner(
                 query_cache: query::QueryCache::default(),
             };
             for cmd in cmd_rx.iter() {
-                dispatch_command(&mut state, cmd);
+                if !dispatch_command(&mut state, cmd) {
+                    break;
+                }
             }
         })
         .expect("spawn backend thread");
 
-    BackendHandle { cmd_tx, evt_rx }
+    BackendHandle {
+        cmd_tx,
+        evt_rx,
+        worker_join: Some(worker_join),
+    }
 }

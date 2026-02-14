@@ -4,6 +4,8 @@ use super::{LocalPasteApp, SaveStatus, SHUTDOWN_SAVE_FLUSH_TIMEOUT};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
+const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
 impl LocalPasteApp {
     pub(super) fn flush_pending_saves_for_shutdown(&mut self) {
         let content_flush_requested = self.save_status == SaveStatus::Dirty && !self.save_in_flight;
@@ -44,6 +46,13 @@ impl LocalPasteApp {
                 timeout_ms = SHUTDOWN_SAVE_FLUSH_TIMEOUT.as_millis(),
                 "Shutdown flush timeout expired with saves still in flight."
             );
+        }
+
+        if let Err(err) = self
+            .backend
+            .shutdown_and_join(true, BACKEND_SHUTDOWN_TIMEOUT)
+        {
+            warn!(error = %err, "Backend shutdown did not complete cleanly.");
         }
     }
 }

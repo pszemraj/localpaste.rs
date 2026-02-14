@@ -45,6 +45,11 @@ pub enum CoreCmd {
     },
     /// Delete a paste by id.
     DeletePaste { id: String },
+    /// Gracefully stop the backend worker.
+    ///
+    /// When `flush` is true, the worker flushes pending database writes before
+    /// acknowledging shutdown.
+    Shutdown { flush: bool },
     /// Folder commands remain for API/core compatibility during deprecation rollout.
     /// The rewrite GUI does not expose folder CRUD controls directly.
     /// Load all folders.
@@ -102,6 +107,11 @@ pub enum CoreEvent {
     FolderSaved { folder: Folder },
     /// Response confirming a folder tree was deleted.
     FolderDeleted { id: String },
+    /// Backend worker has finished shutdown processing.
+    ShutdownComplete {
+        /// Result of optional database flush requested by shutdown command.
+        flush_result: Result<(), String>,
+    },
     /// A backend failure occurred (database error, etc).
     Error {
         source: CoreErrorSource,

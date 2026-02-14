@@ -3,6 +3,8 @@
 use axum::http::{header, HeaderValue};
 use axum::response::{IntoResponse, Response};
 
+// Raw-string source ends with `""#`: first `"` is part of the header value,
+// second `"` starts the raw-string terminator (`"#`).
 const FOLDER_DEPRECATION_WARNING: &str =
     r#"299 - "Folder APIs are deprecated; prefer tags, search, and smart filters""#;
 const FOLDER_DEPRECATION_SUNSET: &str = "Fri, 31 Dec 2027 23:59:59 GMT";
