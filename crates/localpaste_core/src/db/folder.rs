@@ -200,15 +200,7 @@ impl FolderDb {
     /// # Errors
     /// Returns an error when storage operations fail.
     pub fn mark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut deleting = write_txn.open_table(FOLDERS_DELETING)?;
-            for folder_id in folder_ids {
-                deleting.insert(folder_id.as_str(), ())?;
-            }
-        }
-        write_txn.commit()?;
-        Ok(())
+        self.set_delete_markers(folder_ids, true)
     }
 
     /// Remove delete markers for folders.
@@ -219,15 +211,7 @@ impl FolderDb {
     /// # Errors
     /// Returns an error when storage operations fail.
     pub fn unmark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut deleting = write_txn.open_table(FOLDERS_DELETING)?;
-            for folder_id in folder_ids {
-                let _ = deleting.remove(folder_id.as_str())?;
-            }
-        }
-        write_txn.commit()?;
-        Ok(())
+        self.set_delete_markers(folder_ids, false)
     }
 
     /// Check whether a folder id is currently delete-marked.
@@ -280,5 +264,21 @@ impl FolderDb {
 
         write_txn.commit()?;
         Ok(result)
+    }
+
+    fn set_delete_markers(&self, folder_ids: &[String], mark: bool) -> Result<(), AppError> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut deleting = write_txn.open_table(FOLDERS_DELETING)?;
+            for folder_id in folder_ids {
+                if mark {
+                    deleting.insert(folder_id.as_str(), ())?;
+                } else {
+                    let _ = deleting.remove(folder_id.as_str())?;
+                }
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 }

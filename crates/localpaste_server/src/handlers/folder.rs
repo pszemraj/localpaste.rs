@@ -79,33 +79,14 @@ pub async fn update_folder(
     req.parent_id = normalize_optional_for_update(req.parent_id);
     let _folder_guard = crate::db::TransactionOps::acquire_folder_txn_lock(&state.db)?;
 
-    let folders = if req
-        .parent_id
-        .as_ref()
-        .map(|parent_id| !parent_id.is_empty())
-        .unwrap_or(false)
-    {
-        Some(state.db.folders.list()?)
-    } else {
-        None
-    };
-
     if let Some(ref parent_id) = req.parent_id {
         if parent_id == &id {
             return Err(AppError::BadRequest("Folder cannot be its own parent".to_string()).into());
         }
         if !parent_id.is_empty() {
-            let folders = folders.as_ref().unwrap();
-            if folders.iter().all(|f| f.id != *parent_id) {
-                return Err(AppError::BadRequest(format!(
-                    "Parent folder with id '{}' does not exist",
-                    parent_id
-                ))
-                .into());
-            }
             validate_assignable_folder_for_request(&state.db, parent_id, "Parent folder")?;
-
-            if introduces_cycle(folders, &id, parent_id) {
+            let folders = state.db.folders.list()?;
+            if introduces_cycle(&folders, &id, parent_id) {
                 return Err(AppError::BadRequest(
                     "Updating folder would create a cycle".to_string(),
                 )

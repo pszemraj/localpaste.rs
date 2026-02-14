@@ -90,9 +90,6 @@ async fn main() -> anyhow::Result<()> {
     let database = Database::new(&config.db_path)?;
 
     if config.auto_backup && db_exists_before_open {
-        if let Err(err) = database.flush() {
-            tracing::warn!("Failed to flush database before auto-backup: {}", err);
-        }
         let backup_manager = localpaste_server::db::backup::BackupManager::new(&config.db_path);
         if let Err(err) = backup_manager.create_backup(database.db.as_ref()) {
             tracing::warn!("Failed to create auto-backup: {}", err);
@@ -121,14 +118,7 @@ async fn main() -> anyhow::Result<()> {
     let actual_addr = listener.local_addr().unwrap_or(bind_addr);
     tracing::info!("LocalPaste running at http://{}", actual_addr);
 
-    let db = state.db.clone();
     let serve_result = serve_router(listener, state, allow_public, shutdown_signal()).await;
-
-    if let Err(err) = db.flush() {
-        tracing::error!("Failed to flush database: {}", err);
-    } else {
-        tracing::info!("Database flushed successfully");
-    }
 
     serve_result?;
 
@@ -160,13 +150,12 @@ fn print_help() {
     );
     println!("  (malformed env values fail startup instead of silently defaulting)");
     println!("\nSide effects:");
-    println!("  --backup          Flushes DB and writes a backup copy");
+    println!("  --backup          Writes a consistent backup copy of data.redb");
 }
 
 fn run_backup(config: &Config) -> anyhow::Result<()> {
     if std::path::Path::new(&config.db_path).exists() {
         let temp_db = Database::new(&config.db_path)?;
-        temp_db.flush()?;
 
         let backup_manager = localpaste_server::db::backup::BackupManager::new(&config.db_path);
         let backup_path = backup_manager.create_backup(temp_db.db.as_ref())?;
