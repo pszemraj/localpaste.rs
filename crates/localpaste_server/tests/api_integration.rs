@@ -30,18 +30,21 @@ fn test_config_for_db_path(db_path: &Path) -> Config {
     }
 }
 
+fn test_server_for_config(config: Config) -> (TestServer, Arc<PasteLockManager>) {
+    let db = Database::new(&config.db_path).unwrap();
+    let locks = Arc::new(PasteLockManager::default());
+    let state = AppState::with_locks(config, db, locks.clone());
+    let app = create_app(state, false);
+    let server = TestServer::new(app).unwrap();
+    (server, locks)
+}
+
 async fn setup_test_server() -> (TestServer, TempDir, Arc<PasteLockManager>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.db");
 
     let config = test_config_for_db_path(&db_path);
-
-    let db = Database::new(&config.db_path).unwrap();
-    let locks = Arc::new(PasteLockManager::default());
-    let state = AppState::with_locks(config, db, locks.clone());
-    let app = create_app(state, false);
-
-    let server = TestServer::new(app).unwrap();
+    let (server, locks) = test_server_for_config(config);
     (server, temp_dir, locks)
 }
 
@@ -512,10 +515,7 @@ async fn test_max_paste_size_allows_exact_content_limit_with_json_overhead() {
         auto_save_interval: 2000,
         auto_backup: false,
     };
-    let db = Database::new(&config.db_path).unwrap();
-    let state = AppState::new(config, db);
-    let app = create_app(state, false);
-    let server = TestServer::new(app).unwrap();
+    let (server, _locks) = test_server_for_config(config);
 
     let at_limit = "a".repeat(64);
     let at_limit_response = server
