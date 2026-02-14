@@ -19,7 +19,6 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use hyper::HeaderMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -33,6 +32,9 @@ use tower_http::{
 const JSON_BODY_OVERHEAD_BYTES: usize = 16 * 1024;
 const JSON_STRING_ESCAPE_EXPANSION_FACTOR: usize = 6;
 const MAX_JSON_REQUEST_BODY_BYTES: usize = 256 * 1024 * 1024;
+const CSP_HEADER_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+const X_CONTENT_TYPE_OPTIONS_NOSNIFF: &str = "nosniff";
+const X_FRAME_OPTIONS_DENY: &str = "DENY";
 
 fn uncapped_request_body_limit(max_paste_size: usize) -> usize {
     max_paste_size
@@ -126,9 +128,6 @@ impl AppState {
 ///
 /// # Returns
 /// Configured `axum::Router`.
-///
-/// # Panics
-/// Panics if static header values fail to parse (should not happen).
 pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
     create_app_with_cors(state, allow_public_access)
 }
@@ -182,17 +181,6 @@ fn create_app_with_cors(state: AppState, allow_public_access: bool) -> Router {
             "Configured max_paste_size implies an excessive transport body limit; applying safety cap",
         );
     }
-
-    // Configure security headers
-    let mut default_headers = HeaderMap::new();
-    default_headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
-    default_headers.insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
-    default_headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-            .parse()
-            .unwrap(),
-    );
 
     // Configure CORS - optionally allow public access
     let cors = if allow_public_access {
@@ -248,24 +236,15 @@ fn create_app_with_cors(state: AppState, allow_public_access: bool) -> Router {
                 .layer(cors)
                 .layer(SetResponseHeaderLayer::overriding(
                     header::CONTENT_SECURITY_POLICY,
-                    default_headers
-                        .get(header::CONTENT_SECURITY_POLICY)
-                        .unwrap()
-                        .clone(),
+                    HeaderValue::from_static(CSP_HEADER_VALUE),
                 ))
                 .layer(SetResponseHeaderLayer::overriding(
                     header::X_CONTENT_TYPE_OPTIONS,
-                    default_headers
-                        .get(header::X_CONTENT_TYPE_OPTIONS)
-                        .unwrap()
-                        .clone(),
+                    HeaderValue::from_static(X_CONTENT_TYPE_OPTIONS_NOSNIFF),
                 ))
                 .layer(SetResponseHeaderLayer::overriding(
                     header::X_FRAME_OPTIONS,
-                    default_headers
-                        .get(header::X_FRAME_OPTIONS)
-                        .unwrap()
-                        .clone(),
+                    HeaderValue::from_static(X_FRAME_OPTIONS_DENY),
                 )),
         )
 }

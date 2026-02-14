@@ -1,7 +1,5 @@
 //! Headless API server entrypoint.
 
-use std::sync::Arc;
-
 use localpaste_core::DEFAULT_PORT;
 use localpaste_server::db::ProcessProbeResult;
 use localpaste_server::{config::Config, db::Database, serve_router, AppState};
@@ -12,13 +10,11 @@ struct CliFlags {
     help: bool,
     force_unlock: bool,
     backup: bool,
-    user_arg_count: usize,
 }
 
 fn parse_cli_flags(args: &[String]) -> anyhow::Result<CliFlags> {
     let mut flags = CliFlags::default();
     for arg in args.iter().skip(1) {
-        flags.user_arg_count = flags.user_arg_count.saturating_add(1);
         match arg.as_str() {
             "--help" => flags.help = true,
             "--force-unlock" => flags.force_unlock = true,
@@ -38,6 +34,10 @@ fn parse_cli_flags(args: &[String]) -> anyhow::Result<CliFlags> {
         }
     }
     Ok(flags)
+}
+
+fn runs_maintenance_mode(flags: CliFlags) -> bool {
+    flags.force_unlock || flags.backup
 }
 
 fn guard_force_unlock_probe(result: ProcessProbeResult) -> anyhow::Result<()> {
@@ -99,16 +99,14 @@ async fn main() -> anyhow::Result<()> {
         } else {
             tracing::info!("Removed {} lock file(s)", removed_count);
         }
-        if cli_flags.user_arg_count <= 1 {
-            return Ok(());
-        }
     }
 
     if cli_flags.backup {
         run_backup(&config)?;
-        if cli_flags.user_arg_count <= 1 {
-            return Ok(());
-        }
+    }
+
+    if runs_maintenance_mode(cli_flags) {
+        return Ok(());
     }
 
     let database = Database::new(&config.db_path)?;
@@ -143,7 +141,15 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("LocalPaste running at http://{}", actual_addr);
 
     let db = state.db.clone();
-    serve_router(listener, state, allow_public, shutdown_signal(db)).await?;
+    let serve_result = serve_router(listener, state, allow_public, shutdown_signal()).await;
+
+    if let Err(err) = db.flush() {
+        tracing::error!("Failed to flush database: {}", err);
+    } else {
+        tracing::info!("Database flushed successfully");
+    }
+
+    serve_result?;
 
     Ok(())
 }
@@ -174,7 +180,7 @@ fn print_help() {
 fn run_backup(config: &Config) -> anyhow::Result<()> {
     if std::path::Path::new(&config.db_path).exists() {
         let temp_db = Database::new(&config.db_path)?;
-        temp_db.flush().ok();
+        temp_db.flush()?;
 
         let backup_manager = localpaste_server::db::backup::BackupManager::new(&config.db_path);
         let backup_path = backup_manager.create_backup(temp_db.db.as_ref())?;
@@ -185,7 +191,7 @@ fn run_backup(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn shutdown_signal(db: Arc<Database>) {
+async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -207,19 +213,14 @@ async fn shutdown_signal(db: Arc<Database>) {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
-
-    tracing::info!("Shutting down gracefully...");
-
-    if let Err(err) = db.flush() {
-        tracing::error!("Failed to flush database: {}", err);
-    } else {
-        tracing::info!("Database flushed successfully");
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{guard_force_unlock_probe, parse_cli_flags, CliFlags, ProcessProbeResult};
+    use super::{
+        guard_force_unlock_probe, parse_cli_flags, runs_maintenance_mode, CliFlags,
+        ProcessProbeResult,
+    };
 
     #[test]
     fn force_unlock_guard_rejects_unknown_probe_results() {
@@ -269,8 +270,23 @@ mod tests {
                 help: false,
                 force_unlock: true,
                 backup: true,
-                user_arg_count: 2,
             }
         );
+    }
+
+    #[test]
+    fn maintenance_flags_enable_maintenance_mode() {
+        let backup_only = CliFlags {
+            backup: true,
+            ..CliFlags::default()
+        };
+        let unlock_only = CliFlags {
+            force_unlock: true,
+            ..CliFlags::default()
+        };
+        let none = CliFlags::default();
+        assert!(runs_maintenance_mode(backup_only));
+        assert!(runs_maintenance_mode(unlock_only));
+        assert!(!runs_maintenance_mode(none));
     }
 }
