@@ -218,42 +218,41 @@ fn metadata_queries_fall_back_to_canonical_when_derived_rows_are_missing_or_corr
 }
 
 #[test]
-fn list_meta_detects_semantic_meta_drift_and_falls_back_to_canonical() {
+fn metadata_hot_paths_do_not_deserialize_canonical_paste_bodies_when_indexes_are_usable() {
     let (paste_db, _dir) = setup_paste_db();
     paste_db
         .reconcile_meta_indexes()
         .expect("initial reconcile writes marker");
-    let paste = Paste::new("body".to_string(), "old-name".to_string());
+    let paste = Paste::new("body".to_string(), "hot-path-meta".to_string());
     let paste_id = paste.id.clone();
     paste_db.create(&paste).expect("create paste");
 
-    let mut rewritten = paste.clone();
-    rewritten.name = "new-name".to_string();
-    rewritten.content = "rewritten body".to_string();
-    rewritten.updated_at += Duration::seconds(1);
+    // Corrupt canonical bytes directly. Indexed metadata rows remain intact,
+    // so list/search metadata paths should stay on the metadata fast path and
+    // avoid canonical deserialization.
     paste_db
         .tree
-        .insert(
-            paste_id.as_bytes(),
-            bincode::serialize(&rewritten).expect("serialize rewritten paste"),
-        )
-        .expect("rewrite canonical row only");
+        .insert(paste_id.as_bytes(), b"corrupt-canonical-row")
+        .expect("rewrite canonical row with corrupt bytes");
 
-    let metas = paste_db
+    let listed = paste_db
         .list_meta(10, None)
-        .expect("list metadata fallback");
-    let rewritten_meta = metas
+        .expect("list metadata should not decode canonical body");
+    let listed_meta = listed
         .iter()
         .find(|meta| meta.id == paste_id)
-        .expect("rewritten metadata row should be visible");
+        .expect("metadata row should remain visible");
     assert_eq!(
-        rewritten_meta.name, "new-name",
-        "stale derived metadata should not leak when canonical row changed"
+        listed_meta.name, "hot-path-meta",
+        "list_meta should return metadata projection without canonical body decode"
     );
-    assert_eq!(
-        rewritten_meta.content_len,
-        "rewritten body".len(),
-        "fallback should expose canonical content length"
+
+    let searched = paste_db
+        .search_meta("hot-path-meta", 10, None, None)
+        .expect("search metadata should not decode canonical body");
+    assert!(
+        searched.iter().any(|meta| meta.id == paste_id),
+        "search_meta should remain metadata-only on healthy indexes"
     );
 }
 

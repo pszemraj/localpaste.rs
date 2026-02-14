@@ -581,28 +581,11 @@ impl PasteDb {
                 );
                 return self.list_meta_from_canonical(limit, folder_id);
             }
-            let Some(canonical_bytes) = self.tree.get(id.as_bytes())? else {
+            // Keep metadata list/search hot paths metadata-only: verify canonical
+            // key presence without deserializing full paste content.
+            if !self.tree.contains_key(id.as_bytes())? {
                 tracing::warn!(
                     "Metadata row for id '{}' has no canonical paste; listing from canonical tree",
-                    id
-                );
-                return self.list_meta_from_canonical(limit, folder_id);
-            };
-            let canonical = match deserialize_paste(&canonical_bytes) {
-                Ok(canonical) => canonical,
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to decode canonical paste for id '{}': {}; listing from canonical tree",
-                        id,
-                        err
-                    );
-                    return self.list_meta_from_canonical(limit, folder_id);
-                }
-            };
-            let canonical_meta = PasteMeta::from(&canonical);
-            if canonical_meta != meta {
-                tracing::warn!(
-                    "Metadata drift detected for id '{}'; listing from canonical tree",
                     id
                 );
                 return self.list_meta_from_canonical(limit, folder_id);
@@ -737,28 +720,11 @@ impl PasteDb {
                 );
                 return self.search_meta_from_canonical(query, limit, folder_id, language);
             }
-            let Some(canonical_bytes) = self.tree.get(key_id.as_bytes())? else {
+            // Keep metadata list/search hot paths metadata-only: verify canonical
+            // key presence without deserializing full paste content.
+            if !self.tree.contains_key(key_id.as_bytes())? {
                 tracing::warn!(
                     "Metadata search encountered ghost row for id '{}'; falling back to canonical tree",
-                    meta.id
-                );
-                return self.search_meta_from_canonical(query, limit, folder_id, language);
-            };
-            let canonical = match deserialize_paste(&canonical_bytes) {
-                Ok(canonical) => canonical,
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to decode canonical paste for id '{}' during metadata search: {}; falling back to canonical tree",
-                        meta.id,
-                        err
-                    );
-                    return self.search_meta_from_canonical(query, limit, folder_id, language);
-                }
-            };
-            let canonical_meta = PasteMeta::from(&canonical);
-            if canonical_meta != meta {
-                tracing::warn!(
-                    "Metadata drift detected for id '{}' during search; falling back to canonical tree",
                     meta.id
                 );
                 return self.search_meta_from_canonical(query, limit, folder_id, language);
