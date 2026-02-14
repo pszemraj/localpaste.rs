@@ -297,6 +297,21 @@ mod tests {
 
         backend
             .cmd_tx
+            .send(CoreCmd::UpdatePasteVirtual {
+                id: created_id.clone(),
+                content: Rope::from_str("123456789"),
+            })
+            .expect("send oversize virtual update");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::Error { source, message } => {
+                assert_eq!(source, CoreErrorSource::SaveContent);
+                assert!(message.contains("maximum of 8 bytes"));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        backend
+            .cmd_tx
             .send(CoreCmd::GetPaste {
                 id: created_id.clone(),
             })

@@ -770,7 +770,7 @@ fn autosave_send_failure_restores_dirty_state() {
 }
 
 #[test]
-fn on_exit_dispatches_dirty_save_and_drop_releases_selected_lock() {
+fn on_exit_dispatches_dirty_content_and_metadata_save_and_drop_releases_selected_lock() {
     let TestHarness {
         _dir: _guard,
         mut app,
@@ -780,6 +780,12 @@ fn on_exit_dispatches_dirty_save_and_drop_releases_selected_lock() {
     app.save_status = SaveStatus::Dirty;
     app.save_in_flight = false;
     app.last_edit_at = Some(Instant::now());
+    app.edit_name = "exit-name".to_string();
+    app.edit_language = Some("rust".to_string());
+    app.edit_language_is_manual = true;
+    app.edit_tags = "one, two".to_string();
+    app.metadata_dirty = true;
+    app.metadata_save_in_flight = false;
     app.locks
         .acquire("alpha", &app.lock_owner_id)
         .expect("acquire alpha lock");
@@ -791,6 +797,24 @@ fn on_exit_dispatches_dirty_save_and_drop_releases_selected_lock() {
         CoreCmd::UpdatePaste { id, content } => {
             assert_eq!(id, "alpha");
             assert_eq!(content, "exit-save-content");
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+    match recv_cmd(&cmd_rx) {
+        CoreCmd::UpdatePasteMeta {
+            id,
+            name,
+            language,
+            language_is_manual,
+            folder_id,
+            tags,
+        } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(name.as_deref(), Some("exit-name"));
+            assert_eq!(language.as_deref(), Some("rust"));
+            assert_eq!(language_is_manual, Some(true));
+            assert!(folder_id.is_none());
+            assert_eq!(tags, Some(vec!["one".to_string(), "two".to_string()]));
         }
         other => panic!("unexpected command: {:?}", other),
     }

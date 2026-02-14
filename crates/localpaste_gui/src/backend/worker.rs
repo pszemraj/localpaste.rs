@@ -30,8 +30,8 @@ fn send_error(evt_tx: &Sender<CoreEvent>, source: CoreErrorSource, message: Stri
     let _ = evt_tx.send(CoreEvent::Error { source, message });
 }
 
-fn validate_paste_size(content: &str, max_paste_size: usize) -> Result<(), String> {
-    if content.len() > max_paste_size {
+fn validate_paste_size_bytes(content_len: usize, max_paste_size: usize) -> Result<(), String> {
+    if content_len > max_paste_size {
         Err(format!(
             "Paste size exceeds maximum of {} bytes",
             max_paste_size
@@ -39,6 +39,10 @@ fn validate_paste_size(content: &str, max_paste_size: usize) -> Result<(), Strin
     } else {
         Ok(())
     }
+}
+
+fn validate_paste_size(content: &str, max_paste_size: usize) -> Result<(), String> {
+    validate_paste_size_bytes(content.len(), max_paste_size)
 }
 
 fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) {

@@ -1,6 +1,6 @@
 //! Paste CRUD command handlers for the GUI backend worker.
 
-use super::{send_error, validate_paste_size, WorkerState};
+use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
     db::TransactionOps,
@@ -91,6 +91,12 @@ pub(super) fn handle_update_paste(state: &mut WorkerState, id: String, content: 
 }
 
 pub(super) fn handle_update_paste_virtual(state: &mut WorkerState, id: String, content: Rope) {
+    // Guard on rope byte length before materializing a String to avoid
+    // allocation spikes when autosave tries to persist an oversized buffer.
+    if let Err(message) = validate_paste_size_bytes(content.len_bytes(), state.max_paste_size) {
+        send_error(&state.evt_tx, CoreErrorSource::SaveContent, message);
+        return;
+    }
     apply_content_update(
         state,
         id,
