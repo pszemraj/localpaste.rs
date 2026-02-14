@@ -138,3 +138,4 @@ Lock recovery guidance (including what not to delete) lives in [docs/deployment.
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or fully retired now that owner-lock probing is the primary lock-safety mechanism.
 - [ ] Replace `PasteDb` `update_and_fetch` closure side-channel error handling with an explicit CAS-oriented update pipeline (no no-op closure writes on serialization errors).
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR` for validation builds/tests).
+- [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](gui-perf-protocol.md)) and flip parity checklist gate from `[~]` to `[x]`.
