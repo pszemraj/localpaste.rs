@@ -4,8 +4,7 @@ use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
     folder_ops::{
-        delete_folder_tree_and_migrate, ensure_folder_assignable,
-        first_locked_paste_in_folder_delete_set, introduces_cycle,
+        delete_folder_tree_and_migrate_if_unlocked, ensure_folder_assignable, introduces_cycle,
     },
     models::folder::Folder,
     AppError,
@@ -165,31 +164,11 @@ pub(super) fn handle_update_folder(
 }
 
 pub(super) fn handle_delete_folder(state: &mut WorkerState, id: String) {
-    match first_locked_paste_in_folder_delete_set(&state.db, &id, state.locks.locked_ids()) {
-        Ok(Some(locked_id)) => {
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!(
-                    "Delete folder failed: folder delete would migrate locked paste '{}'; close it first.",
-                    locked_id
-                ),
-            );
-            return;
-        }
-        Ok(None) => {}
-        Err(err) => {
-            error!("backend delete folder lock precheck failed: {}", err);
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Delete folder failed: {}", err),
-            );
-            return;
-        }
-    }
+    let delete_result = state.locks.with_locked_ids(|locked_ids| {
+        delete_folder_tree_and_migrate_if_unlocked(&state.db, &id, locked_ids)
+    });
 
-    match delete_folder_tree_and_migrate(&state.db, &id) {
+    match delete_result {
         Ok(_) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::FolderDeleted { id });

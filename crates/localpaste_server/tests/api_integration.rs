@@ -442,6 +442,7 @@ async fn test_delete_folder_rejects_when_descendant_paste_is_locked() {
     let paste_id = paste["id"].as_str().unwrap().to_string();
 
     locks.lock(&paste_id);
+    locks.lock(&paste_id);
 
     let delete_locked_response = server.delete(&format!("/api/folder/{}", folder_id)).await;
     assert_eq!(delete_locked_response.status_code(), StatusCode::LOCKED);
@@ -451,6 +452,12 @@ async fn test_delete_folder_rejects_when_descendant_paste_is_locked() {
     assert_eq!(still_foldered.status_code(), StatusCode::OK);
     let still_foldered_json: serde_json::Value = still_foldered.json();
     assert_eq!(still_foldered_json["folder_id"], folder_id);
+
+    locks.unlock(&paste_id);
+
+    // One holder still remains, so delete should continue to be rejected.
+    let delete_still_locked = server.delete(&format!("/api/folder/{}", folder_id)).await;
+    assert_eq!(delete_still_locked.status_code(), StatusCode::LOCKED);
 
     locks.unlock(&paste_id);
 
@@ -792,14 +799,20 @@ async fn test_delete_locked_paste_rejected() {
     let paste: serde_json::Value = create_response.json();
     let paste_id = paste["id"].as_str().unwrap().to_string();
 
-    // Lock it as if the GUI has it open.
+    // Lock it as if two GUI sessions have it open.
+    locks.lock(&paste_id);
     locks.lock(&paste_id);
 
     // Attempt delete through API
     let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
     assert_eq!(delete_response.status_code(), StatusCode::LOCKED);
 
-    // Unlock and delete should work
+    // Releasing one holder should keep it locked.
+    locks.unlock(&paste_id);
+    let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
+    assert_eq!(delete_response.status_code(), StatusCode::LOCKED);
+
+    // Unlock final holder and delete should work.
     locks.unlock(&paste_id);
     let delete_response = server.delete(&format!("/api/paste/{}", paste_id)).await;
     assert_eq!(delete_response.status_code(), StatusCode::OK);

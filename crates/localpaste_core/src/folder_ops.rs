@@ -148,6 +148,46 @@ pub fn delete_folder_tree_and_migrate(
     root_id: &str,
 ) -> Result<Vec<String>, AppError> {
     let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
+    delete_folder_tree_and_migrate_locked(db, root_id)
+}
+
+/// Deletes a folder tree only when no currently locked paste would be migrated.
+///
+/// The lock check and folder delete run under the same folder transaction lock.
+///
+/// # Arguments
+/// - `db`: Open database handle.
+/// - `root_id`: Root folder id to delete.
+/// - `locked_ids`: Current lock snapshot from the caller's lock manager.
+///
+/// # Returns
+/// Deleted folder ids in execution order (children first, root last).
+///
+/// # Errors
+/// Returns [`AppError::Locked`] when a locked paste would be migrated,
+/// [`AppError::NotFound`] when `root_id` does not exist, or storage errors.
+pub fn delete_folder_tree_and_migrate_if_unlocked<I>(
+    db: &Database,
+    root_id: &str,
+    locked_ids: I,
+) -> Result<Vec<String>, AppError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
+    if let Some(locked_id) = first_locked_paste_in_folder_delete_set(db, root_id, locked_ids)? {
+        return Err(AppError::Locked(format!(
+            "Folder delete would migrate locked paste '{}'; close it first.",
+            locked_id
+        )));
+    }
+    delete_folder_tree_and_migrate_locked(db, root_id)
+}
+
+fn delete_folder_tree_and_migrate_locked(
+    db: &Database,
+    root_id: &str,
+) -> Result<Vec<String>, AppError> {
     let folders = db.folders.list()?;
     if !folders.iter().any(|f| f.id == root_id) {
         return Err(AppError::NotFound);
@@ -377,6 +417,36 @@ mod tests {
 
         let moved = db.pastes.get(&paste.id).expect("get").expect("exists");
         assert_eq!(moved.folder_id, None);
+    }
+
+    #[test]
+    fn delete_tree_if_unlocked_rejects_locked_descendant() {
+        let (db, _dir) = setup_db();
+
+        let root = Folder::with_parent("root".to_string(), None);
+        db.folders.create(&root).expect("create root");
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(root.id.clone());
+        db.pastes.create(&paste).expect("create paste");
+
+        let err = delete_folder_tree_and_migrate_if_unlocked(&db, &root.id, vec![paste.id.clone()])
+            .expect_err("locked descendant should block delete");
+        assert!(
+            matches!(err, AppError::Locked(_)),
+            "expected locked error, got {err}"
+        );
+
+        let still_foldered = db
+            .pastes
+            .get(&paste.id)
+            .expect("lookup")
+            .expect("paste should still exist");
+        assert_eq!(still_foldered.folder_id.as_deref(), Some(root.id.as_str()));
+        assert!(
+            db.folders.get(&root.id).expect("folder lookup").is_some(),
+            "folder should remain when delete is blocked"
+        );
     }
 
     #[test]

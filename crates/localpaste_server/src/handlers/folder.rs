@@ -11,9 +11,7 @@ use axum::{
     response::Response,
     Json,
 };
-use localpaste_core::folder_ops::{
-    delete_folder_tree_and_migrate, first_locked_paste_in_folder_delete_set, introduces_cycle,
-};
+use localpaste_core::folder_ops::{delete_folder_tree_and_migrate_if_unlocked, introduces_cycle};
 
 /// Create a new folder.
 ///
@@ -139,17 +137,11 @@ pub async fn delete_folder(
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("DELETE /api/folder/:id");
 
-    if let Some(locked_id) =
-        first_locked_paste_in_folder_delete_set(&state.db, &id, state.locks.locked_ids())?
-    {
-        return Err(AppError::Locked(format!(
-            "Folder delete would migrate locked paste '{}'; close it first.",
-            locked_id
-        ))
-        .into());
-    }
-
-    let _ = delete_folder_tree_and_migrate(&state.db, &id)?;
+    // Hold the lock-manager mutex for the entire delete flow so lock state cannot
+    // change between lock-check and transactional folder migration.
+    let _ = state.locks.with_locked_ids(|locked_ids| {
+        delete_folder_tree_and_migrate_if_unlocked(&state.db, &id, locked_ids)
+    })?;
 
     Ok(with_folder_deprecation_headers(Json(
         serde_json::json!({ "success": true }),

@@ -1,6 +1,6 @@
 //! In-memory paste edit locks shared between GUI and API handlers.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// Error returned when an operation requires an unlocked paste id.
@@ -12,7 +12,8 @@ pub enum LockCheckError {
 /// Tracks which paste ids are currently open for editing.
 #[derive(Default)]
 pub struct PasteLockManager {
-    inner: Mutex<HashSet<String>>,
+    // Ref-count by paste id so independent lock holders do not clear each other.
+    inner: Mutex<HashMap<String, usize>>,
 }
 
 impl PasteLockManager {
@@ -22,7 +23,7 @@ impl PasteLockManager {
     /// Panics if the internal lock mutex is poisoned.
     pub fn lock(&self, id: &str) {
         let mut guard = self.inner.lock().expect("paste lock manager poisoned");
-        guard.insert(id.to_string());
+        *guard.entry(id.to_string()).or_insert(0) += 1;
     }
 
     /// Remove a paste lock.
@@ -31,7 +32,14 @@ impl PasteLockManager {
     /// Panics if the internal lock mutex is poisoned.
     pub fn unlock(&self, id: &str) {
         let mut guard = self.inner.lock().expect("paste lock manager poisoned");
-        guard.remove(id);
+        let Some(count) = guard.get_mut(id) else {
+            return;
+        };
+        if *count > 1 {
+            *count -= 1;
+        } else {
+            guard.remove(id);
+        }
     }
 
     /// Check if a paste is currently locked.
@@ -43,7 +51,7 @@ impl PasteLockManager {
     /// Panics if the internal lock mutex is poisoned.
     pub fn is_locked(&self, id: &str) -> bool {
         let guard = self.inner.lock().expect("paste lock manager poisoned");
-        guard.contains(id)
+        guard.contains_key(id)
     }
 
     /// Execute `operation` only when `id` is currently unlocked.
@@ -69,12 +77,37 @@ impl PasteLockManager {
         F: FnOnce() -> T,
     {
         let guard = self.inner.lock().expect("paste lock manager poisoned");
-        if guard.contains(id) {
+        if guard.contains_key(id) {
             return Err(LockCheckError::Locked);
         }
         let result = operation();
         drop(guard);
         Ok(result)
+    }
+
+    /// Execute `operation` while blocking lock/unlock transitions.
+    ///
+    /// This helper snapshots locked ids and runs `operation` while the lock-table
+    /// mutex remains held. Use it for lock-sensitive operations that must stay
+    /// atomic with respect to lock/unlock calls.
+    ///
+    /// # Arguments
+    /// - `operation`: Closure receiving the current locked id snapshot.
+    ///
+    /// # Returns
+    /// The closure return value.
+    ///
+    /// # Panics
+    /// Panics if the internal lock mutex is poisoned.
+    pub fn with_locked_ids<T, F>(&self, operation: F) -> T
+    where
+        F: FnOnce(Vec<String>) -> T,
+    {
+        let guard = self.inner.lock().expect("paste lock manager poisoned");
+        let ids = guard.keys().cloned().collect();
+        let result = operation(ids);
+        drop(guard);
+        result
     }
 
     /// Snapshot all currently locked paste ids.
@@ -86,7 +119,7 @@ impl PasteLockManager {
     /// Panics if the internal lock mutex is poisoned.
     pub fn locked_ids(&self) -> Vec<String> {
         let guard = self.inner.lock().expect("paste lock manager poisoned");
-        guard.iter().cloned().collect()
+        guard.keys().cloned().collect()
     }
 }
 
@@ -155,5 +188,24 @@ mod tests {
 
         assert!(lock_completed.load(Ordering::SeqCst));
         assert!(locks.is_locked("alpha"));
+    }
+
+    #[test]
+    fn lock_is_reference_counted_per_paste_id() {
+        let locks = PasteLockManager::default();
+        locks.lock("alpha");
+        locks.lock("alpha");
+
+        locks.unlock("alpha");
+        assert!(
+            locks.is_locked("alpha"),
+            "one unlock should not clear another active holder"
+        );
+
+        locks.unlock("alpha");
+        assert!(
+            !locks.is_locked("alpha"),
+            "lock should clear after all holders release"
+        );
     }
 }
