@@ -36,3 +36,10 @@ Canonical build/run/validation command matrices are maintained in:
 ## License
 
 MIT
+## Documentation map
+Use these repository documents as the source of truth:
+- Docs index: [docs/README.md](docs/README.md)
+- Security: [docs/security.md](docs/security.md)
+- Deployment: [docs/deployment.md](docs/deployment.md)
+- Development log and architecture notes: [docs/dev/devlog.md](docs/dev/devlog.md)
+- Contribution and automation protocol: [AGENTS.md](AGENTS.md)

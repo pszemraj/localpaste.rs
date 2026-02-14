@@ -53,3 +53,11 @@ When updating docs:
 - [UI palette](dev/ui-palette.md) - Canonical color and typography tokens for the rewrite UI.
 - [Virtual editor plan](dev/virtual-editor-plan.md) - Historical rollout timeline (behavior/gates are tracked in GUI notes + parity checklist).
 - [Storage split plan](dev/storage-split-plan.md) - Design-complete follow-up plan for metadata/content split storage.
+## Canonical source-of-truth policy
+Treat this file as the central documentation index. Use the docs below as canonical and avoid duplicating their normative content elsewhere:
+- Product and usage overview: [README.md](../README.md)
+- Security model and controls: [docs/security.md](security.md)
+- Deployment and operations: [docs/deployment.md](deployment.md)
+- Development decisions and change log: [docs/dev/devlog.md](dev/devlog.md)
+- Contributor/agent operating protocol: [AGENTS.md](../AGENTS.md)
+Non-canonical notes (for example scratch/ files, historical plans, or assistant-specific prompts) should clearly link back to these pages instead of restating requirements.

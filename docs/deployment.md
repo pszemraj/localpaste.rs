@@ -202,3 +202,10 @@ With cron:
 # Simple health check
 curl -f http://127.0.0.1:38411/api/pastes/meta?limit=1 || echo "Service down"
 ```
+## Embedded API address discovery (.api-addr)
+When the GUI runs the embedded API server, it writes the bound server URL to .api-addr in the active data directory (derived from DB_PATH).
+CLI resolution order is:
+1. Explicit --server or LP_SERVER
+2. Discovery file (.api-addr)
+3. Default http://localhost:38411
+This makes CLI commands continue working when the embedded server cannot bind the default port and falls back to an OS-assigned port.
