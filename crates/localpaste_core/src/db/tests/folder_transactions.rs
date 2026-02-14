@@ -2,6 +2,39 @@
 
 use super::*;
 
+fn assert_create_with_folder_rejects_deleted_destination(failpoint: TransactionFailpoint) {
+    let _lock = transaction_failpoint_test_lock()
+        .lock()
+        .expect("transaction failpoint lock");
+    let _guard = FailpointGuard;
+    let (db, _temp) = setup_test_db();
+
+    let folder = Folder::new("target-folder".to_string());
+    let folder_id = folder.id.clone();
+    db.folders.create(&folder).unwrap();
+
+    let mut paste = Paste::new("content".to_string(), "name".to_string());
+    paste.folder_id = Some(folder_id.clone());
+    let paste_id = paste.id.clone();
+
+    set_transaction_failpoint(Some(failpoint));
+    let result = TransactionOps::create_paste_with_folder(&db, &paste, &folder_id);
+    set_transaction_failpoint(None);
+
+    assert!(
+        matches!(result, Err(AppError::NotFound)),
+        "deleted destination must reject create"
+    );
+    assert!(
+        db.pastes.get(&paste_id).unwrap().is_none(),
+        "failed create must not leave an orphan canonical row"
+    );
+    assert!(
+        db.folders.get(&folder_id).unwrap().is_none(),
+        "injected race removes destination folder"
+    );
+}
+
 #[test]
 fn test_move_between_folders_rolls_back_counts_when_paste_missing() {
     let (db, _temp) = setup_test_db();
@@ -314,73 +347,15 @@ fn test_create_with_folder_injected_error_rolls_back_reservation_and_leaves_no_p
 
 #[test]
 fn test_create_with_folder_rejects_destination_deleted_after_reservation_without_orphan() {
-    let _lock = transaction_failpoint_test_lock()
-        .lock()
-        .expect("transaction failpoint lock");
-    let _guard = FailpointGuard;
-    let (db, _temp) = setup_test_db();
-
-    let folder = Folder::new("target-folder".to_string());
-    let folder_id = folder.id.clone();
-    db.folders.create(&folder).unwrap();
-
-    let mut paste = Paste::new("content".to_string(), "name".to_string());
-    paste.folder_id = Some(folder_id.clone());
-    let paste_id = paste.id.clone();
-
-    set_transaction_failpoint(Some(
+    assert_create_with_folder_rejects_deleted_destination(
         TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce,
-    ));
-    let result = TransactionOps::create_paste_with_folder(&db, &paste, &folder_id);
-    set_transaction_failpoint(None);
-
-    assert!(
-        matches!(result, Err(AppError::NotFound)),
-        "deleted destination must reject create"
-    );
-    assert!(
-        db.pastes.get(&paste_id).unwrap().is_none(),
-        "failed create must not leave an orphan paste assignment"
-    );
-    assert!(
-        db.folders.get(&folder_id).unwrap().is_none(),
-        "injected race removes destination folder"
     );
 }
 
 #[test]
 fn test_create_with_folder_destination_deleted_after_create_rolls_back_canonical_insert() {
-    let _lock = transaction_failpoint_test_lock()
-        .lock()
-        .expect("transaction failpoint lock");
-    let _guard = FailpointGuard;
-    let (db, _temp) = setup_test_db();
-
-    let folder = Folder::new("target-folder".to_string());
-    let folder_id = folder.id.clone();
-    db.folders.create(&folder).unwrap();
-
-    let mut paste = Paste::new("content".to_string(), "name".to_string());
-    paste.folder_id = Some(folder_id.clone());
-    let paste_id = paste.id.clone();
-
-    set_transaction_failpoint(Some(
+    assert_create_with_folder_rejects_deleted_destination(
         TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce,
-    ));
-    let result = TransactionOps::create_paste_with_folder(&db, &paste, &folder_id);
-    set_transaction_failpoint(None);
-
-    assert!(
-        matches!(result, Err(AppError::NotFound)),
-        "create should fail when destination disappears after canonical insert"
-    );
-    assert!(
-        db.pastes.get(&paste_id).unwrap().is_none(),
-        "post-create destination loss must not leave orphan canonical row"
-    );
-    assert!(
-        db.folders.get(&folder_id).unwrap().is_none(),
-        "injected race removes destination folder"
     );
 }
 

@@ -16,6 +16,8 @@ pub mod folder_ops;
 pub mod models;
 /// Paste naming helpers.
 pub mod naming;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use config::Config;
 pub use constants::{

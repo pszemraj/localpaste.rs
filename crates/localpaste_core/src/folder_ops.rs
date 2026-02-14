@@ -311,7 +311,6 @@ fn maybe_inject_delete_reconcile_failpoint(db: &Database) -> Result<(), AppError
 mod tests {
     use super::*;
     use crate::{db::TransactionOps, models::paste::Paste};
-    use std::collections::HashMap;
     use std::sync::{Arc, Barrier, Mutex, OnceLock};
     use std::thread;
     use tempfile::TempDir;
@@ -334,31 +333,6 @@ mod tests {
     fn delete_reconcile_failpoint_test_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn assert_folder_counts_match_canonical(db: &Database) {
-        let mut canonical_counts: HashMap<String, usize> = HashMap::new();
-        db.pastes
-            .scan_canonical_meta(|meta| {
-                if let Some(folder_id) = meta.folder_id {
-                    *canonical_counts.entry(folder_id).or_insert(0) += 1;
-                }
-                Ok(())
-            })
-            .expect("scan canonical pastes");
-        for folder in db.folders.list().expect("list folders") {
-            let expected = canonical_counts.remove(folder.id.as_str()).unwrap_or(0);
-            assert_eq!(
-                folder.paste_count, expected,
-                "folder count drift for folder {}",
-                folder.id
-            );
-        }
-        assert!(
-            canonical_counts.is_empty(),
-            "canonical rows should not reference missing folders: {:?}",
-            canonical_counts.keys().collect::<Vec<_>>()
-        );
     }
 
     #[test]
@@ -673,6 +647,6 @@ mod tests {
                 "paste must not reference a deleted folder"
             );
         }
-        assert_folder_counts_match_canonical(&db);
+        crate::test_support::assert_folder_counts_match_canonical(&db);
     }
 }

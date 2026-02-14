@@ -276,5 +276,5 @@ fn test_reconcile_folder_invariants_and_move_are_linearized() {
         Some(destination_id.as_str()),
         "final folder assignment should remain valid after serialized reconcile"
     );
-    assert_folder_counts_match_canonical(&db);
+    crate::test_support::assert_folder_counts_match_canonical(&db);
 }
