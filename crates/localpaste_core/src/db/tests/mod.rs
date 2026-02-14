@@ -1,46 +1,17 @@
 //! Database integration tests.
 
 use super::*;
-use crate::db::paste::set_reconcile_failpoint;
 use crate::error::AppError;
 use crate::models::{folder::*, paste::*};
-use chrono::Duration;
-use std::sync::{Arc, Barrier, Mutex, OnceLock};
+use std::sync::{Arc, Barrier};
 use std::thread;
 use tempfile::TempDir;
 
 fn setup_test_db() -> (Database, TempDir) {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("temp dir");
     let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(db_path.to_str().unwrap()).unwrap();
+    let db = Database::new(db_path.to_str().expect("db path")).expect("db");
     (db, temp_dir)
-}
-
-fn transaction_failpoint_test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn reconcile_failpoint_test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-struct FailpointGuard;
-
-impl Drop for FailpointGuard {
-    fn drop(&mut self) {
-        set_transaction_failpoint(None);
-        set_move_pause_hooks(None);
-    }
-}
-
-struct ReconcileFailpointGuard;
-
-impl Drop for ReconcileFailpointGuard {
-    fn drop(&mut self) {
-        set_reconcile_failpoint(false);
-    }
 }
 
 mod basic_ops;
