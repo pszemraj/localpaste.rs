@@ -27,6 +27,49 @@ fn test_paste_create_and_get() {
 }
 
 #[test]
+fn test_paste_create_rejects_duplicate_id_without_overwrite() {
+    let (db, _temp) = setup_test_db();
+
+    let mut original = Paste::new("original".to_string(), "first".to_string());
+    original.id = "duplicate-create-id".to_string();
+    db.pastes.create(&original).expect("create original");
+
+    let mut conflicting = Paste::new("conflicting".to_string(), "second".to_string());
+    conflicting.id = original.id.clone();
+    let err = db
+        .pastes
+        .create(&conflicting)
+        .expect_err("duplicate id create must fail");
+    assert!(
+        matches!(err, AppError::StorageMessage(ref message) if message.contains("already exists")),
+        "unexpected duplicate-create error: {}",
+        err
+    );
+    let meta_state = db.db.open_tree("pastes_meta_state").unwrap();
+    let in_progress = meta_state.get(b"in_progress_count").unwrap();
+    let in_progress_count = in_progress
+        .as_deref()
+        .map(|raw| {
+            let mut bytes = [0u8; std::mem::size_of::<u64>()];
+            bytes.copy_from_slice(raw);
+            u64::from_be_bytes(bytes)
+        })
+        .unwrap_or(0);
+    assert_eq!(
+        in_progress_count, 0,
+        "failed duplicate create must not leave metadata mutation in progress"
+    );
+
+    let stored = db
+        .pastes
+        .get(&original.id)
+        .expect("lookup")
+        .expect("existing paste should remain");
+    assert_eq!(stored.content, "original");
+    assert_eq!(stored.name, "first");
+}
+
+#[test]
 fn test_paste_update() {
     let (db, _temp) = setup_test_db();
 
@@ -284,5 +327,37 @@ fn test_paste_update_preserves_corrupt_record_on_error() {
     assert!(
         tree.get(paste_id.as_bytes()).unwrap().is_some(),
         "corrupt record should not be deleted by failed update"
+    );
+}
+
+#[test]
+fn test_paste_delete_preserves_corrupt_record_on_error() {
+    let (db, _temp) = setup_test_db();
+    let tree = db.db.open_tree("pastes").unwrap();
+    let paste_id = "corrupt-paste-delete-id";
+    tree.insert(paste_id.as_bytes(), b"not-a-paste").unwrap();
+
+    let result = db.pastes.delete(paste_id);
+    assert!(
+        matches!(result, Err(AppError::Serialization(_))),
+        "corrupt paste value should surface serialization error"
+    );
+    assert!(
+        tree.get(paste_id.as_bytes()).unwrap().is_some(),
+        "corrupt record should not be deleted by failed delete"
+    );
+    let meta_state = db.db.open_tree("pastes_meta_state").unwrap();
+    let in_progress = meta_state.get(b"in_progress_count").unwrap();
+    let in_progress_count = in_progress
+        .as_deref()
+        .map(|raw| {
+            let mut bytes = [0u8; std::mem::size_of::<u64>()];
+            bytes.copy_from_slice(raw);
+            u64::from_be_bytes(bytes)
+        })
+        .unwrap_or(0);
+    assert_eq!(
+        in_progress_count, 0,
+        "failed delete must clear metadata mutation in-progress state"
     );
 }

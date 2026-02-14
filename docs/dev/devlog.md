@@ -139,3 +139,5 @@ Lock recovery guidance (including what not to delete) lives in [docs/deployment.
 - [ ] Replace `PasteDb` `update_and_fetch` closure side-channel error handling with an explicit CAS-oriented update pipeline (no no-op closure writes on serialization errors).
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR` for validation builds/tests).
 - [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](gui-perf-protocol.md)) and flip parity checklist gate from `[~]` to `[x]`.
+- [ ] Enforce key/value identity checks for canonical paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
+- [ ] Narrow `PasteDb` mutation API so folder assignment changes cannot bypass folder-count transaction paths.

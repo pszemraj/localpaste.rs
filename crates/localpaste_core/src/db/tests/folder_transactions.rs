@@ -360,6 +360,55 @@ fn test_create_with_folder_destination_deleted_after_create_rolls_back_canonical
 }
 
 #[test]
+fn test_create_with_folder_duplicate_id_rolls_back_destination_reservation() {
+    let (db, _temp) = setup_test_db();
+
+    let old_folder = Folder::new("old-folder".to_string());
+    let old_folder_id = old_folder.id.clone();
+    db.folders.create(&old_folder).unwrap();
+
+    let new_folder = Folder::new("new-folder".to_string());
+    let new_folder_id = new_folder.id.clone();
+    db.folders.create(&new_folder).unwrap();
+
+    let mut existing = Paste::new("original".to_string(), "name".to_string());
+    existing.folder_id = Some(old_folder_id.clone());
+    let paste_id = existing.id.clone();
+    TransactionOps::create_paste_with_folder(&db, &existing, &old_folder_id).unwrap();
+
+    let mut duplicate = Paste::new("conflicting".to_string(), "name".to_string());
+    duplicate.id = paste_id.clone();
+    duplicate.folder_id = Some(new_folder_id.clone());
+
+    let result = TransactionOps::create_paste_with_folder(&db, &duplicate, &new_folder_id);
+    assert!(
+        matches!(result, Err(AppError::StorageMessage(ref message)) if message.contains("already exists")),
+        "duplicate id create should fail without count drift: {:?}",
+        result
+    );
+
+    let stored = db
+        .pastes
+        .get(&paste_id)
+        .expect("lookup")
+        .expect("existing paste");
+    assert_eq!(
+        stored.folder_id.as_deref(),
+        Some(old_folder_id.as_str()),
+        "duplicate create must not reassign canonical folder"
+    );
+    assert_eq!(stored.content, "original");
+
+    let old_after = db.folders.get(&old_folder_id).unwrap().unwrap();
+    let new_after = db.folders.get(&new_folder_id).unwrap().unwrap();
+    assert_eq!(old_after.paste_count, 1);
+    assert_eq!(
+        new_after.paste_count, 0,
+        "destination reservation must rollback on duplicate create"
+    );
+}
+
+#[test]
 fn test_delete_uses_folder_from_deleted_record_not_stale_context() {
     let (db, _temp) = setup_test_db();
 

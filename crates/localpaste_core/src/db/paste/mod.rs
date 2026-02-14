@@ -32,6 +32,42 @@ pub struct PasteDb {
     meta_state_tree: sled::Tree,
 }
 
+struct MetaIndexMutationGuard<'a> {
+    db: &'a PasteDb,
+    active: bool,
+}
+
+impl<'a> MetaIndexMutationGuard<'a> {
+    fn begin(db: &'a PasteDb) -> Result<Self, AppError> {
+        db.begin_meta_index_mutation()?;
+        Ok(Self { db, active: true })
+    }
+
+    fn finish(&mut self) {
+        if !self.active {
+            return;
+        }
+        self.db.try_end_meta_index_mutation();
+        self.active = false;
+    }
+
+    fn finish_with_derived_index_write(
+        &mut self,
+        operation: &str,
+        paste_id: &str,
+        index_result: Result<(), AppError>,
+    ) {
+        self.db
+            .finalize_derived_index_write(operation, paste_id, index_result);
+        self.active = false;
+    }
+}
+
+impl Drop for MetaIndexMutationGuard<'_> {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
 impl PasteDb {
     /// Open the `pastes` tree.
     ///
@@ -106,18 +142,20 @@ impl PasteDb {
     where
         F: FnOnce(&Self, &Paste) -> Result<(), AppError>,
     {
-        self.begin_meta_index_mutation()?;
+        let mut mutation_guard = MetaIndexMutationGuard::begin(self)?;
         let key = paste.id.as_bytes();
-        let value = match bincode::serialize(paste) {
-            Ok(value) => value,
-            Err(err) => {
-                self.try_end_meta_index_mutation();
-                return Err(AppError::Serialization(err));
-            }
-        };
-        let _previous = self.tree.insert(key, value)?;
+        let value = bincode::serialize(paste)?;
+        let inserted = self
+            .tree
+            .compare_and_swap(key, None as Option<&[u8]>, Some(value))?;
+        if inserted.is_err() {
+            return Err(AppError::StorageMessage(format!(
+                "Paste id '{}' already exists",
+                paste.id
+            )));
+        }
         let index_result = index_writer(self, paste);
-        self.finalize_derived_index_write("create", paste.id.as_str(), index_result);
+        mutation_guard.finish_with_derived_index_write("create", paste.id.as_str(), index_result);
         Ok(())
     }
 
@@ -161,7 +199,7 @@ impl PasteDb {
     where
         F: FnOnce(&Self, &Paste, Option<PasteMeta>) -> Result<(), AppError>,
     {
-        self.begin_meta_index_mutation()?;
+        let mut mutation_guard = MetaIndexMutationGuard::begin(self)?;
         // `update_and_fetch` retries the closure under contention but cannot return
         // a typed error. Capture parse/encode failures and surface them after the call.
         let mut update_error: Option<AppError> = None;
@@ -188,7 +226,6 @@ impl PasteDb {
             }
         })?;
         if let Some(err) = update_error.take() {
-            self.try_end_meta_index_mutation();
             return Err(err);
         }
 
@@ -197,11 +234,15 @@ impl PasteDb {
                 let paste = deserialize_paste(&bytes)?;
                 let previous = old_meta.take();
                 let index_result = index_writer(self, &paste, previous);
-                self.finalize_derived_index_write("update", paste.id.as_str(), index_result);
+                mutation_guard.finish_with_derived_index_write(
+                    "update",
+                    paste.id.as_str(),
+                    index_result,
+                );
                 Ok(Some(paste))
             }
             None => {
-                self.try_end_meta_index_mutation();
+                mutation_guard.finish();
                 Ok(None)
             }
         }
@@ -245,7 +286,7 @@ impl PasteDb {
     where
         F: FnOnce(&Self, &Paste, Option<PasteMeta>) -> Result<(), AppError>,
     {
-        self.begin_meta_index_mutation()?;
+        let mut mutation_guard = MetaIndexMutationGuard::begin(self)?;
         // `update_and_fetch` retries the closure under contention but cannot return
         // a typed error. Capture parse/encode failures and surface them after the call.
         let mut update_error: Option<AppError> = None;
@@ -281,11 +322,10 @@ impl PasteDb {
             }
         })?;
         if let Some(err) = update_error.take() {
-            self.try_end_meta_index_mutation();
             return Err(err);
         }
         if folder_mismatch {
-            self.try_end_meta_index_mutation();
+            mutation_guard.finish();
             return Ok(None);
         }
 
@@ -294,7 +334,7 @@ impl PasteDb {
                 let paste = deserialize_paste(&bytes)?;
                 let previous = old_meta.take();
                 let index_result = index_writer(self, &paste, previous);
-                self.finalize_derived_index_write(
+                mutation_guard.finish_with_derived_index_write(
                     "update_if_folder_matches",
                     paste.id.as_str(),
                     index_result,
@@ -302,7 +342,7 @@ impl PasteDb {
                 Ok(Some(paste))
             }
             None => {
-                self.try_end_meta_index_mutation();
+                mutation_guard.finish();
                 Ok(None)
             }
         }
@@ -327,17 +367,41 @@ impl PasteDb {
     where
         F: FnOnce(&Self, &PasteMeta) -> Result<(), AppError>,
     {
-        self.begin_meta_index_mutation()?;
-        match self.tree.remove(id.as_bytes())? {
-            Some(value) => {
-                let paste = deserialize_paste(&value)?;
+        let mut mutation_guard = MetaIndexMutationGuard::begin(self)?;
+        let mut delete_error: Option<AppError> = None;
+        let mut deleted_paste: Option<Paste> = None;
+        let _ = self.tree.update_and_fetch(id.as_bytes(), |old| {
+            delete_error = None;
+            deleted_paste = None;
+            let bytes = old?;
+            match deserialize_paste(bytes) {
+                Ok(paste) => {
+                    deleted_paste = Some(paste);
+                    None
+                }
+                Err(err) => {
+                    delete_error = Some(AppError::Serialization(err));
+                    Some(bytes.to_vec())
+                }
+            }
+        })?;
+        if let Some(err) = delete_error.take() {
+            return Err(err);
+        }
+
+        match deleted_paste {
+            Some(paste) => {
                 let meta = PasteMeta::from(&paste);
                 let index_result = index_remover(self, &meta);
-                self.finalize_derived_index_write("delete", paste.id.as_str(), index_result);
+                mutation_guard.finish_with_derived_index_write(
+                    "delete",
+                    paste.id.as_str(),
+                    index_result,
+                );
                 Ok(Some(paste))
             }
             None => {
-                self.try_end_meta_index_mutation();
+                mutation_guard.finish();
                 Ok(None)
             }
         }
