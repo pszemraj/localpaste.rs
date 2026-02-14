@@ -1,3 +1,5 @@
+//! Paste CRUD command handlers for the GUI backend worker.
+
 use super::{send_error, validate_paste_size, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{

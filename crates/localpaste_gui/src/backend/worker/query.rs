@@ -1,3 +1,5 @@
+//! Metadata list/search command handlers and short-lived cache for the GUI backend worker.
+
 use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent, PasteSummary};
 use std::time::{Duration, Instant};

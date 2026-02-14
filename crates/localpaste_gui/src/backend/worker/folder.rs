@@ -1,3 +1,5 @@
+//! Folder command handlers for the GUI backend worker.
+
 use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
