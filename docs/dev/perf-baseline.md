@@ -1,7 +1,7 @@
 # Phase 0 Performance Baseline (2026-01-29)
 
 Historical snapshot from early rewrite work.
-Current release/perf validation source of truth: [gui-perf-protocol.md](gui-perf-protocol.md).
+Current release/perf validation source of truth: [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
 
 ## Environment
 
@@ -50,13 +50,13 @@ Measured results (single run):
 Interpretation:
 
 - These measurements are for historical API/CLI behavior from this phase.
-- Current rewrite GUI list/search no longer deserialize full content and use metadata/index projections (see [gui-perf-protocol.md](gui-perf-protocol.md)).
+- Current rewrite GUI list/search no longer deserialize full content and use metadata/index projections (see [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)).
 
 ## Historical GUI Notes
 
-The original manual GUI checks from this phase are superseded by the scripted protocol in [gui-perf-protocol.md](gui-perf-protocol.md).
+The original manual GUI checks from this phase are superseded by the scripted protocol in [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
 Keep this file for historical timing context only.
 
 ## Current Rewrite Gate
 
-Use [gui-perf-protocol.md](gui-perf-protocol.md) for release-gate validation and thresholds.
+Use [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md) for release-gate validation and thresholds.

@@ -2,8 +2,8 @@
 
 Canonical scope:
 - Security defaults, threat model, and security-relevant env toggles are defined here.
-- Service operation and lock-recovery procedures are canonical in [deployment.md](deployment.md).
-- Build/run command matrices are canonical in [dev/devlog.md](dev/devlog.md).
+- Service operation and lock-recovery procedures are canonical in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
+- Build/run command matrices are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ---
 
@@ -54,8 +54,8 @@ To add a referrer policy, configure your reverse proxy or extend the Axum middle
 
 ### Lock Management Policy
 
-Operational lock-recovery procedures are canonical in [deployment.md](deployment.md).
-Lock behavior semantics are canonical in [dev/locking-model.md](dev/locking-model.md).
+Operational lock-recovery procedures are canonical in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
+Lock behavior semantics are canonical in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
 Security expectation:
 
 - Treat uncertain lock ownership as unsafe.
@@ -67,7 +67,7 @@ If you need to expose LocalPaste publicly, follow these steps:
 
 ### 1. Enable Public Binding
 
-Build/run mechanics are canonical in [deployment.md](deployment.md) and [dev/devlog.md](dev/devlog.md).
+Build/run mechanics are canonical in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md) and [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 This section only defines the security-relevant overrides:
 
 ```bash
@@ -128,10 +128,10 @@ server {
    ```
 
 2. **Monitoring**: Watch logs for unusual activity
-   Use the canonical service/logging patterns in [deployment.md](deployment.md).
+   Use the canonical service/logging patterns in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
 
 3. **Backups**: Regular database backups
-   Use the backup and retention procedures in [deployment.md](deployment.md).
+   Use the backup and retention procedures in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
 
 4. **Access Control**: Use firewall rules
 

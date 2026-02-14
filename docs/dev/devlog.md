@@ -1,7 +1,7 @@
 # Development Guide
 
 This is the primary development workflow document.
-For topic-specific details, link to the canonical docs in `docs/README.md`.
+For topic-specific details, link to the canonical docs in [docs/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md).
 This is the canonical source for binary/build/run command matrices.
 Other docs should link here instead of repeating command matrices.
 
@@ -63,8 +63,8 @@ Topology note:
 - Use standalone `localpaste` for headless/server-only operation.
 - Embedded GUI API writes the active endpoint to `.api-addr` in the parent directory of `DB_PATH`; `lpaste` auto-uses it when `--server` and `LP_SERVER` are unset.
 
-For editor-mode flags and tracing env vars, see [GUI notes](gui-notes.md).
-For repeatable GUI perf validation, see [GUI perf protocol](gui-perf-protocol.md).
+For editor-mode flags and tracing env vars, see [GUI notes](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md).
+For repeatable GUI perf validation, see [GUI perf protocol](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
 
 ## Validation Loop
 
@@ -89,14 +89,14 @@ cargo run -p localpaste_tools --bin check-loc -- --max-lines 1000 --warn-lines 9
 # (new -> list -> search -> get -> delete), then verify persistence across restart
 ```
 
-Parity/release gate status is tracked in [parity-checklist.md](parity-checklist.md).
+Parity/release gate status is tracked in [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md).
 
 ## API Summary (High-Level)
 
 Authoritative route wiring lives in
-[`crates/localpaste_server/src/lib.rs`](../../crates/localpaste_server/src/lib.rs).
+[`crates/localpaste_server/src/lib.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/lib.rs).
 Authoritative request/response behavior lives in
-[`crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs).
+[`crates/localpaste_server/src/handlers/paste.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/paste.rs).
 Use this section as orientation only and avoid copying route-by-route behavior here.
 
 Key shape expectations:
@@ -105,7 +105,7 @@ Key shape expectations:
 - `/api/search/meta` performs metadata-only matching (name/tags/language).
 - Folder routes are deprecated and emit warning headers.
 
-Current deprecation and parity status is tracked in [parity-checklist.md](parity-checklist.md).
+Current deprecation and parity status is tracked in [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md).
 
 ## Database Notes
 
@@ -114,19 +114,19 @@ Current deprecation and parity status is tracked in [parity-checklist.md](parity
 - Use `DB_PATH` for isolated test runs.
 - GUI sidebar list window is capped at `DEFAULT_LIST_PASTES_LIMIT` (`512`); use search/command palette for global discovery.
 
-Lock recovery guidance (including what not to delete) lives in [docs/deployment.md](../deployment.md).
+Lock recovery guidance (including what not to delete) lives in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
 
 ## Related Docs
 
-- Security defaults and public exposure: [docs/security.md](../security.md)
-- Service management: [docs/deployment.md](../deployment.md)
-- Lock behavior model: [locking-model.md](locking-model.md)
-- Perf protocol: [gui-perf-protocol.md](gui-perf-protocol.md)
-- Virtual editor rollout plan: [virtual-editor-plan.md](virtual-editor-plan.md)
-- Storage split follow-up: [storage-split-plan.md](storage-split-plan.md)
-- Rewrite parity checklist: [parity-checklist.md](parity-checklist.md)
-- Folder audit matrix (2026-02-13): [folder-audit-matrix-2026-02-13.md](folder-audit-matrix-2026-02-13.md)
-- Folder audit report (2026-02-13): [folder-audit-report-2026-02-13.md](folder-audit-report-2026-02-13.md)
+- Security defaults and public exposure: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
+- Service management: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
+- Lock behavior model: [locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
+- Perf protocol: [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)
+- Virtual editor rollout plan: [virtual-editor-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/virtual-editor-plan.md)
+- Storage split follow-up: [storage-split-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/storage-split-plan.md)
+- Rewrite parity checklist: [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
+- Folder audit matrix (2026-02-13): [folder-audit-matrix-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-matrix-2026-02-13.md)
+- Folder audit report (2026-02-13): [folder-audit-report-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-report-2026-02-13.md)
 
 ## Deferred TODO Backlog (2026-02-13 Cold-Eyes Audit)
 
@@ -138,7 +138,7 @@ Lock recovery guidance (including what not to delete) lives in [docs/deployment.
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or fully retired now that owner-lock probing is the primary lock-safety mechanism.
 - [ ] Replace `PasteDb` `update_and_fetch` closure side-channel error handling with an explicit CAS-oriented update pipeline (no no-op closure writes on serialization errors).
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR` for validation builds/tests).
-- [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](gui-perf-protocol.md)) and flip parity checklist gate from `[~]` to `[x]`.
+- [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)) and flip parity checklist gate from `[~]` to `[x]`.
 - [ ] Enforce key/value identity checks for canonical paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
 - [ ] Narrow `PasteDb` mutation API so folder assignment changes cannot bypass folder-count transaction paths.
 - [ ] Track folder-count decrement failures with a persistent repair marker and run opportunistic `reconcile_folder_invariants` recovery in long-lived processes.

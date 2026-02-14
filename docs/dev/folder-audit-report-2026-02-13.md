@@ -3,7 +3,7 @@
 Audit order executed: `B -> C -> E -> D -> F -> A`.
 
 Matrix artifact:
-[folder-audit-matrix-2026-02-13.md](folder-audit-matrix-2026-02-13.md).
+[folder-audit-matrix-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-matrix-2026-02-13.md).
 
 ## Validation Gate Results
 
@@ -33,8 +33,8 @@ API/core smoke executed against isolated DB path:
   - Added compensating delete + count rollback when destination becomes unassignable after canonical insert.
   - Added deterministic failpoints for pre/post create race windows.
 - File references:
-  - `crates/localpaste_core/src/db/mod.rs`
-  - `crates/localpaste_core/src/db/tests.rs`
+  - [`crates/localpaste_core/src/db/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/db/mod.rs)
+  - [`crates/localpaste_core/src/db/tests/folder_transactions.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/db/tests/folder_transactions.rs)
 - Reproduction/tests:
   - `test_create_with_folder_injected_error_rolls_back_reservation_and_leaves_no_paste`
   - `test_create_with_folder_rejects_destination_deleted_after_reservation_without_orphan`
@@ -48,8 +48,8 @@ API/core smoke executed against isolated DB path:
   - Added post-CAS destination revalidation with compensating revert + reservation rollback if destination became unassignable.
   - Retained bounded CAS retries and rollback behavior on conflicts/errors.
 - File references:
-  - `crates/localpaste_core/src/db/mod.rs`
-  - `crates/localpaste_core/src/folder_ops.rs`
+  - [`crates/localpaste_core/src/db/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/db/mod.rs)
+  - [`crates/localpaste_core/src/folder_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/folder_ops.rs)
 - Reproduction/tests:
   - `test_move_between_folders_rejects_destination_deleted_after_reservation`
   - `delete_folder_tree_and_concurrent_move_preserve_no_orphan_and_counts`
@@ -62,9 +62,9 @@ API/core smoke executed against isolated DB path:
   - Removed duplicate implementations and centralized on `core::folder_ops::delete_folder_tree_and_migrate_guarded`.
   - Server + GUI now both call the same helper before delete-tree migration.
 - File references:
-  - `crates/localpaste_core/src/folder_ops.rs`
-  - `crates/localpaste_server/src/handlers/folder.rs`
-  - `crates/localpaste_gui/src/backend/worker.rs`
+  - [`crates/localpaste_core/src/folder_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/folder_ops.rs)
+  - [`crates/localpaste_server/src/handlers/folder.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/folder.rs)
+  - [`crates/localpaste_gui/src/backend/worker.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/backend/worker.rs)
 - Reproduction/tests:
   - `test_delete_folder_rejects_when_descendant_paste_is_locked`
   - `locked_descendant_blocks_backend_folder_delete`
@@ -77,13 +77,13 @@ API/core smoke executed against isolated DB path:
   - Applied across server paste/folder handlers and GUI backend metadata/folder parent flows.
   - Added parity tests proving both server and GUI reject assignment into marked folders.
 - File references:
-  - `crates/localpaste_core/src/folder_ops.rs`
-  - `crates/localpaste_server/src/handlers/paste.rs`
-  - `crates/localpaste_server/src/handlers/folder.rs`
-  - `crates/localpaste_gui/src/backend/worker.rs`
-  - `crates/localpaste_server/tests/api_integration.rs`
-  - `crates/localpaste_gui/src/backend/mod.rs`
-  - `crates/localpaste_gui/tests/headless_workflows.rs`
+  - [`crates/localpaste_core/src/folder_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/folder_ops.rs)
+  - [`crates/localpaste_server/src/handlers/paste.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/paste.rs)
+  - [`crates/localpaste_server/src/handlers/folder.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/folder.rs)
+  - [`crates/localpaste_gui/src/backend/worker.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/backend/worker.rs)
+  - [`crates/localpaste_server/tests/api_integration.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/tests/api_integration.rs)
+  - [`crates/localpaste_gui/src/backend/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/backend/mod.rs)
+  - [`crates/localpaste_gui/tests/headless_workflows.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/tests/headless_workflows.rs)
 - Reproduction/tests:
   - `test_server_rejects_assignments_to_delete_marked_folder`
   - `backend_rejects_assignment_into_delete_marked_folder`
@@ -98,10 +98,10 @@ API/core smoke executed against isolated DB path:
   - Reconcile repairs canonical orphan folder refs and exact folder counts from canonical rows.
   - Startup metadata reconcile remains in place; post-folder reconcile metadata check/reconcile added.
 - File references:
-  - `crates/localpaste_core/src/db/mod.rs`
-  - `crates/localpaste_core/src/folder_ops.rs`
-  - `crates/localpaste_core/src/db/folder.rs`
-  - `crates/localpaste_core/src/db/tests.rs`
+  - [`crates/localpaste_core/src/db/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/db/mod.rs)
+  - [`crates/localpaste_core/src/folder_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/folder_ops.rs)
+  - [`crates/localpaste_core/src/db/folder.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/db/folder.rs)
+  - [`crates/localpaste_core/src/db/tests/startup_reconcile.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/db/tests/startup_reconcile.rs)
 - Reproduction/tests:
   - `test_database_new_reconciles_folder_count_drift`
   - `test_database_new_reconciles_orphan_folder_refs`
@@ -114,7 +114,7 @@ API/core smoke executed against isolated DB path:
   - Added `clear_existing_data` using transactional paste delete + folder tree delete migration helper.
   - Added invariant checker and test coverage for generation+clear roundtrip.
 - File references:
-  - `crates/localpaste_tools/src/main.rs`
+  - [`crates/localpaste_tools/src/main.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_tools/src/main.rs)
 - Reproduction/tests:
   - `tooling_generation_and_clear_preserve_folder_invariants`
 
@@ -124,7 +124,7 @@ API/core smoke executed against isolated DB path:
   - Existing real-backend save-error test remains passing after folder hardening.
   - No regression introduced in save-state transitions.
 - File references:
-  - `crates/localpaste_gui/src/app/tests/save_and_metadata.rs`
+  - [`crates/localpaste_gui/src/app/tests/save_and_metadata.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/tests/save_and_metadata.rs)
 - Reproduction/tests:
   - `real_backend_virtual_save_error_updates_ui_state`
 

@@ -2,7 +2,7 @@
 
 A fast, localhost-only pastebin with a modern editor, built in Rust.
 
-![LocalPaste Screenshot](assets/ui.jpg)
+![LocalPaste Screenshot](https://github.com/pszemraj/localpaste.rs/blob/main/assets/ui.jpg)
 
 ## What It Is
 
@@ -24,22 +24,15 @@ cargo run -p localpaste_gui --bin localpaste-gui
 ```
 
 Canonical build/run/validation command matrices are maintained in:
-[docs/dev/devlog.md](docs/dev/devlog.md).
+[docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ## Configuration And Ops
 
-- Security and environment variables: [docs/security.md](docs/security.md)
-- Service/background operation: [docs/deployment.md](docs/deployment.md)
-- Locking semantics (owner lock + paste edit locks): [docs/dev/locking-model.md](docs/dev/locking-model.md)
-- Documentation source-of-truth map: [docs/README.md](docs/README.md)
+- Security and environment variables: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
+- Service/background operation: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
+- Locking semantics (owner lock + paste edit locks): [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
+- Documentation source-of-truth map: [docs/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md)
 
 ## License
 
 MIT
-## Documentation map
-Use these repository documents as the source of truth:
-- Docs index: [docs/README.md](docs/README.md)
-- Security: [docs/security.md](docs/security.md)
-- Deployment: [docs/deployment.md](docs/deployment.md)
-- Development log and architecture notes: [docs/dev/devlog.md](docs/dev/devlog.md)
-- Development workflow and validation loop: [docs/dev/devlog.md](docs/dev/devlog.md)

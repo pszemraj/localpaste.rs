@@ -3,10 +3,10 @@
 This document is a historical rollout log for the virtual editor.
 Current operational definitions and merge-gate status are authoritative elsewhere:
 
-- Runtime flags and editor behavior: [gui-notes.md](gui-notes.md)
-- Release/perf validation protocol: [gui-perf-protocol.md](gui-perf-protocol.md)
-- Merge readiness and parity status: [parity-checklist.md](parity-checklist.md)
-- Canonical documentation map: [../README.md](../README.md)
+- Runtime flags and editor behavior: [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md)
+- Release/perf validation protocol: [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)
+- Merge readiness and parity status: [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
+- Canonical documentation map: [docs/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md)
 
 This file is retained as a historical design timeline and should not be used as a behavioral reference.
 
@@ -16,7 +16,7 @@ This file is retained as a historical design timeline and should not be used as 
 
 - Landed rope-backed editor primitives (`buffer/state/history/layout/input` modules).
 - Switched editable path to viewport-based virtual rendering with async highlighting.
-- Added perf instrumentation controls (see [gui-notes.md](gui-notes.md)).
+- Added perf instrumentation controls (see [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md)).
 
 ### 2026-02-12
 
@@ -26,7 +26,7 @@ This file is retained as a historical design timeline and should not be used as 
 
 ## Post-Merge Follow-Up Themes
 
-Active follow-up work should be tracked in [parity-checklist.md](parity-checklist.md), but expected themes remain:
+Active follow-up work should be tracked in [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md), but expected themes remain:
 
 - keep re-validating highlight behavior under newline-burst editing in large buffers
 - continue periodic manual parity checks for selection/navigation/undo-redo workflows

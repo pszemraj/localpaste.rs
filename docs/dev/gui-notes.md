@@ -1,8 +1,8 @@
 # GUI Notes
 
 Use this document for rewrite GUI behavior notes and env flags.
-For rollout status, use [virtual-editor-plan.md](virtual-editor-plan.md).
-For perf validation steps/gates, use [gui-perf-protocol.md](gui-perf-protocol.md).
+For rollout status, use [virtual-editor-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/virtual-editor-plan.md).
+For perf validation steps/gates, use [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
 
 ## Runtime Flags
 
@@ -31,7 +31,7 @@ For perf validation steps/gates, use [gui-perf-protocol.md](gui-perf-protocol.md
 
 ## Edit Locks
 
-Detailed lock semantics are canonical in [locking-model.md](locking-model.md).
+Detailed lock semantics are canonical in [locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
 GUI-specific behavior remains:
 
 - Opening a paste in GUI acquires a paste edit lock for the app instance owner.

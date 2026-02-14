@@ -1,7 +1,7 @@
 # Plan-Aligned Rewrite Checklist
 
 This checklist tracks rewrite phases and merge-gate readiness for the native rewrite.
-Implementation context and sequencing live in [virtual-editor-plan.md](virtual-editor-plan.md).
+Implementation context and sequencing live in [virtual-editor-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/virtual-editor-plan.md).
 Strict parity is NOT required - we only port or replace behaviors that match the plan and desired UX.
 
 Status key:
@@ -51,7 +51,7 @@ Codebase audit against this checklist found:
 
 ## Phase 0: Baseline & Guardrails
 
-- [x] Headless perf baseline documented ([perf-baseline.md](perf-baseline.md))
+- [x] Headless perf baseline documented ([perf-baseline.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/perf-baseline.md))
 - [x] Test data generator supports full clear + large datasets
 - [x] Manual profiler panel (profile feature, no puffin_egui)
 - [x] CLI timing flag for API request baselines
@@ -61,7 +61,7 @@ Codebase audit against this checklist found:
 - [x] Core extracted to `localpaste_core`
 - [x] API/CLI builds use core without GUI deps
 - [x] Default port updated + documented
-- [x] API update/delete lock enforcement (blocked when paste open in GUI; lock semantics are canonical in [locking-model.md](locking-model.md))
+- [x] API update/delete lock enforcement (blocked when paste open in GUI; lock semantics are canonical in [locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md))
 
 ## Phase 2: Native App Skeleton (Current)
 
@@ -97,7 +97,7 @@ Codebase audit against this checklist found:
 
 - Release-gate rule: all items in this section must be `[x]` before claiming default-mode reliability sign-off.
 - Current rollout note: virtual editor remains the default mode, but reliability sign-off is explicitly pending while any gate item is `[~]` or `[ ]`.
-- Tracked follow-up: [devlog deferred TODO](devlog.md#deferred-todo-backlog-2026-02-13-cold-eyes-audit) includes the pending manual newline-burst highlight perf recheck.
+- Tracked follow-up: [devlog deferred TODO](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md#deferred-todo-backlog-2026-02-13-cold-eyes-audit) includes the pending manual newline-burst highlight perf recheck.
 
 - [x] Clipboard reliability (`Ctrl/Cmd+C/X/V`) with external paste verification
 - [x] `Ctrl/Cmd+V` non-regression: when app window is active but editor is unfocused, paste creates a new paste and does not mutate current editor content
@@ -109,9 +109,9 @@ Codebase audit against this checklist found:
 - [~] Highlight recovery: keep current render visible while async refresh is pending (newline-burst scenario fixed in code path; perf gate recheck pending)
 - [x] Stale staged-highlight renders are dropped before apply (no unnecessary `highlight_version` bumps)
 - [x] Scope policy: multilingual/IME-specific UX and validation are explicitly out of scope for release gating (English-first workflow only)
-- [x] Trace protocol documented and validated (flag semantics and trace expectations are canonical in [gui-notes.md](gui-notes.md) and [gui-perf-protocol.md](gui-perf-protocol.md))
+- [x] Trace protocol documented and validated (flag semantics and trace expectations are canonical in [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md) and [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md))
 
-Detailed perf and trace protocol lives in [gui-perf-protocol.md](gui-perf-protocol.md).
+Detailed perf and trace protocol lives in [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
 
 ## Phase 5: Search + Command Palette
 

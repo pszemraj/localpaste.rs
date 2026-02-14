@@ -23,7 +23,7 @@ Use this protocol for release-gate evidence and regression checks.
 
 ## Prereqs
 
-Use the canonical build matrix in [devlog.md](devlog.md).
+Use the canonical build matrix in [devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 Minimum binaries required for this protocol:
 
 - `localpaste_tools` / `generate-test-data`
@@ -32,7 +32,7 @@ Minimum binaries required for this protocol:
 ## Canonical Runbook
 
 Use this runbook as the canonical source for reproducible perf checks:
-Flag behavior/meanings are canonical in [gui-notes.md](gui-notes.md); this runbook only pins values used during perf validation.
+Flag behavior/meanings are canonical in [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell
 $env:DB_PATH = Join-Path $env:TEMP "lpaste-perf-$([guid]::NewGuid().ToString('N'))"
@@ -49,7 +49,7 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
 While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks.
-For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](devlog.md) with `localpaste` + `lpaste`.
+For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md) with `localpaste` + `lpaste`.
 
 ## Dataset Expectations
 
@@ -77,6 +77,6 @@ The canonical runbook seeds a large mixed dataset via `generate-test-data`:
 
 ## Related Docs
 
-- Editor flags and trace env vars: [gui-notes.md](gui-notes.md)
-- Rewrite parity gate: [parity-checklist.md](parity-checklist.md)
-- Virtual editor rollout context: [virtual-editor-plan.md](virtual-editor-plan.md)
+- Editor flags and trace env vars: [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md)
+- Rewrite parity gate: [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
+- Virtual editor rollout context: [virtual-editor-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/virtual-editor-plan.md)

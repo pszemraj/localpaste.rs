@@ -2,12 +2,12 @@
 
 > These instructions apply to the headless localpaste server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
 > This is the canonical service-operation runbook. Other docs should link here for stop/restart/lock-recovery guidance instead of duplicating procedures.
-> Security posture, bind policy, and public exposure guidance are canonical in [security.md](security.md).
-> Build/run command matrices for development are canonical in [dev/devlog.md](dev/devlog.md).
+> Security posture, bind policy, and public exposure guidance are canonical in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
+> Build/run command matrices for development are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ## Quick Start
 
-Build/install commands are canonical in [dev/devlog.md](dev/devlog.md).
+Build/install commands are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 After installation/build, start the server in the background:
 
 ```bash
@@ -37,13 +37,13 @@ pkill -f localpaste && pkill -f "cargo run" && sleep 2
 # lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
 
-⚠️ **Important**: Avoid using `kill -9` as it prevents graceful shutdown and can leave database locks. See [dev/devlog.md](dev/devlog.md) for development lock-handling guidance.
+⚠️ **Important**: Avoid using `kill -9` as it prevents graceful shutdown and can leave database locks. See [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md) for development lock-handling guidance.
 
 ### Lock Safety And Force Unlock
 
 This section is the canonical operational guidance for lock recovery.
-Security policy context remains in [security.md](security.md).
-Lock behavior semantics are canonical in [dev/locking-model.md](dev/locking-model.md).
+Security policy context remains in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
+Lock behavior semantics are canonical in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
 
 - LocalPaste now uses a process-lifetime owner lock file (`db.owner.lock`) in the DB directory.
 - Startup acquires that owner lock before opening sled; a second writer on the same `DB_PATH` is rejected.
@@ -202,10 +202,11 @@ With cron:
 # Simple health check
 curl -f http://127.0.0.1:38411/api/pastes/meta?limit=1 || echo "Service down"
 ```
-## Embedded API address discovery (.api-addr)
-When the GUI runs the embedded API server, it writes the bound server URL to .api-addr in the active data directory (derived from DB_PATH).
-CLI resolution order is:
-1. Explicit --server or LP_SERVER
-2. Discovery file (.api-addr)
-3. Default http://localhost:38411
-This makes CLI commands continue working when the embedded server cannot bind the default port and falls back to an OS-assigned port.
+## Embedded API Address Discovery (.api-addr)
+
+Canonical behavior details are maintained in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+Operationally:
+
+- GUI sessions write the active embedded API endpoint to `.api-addr`.
+- `lpaste` discovers that endpoint automatically when `--server` and `LP_SERVER` are unset.
+- Use explicit `--server`/`LP_SERVER` when you need deterministic endpoint targeting.
