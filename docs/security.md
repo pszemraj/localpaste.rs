@@ -26,7 +26,7 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 - **CORS restrictions**: In strict mode, only accepts loopback origins that match the active listener port
 - **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options
 - **Request size limits**: Enforced at transport layer (default: 10MB)
-- **Graceful shutdown**: Database flush on exit to prevent data loss
+- **Durable commits**: redb commits are durable on `commit()` (no explicit flush required)
 - **Single-writer owner lock**: Process-lifetime `db.owner.lock` prevents concurrent writers on the same `DB_PATH`
 
 ## Environment Variables

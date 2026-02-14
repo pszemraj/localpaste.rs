@@ -2,6 +2,14 @@
 
 use crate::Database;
 use std::collections::HashMap;
+use tempfile::TempDir;
+
+pub(crate) fn setup_temp_db() -> (Database, TempDir) {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("test.db");
+    let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+    (db, temp_dir)
+}
 
 pub(crate) fn assert_folder_counts_match_canonical(db: &Database) {
     let mut canonical_counts: HashMap<String, usize> = HashMap::new();

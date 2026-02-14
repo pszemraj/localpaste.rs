@@ -26,3 +26,5 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
+- [ ] Retire `Database::flush()` compatibility plumbing from GUI worker shutdown (`CoreCmd::Shutdown { flush }`) once UI/worker shutdown contracts are updated for redb commit semantics.
+- [ ] Re-evaluate whether `db/tests/basic_ops.rs::test_create_database_and_flush_noop` should remain after the `Database::flush()` compatibility API is removed.

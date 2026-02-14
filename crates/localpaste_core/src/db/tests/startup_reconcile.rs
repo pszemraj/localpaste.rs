@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::db::tables::REDB_FILE_NAME;
+use tempfile::TempDir;
 
 #[test]
 fn database_new_reports_error_for_non_directory_db_path() {

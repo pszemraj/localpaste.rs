@@ -309,14 +309,6 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
     use std::thread;
-    use tempfile::TempDir;
-
-    fn setup_db() -> (Database, TempDir) {
-        let dir = TempDir::new().expect("temp dir");
-        let db_path = dir.path().join("db");
-        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
-        (db, dir)
-    }
 
     #[test]
     fn detects_folder_cycle() {
@@ -344,7 +336,7 @@ mod tests {
 
     #[test]
     fn delete_tree_migrates_pastes() {
-        let (db, _dir) = setup_db();
+        let (db, _dir) = crate::test_support::setup_temp_db();
 
         let root = Folder::with_parent("root".to_string(), None);
         let child = Folder::with_parent("child".to_string(), Some(root.id.clone()));
@@ -364,7 +356,7 @@ mod tests {
 
     #[test]
     fn delete_tree_guarded_rejects_locked_descendant() {
-        let (db, _dir) = setup_db();
+        let (db, _dir) = crate::test_support::setup_temp_db();
 
         let root = Folder::with_parent("root".to_string(), None);
         db.folders.create(&root).expect("create root");
@@ -400,7 +392,7 @@ mod tests {
 
     #[test]
     fn ensure_folder_assignable_rejects_missing_and_marked_folders() {
-        let (db, _dir) = setup_db();
+        let (db, _dir) = crate::test_support::setup_temp_db();
 
         assert!(matches!(
             ensure_folder_assignable(&db, "missing-folder"),
@@ -421,7 +413,7 @@ mod tests {
 
     #[test]
     fn delete_folder_tree_and_concurrent_move_preserve_no_orphan_and_counts() {
-        let (db, _dir) = setup_db();
+        let (db, _dir) = crate::test_support::setup_temp_db();
 
         let root = Folder::with_parent("root".to_string(), None);
         let child = Folder::with_parent("child".to_string(), Some(root.id.clone()));

@@ -3,16 +3,9 @@
 use super::*;
 use crate::error::AppError;
 use crate::models::{folder::*, paste::*};
+pub(super) use crate::test_support::setup_temp_db as setup_test_db;
 use std::sync::{Arc, Barrier};
 use std::thread;
-use tempfile::TempDir;
-
-fn setup_test_db() -> (Database, TempDir) {
-    let temp_dir = TempDir::new().expect("temp dir");
-    let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(db_path.to_str().expect("db path")).expect("db");
-    (db, temp_dir)
-}
 
 mod basic_ops;
 mod concurrency;

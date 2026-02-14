@@ -194,7 +194,7 @@ Key properties:
 
 - autosave and manual save dispatch through backend commands,
 - metadata save path is separate from content save path,
-- shutdown force-enqueues final dirty snapshots before backend shutdown flush.
+- shutdown force-enqueues final dirty snapshots before backend shutdown acknowledgement.
 
 Relevant code:
 
@@ -211,7 +211,7 @@ sequenceDiagram
     UI->>UI: detect dirty content/metadata on exit
     UI->>W: enqueue final content save (forced)
     UI->>W: enqueue final metadata save (forced)
-    UI->>W: send Shutdown{flush=true}
+    UI->>W: send Shutdown{flush=true} (compat flag; redb commits on write commit)
     W->>DB: process queued saves in order
     W->>DB: commit() per mutation
     W-->>UI: ShutdownComplete

@@ -440,43 +440,36 @@ mod tests {
         assert_ne!(path_a, path_b);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
-    fn config_default_db_path_uses_localappdata_on_windows() {
+    fn config_default_db_path_uses_platform_cache_location() {
         let _lock = env_lock().lock().expect("env lock");
         let _db_path = EnvGuard::remove("DB_PATH");
+
+        #[cfg(target_os = "windows")]
         let _local_app_data = EnvGuard::set("LOCALAPPDATA", r"C:\Users\tester\AppData\Local");
+        #[cfg(not(target_os = "windows"))]
+        let _local_app_data = EnvGuard::remove("LOCALAPPDATA");
+
+        #[cfg(target_os = "windows")]
         let _home = EnvGuard::remove("HOME");
-        let _userprofile = EnvGuard::remove("USERPROFILE");
-        let _homedrive = EnvGuard::remove("HOMEDRIVE");
-        let _homepath = EnvGuard::remove("HOMEPATH");
-
-        let config = Config::from_env();
-        assert_eq!(
-            PathBuf::from(config.db_path),
-            PathBuf::from(r"C:\Users\tester\AppData\Local")
-                .join("localpaste")
-                .join("db")
-        );
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn config_default_db_path_uses_home_cache_on_non_windows() {
-        let _lock = env_lock().lock().expect("env lock");
-        let _db_path = EnvGuard::remove("DB_PATH");
+        #[cfg(not(target_os = "windows"))]
         let _home = EnvGuard::set("HOME", "/tmp/localpaste-home");
+
         let _userprofile = EnvGuard::remove("USERPROFILE");
         let _homedrive = EnvGuard::remove("HOMEDRIVE");
         let _homepath = EnvGuard::remove("HOMEPATH");
 
+        #[cfg(target_os = "windows")]
+        let expected = PathBuf::from(r"C:\Users\tester\AppData\Local")
+            .join("localpaste")
+            .join("db");
+        #[cfg(not(target_os = "windows"))]
+        let expected = PathBuf::from("/tmp/localpaste-home")
+            .join(".cache")
+            .join("localpaste")
+            .join("db");
+
         let config = Config::from_env();
-        assert_eq!(
-            PathBuf::from(config.db_path),
-            PathBuf::from("/tmp/localpaste-home")
-                .join(".cache")
-                .join("localpaste")
-                .join("db")
-        );
+        assert_eq!(PathBuf::from(config.db_path), expected);
     }
 }
