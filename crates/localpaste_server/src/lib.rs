@@ -15,27 +15,67 @@ pub use locks::{LockOwnerId, PasteLockError, PasteLockManager, PasteMutationGuar
 
 use axum::{
     extract::DefaultBodyLimit,
-    http::header,
+    http::{header, HeaderValue},
     routing::{delete, get, post, put},
     Router,
 };
 use hyper::HeaderMap;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tower_http::{
-    compression::CompressionLayer, cors::CorsLayer, set_header::SetResponseHeaderLayer,
+    compression::CompressionLayer,
+    cors::{AllowOrigin, CorsLayer},
+    set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
 
 const JSON_BODY_OVERHEAD_BYTES: usize = 16 * 1024;
 const JSON_STRING_ESCAPE_EXPANSION_FACTOR: usize = 6;
+const MAX_JSON_REQUEST_BODY_BYTES: usize = 256 * 1024 * 1024;
 
-fn request_body_limit(max_paste_size: usize) -> usize {
+fn uncapped_request_body_limit(max_paste_size: usize) -> usize {
     max_paste_size
         // Worst-case JSON string expansion is \u00XX (6 bytes) per decoded byte.
         .saturating_mul(JSON_STRING_ESCAPE_EXPANSION_FACTOR)
         .saturating_add(JSON_BODY_OVERHEAD_BYTES)
+}
+
+fn request_body_limit(max_paste_size: usize) -> usize {
+    uncapped_request_body_limit(max_paste_size).min(MAX_JSON_REQUEST_BODY_BYTES)
+}
+
+fn is_loopback_origin(origin: &HeaderValue) -> bool {
+    let origin = match origin.to_str() {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let uri = match origin.parse::<axum::http::Uri>() {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let scheme = match uri.scheme_str() {
+        Some(value) => value,
+        None => return false,
+    };
+    if scheme != "http" && scheme != "https" {
+        return false;
+    }
+    let host = match uri.host() {
+        Some(value) => value,
+        None => return false,
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let normalized_host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    normalized_host
+        .parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
 }
 
 /// Shared state passed to HTTP handlers.
@@ -90,8 +130,7 @@ impl AppState {
 /// # Panics
 /// Panics if static header values fail to parse (should not happen).
 pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
-    let cors_port = state.config.port;
-    create_app_with_cors_port(state, allow_public_access, cors_port)
+    create_app_with_cors(state, allow_public_access)
 }
 
 /// Resolve the listener address from env var overrides and security policy.
@@ -131,7 +170,19 @@ pub fn resolve_bind_address(config: &Config, allow_public_access: bool) -> Socke
     SocketAddr::from(([127, 0, 0, 1], requested.port()))
 }
 
-fn create_app_with_cors_port(state: AppState, allow_public_access: bool, cors_port: u16) -> Router {
+fn create_app_with_cors(state: AppState, allow_public_access: bool) -> Router {
+    let uncapped_body_limit = uncapped_request_body_limit(state.config.max_paste_size);
+    let body_limit = request_body_limit(state.config.max_paste_size);
+    if body_limit < uncapped_body_limit {
+        tracing::warn!(
+            configured_max_paste_size = state.config.max_paste_size,
+            body_limit_bytes = body_limit,
+            uncapped_limit_bytes = uncapped_body_limit,
+            hard_limit_bytes = MAX_JSON_REQUEST_BODY_BYTES,
+            "Configured max_paste_size implies an excessive transport body limit; applying safety cap",
+        );
+    }
+
     // Configure security headers
     let mut default_headers = HeaderMap::new();
     default_headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
@@ -156,11 +207,9 @@ fn create_app_with_cors_port(state: AppState, allow_public_access: bool, cors_po
             .allow_headers(tower_http::cors::Any)
     } else {
         CorsLayer::new()
-            .allow_origin([
-                format!("http://localhost:{}", cors_port).parse().unwrap(),
-                format!("http://127.0.0.1:{}", cors_port).parse().unwrap(),
-                format!("http://[::1]:{}", cors_port).parse().unwrap(),
-            ])
+            .allow_origin(AllowOrigin::predicate(|origin, _| {
+                is_loopback_origin(origin)
+            }))
             .allow_methods([
                 axum::http::Method::GET,
                 axum::http::Method::POST,
@@ -193,9 +242,7 @@ fn create_app_with_cors_port(state: AppState, allow_public_access: bool, cors_po
             tower::ServiceBuilder::new()
                 // Body limit allows for worst-case JSON escaping. Decoded content bytes
                 // are validated separately in handlers against `max_paste_size`.
-                .layer(DefaultBodyLimit::max(request_body_limit(
-                    state.config.max_paste_size,
-                )))
+                .layer(DefaultBodyLimit::max(body_limit))
                 .layer(TraceLayer::new_for_http())
                 .layer(CompressionLayer::new())
                 .layer(cors)
@@ -223,13 +270,6 @@ fn create_app_with_cors_port(state: AppState, allow_public_access: bool, cors_po
         )
 }
 
-fn listener_cors_port(listener: &tokio::net::TcpListener, fallback_port: u16) -> u16 {
-    listener
-        .local_addr()
-        .map(|addr| addr.port())
-        .unwrap_or(fallback_port)
-}
-
 /// Run the Axum server with graceful shutdown support.
 ///
 /// # Arguments
@@ -249,8 +289,7 @@ pub async fn serve_router(
     allow_public_access: bool,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), std::io::Error> {
-    let cors_port = listener_cors_port(&listener, state.config.port);
-    let app = create_app_with_cors_port(state, allow_public_access, cors_port);
+    let app = create_app_with_cors(state, allow_public_access);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
         .await
@@ -258,21 +297,51 @@ pub async fn serve_router(
 
 #[cfg(test)]
 mod tests {
-    use super::listener_cors_port;
+    use super::is_loopback_origin;
+    use super::request_body_limit;
     use super::resolve_bind_address;
+    use super::JSON_BODY_OVERHEAD_BYTES;
+    use super::JSON_STRING_ESCAPE_EXPANSION_FACTOR;
+    use super::MAX_JSON_REQUEST_BODY_BYTES;
+    use axum::http::HeaderValue;
     use localpaste_core::env::{env_lock, EnvGuard};
     use localpaste_core::Config;
-    use localpaste_core::DEFAULT_PORT;
     use std::net::SocketAddr;
 
-    #[tokio::test]
-    async fn listener_cors_port_uses_bound_listener_port() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let expected = listener.local_addr().expect("listener addr").port();
-        let resolved = listener_cors_port(&listener, DEFAULT_PORT);
-        assert_eq!(resolved, expected);
+    #[test]
+    fn request_body_limit_accounts_for_json_escape_worst_case() {
+        let max_paste_size = 128usize;
+        let expected = max_paste_size
+            .saturating_mul(JSON_STRING_ESCAPE_EXPANSION_FACTOR)
+            .saturating_add(JSON_BODY_OVERHEAD_BYTES);
+        assert_eq!(request_body_limit(max_paste_size), expected);
+    }
+
+    #[test]
+    fn request_body_limit_applies_safety_cap() {
+        assert_eq!(request_body_limit(usize::MAX), MAX_JSON_REQUEST_BODY_BYTES);
+    }
+
+    #[test]
+    fn loopback_origin_detection_accepts_localhost_and_loopback_ips() {
+        assert!(is_loopback_origin(&HeaderValue::from_static(
+            "http://localhost:3000"
+        )));
+        assert!(is_loopback_origin(&HeaderValue::from_static(
+            "http://127.0.0.2:3000"
+        )));
+        assert!(is_loopback_origin(&HeaderValue::from_static(
+            "http://[::1]:3000"
+        )));
+    }
+
+    #[test]
+    fn loopback_origin_detection_rejects_non_loopback_or_invalid_origins() {
+        assert!(!is_loopback_origin(&HeaderValue::from_static(
+            "http://example.com:3000"
+        )));
+        assert!(!is_loopback_origin(&HeaderValue::from_static("null")));
+        assert!(!is_loopback_origin(&HeaderValue::from_static("not-a-uri")));
     }
 
     #[test]

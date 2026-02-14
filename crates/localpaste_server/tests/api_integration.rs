@@ -574,15 +574,40 @@ async fn test_max_paste_size_allows_exact_content_limit_with_json_overhead() {
 async fn test_strict_cors_allows_ipv6_loopback_origin() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("strict-cors-ipv6.db");
-    let mut config = test_config_for_db_path(&db_path);
-    config.port = 4055;
+    let config = test_config_for_db_path(&db_path);
     let (server, _locks) = test_server_for_config(config);
-    let origin = "http://[::1]:4055";
+    let ipv6_origin = "http://[::1]:4055";
+    let ipv4_alias_origin = "http://127.0.0.2:9123";
 
-    let response = server.get("/api/pastes").add_header("origin", origin).await;
+    let ipv6_response = server
+        .get("/api/pastes")
+        .add_header("origin", ipv6_origin)
+        .await;
+    assert_eq!(ipv6_response.status_code(), StatusCode::OK);
+    ipv6_response.assert_header("access-control-allow-origin", ipv6_origin);
+
+    let ipv4_alias_response = server
+        .get("/api/pastes")
+        .add_header("origin", ipv4_alias_origin)
+        .await;
+    assert_eq!(ipv4_alias_response.status_code(), StatusCode::OK);
+    ipv4_alias_response.assert_header("access-control-allow-origin", ipv4_alias_origin);
+}
+
+#[tokio::test]
+async fn test_strict_cors_rejects_non_loopback_origin() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("strict-cors-non-loopback.db");
+    let config = test_config_for_db_path(&db_path);
+    let (server, _locks) = test_server_for_config(config);
+
+    let response = server
+        .get("/api/pastes")
+        .add_header("origin", "http://example.com:3000")
+        .await;
 
     assert_eq!(response.status_code(), StatusCode::OK);
-    response.assert_header("access-control-allow-origin", origin);
+    assert!(!response.contains_header("access-control-allow-origin"));
 }
 
 #[tokio::test]
