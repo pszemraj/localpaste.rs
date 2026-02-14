@@ -23,10 +23,11 @@ Use this protocol for release-gate evidence and regression checks.
 
 ## Prereqs
 
-```powershell
-cargo build -p localpaste_tools --bin generate-test-data --release
-cargo build -p localpaste_gui --bin localpaste-gui --release
-```
+Use the canonical build matrix in [devlog.md](devlog.md).
+Minimum binaries required for this protocol:
+
+- `localpaste_tools` / `generate-test-data`
+- `localpaste_gui` / `localpaste-gui`
 
 ## Canonical Runbook
 

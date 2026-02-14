@@ -1,14 +1,16 @@
 # Running LocalPaste as a Background Service
 
 > These instructions apply to the headless localpaste server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
+> This is the canonical service-operation runbook. Other docs should link here for stop/restart/lock-recovery guidance instead of duplicating procedures.
 > Security posture, bind policy, and public exposure guidance are canonical in [security.md](security.md).
 > Build/run command matrices for development are canonical in [dev/devlog.md](dev/devlog.md).
 
 ## Quick Start
 
-```bash
-# Build/install guidance is canonical in [docs/dev/devlog.md](dev/devlog.md)
+Build/install commands are canonical in [dev/devlog.md](dev/devlog.md).
+After installation/build, start the server in the background:
 
+```bash
 # Start in background
 nohup ./localpaste > ~/.cache/localpaste/server.log 2>&1 &
 ```

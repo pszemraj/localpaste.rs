@@ -1,5 +1,10 @@
 # Security Configuration
 
+Canonical scope:
+- Security defaults, threat model, and security-relevant env toggles are defined here.
+- Service operation and lock-recovery procedures are canonical in [deployment.md](deployment.md).
+- Build/run command matrices are canonical in [dev/devlog.md](dev/devlog.md).
+
 ---
 
 - [Security Configuration](#security-configuration)
@@ -61,17 +66,15 @@ If you need to expose LocalPaste publicly, follow these steps:
 
 ### 1. Enable Public Binding
 
-```bash
-# Build instructions are canonical in [docs/dev/devlog.md](dev/devlog.md)
+Build/run mechanics are canonical in [deployment.md](deployment.md) and [dev/devlog.md](dev/devlog.md).
+This section only defines the security-relevant overrides:
 
+```bash
 # Bind to all interfaces (requires ALLOW_PUBLIC_ACCESS)
 export BIND=0.0.0.0:38411
 
 # Allow cross-origin requests and non-loopback bind
 export ALLOW_PUBLIC_ACCESS=1
-
-# Run the server
-./target/release/localpaste
 ```
 
 ### 2. Security Checklist
