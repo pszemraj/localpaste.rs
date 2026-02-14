@@ -49,26 +49,23 @@ fn request_body_limit(max_paste_size: usize) -> usize {
     uncapped_request_body_limit(max_paste_size).min(MAX_JSON_REQUEST_BODY_BYTES)
 }
 
-fn is_loopback_origin(origin: &HeaderValue) -> bool {
+fn parse_http_origin_uri(origin: &HeaderValue) -> Option<axum::http::Uri> {
     let origin = match origin.to_str() {
         Ok(value) => value,
-        Err(_) => return false,
+        Err(_) => return None,
     };
     let uri = match origin.parse::<axum::http::Uri>() {
         Ok(value) => value,
-        Err(_) => return false,
+        Err(_) => return None,
     };
-    let scheme = match uri.scheme_str() {
-        Some(value) => value,
-        None => return false,
-    };
+    let scheme = uri.scheme_str()?;
     if scheme != "http" && scheme != "https" {
-        return false;
+        return None;
     }
-    let host = match uri.host() {
-        Some(value) => value,
-        None => return false,
-    };
+    Some(uri)
+}
+
+fn is_loopback_host(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") {
         return true;
     }
@@ -80,6 +77,40 @@ fn is_loopback_origin(origin: &HeaderValue) -> bool {
         .parse::<IpAddr>()
         .map(|ip| ip.is_loopback())
         .unwrap_or(false)
+}
+
+fn origin_port(uri: &axum::http::Uri) -> Option<u16> {
+    if let Some(port) = uri.port_u16() {
+        return Some(port);
+    }
+    match uri.scheme_str() {
+        Some("http") => Some(80),
+        Some("https") => Some(443),
+        _ => None,
+    }
+}
+
+fn is_loopback_origin(origin: &HeaderValue) -> bool {
+    let uri = match parse_http_origin_uri(origin) {
+        Some(value) => value,
+        None => return false,
+    };
+    let host = match uri.host() {
+        Some(value) => value,
+        None => return false,
+    };
+    is_loopback_host(host)
+}
+
+fn is_loopback_origin_for_listener_port(origin: &HeaderValue, listener_port: u16) -> bool {
+    if !is_loopback_origin(origin) {
+        return false;
+    }
+    let uri = match parse_http_origin_uri(origin) {
+        Some(value) => value,
+        None => return false,
+    };
+    origin_port(&uri) == Some(listener_port)
 }
 
 /// Shared state passed to HTTP handlers.
@@ -131,7 +162,8 @@ impl AppState {
 /// # Returns
 /// Configured `axum::Router`.
 pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
-    create_app_with_cors(state, allow_public_access)
+    let listener_port = state.config.port;
+    create_app_with_cors(state, allow_public_access, listener_port)
 }
 
 /// Resolve the listener address from env var overrides and security policy.
@@ -171,7 +203,7 @@ pub fn resolve_bind_address(config: &Config, allow_public_access: bool) -> Socke
     SocketAddr::from(([127, 0, 0, 1], requested.port()))
 }
 
-fn create_app_with_cors(state: AppState, allow_public_access: bool) -> Router {
+fn create_app_with_cors(state: AppState, allow_public_access: bool, listener_port: u16) -> Router {
     let uncapped_body_limit = uncapped_request_body_limit(state.config.max_paste_size);
     let body_limit = request_body_limit(state.config.max_paste_size);
     if body_limit < uncapped_body_limit {
@@ -197,8 +229,8 @@ fn create_app_with_cors(state: AppState, allow_public_access: bool) -> Router {
             .allow_headers(tower_http::cors::Any)
     } else {
         CorsLayer::new()
-            .allow_origin(AllowOrigin::predicate(|origin, _| {
-                is_loopback_origin(origin)
+            .allow_origin(AllowOrigin::predicate(move |origin, _| {
+                is_loopback_origin_for_listener_port(origin, listener_port)
             }))
             .allow_methods([
                 axum::http::Method::GET,
@@ -274,7 +306,11 @@ pub async fn serve_router(
     allow_public_access: bool,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), std::io::Error> {
-    let app = create_app_with_cors(state, allow_public_access);
+    let listener_port = listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .unwrap_or(state.config.port);
+    let app = create_app_with_cors(state, allow_public_access, listener_port);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
         .await
@@ -283,6 +319,7 @@ pub async fn serve_router(
 #[cfg(test)]
 mod tests {
     use super::is_loopback_origin;
+    use super::is_loopback_origin_for_listener_port;
     use super::request_body_limit;
     use super::resolve_bind_address;
     use super::JSON_BODY_OVERHEAD_BYTES;
@@ -326,6 +363,47 @@ mod tests {
                 origin
             );
         }
+    }
+
+    #[test]
+    fn strict_loopback_origin_requires_listener_port_match() {
+        let listener_port = 3055;
+        let cases = [
+            ("http://localhost:3055", true),
+            ("http://127.0.0.1:3055", true),
+            ("http://[::1]:3055", true),
+            ("http://localhost:3000", false),
+            ("http://127.0.0.1:3000", false),
+            ("https://localhost:3055", true),
+            ("https://localhost", false),
+            ("http://localhost", false),
+            ("http://example.com:3055", false),
+            ("null", false),
+        ];
+
+        for (origin, expected) in cases {
+            assert_eq!(
+                is_loopback_origin_for_listener_port(
+                    &HeaderValue::from_static(origin),
+                    listener_port
+                ),
+                expected,
+                "origin: {}",
+                origin
+            );
+        }
+    }
+
+    #[test]
+    fn strict_loopback_origin_uses_default_ports_when_omitted() {
+        assert!(is_loopback_origin_for_listener_port(
+            &HeaderValue::from_static("http://localhost"),
+            80
+        ));
+        assert!(is_loopback_origin_for_listener_port(
+            &HeaderValue::from_static("https://localhost"),
+            443
+        ));
     }
 
     #[test]

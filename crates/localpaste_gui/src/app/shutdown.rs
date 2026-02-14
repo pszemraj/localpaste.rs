@@ -63,6 +63,10 @@ impl LocalPasteApp {
             }
         }
 
+        // Shutdown must enqueue a final dirty snapshot even when an earlier save is still
+        // in flight; relying on a late ack before timeout can otherwise drop tail edits.
+        self.force_enqueue_dirty_shutdown_snapshots();
+
         if self.save_in_flight
             || self.metadata_save_in_flight
             || self.save_status == SaveStatus::Dirty
@@ -83,6 +87,17 @@ impl LocalPasteApp {
             .shutdown_and_join(true, BACKEND_SHUTDOWN_TIMEOUT)
         {
             warn!(error = %err, "Backend shutdown did not complete cleanly.");
+        }
+    }
+
+    fn force_enqueue_dirty_shutdown_snapshots(&mut self) {
+        if self.save_status == SaveStatus::Dirty {
+            self.save_in_flight = false;
+            self.save_now();
+        }
+        if self.metadata_dirty {
+            self.metadata_save_in_flight = false;
+            self.save_metadata_now();
         }
     }
 }

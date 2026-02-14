@@ -171,5 +171,6 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 mod collections_and_search;
 mod highlight_behaviors;
 mod save_and_metadata;
+mod shutdown_behavior;
 mod state_basics;
 mod virtual_editor_behaviors;
