@@ -84,6 +84,152 @@ fn log_query_perf(
     );
 }
 
+fn try_cached_search_items(
+    state: &mut WorkerState,
+    key: &SearchCacheKey,
+    op: &str,
+    started: Instant,
+) -> Option<Vec<PasteSummary>> {
+    if state.query_cache.search_key.as_ref() != Some(key) {
+        return None;
+    }
+    let (Some(items), Some(cached_at)) = (
+        state.query_cache.search_items.clone(),
+        state.query_cache.search_cached_at,
+    ) else {
+        return None;
+    };
+    if cached_at.elapsed() > QUERY_CACHE_MAX_AGE {
+        return None;
+    }
+    state.query_cache.search_hits = state.query_cache.search_hits.saturating_add(1);
+    log_query_perf(
+        state.perf_log_enabled,
+        &state.query_cache,
+        op,
+        true,
+        started.elapsed().as_secs_f64() * 1000.0,
+        items.len(),
+    );
+    Some(items)
+}
+
+fn store_search_items_in_cache(
+    state: &mut WorkerState,
+    key: SearchCacheKey,
+    op: &str,
+    started: Instant,
+    items: Vec<PasteSummary>,
+) -> Vec<PasteSummary> {
+    state.query_cache.search_key = Some(key);
+    state.query_cache.search_items = Some(items.clone());
+    state.query_cache.search_cached_at = Some(Instant::now());
+    log_query_perf(
+        state.perf_log_enabled,
+        &state.query_cache,
+        op,
+        false,
+        started.elapsed().as_secs_f64() * 1000.0,
+        items.len(),
+    );
+    items
+}
+
+fn run_cached_search<F, E>(
+    state: &mut WorkerState,
+    key: SearchCacheKey,
+    op: &str,
+    error_prefix: &str,
+    fetch_items: F,
+    to_event: E,
+) where
+    F: FnOnce(&WorkerState) -> Result<Vec<PasteSummary>, String>,
+    E: Fn(Vec<PasteSummary>) -> CoreEvent,
+{
+    let started = Instant::now();
+    if let Some(items) = try_cached_search_items(state, &key, op, started) {
+        let _ = state.evt_tx.send(to_event(items));
+        return;
+    }
+
+    state.query_cache.search_misses = state.query_cache.search_misses.saturating_add(1);
+    match fetch_items(state) {
+        Ok(items) => {
+            let items = store_search_items_in_cache(state, key, op, started, items);
+            let _ = state.evt_tx.send(to_event(items));
+        }
+        Err(err) => {
+            error!("backend {} failed: {}", op, err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("{} failed: {}", error_prefix, err),
+            );
+        }
+    }
+}
+
+struct SearchVariant {
+    folder_id: Option<String>,
+    language: Option<String>,
+    op: &'static str,
+    error_prefix: &'static str,
+}
+
+fn handle_search_variant<E>(
+    state: &mut WorkerState,
+    query: String,
+    limit: usize,
+    variant: SearchVariant,
+    to_event: E,
+) where
+    E: Fn(String, Option<String>, Option<String>, Vec<PasteSummary>) -> CoreEvent,
+{
+    let SearchVariant {
+        folder_id,
+        language,
+        op,
+        error_prefix,
+    } = variant;
+    let key = SearchCacheKey {
+        query: query.clone(),
+        limit,
+        folder_id: folder_id.clone(),
+        language: language.clone(),
+    };
+    let query_for_fetch = query.clone();
+    let folder_for_fetch = folder_id.clone();
+    let language_for_fetch = language.clone();
+    run_cached_search(
+        state,
+        key,
+        op,
+        error_prefix,
+        move |worker| {
+            worker
+                .db
+                .pastes
+                .search_meta(
+                    &query_for_fetch,
+                    limit,
+                    folder_for_fetch,
+                    language_for_fetch,
+                )
+                .map(|metas| metas.iter().map(PasteSummary::from_meta).collect())
+                .map_err(|err| err.to_string())
+        },
+        move |items| to_event(query.clone(), folder_id.clone(), language.clone(), items),
+    );
+}
+
+pub(super) enum SearchRoute {
+    Standard {
+        folder_id: Option<String>,
+        language: Option<String>,
+    },
+    Palette,
+}
+
 pub(super) fn handle_list_pastes(state: &mut WorkerState, limit: usize, folder_id: Option<String>) {
     let started = Instant::now();
     let key = ListCacheKey {
@@ -139,140 +285,44 @@ pub(super) fn handle_list_pastes(state: &mut WorkerState, limit: usize, folder_i
     }
 }
 
-pub(super) fn handle_search_pastes(
+pub(super) fn handle_search(
     state: &mut WorkerState,
+    route: SearchRoute,
     query: String,
     limit: usize,
-    folder_id: Option<String>,
-    language: Option<String>,
 ) {
-    let started = Instant::now();
-    let key = SearchCacheKey {
-        query: query.clone(),
-        limit,
-        folder_id: folder_id.clone(),
-        language: language.clone(),
-    };
-    if state.query_cache.search_key.as_ref() == Some(&key) {
-        if let (Some(items), Some(cached_at)) = (
-            state.query_cache.search_items.clone(),
-            state.query_cache.search_cached_at,
-        ) {
-            if cached_at.elapsed() <= QUERY_CACHE_MAX_AGE {
-                state.query_cache.search_hits = state.query_cache.search_hits.saturating_add(1);
-                log_query_perf(
-                    state.perf_log_enabled,
-                    &state.query_cache,
-                    "search",
-                    true,
-                    started.elapsed().as_secs_f64() * 1000.0,
-                    items.len(),
-                );
-                let _ = state.evt_tx.send(CoreEvent::SearchResults {
-                    query,
-                    folder_id,
-                    language,
-                    items,
-                });
-                return;
-            }
-        }
-    }
-
-    state.query_cache.search_misses = state.query_cache.search_misses.saturating_add(1);
-    match state
-        .db
-        .pastes
-        .search_meta(&query, limit, folder_id.clone(), language.clone())
-    {
-        Ok(metas) => {
-            let items: Vec<PasteSummary> = metas.iter().map(PasteSummary::from_meta).collect();
-            state.query_cache.search_key = Some(key);
-            state.query_cache.search_items = Some(items.clone());
-            state.query_cache.search_cached_at = Some(Instant::now());
-            log_query_perf(
-                state.perf_log_enabled,
-                &state.query_cache,
-                "search",
-                false,
-                started.elapsed().as_secs_f64() * 1000.0,
-                items.len(),
-            );
-            let _ = state.evt_tx.send(CoreEvent::SearchResults {
+    match route {
+        SearchRoute::Standard {
+            folder_id,
+            language,
+        } => handle_search_variant(
+            state,
+            query,
+            limit,
+            SearchVariant {
+                folder_id,
+                language,
+                op: "search",
+                error_prefix: "Search",
+            },
+            |query, folder_id, language, items| CoreEvent::SearchResults {
                 query,
                 folder_id,
                 language,
                 items,
-            });
-        }
-        Err(err) => {
-            error!("backend search failed: {}", err);
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Search failed: {}", err),
-            );
-        }
-    }
-}
-
-pub(super) fn handle_palette_search(state: &mut WorkerState, query: String, limit: usize) {
-    let started = Instant::now();
-    let key = SearchCacheKey {
-        query: query.clone(),
-        limit,
-        folder_id: None,
-        language: None,
-    };
-    if state.query_cache.search_key.as_ref() == Some(&key) {
-        if let (Some(items), Some(cached_at)) = (
-            state.query_cache.search_items.clone(),
-            state.query_cache.search_cached_at,
-        ) {
-            if cached_at.elapsed() <= QUERY_CACHE_MAX_AGE {
-                state.query_cache.search_hits = state.query_cache.search_hits.saturating_add(1);
-                log_query_perf(
-                    state.perf_log_enabled,
-                    &state.query_cache,
-                    "palette_search",
-                    true,
-                    started.elapsed().as_secs_f64() * 1000.0,
-                    items.len(),
-                );
-                let _ = state
-                    .evt_tx
-                    .send(CoreEvent::PaletteSearchResults { query, items });
-                return;
-            }
-        }
-    }
-
-    state.query_cache.search_misses = state.query_cache.search_misses.saturating_add(1);
-    match state.db.pastes.search_meta(&query, limit, None, None) {
-        Ok(metas) => {
-            let items: Vec<PasteSummary> = metas.iter().map(PasteSummary::from_meta).collect();
-            state.query_cache.search_key = Some(key);
-            state.query_cache.search_items = Some(items.clone());
-            state.query_cache.search_cached_at = Some(Instant::now());
-            log_query_perf(
-                state.perf_log_enabled,
-                &state.query_cache,
-                "palette_search",
-                false,
-                started.elapsed().as_secs_f64() * 1000.0,
-                items.len(),
-            );
-            let _ = state
-                .evt_tx
-                .send(CoreEvent::PaletteSearchResults { query, items });
-        }
-        Err(err) => {
-            error!("backend palette search failed: {}", err);
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Palette search failed: {}", err),
-            );
-        }
+            },
+        ),
+        SearchRoute::Palette => handle_search_variant(
+            state,
+            query,
+            limit,
+            SearchVariant {
+                folder_id: None,
+                language: None,
+                op: "palette_search",
+                error_prefix: "Palette search",
+            },
+            |query, _folder_id, _language, items| CoreEvent::PaletteSearchResults { query, items },
+        ),
     }
 }

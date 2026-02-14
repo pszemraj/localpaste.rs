@@ -332,11 +332,7 @@ impl LocalPasteApp {
         }
     }
 
-    pub(super) fn set_active_collection(&mut self, collection: SidebarCollection) {
-        if self.active_collection == collection {
-            return;
-        }
-        self.active_collection = collection;
+    fn on_primary_filter_changed(&mut self) {
         self.search_last_sent.clear();
         if self.search_query.trim().is_empty() {
             self.recompute_visible_pastes();
@@ -346,19 +342,21 @@ impl LocalPasteApp {
         }
     }
 
+    pub(super) fn set_active_collection(&mut self, collection: SidebarCollection) {
+        if self.active_collection == collection {
+            return;
+        }
+        self.active_collection = collection;
+        self.on_primary_filter_changed();
+    }
+
     pub(super) fn set_active_language_filter(&mut self, language: Option<String>) {
         let normalized = normalize_language_filter_value(language.as_deref());
         if self.active_language_filter == normalized {
             return;
         }
         self.active_language_filter = normalized;
-        self.search_last_sent.clear();
-        if self.search_query.trim().is_empty() {
-            self.recompute_visible_pastes();
-            self.ensure_selection_after_list_update();
-        } else {
-            self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
-        }
+        self.on_primary_filter_changed();
     }
 
     pub(super) fn language_filter_options(&self) -> Vec<String> {
@@ -937,7 +935,7 @@ impl LocalPasteApp {
         self.metadata_dirty = false;
     }
 
-    fn try_complete_pending_copy(&mut self) {
+    pub(super) fn try_complete_pending_copy(&mut self) {
         let Some(action) = self.pending_copy_action.clone() else {
             return;
         };
@@ -945,25 +943,30 @@ impl LocalPasteApp {
             return;
         };
         match action {
-            PaletteCopyAction::Raw(id) => {
-                if id != paste.id {
-                    return;
-                }
-                self.clipboard_outgoing = Some(paste.content.clone());
+            PaletteCopyAction::Raw(id) if id == paste.id => {
+                let content = if self.selected_id.as_deref() == Some(id.as_str()) {
+                    self.active_snapshot()
+                } else {
+                    paste.content.clone()
+                };
+                self.clipboard_outgoing = Some(content);
                 self.pending_copy_action = None;
                 self.set_status("Copied paste content.");
             }
-            PaletteCopyAction::Fenced(id) => {
-                if id != paste.id {
-                    return;
-                }
-                self.clipboard_outgoing = Some(format_fenced_code_block(
-                    &paste.content,
-                    paste.language.as_deref(),
-                ));
+            PaletteCopyAction::Fenced(id) if id == paste.id => {
+                let (content, language) = if self.selected_id.as_deref() == Some(id.as_str()) {
+                    (
+                        self.active_snapshot(),
+                        self.edit_language.as_deref().or(paste.language.as_deref()),
+                    )
+                } else {
+                    (paste.content.clone(), paste.language.as_deref())
+                };
+                self.clipboard_outgoing = Some(format_fenced_code_block(&content, language));
                 self.pending_copy_action = None;
                 self.set_status("Copied fenced code block.");
             }
+            _ => {}
         }
     }
 

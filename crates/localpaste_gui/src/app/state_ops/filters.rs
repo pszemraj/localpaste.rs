@@ -30,10 +30,7 @@ fn language_in_set(language: Option<&str>, values: &[&str]) -> bool {
 }
 
 pub(super) fn normalize_language_filter_value(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(|item| item.to_ascii_lowercase())
+    localpaste_core::models::paste::normalize_language_filter(value)
 }
 
 fn contains_any_ci(value: &str, needles: &[&str]) -> bool {
@@ -45,9 +42,20 @@ fn tags_contain_any(tags: &[String], needles: &[&str]) -> bool {
     tags.iter().any(|tag| contains_any_ci(tag, needles))
 }
 
+fn summary_matches(
+    item: &PasteSummary,
+    languages: &[&str],
+    name_needles: &[&str],
+    tag_needles: &[&str],
+) -> bool {
+    language_in_set(item.language.as_deref(), languages)
+        || contains_any_ci(item.name.as_str(), name_needles)
+        || tags_contain_any(item.tags.as_slice(), tag_needles)
+}
+
 pub(super) fn is_code_summary(item: &PasteSummary) -> bool {
-    language_in_set(
-        item.language.as_deref(),
+    summary_matches(
+        item,
         &[
             "rust",
             "python",
@@ -72,18 +80,17 @@ pub(super) fn is_code_summary(item: &PasteSummary) -> bool {
             "css",
             "markdown",
         ],
-    ) || contains_any_ci(
-        item.name.as_str(),
         &[
             ".rs", ".py", ".js", ".ts", ".go", ".java", ".cs", ".sql", ".sh", "snippet", "script",
             "class", "function",
         ],
-    ) || tags_contain_any(item.tags.as_slice(), &["code", "snippet", "script"])
+        &["code", "snippet", "script"],
+    )
 }
 
 pub(super) fn is_config_summary(item: &PasteSummary) -> bool {
-    language_in_set(
-        item.language.as_deref(),
+    summary_matches(
+        item,
         &[
             "json",
             "yaml",
@@ -95,8 +102,6 @@ pub(super) fn is_config_summary(item: &PasteSummary) -> bool {
             "hcl",
             "properties",
         ],
-    ) || contains_any_ci(
-        item.name.as_str(),
         &[
             "config",
             "settings",
@@ -107,8 +112,6 @@ pub(super) fn is_config_summary(item: &PasteSummary) -> bool {
             "kubernetes",
             "helm",
         ],
-    ) || tags_contain_any(
-        item.tags.as_slice(),
         &[
             "config",
             "settings",
@@ -122,22 +125,21 @@ pub(super) fn is_config_summary(item: &PasteSummary) -> bool {
 }
 
 pub(super) fn is_log_summary(item: &PasteSummary) -> bool {
-    language_in_set(item.language.as_deref(), &["log"])
-        || contains_any_ci(
-            item.name.as_str(),
-            &["log", "logs", "trace", "stderr", "stdout", "error"],
-        )
-        || tags_contain_any(
-            item.tags.as_slice(),
-            &["log", "logs", "trace", "stderr", "stdout", "error"],
-        )
+    summary_matches(
+        item,
+        &["log"],
+        &["log", "logs", "trace", "stderr", "stdout", "error"],
+        &["log", "logs", "trace", "stderr", "stdout", "error"],
+    )
 }
 
 pub(super) fn is_link_summary(item: &PasteSummary) -> bool {
-    contains_any_ci(
-        item.name.as_str(),
+    summary_matches(
+        item,
+        &[],
         &["http://", "https://", "www.", "url", "link", "links"],
-    ) || tags_contain_any(item.tags.as_slice(), &["url", "link", "links", "bookmark"])
+        &["url", "link", "links", "bookmark"],
+    )
 }
 
 pub(super) fn language_extension(language: Option<&str>) -> &'static str {

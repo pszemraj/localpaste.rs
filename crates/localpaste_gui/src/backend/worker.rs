@@ -52,10 +52,18 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) {
             folder_id,
             language,
         } => {
-            query::handle_search_pastes(state, query, limit, folder_id, language);
+            query::handle_search(
+                state,
+                query::SearchRoute::Standard {
+                    folder_id,
+                    language,
+                },
+                query,
+                limit,
+            );
         }
         CoreCmd::SearchPalette { query, limit } => {
-            query::handle_palette_search(state, query, limit);
+            query::handle_search(state, query::SearchRoute::Palette, query, limit);
         }
         CoreCmd::GetPaste { id } => {
             paste::handle_get_paste(state, id);

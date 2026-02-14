@@ -372,15 +372,10 @@ fn real_backend_virtual_save_error_updates_ui_state() {
 #[test]
 fn select_paste_dirty_defers_switch_until_content_save_ack() {
     let mut harness = make_app();
-    harness.app.all_pastes.push(PasteSummary {
-        id: "beta".to_string(),
-        name: "Beta".to_string(),
-        language: None,
-        content_len: 4,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-    });
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 4));
     harness.app.pastes = harness.app.all_pastes.clone();
     harness.app.selected_content.reset("edited".to_string());
     harness.app.save_status = SaveStatus::Dirty;
@@ -415,15 +410,10 @@ fn select_paste_dirty_defers_switch_until_content_save_ack() {
 #[test]
 fn select_paste_while_content_save_in_flight_queues_pending_without_switching() {
     let mut harness = make_app();
-    harness.app.all_pastes.push(PasteSummary {
-        id: "beta".to_string(),
-        name: "Beta".to_string(),
-        language: None,
-        content_len: 4,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-    });
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 4));
     harness.app.pastes = harness.app.all_pastes.clone();
     harness.app.save_status = SaveStatus::Saving;
     harness.app.save_in_flight = true;
@@ -440,24 +430,14 @@ fn select_paste_while_content_save_in_flight_queues_pending_without_switching() 
 #[test]
 fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_intent() {
     let mut harness = make_app();
-    harness.app.all_pastes.push(PasteSummary {
-        id: "beta".to_string(),
-        name: "Beta".to_string(),
-        language: None,
-        content_len: 4,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-    });
-    harness.app.all_pastes.push(PasteSummary {
-        id: "gamma".to_string(),
-        name: "Gamma".to_string(),
-        language: None,
-        content_len: 4,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-    });
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 4));
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("gamma", "Gamma", None, 4));
     harness.app.pastes = harness.app.all_pastes.clone();
     harness.app.save_status = SaveStatus::Saving;
     harness.app.save_in_flight = true;
@@ -626,15 +606,10 @@ fn metadata_ack_clears_dirty_state_when_draft_matches_dispatched_request() {
 #[test]
 fn select_paste_metadata_dirty_defers_switch_until_meta_save_ack() {
     let mut harness = make_app();
-    harness.app.all_pastes.push(PasteSummary {
-        id: "beta".to_string(),
-        name: "Beta".to_string(),
-        language: None,
-        content_len: 4,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-    });
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 4));
     harness.app.pastes = harness.app.all_pastes.clone();
     harness.app.metadata_dirty = true;
     harness.app.edit_name = "Alpha renamed".to_string();
@@ -673,15 +648,7 @@ fn select_paste_rolls_back_pending_when_metadata_dispatch_fails_with_content_in_
     } = make_app();
     drop(cmd_rx);
 
-    app.all_pastes.push(PasteSummary {
-        id: "beta".to_string(),
-        name: "Beta".to_string(),
-        language: None,
-        content_len: 4,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-    });
+    app.all_pastes.push(test_summary("beta", "Beta", None, 4));
     app.pastes = app.all_pastes.clone();
     app.metadata_dirty = true;
     app.edit_name = "Alpha renamed".to_string();
@@ -705,15 +672,10 @@ fn select_paste_rolls_back_pending_when_metadata_dispatch_fails_with_content_in_
 #[test]
 fn save_error_clears_pending_selection_and_keeps_current_selection() {
     let mut harness = make_app();
-    harness.app.all_pastes.push(PasteSummary {
-        id: "beta".to_string(),
-        name: "Beta".to_string(),
-        language: None,
-        content_len: 4,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-    });
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 4));
     harness.app.pastes = harness.app.all_pastes.clone();
     harness.app.selected_content.reset("edited".to_string());
     harness.app.save_status = SaveStatus::Dirty;

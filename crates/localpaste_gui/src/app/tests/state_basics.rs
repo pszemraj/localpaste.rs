@@ -19,15 +19,10 @@ fn paste_missing_clears_selection_and_removes_list_entry() {
 #[test]
 fn paste_missing_non_selected_removes_list_entry() {
     let mut harness = make_app();
-    harness.app.pastes.push(PasteSummary {
-        id: "beta".to_string(),
-        name: "Beta".to_string(),
-        language: None,
-        content_len: 4,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-    });
+    harness
+        .app
+        .pastes
+        .push(test_summary("beta", "Beta", None, 4));
 
     harness.app.apply_event(CoreEvent::PasteMissing {
         id: "beta".to_string(),

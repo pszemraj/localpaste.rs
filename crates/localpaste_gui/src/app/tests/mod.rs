@@ -28,6 +28,18 @@ fn aligned_names(aligned: &[Option<FakeHighlightLine>]) -> Vec<Option<&'static s
         .collect()
 }
 
+fn test_summary(id: &str, name: &str, language: Option<&str>, content_len: usize) -> PasteSummary {
+    PasteSummary {
+        id: id.to_string(),
+        name: name.to_string(),
+        language: language.map(ToString::to_string),
+        content_len,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    }
+}
+
 fn make_app() -> TestHarness {
     let (cmd_tx, cmd_rx) = unbounded();
     let (_evt_tx, evt_rx) = unbounded();
@@ -51,24 +63,8 @@ fn make_app() -> TestHarness {
 
     let app = LocalPasteApp {
         backend: BackendHandle { cmd_tx, evt_rx },
-        all_pastes: vec![PasteSummary {
-            id: "alpha".to_string(),
-            name: "Alpha".to_string(),
-            language: None,
-            content_len: 7,
-            updated_at: Utc::now(),
-            folder_id: None,
-            tags: Vec::new(),
-        }],
-        pastes: vec![PasteSummary {
-            id: "alpha".to_string(),
-            name: "Alpha".to_string(),
-            language: None,
-            content_len: 7,
-            updated_at: Utc::now(),
-            folder_id: None,
-            tags: Vec::new(),
-        }],
+        all_pastes: vec![test_summary("alpha", "Alpha", None, 7)],
+        pastes: vec![test_summary("alpha", "Alpha", None, 7)],
         selected_id: Some("alpha".to_string()),
         selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
         edit_name: "Alpha".to_string(),

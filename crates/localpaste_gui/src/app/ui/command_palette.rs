@@ -1,6 +1,5 @@
 //! Command palette rendering and quick actions.
 
-use super::super::util::format_fenced_code_block;
 use super::super::*;
 use crate::backend::CoreCmd;
 use eframe::egui::{self, RichText};
@@ -135,7 +134,7 @@ impl LocalPasteApp {
         }
 
         if self.selected_paste.is_some() {
-            self.try_copy_selected_immediately();
+            self.try_complete_pending_copy();
             return;
         }
 
@@ -145,41 +144,6 @@ impl LocalPasteApp {
             return;
         }
         self.set_status("Loading paste for copy...");
-    }
-
-    fn try_copy_selected_immediately(&mut self) {
-        let Some(action) = self.pending_copy_action.clone() else {
-            return;
-        };
-        let Some(paste) = self.selected_paste.as_ref() else {
-            return;
-        };
-        match action {
-            PaletteCopyAction::Raw(id) if id == paste.id => {
-                let content = if self.selected_id.as_deref() == Some(id.as_str()) {
-                    self.active_snapshot()
-                } else {
-                    paste.content.clone()
-                };
-                self.clipboard_outgoing = Some(content);
-                self.pending_copy_action = None;
-                self.set_status("Copied paste content.");
-            }
-            PaletteCopyAction::Fenced(id) if id == paste.id => {
-                let (content, language) = if self.selected_id.as_deref() == Some(id.as_str()) {
-                    (
-                        self.active_snapshot(),
-                        self.edit_language.as_deref().or(paste.language.as_deref()),
-                    )
-                } else {
-                    (paste.content.clone(), paste.language.as_deref())
-                };
-                self.clipboard_outgoing = Some(format_fenced_code_block(&content, language));
-                self.pending_copy_action = None;
-                self.set_status("Copied fenced code block.");
-            }
-            _ => {}
-        }
     }
 
     fn palette_results(&self) -> Vec<PasteSummary> {
