@@ -247,7 +247,7 @@ fn list_meta_dedupes_duplicate_updated_index_entries() {
 }
 
 #[test]
-fn list_meta_keeps_index_fast_path_when_only_in_progress_marker_is_set() {
+fn list_meta_treats_in_progress_marker_as_degraded_and_falls_back_to_canonical() {
     let (paste_db, _dir) = setup_paste_db();
     paste_db
         .reconcile_meta_indexes()
@@ -270,10 +270,12 @@ fn list_meta_keeps_index_fast_path_when_only_in_progress_marker_is_set() {
         .insert(paste_id.as_bytes(), b"corrupt-canonical-row")
         .expect("corrupt canonical row");
 
-    let metas = paste_db.list_meta(10, None).expect("list metadata");
+    let err = paste_db
+        .list_meta(10, None)
+        .expect_err("in-progress marker should force canonical fallback");
     assert!(
-        metas.into_iter().any(|meta| meta.id == paste_id),
-        "in-progress marker alone must not force canonical fallback"
+        matches!(err, AppError::Serialization(_)),
+        "fallback path should surface canonical decode errors"
     );
 }
 

@@ -287,8 +287,6 @@ impl PasteDb {
         F: FnOnce(&Self, &Paste, Option<PasteMeta>) -> Result<(), AppError>,
     {
         let mut mutation_guard = MetaIndexMutationGuard::begin(self)?;
-        // `update_and_fetch` retries the closure under contention but cannot return
-        // a typed error. Capture parse/encode failures and surface them after the call.
         let mut update_error: Option<AppError> = None;
         let mut old_meta: Option<PasteMeta> = None;
         let mut folder_mismatch = false;
@@ -943,6 +941,9 @@ impl PasteDb {
 
     fn meta_indexes_usable(&self) -> Result<bool, AppError> {
         if self.meta_index_schema_version()? != Some(META_INDEX_SCHEMA_VERSION) {
+            return Ok(false);
+        }
+        if self.meta_index_in_progress_count()? > 0 {
             return Ok(false);
         }
         if self.meta_index_faulted()? {
