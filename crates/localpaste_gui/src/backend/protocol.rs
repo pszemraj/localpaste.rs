@@ -118,7 +118,7 @@ pub enum CoreErrorSource {
 }
 
 /// Lightweight summary used for list rendering in the UI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PasteSummary {
     pub id: String,
     pub name: String,

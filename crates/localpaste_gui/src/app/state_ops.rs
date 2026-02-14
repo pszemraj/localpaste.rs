@@ -64,10 +64,16 @@ impl LocalPasteApp {
                     self.query_perf.list_last_roundtrip_ms =
                         Some(sent_at.elapsed().as_secs_f32() * 1000.0);
                 }
+                let list_changed = self.all_pastes != items;
                 self.all_pastes = items;
                 if self.search_query.trim().is_empty() {
                     self.recompute_visible_pastes();
                     self.ensure_selection_after_list_update();
+                } else if list_changed {
+                    // External API/CLI writes arrive via list refresh, not local save events.
+                    // Force one fresh backend search so active query results stay in sync.
+                    self.search_last_sent.clear();
+                    self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
             }
             CoreEvent::PasteLoaded { paste } => {
@@ -128,9 +134,12 @@ impl LocalPasteApp {
                 }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     let has_newer_local_edits = if self.is_virtual_editor_mode() {
+                        // `save_request_revision` can be cleared after a partial deferred-switch
+                        // failure even when a content-save command was already dispatched.
+                        // Use snapshot comparison as a safe fallback for late save acks.
                         requested_revision
                             .map(|revision| self.active_revision() != revision)
-                            .unwrap_or(false)
+                            .unwrap_or_else(|| self.active_snapshot() != paste.content)
                     } else {
                         self.selected_content.as_str() != paste.content
                     };

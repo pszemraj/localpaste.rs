@@ -269,6 +269,40 @@ fn maybe_dispatch_search_requires_debounce_and_dedupes() {
         harness.cmd_rx.try_recv(),
         Err(TryRecvError::Empty)
     ));
+
+    let now = Utc::now();
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![
+            PasteSummary {
+                id: "alpha".to_string(),
+                name: "Alpha".to_string(),
+                language: None,
+                content_len: 7,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+            PasteSummary {
+                id: "beta".to_string(),
+                name: "Beta".to_string(),
+                language: Some("rust".to_string()),
+                content_len: 4,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+        ],
+    });
+    assert!(
+        harness.app.search_last_sent.is_empty(),
+        "list refresh during active search should invalidate cached query"
+    );
+
+    harness.app.maybe_dispatch_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "rust"),
+        other => panic!("unexpected command: {:?}", other),
+    }
 }
 
 #[test]

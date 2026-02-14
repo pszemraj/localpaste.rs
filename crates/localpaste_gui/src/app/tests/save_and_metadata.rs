@@ -301,6 +301,28 @@ fn virtual_editor_autosave_dispatches_rope_snapshot_command() {
 }
 
 #[test]
+fn virtual_save_ack_without_revision_keeps_dirty_state_when_buffer_diverged() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.virtual_editor_buffer.reset("local-newer");
+    harness.app.save_status = SaveStatus::Saving;
+    harness.app.save_in_flight = true;
+    harness.app.save_request_revision = None;
+    harness.app.last_edit_at = Some(Instant::now());
+
+    let mut saved = Paste::new("server-older".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(!harness.app.save_in_flight);
+    assert!(harness.app.last_edit_at.is_some());
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "local-newer");
+}
+
+#[test]
 fn real_backend_virtual_save_error_updates_ui_state() {
     let mut harness = make_app();
     let dir = TempDir::new().expect("temp dir");
