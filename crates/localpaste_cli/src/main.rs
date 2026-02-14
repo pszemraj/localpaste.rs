@@ -116,7 +116,10 @@ async fn ensure_success_or_exit(res: reqwest::Response, action: &str) -> reqwest
         return res;
     }
 
-    let body = res.text().await.unwrap_or_default();
+    let body = match res.text().await {
+        Ok(body) => body,
+        Err(err) => format!("failed to read error response body: {}", err),
+    };
     let message = error_message_for_response(status, &body);
     eprintln!("{} failed ({}): {}", action, status, message);
     std::process::exit(1);
@@ -142,7 +145,7 @@ fn format_summary_output(pastes: &[Value], json: bool) -> Result<String, String>
                 index
             ));
         };
-        rows.push(format!("{:<24} {:<30}", id, name));
+        rows.push(format!("{:<36} {:<30}", id, name));
     }
 
     Ok(rows.join("\n"))
@@ -184,12 +187,22 @@ fn api_url(server: &str, segments: &[&str]) -> Result<reqwest::Url, String> {
     Ok(url)
 }
 
+fn api_url_or_exit(server: &str, action: &str, segments: &[&str]) -> reqwest::Url {
+    match api_url(server, segments) {
+        Ok(url) => url,
+        Err(message) => {
+            eprintln!("{} failed: {}", action, message);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn normalize_server(server: String) -> String {
     if let Ok(mut url) = reqwest::Url::parse(&server) {
         let should_normalize_localhost =
             url.scheme().eq_ignore_ascii_case("http") && url.host_str() == Some("localhost");
-        if should_normalize_localhost {
-            let _ = url.set_host(Some("127.0.0.1"));
+        if should_normalize_localhost && url.set_host(Some("127.0.0.1")).is_err() {
+            return server;
         }
         let mut normalized = url.to_string();
         while normalized.ends_with('/') {
@@ -220,7 +233,10 @@ fn discovery_server_is_reachable(url: &reqwest::Url) -> bool {
     false
 }
 
-fn discovered_server_from_file() -> Option<String> {
+fn discovered_server_from_file_with_reachability<F>(is_reachable: F) -> Option<String>
+where
+    F: Fn(&reqwest::Url) -> bool,
+{
     let path = localpaste_core::config::api_addr_file_path_from_env_or_default();
     let raw = std::fs::read_to_string(path).ok()?;
     let trimmed = raw.trim();
@@ -230,37 +246,59 @@ fn discovered_server_from_file() -> Option<String> {
     // Treat stale discovery entries as absent so the CLI can fall back
     // to the default endpoint when the discovered server is no longer up.
     let url = reqwest::Url::parse(trimmed).ok()?;
-    if !discovery_server_is_reachable(&url) {
+    if !is_reachable(&url) {
         return None;
     }
     Some(trimmed.to_string())
 }
 
+fn discovered_server_from_file() -> Option<String> {
+    discovered_server_from_file_with_reachability(discovery_server_is_reachable)
+}
+
+fn explicit_server_override(server: Option<String>) -> Option<String> {
+    server.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 fn resolve_server(server: Option<String>) -> String {
-    server
+    explicit_server_override(server)
         .or_else(discovered_server_from_file)
         .unwrap_or_else(|| DEFAULT_CLI_SERVER_URL.to_string())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let Cli {
+        server,
+        json,
+        timing,
+        timeout,
+        command,
+    } = Cli::parse();
+
+    if let Commands::Completions { shell } = &command {
+        let mut cmd = Cli::command();
+        let name = cmd.get_name().to_string();
+        generate(*shell, &mut cmd, name, &mut io::stdout());
+        return Ok(());
+    }
+
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(cli.timeout))
+        .timeout(std::time::Duration::from_secs(timeout))
         .build()?;
-    let timing = cli.timing;
-    let json = cli.json;
-    let server = normalize_server(resolve_server(cli.server));
-    let command = cli.command;
+    let server = normalize_server(resolve_server(server));
 
     match command {
-        Commands::Completions { shell } => {
-            let mut cmd = Cli::command();
-            let name = cmd.get_name().to_string();
-            generate(shell, &mut cmd, name, &mut io::stdout());
-            return Ok(());
-        }
+        Commands::Completions { .. } => unreachable!("completions handled before client setup"),
         Commands::New { file, name } => {
+            let endpoint = api_url_or_exit(&server, "New", &["api", "paste"]);
             let content = if let Some(path) = file {
                 std::fs::read_to_string(path)?
             } else {
@@ -275,11 +313,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let request_start = Instant::now();
-            let res = client
-                .post(format!("{}/api/paste", server))
-                .json(&body)
-                .send()
-                .await?;
+            let res = client.post(endpoint).json(&body).send().await?;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "New").await;
 
@@ -299,13 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Get { id } => {
-            let endpoint = match api_url(&server, &["api", "paste", id.as_str()]) {
-                Ok(url) => url,
-                Err(message) => {
-                    eprintln!("Get failed: {}", message);
-                    std::process::exit(1);
-                }
-            };
+            let endpoint = api_url_or_exit(&server, "Get", &["api", "paste", id.as_str()]);
             let request_start = Instant::now();
             let res = client.get(endpoint).send().await?;
             let request_elapsed = request_start.elapsed();
@@ -326,9 +354,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", output);
         }
         Commands::List { limit } => {
+            let endpoint = api_url_or_exit(&server, "List", &["api", "pastes", "meta"]);
             let request_start = Instant::now();
             let res = client
-                .get(format!("{}/api/pastes/meta", server))
+                .get(endpoint)
                 .query(&[("limit", limit)])
                 .send()
                 .await?;
@@ -352,9 +381,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Search { query } => {
+            let endpoint = api_url_or_exit(&server, "Search", &["api", "search"]);
             let request_start = Instant::now();
             let res = client
-                .get(format!("{}/api/search", server))
+                .get(endpoint)
                 .query(&[("q", query.as_str())])
                 .send()
                 .await?;
@@ -378,9 +408,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::SearchMeta { query } => {
+            let endpoint = api_url_or_exit(&server, "Search metadata", &["api", "search", "meta"]);
             let request_start = Instant::now();
             let res = client
-                .get(format!("{}/api/search/meta", server))
+                .get(endpoint)
                 .query(&[("q", query.as_str())])
                 .send()
                 .await?;
@@ -404,13 +435,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Delete { id } => {
-            let endpoint = match api_url(&server, &["api", "paste", id.as_str()]) {
-                Ok(url) => url,
-                Err(message) => {
-                    eprintln!("Delete failed: {}", message);
-                    std::process::exit(1);
-                }
-            };
+            let endpoint = api_url_or_exit(&server, "Delete", &["api", "paste", id.as_str()]);
             let request_start = Instant::now();
             let res = client.delete(endpoint).send().await?;
             let request_elapsed = request_start.elapsed();
@@ -437,8 +462,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        api_url, error_message_for_response, format_delete_output, format_get_output,
-        format_summary_output, normalize_server, paste_id_and_name, resolve_server,
+        api_url, discovered_server_from_file_with_reachability, error_message_for_response,
+        format_delete_output, format_get_output, format_summary_output, normalize_server,
+        paste_id_and_name, resolve_server,
     };
     use super::{Cli, Commands};
     use clap::Parser;
@@ -664,13 +690,31 @@ mod tests {
     fn resolve_server_falls_back_to_default_when_discovery_unreachable() {
         let _lock = env_lock().lock().expect("env lock");
         let env = DiscoveryTestEnv::new("stale", None);
-
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
-        let stale_endpoint = format!("http://{}", listener.local_addr().expect("listener addr"));
-        drop(listener);
-
-        env.write_discovery(stale_endpoint.as_str());
+        // Unknown scheme is parseable but has no known default port, so reachability
+        // check always treats it as unavailable.
+        env.write_discovery("custom-scheme://discovery-host");
         assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
+    }
+
+    #[test]
+    fn discovered_server_file_returns_none_when_reachability_check_fails() {
+        let _lock = env_lock().lock().expect("env lock");
+        let env = DiscoveryTestEnv::new("stub-unreachable", None);
+        env.write_discovery("http://127.0.0.1:45555");
+
+        let discovered = discovered_server_from_file_with_reachability(|_| false);
+        assert!(discovered.is_none());
+    }
+
+    #[test]
+    fn resolve_server_treats_blank_explicit_override_as_absent() {
+        let _lock = env_lock().lock().expect("env lock");
+        let env = DiscoveryTestEnv::new("blank-explicit", None);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let discovered = format!("http://{}", listener.local_addr().expect("listener addr"));
+        env.write_discovery(discovered.as_str());
+
+        assert_eq!(resolve_server(Some("   ".to_string())), discovered);
     }
 
     #[test]
