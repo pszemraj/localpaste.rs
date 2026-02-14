@@ -420,7 +420,7 @@ mod tests {
             .expect("send search");
 
         match recv_event(&backend.evt_rx) {
-            CoreEvent::SearchResults { query, items } => {
+            CoreEvent::SearchResults { query, items, .. } => {
                 assert_eq!(query, "rust");
                 assert_eq!(items.len(), 1);
             }

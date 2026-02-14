@@ -168,7 +168,12 @@ pub(super) fn handle_search_pastes(
                     started.elapsed().as_secs_f64() * 1000.0,
                     items.len(),
                 );
-                let _ = state.evt_tx.send(CoreEvent::SearchResults { query, items });
+                let _ = state.evt_tx.send(CoreEvent::SearchResults {
+                    query,
+                    folder_id,
+                    language,
+                    items,
+                });
                 return;
             }
         }
@@ -178,7 +183,7 @@ pub(super) fn handle_search_pastes(
     match state
         .db
         .pastes
-        .search_meta(&query, limit, folder_id, language)
+        .search_meta(&query, limit, folder_id.clone(), language.clone())
     {
         Ok(metas) => {
             let items: Vec<PasteSummary> = metas.iter().map(PasteSummary::from_meta).collect();
@@ -193,7 +198,12 @@ pub(super) fn handle_search_pastes(
                 started.elapsed().as_secs_f64() * 1000.0,
                 items.len(),
             );
-            let _ = state.evt_tx.send(CoreEvent::SearchResults { query, items });
+            let _ = state.evt_tx.send(CoreEvent::SearchResults {
+                query,
+                folder_id,
+                language,
+                items,
+            });
         }
         Err(err) => {
             error!("backend search failed: {}", err);

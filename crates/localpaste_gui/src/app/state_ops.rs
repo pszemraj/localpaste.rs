@@ -93,21 +93,24 @@ impl LocalPasteApp {
                 self.all_pastes.insert(0, summary.clone());
                 self.pastes.insert(0, summary);
                 self.select_paste(paste.id.clone());
-                self.sync_editor_metadata(&paste);
-                self.selected_content.reset(paste.content.clone());
-                self.reset_virtual_editor(paste.content.as_str());
-                self.editor_cache = EditorLayoutCache::default();
-                self.editor_lines.reset();
-                self.virtual_selection.clear();
-                self.clear_highlight_state();
-                self.selected_paste = Some(paste);
-                self.save_status = SaveStatus::Saved;
-                self.last_edit_at = None;
-                self.save_in_flight = false;
-                self.save_request_revision = None;
-                self.metadata_save_in_flight = false;
-                self.focus_editor_next = true;
-                self.set_status("Created new paste.");
+                // Keep current editor/save state untouched when switching is deferred.
+                if self.selected_id.as_deref() == Some(paste.id.as_str()) {
+                    self.sync_editor_metadata(&paste);
+                    self.selected_content.reset(paste.content.clone());
+                    self.reset_virtual_editor(paste.content.as_str());
+                    self.editor_cache = EditorLayoutCache::default();
+                    self.editor_lines.reset();
+                    self.virtual_selection.clear();
+                    self.clear_highlight_state();
+                    self.selected_paste = Some(paste);
+                    self.save_status = SaveStatus::Saved;
+                    self.last_edit_at = None;
+                    self.save_in_flight = false;
+                    self.save_request_revision = None;
+                    self.metadata_save_in_flight = false;
+                    self.focus_editor_next = true;
+                    self.set_status("Created new paste.");
+                }
             }
             CoreEvent::PasteSaved { paste } => {
                 let requested_revision = self.save_request_revision.take();
@@ -171,9 +174,23 @@ impl LocalPasteApp {
                 self.ensure_selection_after_list_update();
                 self.try_apply_pending_selection();
             }
-            CoreEvent::SearchResults { query, items } => {
-                // Drop stale search responses that no longer match the active query text.
-                if self.search_query.trim().is_empty() || query.trim() != self.search_query.trim() {
+            CoreEvent::SearchResults {
+                query,
+                folder_id,
+                language,
+                items,
+            } => {
+                // Drop stale search responses when query or backend filter context changed.
+                let active_query = self.search_query.trim();
+                let expected_sent_query = self.search_last_sent.trim();
+                let (expected_folder_id, expected_language) = self.search_backend_filters();
+                let response_language = normalize_language_filter_value(language.as_deref());
+                if active_query.is_empty()
+                    || query.trim() != active_query
+                    || query.trim() != expected_sent_query
+                    || folder_id != expected_folder_id
+                    || response_language != expected_language
+                {
                     self.query_perf.search_stale_drops =
                         self.query_perf.search_stale_drops.saturating_add(1);
                     return;

@@ -73,6 +73,8 @@ pub enum CoreEvent {
     /// Response containing ranked search results.
     SearchResults {
         query: String,
+        folder_id: Option<String>,
+        language: Option<String>,
         items: Vec<PasteSummary>,
     },
     /// Response containing command palette search results.

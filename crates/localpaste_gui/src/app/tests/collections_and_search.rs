@@ -9,6 +9,7 @@ fn search_results_respect_collection_filter() {
         .app
         .set_active_collection(SidebarCollection::Unfiled);
     harness.app.set_search_query("rust".to_string());
+    harness.app.search_last_sent = "rust".to_string();
 
     let now = Utc::now();
     let with_folder = PasteSummary {
@@ -32,6 +33,8 @@ fn search_results_respect_collection_filter() {
 
     harness.app.apply_event(CoreEvent::SearchResults {
         query: "rust".to_string(),
+        folder_id: None,
+        language: None,
         items: vec![with_folder, unfiled.clone()],
     });
 
@@ -50,10 +53,78 @@ fn search_results_respect_collection_filter() {
     harness.app.set_search_query(String::new());
     harness.app.apply_event(CoreEvent::SearchResults {
         query: "rust".to_string(),
+        folder_id: None,
+        language: None,
         items: vec![stale],
     });
     assert_eq!(harness.app.pastes.len(), 1);
     assert_eq!(harness.app.pastes[0].id, unfiled.id);
+}
+
+#[test]
+fn stale_search_results_with_old_language_filter_are_dropped() {
+    let mut harness = make_app();
+    harness
+        .app
+        .set_active_language_filter(Some("rust".to_string()));
+    harness.app.set_search_query("term".to_string());
+    harness.app.search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_search();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::SearchPastes {
+            query, language, ..
+        } => {
+            assert_eq!(query, "term");
+            assert_eq!(language.as_deref(), Some("rust"));
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    let stale = PasteSummary {
+        id: "stale".to_string(),
+        name: "stale-python".to_string(),
+        language: Some("python".to_string()),
+        content_len: 10,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    };
+    harness.app.apply_event(CoreEvent::SearchResults {
+        query: "term".to_string(),
+        folder_id: None,
+        language: Some("python".to_string()),
+        items: vec![stale],
+    });
+
+    assert_eq!(
+        harness.app.query_perf.search_stale_drops, 1,
+        "stale filter-mismatched response should be dropped"
+    );
+    assert!(
+        harness.app.pastes.iter().all(|item| item.id != "stale"),
+        "stale result set must not be applied"
+    );
+
+    let fresh = PasteSummary {
+        id: "fresh".to_string(),
+        name: "fresh-rust".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 12,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    };
+    harness.app.apply_event(CoreEvent::SearchResults {
+        query: "term".to_string(),
+        folder_id: None,
+        language: Some("rust".to_string()),
+        items: vec![fresh.clone()],
+    });
+
+    assert_eq!(harness.app.query_perf.search_results_applied, 1);
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, fresh.id);
 }
 
 #[test]

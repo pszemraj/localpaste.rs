@@ -391,6 +391,47 @@ fn select_paste_dirty_defers_switch_until_content_save_ack() {
 }
 
 #[test]
+fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() {
+    let mut harness = make_app();
+    harness.app.selected_content.reset("edited-old".to_string());
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.last_edit_at = Some(Instant::now());
+
+    let mut created = Paste::new("new-content".to_string(), "new-note".to_string());
+    created.id = "new-id".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteCreated { paste: created });
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("new-id"));
+    assert_eq!(harness.app.selected_content.as_str(), "edited-old");
+    assert!(matches!(harness.app.save_status, SaveStatus::Saving));
+    assert!(harness.app.save_in_flight);
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePaste { id, content } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(content, "edited-old");
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    let mut saved = Paste::new("edited-old".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert!(harness.app.pending_selection_id.is_none());
+    assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "new-id"),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
 fn select_paste_metadata_dirty_defers_switch_until_meta_save_ack() {
     let mut harness = make_app();
     harness.app.all_pastes.push(PasteSummary {
