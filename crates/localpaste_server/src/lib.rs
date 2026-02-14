@@ -15,7 +15,7 @@ pub use locks::{LockOwnerId, PasteLockError, PasteLockManager, PasteMutationGuar
 
 use axum::{
     extract::DefaultBodyLimit,
-    http::{header, HeaderValue},
+    http::{header, HeaderName, HeaderValue},
     routing::{delete, get, post, put},
     Router,
 };
@@ -35,6 +35,8 @@ const MAX_JSON_REQUEST_BODY_BYTES: usize = 256 * 1024 * 1024;
 const CSP_HEADER_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 const X_CONTENT_TYPE_OPTIONS_NOSNIFF: &str = "nosniff";
 const X_FRAME_OPTIONS_DENY: &str = "DENY";
+const X_LOCALPASTE_SERVER_HEADER: &str = "x-localpaste-server";
+const X_LOCALPASTE_SERVER_VALUE: &str = "1";
 
 fn uncapped_request_body_limit(max_paste_size: usize) -> usize {
     max_paste_size
@@ -245,6 +247,10 @@ fn create_app_with_cors(state: AppState, allow_public_access: bool) -> Router {
                 .layer(SetResponseHeaderLayer::overriding(
                     header::X_FRAME_OPTIONS,
                     HeaderValue::from_static(X_FRAME_OPTIONS_DENY),
+                ))
+                .layer(SetResponseHeaderLayer::overriding(
+                    HeaderName::from_static(X_LOCALPASTE_SERVER_HEADER),
+                    HeaderValue::from_static(X_LOCALPASTE_SERVER_VALUE),
                 )),
         )
 }
