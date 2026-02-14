@@ -1,0 +1,332 @@
+//! Helper functions shared by paste storage operations.
+
+use crate::models::paste::*;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::cell::Cell;
+
+#[cfg(test)]
+use crate::error::AppError;
+
+#[cfg(test)]
+thread_local! {
+    static RECONCILE_FAILPOINT: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_reconcile_failpoint(enabled: bool) {
+    RECONCILE_FAILPOINT.with(|slot| slot.set(enabled));
+}
+
+#[cfg(test)]
+pub(super) fn maybe_inject_reconcile_failpoint() -> Result<(), AppError> {
+    if RECONCILE_FAILPOINT.with(|slot| slot.get()) {
+        return Err(AppError::DatabaseError(
+            "Injected reconcile failpoint".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
+    let mut content_changed = false;
+
+    if let Some(content) = &update.content {
+        paste.content = content.clone();
+        paste.is_markdown = paste.content.contains("```") || paste.content.contains('#');
+        content_changed = true;
+    }
+    if let Some(name) = &update.name {
+        paste.name = name.clone();
+    }
+    if let Some(language) = &update.language {
+        paste.language = Some(language.clone());
+        if update.language_is_manual.is_none() {
+            paste.language_is_manual = true;
+        }
+    }
+    if let Some(is_manual) = update.language_is_manual {
+        paste.language_is_manual = is_manual;
+    }
+    let should_auto_detect = update.language.is_none()
+        && !paste.language_is_manual
+        && (content_changed || update.language_is_manual == Some(false));
+    if should_auto_detect {
+        paste.language = detect_language(&paste.content);
+    }
+
+    // Normalize folder_id: empty string becomes None
+    if let Some(ref fid) = update.folder_id {
+        paste.folder_id = if fid.is_empty() {
+            None
+        } else {
+            Some(fid.clone())
+        };
+    }
+    if let Some(tags) = &update.tags {
+        paste.tags = tags.clone();
+    }
+
+    paste.updated_at = Utc::now();
+}
+
+pub(super) fn normalized_language_filter(language: Option<&str>) -> Option<String> {
+    language
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+pub(super) fn language_matches_filter(language: Option<&str>, filter: Option<&str>) -> bool {
+    let Some(filter) = filter else {
+        return true;
+    };
+    language
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.eq_ignore_ascii_case(filter))
+        .unwrap_or(false)
+}
+
+pub(super) fn meta_matches_filters(
+    meta: &PasteMeta,
+    folder_filter: Option<&str>,
+    language_filter: Option<&str>,
+) -> bool {
+    if let Some(folder_id) = folder_filter {
+        if meta.folder_id.as_deref() != Some(folder_id) {
+            return false;
+        }
+    }
+    language_matches_filter(meta.language.as_deref(), language_filter)
+}
+
+pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
+    let mut score = 0;
+    if meta.name.to_lowercase().contains(query_lower) {
+        score += 10;
+    }
+    if meta
+        .tags
+        .iter()
+        .any(|tag| tag.to_lowercase().contains(query_lower))
+    {
+        score += 5;
+    }
+    if meta
+        .language
+        .as_ref()
+        .map(|lang| lang.to_lowercase().contains(query_lower))
+        .unwrap_or(false)
+    {
+        score += 2;
+    }
+    score
+}
+
+pub(super) fn score_paste_match(paste: &Paste, query_lower: &str) -> i32 {
+    let mut score = 0;
+    if contains_case_insensitive(&paste.name, query_lower) {
+        score += 10;
+    }
+    if paste
+        .tags
+        .iter()
+        .any(|tag| contains_case_insensitive(tag, query_lower))
+    {
+        score += 5;
+    }
+    if contains_case_insensitive(&paste.content, query_lower) {
+        score += 1;
+    }
+    score
+}
+
+pub(super) fn push_ranked_meta_top_k(
+    results: &mut Vec<(i32, DateTime<Utc>, PasteMeta)>,
+    candidate: (i32, DateTime<Utc>, PasteMeta),
+    limit: usize,
+) {
+    push_ranked_top_k(results, candidate, limit);
+}
+
+fn push_ranked_top_k<T>(
+    results: &mut Vec<(i32, DateTime<Utc>, T)>,
+    candidate: (i32, DateTime<Utc>, T),
+    limit: usize,
+) {
+    if limit == 0 {
+        return;
+    }
+    if results.len() < limit {
+        results.push(candidate);
+        return;
+    }
+
+    let Some((worst_idx, worst_entry)) = results
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)))
+    else {
+        results.push(candidate);
+        return;
+    };
+
+    let candidate_better = candidate.0 > worst_entry.0
+        || (candidate.0 == worst_entry.0 && candidate.1 > worst_entry.1);
+    if candidate_better {
+        results[worst_idx] = candidate;
+    }
+}
+
+pub(super) fn finalize_meta_search_results(
+    mut ranked_results: Vec<(i32, DateTime<Utc>, PasteMeta)>,
+    limit: usize,
+) -> Vec<PasteMeta> {
+    ranked_results.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    ranked_results
+        .into_iter()
+        .take(limit)
+        .map(|(_, _, meta)| meta)
+        .collect()
+}
+
+pub(super) fn push_recent_meta_top_k(
+    results: &mut Vec<(DateTime<Utc>, PasteMeta)>,
+    candidate: (DateTime<Utc>, PasteMeta),
+    limit: usize,
+) {
+    if limit == 0 {
+        return;
+    }
+    if results.len() < limit {
+        results.push(candidate);
+        return;
+    }
+
+    let Some((worst_idx, worst_entry)) = results
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| left.0.cmp(&right.0))
+    else {
+        results.push(candidate);
+        return;
+    };
+    if candidate.0 > worst_entry.0 {
+        results[worst_idx] = candidate;
+    }
+}
+
+pub(super) fn finalize_recent_meta_results(
+    mut ranked_results: Vec<(DateTime<Utc>, PasteMeta)>,
+    limit: usize,
+) -> Vec<PasteMeta> {
+    ranked_results.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked_results
+        .into_iter()
+        .take(limit)
+        .map(|(_, meta)| meta)
+        .collect()
+}
+
+fn contains_case_insensitive(haystack: &str, query_lower: &str) -> bool {
+    if query_lower.is_empty() {
+        return true;
+    }
+    if query_lower.is_ascii() {
+        let needle = query_lower.as_bytes();
+        let hay = haystack.as_bytes();
+        if needle.len() > hay.len() {
+            return false;
+        }
+        for idx in 0..=hay.len() - needle.len() {
+            if hay[idx..idx + needle.len()]
+                .iter()
+                .map(u8::to_ascii_lowercase)
+                .eq(needle.iter().copied())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    haystack.to_lowercase().contains(query_lower)
+}
+
+pub(super) fn folder_matches_expected(
+    current_folder_id: Option<&str>,
+    expected_folder_id: Option<&str>,
+    folder_mismatch: &Cell<bool>,
+) -> bool {
+    // update_and_fetch may retry the closure under contention; mismatch tracking
+    // must represent only the latest attempt.
+    folder_mismatch.set(false);
+    if current_folder_id != expected_folder_id {
+        folder_mismatch.set(true);
+        return false;
+    }
+    true
+}
+
+pub(super) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
+    bincode::deserialize::<Paste>(bytes).or_else(|err| {
+        bincode::deserialize::<LegacyPaste>(bytes)
+            .map(Paste::from)
+            .map_err(|_| err)
+    })
+}
+
+pub(super) fn deserialize_meta(bytes: &[u8]) -> Result<PasteMeta, bincode::Error> {
+    bincode::deserialize(bytes)
+}
+
+pub(super) fn decode_dirty_count(raw: Option<&[u8]>) -> u64 {
+    let Some(raw) = raw else {
+        return 0;
+    };
+    if raw.len() != std::mem::size_of::<u64>() {
+        return 0;
+    }
+    let mut bytes = [0u8; std::mem::size_of::<u64>()];
+    bytes.copy_from_slice(raw);
+    u64::from_be_bytes(bytes)
+}
+
+pub(super) fn index_key(updated_at: DateTime<Utc>, id: &str) -> Vec<u8> {
+    let millis = updated_at.timestamp_millis().max(0) as u64;
+    let reverse = u64::MAX.saturating_sub(millis);
+    let mut key = Vec::with_capacity(8 + id.len());
+    key.extend_from_slice(&reverse.to_be_bytes());
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+
+#[derive(Serialize, Deserialize)]
+struct LegacyPaste {
+    id: String,
+    name: String,
+    content: String,
+    language: Option<String>,
+    folder_id: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    tags: Vec<String>,
+    is_markdown: bool,
+}
+
+impl From<LegacyPaste> for Paste {
+    fn from(old: LegacyPaste) -> Self {
+        Self {
+            id: old.id,
+            name: old.name,
+            content: old.content,
+            language: old.language.clone(),
+            language_is_manual: old.language.is_some(),
+            folder_id: old.folder_id,
+            created_at: old.created_at,
+            updated_at: old.updated_at,
+            tags: old.tags,
+            is_markdown: old.is_markdown,
+        }
+    }
+}
