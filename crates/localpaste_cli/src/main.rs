@@ -5,7 +5,6 @@ use clap_complete::{generate, Shell};
 use localpaste_core::DEFAULT_CLI_SERVER_URL;
 use serde_json::Value;
 use std::io::{self, Read, Write};
-use std::net::IpAddr;
 use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 
@@ -216,20 +215,6 @@ fn normalize_server(server: String) -> String {
 
 const DISCOVERY_PROBE_MAX_HEADER_BYTES: usize = 16 * 1024;
 
-fn discovery_host_is_loopback(host: &str) -> bool {
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    let normalized_host = host
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-        .unwrap_or(host);
-    normalized_host
-        .parse::<IpAddr>()
-        .map(|ip| ip.is_loopback())
-        .unwrap_or(false)
-}
-
 fn discovery_probe_response_looks_like_localpaste(response: &[u8]) -> bool {
     let Some(headers_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
         return false;
@@ -313,7 +298,7 @@ fn discovery_server_is_localpaste(url: &reqwest::Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
-    if !discovery_host_is_loopback(host) {
+    if !localpaste_core::text::is_loopback_host(host) {
         return false;
     }
     let Some(port) = url.port_or_known_default() else {
@@ -406,19 +391,8 @@ fn discovered_server_from_file() -> Option<String> {
     discovered_server_from_file_with_reachability(discovery_server_is_localpaste)
 }
 
-fn explicit_server_override(server: Option<String>) -> Option<String> {
-    server.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
 fn resolve_server(server: Option<String>) -> String {
-    explicit_server_override(server)
+    localpaste_core::text::normalize_optional_nonempty(server)
         .or_else(discovered_server_from_file)
         .unwrap_or_else(|| DEFAULT_CLI_SERVER_URL.to_string())
 }

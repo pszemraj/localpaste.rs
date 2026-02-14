@@ -20,7 +20,7 @@ use axum::{
     Router,
 };
 use std::future::Future;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::{
     compression::CompressionLayer,
@@ -65,20 +65,6 @@ fn parse_http_origin_uri(origin: &HeaderValue) -> Option<axum::http::Uri> {
     Some(uri)
 }
 
-fn is_loopback_host(host: &str) -> bool {
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    let normalized_host = host
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-        .unwrap_or(host);
-    normalized_host
-        .parse::<IpAddr>()
-        .map(|ip| ip.is_loopback())
-        .unwrap_or(false)
-}
-
 fn origin_port(uri: &axum::http::Uri) -> Option<u16> {
     if let Some(port) = uri.port_u16() {
         return Some(port);
@@ -99,7 +85,7 @@ fn is_loopback_origin(origin: &HeaderValue) -> bool {
         Some(value) => value,
         None => return false,
     };
-    is_loopback_host(host)
+    localpaste_core::text::is_loopback_host(host)
 }
 
 fn is_loopback_origin_for_listener_port(origin: &HeaderValue, listener_port: u16) -> bool {

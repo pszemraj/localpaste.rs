@@ -1,7 +1,7 @@
 //! Unit tests for the `lpaste` CLI entrypoint module.
 
 use super::{
-    api_url, discovered_server_from_file_with_reachability, discovery_host_is_loopback,
+    api_url, discovered_server_from_file_with_reachability,
     discovery_probe_response_looks_like_localpaste, error_message_for_response,
     format_delete_output, format_get_output, format_summary_output, normalize_server,
     paste_id_and_name, resolve_server,
@@ -378,11 +378,11 @@ fn discovery_identity_probe_requires_localpaste_headers() {
 
 #[test]
 fn discovery_host_loopback_allows_only_local_targets() {
-    assert!(discovery_host_is_loopback("localhost"));
-    assert!(discovery_host_is_loopback("127.0.0.1"));
-    assert!(discovery_host_is_loopback("::1"));
-    assert!(!discovery_host_is_loopback("example.com"));
-    assert!(!discovery_host_is_loopback("192.168.1.20"));
+    assert!(localpaste_core::text::is_loopback_host("localhost"));
+    assert!(localpaste_core::text::is_loopback_host("127.0.0.1"));
+    assert!(localpaste_core::text::is_loopback_host("::1"));
+    assert!(!localpaste_core::text::is_loopback_host("example.com"));
+    assert!(!localpaste_core::text::is_loopback_host("192.168.1.20"));
 }
 
 #[test]

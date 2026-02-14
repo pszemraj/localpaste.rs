@@ -28,12 +28,12 @@ impl<'ast> Visit<'ast> for AstNormalizer {
     }
 
     fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
-        self.nodes.push(path_kind("path", &node.path));
+        self.push_path_kind("path", &node.path);
         syn::visit::visit_expr_path(self, node);
     }
 
     fn visit_type_path(&mut self, node: &'ast syn::TypePath) {
-        self.nodes.push(path_kind("type", &node.path));
+        self.push_path_kind("type", &node.path);
         syn::visit::visit_type_path(self, node);
     }
 
@@ -57,6 +57,10 @@ impl AstNormalizer {
         let next = self.ident_map.len();
         let idx = *self.ident_map.entry(key).or_insert(next);
         format!("id_{}", idx)
+    }
+
+    fn push_path_kind(&mut self, prefix: &str, path: &syn::Path) {
+        self.nodes.push(path_kind(prefix, path));
     }
 }
 

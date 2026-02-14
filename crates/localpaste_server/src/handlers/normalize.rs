@@ -7,14 +7,7 @@ use localpaste_core::{folder_ops::ensure_folder_assignable, Database};
 ///
 /// Empty or whitespace-only values are treated as absent.
 pub(super) fn normalize_optional_for_create(value: Option<String>) -> Option<String> {
-    value.and_then(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
+    localpaste_core::text::normalize_optional_nonempty(value)
 }
 
 /// Normalize optional identifiers for update semantics.

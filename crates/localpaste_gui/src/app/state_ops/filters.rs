@@ -2,6 +2,89 @@
 
 use crate::backend::PasteSummary;
 
+struct SummaryPattern {
+    languages: &'static [&'static str],
+    name_needles: &'static [&'static str],
+    tag_needles: &'static [&'static str],
+}
+
+const CODE_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
+    languages: &[
+        "rust",
+        "python",
+        "javascript",
+        "typescript",
+        "go",
+        "java",
+        "kotlin",
+        "swift",
+        "ruby",
+        "php",
+        "c",
+        "cpp",
+        "c++",
+        "csharp",
+        "cs",
+        "shell",
+        "bash",
+        "zsh",
+        "sql",
+        "html",
+        "css",
+        "markdown",
+    ],
+    name_needles: &[
+        ".rs", ".py", ".js", ".ts", ".go", ".java", ".cs", ".sql", ".sh", "snippet", "script",
+        "class", "function",
+    ],
+    tag_needles: &["code", "snippet", "script"],
+};
+
+const CONFIG_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
+    languages: &[
+        "json",
+        "yaml",
+        "yml",
+        "toml",
+        "ini",
+        "env",
+        "xml",
+        "hcl",
+        "properties",
+    ],
+    name_needles: &[
+        "config",
+        "settings",
+        ".env",
+        "dockerfile",
+        "compose",
+        "k8s",
+        "kubernetes",
+        "helm",
+    ],
+    tag_needles: &[
+        "config",
+        "settings",
+        "env",
+        "docker",
+        "k8s",
+        "kubernetes",
+        "helm",
+    ],
+};
+
+const LOG_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
+    languages: &["log"],
+    name_needles: &["log", "logs", "trace", "stderr", "stdout", "error"],
+    tag_needles: &["log", "logs", "trace", "stderr", "stdout", "error"],
+};
+
+const LINK_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
+    languages: &[],
+    name_needles: &["http://", "https://", "www.", "url", "link", "links"],
+    tag_needles: &["url", "link", "links", "bookmark"],
+};
+
 pub(super) fn parse_tags_csv(input: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for tag in input.split(',') {
@@ -53,93 +136,29 @@ fn summary_matches(
         || tags_contain_any(item.tags.as_slice(), tag_needles)
 }
 
-pub(super) fn is_code_summary(item: &PasteSummary) -> bool {
+fn summary_matches_pattern(item: &PasteSummary, pattern: &SummaryPattern) -> bool {
     summary_matches(
         item,
-        &[
-            "rust",
-            "python",
-            "javascript",
-            "typescript",
-            "go",
-            "java",
-            "kotlin",
-            "swift",
-            "ruby",
-            "php",
-            "c",
-            "cpp",
-            "c++",
-            "csharp",
-            "cs",
-            "shell",
-            "bash",
-            "zsh",
-            "sql",
-            "html",
-            "css",
-            "markdown",
-        ],
-        &[
-            ".rs", ".py", ".js", ".ts", ".go", ".java", ".cs", ".sql", ".sh", "snippet", "script",
-            "class", "function",
-        ],
-        &["code", "snippet", "script"],
+        pattern.languages,
+        pattern.name_needles,
+        pattern.tag_needles,
     )
+}
+
+pub(super) fn is_code_summary(item: &PasteSummary) -> bool {
+    summary_matches_pattern(item, &CODE_SUMMARY_PATTERN)
 }
 
 pub(super) fn is_config_summary(item: &PasteSummary) -> bool {
-    summary_matches(
-        item,
-        &[
-            "json",
-            "yaml",
-            "yml",
-            "toml",
-            "ini",
-            "env",
-            "xml",
-            "hcl",
-            "properties",
-        ],
-        &[
-            "config",
-            "settings",
-            ".env",
-            "dockerfile",
-            "compose",
-            "k8s",
-            "kubernetes",
-            "helm",
-        ],
-        &[
-            "config",
-            "settings",
-            "env",
-            "docker",
-            "k8s",
-            "kubernetes",
-            "helm",
-        ],
-    )
+    summary_matches_pattern(item, &CONFIG_SUMMARY_PATTERN)
 }
 
 pub(super) fn is_log_summary(item: &PasteSummary) -> bool {
-    summary_matches(
-        item,
-        &["log"],
-        &["log", "logs", "trace", "stderr", "stdout", "error"],
-        &["log", "logs", "trace", "stderr", "stdout", "error"],
-    )
+    summary_matches_pattern(item, &LOG_SUMMARY_PATTERN)
 }
 
 pub(super) fn is_link_summary(item: &PasteSummary) -> bool {
-    summary_matches(
-        item,
-        &[],
-        &["http://", "https://", "www.", "url", "link", "links"],
-        &["url", "link", "links", "bookmark"],
-    )
+    summary_matches_pattern(item, &LINK_SUMMARY_PATTERN)
 }
 
 pub(super) fn language_extension(language: Option<&str>) -> &'static str {

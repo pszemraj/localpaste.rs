@@ -18,6 +18,8 @@ pub mod models;
 pub mod naming;
 #[cfg(test)]
 pub(crate) mod test_support;
+/// Shared string and host normalization helpers.
+pub mod text;
 
 pub use config::Config;
 pub use constants::{
