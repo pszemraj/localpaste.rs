@@ -123,7 +123,10 @@ fn database_new_clears_stale_folder_delete_markers() {
     drop(db);
 
     let reopened = Database::new(&db_path_str).expect("reopen");
-    assert!(!reopened.folders.is_delete_marked(&folder_id).expect("marked"));
+    assert!(!reopened
+        .folders
+        .is_delete_marked(&folder_id)
+        .expect("marked"));
 }
 
 #[test]

@@ -11,6 +11,12 @@ pub struct FolderDb {
 
 impl FolderDb {
     /// Initialize folder tables if they do not exist yet.
+    ///
+    /// # Returns
+    /// A new [`FolderDb`] accessor bound to `db`.
+    ///
+    /// # Errors
+    /// Returns an error when redb transaction/table initialization fails.
     pub fn new(db: Arc<redb::Database>) -> Result<Self, AppError> {
         let write_txn = db.begin_write()?;
         write_txn.open_table(FOLDERS)?;
@@ -19,6 +25,17 @@ impl FolderDb {
         Ok(Self { db })
     }
 
+    /// Insert a new folder row.
+    ///
+    /// # Arguments
+    /// - `folder`: Folder row to persist.
+    ///
+    /// # Returns
+    /// `Ok(())` when the row is inserted.
+    ///
+    /// # Errors
+    /// Returns an error when serialization fails, the id already exists, or
+    /// underlying storage operations fail.
     pub fn create(&self, folder: &Folder) -> Result<(), AppError> {
         let encoded = bincode::serialize(folder)?;
         let write_txn = self.db.begin_write()?;
@@ -36,6 +53,13 @@ impl FolderDb {
         Ok(())
     }
 
+    /// Fetch a folder by id.
+    ///
+    /// # Returns
+    /// `Ok(Some(folder))` when found, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn get(&self, id: &str) -> Result<Option<Folder>, AppError> {
         let read_txn = self.db.begin_read()?;
         let folders = read_txn.open_table(FOLDERS)?;
@@ -45,6 +69,20 @@ impl FolderDb {
         }
     }
 
+    /// Update folder name and optionally parent id.
+    ///
+    /// Empty `parent_id` values are normalized to `None`.
+    ///
+    /// # Arguments
+    /// - `id`: Folder id to update.
+    /// - `name`: New folder display name.
+    /// - `parent_id`: Optional parent id (empty string clears parent).
+    ///
+    /// # Returns
+    /// `Ok(Some(folder))` when updated, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or serialization fails.
     pub fn update(
         &self,
         id: &str,
@@ -64,6 +102,13 @@ impl FolderDb {
         })
     }
 
+    /// Delete a folder and clear any delete marker for the same id.
+    ///
+    /// # Returns
+    /// `Ok(true)` when deleted, `Ok(false)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage operations fail.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
         let write_txn = self.db.begin_write()?;
         let removed = {
@@ -77,6 +122,13 @@ impl FolderDb {
         Ok(removed)
     }
 
+    /// List all folders sorted by name.
+    ///
+    /// # Returns
+    /// All known folders in ascending name order.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn list(&self) -> Result<Vec<Folder>, AppError> {
         let read_txn = self.db.begin_read()?;
         let folders_table = read_txn.open_table(FOLDERS)?;
@@ -90,6 +142,18 @@ impl FolderDb {
         Ok(folders)
     }
 
+    /// Add or subtract from a folder's `paste_count`.
+    ///
+    /// # Arguments
+    /// - `id`: Folder id to update.
+    /// - `delta`: Signed delta applied with saturation.
+    ///
+    /// # Returns
+    /// `Ok(())` when the count update commits.
+    ///
+    /// # Errors
+    /// Returns [`AppError::NotFound`] when the folder is missing, or storage
+    /// / serialization errors when the update cannot be committed.
     pub fn update_count(&self, id: &str, delta: i32) -> Result<(), AppError> {
         let updated = self.update_folder_record(id, move |folder| {
             if delta > 0 {
@@ -105,6 +169,18 @@ impl FolderDb {
         Ok(())
     }
 
+    /// Set a folder's `paste_count` to an exact value.
+    ///
+    /// # Arguments
+    /// - `id`: Folder id to update.
+    /// - `count`: New exact paste count.
+    ///
+    /// # Returns
+    /// `Ok(())` when the count update commits.
+    ///
+    /// # Errors
+    /// Returns [`AppError::NotFound`] when the folder is missing, or storage
+    /// / serialization errors when the update cannot be committed.
     pub fn set_count(&self, id: &str, count: usize) -> Result<(), AppError> {
         let updated = self.update_folder_record(id, move |folder| {
             folder.paste_count = count;
@@ -116,6 +192,13 @@ impl FolderDb {
         Ok(())
     }
 
+    /// Mark folders as in-progress for delete workflows.
+    ///
+    /// # Returns
+    /// `Ok(())` when all markers are written.
+    ///
+    /// # Errors
+    /// Returns an error when storage operations fail.
     pub fn mark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
         let write_txn = self.db.begin_write()?;
         {
@@ -128,6 +211,13 @@ impl FolderDb {
         Ok(())
     }
 
+    /// Remove delete markers for folders.
+    ///
+    /// # Returns
+    /// `Ok(())` when all markers are removed.
+    ///
+    /// # Errors
+    /// Returns an error when storage operations fail.
     pub fn unmark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
         let write_txn = self.db.begin_write()?;
         {
@@ -140,12 +230,26 @@ impl FolderDb {
         Ok(())
     }
 
+    /// Check whether a folder id is currently delete-marked.
+    ///
+    /// # Returns
+    /// `true` when a marker is present, otherwise `false`.
+    ///
+    /// # Errors
+    /// Returns an error when storage operations fail.
     pub fn is_delete_marked(&self, id: &str) -> Result<bool, AppError> {
         let read_txn = self.db.begin_read()?;
         let deleting = read_txn.open_table(FOLDERS_DELETING)?;
         Ok(deleting.get(id)?.is_some())
     }
 
+    /// Remove all folder delete markers.
+    ///
+    /// # Returns
+    /// `Ok(())` when table reset completes.
+    ///
+    /// # Errors
+    /// Returns an error when table reset operations fail.
     pub fn clear_delete_markers(&self) -> Result<(), AppError> {
         let write_txn = self.db.begin_write()?;
         let _ = write_txn.delete_table(FOLDERS_DELETING);

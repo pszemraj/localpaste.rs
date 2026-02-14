@@ -14,6 +14,9 @@ pub struct BackupManager {
 
 impl BackupManager {
     /// Create a backup manager for the database path.
+    ///
+    /// # Returns
+    /// A new [`BackupManager`] bound to `db_path`.
     pub fn new(db_path: &str) -> Self {
         let db_path = PathBuf::from(db_path);
         let db_file_path = db_path.join(REDB_FILE_NAME);
@@ -27,13 +30,21 @@ impl BackupManager {
     ///
     /// Holding a write transaction blocks concurrent writers, guaranteeing a
     /// consistent on-disk snapshot for the copy operation.
+    ///
+    /// # Returns
+    /// The created backup file path, or an empty string when no database file exists.
+    ///
+    /// # Errors
+    /// Returns an error when transaction start or filesystem copy operations fail.
     pub fn create_backup(&self, db: &redb::Database) -> Result<String, AppError> {
         if !self.db_file_path.exists() {
             return Ok(String::new());
         }
 
         let timestamp = unix_timestamp_seconds(SystemTime::now())?;
-        let backup_path = self.db_path.with_extension(format!("backup.{}.redb", timestamp));
+        let backup_path = self
+            .db_path
+            .with_extension(format!("backup.{}.redb", timestamp));
 
         let write_txn = db.begin_write()?;
         std::fs::copy(&self.db_file_path, &backup_path).map_err(|err| {

@@ -28,11 +28,20 @@ impl Drop for OwnerLockGuard {
 }
 
 /// Return the owner lock file path for a database root.
+///
+/// # Returns
+/// Fully qualified owner-lock path (`<db_path>/db.owner.lock`).
 pub fn owner_lock_path(db_path: &str) -> PathBuf {
     PathBuf::from(db_path).join(DB_OWNER_LOCK_FILE_NAME)
 }
 
 /// Acquire and hold an exclusive owner lock for the process lifetime.
+///
+/// # Returns
+/// A guard that keeps the owner lock held until dropped.
+///
+/// # Errors
+/// Returns an error when lock file creation/open or lock acquisition fails.
 pub fn acquire_owner_lock_for_lifetime(db_path: &str) -> Result<OwnerLockGuard, AppError> {
     let lock_path = owner_lock_path(db_path);
     if let Some(parent) = lock_path.parent() {
@@ -75,6 +84,15 @@ pub fn acquire_owner_lock_for_lifetime(db_path: &str) -> Result<OwnerLockGuard, 
 }
 
 /// Probe whether another process currently holds the owner lock.
+///
+/// # Returns
+/// [`ProcessProbeResult::Running`] when locked by another process, or
+/// [`ProcessProbeResult::NotRunning`] when this process can safely acquire/release
+/// the owner lock. Probe/tooling failures return [`ProcessProbeResult::Unknown`].
+///
+/// # Errors
+/// This helper does not return `Result`; uncertainty is represented as
+/// [`ProcessProbeResult::Unknown`].
 pub fn probe_owner_lock(db_path: &str) -> ProcessProbeResult {
     let lock_path = owner_lock_path(db_path);
     if let Some(parent) = lock_path.parent() {

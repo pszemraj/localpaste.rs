@@ -22,6 +22,12 @@ pub struct PasteDb {
 
 impl PasteDb {
     /// Initialize paste tables if they do not exist yet.
+    ///
+    /// # Returns
+    /// A new [`PasteDb`] accessor bound to `db`.
+    ///
+    /// # Errors
+    /// Returns an error when redb transaction/table initialization fails.
     pub fn new(db: Arc<redb::Database>) -> Result<Self, AppError> {
         let write_txn = db.begin_write()?;
         write_txn.open_table(PASTES)?;
@@ -31,6 +37,17 @@ impl PasteDb {
         Ok(Self { db })
     }
 
+    /// Insert a new paste row and derived metadata/index rows atomically.
+    ///
+    /// # Arguments
+    /// - `paste`: Paste row to persist.
+    ///
+    /// # Returns
+    /// `Ok(())` when insert commits.
+    ///
+    /// # Errors
+    /// Returns an error when serialization fails, id already exists, or storage
+    /// operations fail.
     pub fn create(&self, paste: &Paste) -> Result<(), AppError> {
         let encoded_paste = bincode::serialize(paste)?;
         let meta = PasteMeta::from(paste);
@@ -58,6 +75,13 @@ impl PasteDb {
         Ok(())
     }
 
+    /// Fetch a paste by id.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when found, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn get(&self, id: &str) -> Result<Option<Paste>, AppError> {
         let read_txn = self.db.begin_read()?;
         let pastes = read_txn.open_table(PASTES)?;
@@ -67,10 +91,33 @@ impl PasteDb {
         }
     }
 
+    /// Update a paste by id.
+    ///
+    /// # Arguments
+    /// - `id`: Paste id to update.
+    /// - `update`: Update payload.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when updated, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or serialization fails.
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
         self.update_inner(id, None, update)
     }
 
+    /// Update a paste only when current folder id matches `expected_folder_id`.
+    ///
+    /// # Arguments
+    /// - `id`: Paste id to update.
+    /// - `expected_folder_id`: Expected current folder id.
+    /// - `update`: Update payload.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when updated, `Ok(None)` when missing or folder does not match.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or serialization fails.
     pub fn update_if_folder_matches(
         &self,
         id: &str,
@@ -132,6 +179,13 @@ impl PasteDb {
         Ok(updated_paste)
     }
 
+    /// Delete a paste and return the deleted canonical row.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when deleted, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
         let write_txn = self.db.begin_write()?;
         let deleted = {
@@ -156,10 +210,28 @@ impl PasteDb {
         Ok(deleted)
     }
 
+    /// Delete a paste by id.
+    ///
+    /// # Returns
+    /// `true` when a row was deleted, otherwise `false`.
+    ///
+    /// # Errors
+    /// Returns an error when storage or deserialization fails.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
         Ok(self.delete_and_return(id)?.is_some())
     }
 
+    /// List canonical paste rows sorted by `updated_at` descending.
+    ///
+    /// # Arguments
+    /// - `limit`: Maximum rows to return.
+    /// - `folder_id`: Optional folder filter.
+    ///
+    /// # Returns
+    /// Up to `limit` canonical rows in descending recency order.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn list(&self, limit: usize, folder_id: Option<String>) -> Result<Vec<Paste>, AppError> {
         if limit == 0 {
             return Ok(Vec::new());
@@ -185,6 +257,17 @@ impl PasteDb {
         Ok(pastes)
     }
 
+    /// Return up to `limit` canonical paste ids, optionally filtered by folder.
+    ///
+    /// # Arguments
+    /// - `limit`: Maximum ids to return.
+    /// - `folder_id`: Optional folder filter.
+    ///
+    /// # Returns
+    /// Up to `limit` canonical paste ids.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn list_canonical_ids_batch(
         &self,
         limit: usize,
@@ -215,6 +298,13 @@ impl PasteDb {
         Ok(ids)
     }
 
+    /// Scan canonical paste rows and invoke `on_meta` for each derived [`PasteMeta`].
+    ///
+    /// # Returns
+    /// `Ok(())` when scan completes.
+    ///
+    /// # Errors
+    /// Returns an error when storage access, deserialization, or callback execution fails.
     pub fn scan_canonical_meta<F>(&self, mut on_meta: F) -> Result<(), AppError>
     where
         F: FnMut(PasteMeta) -> Result<(), AppError>,
@@ -229,6 +319,17 @@ impl PasteDb {
         Ok(())
     }
 
+    /// List paste metadata using the recency index.
+    ///
+    /// # Arguments
+    /// - `limit`: Maximum rows to return.
+    /// - `folder_id`: Optional folder filter.
+    ///
+    /// # Returns
+    /// Up to `limit` metadata rows in index order.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn list_meta(
         &self,
         limit: usize,
@@ -264,6 +365,19 @@ impl PasteDb {
         Ok(metas)
     }
 
+    /// Search canonical paste data and return ranked metadata rows.
+    ///
+    /// # Arguments
+    /// - `query`: Search query string.
+    /// - `limit`: Maximum rows to return.
+    /// - `folder_id`: Optional folder filter.
+    /// - `language`: Optional language filter.
+    ///
+    /// # Returns
+    /// Ranked metadata matches (name/tags/content scoring).
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn search(
         &self,
         query: &str,
@@ -305,6 +419,19 @@ impl PasteDb {
         Ok(finalize_meta_search_results(results, limit))
     }
 
+    /// Search metadata-only fields and return ranked rows.
+    ///
+    /// # Arguments
+    /// - `query`: Search query string.
+    /// - `limit`: Maximum rows to return.
+    /// - `folder_id`: Optional folder filter.
+    /// - `language`: Optional language filter.
+    ///
+    /// # Returns
+    /// Ranked metadata matches (name/tags/language scoring).
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn search_meta(
         &self,
         query: &str,
@@ -337,7 +464,6 @@ impl PasteDb {
 
         Ok(finalize_meta_search_results(results, limit))
     }
-
 }
 
 #[cfg(test)]

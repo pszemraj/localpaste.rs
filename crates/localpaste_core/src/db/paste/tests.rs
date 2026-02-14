@@ -1,3 +1,5 @@
+//! Paste table tests.
+
 use super::PasteDb;
 use crate::db::tables::{PASTES, PASTES_BY_UPDATED, PASTES_META, REDB_FILE_NAME};
 use crate::models::paste::{Paste, UpdatePasteRequest};
@@ -77,7 +79,9 @@ fn create_rejects_duplicate_id() {
 
     let mut second = Paste::new("two".to_string(), "two".to_string());
     second.id = "duplicate-id".to_string();
-    let err = paste_db.create(&second).expect_err("duplicate create should fail");
+    let err = paste_db
+        .create(&second)
+        .expect_err("duplicate create should fail");
     assert!(
         matches!(err, crate::AppError::StorageMessage(ref msg) if msg.contains("already exists")),
         "unexpected error: {}",
@@ -107,7 +111,10 @@ fn aborted_write_transaction_leaves_no_partial_rows() {
         .open_table(PASTES_BY_UPDATED)
         .expect("open updated");
 
-    assert!(pastes.get(paste.id.as_str()).expect("get canonical").is_none());
+    assert!(pastes
+        .get(paste.id.as_str())
+        .expect("get canonical")
+        .is_none());
     assert!(metas.get(paste.id.as_str()).expect("get meta").is_none());
     let has_updated = updated
         .iter()
@@ -131,11 +138,15 @@ fn search_distinguishes_content_vs_meta_queries() {
         "name match should be found in canonical search"
     );
     assert!(
-        content_results.iter().any(|meta| meta.id == content_only.id),
+        content_results
+            .iter()
+            .any(|meta| meta.id == content_only.id),
         "content match should be found in canonical search"
     );
 
-    let meta_results = paste_db.search_meta("needle", 10, None, None).expect("meta");
+    let meta_results = paste_db
+        .search_meta("needle", 10, None, None)
+        .expect("meta");
     assert!(
         meta_results.iter().any(|meta| meta.id == by_name.id),
         "name match should be found in metadata search"

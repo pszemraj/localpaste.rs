@@ -294,6 +294,9 @@ mod tests {
 
     #[test]
     fn legacy_language_manual_flag_marks_divergent_language_as_manual() {
-        assert!(infer_legacy_language_is_manual("fn main() {}", Some("python")));
+        assert!(infer_legacy_language_is_manual(
+            "fn main() {}",
+            Some("python")
+        ));
     }
 }

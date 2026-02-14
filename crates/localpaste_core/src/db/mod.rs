@@ -118,6 +118,13 @@ fn pgrep_cmdline_probe_result(binary_name: &str, current_pid: u32) -> ProcessPro
 
 /// Probe for other LocalPaste processes.
 #[cfg(unix)]
+///
+/// # Returns
+/// Best-effort process-liveness classification for known LocalPaste binaries.
+///
+/// # Errors
+/// This helper does not return `Result`; probe uncertainty is represented as
+/// [`ProcessProbeResult::Unknown`].
 pub fn localpaste_process_probe() -> ProcessProbeResult {
     let current_pid = std::process::id();
     let exact_probe = UNIX_PGREP_EXACT_NAMES
@@ -135,6 +142,16 @@ pub fn localpaste_process_probe() -> ProcessProbeResult {
 
 /// Probe for other LocalPaste processes.
 #[cfg(windows)]
+///
+/// # Returns
+/// Best-effort process-liveness classification for known LocalPaste binaries.
+///
+/// # Errors
+/// This helper does not return `Result`; probe uncertainty is represented as
+/// [`ProcessProbeResult::Unknown`].
+///
+/// # Panics
+/// This function does not intentionally panic.
 pub fn localpaste_process_probe() -> ProcessProbeResult {
     use std::process::Command;
 
@@ -188,6 +205,12 @@ fn tasklist_error_probe_result(kind: std::io::ErrorKind) -> ProcessProbeResult {
 
 /// Probe for other LocalPaste processes.
 #[cfg(not(any(unix, windows)))]
+///
+/// # Returns
+/// Always returns [`ProcessProbeResult::Unknown`] on unsupported platforms.
+///
+/// # Errors
+/// This helper does not return `Result`.
 pub fn localpaste_process_probe() -> ProcessProbeResult {
     ProcessProbeResult::Unknown
 }
@@ -281,12 +304,25 @@ impl Database {
     }
 
     /// Build a database handle from an existing shared redb instance.
+    ///
+    /// # Returns
+    /// A [`Database`] handle that shares the same underlying redb instance.
+    ///
+    /// # Errors
+    /// Returns an error when table accessors or coordination primitives cannot
+    /// be initialized.
     pub fn from_shared(db: Arc<RedbDatabase>) -> Result<Self, AppError> {
         let folder_txn_lock = Self::shared_folder_txn_lock_for_db(&db)?;
         Self::from_shared_with_coordination(db, None, folder_txn_lock)
     }
 
     /// Clone this handle for another subsystem in the same process.
+    ///
+    /// # Returns
+    /// A new [`Database`] view sharing the same storage handle and locks.
+    ///
+    /// # Errors
+    /// Returns an error when accessor initialization fails.
     pub fn share(&self) -> Result<Self, AppError> {
         Self::from_shared_with_coordination(
             self.db.clone(),
@@ -296,6 +332,13 @@ impl Database {
     }
 
     /// Open the database and initialize tables.
+    ///
+    /// # Returns
+    /// An initialized [`Database`] instance.
+    ///
+    /// # Errors
+    /// Returns an error when directory setup, lock acquisition, redb open, or
+    /// startup invariant repair cannot be completed.
     pub fn new(path: &str) -> Result<Self, AppError> {
         let db_dir = Path::new(path);
         if db_dir.exists() && !db_dir.is_dir() {
@@ -379,6 +422,12 @@ impl Database {
     }
 
     /// Compatibility no-op. redb durability is guaranteed on commit.
+    ///
+    /// # Returns
+    /// Always returns `Ok(())`.
+    ///
+    /// # Errors
+    /// This compatibility helper currently returns no errors.
     pub fn flush(&self) -> Result<(), AppError> {
         Ok(())
     }

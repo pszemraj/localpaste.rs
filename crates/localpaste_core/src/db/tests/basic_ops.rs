@@ -145,9 +145,9 @@ fn corrupt_rows_surface_serialization_errors_without_removal() {
     }
     write_txn.commit().expect("commit");
 
-    let folder_update = db
-        .folders
-        .update("corrupt-folder", "renamed".to_string(), Some(String::new()));
+    let folder_update =
+        db.folders
+            .update("corrupt-folder", "renamed".to_string(), Some(String::new()));
     assert!(matches!(folder_update, Err(AppError::Serialization(_))));
 
     let paste_update = db.pastes.update(

@@ -40,6 +40,12 @@ fn load_folder(
 
 impl TransactionOps {
     /// Acquire the global folder-transaction lock.
+    ///
+    /// # Returns
+    /// A guard that must be held for the full folder-affecting critical section.
+    ///
+    /// # Errors
+    /// Returns an error when the lock is poisoned.
     pub fn acquire_folder_txn_lock(
         db: &Database,
     ) -> Result<std::sync::MutexGuard<'_, ()>, AppError> {
@@ -49,6 +55,18 @@ impl TransactionOps {
     }
 
     /// Atomically create a paste and increment the destination folder count.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `paste`: Paste row to insert.
+    /// - `folder_id`: Destination folder id.
+    ///
+    /// # Returns
+    /// `Ok(())` when the write commits.
+    ///
+    /// # Errors
+    /// Returns an error when folder assignment is invalid, id already exists,
+    /// serialization fails, or storage operations fail.
     pub fn create_paste_with_folder(
         db: &Database,
         paste: &Paste,
@@ -102,6 +120,16 @@ impl TransactionOps {
     }
 
     /// Atomically delete a paste and decrement folder count when applicable.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `paste_id`: Paste id to remove.
+    ///
+    /// # Returns
+    /// `Ok(true)` when a paste was removed, `Ok(false)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
     pub fn delete_paste_with_folder(db: &Database, paste_id: &str) -> Result<bool, AppError> {
         let _guard = Self::acquire_folder_txn_lock(db)?;
         Self::delete_paste_with_folder_locked(db, paste_id)
@@ -145,6 +173,19 @@ impl TransactionOps {
     }
 
     /// Atomically move a paste between folders while applying additional updates.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `paste_id`: Paste id to update.
+    /// - `new_folder_id`: Destination folder id, or `None` for unfiled.
+    /// - `update_req`: Additional patch fields for the paste row.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when updated, `Ok(None)` when the paste does not exist.
+    ///
+    /// # Errors
+    /// Returns an error when destination assignment is invalid, or when storage /
+    /// serialization operations fail.
     pub fn move_paste_between_folders(
         db: &Database,
         paste_id: &str,

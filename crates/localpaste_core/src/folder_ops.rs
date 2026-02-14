@@ -8,6 +8,17 @@ use crate::{
 use std::collections::{HashMap, HashSet};
 
 /// Validate that a folder can accept new paste assignments.
+///
+/// # Arguments
+/// - `db`: Open database handle.
+/// - `folder_id`: Candidate folder id.
+///
+/// # Returns
+/// `Ok(())` when the folder exists and is not delete-marked.
+///
+/// # Errors
+/// Returns [`AppError::NotFound`] for missing folders or
+/// [`AppError::BadRequest`] when delete is in progress.
 pub fn ensure_folder_assignable(db: &Database, folder_id: &str) -> Result<(), AppError> {
     if db.folders.get(folder_id)?.is_none() {
         return Err(AppError::NotFound);
@@ -22,6 +33,14 @@ pub fn ensure_folder_assignable(db: &Database, folder_id: &str) -> Result<(), Ap
 }
 
 /// Returns `true` if assigning `folder_id` under `new_parent_id` introduces a cycle.
+///
+/// # Arguments
+/// - `folders`: Full folder list.
+/// - `folder_id`: Folder being re-parented.
+/// - `new_parent_id`: Proposed parent id.
+///
+/// # Returns
+/// `true` when the proposed parent would create a cycle.
 pub fn introduces_cycle(folders: &[Folder], folder_id: &str, new_parent_id: &str) -> bool {
     let parent_map: HashMap<&str, Option<&str>> = folders
         .iter()
@@ -41,6 +60,13 @@ pub fn introduces_cycle(folders: &[Folder], folder_id: &str, new_parent_id: &str
 }
 
 /// Collect descendants (including `root_id`) in child-first delete order.
+///
+/// # Arguments
+/// - `folders`: Full folder list.
+/// - `root_id`: Root folder id to delete.
+///
+/// # Returns
+/// Folder ids ordered so children are deleted before parents.
 pub fn folder_delete_order(folders: &[Folder], root_id: &str) -> Vec<String> {
     let mut to_visit = vec![root_id.to_string()];
     let mut discovered = Vec::new();
@@ -64,6 +90,17 @@ pub fn folder_delete_order(folders: &[Folder], root_id: &str) -> Vec<String> {
 }
 
 /// Deletes a folder tree and migrates all affected pastes to unfiled.
+///
+/// # Arguments
+/// - `db`: Open database handle.
+/// - `root_id`: Root folder id to delete.
+///
+/// # Returns
+/// Deleted folder ids in execution order (children first, root last).
+///
+/// # Errors
+/// Returns [`AppError::NotFound`] when `root_id` does not exist, or storage
+/// errors when folder/paste mutations fail.
 pub fn delete_folder_tree_and_migrate(
     db: &Database,
     root_id: &str,
@@ -72,6 +109,18 @@ pub fn delete_folder_tree_and_migrate(
 }
 
 /// Deletes a folder tree while holding an external guard for affected paste ids.
+///
+/// # Arguments
+/// - `db`: Open database handle.
+/// - `root_id`: Root folder id to delete.
+/// - `acquire_guard`: Callback that receives affected paste ids and returns a guard.
+///
+/// # Returns
+/// Deleted folder ids in execution order (children first, root last).
+///
+/// # Errors
+/// Returns [`AppError::NotFound`] when `root_id` does not exist, or any error
+/// produced by `acquire_guard` / storage mutations.
 pub fn delete_folder_tree_and_migrate_guarded<G, F>(
     db: &Database,
     root_id: &str,
@@ -201,6 +250,13 @@ fn reconcile_folder_parent_invariants_locked(
 }
 
 /// Reconcile folder invariants from canonical paste rows.
+///
+/// # Returns
+/// `Ok(())` when parent references, orphan folder references, and exact counts
+/// are repaired.
+///
+/// # Errors
+/// Returns storage and serialization errors when reconciliation cannot complete.
 pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
     let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
     let initial_folders = db.folders.list()?;

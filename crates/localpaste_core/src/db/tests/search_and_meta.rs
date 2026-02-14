@@ -92,7 +92,10 @@ fn paste_search_meta_is_metadata_only() {
     db.pastes.create(&by_tag).expect("create");
     db.pastes.create(&content_only).expect("create");
 
-    let results = db.pastes.search_meta("rust", 10, None, None).expect("search");
+    let results = db
+        .pastes
+        .search_meta("rust", 10, None, None)
+        .expect("search");
     let ids: Vec<String> = results.into_iter().map(|m| m.id).collect();
     assert!(ids.contains(&by_name.id));
     assert!(ids.contains(&by_tag.id));
@@ -169,7 +172,10 @@ fn paste_search_ignores_empty_or_whitespace_queries() {
     let meta_empty = db.pastes.search_meta("", 10, None, None).expect("search");
     assert!(meta_empty.is_empty());
 
-    let meta_whitespace = db.pastes.search_meta("   ", 10, None, None).expect("search");
+    let meta_whitespace = db
+        .pastes
+        .search_meta("   ", 10, None, None)
+        .expect("search");
     assert!(meta_whitespace.is_empty());
 }
 
@@ -188,7 +194,10 @@ fn meta_indexes_stay_consistent_after_update_and_delete() {
         folder_id: None,
         tags: Some(vec!["tag".to_string()]),
     };
-    db.pastes.update(&paste_id, update).expect("update").expect("row");
+    db.pastes
+        .update(&paste_id, update)
+        .expect("update")
+        .expect("row");
 
     let metas = db.pastes.list_meta(10, None).expect("list");
     let updated = metas.into_iter().find(|m| m.id == paste_id).expect("meta");

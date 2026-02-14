@@ -145,7 +145,10 @@ fn print_help() {
     println!(
         "  DB_PATH           Database path (default: platform cache dir; Windows: %LOCALAPPDATA%\\\\localpaste\\\\db, Unix: ~/.cache/localpaste/db)"
     );
-    println!("  PORT              Server port (default: {})", DEFAULT_PORT);
+    println!(
+        "  PORT              Server port (default: {})",
+        DEFAULT_PORT
+    );
     println!("  MAX_PASTE_SIZE    Maximum paste size in bytes (default: 10MB)");
     println!(
         "  AUTO_BACKUP       Create backup at startup when DB already exists (1/0/true/false)"
