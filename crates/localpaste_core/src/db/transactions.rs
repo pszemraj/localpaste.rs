@@ -7,9 +7,15 @@ use crate::error::AppError;
 use crate::models::folder::Folder;
 use crate::models::paste::{Paste, PasteMeta, UpdatePasteRequest};
 use redb::ReadableTable;
+use std::sync::MutexGuard;
 
 /// Atomic operations that update paste and folder rows together.
 pub struct TransactionOps;
+
+/// Guard that proves the caller holds the global folder transaction lock.
+pub struct FolderTxnGuard<'a> {
+    _guard: MutexGuard<'a, ()>,
+}
 
 fn ensure_folder_assignable_in_txn(
     folders: &redb::Table<&str, &[u8]>,
@@ -54,6 +60,21 @@ impl TransactionOps {
             .map_err(|_| AppError::StorageMessage("Folder transaction lock poisoned".to_string()))
     }
 
+    /// Acquire the global folder transaction guard.
+    ///
+    /// This typed guard must be passed to guarded mutation helpers to guarantee
+    /// consistent lock ordering across crates.
+    ///
+    /// # Returns
+    /// A guard that must be held for the full folder-affecting critical section.
+    ///
+    /// # Errors
+    /// Returns an error when the lock is poisoned.
+    pub fn acquire_folder_txn_guard(db: &Database) -> Result<FolderTxnGuard<'_>, AppError> {
+        let guard = Self::acquire_folder_txn_lock(db)?;
+        Ok(FolderTxnGuard { _guard: guard })
+    }
+
     /// Atomically create a paste and increment the destination folder count.
     ///
     /// # Arguments
@@ -72,12 +93,27 @@ impl TransactionOps {
         paste: &Paste,
         folder_id: &str,
     ) -> Result<(), AppError> {
-        let _guard = Self::acquire_folder_txn_lock(db)?;
-        Self::create_paste_with_folder_locked(db, paste, folder_id)
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::create_paste_with_folder_locked(db, &guard, paste, folder_id)
     }
 
-    pub(crate) fn create_paste_with_folder_locked(
+    /// Create a paste while holding a folder transaction guard.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `_folder_guard`: Active folder transaction guard for this critical section.
+    /// - `paste`: Paste row to insert.
+    /// - `folder_id`: Destination folder id.
+    ///
+    /// # Returns
+    /// `Ok(())` when the write commits.
+    ///
+    /// # Errors
+    /// Returns an error when folder assignment is invalid, id already exists,
+    /// serialization fails, or storage operations fail.
+    pub fn create_paste_with_folder_locked(
         db: &Database,
+        _folder_guard: &FolderTxnGuard<'_>,
         paste: &Paste,
         folder_id: &str,
     ) -> Result<(), AppError> {
@@ -131,12 +167,25 @@ impl TransactionOps {
     /// # Errors
     /// Returns an error when storage access or deserialization fails.
     pub fn delete_paste_with_folder(db: &Database, paste_id: &str) -> Result<bool, AppError> {
-        let _guard = Self::acquire_folder_txn_lock(db)?;
-        Self::delete_paste_with_folder_locked(db, paste_id)
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::delete_paste_with_folder_locked(db, &guard, paste_id)
     }
 
-    pub(crate) fn delete_paste_with_folder_locked(
+    /// Delete a paste while holding a folder transaction guard.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `_folder_guard`: Active folder transaction guard for this critical section.
+    /// - `paste_id`: Paste id to remove.
+    ///
+    /// # Returns
+    /// `Ok(true)` when a paste was removed, `Ok(false)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn delete_paste_with_folder_locked(
         db: &Database,
+        _folder_guard: &FolderTxnGuard<'_>,
         paste_id: &str,
     ) -> Result<bool, AppError> {
         let write_txn = db.db.begin_write()?;
@@ -192,12 +241,28 @@ impl TransactionOps {
         new_folder_id: Option<&str>,
         update_req: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
-        let _guard = Self::acquire_folder_txn_lock(db)?;
-        Self::move_paste_between_folders_locked(db, paste_id, new_folder_id, update_req)
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::move_paste_between_folders_locked(db, &guard, paste_id, new_folder_id, update_req)
     }
 
-    pub(crate) fn move_paste_between_folders_locked(
+    /// Move a paste between folders while holding a folder transaction guard.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `_folder_guard`: Active folder transaction guard for this critical section.
+    /// - `paste_id`: Paste id to update.
+    /// - `new_folder_id`: Destination folder id, or `None` for unfiled.
+    /// - `update_req`: Additional patch fields for the paste row.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when updated, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when destination assignment is invalid, or when storage /
+    /// serialization operations fail.
+    pub fn move_paste_between_folders_locked(
         db: &Database,
+        _folder_guard: &FolderTxnGuard<'_>,
         paste_id: &str,
         new_folder_id: Option<&str>,
         update_req: UpdatePasteRequest,

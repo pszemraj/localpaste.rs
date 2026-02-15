@@ -3,6 +3,7 @@
 use localpaste_core::DEFAULT_PORT;
 use localpaste_server::{config::Config, db::Database, serve_router, AppState};
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +59,10 @@ fn validate_bind_override(allow_public_access: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn database_file_path(config: &Config) -> PathBuf {
+    Path::new(&config.db_path).join(localpaste_server::db::tables::REDB_FILE_NAME)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -77,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let config = Config::from_env_strict().map_err(anyhow::Error::msg)?;
-    let db_exists_before_open = std::path::Path::new(&config.db_path).exists();
+    let db_exists_before_open = database_file_path(&config).is_file();
 
     if cli_flags.backup {
         run_backup(&config)?;
@@ -154,7 +159,7 @@ fn print_help() {
 }
 
 fn run_backup(config: &Config) -> anyhow::Result<()> {
-    if std::path::Path::new(&config.db_path).exists() {
+    if database_file_path(config).is_file() {
         let temp_db = Database::new(&config.db_path)?;
 
         let backup_manager = localpaste_server::db::backup::BackupManager::new(&config.db_path);
@@ -192,8 +197,12 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cli_flags, runs_maintenance_mode, validate_bind_override, CliFlags};
+    use super::{
+        database_file_path, parse_cli_flags, run_backup, runs_maintenance_mode,
+        validate_bind_override, CliFlags,
+    };
     use localpaste_core::env::{env_lock, EnvGuard};
+    use tempfile::TempDir;
 
     #[test]
     fn parse_cli_flags_rejects_unknown_and_positional_arguments() {
@@ -236,6 +245,37 @@ mod tests {
         let none = CliFlags::default();
         assert!(runs_maintenance_mode(backup_only));
         assert!(!runs_maintenance_mode(none));
+    }
+
+    #[test]
+    fn run_backup_skips_when_data_file_is_missing() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_dir = temp_dir.path().join("db");
+        std::fs::create_dir_all(&db_dir).expect("create db dir");
+        let config = localpaste_server::Config {
+            db_path: db_dir.to_string_lossy().to_string(),
+            port: 3055,
+            max_paste_size: 1024 * 1024,
+            auto_save_interval: 500,
+            auto_backup: false,
+        };
+
+        run_backup(&config).expect("backup mode should succeed when db file is missing");
+
+        let db_file = database_file_path(&config);
+        assert!(
+            !db_file.exists(),
+            "backup mode must not create '{}' when no database exists",
+            localpaste_server::db::tables::REDB_FILE_NAME
+        );
+        let entries = std::fs::read_dir(&db_dir)
+            .expect("read db dir")
+            .collect::<Result<Vec<_>, std::io::Error>>()
+            .expect("collect dir entries");
+        assert!(
+            entries.is_empty(),
+            "backup mode should not create files in an empty db directory"
+        );
     }
 
     #[test]

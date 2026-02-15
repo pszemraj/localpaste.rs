@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-pub use transactions::TransactionOps;
+pub use transactions::{FolderTxnGuard, TransactionOps};
 
 /// Process probe state used for lock-safety decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

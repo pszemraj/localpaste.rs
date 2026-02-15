@@ -197,6 +197,18 @@ pub(super) fn handle_update_paste_meta(
 }
 
 pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
+    let folder_guard = match TransactionOps::acquire_folder_txn_guard(&state.db) {
+        Ok(guard) => guard,
+        Err(err) => {
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Delete failed: {}", err),
+            );
+            return;
+        }
+    };
+
     let _mutation_guard = match state
         .locks
         .begin_mutation_ignoring_owner(id.as_str(), &state.lock_owner_id)
@@ -217,7 +229,7 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
         }
     };
 
-    let deleted = TransactionOps::delete_paste_with_folder(&state.db, &id);
+    let deleted = TransactionOps::delete_paste_with_folder_locked(&state.db, &folder_guard, &id);
     match deleted {
         Ok(true) => {
             state.query_cache.invalidate();

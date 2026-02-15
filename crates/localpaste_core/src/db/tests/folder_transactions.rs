@@ -176,3 +176,60 @@ fn delete_uses_folder_from_deleted_record_not_stale_context() {
     assert_eq!(old_after.paste_count, 0);
     assert_eq!(new_after.paste_count, 0);
 }
+
+#[test]
+fn direct_folder_affecting_paste_ops_are_rejected() {
+    let (db, _temp) = setup_test_db();
+
+    let folder = Folder::new("folder".to_string());
+    let folder_id = folder.id.clone();
+    db.folders.create(&folder).expect("create folder");
+
+    let mut direct_create = Paste::new("content".to_string(), "direct-create".to_string());
+    direct_create.folder_id = Some(folder_id.clone());
+    let create_err = db
+        .pastes
+        .create(&direct_create)
+        .expect_err("direct folder create should be rejected");
+    assert!(matches!(create_err, AppError::BadRequest(_)));
+    assert!(
+        db.pastes.get(&direct_create.id).expect("lookup").is_none(),
+        "rejected direct create must not persist rows"
+    );
+
+    let mut transactional = Paste::new("content".to_string(), "managed".to_string());
+    transactional.folder_id = Some(folder_id.clone());
+    let paste_id = transactional.id.clone();
+    TransactionOps::create_paste_with_folder(&db, &transactional, &folder_id).expect("create");
+
+    let update_err = db
+        .pastes
+        .update(
+            &paste_id,
+            UpdatePasteRequest {
+                content: None,
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(String::new()),
+                tags: None,
+            },
+        )
+        .expect_err("direct folder update should be rejected");
+    assert!(matches!(update_err, AppError::BadRequest(_)));
+
+    let delete_err = db
+        .pastes
+        .delete(&paste_id)
+        .expect_err("direct folder delete should be rejected");
+    assert!(matches!(delete_err, AppError::BadRequest(_)));
+
+    let current = db
+        .pastes
+        .get(&paste_id)
+        .expect("lookup")
+        .expect("paste should still exist");
+    assert_eq!(current.folder_id.as_deref(), Some(folder_id.as_str()));
+    let folder_after = db.folders.get(&folder_id).expect("folder").expect("exists");
+    assert_eq!(folder_after.paste_count, 1);
+}

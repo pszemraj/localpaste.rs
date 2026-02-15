@@ -129,11 +129,11 @@ pub fn delete_folder_tree_and_migrate_guarded<G, F>(
 where
     F: FnOnce(&[String]) -> Result<G, AppError>,
 {
-    let _folder_guard = TransactionOps::acquire_folder_txn_lock(db)?;
+    let folder_guard = TransactionOps::acquire_folder_txn_guard(db)?;
     let delete_order = folder_delete_order_for_root_locked(db, root_id)?;
     let affected_paste_ids = collect_affected_paste_ids_locked(db, &delete_order)?;
     let _external_guard = acquire_guard(&affected_paste_ids)?;
-    delete_folder_tree_and_migrate_with_order_locked(db, delete_order)
+    delete_folder_tree_and_migrate_with_order_locked(db, &folder_guard, delete_order)
 }
 
 fn folder_delete_order_for_root_locked(
@@ -171,12 +171,13 @@ fn collect_affected_paste_ids_locked(
 
 fn delete_folder_tree_and_migrate_with_order_locked(
     db: &Database,
+    folder_guard: &crate::db::FolderTxnGuard<'_>,
     delete_order: Vec<String>,
 ) -> Result<Vec<String>, AppError> {
     db.folders.mark_deleting(&delete_order)?;
     let result = (|| {
         for folder_id in &delete_order {
-            migrate_folder_pastes_to_unfiled(db, folder_id)?;
+            migrate_folder_pastes_to_unfiled(db, folder_guard, folder_id)?;
             db.folders.delete(folder_id)?;
         }
         Ok(delete_order.clone())
@@ -192,7 +193,11 @@ fn delete_folder_tree_and_migrate_with_order_locked(
     result
 }
 
-fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<(), AppError> {
+fn migrate_folder_pastes_to_unfiled(
+    db: &Database,
+    folder_guard: &crate::db::FolderTxnGuard<'_>,
+    folder_id: &str,
+) -> Result<(), AppError> {
     loop {
         let paste_ids = db.pastes.list_canonical_ids_batch(100, Some(folder_id))?;
         if paste_ids.is_empty() {
@@ -208,7 +213,13 @@ fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<()
                 folder_id: Some(String::new()),
                 tags: None,
             };
-            let _ = TransactionOps::move_paste_between_folders_locked(db, &paste_id, None, update)?;
+            let _ = TransactionOps::move_paste_between_folders_locked(
+                db,
+                folder_guard,
+                &paste_id,
+                None,
+                update,
+            )?;
         }
     }
     Ok(())
@@ -258,7 +269,7 @@ fn reconcile_folder_parent_invariants_locked(
 /// # Errors
 /// Returns storage and serialization errors when reconciliation cannot complete.
 pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
-    let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
+    let folder_guard = TransactionOps::acquire_folder_txn_guard(db)?;
     let initial_folders = db.folders.list()?;
     reconcile_folder_parent_invariants_locked(db, &initial_folders)?;
 
@@ -290,7 +301,13 @@ pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
                 folder_id: Some(String::new()),
                 tags: None,
             };
-            let _ = TransactionOps::move_paste_between_folders_locked(db, paste_id, None, update)?;
+            let _ = TransactionOps::move_paste_between_folders_locked(
+                db,
+                &folder_guard,
+                paste_id,
+                None,
+                update,
+            )?;
         }
     }
 
