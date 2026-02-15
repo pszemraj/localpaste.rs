@@ -159,12 +159,23 @@ fn print_help() {
 }
 
 fn run_backup(config: &Config) -> anyhow::Result<()> {
-    if database_file_path(config).is_file() {
+    let db_file = database_file_path(config);
+    let db_dir = Path::new(&config.db_path);
+
+    if db_file.is_file() {
         let temp_db = Database::new(&config.db_path)?;
 
         let backup_manager = localpaste_server::db::backup::BackupManager::new(&config.db_path);
         let backup_path = backup_manager.create_backup(temp_db.db.as_ref())?;
         println!("Database backed up to: {}", backup_path);
+    } else if db_dir.is_dir() && localpaste_server::db::looks_like_legacy_sled_layout(db_dir)? {
+        anyhow::bail!(
+            "Detected legacy sled database files in '{}' but '{}' is missing.\n\
+             Backup mode only supports the current redb layout.\n\
+             Copy this directory manually to preserve legacy data before continuing.",
+            db_dir.display(),
+            db_file.display()
+        );
     } else {
         println!("No existing database to backup");
     }
@@ -275,6 +286,34 @@ mod tests {
         assert!(
             entries.is_empty(),
             "backup mode should not create files in an empty db directory"
+        );
+    }
+
+    #[test]
+    fn run_backup_errors_when_legacy_sled_layout_is_detected() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_dir = temp_dir.path().join("legacy-db");
+        std::fs::create_dir_all(&db_dir).expect("create db dir");
+        std::fs::write(db_dir.join("pastes"), b"legacy").expect("seed legacy marker");
+        let config = localpaste_server::Config {
+            db_path: db_dir.to_string_lossy().to_string(),
+            port: 3055,
+            max_paste_size: 1024 * 1024,
+            auto_save_interval: 500,
+            auto_backup: false,
+        };
+
+        let err = run_backup(&config).expect_err("legacy layout should fail in backup mode");
+        let message = err.to_string();
+        assert!(
+            message.contains("legacy sled"),
+            "error should mention legacy sled detection: {}",
+            message
+        );
+        assert!(
+            message.contains(localpaste_server::db::tables::REDB_FILE_NAME),
+            "error should mention missing redb file: {}",
+            message
         );
     }
 

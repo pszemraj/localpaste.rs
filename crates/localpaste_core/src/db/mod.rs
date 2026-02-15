@@ -227,7 +227,17 @@ pub struct Database {
 #[cfg(test)]
 mod tests;
 
-fn looks_like_legacy_sled_layout(db_dir: &Path) -> Result<bool, AppError> {
+/// Detect whether a DB directory appears to contain legacy sled artifacts.
+///
+/// # Arguments
+/// - `db_dir`: Database directory path to inspect.
+///
+/// # Returns
+/// `Ok(true)` when known sled-era marker files/directories are present.
+///
+/// # Errors
+/// Returns an error when directory entries cannot be inspected.
+pub fn looks_like_legacy_sled_layout(db_dir: &Path) -> Result<bool, AppError> {
     const SLED_HINTS: &[&str] = &[
         "blobs",
         "conf",
