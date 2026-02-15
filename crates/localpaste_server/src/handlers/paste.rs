@@ -9,7 +9,7 @@ use axum::{
     response::Response,
     Json,
 };
-use localpaste_core::folder_ops::map_missing_folder_for_request;
+use localpaste_core::folder_ops::map_missing_folder_for_optional_request;
 
 const RESPONSE_SHAPE_HEADER: &str = "x-localpaste-response-shape";
 const META_RESPONSE_SHAPE: &str = "meta-only";
@@ -65,13 +65,6 @@ fn with_folder_metadata_response(response: Response, include_meta_shape_header: 
         with_meta_only_response_shape(response)
     } else {
         response
-    }
-}
-
-fn map_folder_not_found_for_request(err: AppError, folder_id: Option<&str>) -> AppError {
-    match (err, folder_id) {
-        (err, Some(folder_id)) => map_missing_folder_for_request(err, folder_id, "Folder"),
-        (err, _) => err,
     }
 }
 
@@ -180,8 +173,9 @@ pub async fn create_paste(
 
     // Use transaction-like operation for atomic folder count update
     if let Some(ref folder_id) = paste.folder_id {
-        crate::db::TransactionOps::create_paste_with_folder(&state.db, &paste, folder_id)
-            .map_err(|err| map_folder_not_found_for_request(err, Some(folder_id.as_str())))?;
+        crate::db::TransactionOps::create_paste_with_folder(&state.db, &paste, folder_id).map_err(
+            |err| map_missing_folder_for_optional_request(err, Some(folder_id.as_str()), "Folder"),
+        )?;
     } else {
         state.db.pastes.create(&paste)?;
     }
@@ -268,7 +262,9 @@ pub async fn update_paste(
             new_folder_id.as_deref(),
             req,
         )
-        .map_err(|err| map_folder_not_found_for_request(err, new_folder_id.as_deref()))?
+        .map_err(|err| {
+            map_missing_folder_for_optional_request(err, new_folder_id.as_deref(), "Folder")
+        })?
         .ok_or(AppError::NotFound)?
     } else {
         let _mutation_guard = state.locks.begin_mutation(&id).map_err(|err| {

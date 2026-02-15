@@ -4,7 +4,7 @@ use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerSt
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
     db::TransactionOps,
-    folder_ops::map_missing_folder_for_request,
+    folder_ops::map_missing_folder_for_optional_request,
     models::paste::{self, UpdatePasteRequest},
     naming, AppError,
 };
@@ -25,13 +25,6 @@ fn begin_owner_mutation_guard<'a>(
                 "Paste is currently open for editing.",
             )
         })
-}
-
-fn map_gui_folder_not_found(err: AppError, folder_id: Option<&str>) -> AppError {
-    match (err, folder_id) {
-        (err, Some(folder_id)) => map_missing_folder_for_request(err, folder_id, "Folder"),
-        (err, _) => err,
-    }
 }
 
 pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
@@ -225,7 +218,9 @@ pub(super) fn handle_update_paste_meta(
             new_folder_id.as_deref(),
             update,
         )
-        .map_err(|err| map_gui_folder_not_found(err, new_folder_id.as_deref()))
+        .map_err(|err| {
+            map_missing_folder_for_optional_request(err, new_folder_id.as_deref(), "Folder")
+        })
     } else {
         let _mutation_guard = match begin_owner_mutation_guard(
             state.locks.as_ref(),

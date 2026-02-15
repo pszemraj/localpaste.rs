@@ -21,31 +21,12 @@ pub struct PasteDb {
 }
 
 impl PasteDb {
-    fn reject_direct_create_with_folder(paste: &Paste) -> Result<(), AppError> {
-        if paste.folder_id.is_some() {
-            return Err(AppError::BadRequest(
-                "Direct folder assignment via PasteDb::create is not allowed; use TransactionOps::create_paste_with_folder".to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn reject_direct_update_with_folder_change(
-        update: &UpdatePasteRequest,
+    fn reject_direct_folder_operation(
+        violates: bool,
+        message: &'static str,
     ) -> Result<(), AppError> {
-        if update.folder_id.is_some() {
-            return Err(AppError::BadRequest(
-                "Direct folder updates via PasteDb::update are not allowed; use TransactionOps::move_paste_between_folders".to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn reject_direct_delete_for_foldered_paste(paste: &Paste) -> Result<(), AppError> {
-        if paste.folder_id.is_some() {
-            return Err(AppError::BadRequest(
-                "Direct deletion of foldered pastes via PasteDb::delete is not allowed; use TransactionOps::delete_paste_with_folder".to_string(),
-            ));
+        if violates {
+            return Err(AppError::BadRequest(message.to_string()));
         }
         Ok(())
     }
@@ -81,7 +62,10 @@ impl PasteDb {
     /// Returns an error when serialization fails, id already exists, or storage
     /// operations fail.
     pub fn create(&self, paste: &Paste) -> Result<(), AppError> {
-        Self::reject_direct_create_with_folder(paste)?;
+        Self::reject_direct_folder_operation(
+            paste.folder_id.is_some(),
+            "Direct folder assignment via PasteDb::create is not allowed; use TransactionOps::create_paste_with_folder",
+        )?;
         let encoded_paste = bincode::serialize(paste)?;
         let meta = PasteMeta::from(paste);
         let encoded_meta = bincode::serialize(&meta)?;
@@ -169,7 +153,10 @@ impl PasteDb {
         expected_folder: Option<Option<&str>>,
         update: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
-        Self::reject_direct_update_with_folder_change(&update)?;
+        Self::reject_direct_folder_operation(
+            update.folder_id.is_some(),
+            "Direct folder updates via PasteDb::update are not allowed; use TransactionOps::move_paste_between_folders",
+        )?;
         let write_txn = self.db.begin_write()?;
         let updated_paste = {
             let mut pastes = write_txn.open_table(PASTES)?;
@@ -232,7 +219,10 @@ impl PasteDb {
                 return Ok(None);
             };
             let paste = deserialize_paste(old_guard.value())?;
-            Self::reject_direct_delete_for_foldered_paste(&paste)?;
+            Self::reject_direct_folder_operation(
+                paste.folder_id.is_some(),
+                "Direct deletion of foldered pastes via PasteDb::delete is not allowed; use TransactionOps::delete_paste_with_folder",
+            )?;
             let recency_key = reverse_timestamp_key(paste.updated_at);
             drop(old_guard);
 

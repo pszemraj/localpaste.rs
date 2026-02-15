@@ -546,15 +546,7 @@ impl LocalPasteApp {
         self.metadata_save_request = None;
     }
 
-    fn apply_selection_now(&mut self, id: String) -> bool {
-        // Acquire target lock before releasing current selection lock so failed
-        // switches never drop the currently editable paste unexpectedly.
-        if !self.acquire_paste_lock(id.as_str()) {
-            return false;
-        }
-        if let Some(prev) = self.selected_id.replace(id.clone()) {
-            self.release_paste_lock(prev.as_str());
-        }
+    fn reset_selection_editor_state(&mut self) {
         self.selected_paste = None;
         self.edit_name.clear();
         self.edit_language = None;
@@ -573,6 +565,18 @@ impl LocalPasteApp {
         self.last_edit_at = None;
         self.save_in_flight = false;
         self.save_request_revision = None;
+    }
+
+    fn apply_selection_now(&mut self, id: String) -> bool {
+        // Acquire target lock before releasing current selection lock so failed
+        // switches never drop the currently editable paste unexpectedly.
+        if !self.acquire_paste_lock(id.as_str()) {
+            return false;
+        }
+        if let Some(prev) = self.selected_id.replace(id.clone()) {
+            self.release_paste_lock(prev.as_str());
+        }
+        self.reset_selection_editor_state();
         if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
             self.clear_selection();
             self.set_status("Get paste failed: backend unavailable.");
@@ -604,24 +608,7 @@ impl LocalPasteApp {
         if let Some(prev) = self.selected_id.take() {
             self.release_paste_lock(prev.as_str());
         }
-        self.selected_paste = None;
-        self.edit_name.clear();
-        self.edit_language = None;
-        self.edit_language_is_manual = false;
-        self.edit_tags.clear();
-        self.metadata_dirty = false;
-        self.metadata_save_in_flight = false;
-        self.metadata_save_request = None;
-        self.selected_content.reset(String::new());
-        self.reset_virtual_editor("");
-        self.editor_cache = EditorLayoutCache::default();
-        self.editor_lines.reset();
-        self.virtual_selection.clear();
-        self.clear_highlight_state();
-        self.save_status = SaveStatus::Saved;
-        self.last_edit_at = None;
-        self.save_in_flight = false;
-        self.save_request_revision = None;
+        self.reset_selection_editor_state();
     }
 
     pub(super) fn set_status(&mut self, text: impl Into<String>) {

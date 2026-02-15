@@ -51,6 +51,27 @@ pub fn map_missing_folder_for_request(err: AppError, folder_id: &str, label: &st
     }
 }
 
+/// Map an optional missing-folder context into caller-facing validation errors.
+///
+/// # Arguments
+/// - `err`: Source error from folder validation logic.
+/// - `folder_id`: Optional folder id that was requested.
+/// - `label`: Resource label used in the final user-facing message.
+///
+/// # Returns
+/// `BadRequest` when `folder_id` is present and `err` is `NotFound`,
+/// otherwise the original error.
+pub fn map_missing_folder_for_optional_request(
+    err: AppError,
+    folder_id: Option<&str>,
+    label: &str,
+) -> AppError {
+    match folder_id {
+        Some(folder_id) => map_missing_folder_for_request(err, folder_id, label),
+        None => err,
+    }
+}
+
 /// Create a folder with canonical parent validation under the folder txn lock.
 ///
 /// # Arguments
@@ -619,6 +640,17 @@ mod tests {
             ensure_folder_assignable(&db, folder_id.as_str()),
             Err(AppError::BadRequest(_))
         ));
+    }
+
+    #[test]
+    fn map_missing_folder_for_optional_request_preserves_missing_context() {
+        let err =
+            map_missing_folder_for_optional_request(AppError::NotFound, Some("folder-1"), "Folder");
+        assert!(matches!(err, AppError::BadRequest(_)));
+
+        let passthrough =
+            map_missing_folder_for_optional_request(AppError::NotFound, None, "Folder");
+        assert!(matches!(passthrough, AppError::NotFound));
     }
 
     #[test]
