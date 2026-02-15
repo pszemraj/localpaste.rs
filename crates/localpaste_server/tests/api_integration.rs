@@ -599,17 +599,51 @@ async fn test_strict_cors_origin_matrix() {
 async fn test_invalid_folder_association() {
     let (server, _temp, _locks) = setup_test_server().await;
 
-    // Try to create paste with non-existent folder
-    let response = server
+    let missing_folder_id = "non-existent-folder-id";
+
+    // Create with a non-existent folder should return a stable 400 contract.
+    let create_response = server
         .post("/api/paste")
         .json(&json!({
             "content": "Test content",
             "name": "test",
-            "folder_id": "non-existent-folder-id"
+            "folder_id": missing_folder_id
         }))
         .await;
 
-    assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
+    assert_eq!(create_response.status_code(), StatusCode::BAD_REQUEST);
+    let create_body: serde_json::Value = create_response.json();
+    let expected_missing_folder_msg =
+        format!("Folder with id '{}' does not exist", missing_folder_id);
+    assert_eq!(
+        create_body["error"].as_str(),
+        Some(expected_missing_folder_msg.as_str())
+    );
+
+    // Update with a non-existent folder should return the same 400 contract.
+    let seed_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "seed content",
+            "name": "seed"
+        }))
+        .await;
+    assert_eq!(seed_response.status_code(), StatusCode::OK);
+    let seed: serde_json::Value = seed_response.json();
+    let seed_id = seed["id"].as_str().unwrap();
+
+    let update_response = server
+        .put(&format!("/api/paste/{}", seed_id))
+        .json(&json!({
+            "folder_id": missing_folder_id
+        }))
+        .await;
+    assert_eq!(update_response.status_code(), StatusCode::BAD_REQUEST);
+    let update_body: serde_json::Value = update_response.json();
+    assert_eq!(
+        update_body["error"].as_str(),
+        Some(expected_missing_folder_msg.as_str())
+    );
 }
 
 #[tokio::test]

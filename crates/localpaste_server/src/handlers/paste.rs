@@ -1,10 +1,7 @@
 //! Paste HTTP handlers.
 
 use super::deprecation::maybe_with_folder_deprecation_headers;
-use super::normalize::{
-    normalize_optional_for_create, normalize_optional_for_update,
-    validate_assignable_folder_for_request,
-};
+use super::normalize::{normalize_optional_for_create, normalize_optional_for_update};
 use crate::{error::HttpError, models::paste::*, naming, AppError, AppState};
 use axum::{
     extract::{Path, Query, State},
@@ -67,6 +64,15 @@ fn with_folder_metadata_response(response: Response, include_meta_shape_header: 
         with_meta_only_response_shape(response)
     } else {
         response
+    }
+}
+
+fn map_folder_not_found_for_request(err: AppError, folder_id: Option<&str>) -> AppError {
+    match (err, folder_id) {
+        (AppError::NotFound, Some(folder_id)) => {
+            AppError::BadRequest(format!("Folder with id '{}' does not exist", folder_id))
+        }
+        (err, _) => err,
     }
 }
 
@@ -153,10 +159,6 @@ pub async fn create_paste(
         .into());
     }
 
-    if let Some(ref folder_id) = req.folder_id {
-        validate_assignable_folder_for_request(&state.db, folder_id, "Folder")?;
-    }
-
     let name = req.name.unwrap_or_else(naming::generate_name);
     let mut paste = Paste::new(req.content, name);
     let language_is_manual = req.language_is_manual;
@@ -178,7 +180,8 @@ pub async fn create_paste(
 
     // Use transaction-like operation for atomic folder count update
     if let Some(ref folder_id) = paste.folder_id {
-        crate::db::TransactionOps::create_paste_with_folder(&state.db, &paste, folder_id)?;
+        crate::db::TransactionOps::create_paste_with_folder(&state.db, &paste, folder_id)
+            .map_err(|err| map_folder_not_found_for_request(err, Some(folder_id.as_str())))?;
     } else {
         state.db.pastes.create(&paste)?;
     }
@@ -244,16 +247,10 @@ pub async fn update_paste(
         }
     }
 
-    // Validate new folder exists if specified
-    if let Some(ref folder_id) = req.folder_id {
-        if !folder_id.is_empty() {
-            validate_assignable_folder_for_request(&state.db, folder_id, "Folder")?;
-        }
-    }
-
     let updated = if req.folder_id.is_some() {
-        // Explicit folder operations (including clear-to-unfiled) use CAS-backed
-        // transaction logic to avoid stale-read folder count drift under concurrency.
+        // Explicit folder operations (including clear-to-unfiled) are serialized
+        // by the folder transaction guard and committed atomically via redb write
+        // transaction helpers in TransactionOps.
         let (folder_guard, _mutation_guard) = acquire_folder_scoped_mutation_guards(
             &state,
             &id,
@@ -270,7 +267,8 @@ pub async fn update_paste(
             &id,
             new_folder_id.as_deref(),
             req,
-        )?
+        )
+        .map_err(|err| map_folder_not_found_for_request(err, new_folder_id.as_deref()))?
         .ok_or(AppError::NotFound)?
     } else {
         let _mutation_guard = state.locks.begin_mutation(&id).map_err(|err| {
