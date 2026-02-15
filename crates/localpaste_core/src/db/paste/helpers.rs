@@ -79,6 +79,7 @@ pub(super) fn meta_matches_filters(
 
 pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
     let mut score = 0;
+    let canonical_query = crate::detection::canonical::canonicalize(query_lower);
     if meta.name.to_lowercase().contains(query_lower) {
         score += 10;
     }
@@ -92,7 +93,14 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
     if meta
         .language
         .as_ref()
-        .map(|lang| lang.to_lowercase().contains(query_lower))
+        .map(|lang| {
+            let language_lower = lang.to_lowercase();
+            let canonical_language = crate::detection::canonical::canonicalize(lang);
+            language_lower.contains(query_lower)
+                || canonical_language.contains(query_lower)
+                || (!canonical_query.is_empty()
+                    && (language_lower == canonical_query || canonical_language == canonical_query))
+        })
         .unwrap_or(false)
     {
         score += 2;
@@ -264,14 +272,17 @@ fn infer_legacy_language_is_manual(content: &str, stored_language: Option<&str>)
     let inferred = detect_language(content);
     inferred
         .as_deref()
-        .map(crate::detection::canonical::canonicalize)
-        .map(|value| value != stored)
+        .map(|value| value != stored.as_str())
         .unwrap_or(true)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{infer_legacy_language_is_manual, reverse_timestamp_key, LegacyPaste, Paste};
+    use super::{
+        infer_legacy_language_is_manual, reverse_timestamp_key, score_meta_match, LegacyPaste,
+        Paste,
+    };
+    use crate::models::paste::PasteMeta;
     use chrono::{TimeZone, Utc};
 
     #[test]
@@ -317,5 +328,36 @@ mod tests {
             Some("pwsh"),
             Some("powershell")
         ));
+    }
+
+    #[test]
+    fn search_language_scoring_respects_aliases() {
+        let base = PasteMeta {
+            id: "id-1".to_string(),
+            name: "sample".to_string(),
+            language: None,
+            folder_id: None,
+            updated_at: Utc::now(),
+            tags: Vec::new(),
+            content_len: 10,
+            is_markdown: false,
+        };
+
+        let cs_meta = PasteMeta {
+            language: Some("cs".to_string()),
+            ..base.clone()
+        };
+        let csharp_meta = PasteMeta {
+            language: Some("csharp".to_string()),
+            ..base.clone()
+        };
+        let css_meta = PasteMeta {
+            language: Some("css".to_string()),
+            ..base
+        };
+
+        assert_eq!(score_meta_match(&cs_meta, "csharp"), 2);
+        assert_eq!(score_meta_match(&csharp_meta, "cs"), 2);
+        assert_eq!(score_meta_match(&css_meta, "csharp"), 0);
     }
 }

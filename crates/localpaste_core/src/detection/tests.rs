@@ -64,6 +64,8 @@ fn canonicalization_matrix_handles_aliases() {
         ("md", "markdown"),
         ("plain text", "text"),
         ("pwsh", "powershell"),
+        ("scss", "scss"),
+        ("sass", "sass"),
         ("rust", "rust"),
     ];
     for (input, expected) in cases {

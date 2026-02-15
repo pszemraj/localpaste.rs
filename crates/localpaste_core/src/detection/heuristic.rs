@@ -150,6 +150,12 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("c".to_string());
     }
 
+    if lower.contains("import foundation")
+        || (lower.contains("func ") && (lower.contains("guard let") || lower.contains("protocol ")))
+    {
+        return Some("swift".to_string());
+    }
+
     let scored_languages: &[(&str, &[&str], usize)] = &[
         (
             "rust",

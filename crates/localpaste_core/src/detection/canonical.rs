@@ -90,6 +90,14 @@ pub const MANUAL_LANGUAGE_OPTIONS: &[ManualLanguageOption] = &[
         value: "rust",
     },
     ManualLanguageOption {
+        label: "Sass",
+        value: "sass",
+    },
+    ManualLanguageOption {
+        label: "SCSS",
+        value: "scss",
+    },
+    ManualLanguageOption {
         label: "Shell",
         value: "shell",
     },
@@ -147,7 +155,6 @@ pub fn canonicalize(language: &str) -> String {
         "m" | "mm" | "objc" | "objective-c" => "objectivec".to_string(),
         "pl" => "perl".to_string(),
         "ex" | "exs" => "elixir".to_string(),
-        "scss" | "sass" => "css".to_string(),
         _ => lowered,
     }
 }

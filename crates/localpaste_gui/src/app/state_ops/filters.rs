@@ -28,6 +28,8 @@ const CODE_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
         "sql",
         "html",
         "css",
+        "scss",
+        "sass",
         "markdown",
         "dart",
         "zig",
@@ -168,6 +170,8 @@ pub(super) fn language_extension(language: Option<&str>) -> &'static str {
         "markdown" => "md",
         "html" => "html",
         "css" => "css",
+        "scss" => "scss",
+        "sass" => "sass",
         "sql" => "sql",
         "shell" => "sh",
         "cs" => "cs",
@@ -227,6 +231,7 @@ mod tests {
         assert_eq!(language_extension(Some(" Python ")), "py");
         assert_eq!(language_extension(Some("csharp")), "cs");
         assert_eq!(language_extension(Some("bash")), "sh");
+        assert_eq!(language_extension(Some("scss")), "scss");
         assert_eq!(language_extension(Some("unknown")), "txt");
         assert_eq!(language_extension(None), "txt");
     }

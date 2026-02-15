@@ -25,7 +25,7 @@ pub fn detect_language(content: &str) -> Option<String> {
 
     heuristic::detect(content)
         .map(|label| canonical::canonicalize(&label))
-        .filter(|label| !label.is_empty())
+        .filter(|label| !label.is_empty() && label != "text")
 }
 
 /// Initialize the Magika model session early when available.
