@@ -33,6 +33,8 @@ impl BackupManager {
     ///
     /// This avoids direct file-copy behavior on open databases, which can fail
     /// on platforms with strict file locking (notably Windows).
+    /// Snapshot consistency comes from a source read transaction; copied rows are
+    /// committed into the destination backup file via a destination write transaction.
     ///
     /// # Returns
     /// The created backup file path, or an empty string when no database file exists.

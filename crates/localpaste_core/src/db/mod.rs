@@ -409,12 +409,13 @@ impl Database {
             Err(err) => return Err(AppError::Database(err.into())),
         };
 
+        let folder_txn_lock = Self::shared_folder_txn_lock_for_db(&db)?;
         let database = Self {
             pastes: paste::PasteDb::new(db.clone())?,
             folders: folder::FolderDb::new(db.clone())?,
             db,
             _owner_lock_guard: owner_lock_guard,
-            folder_txn_lock: Arc::new(Mutex::new(())),
+            folder_txn_lock,
         };
 
         database.folders.clear_delete_markers()?;

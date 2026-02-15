@@ -193,14 +193,8 @@ fn contains_case_insensitive(haystack: &str, query_lower: &str) -> bool {
 pub(super) fn folder_matches_expected(
     current_folder_id: Option<&str>,
     expected_folder_id: Option<&str>,
-    folder_mismatch: &mut bool,
 ) -> bool {
-    *folder_mismatch = false;
-    if current_folder_id != expected_folder_id {
-        *folder_mismatch = true;
-        return false;
-    }
-    true
+    current_folder_id == expected_folder_id
 }
 
 pub(crate) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {

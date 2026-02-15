@@ -142,9 +142,12 @@ impl TransactionOps {
                 )));
             }
 
-            let Some(mut folder) = load_folder(&folders, folder_id)? else {
-                return Err(AppError::NotFound);
-            };
+            let mut folder = load_folder(&folders, folder_id)?.ok_or_else(|| {
+                AppError::StorageMessage(format!(
+                    "Folder '{}' disappeared inside a single write transaction after assignability check",
+                    folder_id
+                ))
+            })?;
             folder.paste_count = folder.paste_count.saturating_add(1);
             let encoded_folder = bincode::serialize(&folder)?;
 
@@ -313,9 +316,12 @@ impl TransactionOps {
                     }
                 }
                 if let Some(new_id) = new_folder_id {
-                    let Some(mut new_folder) = load_folder(&folders, new_id)? else {
-                        return Err(AppError::NotFound);
-                    };
+                    let mut new_folder = load_folder(&folders, new_id)?.ok_or_else(|| {
+                        AppError::StorageMessage(format!(
+                            "Folder '{}' disappeared inside a single write transaction after assignability check",
+                            new_id
+                        ))
+                    })?;
                     new_folder.paste_count = new_folder.paste_count.saturating_add(1);
                     let encoded_new_folder = bincode::serialize(&new_folder)?;
                     folders.insert(new_id, encoded_new_folder.as_slice())?;

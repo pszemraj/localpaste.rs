@@ -4,7 +4,7 @@ use super::*;
 use chrono::Duration;
 
 #[test]
-fn paste_list_meta_orders_by_updated_and_honors_limit() {
+fn paste_list_and_list_meta_order_by_updated_and_honor_limit() {
     let (db, _temp) = setup_test_db();
     let now = chrono::Utc::now();
 
@@ -18,6 +18,11 @@ fn paste_list_meta_orders_by_updated_and_honors_limit() {
 
     db.pastes.create(&older).expect("create older");
     db.pastes.create(&newer).expect("create newer");
+
+    let rows = db.pastes.list(1, None).expect("list canonical");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, newer_id);
+    assert_ne!(rows[0].id, older_id);
 
     let metas = db.pastes.list_meta(1, None).expect("list");
     assert_eq!(metas.len(), 1);

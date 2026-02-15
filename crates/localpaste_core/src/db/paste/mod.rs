@@ -171,7 +171,6 @@ impl PasteDb {
     ) -> Result<Option<Paste>, AppError> {
         Self::reject_direct_update_with_folder_change(&update)?;
         let write_txn = self.db.begin_write()?;
-        let mut folder_mismatch = false;
         let updated_paste = {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
@@ -186,7 +185,7 @@ impl PasteDb {
             drop(old_guard);
 
             if let Some(expected) = expected_folder {
-                if !folder_matches_expected(old_folder.as_deref(), expected, &mut folder_mismatch) {
+                if !folder_matches_expected(old_folder.as_deref(), expected) {
                     return Ok(None);
                 }
             }
@@ -207,10 +206,6 @@ impl PasteDb {
 
             Some(paste)
         };
-
-        if folder_mismatch {
-            return Ok(None);
-        }
 
         write_txn.commit()?;
         Ok(updated_paste)
@@ -279,22 +274,28 @@ impl PasteDb {
         }
 
         let read_txn = self.db.begin_read()?;
+        let updated_table = read_txn.open_table(PASTES_BY_UPDATED)?;
         let pastes_table = read_txn.open_table(PASTES)?;
         let mut pastes = Vec::new();
 
-        for item in pastes_table.iter()? {
-            let (_, value) = item?;
-            let paste = deserialize_paste(value.value())?;
+        for item in updated_table.iter()? {
+            let (key, _) = item?;
+            let (_, paste_id) = key.value();
+            let Some(paste_guard) = pastes_table.get(paste_id)? else {
+                continue;
+            };
+            let paste = deserialize_paste(paste_guard.value())?;
             if let Some(ref fid) = folder_id {
                 if paste.folder_id.as_ref() != Some(fid) {
                     continue;
                 }
             }
             pastes.push(paste);
+            if pastes.len() >= limit {
+                break;
+            }
         }
 
-        pastes.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
-        pastes.truncate(limit);
         Ok(pastes)
     }
 
@@ -306,6 +307,10 @@ impl PasteDb {
     ///
     /// # Returns
     /// Up to `limit` canonical paste ids.
+    ///
+    /// Order is based on canonical key iteration and is intentionally not a recency
+    /// sort. This helper is used by destructive maintenance paths that must walk
+    /// canonical rows directly even if derived metadata/index tables drift.
     ///
     /// # Errors
     /// Returns an error when storage access or deserialization fails.

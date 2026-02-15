@@ -19,6 +19,10 @@ fn from_shared_reuses_folder_transaction_lock_for_same_shared_db() {
     let handle_b = Database::from_shared(shared).expect("from_shared handle B");
 
     assert!(
+        Arc::ptr_eq(&db.folder_txn_lock, &handle_a.folder_txn_lock),
+        "Database::new and Database::from_shared handles over the same Arc<Database> must share folder transaction lock"
+    );
+    assert!(
         Arc::ptr_eq(&handle_a.folder_txn_lock, &handle_b.folder_txn_lock),
         "from_shared handles over the same Arc<Database> must share folder transaction lock"
     );
