@@ -3,6 +3,7 @@
 > These instructions apply to the headless `localpaste` server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
 > This is the canonical service-operation runbook. Other docs should link here for stop/restart/lock-recovery guidance instead of duplicating procedures.
 > Security posture, bind policy, and public exposure guidance are canonical in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
+> Storage backend and compatibility policy are canonical in [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 > Build/run command matrices for development are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ## Quick Start
@@ -18,6 +19,16 @@ echo $! > ~/.cache/localpaste/localpaste.pid
 
 Important runtime rule:
 - Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` at the same time.
+
+## Storage Backend Note
+
+Storage/backend compatibility policy is canonical in
+[docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
+Operationally:
+
+- Current runtime expects `DB_PATH/data.redb`.
+- Legacy sled-era data is incompatible with this build.
+- Use a fresh `DB_PATH` when moving from older sled-era versions.
 
 For stop/restart/cleanup procedures, use [Stopping LocalPaste Safely](#stopping-localpaste-safely).
 
@@ -45,19 +56,18 @@ lsof -i :38411
 # lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
 
-Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown and can require lock recovery.
+Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
 
-### Lock Safety And Force Unlock
+### Lock Safety
 
-This section is the canonical operational guidance for lock recovery.
+This section is the canonical operational guidance for writer coordination.
 Security policy context remains in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
 Lock behavior semantics are canonical in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
 
 - LocalPaste uses a process-lifetime owner lock file (`db.owner.lock`) in the DB directory.
-- Startup acquires that owner lock before opening sled; a second writer on the same `DB_PATH` is rejected.
-- `--force-unlock` is conservative by default and refuses uncertain ownership states.
-- Use `--force-unlock` only after all LocalPaste processes are confirmed stopped and a backup has been taken.
-- Prefer changing `DB_PATH` for isolated tests over forcing unlock on a shared working directory.
+- Startup acquires that owner lock before opening redb; a second writer on the same `DB_PATH` is rejected.
+- There is no `--force-unlock` mode. Stop the owning process and retry.
+- Prefer changing `DB_PATH` for isolated tests over sharing one working directory.
 
 ## Linux (systemd)
 

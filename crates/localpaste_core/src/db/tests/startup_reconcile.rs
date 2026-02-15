@@ -1,342 +1,191 @@
-//! Startup reconciliation and degraded-mode behavior tests.
+//! Startup behavior and invariant repair tests.
 
 use super::*;
-use crate::env::{env_lock, EnvGuard};
+use crate::db::tables::REDB_FILE_NAME;
+use tempfile::TempDir;
 
-#[test]
-fn test_database_new_reconciles_missing_meta_indexes() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
+fn setup_temp_db_path(name: &str) -> (TempDir, String) {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join(name);
+    let db_path_str = db_path.to_str().expect("db path").to_string();
+    (temp_dir, db_path_str)
+}
 
-    let db = Database::new(&db_path_str).unwrap();
-    let paste = Paste::new("seed".to_string(), "seed".to_string());
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).unwrap();
-
-    let meta_tree = db.db.open_tree("pastes_meta").unwrap();
-    let updated_tree = db.db.open_tree("pastes_by_updated").unwrap();
-    meta_tree.clear().unwrap();
-    updated_tree.clear().unwrap();
-    drop(meta_tree);
-    drop(updated_tree);
-    drop(db);
-
-    let reopened = Database::new(&db_path_str).unwrap();
-    let metas = reopened.pastes.list_meta(10, None).unwrap();
-    assert!(metas.into_iter().any(|m| m.id == paste_id));
+fn open_test_database(path: &str) -> Database {
+    Database::new(path).expect("db")
 }
 
 #[test]
-fn test_database_new_reconciles_when_meta_marker_missing() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
-
-    let db = Database::new(&db_path_str).unwrap();
-    let state_tree = db.db.open_tree("pastes_meta_state").unwrap();
-    assert!(state_tree.get("version").unwrap().is_some());
-    state_tree.remove("version").unwrap();
-    drop(state_tree);
-    drop(db);
-
-    let reopened = Database::new(&db_path_str).unwrap();
-    let reopened_state = reopened.db.open_tree("pastes_meta_state").unwrap();
-    assert!(
-        reopened_state.get("version").unwrap().is_some(),
-        "missing marker should be recreated during startup reconcile"
-    );
-}
-
-#[test]
-fn test_database_new_force_reindex_repairs_corrupt_meta_rows() {
-    let _lock = env_lock().lock().expect("env lock");
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
-
-    let db = Database::new(&db_path_str).unwrap();
-    let paste = Paste::new("force reindex".to_string(), "force-reindex".to_string());
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).unwrap();
-
-    let meta_tree = db.db.open_tree("pastes_meta").unwrap();
-    meta_tree
-        .insert(paste_id.as_bytes(), b"corrupt-meta")
-        .unwrap();
-    drop(meta_tree);
-    drop(db);
-
-    let _reindex_guard = EnvGuard::set("LOCALPASTE_REINDEX", "1");
-
-    let reopened = Database::new(&db_path_str).unwrap();
-    let metas = reopened.pastes.list_meta(10, None).unwrap();
-    assert!(
-        metas.into_iter().any(|meta| meta.id == paste_id),
-        "forced reindex should rebuild metadata entries"
-    );
-}
-
-#[test]
-fn test_database_new_reports_error_for_corrupt_storage_path() {
-    let temp_dir = TempDir::new().unwrap();
+fn database_new_reports_error_for_non_directory_db_path() {
+    let temp_dir = TempDir::new().expect("temp dir");
     let db_path = temp_dir.path().join("not-a-db-file");
-    std::fs::write(&db_path, b"not-a-sled-db").unwrap();
+    std::fs::write(&db_path, b"not-a-db").expect("seed file");
 
-    let result = Database::new(db_path.to_str().unwrap());
+    let result = Database::new(db_path.to_str().expect("path"));
     assert!(
         matches!(result, Err(AppError::StorageMessage(_))),
-        "opening a non-directory/non-db path should return a database error"
+        "opening a non-directory DB_PATH should fail"
     );
 }
 
 #[test]
-fn test_database_new_reconciles_derived_only_rows_on_startup() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
+fn database_new_repairs_folder_count_drift_on_restart() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("test.db");
 
-    let db = Database::new(&db_path_str).unwrap();
-    let paste = Paste::new("ghost".to_string(), "ghost".to_string());
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).unwrap();
-
-    let canonical_tree = db.db.open_tree("pastes").unwrap();
-    canonical_tree.remove(paste_id.as_bytes()).unwrap();
-    drop(canonical_tree);
-    drop(db);
-
-    let reopened = Database::new(&db_path_str).unwrap();
-    assert!(
-        reopened.pastes.get(&paste_id).unwrap().is_none(),
-        "canonical row should remain deleted"
-    );
-    assert!(
-        reopened
-            .pastes
-            .list_meta(10, None)
-            .unwrap()
-            .into_iter()
-            .all(|meta| meta.id != paste_id),
-        "startup reconcile should remove ghost metadata rows"
-    );
-
-    let meta_tree = reopened.db.open_tree("pastes_meta").unwrap();
-    assert!(
-        meta_tree.get(paste_id.as_bytes()).unwrap().is_none(),
-        "metadata tree should not retain derived-only row after startup reconcile"
-    );
-    let updated_tree = reopened.db.open_tree("pastes_by_updated").unwrap();
-    let has_updated_ref = updated_tree
-        .iter()
-        .filter_map(|item| item.ok())
-        .any(|(_, value)| value.as_ref() == paste_id.as_bytes());
-    assert!(
-        !has_updated_ref,
-        "recency index should not retain derived-only references after startup reconcile"
-    );
-}
-
-#[test]
-fn test_database_new_reconciles_folder_count_drift() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
-
-    let db = Database::new(&db_path_str).unwrap();
+    let db = open_test_database(&db_path_str);
     let folder = Folder::new("count-drift-folder".to_string());
     let folder_id = folder.id.clone();
-    db.folders.create(&folder).unwrap();
+    db.folders.create(&folder).expect("create folder");
 
     let mut paste_a = Paste::new("one".to_string(), "one".to_string());
     paste_a.folder_id = Some(folder_id.clone());
     let mut paste_b = Paste::new("two".to_string(), "two".to_string());
     paste_b.folder_id = Some(folder_id.clone());
-    TransactionOps::create_paste_with_folder(&db, &paste_a, &folder_id).unwrap();
-    TransactionOps::create_paste_with_folder(&db, &paste_b, &folder_id).unwrap();
+    TransactionOps::create_paste_with_folder(&db, &paste_a, &folder_id).expect("create");
+    TransactionOps::create_paste_with_folder(&db, &paste_b, &folder_id).expect("create");
 
-    db.folders.set_count(&folder_id, 99).unwrap();
+    db.folders.set_count(&folder_id, 99).expect("drift");
     drop(db);
 
-    let reopened = Database::new(&db_path_str).unwrap();
+    let reopened = open_test_database(&db_path_str);
     let folder_after = reopened
         .folders
         .get(&folder_id)
-        .unwrap()
-        .expect("folder exists");
+        .expect("get folder")
+        .expect("exists");
     let canonical_count = reopened
         .pastes
         .list(100, Some(folder_id.clone()))
-        .unwrap()
+        .expect("list")
         .len();
-    assert_eq!(
-        folder_after.paste_count, canonical_count,
-        "startup reconcile must repair folder paste_count drift"
-    );
+    assert_eq!(folder_after.paste_count, canonical_count);
 }
 
 #[test]
-fn test_database_new_reconciles_orphan_folder_refs() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
+fn database_new_repairs_orphan_folder_refs_on_restart() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("test.db");
 
-    let db = Database::new(&db_path_str).unwrap();
+    let db = open_test_database(&db_path_str);
     let folder = Folder::new("orphan-folder".to_string());
     let folder_id = folder.id.clone();
-    db.folders.create(&folder).unwrap();
+    db.folders.create(&folder).expect("create folder");
 
     let mut paste = Paste::new("orphan body".to_string(), "orphan".to_string());
     paste.folder_id = Some(folder_id.clone());
     let paste_id = paste.id.clone();
-    TransactionOps::create_paste_with_folder(&db, &paste, &folder_id).unwrap();
+    TransactionOps::create_paste_with_folder(&db, &paste, &folder_id).expect("create");
 
-    db.folders.delete(&folder_id).unwrap();
+    db.folders.delete(&folder_id).expect("delete folder");
     drop(db);
 
-    let reopened = Database::new(&db_path_str).unwrap();
+    let reopened = open_test_database(&db_path_str);
     let repaired = reopened
         .pastes
         .get(&paste_id)
-        .unwrap()
-        .expect("paste should still exist");
-    assert!(
-        repaired.folder_id.is_none(),
-        "startup reconcile must clear folder_id references to missing folders"
-    );
+        .expect("get paste")
+        .expect("paste exists");
+    assert!(repaired.folder_id.is_none());
 }
 
 #[test]
-fn test_database_new_reconciles_orphan_folder_parent_refs() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
+fn database_new_repairs_orphan_folder_parent_refs_on_restart() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("test.db");
 
-    let db = Database::new(&db_path_str).unwrap();
+    let db = open_test_database(&db_path_str);
     let root = Folder::new("root".to_string());
     let root_id = root.id.clone();
-    db.folders.create(&root).unwrap();
+    db.folders.create(&root).expect("create root");
 
     let child = Folder::with_parent("child".to_string(), Some(root_id.clone()));
     let child_id = child.id.clone();
-    db.folders.create(&child).unwrap();
+    db.folders.create(&child).expect("create child");
 
-    db.folders.delete(&root_id).unwrap();
+    db.folders.delete(&root_id).expect("delete root");
     drop(db);
 
-    let reopened = Database::new(&db_path_str).unwrap();
+    let reopened = open_test_database(&db_path_str);
     let repaired_child = reopened
         .folders
         .get(&child_id)
-        .unwrap()
-        .expect("child should still exist");
-    assert!(
-        repaired_child.parent_id.is_none(),
-        "startup reconcile must clear parent_id references to missing folders"
-    );
+        .expect("get child")
+        .expect("child exists");
+    assert!(repaired_child.parent_id.is_none());
 }
 
 #[test]
-fn test_database_new_continues_when_folder_reconcile_hits_corrupt_canonical_row() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
+fn database_new_clears_stale_folder_delete_markers() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("test.db");
 
-    let db = Database::new(&db_path_str).unwrap();
-    let paste = Paste::new("corrupt-me".to_string(), "corrupt-me".to_string());
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).unwrap();
-    db.db
-        .open_tree("pastes")
-        .unwrap()
-        .insert(paste_id.as_bytes(), b"corrupt-canonical-row")
-        .unwrap();
-    drop(db);
-
-    let reopened = Database::new(&db_path_str)
-        .expect("startup should continue even when folder reconcile sees corrupt canonical row");
-    assert!(
-        reopened
-            .pastes
-            .needs_reconcile_meta_indexes(false)
-            .expect("needs reconcile"),
-        "corrupt canonical row should keep metadata reconcile markers in degraded mode"
-    );
-}
-
-#[test]
-fn test_database_new_continues_in_degraded_mode_when_meta_reconcile_fails() {
-    let _lock = reconcile_failpoint_test_lock()
-        .lock()
-        .expect("reconcile failpoint lock");
-    let _guard = ReconcileFailpointGuard;
-
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
-
-    set_reconcile_failpoint(true);
-    let db =
-        Database::new(&db_path_str).expect("startup should continue when metadata reconcile fails");
-    set_reconcile_failpoint(false);
-
-    let state_tree = db.db.open_tree("pastes_meta_state").unwrap();
-    let in_progress = state_tree
-        .get("in_progress_count")
-        .unwrap()
-        .expect("in-progress marker");
-    assert_eq!(
-        u64::from_be_bytes(in_progress.as_ref().try_into().expect("u64 marker bytes")),
-        0,
-        "failed startup reconcile must not leave in-progress stuck"
-    );
-    let faulted = state_tree.get("faulted").unwrap().expect("faulted marker");
-    assert_eq!(
-        faulted.as_ref(),
-        &[1u8],
-        "failed startup reconcile should mark metadata indexes faulted"
-    );
-    assert!(
-        db.pastes
-            .needs_reconcile_meta_indexes(false)
-            .expect("needs reconcile"),
-        "runtime should keep reconcile-needed marker in degraded startup mode"
-    );
-
-    let paste = Paste::new(
-        "degraded mode body".to_string(),
-        "degraded-mode".to_string(),
-    );
-    let paste_id = paste.id.clone();
-    db.pastes
-        .create(&paste)
-        .expect("create paste in degraded mode");
-    let listed = db.pastes.list_meta(10, None).expect("list meta fallback");
-    assert!(
-        listed.iter().any(|meta| meta.id == paste_id),
-        "degraded mode must keep canonical rows visible via fallback"
-    );
-}
-
-#[test]
-fn test_database_new_clears_stale_folder_delete_markers() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().unwrap().to_string();
-
-    let db = Database::new(&db_path_str).unwrap();
+    let db = open_test_database(&db_path_str);
     let folder = Folder::new("marker-folder".to_string());
     let folder_id = folder.id.clone();
-    db.folders.create(&folder).unwrap();
+    db.folders.create(&folder).expect("create folder");
     db.folders
         .mark_deleting(std::slice::from_ref(&folder_id))
-        .unwrap();
-    assert!(db.folders.is_delete_marked(&folder_id).unwrap());
+        .expect("mark");
+    assert!(db.folders.is_delete_marked(&folder_id).expect("marked"));
     drop(db);
 
-    let reopened = Database::new(&db_path_str).unwrap();
+    let reopened = open_test_database(&db_path_str);
+    assert!(!reopened
+        .folders
+        .is_delete_marked(&folder_id)
+        .expect("marked"));
+}
+
+#[test]
+fn database_new_rejects_legacy_sled_layout_when_data_redb_missing() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("legacy-db");
+    std::fs::create_dir_all(&db_path).expect("create dir");
+    std::fs::write(db_path.join("pastes"), b"legacy").expect("seed legacy artifact");
+
+    let err = match Database::new(db_path.to_str().expect("path")) {
+        Ok(_) => panic!("legacy sled layout without data.redb should fail"),
+        Err(err) => err,
+    };
+    match err {
+        AppError::StorageMessage(message) => {
+            assert!(
+                message.contains("legacy sled"),
+                "error should describe legacy sled detection: {}",
+                message
+            );
+            assert!(
+                message.contains(REDB_FILE_NAME),
+                "error should mention expected redb file: {}",
+                message
+            );
+        }
+        other => panic!("unexpected error variant: {:?}", other),
+    }
+}
+
+#[test]
+fn database_new_ignores_unrelated_lock_files_when_data_redb_missing() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("non-legacy-db");
+    std::fs::create_dir_all(&db_path).expect("create dir");
+    std::fs::write(db_path.join("random.lock"), b"not-sled").expect("seed lock artifact");
+
+    let db = Database::new(db_path.to_str().expect("path"))
+        .expect("unrelated lock file should not block startup");
+    drop(db);
+
     assert!(
-        !reopened.folders.is_delete_marked(&folder_id).unwrap(),
-        "startup should clear stale folder delete markers"
+        db_path.join(REDB_FILE_NAME).exists(),
+        "database should initialize data.redb when no legacy sled markers are present"
     );
+}
+
+#[test]
+fn database_new_allows_startup_when_data_redb_exists() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("db");
+    let db = open_test_database(&db_path_str);
+    drop(db);
+
+    // Add legacy-looking artifacts; `data.redb` still exists and should win.
+    let db_path = std::path::Path::new(&db_path_str);
+    std::fs::write(db_path.join("pastes"), b"legacy").expect("seed legacy artifact");
+    open_test_database(&db_path_str);
 }

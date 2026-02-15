@@ -1,512 +1,331 @@
-//! Cross-tree transaction helpers for folder-affecting mutations.
+//! Atomic cross-table transaction helpers for folder-affecting mutations.
 
+use super::tables::{FOLDERS, FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META};
 use super::Database;
+use crate::db::paste::{apply_update_request, deserialize_paste, reverse_timestamp_key};
 use crate::error::AppError;
-use crate::folder_ops::ensure_folder_assignable;
-#[cfg(test)]
-use std::cell::RefCell;
-#[cfg(test)]
-use std::sync::Arc;
-#[cfg(test)]
-use std::sync::{Barrier, Mutex, OnceLock};
+use crate::models::folder::Folder;
+use crate::models::paste::{Paste, PasteMeta, UpdatePasteRequest};
+use redb::ReadableTable;
+use std::sync::MutexGuard;
 
-/// Transaction-like operations for atomic updates across trees.
-///
-/// Sled transactions are limited to a single tree, so we use careful ordering
-/// and rollback logic to maintain consistency across trees.
+/// Atomic operations that update paste and folder rows together.
 pub struct TransactionOps;
 
-#[cfg(test)]
-#[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TransactionFailpoint {
-    CreateAfterDestinationReserveOnce,
-    CreateDeleteDestinationAfterReserveOnce,
-    CreateDeleteDestinationAfterCanonicalCreateOnce,
-    MoveAfterDestinationReserveOnce,
-    MoveDeleteDestinationAfterReserveOnce,
-    MovePauseAfterDestinationReserveOnce,
+/// Guard that proves the caller holds the global folder transaction lock.
+pub struct FolderTxnGuard<'a> {
+    _guard: MutexGuard<'a, ()>,
 }
 
-#[cfg(test)]
-thread_local! {
-    static TRANSACTION_FAILPOINT: RefCell<Option<TransactionFailpoint>> = const { RefCell::new(None) };
+fn ensure_folder_assignable_in_txn(
+    folders: &redb::Table<&str, &[u8]>,
+    deleting: &redb::Table<&str, ()>,
+    folder_id: &str,
+) -> Result<(), AppError> {
+    if folders.get(folder_id)?.is_none() {
+        return Err(AppError::NotFound);
+    }
+    if deleting.get(folder_id)?.is_some() {
+        return Err(AppError::BadRequest(format!(
+            "Folder with id '{}' is being deleted",
+            folder_id
+        )));
+    }
+    Ok(())
 }
 
-#[cfg(test)]
-pub(crate) fn set_transaction_failpoint(failpoint: Option<TransactionFailpoint>) {
-    TRANSACTION_FAILPOINT.with(|slot| {
-        *slot.borrow_mut() = failpoint;
-    });
+fn load_folder(
+    folders: &redb::Table<&str, &[u8]>,
+    folder_id: &str,
+) -> Result<Option<Folder>, AppError> {
+    let Some(guard) = folders.get(folder_id)? else {
+        return Ok(None);
+    };
+    Ok(Some(bincode::deserialize(guard.value())?))
 }
 
-#[cfg(test)]
-fn take_transaction_failpoint() -> Option<TransactionFailpoint> {
-    TRANSACTION_FAILPOINT.with(|slot| slot.borrow_mut().take())
+fn folder_disappeared_after_assignability_error(folder_id: &str) -> AppError {
+    AppError::StorageMessage(format!(
+        "Folder '{}' disappeared inside a single write transaction after assignability check",
+        folder_id
+    ))
 }
 
-#[cfg(test)]
-fn restore_transaction_failpoint(failpoint: TransactionFailpoint) {
-    TRANSACTION_FAILPOINT.with(|slot| {
-        *slot.borrow_mut() = Some(failpoint);
-    });
-}
-
-#[cfg(test)]
-#[derive(Clone)]
-pub(crate) struct MovePauseHooks {
-    pub(crate) reached: Arc<Barrier>,
-    pub(crate) resume: Arc<Barrier>,
-}
-
-#[cfg(test)]
-fn move_pause_hooks_slot() -> &'static Mutex<Option<MovePauseHooks>> {
-    static SLOT: OnceLock<Mutex<Option<MovePauseHooks>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
-}
-
-#[cfg(test)]
-pub(crate) fn set_move_pause_hooks(hooks: Option<MovePauseHooks>) {
-    let mut slot = move_pause_hooks_slot()
-        .lock()
-        .expect("move pause hook lock poisoned");
-    *slot = hooks;
-}
-
-#[cfg(test)]
-fn take_move_pause_hooks() -> Option<MovePauseHooks> {
-    move_pause_hooks_slot()
-        .lock()
-        .expect("move pause hook lock poisoned")
-        .take()
-}
-
-#[cfg(test)]
-fn apply_move_failpoint_after_destination_reserve(
-    db: &Database,
-    folder_changing: bool,
+fn apply_folder_count_transition(
+    folders: &mut redb::Table<&str, &[u8]>,
+    old_folder_id: Option<&str>,
     new_folder_id: Option<&str>,
 ) -> Result<(), AppError> {
-    let Some(failpoint) = take_transaction_failpoint() else {
+    if old_folder_id == new_folder_id {
         return Ok(());
-    };
+    }
 
-    match failpoint {
-        TransactionFailpoint::CreateAfterDestinationReserveOnce
-        | TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce
-        | TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce => {
-            restore_transaction_failpoint(failpoint);
-            Ok(())
-        }
-        TransactionFailpoint::MoveAfterDestinationReserveOnce => Err(AppError::StorageMessage(
-            format!("Injected transaction failpoint: {:?}", failpoint),
-        )),
-        TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce => {
-            if folder_changing {
-                if let Some(new_id) = new_folder_id {
-                    db.folders.delete(new_id)?;
-                }
-            }
-            Ok(())
-        }
-        TransactionFailpoint::MovePauseAfterDestinationReserveOnce => {
-            if let Some(hooks) = take_move_pause_hooks() {
-                hooks.reached.wait();
-                hooks.resume.wait();
-            }
-            Ok(())
+    if let Some(old_id) = old_folder_id {
+        if let Some(mut old_folder) = load_folder(folders, old_id)? {
+            old_folder.paste_count = old_folder.paste_count.saturating_sub(1);
+            let encoded_old = bincode::serialize(&old_folder)?;
+            folders.insert(old_id, encoded_old.as_slice())?;
         }
     }
-}
 
-#[cfg(test)]
-fn apply_create_failpoint_after_destination_reserve(
-    db: &Database,
-    folder_id: &str,
-) -> Result<(), AppError> {
-    let Some(failpoint) = take_transaction_failpoint() else {
-        return Ok(());
-    };
-
-    match failpoint {
-        TransactionFailpoint::CreateAfterDestinationReserveOnce => Err(AppError::StorageMessage(
-            format!("Injected transaction failpoint: {:?}", failpoint),
-        )),
-        TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce => {
-            db.folders.delete(folder_id)?;
-            Ok(())
-        }
-        TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce
-        | TransactionFailpoint::MoveAfterDestinationReserveOnce
-        | TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce
-        | TransactionFailpoint::MovePauseAfterDestinationReserveOnce => {
-            restore_transaction_failpoint(failpoint);
-            Ok(())
-        }
+    if let Some(new_id) = new_folder_id {
+        let mut new_folder = load_folder(folders, new_id)?
+            .ok_or_else(|| folder_disappeared_after_assignability_error(new_id))?;
+        new_folder.paste_count = new_folder.paste_count.saturating_add(1);
+        let encoded_new = bincode::serialize(&new_folder)?;
+        folders.insert(new_id, encoded_new.as_slice())?;
     }
-}
 
-#[cfg(test)]
-fn apply_create_failpoint_after_canonical_create(
-    db: &Database,
-    folder_id: &str,
-) -> Result<(), AppError> {
-    let Some(failpoint) = take_transaction_failpoint() else {
-        return Ok(());
-    };
-
-    match failpoint {
-        TransactionFailpoint::CreateDeleteDestinationAfterCanonicalCreateOnce => {
-            db.folders.delete(folder_id)?;
-            Ok(())
-        }
-        TransactionFailpoint::CreateAfterDestinationReserveOnce
-        | TransactionFailpoint::CreateDeleteDestinationAfterReserveOnce
-        | TransactionFailpoint::MoveAfterDestinationReserveOnce
-        | TransactionFailpoint::MoveDeleteDestinationAfterReserveOnce
-        | TransactionFailpoint::MovePauseAfterDestinationReserveOnce => {
-            restore_transaction_failpoint(failpoint);
-            Ok(())
-        }
-    }
-}
-
-fn rollback_destination_reservation(
-    db: &Database,
-    destination_folder_id: Option<&str>,
-    context: &str,
-    ignore_not_found: bool,
-) {
-    let Some(folder_id) = destination_folder_id else {
-        return;
-    };
-    if let Err(err) = db.folders.update_count(folder_id, -1) {
-        if ignore_not_found && matches!(err, AppError::NotFound) {
-            return;
-        }
-        tracing::error!(
-            "Failed to rollback destination folder count after {}: {}",
-            context,
-            err
-        );
-    }
+    Ok(())
 }
 
 impl TransactionOps {
-    /// Acquire the global folder-transaction lock.
+    /// Acquire the global folder transaction guard.
     ///
-    /// This lock serializes folder-affecting flows (folder delete trees, folder-targeted
-    /// paste create/move/delete operations, and folder-parent mutations) that cannot be
-    /// represented as a single sled cross-tree transaction.
+    /// This typed guard must be passed to guarded mutation helpers to guarantee
+    /// consistent lock ordering across crates.
     ///
     /// # Returns
-    /// A lock guard that must be held for the full critical section.
+    /// A guard that must be held for the full folder-affecting critical section.
     ///
     /// # Errors
-    /// Returns [`AppError::StorageMessage`] when the lock is poisoned.
-    pub fn acquire_folder_txn_lock(
-        db: &Database,
-    ) -> Result<std::sync::MutexGuard<'_, ()>, AppError> {
-        db.folder_txn_lock
-            .lock()
-            .map_err(|_| AppError::StorageMessage("Folder transaction lock poisoned".to_string()))
+    /// Returns an error when the lock is poisoned.
+    pub fn acquire_folder_txn_guard(db: &Database) -> Result<FolderTxnGuard<'_>, AppError> {
+        let guard = db.folder_txn_lock.lock().map_err(|_| {
+            AppError::StorageMessage("Folder transaction lock poisoned".to_string())
+        })?;
+        Ok(FolderTxnGuard { _guard: guard })
     }
 
-    /// Atomically create a paste and update folder count
+    /// Atomically create a paste and increment the destination folder count.
     ///
     /// # Arguments
-    /// - `db`: Database handle.
-    /// - `paste`: Paste to insert.
-    /// - `folder_id`: Folder that will contain the paste.
+    /// - `db`: Open database handle.
+    /// - `paste`: Paste row to insert.
+    /// - `folder_id`: Destination folder id.
     ///
     /// # Returns
-    /// `Ok(())` on success.
+    /// `Ok(())` when the write commits.
     ///
     /// # Errors
-    /// Propagates storage errors from paste or folder updates.
+    /// Returns an error when folder assignment is invalid, id already exists,
+    /// serialization fails, or storage operations fail.
     pub fn create_paste_with_folder(
         db: &Database,
-        paste: &crate::models::paste::Paste,
+        paste: &Paste,
         folder_id: &str,
     ) -> Result<(), AppError> {
-        let _guard = Self::acquire_folder_txn_lock(db)?;
-        Self::create_paste_with_folder_locked(db, paste, folder_id)
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::create_paste_with_folder_locked(db, &guard, paste, folder_id)
     }
 
-    pub(crate) fn create_paste_with_folder_locked(
+    /// Create a paste while holding a folder transaction guard.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `_folder_guard`: Active folder transaction guard for this critical section.
+    /// - `paste`: Paste row to insert.
+    /// - `folder_id`: Destination folder id.
+    ///
+    /// # Returns
+    /// `Ok(())` when the write commits.
+    ///
+    /// # Errors
+    /// Returns an error when folder assignment is invalid, id already exists,
+    /// serialization fails, or storage operations fail.
+    pub fn create_paste_with_folder_locked(
         db: &Database,
-        paste: &crate::models::paste::Paste,
+        _folder_guard: &FolderTxnGuard<'_>,
+        paste: &Paste,
         folder_id: &str,
     ) -> Result<(), AppError> {
-        ensure_folder_assignable(db, folder_id)?;
-        db.folders.update_count(folder_id, 1)?;
+        // Keep caller-owned model values immutable at this layer: persistence
+        // uses a cloned row with the canonical folder assignment applied.
+        let mut paste = paste.clone();
+        paste.folder_id = Some(folder_id.to_string());
 
-        #[cfg(test)]
-        if let Err(err) = apply_create_failpoint_after_destination_reserve(db, folder_id) {
-            rollback_destination_reservation(
-                db,
-                Some(folder_id),
-                "injected create failpoint",
-                true,
-            );
-            return Err(err);
-        }
+        let encoded_paste = bincode::serialize(&paste)?;
+        let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
+        let recency_key = reverse_timestamp_key(paste.updated_at);
 
-        if let Err(err) = ensure_folder_assignable(db, folder_id) {
-            rollback_destination_reservation(
-                db,
-                Some(folder_id),
-                "destination became unassignable before create",
-                true,
-            );
-            return Err(err);
-        }
+        let write_txn = db.db.begin_write()?;
+        {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut folders = write_txn.open_table(FOLDERS)?;
+            let deleting = write_txn.open_table(FOLDERS_DELETING)?;
 
-        if let Err(e) = db.pastes.create(paste) {
-            rollback_destination_reservation(db, Some(folder_id), "canonical create failure", true);
-            return Err(e);
-        }
-
-        #[cfg(test)]
-        if let Err(err) = apply_create_failpoint_after_canonical_create(db, folder_id) {
-            if let Err(delete_err) = db.pastes.delete(&paste.id) {
-                tracing::error!(
-                    "Failed to delete just-created paste after injected post-create failpoint: {}",
-                    delete_err
-                );
+            ensure_folder_assignable_in_txn(&folders, &deleting, folder_id)?;
+            if pastes.get(paste.id.as_str())?.is_some() {
+                return Err(AppError::StorageMessage(format!(
+                    "Paste id '{}' already exists",
+                    paste.id
+                )));
             }
-            rollback_destination_reservation(
-                db,
-                Some(folder_id),
-                "injected post-create failpoint",
-                true,
-            );
-            return Err(err);
-        }
 
-        if let Err(err) = ensure_folder_assignable(db, folder_id) {
-            if let Err(delete_err) = db.pastes.delete(&paste.id) {
-                tracing::error!(
-                    "Failed to delete just-created paste after destination folder disappeared: {}",
-                    delete_err
-                );
-            }
-            rollback_destination_reservation(
-                db,
-                Some(folder_id),
-                "post-create destination check",
-                true,
-            );
-            // Canonical create may have committed before this point. Returning Err is intentional:
-            // callers must retry because the destination became invalid and compensating actions
-            // were already attempted above.
-            return Err(err);
+            pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
+            metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
+            updated.insert((recency_key, paste.id.as_str()), ())?;
+            apply_folder_count_transition(&mut folders, None, Some(folder_id))?;
         }
-
+        write_txn.commit()?;
         Ok(())
     }
 
-    /// Atomically delete a paste and update folder count
+    /// Atomically delete a paste and decrement folder count when applicable.
     ///
     /// # Arguments
-    /// - `db`: Database handle.
-    /// - `paste_id`: Paste identifier to delete.
+    /// - `db`: Open database handle.
+    /// - `paste_id`: Paste id to remove.
     ///
     /// # Returns
-    /// `Ok(true)` if a paste was deleted, `Ok(false)` if not found.
+    /// `Ok(true)` when a paste was removed, `Ok(false)` when missing.
     ///
     /// # Errors
-    /// Propagates storage errors from the paste tree.
+    /// Returns an error when storage access or deserialization fails.
     pub fn delete_paste_with_folder(db: &Database, paste_id: &str) -> Result<bool, AppError> {
-        let _guard = Self::acquire_folder_txn_lock(db)?;
-        Self::delete_paste_with_folder_locked(db, paste_id)
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::delete_paste_with_folder_locked(db, &guard, paste_id)
     }
 
-    pub(crate) fn delete_paste_with_folder_locked(
+    /// Delete a paste while holding a folder transaction guard.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `_folder_guard`: Active folder transaction guard for this critical section.
+    /// - `paste_id`: Paste id to remove.
+    ///
+    /// # Returns
+    /// `Ok(true)` when a paste was removed, `Ok(false)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn delete_paste_with_folder_locked(
         db: &Database,
+        _folder_guard: &FolderTxnGuard<'_>,
         paste_id: &str,
     ) -> Result<bool, AppError> {
-        let deleted = db.pastes.delete_and_return(paste_id)?;
+        let write_txn = db.db.begin_write()?;
+        let deleted = {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut folders = write_txn.open_table(FOLDERS)?;
 
-        if let Some(paste) = deleted {
-            if let Some(folder_id) = paste.folder_id.as_deref() {
-                // Update folder count - if this fails, log but continue
-                // (paste is already deleted, better to have incorrect count than fail)
-                if let Err(e) = db.folders.update_count(folder_id, -1) {
-                    tracing::error!("Failed to update folder count after paste deletion: {}", e);
-                }
-            }
+            let Some(old_guard) = pastes.get(paste_id)? else {
+                return Ok(false);
+            };
+            let paste = deserialize_paste(old_guard.value())?;
+            let old_recency_key = reverse_timestamp_key(paste.updated_at);
+            let old_folder_id = paste.folder_id;
+            drop(old_guard);
 
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+            let _ = updated.remove((old_recency_key, paste_id))?;
+            let _ = pastes.remove(paste_id)?;
+            let _ = metas.remove(paste_id)?;
+
+            apply_folder_count_transition(&mut folders, old_folder_id.as_deref(), None)?;
+            true
+        };
+
+        write_txn.commit()?;
+        Ok(deleted)
     }
 
-    /// Atomically move a paste between folders
+    /// Atomically move a paste between folders while applying additional updates.
     ///
     /// # Arguments
-    /// - `db`: Database handle.
-    /// - `paste_id`: Paste identifier to update.
-    /// - `new_folder_id`: Destination folder id, if any.
-    /// - `update_req`: Update payload to apply to the paste.
+    /// - `db`: Open database handle.
+    /// - `paste_id`: Paste id to update.
+    /// - `new_folder_id`: Destination folder id, or `None` for unfiled.
+    /// - `update_req`: Additional patch fields for the paste row.
     ///
     /// # Returns
-    /// Updated paste if it existed.
+    /// `Ok(Some(paste))` when updated, `Ok(None)` when the paste does not exist.
     ///
     /// # Errors
-    /// Propagates storage errors from paste or folder updates.
+    /// Returns an error when destination assignment is invalid, or when storage /
+    /// serialization operations fail.
     pub fn move_paste_between_folders(
         db: &Database,
         paste_id: &str,
         new_folder_id: Option<&str>,
-        update_req: crate::models::paste::UpdatePasteRequest,
-    ) -> Result<Option<crate::models::paste::Paste>, AppError> {
-        let _guard = Self::acquire_folder_txn_lock(db)?;
-        Self::move_paste_between_folders_locked(db, paste_id, new_folder_id, update_req)
+        update_req: UpdatePasteRequest,
+    ) -> Result<Option<Paste>, AppError> {
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::move_paste_between_folders_locked(db, &guard, paste_id, new_folder_id, update_req)
     }
 
-    pub(crate) fn move_paste_between_folders_locked(
+    /// Move a paste between folders while holding a folder transaction guard.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `_folder_guard`: Active folder transaction guard for this critical section.
+    /// - `paste_id`: Paste id to update.
+    /// - `new_folder_id`: Destination folder id, or `None` for unfiled.
+    /// - `update_req`: Additional patch fields for the paste row.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when updated, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when destination assignment is invalid, or when storage /
+    /// serialization operations fail.
+    pub fn move_paste_between_folders_locked(
         db: &Database,
+        _folder_guard: &FolderTxnGuard<'_>,
         paste_id: &str,
         new_folder_id: Option<&str>,
-        update_req: crate::models::paste::UpdatePasteRequest,
-    ) -> Result<Option<crate::models::paste::Paste>, AppError> {
-        const MAX_MOVE_RETRIES: usize = 8;
+        update_req: UpdatePasteRequest,
+    ) -> Result<Option<Paste>, AppError> {
+        let write_txn = db.db.begin_write()?;
+        let updated_paste = {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut folders = write_txn.open_table(FOLDERS)?;
+            let deleting = write_txn.open_table(FOLDERS_DELETING)?;
 
-        for _ in 0..MAX_MOVE_RETRIES {
-            let current = match db.pastes.get(paste_id)? {
-                Some(paste) => paste,
-                None => return Ok(None),
+            let Some(old_guard) = pastes.get(paste_id)? else {
+                return Ok(None);
             };
+            let mut paste = deserialize_paste(old_guard.value())?;
+            let old_folder_id = paste.folder_id.clone();
+            let folder_changing = old_folder_id.as_deref() != new_folder_id;
+            let old_recency_key = reverse_timestamp_key(paste.updated_at);
+            drop(old_guard);
 
-            let old_folder_id = current.folder_id.as_deref();
-            let folder_changing = old_folder_id != new_folder_id;
-
-            // Reserve the destination count first so we can fail fast if the folder is gone.
             if folder_changing {
                 if let Some(new_id) = new_folder_id {
-                    ensure_folder_assignable(db, new_id)?;
-                    db.folders.update_count(new_id, 1)?;
+                    ensure_folder_assignable_in_txn(&folders, &deleting, new_id)?;
                 }
             }
-            #[cfg(test)]
-            if let Err(err) =
-                apply_move_failpoint_after_destination_reserve(db, folder_changing, new_folder_id)
-            {
-                rollback_destination_reservation(
-                    db,
-                    if folder_changing { new_folder_id } else { None },
-                    "injected move failpoint",
-                    false,
-                );
-                return Err(err);
-            }
 
-            // The destination can disappear between reservation and the paste CAS.
-            // Revalidate here so we don't commit a folder_id that no longer exists.
+            apply_update_request(&mut paste, &update_req);
+            paste.folder_id = new_folder_id.map(ToString::to_string);
+
+            let encoded_paste = bincode::serialize(&paste)?;
+            let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
+            let new_recency_key = reverse_timestamp_key(paste.updated_at);
+
+            pastes.insert(paste_id, encoded_paste.as_slice())?;
+            metas.insert(paste_id, encoded_meta.as_slice())?;
+            let _ = updated.remove((old_recency_key, paste_id))?;
+            updated.insert((new_recency_key, paste_id), ())?;
+
             if folder_changing {
-                if let Some(new_id) = new_folder_id {
-                    if let Err(err) = ensure_folder_assignable(db, new_id) {
-                        rollback_destination_reservation(
-                            db,
-                            Some(new_id),
-                            "destination disappeared before move CAS",
-                            true,
-                        );
-                        return Err(err);
-                    }
-                }
+                apply_folder_count_transition(
+                    &mut folders,
+                    old_folder_id.as_deref(),
+                    new_folder_id,
+                )?;
             }
 
-            let update_result =
-                db.pastes
-                    .update_if_folder_matches(paste_id, old_folder_id, update_req.clone());
-            match update_result {
-                Ok(Some(updated)) => {
-                    if folder_changing {
-                        if let Some(new_id) = new_folder_id {
-                            if let Err(err) = ensure_folder_assignable(db, new_id) {
-                                let revert_folder_value = old_folder_id
-                                    .map(ToString::to_string)
-                                    .unwrap_or_else(String::new);
-                                let revert_req = crate::models::paste::UpdatePasteRequest {
-                                    content: None,
-                                    name: None,
-                                    language: None,
-                                    language_is_manual: None,
-                                    folder_id: Some(revert_folder_value),
-                                    tags: None,
-                                };
-                                match db.pastes.update_if_folder_matches(
-                                    paste_id,
-                                    Some(new_id),
-                                    revert_req,
-                                ) {
-                                    Ok(_) => {}
-                                    Err(revert_err) => {
-                                        tracing::error!(
-                                            "Failed to revert paste folder after destination became unassignable: {}",
-                                            revert_err
-                                        );
-                                    }
-                                }
-                                rollback_destination_reservation(
-                                    db,
-                                    Some(new_id),
-                                    "post-commit destination check",
-                                    true,
-                                );
-                                // Canonical CAS may have committed before this point. Returning Err
-                                // is intentional so callers observe that destination validation
-                                // failed and compensating revert/rollback was attempted.
-                                return Err(err);
-                            }
-                        }
-                    }
+            Some(paste)
+        };
 
-                    if folder_changing {
-                        if let Some(old_id) = old_folder_id {
-                            if let Err(err) = db.folders.update_count(old_id, -1) {
-                                tracing::error!(
-                                    "Failed to decrement old folder count after move: {}",
-                                    err
-                                );
-                            }
-                        }
-                    }
-                    return Ok(Some(updated));
-                }
-                Ok(None) => {
-                    // Compare-and-swap mismatch or deletion. Roll back destination reservation.
-                    rollback_destination_reservation(
-                        db,
-                        if folder_changing { new_folder_id } else { None },
-                        "move conflict",
-                        false,
-                    );
-
-                    if db.pastes.get(paste_id)?.is_none() {
-                        return Ok(None);
-                    }
-                }
-                Err(err) => {
-                    // PasteDb update methods treat metadata-index failures as best-effort and
-                    // return success once the canonical row is committed. An error here means
-                    // canonical compare-and-swap did not commit, so rolling back reservation is safe.
-                    rollback_destination_reservation(
-                        db,
-                        if folder_changing { new_folder_id } else { None },
-                        "move error",
-                        false,
-                    );
-                    return Err(err);
-                }
-            }
-        }
-
-        Err(AppError::StorageMessage(
-            "Paste update conflicted repeatedly; please retry.".to_string(),
-        ))
+        write_txn.commit()?;
+        Ok(updated_paste)
     }
 }

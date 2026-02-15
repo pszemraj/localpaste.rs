@@ -1,17 +1,15 @@
 //! Folder HTTP handlers.
 
 use super::deprecation::{warn_folder_deprecation, with_folder_deprecation_headers};
-use super::normalize::{
-    normalize_optional_for_create, normalize_optional_for_update,
-    validate_assignable_folder_for_request,
-};
 use crate::{error::HttpError, models::folder::*, AppError, AppState};
 use axum::{
     extract::{Path, State},
     response::Response,
     Json,
 };
-use localpaste_core::folder_ops::{delete_folder_tree_and_migrate_guarded, introduces_cycle};
+use localpaste_core::folder_ops::{
+    create_folder_validated, delete_folder_tree_and_migrate_guarded, update_folder_validated,
+};
 
 /// Create a new folder.
 ///
@@ -26,18 +24,10 @@ use localpaste_core::folder_ops::{delete_folder_tree_and_migrate_guarded, introd
 /// Returns an error if validation or persistence fails.
 pub async fn create_folder(
     State(state): State<AppState>,
-    Json(mut req): Json<CreateFolderRequest>,
+    Json(req): Json<CreateFolderRequest>,
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("POST /api/folder");
-    req.parent_id = normalize_optional_for_create(req.parent_id);
-    let _folder_guard = crate::db::TransactionOps::acquire_folder_txn_lock(&state.db)?;
-
-    if let Some(ref parent_id) = req.parent_id {
-        validate_assignable_folder_for_request(&state.db, parent_id, "Parent folder")?;
-    }
-
-    let folder = Folder::with_parent(req.name, req.parent_id);
-    state.db.folders.create(&folder)?;
+    let folder = create_folder_validated(&state.db, req.name, req.parent_id)?;
     Ok(with_folder_deprecation_headers(Json(folder)))
 }
 
@@ -73,51 +63,10 @@ pub async fn list_folders(State(state): State<AppState>) -> Result<Response, Htt
 pub async fn update_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(mut req): Json<UpdateFolderRequest>,
+    Json(req): Json<UpdateFolderRequest>,
 ) -> Result<Response, HttpError> {
     warn_folder_deprecation("PUT /api/folder/:id");
-    req.parent_id = normalize_optional_for_update(req.parent_id);
-    let _folder_guard = crate::db::TransactionOps::acquire_folder_txn_lock(&state.db)?;
-
-    let folders = if req
-        .parent_id
-        .as_ref()
-        .map(|parent_id| !parent_id.is_empty())
-        .unwrap_or(false)
-    {
-        Some(state.db.folders.list()?)
-    } else {
-        None
-    };
-
-    if let Some(ref parent_id) = req.parent_id {
-        if parent_id == &id {
-            return Err(AppError::BadRequest("Folder cannot be its own parent".to_string()).into());
-        }
-        if !parent_id.is_empty() {
-            let folders = folders.as_ref().unwrap();
-            if folders.iter().all(|f| f.id != *parent_id) {
-                return Err(AppError::BadRequest(format!(
-                    "Parent folder with id '{}' does not exist",
-                    parent_id
-                ))
-                .into());
-            }
-            validate_assignable_folder_for_request(&state.db, parent_id, "Parent folder")?;
-
-            if introduces_cycle(folders, &id, parent_id) {
-                return Err(AppError::BadRequest(
-                    "Updating folder would create a cycle".to_string(),
-                )
-                .into());
-            }
-        }
-    }
-
-    let folder = state
-        .db
-        .folders
-        .update(&id, req.name, req.parent_id)?
+    let folder = update_folder_validated(&state.db, &id, req.name, req.parent_id)?
         .ok_or(AppError::NotFound)?;
     Ok(with_folder_deprecation_headers(Json(folder)))
 }

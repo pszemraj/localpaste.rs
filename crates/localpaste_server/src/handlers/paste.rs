@@ -1,10 +1,7 @@
 //! Paste HTTP handlers.
 
 use super::deprecation::maybe_with_folder_deprecation_headers;
-use super::normalize::{
-    normalize_optional_for_create, normalize_optional_for_update,
-    validate_assignable_folder_for_request,
-};
+use super::normalize::{normalize_optional_for_create, normalize_optional_for_update};
 use crate::{error::HttpError, models::paste::*, naming, AppError, AppState};
 use axum::{
     extract::{Path, Query, State},
@@ -12,6 +9,7 @@ use axum::{
     response::Response,
     Json,
 };
+use localpaste_core::folder_ops::map_missing_folder_for_request;
 
 const RESPONSE_SHAPE_HEADER: &str = "x-localpaste-response-shape";
 const META_RESPONSE_SHAPE: &str = "meta-only";
@@ -49,11 +47,31 @@ fn normalize_search_filters_for_query(
     )
 }
 
+fn acquire_folder_scoped_mutation_guards<'a>(
+    state: &'a AppState,
+    paste_id: &str,
+    locked_message: &'static str,
+) -> Result<(crate::db::FolderTxnGuard<'a>, crate::PasteMutationGuard<'a>), HttpError> {
+    let folder_guard = crate::db::TransactionOps::acquire_folder_txn_guard(&state.db)?;
+    let mutation_guard = state
+        .locks
+        .begin_mutation(paste_id)
+        .map_err(|err| crate::locks::map_paste_mutation_lock_error(err, locked_message))?;
+    Ok((folder_guard, mutation_guard))
+}
+
 fn with_folder_metadata_response(response: Response, include_meta_shape_header: bool) -> Response {
     if include_meta_shape_header {
         with_meta_only_response_shape(response)
     } else {
         response
+    }
+}
+
+fn map_folder_not_found_for_request(err: AppError, folder_id: Option<&str>) -> AppError {
+    match (err, folder_id) {
+        (err, Some(folder_id)) => map_missing_folder_for_request(err, folder_id, "Folder"),
+        (err, _) => err,
     }
 }
 
@@ -75,6 +93,7 @@ fn list_meta_response(
     ))
 }
 
+#[derive(Clone, Copy)]
 enum SearchMode {
     Canonical,
     MetaOnly,
@@ -140,10 +159,6 @@ pub async fn create_paste(
         .into());
     }
 
-    if let Some(ref folder_id) = req.folder_id {
-        validate_assignable_folder_for_request(&state.db, folder_id, "Folder")?;
-    }
-
     let name = req.name.unwrap_or_else(naming::generate_name);
     let mut paste = Paste::new(req.content, name);
     let language_is_manual = req.language_is_manual;
@@ -165,7 +180,8 @@ pub async fn create_paste(
 
     // Use transaction-like operation for atomic folder count update
     if let Some(ref folder_id) = paste.folder_id {
-        crate::db::TransactionOps::create_paste_with_folder(&state.db, &paste, folder_id)?;
+        crate::db::TransactionOps::create_paste_with_folder(&state.db, &paste, folder_id)
+            .map_err(|err| map_folder_not_found_for_request(err, Some(folder_id.as_str())))?;
     } else {
         state.db.pastes.create(&paste)?;
     }
@@ -231,32 +247,33 @@ pub async fn update_paste(
         }
     }
 
-    // Validate new folder exists if specified
-    if let Some(ref folder_id) = req.folder_id {
-        if !folder_id.is_empty() {
-            validate_assignable_folder_for_request(&state.db, folder_id, "Folder")?;
-        }
-    }
-
-    let _mutation_guard = state.locks.begin_mutation(&id).map_err(|err| {
-        crate::locks::map_paste_mutation_lock_error(err, "Paste is currently open for editing.")
-    })?;
     let updated = if req.folder_id.is_some() {
-        // Explicit folder operations (including clear-to-unfiled) use CAS-backed
-        // transaction logic to avoid stale-read folder count drift under concurrency.
+        // Explicit folder operations (including clear-to-unfiled) are serialized
+        // by the folder transaction guard and committed atomically via redb write
+        // transaction helpers in TransactionOps.
+        let (folder_guard, _mutation_guard) = acquire_folder_scoped_mutation_guards(
+            &state,
+            &id,
+            "Paste is currently open for editing.",
+        )?;
         let new_folder_id =
             req.folder_id
                 .clone()
                 .and_then(|f| if f.is_empty() { None } else { Some(f) });
 
-        crate::db::TransactionOps::move_paste_between_folders(
+        crate::db::TransactionOps::move_paste_between_folders_locked(
             &state.db,
+            &folder_guard,
             &id,
             new_folder_id.as_deref(),
             req,
-        )?
+        )
+        .map_err(|err| map_folder_not_found_for_request(err, new_folder_id.as_deref()))?
         .ok_or(AppError::NotFound)?
     } else {
+        let _mutation_guard = state.locks.begin_mutation(&id).map_err(|err| {
+            crate::locks::map_paste_mutation_lock_error(err, "Paste is currently open for editing.")
+        })?;
         // folder_id not changing, just update the paste
         state
             .db
@@ -287,12 +304,12 @@ pub async fn delete_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let _mutation_guard = state.locks.begin_mutation(&id).map_err(|err| {
-        crate::locks::map_paste_mutation_lock_error(err, "Paste is currently open for editing.")
-    })?;
+    let (folder_guard, _mutation_guard) =
+        acquire_folder_scoped_mutation_guards(&state, &id, "Paste is currently open for editing.")?;
     // Use transaction-like operation for atomic folder count update.
     // The helper derives folder ownership from the deleted record to avoid stale-folder races.
-    let deleted = crate::db::TransactionOps::delete_paste_with_folder(&state.db, &id)?;
+    let deleted =
+        crate::db::TransactionOps::delete_paste_with_folder_locked(&state.db, &folder_guard, &id)?;
 
     if deleted {
         Ok(Json(serde_json::json!({ "success": true })))
@@ -386,4 +403,87 @@ pub async fn search_pastes_meta(
         "GET /api/search/meta?folder_id=...",
         false,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::acquire_folder_scoped_mutation_guards;
+    use crate::{db::TransactionOps, AppState, Config, Database};
+    use localpaste_core::models::{folder::Folder, paste::Paste};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+    use tempfile::TempDir;
+
+    fn setup_state_with_foldered_paste() -> (TempDir, AppState, String) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("open db");
+
+        let folder = Folder::new("folder".to_string());
+        let folder_id = folder.id.clone();
+        db.folders.create(&folder).expect("create folder");
+
+        let mut paste = Paste::new("content".to_string(), "name".to_string());
+        paste.folder_id = Some(folder_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &folder_id).expect("create paste");
+
+        let state = AppState::new(
+            Config {
+                db_path: db_path.to_string_lossy().to_string(),
+                port: 3055,
+                max_paste_size: 1024 * 1024,
+                auto_save_interval: 500,
+                auto_backup: false,
+            },
+            db,
+        );
+        (temp_dir, state, paste_id)
+    }
+
+    #[test]
+    fn folder_scoped_mutation_waits_for_folder_lock_before_marking_mutating() {
+        let (_temp_dir, state, paste_id) = setup_state_with_foldered_paste();
+        let held_folder_guard =
+            TransactionOps::acquire_folder_txn_guard(state.db.as_ref()).expect("hold folder lock");
+
+        let worker_state = state.clone();
+        let worker_paste_id = paste_id.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).expect("started signal");
+            let guards = acquire_folder_scoped_mutation_guards(
+                &worker_state,
+                worker_paste_id.as_str(),
+                "Paste is currently open for editing.",
+            );
+            guards.map(|_| ()).map_err(|err| format!("{:?}", err))
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker should start");
+        thread::sleep(Duration::from_millis(50));
+
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline {
+            let guard = state
+                .locks
+                .begin_batch_mutation([paste_id.as_str()])
+                .expect(
+                    "folder delete should reserve affected ids while mutation waits on folder lock",
+                );
+            drop(guard);
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        drop(held_folder_guard);
+        let worker_result = worker.join().expect("join worker");
+        assert!(
+            worker_result.is_ok(),
+            "folder-scoped mutation guard acquisition should eventually succeed: {:?}",
+            worker_result
+        );
+    }
 }

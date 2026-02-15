@@ -125,10 +125,6 @@ impl EmbeddedServer {
                 )) {
                     warn!("server error: {}", err);
                 }
-
-                if let Err(err) = state.db.flush() {
-                    warn!("failed to flush database: {}", err);
-                }
             })
             .map_err(|err| AppError::StorageMessage(format!("failed to spawn server: {}", err)))?;
 

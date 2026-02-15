@@ -2,6 +2,7 @@
 
 This document is the canonical system walkthrough for LocalPaste.rs.
 For command-level developer workflows, use [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+For storage/backend compatibility rules, use [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 For security posture, use [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
 For service operations, use [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
 
@@ -32,7 +33,7 @@ flowchart LR
     ES --> CORE
     HS --> CORE
     GUIB --> CORE
-    CORE --> DB[("sled DB")]
+    CORE --> DB[("redb (data.redb)")]
     GUI --> DISC[".api-addr discovery file"]
     CLI --> DISC
 ```
@@ -96,19 +97,20 @@ sequenceDiagram
 
 ## 3) Storage Design
 
-LocalPaste uses sled with canonical and derived structures.
+Canonical on-disk contract and compatibility policy are defined in
+[docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
+Architecture summary:
 
-Canonical trees:
+Canonical tables:
 
 - `pastes`: authoritative full paste rows.
 - `folders`: authoritative folder rows.
 - `folders_deleting`: in-progress delete markers for folder-tree operations.
 
-Derived/index trees:
+Derived/index tables:
 
 - `pastes_meta`: metadata projection for list/search.
-- `pastes_by_updated`: recency ordering index.
-- `pastes_meta_state`: metadata index health markers (version/in-progress/faulted).
+- `pastes_by_updated`: recency ordering index keyed by `(reverse_millis, paste_id)`.
 
 Primary implementation:
 
@@ -118,34 +120,29 @@ Primary implementation:
 
 ## 4) Consistency Model
 
-Sled does not provide cross-tree atomic transactions, so LocalPaste uses:
+redb write transactions are atomic across all opened tables, so LocalPaste now uses:
 
-- canonical-write-first semantics for source-of-truth rows,
-- explicit rollback/compensation for folder-affecting multi-step operations,
-- metadata/index health tracking and reconcile markers,
-- canonical fallback on read when metadata/index drift is detected.
+- single-write-transaction mutations for paste/meta/index/folder updates,
+- no metadata fault markers or reconcile state machine,
+- no cross-table rollback stack for folder-affecting operations.
 
 Core transaction helper:
 
 - [`crates/localpaste_core/src/db/transactions.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/db/transactions.rs)
 
-Folder shared operations and reconcile:
+Folder shared operations and invariant repair:
 
 - [`crates/localpaste_core/src/folder_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/folder_ops.rs)
 
 ```mermaid
 flowchart TD
-    W["Write request (create/update/delete/move)"] --> C["Write canonical tree(s)"]
-    C --> D["Update derived indexes (meta/updated)"]
-    D --> E{"Derived write succeeds?"}
-    E -- yes --> OK["Return success"]
-    E -- no --> M["Mark metadata state faulted / needs reconcile"]
-    M --> OK
+    W["Write request (create/update/delete/move)"] --> T["Open single redb write transaction"]
+    T --> C["Update canonical + derived tables"]
+    C --> K{"commit() succeeds?"}
+    K -- yes --> OK["All changes visible atomically"]
+    K -- no --> ABORT["No partial rows committed"]
 
-    R["Read request (list/search/meta)"] --> H{"Index healthy?"}
-    H -- yes --> I["Read from metadata/index trees"]
-    H -- no --> F["Fallback to canonical rows"]
-    F --> Q["Optionally trigger reconcile path"]
+    R["Read request (list/search/meta)"] --> I["Read from canonical/metadata tables"]
 ```
 
 ## 5) Read And Write Paths
@@ -160,9 +157,8 @@ The project centralizes sensitive folder assignment/delete logic in shared core 
 
 Read behavior:
 
-- list/search prefer metadata/index projections,
-- drift/missing rows trigger canonical fallback (never trust stale derived state as authoritative),
-- reconcile paths restore derived structures opportunistically.
+- list/search use metadata/index projections backed by atomic write consistency,
+- no stale-index canonical fallback path is required.
 
 ## 6) Locking And Concurrency
 
@@ -201,7 +197,7 @@ Key properties:
 
 - autosave and manual save dispatch through backend commands,
 - metadata save path is separate from content save path,
-- shutdown force-enqueues final dirty snapshots before backend shutdown flush.
+- shutdown force-enqueues final dirty snapshots before backend shutdown acknowledgement.
 
 Relevant code:
 
@@ -213,14 +209,14 @@ Relevant code:
 sequenceDiagram
     participant UI as GUI App
     participant W as Backend Worker
-    participant DB as sled DB
+    participant DB as redb
 
     UI->>UI: detect dirty content/metadata on exit
     UI->>W: enqueue final content save (forced)
     UI->>W: enqueue final metadata save (forced)
-    UI->>W: send Shutdown{flush=true}
+    UI->>W: send Shutdown{flush=true} (compat flag; redb commits on write commit)
     W->>DB: process queued saves in order
-    W->>DB: flush()
+    W->>DB: commit() per mutation
     W-->>UI: ShutdownComplete
 ```
 
@@ -256,6 +252,5 @@ Core themes:
 
 ## 11) Active Follow-Ups
 
-- Storage split design follow-up: [docs/dev/storage-split-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/storage-split-plan.md)
 - Rewrite readiness/perf gate: [docs/dev/parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
 - Engineering backlog: [docs/dev/backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)

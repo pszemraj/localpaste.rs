@@ -643,7 +643,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Clearing existing data...");
         let (deleted_pastes, deleted_folders) = clear_existing_data(&db)?;
         assert_folder_invariants(&db)?;
-        db.flush()?;
         println!(
             "Cleared {} pastes and {} folders",
             deleted_pastes, deleted_folders
@@ -737,7 +736,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     assert_folder_invariants(&db)?;
-    db.flush()?;
 
     let elapsed = start.elapsed();
     let rate = args.count as f64 / elapsed.as_secs_f64();

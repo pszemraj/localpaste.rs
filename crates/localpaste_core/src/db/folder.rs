@@ -1,83 +1,88 @@
-//! Folder storage operations backed by sled.
+//! Folder storage operations backed by redb.
 
-use crate::{error::AppError, models::folder::*};
-use sled::Db;
-use std::cell::RefCell;
-use std::rc::Rc;
+use crate::{db::tables::*, error::AppError, models::folder::*};
+use redb::{ReadableDatabase, ReadableTable};
 use std::sync::Arc;
 
-/// Accessor for the `folders` sled tree.
+/// Accessor for folder-related redb tables.
 pub struct FolderDb {
-    tree: sled::Tree,
-    delete_markers: sled::Tree,
+    db: Arc<redb::Database>,
 }
 
 impl FolderDb {
-    /// Open the `folders` tree.
+    /// Initialize folder tables if they do not exist yet.
     ///
     /// # Returns
-    /// A [`FolderDb`] bound to the `folders` tree.
+    /// A new [`FolderDb`] accessor bound to `db`.
     ///
     /// # Errors
-    /// Returns an error if the tree cannot be opened.
-    pub fn new(db: Arc<Db>) -> Result<Self, AppError> {
-        let tree = db.open_tree("folders")?;
-        let delete_markers = db.open_tree("folders_deleting")?;
-        Ok(Self {
-            tree,
-            delete_markers,
-        })
+    /// Returns an error when redb transaction/table initialization fails.
+    pub fn new(db: Arc<redb::Database>) -> Result<Self, AppError> {
+        let write_txn = db.begin_write()?;
+        write_txn.open_table(FOLDERS)?;
+        write_txn.open_table(FOLDERS_DELETING)?;
+        write_txn.commit()?;
+        Ok(Self { db })
     }
 
-    /// Insert a new folder.
+    /// Insert a new folder row.
+    ///
+    /// # Arguments
+    /// - `folder`: Folder row to persist.
     ///
     /// # Returns
-    /// `Ok(())` on success.
+    /// `Ok(())` when the row is inserted.
     ///
     /// # Errors
-    /// Returns an error if serialization or insertion fails.
+    /// Returns an error when serialization fails, the id already exists, or
+    /// underlying storage operations fail.
     pub fn create(&self, folder: &Folder) -> Result<(), AppError> {
-        let key = folder.id.as_bytes();
-        let value = bincode::serialize(folder)?;
-        let inserted = self
-            .tree
-            .compare_and_swap(key, None as Option<&[u8]>, Some(value))?;
-        if inserted.is_err() {
-            return Err(AppError::StorageMessage(format!(
-                "Folder id '{}' already exists",
-                folder.id
-            )));
+        let encoded = bincode::serialize(folder)?;
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut folders = write_txn.open_table(FOLDERS)?;
+            if folders.get(folder.id.as_str())?.is_some() {
+                return Err(AppError::StorageMessage(format!(
+                    "Folder id '{}' already exists",
+                    folder.id
+                )));
+            }
+            folders.insert(folder.id.as_str(), encoded.as_slice())?;
         }
+        write_txn.commit()?;
         Ok(())
     }
 
     /// Fetch a folder by id.
     ///
     /// # Returns
-    /// The folder if it exists.
+    /// `Ok(Some(folder))` when found, `Ok(None)` when missing.
     ///
     /// # Errors
-    /// Returns an error if the lookup fails.
+    /// Returns an error when storage access or deserialization fails.
     pub fn get(&self, id: &str) -> Result<Option<Folder>, AppError> {
-        Ok(self
-            .tree
-            .get(id.as_bytes())?
-            .map(|v| bincode::deserialize(&v))
-            .transpose()?)
+        let read_txn = self.db.begin_read()?;
+        let folders = read_txn.open_table(FOLDERS)?;
+        match folders.get(id)? {
+            Some(value) => Ok(Some(bincode::deserialize(value.value())?)),
+            None => Ok(None),
+        }
     }
 
-    /// Update a folder's name and optional parent.
+    /// Update folder name and optionally parent id.
+    ///
+    /// Empty `parent_id` values are normalized to `None`.
     ///
     /// # Arguments
-    /// - `id`: Folder identifier.
-    /// - `name`: New folder name.
-    /// - `parent_id`: Optional new parent id (empty string normalizes to `None`).
+    /// - `id`: Folder id to update.
+    /// - `name`: New folder display name.
+    /// - `parent_id`: Optional parent id (empty string clears parent).
     ///
     /// # Returns
-    /// Updated folder if it exists.
+    /// `Ok(Some(folder))` when updated, `Ok(None)` when missing.
     ///
     /// # Errors
-    /// Returns an error if serialization or update fails.
+    /// Returns an error when storage access or serialization fails.
     pub fn update(
         &self,
         id: &str,
@@ -97,49 +102,58 @@ impl FolderDb {
         })
     }
 
-    /// Delete a folder by id.
+    /// Delete a folder and clear any delete marker for the same id.
     ///
     /// # Returns
-    /// `true` if a folder was deleted.
+    /// `Ok(true)` when deleted, `Ok(false)` when missing.
     ///
     /// # Errors
-    /// Returns an error if deletion fails.
+    /// Returns an error when storage operations fail.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
-        let removed = self.tree.remove(id.as_bytes())?.is_some();
-        let _ = self.delete_markers.remove(id.as_bytes())?;
+        let write_txn = self.db.begin_write()?;
+        let removed = {
+            let mut folders = write_txn.open_table(FOLDERS)?;
+            let mut deleting = write_txn.open_table(FOLDERS_DELETING)?;
+            let removed = folders.remove(id)?.is_some();
+            let _ = deleting.remove(id)?;
+            removed
+        };
+        write_txn.commit()?;
         Ok(removed)
     }
 
-    /// List all folders.
+    /// List all folders sorted by name.
     ///
     /// # Returns
-    /// A sorted list of folders.
+    /// All known folders in ascending name order.
     ///
     /// # Errors
-    /// Returns an error if iteration fails.
+    /// Returns an error when storage access or deserialization fails.
     pub fn list(&self) -> Result<Vec<Folder>, AppError> {
+        let read_txn = self.db.begin_read()?;
+        let folders_table = read_txn.open_table(FOLDERS)?;
         let mut folders = Vec::new();
-        for item in self.tree.iter() {
+        for item in folders_table.iter()? {
             let (_, value) = item?;
-            let folder: Folder = bincode::deserialize(&value)?;
+            let folder: Folder = bincode::deserialize(value.value())?;
             folders.push(folder);
         }
         folders.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(folders)
     }
 
-    /// Adjust the paste count for a folder.
+    /// Add or subtract from a folder's `paste_count`.
     ///
     /// # Arguments
-    /// - `id`: Folder identifier.
-    /// - `delta`: Count adjustment (positive or negative).
+    /// - `id`: Folder id to update.
+    /// - `delta`: Signed delta applied with saturation.
     ///
     /// # Returns
-    /// `Ok(())` when the update is applied.
+    /// `Ok(())` when the count update commits.
     ///
     /// # Errors
-    /// Returns [`AppError::NotFound`] when the folder does not exist, or a storage/serialization
-    /// error when the update fails.
+    /// Returns [`AppError::NotFound`] when the folder is missing, or storage
+    /// / serialization errors when the update cannot be committed.
     pub fn update_count(&self, id: &str, delta: i32) -> Result<(), AppError> {
         let updated = self.update_folder_record(id, move |folder| {
             if delta > 0 {
@@ -155,18 +169,18 @@ impl FolderDb {
         Ok(())
     }
 
-    /// Set a folder paste count to an exact value.
+    /// Set a folder's `paste_count` to an exact value.
     ///
     /// # Arguments
-    /// - `id`: Folder identifier.
-    /// - `count`: Exact canonical paste count.
+    /// - `id`: Folder id to update.
+    /// - `count`: New exact paste count.
     ///
     /// # Returns
-    /// `Ok(())` when the update is applied.
+    /// `Ok(())` when the count update commits.
     ///
     /// # Errors
-    /// Returns [`AppError::NotFound`] when the folder does not exist, or a storage/serialization
-    /// error when the update fails.
+    /// Returns [`AppError::NotFound`] when the folder is missing, or storage
+    /// / serialization errors when the update cannot be committed.
     pub fn set_count(&self, id: &str, count: usize) -> Result<(), AppError> {
         let updated = self.update_folder_record(id, move |folder| {
             folder.paste_count = count;
@@ -178,113 +192,93 @@ impl FolderDb {
         Ok(())
     }
 
-    /// Mark folders as in-progress deletion targets.
-    ///
-    /// # Arguments
-    /// - `folder_ids`: Folder ids to mark.
+    /// Mark folders as in-progress for delete workflows.
     ///
     /// # Returns
-    /// `Ok(())` after all markers are persisted.
+    /// `Ok(())` when all markers are written.
     ///
     /// # Errors
-    /// Returns an error if the marker tree write fails.
+    /// Returns an error when storage operations fail.
     pub fn mark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
-        let mut marked: Vec<String> = Vec::with_capacity(folder_ids.len());
-        for folder_id in folder_ids {
-            if let Err(err) = self.delete_markers.insert(folder_id.as_bytes(), &[1u8]) {
-                for rollback_id in marked {
-                    let _ = self.delete_markers.remove(rollback_id.as_bytes());
-                }
-                return Err(AppError::Database(err));
-            }
-            marked.push(folder_id.clone());
-        }
-        Ok(())
+        self.set_delete_markers(folder_ids, true)
     }
 
-    /// Remove in-progress deletion markers from folders.
-    ///
-    /// # Arguments
-    /// - `folder_ids`: Folder ids to unmark.
+    /// Remove delete markers for folders.
     ///
     /// # Returns
-    /// `Ok(())` after marker removal completes.
+    /// `Ok(())` when all markers are removed.
     ///
     /// # Errors
-    /// Returns an error if marker removal fails.
+    /// Returns an error when storage operations fail.
     pub fn unmark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
-        for folder_id in folder_ids {
-            let _ = self.delete_markers.remove(folder_id.as_bytes())?;
-        }
-        Ok(())
+        self.set_delete_markers(folder_ids, false)
     }
 
-    /// Check whether a folder is marked as being deleted.
-    ///
-    /// # Arguments
-    /// - `id`: Folder identifier.
+    /// Check whether a folder id is currently delete-marked.
     ///
     /// # Returns
-    /// `true` when deletion is in progress for the folder id.
+    /// `true` when a marker is present, otherwise `false`.
     ///
     /// # Errors
-    /// Returns an error if marker lookup fails.
+    /// Returns an error when storage operations fail.
     pub fn is_delete_marked(&self, id: &str) -> Result<bool, AppError> {
-        Ok(self.delete_markers.get(id.as_bytes())?.is_some())
+        let read_txn = self.db.begin_read()?;
+        let deleting = read_txn.open_table(FOLDERS_DELETING)?;
+        Ok(deleting.get(id)?.is_some())
     }
 
-    /// Clear all in-progress delete markers.
+    /// Remove all folder delete markers.
     ///
     /// # Returns
-    /// `Ok(())` when marker state is fully reset.
+    /// `Ok(())` when table reset completes.
     ///
     /// # Errors
-    /// Returns an error if marker tree clear fails.
+    /// Returns an error when table reset operations fail.
     pub fn clear_delete_markers(&self) -> Result<(), AppError> {
-        self.delete_markers.clear()?;
+        let write_txn = self.db.begin_write()?;
+        let _ = write_txn.delete_table(FOLDERS_DELETING);
+        write_txn.open_table(FOLDERS_DELETING)?;
+        write_txn.commit()?;
         Ok(())
     }
 
-    fn update_folder_record<F>(&self, id: &str, mutator: F) -> Result<Option<Folder>, AppError>
+    fn update_folder_record<F>(&self, id: &str, mut mutator: F) -> Result<Option<Folder>, AppError>
     where
         F: FnMut(&mut Folder) -> Result<(), AppError>,
     {
-        let update_error = Rc::new(RefCell::new(None));
-        let update_error_in = Rc::clone(&update_error);
-        let mutator = Rc::new(RefCell::new(mutator));
-        let mutator_in = Rc::clone(&mutator);
-        let result = self.tree.update_and_fetch(id.as_bytes(), move |old| {
-            let bytes = old?;
-
-            let mut folder: Folder = match bincode::deserialize(bytes) {
-                Ok(folder) => folder,
-                Err(err) => {
-                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
-                    return Some(bytes.to_vec());
-                }
+        let write_txn = self.db.begin_write()?;
+        let result = {
+            let mut folders = write_txn.open_table(FOLDERS)?;
+            let Some(value) = folders.get(id)? else {
+                return Ok(None);
             };
 
-            if let Err(err) = (mutator_in.borrow_mut())(&mut folder) {
-                *update_error_in.borrow_mut() = Some(err);
-                return Some(bytes.to_vec());
-            }
+            let mut folder: Folder = bincode::deserialize(value.value())?;
+            drop(value);
 
-            match bincode::serialize(&folder) {
-                Ok(encoded) => Some(encoded),
-                Err(err) => {
-                    *update_error_in.borrow_mut() = Some(AppError::Serialization(err));
-                    Some(bytes.to_vec())
+            mutator(&mut folder)?;
+            let encoded = bincode::serialize(&folder)?;
+            folders.insert(id, encoded.as_slice())?;
+            Some(folder)
+        };
+
+        write_txn.commit()?;
+        Ok(result)
+    }
+
+    fn set_delete_markers(&self, folder_ids: &[String], mark: bool) -> Result<(), AppError> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut deleting = write_txn.open_table(FOLDERS_DELETING)?;
+            for folder_id in folder_ids {
+                if mark {
+                    deleting.insert(folder_id.as_str(), ())?;
+                } else {
+                    let _ = deleting.remove(folder_id.as_str())?;
                 }
             }
-        })?;
-
-        if let Some(err) = update_error.borrow_mut().take() {
-            return Err(err);
         }
-
-        match result {
-            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
-            None => Ok(None),
-        }
+        write_txn.commit()?;
+        Ok(())
     }
 }

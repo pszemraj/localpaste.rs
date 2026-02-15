@@ -2,13 +2,8 @@
 
 use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent};
-use localpaste_core::{
-    db::TransactionOps,
-    folder_ops::{
-        delete_folder_tree_and_migrate_guarded, ensure_folder_assignable, introduces_cycle,
-    },
-    models::folder::Folder,
-    AppError,
+use localpaste_core::folder_ops::{
+    create_folder_validated, delete_folder_tree_and_migrate_guarded, update_folder_validated,
 };
 use tracing::error;
 
@@ -33,39 +28,8 @@ pub(super) fn handle_create_folder(
     name: String,
     parent_id: Option<String>,
 ) {
-    let _folder_guard = match TransactionOps::acquire_folder_txn_lock(&state.db) {
-        Ok(guard) => guard,
-        Err(err) => {
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Create folder failed: {}", err),
-            );
-            return;
-        }
-    };
-    let normalized_parent = parent_id
-        .map(|pid| pid.trim().to_string())
-        .filter(|pid| !pid.is_empty());
-    if let Some(parent_id) = normalized_parent.as_deref() {
-        if let Err(err) = ensure_folder_assignable(&state.db, parent_id) {
-            let message = match err {
-                AppError::NotFound => {
-                    format!(
-                        "Create folder failed: parent '{}' does not exist",
-                        parent_id
-                    )
-                }
-                other => format!("Create folder failed: {}", other),
-            };
-            send_error(&state.evt_tx, CoreErrorSource::Other, message);
-            return;
-        }
-    }
-
-    let folder = Folder::with_parent(name, normalized_parent);
-    match state.db.folders.create(&folder) {
-        Ok(()) => {
+    match create_folder_validated(&state.db, name, parent_id) {
+        Ok(folder) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::FolderSaved { folder });
         }
@@ -86,84 +50,7 @@ pub(super) fn handle_update_folder(
     name: String,
     parent_id: Option<String>,
 ) {
-    let _folder_guard = match TransactionOps::acquire_folder_txn_lock(&state.db) {
-        Ok(guard) => guard,
-        Err(err) => {
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Update folder failed: {}", err),
-            );
-            return;
-        }
-    };
-    // Preserve API semantics:
-    // - `None` => leave parent unchanged
-    // - `Some(\"\")` => clear parent (top-level)
-    // - `Some(\"id\")` => set explicit parent
-    let parent_update = parent_id.map(|pid| pid.trim().to_string());
-    let normalized_parent = parent_update.as_ref().and_then(|pid| match pid.trim() {
-        "" => None,
-        trimmed => Some(trimmed),
-    });
-    if normalized_parent == Some(id.as_str()) {
-        send_error(
-            &state.evt_tx,
-            CoreErrorSource::Other,
-            "Update folder failed: folder cannot be its own parent".to_string(),
-        );
-        return;
-    }
-
-    if let Some(parent_id) = normalized_parent {
-        let folders = match state.db.folders.list() {
-            Ok(folders) => folders,
-            Err(err) => {
-                send_error(
-                    &state.evt_tx,
-                    CoreErrorSource::Other,
-                    format!("Update folder failed: {}", err),
-                );
-                return;
-            }
-        };
-
-        if folders.iter().all(|f| f.id != parent_id) {
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!(
-                    "Update folder failed: parent '{}' does not exist",
-                    parent_id
-                ),
-            );
-            return;
-        }
-        if let Err(err) = ensure_folder_assignable(&state.db, parent_id) {
-            let message = match err {
-                AppError::NotFound => {
-                    format!(
-                        "Update folder failed: parent '{}' does not exist",
-                        parent_id
-                    )
-                }
-                other => format!("Update folder failed: {}", other),
-            };
-            send_error(&state.evt_tx, CoreErrorSource::Other, message);
-            return;
-        }
-
-        if introduces_cycle(&folders, &id, parent_id) {
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                "Update folder failed: would create cycle".to_string(),
-            );
-            return;
-        }
-    }
-
-    match state.db.folders.update(&id, name, parent_update) {
+    match update_folder_validated(&state.db, &id, name, parent_id) {
         Ok(Some(folder)) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::FolderSaved { folder });

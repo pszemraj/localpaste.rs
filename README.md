@@ -29,6 +29,7 @@ Canonical build/run/validation command matrices are maintained in:
 ## Configuration And Ops
 
 - System architecture walkthrough: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
+- Storage/backend compatibility contract: [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md)
 - Security and environment variables: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
 - Service/background operation: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
 - Locking semantics (owner lock + paste edit locks): [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)

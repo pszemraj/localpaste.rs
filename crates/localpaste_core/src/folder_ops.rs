@@ -5,20 +5,21 @@ use crate::{
     models::{folder::Folder, paste::UpdatePasteRequest},
     AppError, Database,
 };
+use redb::ReadableTable;
 use std::collections::{HashMap, HashSet};
 
 /// Validate that a folder can accept new paste assignments.
 ///
 /// # Arguments
 /// - `db`: Open database handle.
-/// - `folder_id`: Target folder id.
+/// - `folder_id`: Candidate folder id.
 ///
 /// # Returns
-/// `Ok(())` when the folder exists and is not in an active delete set.
+/// `Ok(())` when the folder exists and is not delete-marked.
 ///
 /// # Errors
-/// Returns [`AppError::NotFound`] when the folder does not exist, or
-/// [`AppError::BadRequest`] when delete is in progress for the folder.
+/// Returns [`AppError::NotFound`] for missing folders or
+/// [`AppError::BadRequest`] when delete is in progress.
 pub fn ensure_folder_assignable(db: &Database, folder_id: &str) -> Result<(), AppError> {
     if db.folders.get(folder_id)?.is_none() {
         return Err(AppError::NotFound);
@@ -32,15 +33,108 @@ pub fn ensure_folder_assignable(db: &Database, folder_id: &str) -> Result<(), Ap
     Ok(())
 }
 
+/// Map a missing-folder `NotFound` into a caller-facing validation message.
+///
+/// # Arguments
+/// - `err`: Source error from folder validation logic.
+/// - `folder_id`: Folder id that was requested.
+/// - `label`: Resource label used in the final user-facing message.
+///
+/// # Returns
+/// `BadRequest` for missing folders, otherwise the original error.
+pub fn map_missing_folder_for_request(err: AppError, folder_id: &str, label: &str) -> AppError {
+    match err {
+        AppError::NotFound => {
+            AppError::BadRequest(format!("{} with id '{}' does not exist", label, folder_id))
+        }
+        other => other,
+    }
+}
+
+/// Create a folder with canonical parent validation under the folder txn lock.
+///
+/// # Arguments
+/// - `db`: Open database handle.
+/// - `name`: Folder display name.
+/// - `parent_id`: Optional parent id (empty/whitespace clears to top-level).
+///
+/// # Returns
+/// The created folder row.
+///
+/// # Errors
+/// Returns parent validation errors or storage failures.
+pub fn create_folder_validated(
+    db: &Database,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<Folder, AppError> {
+    let _folder_guard = TransactionOps::acquire_folder_txn_guard(db)?;
+    let normalized_parent = parent_id
+        .map(|pid| pid.trim().to_string())
+        .filter(|pid| !pid.is_empty());
+
+    if let Some(parent_id) = normalized_parent.as_deref() {
+        ensure_folder_assignable(db, parent_id)
+            .map_err(|err| map_missing_folder_for_request(err, parent_id, "Parent folder"))?;
+    }
+
+    let folder = Folder::with_parent(name, normalized_parent);
+    db.folders.create(&folder)?;
+    Ok(folder)
+}
+
+/// Update a folder with canonical parent validation under the folder txn lock.
+///
+/// # Arguments
+/// - `db`: Open database handle.
+/// - `id`: Folder id to update.
+/// - `name`: New folder display name.
+/// - `parent_id`: Optional parent update (`None` keeps current, empty clears).
+///
+/// # Returns
+/// `Ok(Some(folder))` when updated, `Ok(None)` when the target folder is missing.
+///
+/// # Errors
+/// Returns validation or storage errors.
+pub fn update_folder_validated(
+    db: &Database,
+    id: &str,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<Option<Folder>, AppError> {
+    let _folder_guard = TransactionOps::acquire_folder_txn_guard(db)?;
+    let parent_update = parent_id.map(|pid| pid.trim().to_string());
+
+    if let Some(parent_id) = parent_update.as_deref() {
+        if parent_id == id {
+            return Err(AppError::BadRequest(
+                "Folder cannot be its own parent".to_string(),
+            ));
+        }
+        if !parent_id.is_empty() {
+            ensure_folder_assignable(db, parent_id)
+                .map_err(|err| map_missing_folder_for_request(err, parent_id, "Parent folder"))?;
+            let folders = db.folders.list()?;
+            if introduces_cycle(&folders, id, parent_id) {
+                return Err(AppError::BadRequest(
+                    "Updating folder would create cycle".to_string(),
+                ));
+            }
+        }
+    }
+
+    db.folders.update(id, name, parent_update)
+}
+
 /// Returns `true` if assigning `folder_id` under `new_parent_id` introduces a cycle.
 ///
 /// # Arguments
-/// - `folders`: Full folder list representing the current tree.
+/// - `folders`: Full folder list.
 /// - `folder_id`: Folder being re-parented.
-/// - `new_parent_id`: Proposed parent folder id.
+/// - `new_parent_id`: Proposed parent id.
 ///
 /// # Returns
-/// `true` when the proposed parent would introduce a cycle.
+/// `true` when the proposed parent would create a cycle.
 pub fn introduces_cycle(folders: &[Folder], folder_id: &str, new_parent_id: &str) -> bool {
     let parent_map: HashMap<&str, Option<&str>> = folders
         .iter()
@@ -62,7 +156,7 @@ pub fn introduces_cycle(folders: &[Folder], folder_id: &str, new_parent_id: &str
 /// Collect descendants (including `root_id`) in child-first delete order.
 ///
 /// # Arguments
-/// - `folders`: Full folder list representing the current tree.
+/// - `folders`: Full folder list.
 /// - `root_id`: Root folder id to delete.
 ///
 /// # Returns
@@ -91,8 +185,6 @@ pub fn folder_delete_order(folders: &[Folder], root_id: &str) -> Vec<String> {
 
 /// Deletes a folder tree and migrates all affected pastes to unfiled.
 ///
-/// Returns the folder ids that were deleted in execution order.
-///
 /// # Arguments
 /// - `db`: Open database handle.
 /// - `root_id`: Root folder id to delete.
@@ -101,8 +193,8 @@ pub fn folder_delete_order(folders: &[Folder], root_id: &str) -> Vec<String> {
 /// Deleted folder ids in execution order (children first, root last).
 ///
 /// # Errors
-/// Returns [`AppError::NotFound`] when `root_id` does not exist, or storage errors when
-/// folder/paste updates fail.
+/// Returns [`AppError::NotFound`] when `root_id` does not exist, or storage
+/// errors when folder/paste mutations fail.
 pub fn delete_folder_tree_and_migrate(
     db: &Database,
     root_id: &str,
@@ -112,22 +204,17 @@ pub fn delete_folder_tree_and_migrate(
 
 /// Deletes a folder tree while holding an external guard for affected paste ids.
 ///
-/// The caller-provided `acquire_guard` callback executes while the folder
-/// transaction lock is held and receives the exact canonical paste ids that
-/// belong to the delete set. The returned guard is held for the full migration
-/// and delete flow.
-///
 /// # Arguments
 /// - `db`: Open database handle.
 /// - `root_id`: Root folder id to delete.
-/// - `acquire_guard`: Callback that acquires an external guard for affected ids.
+/// - `acquire_guard`: Callback that receives affected paste ids and returns a guard.
 ///
 /// # Returns
 /// Deleted folder ids in execution order (children first, root last).
 ///
 /// # Errors
 /// Returns [`AppError::NotFound`] when `root_id` does not exist, or any error
-/// returned by `acquire_guard` / storage mutations.
+/// produced by `acquire_guard` / storage mutations.
 pub fn delete_folder_tree_and_migrate_guarded<G, F>(
     db: &Database,
     root_id: &str,
@@ -136,11 +223,11 @@ pub fn delete_folder_tree_and_migrate_guarded<G, F>(
 where
     F: FnOnce(&[String]) -> Result<G, AppError>,
 {
-    let _folder_guard = TransactionOps::acquire_folder_txn_lock(db)?;
+    let folder_guard = TransactionOps::acquire_folder_txn_guard(db)?;
     let delete_order = folder_delete_order_for_root_locked(db, root_id)?;
     let affected_paste_ids = collect_affected_paste_ids_locked(db, &delete_order)?;
     let _external_guard = acquire_guard(&affected_paste_ids)?;
-    delete_folder_tree_and_migrate_with_order_locked(db, delete_order)
+    delete_folder_tree_and_migrate_with_order_locked(db, &folder_guard, delete_order)
 }
 
 fn folder_delete_order_for_root_locked(
@@ -178,73 +265,80 @@ fn collect_affected_paste_ids_locked(
 
 fn delete_folder_tree_and_migrate_with_order_locked(
     db: &Database,
+    _folder_guard: &crate::db::FolderTxnGuard<'_>,
     delete_order: Vec<String>,
 ) -> Result<Vec<String>, AppError> {
-    db.folders.mark_deleting(&delete_order)?;
-    let result = (|| {
+    use crate::db::paste::{apply_update_request, deserialize_paste, reverse_timestamp_key};
+    use crate::db::tables::{FOLDERS, FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META};
+    use crate::models::paste::PasteMeta;
+
+    let delete_set: HashSet<&str> = delete_order.iter().map(|id| id.as_str()).collect();
+    let clear_folder_update = UpdatePasteRequest {
+        content: None,
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(String::new()),
+        tags: None,
+    };
+
+    let write_txn = db.db.begin_write()?;
+    {
+        let mut pastes = write_txn.open_table(PASTES)?;
+        let mut metas = write_txn.open_table(PASTES_META)?;
+        let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+        let mut folders = write_txn.open_table(FOLDERS)?;
+        let mut deleting = write_txn.open_table(FOLDERS_DELETING)?;
+
         for folder_id in &delete_order {
-            migrate_folder_pastes_to_unfiled(db, folder_id)?;
-            db.folders.delete(folder_id)?;
+            deleting.insert(folder_id.as_str(), ())?;
         }
 
-        // list_meta can temporarily mask stale rows by falling back to canonical data.
-        // Rebuild indexes from canonical rows so folder deletions do not leave persistent
-        // metadata/index ghosts that force repeated runtime fallback scans.
-        if let Err(err) = reconcile_meta_indexes_after_folder_delete(db) {
-            tracing::error!(
-                "Folder delete committed but metadata reconcile failed; leaving reconcile marker for repair: {}",
-                err
-            );
-        }
-
-        Ok(delete_order.clone())
-    })();
-
-    if let Err(unmark_err) = db.folders.unmark_deleting(&delete_order) {
-        tracing::error!(
-            "Failed to clear folder delete markers after delete flow: {}",
-            unmark_err
-        );
-    }
-
-    result
-}
-
-fn migrate_folder_pastes_to_unfiled(db: &Database, folder_id: &str) -> Result<(), AppError> {
-    loop {
-        let paste_ids = db.pastes.list_canonical_ids_batch(100, Some(folder_id))?;
-        if paste_ids.is_empty() {
-            break;
-        }
-
-        for paste_id in paste_ids {
-            let update = UpdatePasteRequest {
-                content: None,
-                name: None,
-                language: None,
-                language_is_manual: None,
-                folder_id: Some(String::new()), // normalized to None in PasteDb::update
-                tags: None,
-            };
-            let moved =
-                TransactionOps::move_paste_between_folders_locked(db, &paste_id, None, update)?;
-            if moved.is_none() {
+        // First pass: find affected ids while preserving existing behavior that
+        // deserialization failures abort the delete transaction.
+        let mut affected_ids = Vec::new();
+        for entry in pastes.iter()? {
+            let (id_guard, value_guard) = entry?;
+            let paste = deserialize_paste(value_guard.value())?;
+            let in_delete_tree = paste
+                .folder_id
+                .as_deref()
+                .map(|folder_id| delete_set.contains(folder_id))
+                .unwrap_or(false);
+            if !in_delete_tree {
                 continue;
             }
+            affected_ids.push(id_guard.value().to_string());
+        }
+
+        // Second pass: rewrite one paste at a time so large folder deletes do
+        // not buffer all serialized payloads in memory before writing.
+        for paste_id in affected_ids {
+            let Some(paste_guard) = pastes.get(paste_id.as_str())? else {
+                continue;
+            };
+            let mut paste = deserialize_paste(paste_guard.value())?;
+            let old_recency_key = reverse_timestamp_key(paste.updated_at);
+            drop(paste_guard);
+
+            apply_update_request(&mut paste, &clear_folder_update);
+            let encoded_paste = bincode::serialize(&paste)?;
+            let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
+            let new_recency_key = reverse_timestamp_key(paste.updated_at);
+            pastes.insert(paste_id.as_str(), encoded_paste.as_slice())?;
+            metas.insert(paste_id.as_str(), encoded_meta.as_slice())?;
+            let _ = updated.remove((old_recency_key, paste_id.as_str()))?;
+            updated.insert((new_recency_key, paste_id.as_str()), ())?;
+        }
+
+        for folder_id in &delete_order {
+            let _ = folders.remove(folder_id.as_str())?;
+            let _ = deleting.remove(folder_id.as_str())?;
         }
     }
-    Ok(())
-}
 
-#[cfg(not(test))]
-fn reconcile_meta_indexes_after_folder_delete(db: &Database) -> Result<(), AppError> {
-    db.pastes.reconcile_meta_indexes()
-}
-
-#[cfg(test)]
-fn reconcile_meta_indexes_after_folder_delete(db: &Database) -> Result<(), AppError> {
-    maybe_inject_delete_reconcile_failpoint(db)?;
-    db.pastes.reconcile_meta_indexes()
+    write_txn.commit()?;
+    Ok(delete_order)
 }
 
 fn reconcile_folder_parent_invariants_locked(
@@ -274,13 +368,6 @@ fn reconcile_folder_parent_invariants_locked(
         if !clear_parent_ids.contains(folder.id.as_str()) {
             continue;
         }
-        if let Some(parent_id) = folder.parent_id.as_deref() {
-            tracing::warn!(
-                folder_id = %folder.id,
-                parent_id = %parent_id,
-                "Clearing invalid folder parent during startup reconcile"
-            );
-        }
         let _ = db
             .folders
             .update(folder.id.as_str(), folder.name.clone(), Some(String::new()))?;
@@ -291,19 +378,14 @@ fn reconcile_folder_parent_invariants_locked(
 
 /// Reconcile folder invariants from canonical paste rows.
 ///
-/// Repairs two classes of drift:
-/// 1. Canonical pastes referencing missing folders are moved to unfiled.
-/// 2. `Folder.paste_count` is reset to exact canonical ownership counts.
-///
 /// # Returns
-/// `Ok(())` after canonical references and counts are repaired.
+/// `Ok(())` when parent references, orphan folder references, and exact counts
+/// are repaired.
 ///
 /// # Errors
-/// Returns storage/serialization errors when reconciliation cannot complete.
+/// Returns storage and serialization errors when reconciliation cannot complete.
 pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
-    // Keep folder-invariant repair serialized with folder-affecting transactions even if this
-    // helper is called outside startup in the future.
-    let _guard = TransactionOps::acquire_folder_txn_lock(db)?;
+    let folder_guard = TransactionOps::acquire_folder_txn_guard(db)?;
     let initial_folders = db.folders.list()?;
     reconcile_folder_parent_invariants_locked(db, &initial_folders)?;
 
@@ -335,7 +417,13 @@ pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
                 folder_id: Some(String::new()),
                 tags: None,
             };
-            let _ = db.pastes.update(paste_id, update)?;
+            let _ = TransactionOps::move_paste_between_folders_locked(
+                db,
+                &folder_guard,
+                paste_id,
+                None,
+                update,
+            )?;
         }
     }
 
@@ -348,57 +436,12 @@ pub fn reconcile_folder_invariants(db: &Database) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-thread_local! {
-    static DELETE_RECONCILE_FAILPOINT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-#[cfg(test)]
-pub(crate) fn set_delete_reconcile_failpoint(enabled: bool) {
-    DELETE_RECONCILE_FAILPOINT.with(|slot| slot.set(enabled));
-}
-
-#[cfg(test)]
-fn maybe_inject_delete_reconcile_failpoint(db: &Database) -> Result<(), AppError> {
-    let enabled = DELETE_RECONCILE_FAILPOINT.with(|slot| {
-        let enabled = slot.get();
-        if enabled {
-            slot.set(false);
-        }
-        enabled
-    });
-    if !enabled {
-        return Ok(());
-    }
-    let tree = db.db.open_tree("pastes")?;
-    tree.insert(
-        b"folder-delete-reconcile-failpoint-row",
-        b"corrupt-canonical-row",
-    )?;
-    Ok(())
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{db::TransactionOps, models::paste::Paste};
+    use crate::{db::tables::PASTES, db::TransactionOps, models::paste::Paste};
+    use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
     use std::thread;
-    use tempfile::TempDir;
-
-    fn setup_db() -> (Database, TempDir) {
-        let dir = TempDir::new().expect("temp dir");
-        let db_path = dir.path().join("db");
-        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
-        (db, dir)
-    }
-
-    struct DeleteReconcileFailpointGuard;
-
-    impl Drop for DeleteReconcileFailpointGuard {
-        fn drop(&mut self) {
-            set_delete_reconcile_failpoint(false);
-        }
-    }
 
     #[test]
     fn detects_folder_cycle() {
@@ -426,7 +469,7 @@ mod tests {
 
     #[test]
     fn delete_tree_migrates_pastes() {
-        let (db, _dir) = setup_db();
+        let (db, _dir) = crate::test_support::setup_temp_db();
 
         let root = Folder::with_parent("root".to_string(), None);
         let child = Folder::with_parent("child".to_string(), Some(root.id.clone()));
@@ -435,7 +478,7 @@ mod tests {
 
         let mut paste = Paste::new("content".to_string(), "name".to_string());
         paste.folder_id = Some(child.id.clone());
-        db.pastes.create(&paste).expect("create paste");
+        TransactionOps::create_paste_with_folder(&db, &paste, &child.id).expect("create paste");
 
         let deleted = delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
         assert_eq!(deleted.last(), Some(&root.id));
@@ -445,21 +488,52 @@ mod tests {
     }
 
     #[test]
+    fn delete_tree_migrates_many_large_pastes() {
+        let (db, _dir) = crate::test_support::setup_temp_db();
+
+        let root = Folder::with_parent("root".to_string(), None);
+        db.folders.create(&root).expect("create root");
+
+        let large_content = "x".repeat(256 * 1024);
+        let mut paste_ids = Vec::new();
+        for idx in 0..24 {
+            let mut paste = Paste::new(large_content.clone(), format!("large-{}", idx));
+            paste.folder_id = Some(root.id.clone());
+            paste_ids.push(paste.id.clone());
+            TransactionOps::create_paste_with_folder(&db, &paste, &root.id).expect("create paste");
+        }
+
+        delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
+
+        for paste_id in paste_ids {
+            let moved = db.pastes.get(&paste_id).expect("get").expect("exists");
+            assert_eq!(moved.folder_id, None, "migrated paste should be unfiled");
+        }
+    }
+
+    #[test]
     fn delete_tree_guarded_rejects_locked_descendant() {
-        let (db, _dir) = setup_db();
+        let (db, _dir) = crate::test_support::setup_temp_db();
 
         let root = Folder::with_parent("root".to_string(), None);
         db.folders.create(&root).expect("create root");
 
         let mut paste = Paste::new("content".to_string(), "name".to_string());
         paste.folder_id = Some(root.id.clone());
-        db.pastes.create(&paste).expect("create paste");
+        let paste_id = paste.id.clone();
+        let guarded_paste_id = paste_id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &root.id).expect("create paste");
 
         let locked_ids = HashSet::from([paste.id.clone()]);
         let err = delete_folder_tree_and_migrate_guarded(&db, &root.id, |affected_paste_ids| {
+            assert_eq!(
+                affected_paste_ids,
+                std::slice::from_ref(&guarded_paste_id),
+                "guard should receive the exact affected paste ids"
+            );
             if let Some(locked_id) = affected_paste_ids
                 .iter()
-                .find(|paste_id| locked_ids.contains(paste_id.as_str()))
+                .find(|id| locked_ids.contains(id.as_str()))
             {
                 return Err::<(), AppError>(AppError::Locked(format!(
                     "Folder delete would migrate locked paste '{}'; close it first.",
@@ -469,175 +543,71 @@ mod tests {
             Ok(())
         })
         .expect_err("locked descendant should block delete");
-        assert!(
-            matches!(err, AppError::Locked(_)),
-            "expected locked error, got {err}"
-        );
+        assert!(matches!(err, AppError::Locked(_)));
 
-        let still_foldered = db
+        let current = db
             .pastes
-            .get(&paste.id)
+            .get(&paste_id)
             .expect("lookup")
             .expect("paste should still exist");
-        assert_eq!(still_foldered.folder_id.as_deref(), Some(root.id.as_str()));
+        assert_eq!(current.folder_id.as_deref(), Some(root.id.as_str()));
         assert!(
             db.folders.get(&root.id).expect("folder lookup").is_some(),
-            "folder should remain when delete is blocked"
+            "folder should remain when guarded delete is rejected"
         );
     }
 
     #[test]
-    fn delete_tree_guarded_can_reject_using_affected_paste_ids() {
-        let (db, _dir) = setup_db();
-
-        let root = Folder::with_parent("root".to_string(), None);
-        let child = Folder::with_parent("child".to_string(), Some(root.id.clone()));
-        db.folders.create(&root).expect("create root");
-        db.folders.create(&child).expect("create child");
-
-        let mut in_scope = Paste::new("in-scope".to_string(), "name".to_string());
-        in_scope.folder_id = Some(child.id.clone());
-        db.pastes.create(&in_scope).expect("create in-scope paste");
-
-        let out_of_scope = Paste::new("out-of-scope".to_string(), "name".to_string());
-        db.pastes
-            .create(&out_of_scope)
-            .expect("create out-of-scope paste");
-
-        let err = delete_folder_tree_and_migrate_guarded(&db, &root.id, |affected_paste_ids| {
-            assert!(
-                affected_paste_ids.contains(&in_scope.id),
-                "guard should receive descendant paste ids"
-            );
-            assert!(
-                !affected_paste_ids.contains(&out_of_scope.id),
-                "guard should exclude unrelated paste ids"
-            );
-            Err::<(), AppError>(AppError::Locked("guard rejected delete".to_string()))
-        })
-        .expect_err("guard should reject delete");
-
-        assert!(matches!(err, AppError::Locked(_)));
-        assert!(
-            db.folders.get(&root.id).expect("root lookup").is_some(),
-            "root folder should remain after guarded rejection"
-        );
-        assert!(
-            db.folders.get(&child.id).expect("child lookup").is_some(),
-            "child folder should remain after guarded rejection"
-        );
-        let in_scope_after = db
-            .pastes
-            .get(&in_scope.id)
-            .expect("in-scope lookup")
-            .expect("in-scope paste still exists");
-        assert_eq!(in_scope_after.folder_id.as_deref(), Some(child.id.as_str()));
-    }
-
-    #[test]
-    fn delete_tree_handles_orphaned_meta_rows() {
-        let (db, _dir) = setup_db();
+    fn delete_tree_rolls_back_if_migration_scan_fails() {
+        let (db, _dir) = crate::test_support::setup_temp_db();
 
         let root = Folder::with_parent("root".to_string(), None);
         db.folders.create(&root).expect("create root");
 
         let mut paste = Paste::new("content".to_string(), "name".to_string());
         paste.folder_id = Some(root.id.clone());
-        db.pastes.create(&paste).expect("create paste");
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &root.id).expect("create paste");
 
-        // Simulate interrupted write: canonical row removed while metadata/index rows remain.
-        db.db
-            .open_tree("pastes")
-            .expect("pastes tree")
-            .remove(paste.id.as_bytes())
-            .expect("remove canonical");
-        let stale = db
+        let write_txn = db.db.begin_write().expect("begin write");
+        {
+            let mut pastes = write_txn.open_table(PASTES).expect("open pastes");
+            pastes
+                .insert("corrupt-row", b"not-a-paste".as_slice())
+                .expect("insert corrupt row");
+        }
+        write_txn.commit().expect("commit");
+
+        let err = delete_folder_tree_and_migrate(&db, &root.id)
+            .expect_err("corrupt migration scan should abort delete");
+        assert!(matches!(err, AppError::Serialization(_)));
+
+        let current = db
             .pastes
-            .list_meta(10, Some(root.id.clone()))
-            .expect("list stale meta");
-        assert_eq!(
-            stale.len(),
-            0,
-            "metadata listing should fall back to canonical rows and hide stale ghost entries"
-        );
-
-        let deleted = delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
-        assert_eq!(deleted, vec![root.id.clone()]);
-        assert!(
-            db.folders.get(&root.id).expect("folder lookup").is_none(),
-            "folder should be deleted despite stale metadata row"
-        );
-        assert!(
-            db.pastes
-                .list_meta(10, Some(root.id.clone()))
-                .expect("list after delete")
-                .is_empty(),
-            "metadata index should be reconciled to remove orphan row"
-        );
-        let meta_tree = db.db.open_tree("pastes_meta").expect("meta tree");
-        assert!(
-            meta_tree
-                .get(paste.id.as_bytes())
-                .expect("meta lookup")
-                .is_none(),
-            "reconcile should remove orphaned metadata row"
-        );
-        let updated_tree = db.db.open_tree("pastes_by_updated").expect("updated tree");
-        let stale_updated_ref = updated_tree
-            .iter()
-            .filter_map(|item| item.ok())
-            .any(|(_, value)| value.as_ref() == paste.id.as_bytes());
-        assert!(
-            !stale_updated_ref,
-            "reconcile should remove orphaned recency-index references"
-        );
-    }
-
-    #[test]
-    fn delete_tree_migrates_when_metadata_row_is_missing() {
-        let (db, _dir) = setup_db();
-
-        let root = Folder::with_parent("root".to_string(), None);
-        db.folders.create(&root).expect("create root");
-
-        let mut paste = Paste::new("content".to_string(), "name".to_string());
-        paste.folder_id = Some(root.id.clone());
-        db.pastes.create(&paste).expect("create paste");
-
-        db.db
-            .open_tree("pastes_meta")
-            .expect("meta tree")
-            .remove(paste.id.as_bytes())
-            .expect("remove canonical");
-
-        let deleted = delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
-        assert_eq!(deleted, vec![root.id.clone()]);
-        let moved = db
-            .pastes
-            .get(&paste.id)
-            .expect("get paste")
+            .get(&paste_id)
+            .expect("lookup")
             .expect("paste should still exist");
-        assert_eq!(moved.folder_id, None);
+        assert_eq!(current.folder_id.as_deref(), Some(root.id.as_str()));
         assert!(
-            db.pastes
-                .list(10, Some(root.id.clone()))
-                .expect("list")
-                .is_empty(),
-            "canonical rows for deleted folder should be migrated"
+            db.folders.get(&root.id).expect("folder lookup").is_some(),
+            "folder should remain when delete transaction aborts"
+        );
+        assert!(
+            !db.folders
+                .is_delete_marked(&root.id)
+                .expect("marker lookup"),
+            "delete markers must not leak on failed atomic delete"
         );
     }
 
     #[test]
     fn ensure_folder_assignable_rejects_missing_and_marked_folders() {
-        let (db, _dir) = setup_db();
+        let (db, _dir) = crate::test_support::setup_temp_db();
 
-        assert!(
-            matches!(
-                ensure_folder_assignable(&db, "missing-folder"),
-                Err(AppError::NotFound)
-            ),
-            "missing folder must be rejected"
-        );
+        assert!(matches!(
+            ensure_folder_assignable(&db, "missing-folder"),
+            Err(AppError::NotFound)
+        ));
 
         let folder = Folder::new("root".to_string());
         let folder_id = folder.id.clone();
@@ -645,78 +615,15 @@ mod tests {
         db.folders
             .mark_deleting(std::slice::from_ref(&folder_id))
             .expect("mark deleting");
-        assert!(
-            matches!(
-                ensure_folder_assignable(&db, folder_id.as_str()),
-                Err(AppError::BadRequest(_))
-            ),
-            "delete-marked folder must be rejected for assignment"
-        );
-    }
-
-    #[test]
-    fn create_with_folder_rejects_when_folder_is_marked_for_delete() {
-        let (db, _dir) = setup_db();
-
-        let folder = Folder::new("root".to_string());
-        let folder_id = folder.id.clone();
-        db.folders.create(&folder).expect("create folder");
-        db.folders
-            .mark_deleting(std::slice::from_ref(&folder_id))
-            .expect("mark deleting");
-
-        let mut paste = Paste::new("content".to_string(), "name".to_string());
-        paste.folder_id = Some(folder_id.clone());
-        let paste_id = paste.id.clone();
-
-        let result = TransactionOps::create_paste_with_folder(&db, &paste, &folder_id);
-        assert!(
-            matches!(result, Err(AppError::BadRequest(_))),
-            "assignment into delete-marked folder must be blocked"
-        );
-        assert!(
-            db.pastes.get(&paste_id).expect("lookup").is_none(),
-            "failed create must not leave canonical row"
-        );
-    }
-
-    #[test]
-    fn delete_tree_returns_success_when_post_commit_reconcile_fails() {
-        let _guard = DeleteReconcileFailpointGuard;
-        let (db, _dir) = setup_db();
-
-        let root = Folder::with_parent("root".to_string(), None);
-        db.folders.create(&root).expect("create root");
-
-        let mut paste = Paste::new("content".to_string(), "name".to_string());
-        paste.folder_id = Some(root.id.clone());
-        let paste_id = paste.id.clone();
-        db.pastes.create(&paste).expect("create paste");
-
-        set_delete_reconcile_failpoint(true);
-        let deleted = delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
-        assert_eq!(deleted, vec![root.id.clone()]);
-        assert!(
-            db.folders.get(&root.id).expect("folder lookup").is_none(),
-            "folder deletion should commit even when reconcile fails"
-        );
-        let moved = db
-            .pastes
-            .get(&paste_id)
-            .expect("paste lookup")
-            .expect("paste should still exist");
-        assert_eq!(moved.folder_id, None);
-        assert!(
-            db.pastes
-                .needs_reconcile_meta_indexes(false)
-                .expect("needs reconcile"),
-            "failed reconcile should leave recovery markers for follow-up repair"
-        );
+        assert!(matches!(
+            ensure_folder_assignable(&db, folder_id.as_str()),
+            Err(AppError::BadRequest(_))
+        ));
     }
 
     #[test]
     fn delete_folder_tree_and_concurrent_move_preserve_no_orphan_and_counts() {
-        let (db, _dir) = setup_db();
+        let (db, _dir) = crate::test_support::setup_temp_db();
 
         let root = Folder::with_parent("root".to_string(), None);
         let child = Folder::with_parent("child".to_string(), Some(root.id.clone()));
@@ -777,15 +684,6 @@ mod tests {
                 ),
             "move should either succeed or fail with assignability rejection: {:?}",
             move_result
-        );
-
-        assert!(
-            db.folders.get(&root.id).expect("root lookup").is_none(),
-            "root should be deleted"
-        );
-        assert!(
-            db.folders.get(&child.id).expect("child lookup").is_none(),
-            "child should be deleted"
         );
 
         let current = db
