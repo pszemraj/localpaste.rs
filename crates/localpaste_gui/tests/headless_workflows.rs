@@ -252,6 +252,89 @@ fn backend_delete_rejects_foreign_lock_holder_and_preserves_paste() {
 }
 
 #[test]
+fn backend_update_paths_reject_foreign_lock_holder_and_preserve_paste() {
+    let env = TestEnv::new();
+    let locks = Arc::new(PasteLockManager::default());
+    let backend = env.spawn_backend_with_locks(locks.clone());
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::CreatePaste {
+            content: "locked body".to_string(),
+        })
+        .expect("create paste");
+    let baseline = match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteCreated { paste } => paste,
+        other => panic!("unexpected event: {:?}", other),
+    };
+    let paste_id = baseline.id.clone();
+
+    let foreign_owner = LockOwnerId::new("foreign-owner".to_string());
+    locks
+        .acquire(&paste_id, &foreign_owner)
+        .expect("acquire foreign lock holder");
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::UpdatePaste {
+            id: paste_id.clone(),
+            content: "mutated-body".to_string(),
+        })
+        .expect("send content update");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::Error { message, .. } => {
+            assert!(
+                message.contains("open for editing"),
+                "expected lock rejection, got: {}",
+                message
+            );
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::UpdatePasteMeta {
+            id: paste_id.clone(),
+            name: Some("mutated-name".to_string()),
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        })
+        .expect("send metadata update");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::Error { message, .. } => {
+            assert!(
+                message.contains("open for editing"),
+                "expected lock rejection, got: {}",
+                message
+            );
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::GetPaste {
+            id: paste_id.clone(),
+        })
+        .expect("send get after rejected updates");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteLoaded { paste } => {
+            assert_eq!(paste.id, paste_id);
+            assert_eq!(paste.content, baseline.content);
+            assert_eq!(paste.name, baseline.name);
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    locks
+        .release(&paste_id, &foreign_owner)
+        .expect("release foreign lock holder");
+}
+
+#[test]
 fn locked_descendant_blocks_backend_folder_delete() {
     let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());
@@ -474,8 +557,8 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
 
     let delete_status = delete_thread.join().expect("delete join");
     assert!(
-        delete_status.is_success(),
-        "delete request should complete successfully, got {}",
+        delete_status.is_success() || delete_status == reqwest::StatusCode::LOCKED,
+        "delete request should either complete or be lock-rejected, got {}",
         delete_status
     );
 
@@ -485,9 +568,16 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
             id: paste_id.clone(),
         })
         .expect("get after race");
-    match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteMissing { id } => assert_eq!(id, paste_id),
-        other => panic!("unexpected post-race get result: {:?}", other),
+    if delete_status.is_success() {
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteMissing { id } => assert_eq!(id, paste_id),
+            other => panic!("unexpected post-race get result: {:?}", other),
+        }
+    } else {
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteLoaded { paste } => assert_eq!(paste.id, paste_id),
+            other => panic!("unexpected post-race get result: {:?}", other),
+        }
     }
 
     backend
@@ -499,10 +589,17 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
         .expect("list after race");
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteList { items } => {
-            assert!(
-                items.iter().all(|item| item.id != paste_id),
-                "deleted paste must not appear in metadata list"
-            );
+            if delete_status.is_success() {
+                assert!(
+                    items.iter().all(|item| item.id != paste_id),
+                    "deleted paste must not appear in metadata list"
+                );
+            } else {
+                assert!(
+                    items.iter().any(|item| item.id == paste_id),
+                    "locked delete must preserve paste visibility in metadata list"
+                );
+            }
         }
         other => panic!("unexpected post-race list result: {:?}", other),
     }

@@ -8,8 +8,24 @@ use localpaste_core::{
     models::paste::{self, UpdatePasteRequest},
     naming, AppError,
 };
+use localpaste_server::LockOwnerId;
 use ropey::Rope;
 use tracing::error;
+
+fn begin_owner_mutation_guard<'a>(
+    locks: &'a localpaste_server::PasteLockManager,
+    owner_id: &LockOwnerId,
+    id: &str,
+) -> Result<localpaste_server::PasteMutationGuard<'a>, AppError> {
+    locks
+        .begin_mutation_ignoring_owner(id, owner_id)
+        .map_err(|err| {
+            localpaste_server::locks::map_paste_mutation_lock_error(
+                err,
+                "Paste is currently open for editing.",
+            )
+        })
+}
 
 pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
     match state.db.pastes.get(&id) {
@@ -66,6 +82,18 @@ fn apply_content_update(state: &mut WorkerState, id: String, content: String, lo
         folder_id: None,
         tags: None,
     };
+    let _mutation_guard =
+        match begin_owner_mutation_guard(state.locks.as_ref(), &state.lock_owner_id, id.as_str()) {
+            Ok(guard) => guard,
+            Err(err) => {
+                send_error(
+                    &state.evt_tx,
+                    CoreErrorSource::SaveContent,
+                    format!("Update failed: {}", err),
+                );
+                return;
+            }
+        };
     match state.db.pastes.update(&id, update) {
         Ok(Some(paste)) => {
             state.query_cache.invalidate();
@@ -167,12 +195,59 @@ pub(super) fn handle_update_paste_meta(
     };
 
     let result = if normalized_folder_id.is_some() {
+        let folder_guard = match TransactionOps::acquire_folder_txn_guard(&state.db) {
+            Ok(guard) => guard,
+            Err(err) => {
+                send_error(
+                    &state.evt_tx,
+                    CoreErrorSource::SaveMetadata,
+                    format!("Metadata update failed: {}", err),
+                );
+                return;
+            }
+        };
+        let _mutation_guard = match begin_owner_mutation_guard(
+            state.locks.as_ref(),
+            &state.lock_owner_id,
+            id.as_str(),
+        ) {
+            Ok(guard) => guard,
+            Err(err) => {
+                send_error(
+                    &state.evt_tx,
+                    CoreErrorSource::SaveMetadata,
+                    format!("Metadata update failed: {}", err),
+                );
+                return;
+            }
+        };
         let new_folder_id =
             normalized_folder_id
                 .clone()
                 .and_then(|f| if f.is_empty() { None } else { Some(f) });
-        TransactionOps::move_paste_between_folders(&state.db, &id, new_folder_id.as_deref(), update)
+        TransactionOps::move_paste_between_folders_locked(
+            &state.db,
+            &folder_guard,
+            &id,
+            new_folder_id.as_deref(),
+            update,
+        )
     } else {
+        let _mutation_guard = match begin_owner_mutation_guard(
+            state.locks.as_ref(),
+            &state.lock_owner_id,
+            id.as_str(),
+        ) {
+            Ok(guard) => guard,
+            Err(err) => {
+                send_error(
+                    &state.evt_tx,
+                    CoreErrorSource::SaveMetadata,
+                    format!("Metadata update failed: {}", err),
+                );
+                return;
+            }
+        };
         state.db.pastes.update(&id, update)
     };
 
