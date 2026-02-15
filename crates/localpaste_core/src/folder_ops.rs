@@ -201,10 +201,12 @@ fn delete_folder_tree_and_migrate_with_order_locked(
             deleting.insert(folder_id.as_str(), ())?;
         }
 
-        let mut updates = Vec::new();
+        // First pass: find affected ids while preserving existing behavior that
+        // deserialization failures abort the delete transaction.
+        let mut affected_ids = Vec::new();
         for entry in pastes.iter()? {
             let (id_guard, value_guard) = entry?;
-            let mut paste = deserialize_paste(value_guard.value())?;
+            let paste = deserialize_paste(value_guard.value())?;
             let in_delete_tree = paste
                 .folder_id
                 .as_deref()
@@ -213,22 +215,23 @@ fn delete_folder_tree_and_migrate_with_order_locked(
             if !in_delete_tree {
                 continue;
             }
-            let paste_id = id_guard.value().to_string();
+            affected_ids.push(id_guard.value().to_string());
+        }
+
+        // Second pass: rewrite one paste at a time so large folder deletes do
+        // not buffer all serialized payloads in memory before writing.
+        for paste_id in affected_ids {
+            let Some(paste_guard) = pastes.get(paste_id.as_str())? else {
+                continue;
+            };
+            let mut paste = deserialize_paste(paste_guard.value())?;
             let old_recency_key = reverse_timestamp_key(paste.updated_at);
+            drop(paste_guard);
+
             apply_update_request(&mut paste, &clear_folder_update);
             let encoded_paste = bincode::serialize(&paste)?;
             let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
             let new_recency_key = reverse_timestamp_key(paste.updated_at);
-            updates.push((
-                paste_id,
-                old_recency_key,
-                new_recency_key,
-                encoded_paste,
-                encoded_meta,
-            ));
-        }
-
-        for (paste_id, old_recency_key, new_recency_key, encoded_paste, encoded_meta) in updates {
             pastes.insert(paste_id.as_str(), encoded_paste.as_slice())?;
             metas.insert(paste_id.as_str(), encoded_meta.as_slice())?;
             let _ = updated.remove((old_recency_key, paste_id.as_str()))?;
@@ -389,6 +392,30 @@ mod tests {
 
         let moved = db.pastes.get(&paste.id).expect("get").expect("exists");
         assert_eq!(moved.folder_id, None);
+    }
+
+    #[test]
+    fn delete_tree_migrates_many_large_pastes() {
+        let (db, _dir) = crate::test_support::setup_temp_db();
+
+        let root = Folder::with_parent("root".to_string(), None);
+        db.folders.create(&root).expect("create root");
+
+        let large_content = "x".repeat(256 * 1024);
+        let mut paste_ids = Vec::new();
+        for idx in 0..24 {
+            let mut paste = Paste::new(large_content.clone(), format!("large-{}", idx));
+            paste.folder_id = Some(root.id.clone());
+            paste_ids.push(paste.id.clone());
+            TransactionOps::create_paste_with_folder(&db, &paste, &root.id).expect("create paste");
+        }
+
+        delete_folder_tree_and_migrate(&db, &root.id).expect("delete tree");
+
+        for paste_id in paste_ids {
+            let moved = db.pastes.get(&paste_id).expect("get").expect("exists");
+            assert_eq!(moved.folder_id, None, "migrated paste should be unfiled");
+        }
     }
 
     #[test]
