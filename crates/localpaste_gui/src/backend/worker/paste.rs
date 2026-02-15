@@ -52,7 +52,7 @@ pub(super) fn handle_create_paste(state: &mut WorkerState, content: String) {
     }
     let inferred = paste::detect_language(&content);
     let name = naming::generate_name_for_content(&content, inferred.as_deref());
-    let paste = paste::Paste::new(content, name);
+    let paste = paste::Paste::new_with_language(content, name, inferred, false);
     match state.db.pastes.create(&paste) {
         Ok(()) => {
             state.query_cache.invalidate();

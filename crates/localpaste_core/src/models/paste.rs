@@ -74,6 +74,41 @@ pub struct ListQuery {
 }
 
 impl Paste {
+    /// Create a new paste with explicit language/manual-state values.
+    ///
+    /// This constructor is used by callers that already resolved language and
+    /// want to avoid duplicate detection work during creation paths.
+    ///
+    /// # Arguments
+    /// - `content`: Paste content.
+    /// - `name`: Paste display name.
+    /// - `language`: Precomputed or manually provided language label.
+    /// - `language_is_manual`: Whether language should be treated as user-managed.
+    ///
+    /// # Returns
+    /// A new [`Paste`] instance.
+    pub fn new_with_language(
+        content: String,
+        name: String,
+        language: Option<String>,
+        language_is_manual: bool,
+    ) -> Self {
+        let now = Utc::now();
+        let is_markdown = is_markdown_content(&content);
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            content,
+            language,
+            language_is_manual,
+            folder_id: None,
+            created_at: now,
+            updated_at: now,
+            tags: Vec::new(),
+            is_markdown,
+        }
+    }
+
     /// Create a new paste with inferred language and defaults.
     ///
     /// # Arguments
@@ -83,21 +118,8 @@ impl Paste {
     /// # Returns
     /// A new [`Paste`] instance.
     pub fn new(content: String, name: String) -> Self {
-        let now = Utc::now();
         let language = detect_language(&content);
-        let is_markdown = is_markdown_content(&content);
-        Self {
-            id: Uuid::new_v4().to_string(),
-            name,
-            content,
-            language,
-            language_is_manual: false,
-            folder_id: None,
-            created_at: now,
-            updated_at: now,
-            tags: Vec::new(),
-            is_markdown,
-        }
+        Self::new_with_language(content, name, language, false)
     }
 }
 

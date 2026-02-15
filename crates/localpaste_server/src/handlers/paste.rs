@@ -138,13 +138,21 @@ fn search_meta_response(
 /// Returns an error if validation or persistence fails.
 pub async fn create_paste(
     State(state): State<AppState>,
-    Json(mut req): Json<CreatePasteRequest>,
+    Json(req): Json<CreatePasteRequest>,
 ) -> Result<Response, HttpError> {
     let folder_field_used = req.folder_id.is_some();
-    req.folder_id = normalize_optional_for_create(req.folder_id);
+    let CreatePasteRequest {
+        content,
+        language,
+        language_is_manual,
+        folder_id,
+        tags,
+        name,
+    } = req;
+    let normalized_folder_id = normalize_optional_for_create(folder_id);
 
     // Check paste size limit
-    if req.content.len() > state.config.max_paste_size {
+    if content.len() > state.config.max_paste_size {
         return Err(AppError::BadRequest(format!(
             "Paste size exceeds maximum of {} bytes",
             state.config.max_paste_size
@@ -152,23 +160,28 @@ pub async fn create_paste(
         .into());
     }
 
-    let name = req.name.unwrap_or_else(naming::generate_name);
-    let mut paste = Paste::new(req.content, name);
-    let language_is_manual = req.language_is_manual;
+    let name = name.unwrap_or_else(naming::generate_name);
+    let mut paste = if let Some(language) = language {
+        Paste::new_with_language(
+            content,
+            name,
+            Some(language),
+            language_is_manual.unwrap_or(true),
+        )
+    } else {
+        let mut inferred = Paste::new(content, name);
+        if let Some(is_manual) = language_is_manual {
+            inferred.language_is_manual = is_manual;
+        }
+        inferred
+    };
 
-    if let Some(ref folder_id) = req.folder_id {
+    if let Some(ref folder_id) = normalized_folder_id {
         paste.folder_id = Some(folder_id.clone());
     }
 
-    if let Some(tags) = req.tags {
+    if let Some(tags) = tags {
         paste.tags = tags;
-    }
-
-    if let Some(language) = req.language {
-        paste.language = Some(language);
-        paste.language_is_manual = language_is_manual.unwrap_or(true);
-    } else if let Some(is_manual) = language_is_manual {
-        paste.language_is_manual = is_manual;
     }
 
     // Use transaction-like operation for atomic folder count update

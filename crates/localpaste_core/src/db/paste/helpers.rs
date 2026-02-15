@@ -244,14 +244,15 @@ impl From<LegacyPaste> for Paste {
             tags,
             is_markdown,
         } = old;
-        let language_is_manual =
-            infer_legacy_language_is_manual(content.as_str(), language.as_deref());
         Self {
             id,
             name,
             content,
             language,
-            language_is_manual,
+            // Legacy rows predate persisted manual intent. Keep migration deterministic
+            // and cheap by defaulting to auto-detect mode instead of re-running detector
+            // logic during deserialization.
+            language_is_manual: false,
             folder_id,
             created_at,
             updated_at,
@@ -261,32 +262,14 @@ impl From<LegacyPaste> for Paste {
     }
 }
 
-fn infer_legacy_language_is_manual(content: &str, stored_language: Option<&str>) -> bool {
-    let Some(stored) = stored_language
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return false;
-    };
-    let stored = crate::detection::canonical::canonicalize(stored);
-    let inferred = detect_language(content);
-    inferred
-        .as_deref()
-        .map(|value| value != stored.as_str())
-        .unwrap_or(true)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        infer_legacy_language_is_manual, reverse_timestamp_key, score_meta_match, LegacyPaste,
-        Paste,
-    };
+    use super::{reverse_timestamp_key, score_meta_match, LegacyPaste, Paste};
     use crate::models::paste::PasteMeta;
     use chrono::{TimeZone, Utc};
 
     #[test]
-    fn legacy_language_manual_flag_preserves_auto_detected_values() {
+    fn legacy_language_manual_flag_defaults_to_auto_mode() {
         let legacy = LegacyPaste {
             id: "legacy-id".to_string(),
             name: "legacy".to_string(),
@@ -303,11 +286,20 @@ mod tests {
     }
 
     #[test]
-    fn legacy_language_manual_flag_marks_divergent_language_as_manual() {
-        assert!(infer_legacy_language_is_manual(
-            "fn main() {}",
-            Some("python")
-        ));
+    fn legacy_language_manual_flag_stays_auto_even_when_language_diverges() {
+        let legacy = LegacyPaste {
+            id: "legacy-id-2".to_string(),
+            name: "legacy-2".to_string(),
+            content: "fn main() {}".to_string(),
+            language: Some("python".to_string()),
+            folder_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            tags: Vec::new(),
+            is_markdown: false,
+        };
+        let migrated: Paste = legacy.into();
+        assert!(!migrated.language_is_manual);
     }
 
     #[test]

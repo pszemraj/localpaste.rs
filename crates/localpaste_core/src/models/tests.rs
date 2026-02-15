@@ -18,6 +18,18 @@ mod model_tests {
     }
 
     #[test]
+    fn test_paste_new_with_language_uses_provided_values_without_detection_override() {
+        let paste = paste::Paste::new_with_language(
+            "fn main() { println!(\"hi\"); }".to_string(),
+            "manual".to_string(),
+            Some("python".to_string()),
+            true,
+        );
+        assert_eq!(paste.language.as_deref(), Some("python"));
+        assert!(paste.language_is_manual);
+    }
+
+    #[test]
     fn test_paste_detect_language_matrix() {
         let cases = [
             (
