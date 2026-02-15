@@ -181,7 +181,11 @@ impl LocalPasteApp {
                 } else {
                     hash_bytes(self.selected_content.as_str().as_bytes())
                 };
-                let async_mode = text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES && !is_large;
+                let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
+                let use_virtual_editor = self.editor_mode == EditorMode::VirtualEditor;
+                let needs_worker_render = use_virtual_preview || use_virtual_editor;
+                let async_mode =
+                    !is_large && (text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES || needs_worker_render);
                 let should_request = async_mode
                     && self.should_request_highlight(
                         revision,
@@ -286,8 +290,6 @@ impl LocalPasteApp {
                         }
                     });
                 let row_height = ui.text_style_height(&editor_style);
-                let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
-                let use_virtual_editor = self.editor_mode == EditorMode::VirtualEditor;
 
                 let scroll = egui::ScrollArea::vertical()
                     .id_salt("editor_scroll")
