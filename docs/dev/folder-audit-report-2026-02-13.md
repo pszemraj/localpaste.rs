@@ -43,9 +43,12 @@ For affected callsites and tests, use the matrix:
 
 ## Residual Risk Notes
 
-- Sled cross-tree operations are still compensated, not physically atomic.
-- Rare post-commit race windows rely on tested compensation/reconcile paths.
-- Future folder mutations must keep shared helper usage and failpoint-backed tests.
+These notes were true at audit time and are historical context only.
+Current runtime/storage behavior is canonical in:
+
+- [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md)
+- [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
+- [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
 
 ## Follow-Up Routing
 

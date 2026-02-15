@@ -15,12 +15,13 @@ For repository-wide ownership rules, see [docs/README.md](https://github.com/psz
   [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)
 - Lock semantics:
   [locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
-- Storage split follow-up:
-  [storage-split-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/storage-split-plan.md)
 - UI palette tokens:
   [ui-palette.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/ui-palette.md)
 - Engineering backlog:
   [backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
+
+Cross-cutting non-dev canonical docs:
+- Storage/backend compatibility: [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md)
 
 ## Historical Reference Docs
 

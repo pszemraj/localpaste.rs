@@ -2,6 +2,7 @@
 
 Canonical scope:
 - Security defaults, threat model, and security-relevant env toggles are defined here.
+- Storage/backend compatibility policy is canonical in [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 - Service operation and lock-recovery procedures are canonical in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
 - Build/run command matrices are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
@@ -26,8 +27,8 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 - **CORS restrictions**: In strict mode, only accepts loopback origins that match the active listener port
 - **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options
 - **Request size limits**: Enforced at transport layer (default: 10MB)
-- **Durable commits**: redb commits are durable on `commit()` (no explicit flush required)
-- **Single-writer owner lock**: Process-lifetime `db.owner.lock` prevents concurrent writers on the same `DB_PATH`
+- **Storage durability**: defined in [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md)
+- **Single-writer owner lock**: semantics in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
 
 ## Environment Variables
 

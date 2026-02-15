@@ -3,6 +3,7 @@
 > These instructions apply to the headless `localpaste` server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
 > This is the canonical service-operation runbook. Other docs should link here for stop/restart/lock-recovery guidance instead of duplicating procedures.
 > Security posture, bind policy, and public exposure guidance are canonical in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
+> Storage backend and compatibility policy are canonical in [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 > Build/run command matrices for development are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ## Quick Start
@@ -19,12 +20,15 @@ echo $! > ~/.cache/localpaste/localpaste.pid
 Important runtime rule:
 - Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` at the same time.
 
-## Storage Backend Note (v0.4.0)
+## Storage Backend Note
 
-- LocalPaste now uses **redb** and stores data at `DB_PATH/data.redb`.
-- Existing **sled** data is not opened automatically by this build.
-- On startup, if `data.redb` is missing and legacy sled artifacts are detected, startup fails with an explicit incompatible-storage error message.
-- There is no migration path in this project for legacy sled data. Use a fresh empty `DB_PATH` for this build.
+Storage/backend compatibility policy is canonical in
+[docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
+Operationally:
+
+- Current runtime expects `DB_PATH/data.redb`.
+- Legacy sled-era data is incompatible with this build.
+- Use a fresh `DB_PATH` when moving from older sled-era versions.
 
 For stop/restart/cleanup procedures, use [Stopping LocalPaste Safely](#stopping-localpaste-safely).
 

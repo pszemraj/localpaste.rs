@@ -2,6 +2,7 @@
 
 This document is the canonical system walkthrough for LocalPaste.rs.
 For command-level developer workflows, use [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+For storage/backend compatibility rules, use [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 For security posture, use [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
 For service operations, use [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
 
@@ -96,7 +97,9 @@ sequenceDiagram
 
 ## 3) Storage Design
 
-LocalPaste uses redb 3.x with typed tables in a single database file at `DB_PATH/data.redb`.
+Canonical on-disk contract and compatibility policy are defined in
+[docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
+Architecture summary:
 
 Canonical tables:
 
@@ -249,6 +252,5 @@ Core themes:
 
 ## 11) Active Follow-Ups
 
-- Storage split design follow-up: [docs/dev/storage-split-plan.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/storage-split-plan.md)
 - Rewrite readiness/perf gate: [docs/dev/parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
 - Engineering backlog: [docs/dev/backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
