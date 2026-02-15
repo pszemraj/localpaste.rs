@@ -849,11 +849,14 @@ impl LocalPasteApp {
         }
         match active_language_filter {
             None => true,
-            Some(lang) => item
-                .language
-                .as_deref()
-                .map(|value| value.eq_ignore_ascii_case(lang))
-                .unwrap_or(false),
+            Some(lang) => {
+                let canonical_filter = localpaste_core::detection::canonical::canonicalize(lang);
+                item.language
+                    .as_deref()
+                    .map(localpaste_core::detection::canonical::canonicalize)
+                    .map(|value| value == canonical_filter)
+                    .unwrap_or(false)
+            }
         }
     }
 

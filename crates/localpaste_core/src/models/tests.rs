@@ -39,7 +39,7 @@ mod model_tests {
             (
                 "csharp",
                 "using System;\nnamespace Demo {\n    public class Program {\n        public static void Main(string[] args) {\n            Console.WriteLine(\"hi\");\n        }\n    }\n}",
-                "csharp",
+                "cs",
             ),
             (
                 "html",

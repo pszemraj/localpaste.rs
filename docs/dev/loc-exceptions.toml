@@ -11,4 +11,7 @@
 # max_lines = 1200
 # reason = "Temporary during editor state extraction work"
 
-exceptions = []
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/highlight.rs"
+max_lines = 1200
+reason = "Temporary while syntax resolution and worker/cache logic remain co-located; split planned after Magika rollout."

@@ -46,48 +46,51 @@ impl LocalPasteApp {
 
                 ui.add_space(6.0);
                 ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
+                const AUTO_LANGUAGE: &str = "__auto__";
+                let current_manual_value = self
+                    .edit_language
+                    .as_deref()
+                    .map(localpaste_core::detection::canonical::canonicalize)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "text".to_string());
                 let mut language_choice = if self.edit_language_is_manual {
-                    self.edit_language
-                        .clone()
-                        .unwrap_or_else(|| "text".to_string())
+                    current_manual_value.clone()
                 } else {
+                    AUTO_LANGUAGE.to_string()
+                };
+                let selected_language_text = if language_choice == AUTO_LANGUAGE {
                     "Auto".to_string()
+                } else {
+                    localpaste_core::detection::canonical::manual_option_label(
+                        language_choice.as_str(),
+                    )
+                    .unwrap_or(language_choice.as_str())
+                    .to_string()
                 };
                 egui::ComboBox::from_id_salt("drawer_language_select")
-                    .selected_text(language_choice.clone())
+                    .selected_text(selected_language_text)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut language_choice, "Auto".to_string(), "Auto");
-                        for value in [
-                            "rust",
-                            "python",
-                            "javascript",
-                            "typescript",
-                            "json",
-                            "yaml",
-                            "toml",
-                            "markdown",
-                            "html",
-                            "css",
-                            "sql",
-                            "shell",
-                            "text",
-                        ] {
+                        ui.selectable_value(
+                            &mut language_choice,
+                            AUTO_LANGUAGE.to_string(),
+                            "Auto",
+                        );
+                        for option in localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
+                        {
                             ui.selectable_value(
                                 &mut language_choice,
-                                value.to_string(),
-                                value.to_string(),
+                                option.value.to_string(),
+                                option.label,
                             );
                         }
                     });
-                if language_choice == "Auto" {
+                if language_choice == AUTO_LANGUAGE {
                     if self.edit_language_is_manual || self.edit_language.is_some() {
                         self.edit_language_is_manual = false;
                         self.edit_language = None;
                         self.metadata_dirty = true;
                     }
-                } else if !self.edit_language_is_manual
-                    || self.edit_language.as_deref() != Some(language_choice.as_str())
-                {
+                } else if !self.edit_language_is_manual || current_manual_value != language_choice {
                     self.edit_language_is_manual = true;
                     self.edit_language = Some(language_choice);
                     self.metadata_dirty = true;

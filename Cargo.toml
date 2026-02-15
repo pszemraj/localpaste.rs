@@ -10,7 +10,7 @@ default-members = ["crates/localpaste_gui"]
 resolver = "2"
 
 [workspace.package]
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT"
@@ -27,6 +27,13 @@ tempfile = "3.21"
 tokio = "1.40"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+magika = "1.0.0"
+ort = { version = "=2.0.0-rc.10", default-features = false, features = [
+    "std",
+    "ndarray",
+    "download-binaries",
+    "copy-dylibs",
+] }
 
 [profile.dev]
 incremental = true

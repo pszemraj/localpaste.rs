@@ -56,10 +56,11 @@ pub(super) fn language_matches_filter(language: Option<&str>, filter: Option<&st
     let Some(filter) = filter else {
         return true;
     };
+    let canonical_filter = crate::detection::canonical::canonicalize(filter);
     language
-        .map(str::trim)
+        .map(crate::detection::canonical::canonicalize)
         .filter(|value| !value.is_empty())
-        .map(|value| value.eq_ignore_ascii_case(filter))
+        .map(|value| value == canonical_filter)
         .unwrap_or(false)
 }
 
@@ -259,10 +260,12 @@ fn infer_legacy_language_is_manual(content: &str, stored_language: Option<&str>)
     else {
         return false;
     };
+    let stored = crate::detection::canonical::canonicalize(stored);
     let inferred = detect_language(content);
     inferred
         .as_deref()
-        .map(|value| !value.eq_ignore_ascii_case(stored))
+        .map(crate::detection::canonical::canonicalize)
+        .map(|value| value != stored)
         .unwrap_or(true)
 }
 
@@ -303,5 +306,16 @@ mod tests {
             .single()
             .expect("valid timestamp");
         assert_eq!(reverse_timestamp_key(pre_epoch), u64::MAX);
+    }
+
+    #[test]
+    fn language_filter_aliases_match_canonical_values() {
+        assert!(super::language_matches_filter(Some("csharp"), Some("cs")));
+        assert!(super::language_matches_filter(Some("cs"), Some("csharp")));
+        assert!(super::language_matches_filter(Some("bash"), Some("shell")));
+        assert!(super::language_matches_filter(
+            Some("pwsh"),
+            Some("powershell")
+        ));
     }
 }

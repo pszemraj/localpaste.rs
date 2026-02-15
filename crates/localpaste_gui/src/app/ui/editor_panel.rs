@@ -12,7 +12,11 @@ impl LocalPasteApp {
             if let Some(id) = selected_meta {
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
-                let lang_label = display_language_label(language.as_deref(), is_large);
+                let lang_label = display_language_label(
+                    language.as_deref(),
+                    self.edit_language_is_manual,
+                    is_large,
+                );
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
 
                 let mut pending_language_filter: Option<Option<String>> = None;

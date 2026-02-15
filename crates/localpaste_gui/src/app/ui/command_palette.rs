@@ -77,6 +77,7 @@ impl LocalPasteApp {
                                 ui.horizontal(|ui| {
                                     let lang = display_language_label(
                                         item.language.as_deref(),
+                                        false,
                                         item.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
                                     );
                                     let label = format!("{}  [{}]", item.name, lang);

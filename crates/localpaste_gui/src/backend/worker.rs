@@ -310,6 +310,7 @@ pub fn spawn_backend_with_locks_and_owner(
     let worker_join = thread::Builder::new()
         .name("localpaste-gui-backend".to_string())
         .spawn(move || {
+            localpaste_core::detection::prewarm();
             let mut state = WorkerState {
                 db,
                 evt_tx,

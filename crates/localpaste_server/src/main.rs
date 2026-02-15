@@ -93,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let database = Database::new(&config.db_path)?;
+    localpaste_core::detection::prewarm();
 
     if config.auto_backup && db_exists_before_open {
         let backup_manager = localpaste_server::db::backup::BackupManager::new(&config.db_path);

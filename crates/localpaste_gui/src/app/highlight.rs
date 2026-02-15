@@ -209,11 +209,7 @@ impl EditorLayoutCache {
         self.highlight_cache
             .clear_if_mismatch(language_hint, theme_key);
 
-        let syntax = settings
-            .ps
-            .find_syntax_by_name(language_hint)
-            .or_else(|| settings.ps.find_syntax_by_extension(language_hint))
-            .unwrap_or_else(|| settings.ps.find_syntax_plain_text());
+        let syntax = resolve_syntax(&settings.ps, language_hint);
         let theme = settings
             .ts
             .themes
@@ -431,6 +427,83 @@ pub(super) fn build_virtual_line_job(
 
     job.wrap.max_width = f32::INFINITY;
     job
+}
+
+fn normalized_syntax_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+fn resolve_syntax<'a>(
+    ps: &'a syntect::parsing::SyntaxSet,
+    hint: &str,
+) -> &'a syntect::parsing::SyntaxReference {
+    let hint_trimmed = hint.trim();
+    if hint_trimmed.is_empty() {
+        return ps.find_syntax_plain_text();
+    }
+
+    let hint_lower = hint_trimmed.to_ascii_lowercase();
+    if matches!(hint_lower.as_str(), "text" | "txt" | "plain" | "plaintext") {
+        return ps.find_syntax_plain_text();
+    }
+
+    if let Some(syntax) = ps.find_syntax_by_name(hint_trimmed) {
+        return syntax;
+    }
+    if let Some(syntax) = ps.find_syntax_by_extension(hint_trimmed) {
+        return syntax;
+    }
+
+    for syntax in ps.syntaxes() {
+        if syntax.name.eq_ignore_ascii_case(hint_trimmed) {
+            return syntax;
+        }
+    }
+
+    let hint_normalized = normalized_syntax_key(&hint_lower);
+    if !hint_normalized.is_empty() {
+        for syntax in ps.syntaxes() {
+            if normalized_syntax_key(syntax.name.as_str()) == hint_normalized {
+                return syntax;
+            }
+        }
+    }
+
+    for syntax in ps.syntaxes() {
+        if syntax
+            .file_extensions
+            .iter()
+            .any(|ext| ext.eq_ignore_ascii_case(&hint_lower))
+        {
+            return syntax;
+        }
+    }
+
+    let alias = match hint_lower.as_str() {
+        "cs" => "C#",
+        "shell" => "Bourne Again Shell (bash)",
+        "cpp" => "C++",
+        "powershell" => "PowerShell",
+        "objectivec" => "Objective-C",
+        "dockerfile" => "Dockerfile",
+        "makefile" => "Makefile",
+        "latex" => "LaTeX",
+        _ => "",
+    };
+    if !alias.is_empty() {
+        if let Some(syntax) = ps.find_syntax_by_name(alias) {
+            return syntax;
+        }
+        if let Some(syntax) = ps.find_syntax_by_extension(alias) {
+            return syntax;
+        }
+    }
+
+    ps.find_syntax_plain_text()
 }
 
 /// Provides reusable syntect sets for worker and UI layouts.
@@ -828,11 +901,7 @@ fn highlight_in_worker(
         cache.lines.clear();
     }
 
-    let syntax = settings
-        .ps
-        .find_syntax_by_name(&req.language_hint)
-        .or_else(|| settings.ps.find_syntax_by_extension(&req.language_hint))
-        .unwrap_or_else(|| settings.ps.find_syntax_plain_text());
+    let syntax = resolve_syntax(&settings.ps, &req.language_hint);
     let theme = settings
         .ts
         .themes
@@ -968,24 +1037,69 @@ fn highlight_in_worker(
 
 /// Normalizes user-facing language names into syntect-compatible hints.
 pub(super) fn syntect_language_hint(language: &str) -> String {
-    let lang = language.trim().to_ascii_lowercase();
-    match lang.as_str() {
-        "python" => "py".to_string(),
-        "javascript" | "js" => "js".to_string(),
-        "typescript" | "ts" => "ts".to_string(),
-        "markdown" | "md" => "md".to_string(),
-        "csharp" | "cs" => "cs".to_string(),
-        "cpp" | "c++" => "cpp".to_string(),
-        "shell" | "bash" | "sh" => "sh".to_string(),
-        "plaintext" | "plain" | "text" => "txt".to_string(),
-        "yaml" | "yml" => "yaml".to_string(),
-        "toml" => "toml".to_string(),
-        "json" => "json".to_string(),
-        "rust" => "rs".to_string(),
-        "go" => "go".to_string(),
-        "html" => "html".to_string(),
-        "xml" => "xml".to_string(),
-        "sql" => "sql".to_string(),
-        _ => lang,
+    let canonical = localpaste_core::detection::canonical::canonicalize(language);
+    if canonical.is_empty() {
+        "text".to_string()
+    } else {
+        canonical
+    }
+}
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::{resolve_syntax, syntect_language_hint, SyntectSettings};
+
+    #[test]
+    fn resolve_syntax_handles_common_canonical_labels() {
+        let settings = SyntectSettings::default();
+        let cases = [
+            "rust",
+            "python",
+            "javascript",
+            "go",
+            "java",
+            "html",
+            "css",
+            "json",
+            "yaml",
+            "sql",
+        ];
+        for label in cases {
+            let syntax = resolve_syntax(&settings.ps, label);
+            assert_ne!(syntax.name, "Plain Text", "label: {label}");
+        }
+    }
+
+    #[test]
+    fn resolve_syntax_handles_alias_labels() {
+        let settings = SyntectSettings::default();
+        for label in ["cs", "shell", "cpp"] {
+            let syntax = resolve_syntax(&settings.ps, label);
+            assert_ne!(syntax.name, "Plain Text", "label: {label}");
+        }
+        // No PowerShell grammar ships in all syntect bundles.
+        assert_eq!(
+            resolve_syntax(&settings.ps, "powershell").name,
+            "Plain Text"
+        );
+    }
+
+    #[test]
+    fn resolve_syntax_falls_back_to_plain_for_unknown_or_text() {
+        let settings = SyntectSettings::default();
+        assert_eq!(
+            resolve_syntax(&settings.ps, "somethingtotallyunknown").name,
+            "Plain Text"
+        );
+        assert_eq!(resolve_syntax(&settings.ps, "").name, "Plain Text");
+        assert_eq!(resolve_syntax(&settings.ps, "text").name, "Plain Text");
+        assert_eq!(resolve_syntax(&settings.ps, "txt").name, "Plain Text");
+    }
+
+    #[test]
+    fn syntect_hint_uses_canonical_labels() {
+        assert_eq!(syntect_language_hint(" csharp "), "cs");
+        assert_eq!(syntect_language_hint("bash"), "shell");
+        assert_eq!(syntect_language_hint(""), "text");
     }
 }

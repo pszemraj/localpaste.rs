@@ -11,7 +11,7 @@ name = "localpaste-gui"
 path = "src/main.rs"
 
 [dependencies]
-localpaste_core = { path = "../localpaste_core" }
+localpaste_core = { path = "../localpaste_core", default-features = false }
 localpaste_server = { path = "../localpaste_server" }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
@@ -26,7 +26,8 @@ rfd = "0.14"
 puffin = { version = "0.19", optional = true }
 
 [features]
-default = []
+default = ["magika"]
+magika = ["localpaste_core/magika"]
 debug-tools = []
 profile = ["puffin"]
 

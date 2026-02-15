@@ -82,6 +82,7 @@ impl LocalPasteApp {
                                     self.selected_id.as_deref() == Some(paste.id.as_str());
                                 let lang_label = display_language_label(
                                     paste.language.as_deref(),
+                                    false,
                                     paste.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
                                 );
                                 let label = format!("{}  ({})", paste.name, lang_label);

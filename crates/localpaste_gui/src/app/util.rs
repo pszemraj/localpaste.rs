@@ -5,16 +5,28 @@ pub(super) fn env_flag_enabled(name: &str) -> bool {
 }
 
 /// Formats the language label shown in the UI, falling back to auto/plain.
-pub(super) fn display_language_label(language: Option<&str>, is_large: bool) -> String {
+pub(super) fn display_language_label(
+    language: Option<&str>,
+    is_manual: bool,
+    is_large: bool,
+) -> String {
     if is_large {
         return "plain".to_string();
     }
     let Some(raw) = language else {
-        return "auto".to_string();
+        return if is_manual {
+            "plain".to_string()
+        } else {
+            "auto".to_string()
+        };
     };
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return "auto".to_string();
+        return if is_manual {
+            "plain".to_string()
+        } else {
+            "auto".to_string()
+        };
     }
     let lowered = trimmed.to_ascii_lowercase();
     match lowered.as_str() {
@@ -127,7 +139,10 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
 
 #[cfg(test)]
 mod tests {
-    use super::{api_paste_link_for_copy, format_fenced_code_block, status_language_filter_label};
+    use super::{
+        api_paste_link_for_copy, display_language_label, format_fenced_code_block,
+        status_language_filter_label,
+    };
 
     #[test]
     fn status_language_filter_label_resolution_matrix() {
@@ -170,5 +185,14 @@ mod tests {
             "abc",
         );
         assert_eq!(v6, "http://[::1]:38411/api/paste/abc");
+    }
+
+    #[test]
+    fn display_language_label_distinguishes_auto_and_manual_plain() {
+        assert_eq!(display_language_label(None, false, false), "auto");
+        assert_eq!(display_language_label(None, true, false), "plain");
+        assert_eq!(display_language_label(Some("txt"), false, false), "plain");
+        assert_eq!(display_language_label(Some("rust"), false, false), "rust");
+        assert_eq!(display_language_label(Some("rust"), false, true), "plain");
     }
 }

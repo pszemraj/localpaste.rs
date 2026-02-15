@@ -22,16 +22,18 @@ const CODE_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
         "php",
         "c",
         "cpp",
-        "c++",
-        "csharp",
         "cs",
         "shell",
-        "bash",
-        "zsh",
+        "powershell",
         "sql",
         "html",
         "css",
         "markdown",
+        "dart",
+        "zig",
+        "lua",
+        "perl",
+        "elixir",
     ],
     name_needles: &[
         ".rs", ".py", ".js", ".ts", ".go", ".java", ".cs", ".sql", ".sh", "snippet", "script",
@@ -41,17 +43,7 @@ const CODE_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
 };
 
 const CONFIG_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
-    languages: &[
-        "json",
-        "yaml",
-        "yml",
-        "toml",
-        "ini",
-        "env",
-        "xml",
-        "hcl",
-        "properties",
-    ],
+    languages: &["json", "yaml", "toml", "xml", "dockerfile", "makefile"],
     name_needles: &[
         "config",
         "settings",
@@ -107,9 +99,10 @@ fn language_in_set(language: Option<&str>, values: &[&str]) -> bool {
     let Some(language) = language.map(str::trim).filter(|value| !value.is_empty()) else {
         return false;
     };
+    let canonical = localpaste_core::detection::canonical::canonicalize(language);
     values
         .iter()
-        .any(|value| language.eq_ignore_ascii_case(value))
+        .any(|value| canonical.eq_ignore_ascii_case(value))
 }
 
 pub(super) fn normalize_language_filter_value(value: Option<&str>) -> Option<String> {
@@ -162,12 +155,9 @@ pub(super) fn is_link_summary(item: &PasteSummary) -> bool {
 }
 
 pub(super) fn language_extension(language: Option<&str>) -> &'static str {
-    match language
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    let canonical =
+        localpaste_core::detection::canonical::canonicalize(language.unwrap_or_default().trim());
+    match canonical.as_str() {
         "rust" => "rs",
         "python" => "py",
         "javascript" => "js",
@@ -180,6 +170,27 @@ pub(super) fn language_extension(language: Option<&str>) -> &'static str {
         "css" => "css",
         "sql" => "sql",
         "shell" => "sh",
+        "cs" => "cs",
+        "cpp" => "cpp",
+        "c" => "c",
+        "go" => "go",
+        "java" => "java",
+        "kotlin" => "kt",
+        "swift" => "swift",
+        "ruby" => "rb",
+        "php" => "php",
+        "perl" => "pl",
+        "lua" => "lua",
+        "r" => "r",
+        "scala" => "scala",
+        "dart" => "dart",
+        "elixir" => "ex",
+        "haskell" => "hs",
+        "zig" => "zig",
+        "xml" => "xml",
+        "dockerfile" => "dockerfile",
+        "makefile" => "makefile",
+        "powershell" => "ps1",
         _ => "txt",
     }
 }
@@ -214,6 +225,8 @@ mod tests {
     fn language_extension_maps_known_and_unknown_languages() {
         assert_eq!(language_extension(Some("rust")), "rs");
         assert_eq!(language_extension(Some(" Python ")), "py");
+        assert_eq!(language_extension(Some("csharp")), "cs");
+        assert_eq!(language_extension(Some("bash")), "sh");
         assert_eq!(language_extension(Some("unknown")), "txt");
         assert_eq!(language_extension(None), "txt");
     }
