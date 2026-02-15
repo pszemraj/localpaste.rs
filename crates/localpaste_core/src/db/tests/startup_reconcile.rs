@@ -159,6 +159,23 @@ fn database_new_rejects_legacy_sled_layout_when_data_redb_missing() {
 }
 
 #[test]
+fn database_new_ignores_unrelated_lock_files_when_data_redb_missing() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("non-legacy-db");
+    std::fs::create_dir_all(&db_path).expect("create dir");
+    std::fs::write(db_path.join("random.lock"), b"not-sled").expect("seed lock artifact");
+
+    let db = Database::new(db_path.to_str().expect("path"))
+        .expect("unrelated lock file should not block startup");
+    drop(db);
+
+    assert!(
+        db_path.join(REDB_FILE_NAME).exists(),
+        "database should initialize data.redb when no legacy sled markers are present"
+    );
+}
+
+#[test]
 fn database_new_allows_startup_when_data_redb_exists() {
     let temp_dir = TempDir::new().expect("temp dir");
     let db_path = temp_dir.path().join("db");

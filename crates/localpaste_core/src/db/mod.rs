@@ -262,9 +262,6 @@ fn looks_like_legacy_sled_layout(db_dir: &Path) -> Result<bool, AppError> {
         if SLED_HINTS.contains(&name.as_str()) || name.starts_with("snap.") {
             return Ok(true);
         }
-        if name.ends_with(".lock") && name != "db.owner.lock" {
-            return Ok(true);
-        }
     }
 
     Ok(false)
