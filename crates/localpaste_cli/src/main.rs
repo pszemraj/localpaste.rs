@@ -73,6 +73,40 @@ enum Commands {
     },
 }
 
+enum ApiCommand {
+    New {
+        file: Option<String>,
+        name: Option<String>,
+    },
+    Get {
+        id: String,
+    },
+    List {
+        limit: usize,
+    },
+    Search {
+        query: String,
+    },
+    SearchMeta {
+        query: String,
+    },
+    Delete {
+        id: String,
+    },
+}
+
+fn classify_command(command: Commands) -> Result<ApiCommand, Shell> {
+    match command {
+        Commands::Completions { shell } => Err(shell),
+        Commands::New { file, name } => Ok(ApiCommand::New { file, name }),
+        Commands::Get { id } => Ok(ApiCommand::Get { id }),
+        Commands::List { limit } => Ok(ApiCommand::List { limit }),
+        Commands::Search { query } => Ok(ApiCommand::Search { query }),
+        Commands::SearchMeta { query } => Ok(ApiCommand::SearchMeta { query }),
+        Commands::Delete { id } => Ok(ApiCommand::Delete { id }),
+    }
+}
+
 fn log_timing(timing: bool, label: &str, duration: Duration) {
     if timing {
         eprintln!(
@@ -494,12 +528,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         command,
     } = Cli::parse();
 
-    if let Commands::Completions { shell } = &command {
-        let mut cmd = Cli::command();
-        let name = cmd.get_name().to_string();
-        generate(*shell, &mut cmd, name, &mut io::stdout());
-        return Ok(());
-    }
+    let command = match classify_command(command) {
+        Err(shell) => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            generate(shell, &mut cmd, name, &mut io::stdout());
+            return Ok(());
+        }
+        Ok(command) => command,
+    };
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout))
@@ -512,8 +549,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match command {
-        Commands::Completions { .. } => unreachable!("completions handled before client setup"),
-        Commands::New { file, name } => {
+        ApiCommand::New { file, name } => {
             let endpoint = api_url_or_exit(&server, "New", &["api", "paste"]);
             let content = if let Some(path) = file {
                 std::fs::read_to_string(path)?
@@ -554,7 +590,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Created: {} ({})", name, id);
             }
         }
-        Commands::Get { id } => {
+        ApiCommand::Get { id } => {
             let endpoint = api_url_or_exit(&server, "Get", &["api", "paste", id.as_str()]);
             let request_start = Instant::now();
             let res = send_or_exit(client.get(endpoint), "Get", source, server.as_str()).await;
@@ -575,7 +611,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             println!("{}", output);
         }
-        Commands::List { limit } => {
+        ApiCommand::List { limit } => {
             let endpoint = api_url_or_exit(&server, "List", &["api", "pastes", "meta"]);
             let request_start = Instant::now();
             let res = send_or_exit(
@@ -604,7 +640,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", output);
             }
         }
-        Commands::Search { query } => {
+        ApiCommand::Search { query } => {
             let endpoint = api_url_or_exit(&server, "Search", &["api", "search"]);
             let request_start = Instant::now();
             let res = send_or_exit(
@@ -633,7 +669,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", output);
             }
         }
-        Commands::SearchMeta { query } => {
+        ApiCommand::SearchMeta { query } => {
             let endpoint = api_url_or_exit(&server, "Search metadata", &["api", "search", "meta"]);
             let request_start = Instant::now();
             let res = send_or_exit(
@@ -662,7 +698,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", output);
             }
         }
-        Commands::Delete { id } => {
+        ApiCommand::Delete { id } => {
             let endpoint = api_url_or_exit(&server, "Delete", &["api", "paste", id.as_str()]);
             let request_start = Instant::now();
             let res =

@@ -4,6 +4,7 @@ use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerSt
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
     db::TransactionOps,
+    folder_ops::map_missing_folder_for_request,
     models::paste::{self, UpdatePasteRequest},
     naming, AppError,
 };
@@ -28,9 +29,7 @@ fn begin_owner_mutation_guard<'a>(
 
 fn map_gui_folder_not_found(err: AppError, folder_id: Option<&str>) -> AppError {
     match (err, folder_id) {
-        (AppError::NotFound, Some(folder_id)) => {
-            AppError::BadRequest(format!("folder '{}' does not exist", folder_id))
-        }
+        (err, Some(folder_id)) => map_missing_folder_for_request(err, folder_id, "Folder"),
         (err, _) => err,
     }
 }

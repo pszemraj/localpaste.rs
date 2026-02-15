@@ -44,22 +44,42 @@ fn load_folder(
     Ok(Some(bincode::deserialize(guard.value())?))
 }
 
-impl TransactionOps {
-    /// Acquire the global folder-transaction lock.
-    ///
-    /// # Returns
-    /// A guard that must be held for the full folder-affecting critical section.
-    ///
-    /// # Errors
-    /// Returns an error when the lock is poisoned.
-    pub fn acquire_folder_txn_lock(
-        db: &Database,
-    ) -> Result<std::sync::MutexGuard<'_, ()>, AppError> {
-        db.folder_txn_lock
-            .lock()
-            .map_err(|_| AppError::StorageMessage("Folder transaction lock poisoned".to_string()))
+fn folder_disappeared_after_assignability_error(folder_id: &str) -> AppError {
+    AppError::StorageMessage(format!(
+        "Folder '{}' disappeared inside a single write transaction after assignability check",
+        folder_id
+    ))
+}
+
+fn apply_folder_count_transition(
+    folders: &mut redb::Table<&str, &[u8]>,
+    old_folder_id: Option<&str>,
+    new_folder_id: Option<&str>,
+) -> Result<(), AppError> {
+    if old_folder_id == new_folder_id {
+        return Ok(());
     }
 
+    if let Some(old_id) = old_folder_id {
+        if let Some(mut old_folder) = load_folder(folders, old_id)? {
+            old_folder.paste_count = old_folder.paste_count.saturating_sub(1);
+            let encoded_old = bincode::serialize(&old_folder)?;
+            folders.insert(old_id, encoded_old.as_slice())?;
+        }
+    }
+
+    if let Some(new_id) = new_folder_id {
+        let mut new_folder = load_folder(folders, new_id)?
+            .ok_or_else(|| folder_disappeared_after_assignability_error(new_id))?;
+        new_folder.paste_count = new_folder.paste_count.saturating_add(1);
+        let encoded_new = bincode::serialize(&new_folder)?;
+        folders.insert(new_id, encoded_new.as_slice())?;
+    }
+
+    Ok(())
+}
+
+impl TransactionOps {
     /// Acquire the global folder transaction guard.
     ///
     /// This typed guard must be passed to guarded mutation helpers to guarantee
@@ -71,7 +91,9 @@ impl TransactionOps {
     /// # Errors
     /// Returns an error when the lock is poisoned.
     pub fn acquire_folder_txn_guard(db: &Database) -> Result<FolderTxnGuard<'_>, AppError> {
-        let guard = Self::acquire_folder_txn_lock(db)?;
+        let guard = db.folder_txn_lock.lock().map_err(|_| {
+            AppError::StorageMessage("Folder transaction lock poisoned".to_string())
+        })?;
         Ok(FolderTxnGuard { _guard: guard })
     }
 
@@ -142,19 +164,10 @@ impl TransactionOps {
                 )));
             }
 
-            let mut folder = load_folder(&folders, folder_id)?.ok_or_else(|| {
-                AppError::StorageMessage(format!(
-                    "Folder '{}' disappeared inside a single write transaction after assignability check",
-                    folder_id
-                ))
-            })?;
-            folder.paste_count = folder.paste_count.saturating_add(1);
-            let encoded_folder = bincode::serialize(&folder)?;
-
             pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
             metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
             updated.insert((recency_key, paste.id.as_str()), ())?;
-            folders.insert(folder_id, encoded_folder.as_slice())?;
+            apply_folder_count_transition(&mut folders, None, Some(folder_id))?;
         }
         write_txn.commit()?;
         Ok(())
@@ -205,20 +218,14 @@ impl TransactionOps {
             };
             let paste = deserialize_paste(old_guard.value())?;
             let old_recency_key = reverse_timestamp_key(paste.updated_at);
-            let old_folder_id = paste.folder_id.clone();
+            let old_folder_id = paste.folder_id;
             drop(old_guard);
 
             let _ = updated.remove((old_recency_key, paste_id))?;
             let _ = pastes.remove(paste_id)?;
             let _ = metas.remove(paste_id)?;
 
-            if let Some(folder_id) = old_folder_id.as_deref() {
-                if let Some(mut folder) = load_folder(&folders, folder_id)? {
-                    folder.paste_count = folder.paste_count.saturating_sub(1);
-                    let encoded_folder = bincode::serialize(&folder)?;
-                    folders.insert(folder_id, encoded_folder.as_slice())?;
-                }
-            }
+            apply_folder_count_transition(&mut folders, old_folder_id.as_deref(), None)?;
             true
         };
 
@@ -308,24 +315,11 @@ impl TransactionOps {
             updated.insert((new_recency_key, paste_id), ())?;
 
             if folder_changing {
-                if let Some(old_id) = old_folder_id.as_deref() {
-                    if let Some(mut old_folder) = load_folder(&folders, old_id)? {
-                        old_folder.paste_count = old_folder.paste_count.saturating_sub(1);
-                        let encoded_old_folder = bincode::serialize(&old_folder)?;
-                        folders.insert(old_id, encoded_old_folder.as_slice())?;
-                    }
-                }
-                if let Some(new_id) = new_folder_id {
-                    let mut new_folder = load_folder(&folders, new_id)?.ok_or_else(|| {
-                        AppError::StorageMessage(format!(
-                            "Folder '{}' disappeared inside a single write transaction after assignability check",
-                            new_id
-                        ))
-                    })?;
-                    new_folder.paste_count = new_folder.paste_count.saturating_add(1);
-                    let encoded_new_folder = bincode::serialize(&new_folder)?;
-                    folders.insert(new_id, encoded_new_folder.as_slice())?;
-                }
+                apply_folder_count_transition(
+                    &mut folders,
+                    old_folder_id.as_deref(),
+                    new_folder_id,
+                )?;
             }
 
             Some(paste)

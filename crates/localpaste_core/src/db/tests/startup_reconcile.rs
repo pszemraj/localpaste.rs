@@ -4,6 +4,17 @@ use super::*;
 use crate::db::tables::REDB_FILE_NAME;
 use tempfile::TempDir;
 
+fn setup_temp_db_path(name: &str) -> (TempDir, String) {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join(name);
+    let db_path_str = db_path.to_str().expect("db path").to_string();
+    (temp_dir, db_path_str)
+}
+
+fn open_test_database(path: &str) -> Database {
+    Database::new(path).expect("db")
+}
+
 #[test]
 fn database_new_reports_error_for_non_directory_db_path() {
     let temp_dir = TempDir::new().expect("temp dir");
@@ -19,11 +30,9 @@ fn database_new_reports_error_for_non_directory_db_path() {
 
 #[test]
 fn database_new_repairs_folder_count_drift_on_restart() {
-    let temp_dir = TempDir::new().expect("temp dir");
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().expect("db path").to_string();
+    let (_temp_dir, db_path_str) = setup_temp_db_path("test.db");
 
-    let db = Database::new(&db_path_str).expect("db");
+    let db = open_test_database(&db_path_str);
     let folder = Folder::new("count-drift-folder".to_string());
     let folder_id = folder.id.clone();
     db.folders.create(&folder).expect("create folder");
@@ -38,7 +47,7 @@ fn database_new_repairs_folder_count_drift_on_restart() {
     db.folders.set_count(&folder_id, 99).expect("drift");
     drop(db);
 
-    let reopened = Database::new(&db_path_str).expect("reopen");
+    let reopened = open_test_database(&db_path_str);
     let folder_after = reopened
         .folders
         .get(&folder_id)
@@ -54,11 +63,9 @@ fn database_new_repairs_folder_count_drift_on_restart() {
 
 #[test]
 fn database_new_repairs_orphan_folder_refs_on_restart() {
-    let temp_dir = TempDir::new().expect("temp dir");
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().expect("db path").to_string();
+    let (_temp_dir, db_path_str) = setup_temp_db_path("test.db");
 
-    let db = Database::new(&db_path_str).expect("db");
+    let db = open_test_database(&db_path_str);
     let folder = Folder::new("orphan-folder".to_string());
     let folder_id = folder.id.clone();
     db.folders.create(&folder).expect("create folder");
@@ -71,7 +78,7 @@ fn database_new_repairs_orphan_folder_refs_on_restart() {
     db.folders.delete(&folder_id).expect("delete folder");
     drop(db);
 
-    let reopened = Database::new(&db_path_str).expect("reopen");
+    let reopened = open_test_database(&db_path_str);
     let repaired = reopened
         .pastes
         .get(&paste_id)
@@ -82,11 +89,9 @@ fn database_new_repairs_orphan_folder_refs_on_restart() {
 
 #[test]
 fn database_new_repairs_orphan_folder_parent_refs_on_restart() {
-    let temp_dir = TempDir::new().expect("temp dir");
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().expect("db path").to_string();
+    let (_temp_dir, db_path_str) = setup_temp_db_path("test.db");
 
-    let db = Database::new(&db_path_str).expect("db");
+    let db = open_test_database(&db_path_str);
     let root = Folder::new("root".to_string());
     let root_id = root.id.clone();
     db.folders.create(&root).expect("create root");
@@ -98,7 +103,7 @@ fn database_new_repairs_orphan_folder_parent_refs_on_restart() {
     db.folders.delete(&root_id).expect("delete root");
     drop(db);
 
-    let reopened = Database::new(&db_path_str).expect("reopen");
+    let reopened = open_test_database(&db_path_str);
     let repaired_child = reopened
         .folders
         .get(&child_id)
@@ -109,11 +114,9 @@ fn database_new_repairs_orphan_folder_parent_refs_on_restart() {
 
 #[test]
 fn database_new_clears_stale_folder_delete_markers() {
-    let temp_dir = TempDir::new().expect("temp dir");
-    let db_path = temp_dir.path().join("test.db");
-    let db_path_str = db_path.to_str().expect("db path").to_string();
+    let (_temp_dir, db_path_str) = setup_temp_db_path("test.db");
 
-    let db = Database::new(&db_path_str).expect("db");
+    let db = open_test_database(&db_path_str);
     let folder = Folder::new("marker-folder".to_string());
     let folder_id = folder.id.clone();
     db.folders.create(&folder).expect("create folder");
@@ -123,7 +126,7 @@ fn database_new_clears_stale_folder_delete_markers() {
     assert!(db.folders.is_delete_marked(&folder_id).expect("marked"));
     drop(db);
 
-    let reopened = Database::new(&db_path_str).expect("reopen");
+    let reopened = open_test_database(&db_path_str);
     assert!(!reopened
         .folders
         .is_delete_marked(&folder_id)
@@ -177,12 +180,12 @@ fn database_new_ignores_unrelated_lock_files_when_data_redb_missing() {
 
 #[test]
 fn database_new_allows_startup_when_data_redb_exists() {
-    let temp_dir = TempDir::new().expect("temp dir");
-    let db_path = temp_dir.path().join("db");
-    let db = Database::new(db_path.to_str().expect("path")).expect("initial open");
+    let (_temp_dir, db_path_str) = setup_temp_db_path("db");
+    let db = open_test_database(&db_path_str);
     drop(db);
 
     // Add legacy-looking artifacts; `data.redb` still exists and should win.
+    let db_path = std::path::Path::new(&db_path_str);
     std::fs::write(db_path.join("pastes"), b"legacy").expect("seed legacy artifact");
-    Database::new(db_path.to_str().expect("path")).expect("reopen should succeed");
+    open_test_database(&db_path_str);
 }

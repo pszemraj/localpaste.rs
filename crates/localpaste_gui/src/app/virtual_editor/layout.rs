@@ -247,11 +247,21 @@ fn measure_line(buffer: &RopeBuffer, idx: usize, cols: usize, line_height: f32) 
 mod tests {
     use super::*;
 
+    fn rebuild_cache_for(
+        text: &str,
+        wrap_width: f32,
+        line_height: f32,
+        char_width: f32,
+    ) -> (RopeBuffer, WrapLayoutCache) {
+        let buffer = RopeBuffer::new(text);
+        let mut cache = WrapLayoutCache::default();
+        cache.rebuild(&buffer, wrap_width, line_height, char_width);
+        (buffer, cache)
+    }
+
     #[test]
     fn visible_range_tracks_wrapped_heights() {
-        let buffer = RopeBuffer::new("1234567890\n12\n123456");
-        let mut cache = WrapLayoutCache::default();
-        cache.rebuild(&buffer, 30.0, 10.0, 5.0);
+        let (_buffer, cache) = rebuild_cache_for("1234567890\n12\n123456", 30.0, 10.0, 5.0);
         // Wrap columns = 6, heights: [20,10,10]
         assert_eq!(cache.visible_range(0.0, 9.0, 0), 0..1);
         assert_eq!(cache.visible_range(21.0, 9.0, 0), 1..3);
@@ -260,9 +270,7 @@ mod tests {
 
     #[test]
     fn needs_rebuild_only_tracks_geometry_and_text_state() {
-        let buffer = RopeBuffer::new("alpha\nbeta");
-        let mut cache = WrapLayoutCache::default();
-        cache.rebuild(&buffer, 60.0, 12.0, 6.0);
+        let (buffer, cache) = rebuild_cache_for("alpha\nbeta", 60.0, 12.0, 6.0);
 
         assert!(!cache.needs_rebuild(buffer.revision(), 60.0, 12.0, 6.0, buffer.line_count()));
         assert!(cache.needs_rebuild(buffer.revision(), 61.0, 12.0, 6.0, buffer.line_count()));

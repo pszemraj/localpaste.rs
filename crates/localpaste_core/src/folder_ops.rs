@@ -33,12 +33,20 @@ pub fn ensure_folder_assignable(db: &Database, folder_id: &str) -> Result<(), Ap
     Ok(())
 }
 
-fn map_parent_assignability_error(err: AppError, parent_id: &str) -> AppError {
+/// Map a missing-folder `NotFound` into a caller-facing validation message.
+///
+/// # Arguments
+/// - `err`: Source error from folder validation logic.
+/// - `folder_id`: Folder id that was requested.
+/// - `label`: Resource label used in the final user-facing message.
+///
+/// # Returns
+/// `BadRequest` for missing folders, otherwise the original error.
+pub fn map_missing_folder_for_request(err: AppError, folder_id: &str, label: &str) -> AppError {
     match err {
-        AppError::NotFound => AppError::BadRequest(format!(
-            "Parent folder with id '{}' does not exist",
-            parent_id
-        )),
+        AppError::NotFound => {
+            AppError::BadRequest(format!("{} with id '{}' does not exist", label, folder_id))
+        }
         other => other,
     }
 }
@@ -67,7 +75,7 @@ pub fn create_folder_validated(
 
     if let Some(parent_id) = normalized_parent.as_deref() {
         ensure_folder_assignable(db, parent_id)
-            .map_err(|err| map_parent_assignability_error(err, parent_id))?;
+            .map_err(|err| map_missing_folder_for_request(err, parent_id, "Parent folder"))?;
     }
 
     let folder = Folder::with_parent(name, normalized_parent);
@@ -105,7 +113,7 @@ pub fn update_folder_validated(
         }
         if !parent_id.is_empty() {
             ensure_folder_assignable(db, parent_id)
-                .map_err(|err| map_parent_assignability_error(err, parent_id))?;
+                .map_err(|err| map_missing_folder_for_request(err, parent_id, "Parent folder"))?;
             let folders = db.folders.list()?;
             if introduces_cycle(&folders, id, parent_id) {
                 return Err(AppError::BadRequest(

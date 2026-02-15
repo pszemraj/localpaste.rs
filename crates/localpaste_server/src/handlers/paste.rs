@@ -9,6 +9,7 @@ use axum::{
     response::Response,
     Json,
 };
+use localpaste_core::folder_ops::map_missing_folder_for_request;
 
 const RESPONSE_SHAPE_HEADER: &str = "x-localpaste-response-shape";
 const META_RESPONSE_SHAPE: &str = "meta-only";
@@ -69,9 +70,7 @@ fn with_folder_metadata_response(response: Response, include_meta_shape_header: 
 
 fn map_folder_not_found_for_request(err: AppError, folder_id: Option<&str>) -> AppError {
     match (err, folder_id) {
-        (AppError::NotFound, Some(folder_id)) => {
-            AppError::BadRequest(format!("Folder with id '{}' does not exist", folder_id))
-        }
+        (err, Some(folder_id)) => map_missing_folder_for_request(err, folder_id, "Folder"),
         (err, _) => err,
     }
 }
@@ -94,6 +93,7 @@ fn list_meta_response(
     ))
 }
 
+#[derive(Clone, Copy)]
 enum SearchMode {
     Canonical,
     MetaOnly,
