@@ -4,7 +4,6 @@ use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerSt
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
     db::TransactionOps,
-    folder_ops::ensure_folder_assignable,
     models::paste::{self, UpdatePasteRequest},
     naming, AppError,
 };
@@ -25,6 +24,15 @@ fn begin_owner_mutation_guard<'a>(
                 "Paste is currently open for editing.",
             )
         })
+}
+
+fn map_gui_folder_not_found(err: AppError, folder_id: Option<&str>) -> AppError {
+    match (err, folder_id) {
+        (AppError::NotFound, Some(folder_id)) => {
+            AppError::BadRequest(format!("folder '{}' does not exist", folder_id))
+        }
+        (err, _) => err,
+    }
 }
 
 pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
@@ -171,20 +179,6 @@ pub(super) fn handle_update_paste_meta(
         }
     });
 
-    if let Some(folder_id) = normalized_folder_id.as_ref().filter(|fid| !fid.is_empty()) {
-        if let Err(err) = ensure_folder_assignable(&state.db, folder_id) {
-            let message = match err {
-                AppError::NotFound => format!(
-                    "Metadata update failed: folder '{}' does not exist",
-                    folder_id
-                ),
-                other => format!("Metadata update failed: {}", other),
-            };
-            send_error(&state.evt_tx, CoreErrorSource::SaveMetadata, message);
-            return;
-        }
-    }
-
     let update = UpdatePasteRequest {
         content: None,
         name,
@@ -232,6 +226,7 @@ pub(super) fn handle_update_paste_meta(
             new_folder_id.as_deref(),
             update,
         )
+        .map_err(|err| map_gui_folder_not_found(err, new_folder_id.as_deref()))
     } else {
         let _mutation_guard = match begin_owner_mutation_guard(
             state.locks.as_ref(),

@@ -33,6 +33,91 @@ pub fn ensure_folder_assignable(db: &Database, folder_id: &str) -> Result<(), Ap
     Ok(())
 }
 
+fn map_parent_assignability_error(err: AppError, parent_id: &str) -> AppError {
+    match err {
+        AppError::NotFound => AppError::BadRequest(format!(
+            "Parent folder with id '{}' does not exist",
+            parent_id
+        )),
+        other => other,
+    }
+}
+
+/// Create a folder with canonical parent validation under the folder txn lock.
+///
+/// # Arguments
+/// - `db`: Open database handle.
+/// - `name`: Folder display name.
+/// - `parent_id`: Optional parent id (empty/whitespace clears to top-level).
+///
+/// # Returns
+/// The created folder row.
+///
+/// # Errors
+/// Returns parent validation errors or storage failures.
+pub fn create_folder_validated(
+    db: &Database,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<Folder, AppError> {
+    let _folder_guard = TransactionOps::acquire_folder_txn_guard(db)?;
+    let normalized_parent = parent_id
+        .map(|pid| pid.trim().to_string())
+        .filter(|pid| !pid.is_empty());
+
+    if let Some(parent_id) = normalized_parent.as_deref() {
+        ensure_folder_assignable(db, parent_id)
+            .map_err(|err| map_parent_assignability_error(err, parent_id))?;
+    }
+
+    let folder = Folder::with_parent(name, normalized_parent);
+    db.folders.create(&folder)?;
+    Ok(folder)
+}
+
+/// Update a folder with canonical parent validation under the folder txn lock.
+///
+/// # Arguments
+/// - `db`: Open database handle.
+/// - `id`: Folder id to update.
+/// - `name`: New folder display name.
+/// - `parent_id`: Optional parent update (`None` keeps current, empty clears).
+///
+/// # Returns
+/// `Ok(Some(folder))` when updated, `Ok(None)` when the target folder is missing.
+///
+/// # Errors
+/// Returns validation or storage errors.
+pub fn update_folder_validated(
+    db: &Database,
+    id: &str,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<Option<Folder>, AppError> {
+    let _folder_guard = TransactionOps::acquire_folder_txn_guard(db)?;
+    let parent_update = parent_id.map(|pid| pid.trim().to_string());
+
+    if let Some(parent_id) = parent_update.as_deref() {
+        if parent_id == id {
+            return Err(AppError::BadRequest(
+                "Folder cannot be its own parent".to_string(),
+            ));
+        }
+        if !parent_id.is_empty() {
+            ensure_folder_assignable(db, parent_id)
+                .map_err(|err| map_parent_assignability_error(err, parent_id))?;
+            let folders = db.folders.list()?;
+            if introduces_cycle(&folders, id, parent_id) {
+                return Err(AppError::BadRequest(
+                    "Updating folder would create cycle".to_string(),
+                ));
+            }
+        }
+    }
+
+    db.folders.update(id, name, parent_update)
+}
+
 /// Returns `true` if assigning `folder_id` under `new_parent_id` introduces a cycle.
 ///
 /// # Arguments
