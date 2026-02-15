@@ -6,6 +6,7 @@
 mod app;
 /// Backend worker + protocol types used by the GUI and headless tests.
 pub mod backend;
+mod lock_owner;
 
 use app::LocalPasteApp;
 use eframe::egui;

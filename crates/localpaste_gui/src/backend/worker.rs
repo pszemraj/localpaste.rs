@@ -281,7 +281,7 @@ pub fn spawn_backend_with_locks(
         db,
         max_paste_size,
         locks,
-        LockOwnerId::new("gui-backend-worker"),
+        crate::lock_owner::next_lock_owner_id("gui-backend-worker"),
     )
 }
 

@@ -27,7 +27,6 @@ use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager}
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::ops::Range;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use style::*;
@@ -177,12 +176,6 @@ const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const VIRTUAL_OVERSCAN_LINES: usize = 3;
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
-
-fn next_lock_owner_id() -> LockOwnerId {
-    static NEXT_OWNER_SEQ: AtomicU64 = AtomicU64::new(1);
-    let seq = NEXT_OWNER_SEQ.fetch_add(1, Ordering::Relaxed);
-    LockOwnerId::new(format!("gui-{}-{}", std::process::id(), seq))
-}
 
 struct StatusMessage {
     text: String,
@@ -390,7 +383,7 @@ impl LocalPasteApp {
         let server_addr = server.addr();
         let server_used_fallback = server.used_fallback();
 
-        let lock_owner_id = next_lock_owner_id();
+        let lock_owner_id = crate::lock_owner::next_lock_owner_id("gui");
         let backend = spawn_backend_with_locks_and_owner(
             db,
             config.max_paste_size,

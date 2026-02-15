@@ -81,7 +81,7 @@ pub fn map_paste_mutation_lock_error(
 ) -> AppError {
     match err {
         PasteLockError::Held { .. } | PasteLockError::Mutating { .. } => {
-            AppError::Locked(locked_message.to_string())
+            AppError::Locked(lock_conflict_message(&err, locked_message))
         }
         PasteLockError::Poisoned => {
             AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
@@ -101,18 +101,36 @@ pub fn map_paste_mutation_lock_error(
 /// A mapped [`AppError`] with a stable folder-delete lock message.
 pub fn map_folder_delete_lock_error(err: PasteLockError) -> AppError {
     match err {
-        PasteLockError::Held { paste_id } | PasteLockError::Mutating { paste_id } => {
+        PasteLockError::Held { paste_id } => {
             AppError::Locked(format!(
                 "Folder delete would migrate locked paste '{}'; close it first.",
                 paste_id
             ))
         }
+        PasteLockError::Mutating { paste_id } => AppError::Locked(format!(
+            "Folder delete would migrate locked paste '{}' during an in-flight mutation; retry shortly.",
+            paste_id
+        )),
         PasteLockError::Poisoned => {
             AppError::StorageMessage("Paste lock manager is unavailable.".to_string())
         }
         PasteLockError::NotHeld { .. } => {
             AppError::StorageMessage(format!("Unexpected paste lock state: {}", err))
         }
+    }
+}
+
+fn lock_conflict_message(err: &PasteLockError, locked_message: &'static str) -> String {
+    match err {
+        PasteLockError::Held { paste_id } => format!(
+            "{} (paste '{}' is held by another editor.)",
+            locked_message, paste_id
+        ),
+        PasteLockError::Mutating { paste_id } => format!(
+            "{} (paste '{}' has an in-flight mutation.)",
+            locked_message, paste_id
+        ),
+        PasteLockError::NotHeld { .. } | PasteLockError::Poisoned => locked_message.to_string(),
     }
 }
 
@@ -352,7 +370,11 @@ impl PasteLockManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{LockOwnerId, PasteLockError, PasteLockManager};
+    use super::{
+        map_folder_delete_lock_error, map_paste_mutation_lock_error, LockOwnerId, PasteLockError,
+        PasteLockManager,
+    };
+    use crate::AppError;
     use std::sync::Arc;
     use std::thread;
 
@@ -532,5 +554,52 @@ mod tests {
             locks.begin_mutation("alpha"),
             Err(PasteLockError::Poisoned)
         ));
+    }
+
+    #[test]
+    fn mapped_mutation_lock_errors_include_paste_context() {
+        let held = map_paste_mutation_lock_error(
+            PasteLockError::Held {
+                paste_id: "alpha".to_string(),
+            },
+            "Paste is currently open for editing.",
+        );
+        match held {
+            AppError::Locked(message) => {
+                assert!(message.contains("open for editing"));
+                assert!(message.contains("alpha"));
+            }
+            other => panic!("expected locked error, got {:?}", other),
+        }
+
+        let mutating = map_paste_mutation_lock_error(
+            PasteLockError::Mutating {
+                paste_id: "beta".to_string(),
+            },
+            "Paste is currently open for editing.",
+        );
+        match mutating {
+            AppError::Locked(message) => {
+                assert!(message.contains("open for editing"));
+                assert!(message.contains("beta"));
+                assert!(message.contains("in-flight mutation"));
+            }
+            other => panic!("expected locked error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mapped_folder_delete_mutating_error_is_actionable() {
+        let err = map_folder_delete_lock_error(PasteLockError::Mutating {
+            paste_id: "foldered".to_string(),
+        });
+        match err {
+            AppError::Locked(message) => {
+                assert!(message.contains("locked paste"));
+                assert!(message.contains("retry shortly"));
+                assert!(message.contains("foldered"));
+            }
+            other => panic!("expected locked error, got {:?}", other),
+        }
     }
 }
