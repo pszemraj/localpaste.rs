@@ -133,10 +133,24 @@ Detailed perf and trace protocol lives in [gui-perf-protocol.md](https://github.
 
 - [x] Auto-detect language on content (detect on create; re-detect on content update and when switching back to auto mode)
 - [x] Manual language override + `language_is_manual`
+- [x] GUI/server default to Magika-enabled detection (`magika` crate feature default-on there; `localpaste_core` remains opt-in)
+- [x] Heuristic fallback remains active and expanded (`kotlin`, `swift`, `dart`, `zig`, `lua`, `perl`, `elixir`, `powershell`)
+- [x] Canonical alias normalization applied for detection/filter interoperability (`csharp` <-> `cs`, `bash`/`sh` -> `shell`, etc.)
+- [x] Syntect grammar resolution uses multi-step resolver (not a tiny fixed mapping table)
 - [x] Async syntect highlighting with staged apply and line-state reuse [Replace]
 - [x] Large-paste fallback to plain text
 - [x] Plain highlight threshold (aligned with perf budget)
 - [x] Highlighting debounce while typing for performance
+
+### Language/Highlight Manual QA Gate
+
+- [ ] Default-feature GUI run confirms Magika-backed auto detection across representative snippets (`rust`, `python`, `shell`, `json`)
+- [ ] Manual `Plain text` selection displays `plain` (not `auto`) and remains fixed across content edits
+- [ ] Switching back to `Auto` re-enables detection and updates language metadata on edit/save
+- [ ] Alias filtering works in GUI projection (`cs` matches both `cs` and `csharp`; `shell` matches `bash`/`sh`)
+- [ ] Resolver alias path confirms highlight for `cs`, `shell`, `cpp`, `powershell`
+- [ ] Unknown labels plus `text`/`txt` render as plain text
+- [ ] Large buffer (`>= 256KB`) always renders plain text regardless of metadata language
 
 ## Naming + Metadata
 
