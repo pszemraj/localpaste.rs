@@ -28,3 +28,4 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
 - [ ] Retire `Database::flush()` compatibility plumbing from GUI worker shutdown (`CoreCmd::Shutdown { flush }`) once UI/worker shutdown contracts are updated for redb commit semantics.
 - [ ] Re-evaluate whether `db/tests/basic_ops.rs::test_create_database_and_flush_noop` should remain after the `Database::flush()` compatibility API is removed.
+- [ ] Review `check-ast-dupes --include-tests` hit in `crates/localpaste_gui/src/app/virtual_editor/layout.rs` (high-similarity test bodies) and decide whether to keep as-is with rationale or consolidate shared setup.
