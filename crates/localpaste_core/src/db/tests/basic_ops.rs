@@ -128,6 +128,106 @@ fn update_count_returns_not_found_for_missing_folder() {
 }
 
 #[test]
+fn clear_delete_markers_resets_table_and_allows_reuse() {
+    let (db, _temp) = setup_test_db();
+    let folder = Folder::new("marker-folder".to_string());
+    let folder_id = folder.id.clone();
+    db.folders.create(&folder).expect("create folder");
+
+    db.folders
+        .mark_deleting(std::slice::from_ref(&folder_id))
+        .expect("mark deleting");
+    assert!(
+        db.folders.is_delete_marked(&folder_id).expect("is marked"),
+        "marker should exist before clear"
+    );
+
+    db.folders.clear_delete_markers().expect("clear markers");
+    assert!(
+        !db.folders
+            .is_delete_marked(&folder_id)
+            .expect("is unmarked"),
+        "marker should be cleared"
+    );
+
+    db.folders
+        .mark_deleting(std::slice::from_ref(&folder_id))
+        .expect("re-mark deleting after clear");
+    assert!(
+        db.folders.is_delete_marked(&folder_id).expect("re-marked"),
+        "delete-marker table should remain usable after clear"
+    );
+}
+
+#[test]
+fn update_language_transitions_between_manual_and_auto_modes() {
+    let (db, _temp) = setup_test_db();
+    let paste = Paste::new(
+        "fn main() {\n    let x = 5;\n    println!(\"hello\");\n}".to_string(),
+        "lang".to_string(),
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let set_manual = UpdatePasteRequest {
+        content: None,
+        name: None,
+        language: Some("python".to_string()),
+        language_is_manual: Some(true),
+        folder_id: None,
+        tags: None,
+    };
+    let manual = db
+        .pastes
+        .update(&paste_id, set_manual)
+        .expect("manual update")
+        .expect("paste exists");
+    assert_eq!(manual.language.as_deref(), Some("python"));
+    assert!(
+        manual.language_is_manual,
+        "language should be manual after override"
+    );
+
+    let switch_back_to_auto = UpdatePasteRequest {
+        content: None,
+        name: None,
+        language: None,
+        language_is_manual: Some(false),
+        folder_id: None,
+        tags: None,
+    };
+    let auto = db
+        .pastes
+        .update(&paste_id, switch_back_to_auto)
+        .expect("switch to auto")
+        .expect("paste exists");
+    assert_eq!(auto.language.as_deref(), Some("rust"));
+    assert!(
+        !auto.language_is_manual,
+        "language should be auto-managed after switch"
+    );
+
+    let auto_redetect_on_content_change = UpdatePasteRequest {
+        content: Some("def main():\n    import sys\n    print('hello')".to_string()),
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: None,
+        tags: None,
+    };
+    let redetected = db
+        .pastes
+        .update(&paste_id, auto_redetect_on_content_change)
+        .expect("content update")
+        .expect("paste exists");
+    assert_eq!(redetected.language.as_deref(), Some("python"));
+    assert!(
+        !redetected.language_is_manual,
+        "auto mode should keep manual flag disabled after content redetect"
+    );
+}
+
+#[test]
 fn corrupt_rows_surface_serialization_errors_without_removal() {
     let (db, _temp) = setup_test_db();
 

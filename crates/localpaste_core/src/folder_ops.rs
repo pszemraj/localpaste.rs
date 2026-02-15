@@ -381,10 +381,16 @@ mod tests {
         let mut paste = Paste::new("content".to_string(), "name".to_string());
         paste.folder_id = Some(root.id.clone());
         let paste_id = paste.id.clone();
+        let guarded_paste_id = paste_id.clone();
         TransactionOps::create_paste_with_folder(&db, &paste, &root.id).expect("create paste");
 
         let locked_ids = HashSet::from([paste.id.clone()]);
         let err = delete_folder_tree_and_migrate_guarded(&db, &root.id, |affected_paste_ids| {
+            assert_eq!(
+                affected_paste_ids,
+                std::slice::from_ref(&guarded_paste_id),
+                "guard should receive the exact affected paste ids"
+            );
             if let Some(locked_id) = affected_paste_ids
                 .iter()
                 .find(|id| locked_ids.contains(id.as_str()))
@@ -405,6 +411,10 @@ mod tests {
             .expect("lookup")
             .expect("paste should still exist");
         assert_eq!(current.folder_id.as_deref(), Some(root.id.as_str()));
+        assert!(
+            db.folders.get(&root.id).expect("folder lookup").is_some(),
+            "folder should remain when guarded delete is rejected"
+        );
     }
 
     #[test]

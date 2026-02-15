@@ -5,6 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub(crate) fn reverse_timestamp_key(updated_at: DateTime<Utc>) -> u64 {
+    // Pre-epoch timestamps are clamped to preserve total ordering semantics for
+    // expected runtime data while avoiding negative->u64 underflow.
     let millis = updated_at.timestamp_millis().max(0) as u64;
     u64::MAX.saturating_sub(millis)
 }
@@ -272,8 +274,8 @@ fn infer_legacy_language_is_manual(content: &str, stored_language: Option<&str>)
 
 #[cfg(test)]
 mod tests {
-    use super::{infer_legacy_language_is_manual, LegacyPaste, Paste};
-    use chrono::Utc;
+    use super::{infer_legacy_language_is_manual, reverse_timestamp_key, LegacyPaste, Paste};
+    use chrono::{TimeZone, Utc};
 
     #[test]
     fn legacy_language_manual_flag_preserves_auto_detected_values() {
@@ -298,5 +300,14 @@ mod tests {
             "fn main() {}",
             Some("python")
         ));
+    }
+
+    #[test]
+    fn reverse_timestamp_key_clamps_pre_epoch_values() {
+        let pre_epoch = Utc
+            .with_ymd_and_hms(1960, 1, 1, 0, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        assert_eq!(reverse_timestamp_key(pre_epoch), u64::MAX);
     }
 }

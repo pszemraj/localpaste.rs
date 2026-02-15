@@ -117,6 +117,8 @@ impl TransactionOps {
         paste: &Paste,
         folder_id: &str,
     ) -> Result<(), AppError> {
+        // Keep caller-owned model values immutable at this layer: persistence
+        // uses a cloned row with the canonical folder assignment applied.
         let mut paste = paste.clone();
         paste.folder_id = Some(folder_id.to_string());
 
