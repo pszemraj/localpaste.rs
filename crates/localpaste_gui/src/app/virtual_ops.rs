@@ -371,11 +371,8 @@ impl LocalPasteApp {
                 .map(|started| started.elapsed().as_secs_f32() * 1000.0)
                 .unwrap_or(0.0);
             let galley_started = perf_enabled.then(Instant::now);
-            self.virtual_galley_cache.apply_delta(
-                delta,
-                self.virtual_editor_buffer.line_count(),
-                self.virtual_editor_buffer.revision(),
-            );
+            self.virtual_galley_cache
+                .apply_delta(delta, self.virtual_editor_buffer.line_count());
             let galley_apply_ms = galley_started
                 .map(|started| started.elapsed().as_secs_f32() * 1000.0)
                 .unwrap_or(0.0);
@@ -729,11 +726,8 @@ impl LocalPasteApp {
                         let _ = self
                             .virtual_layout
                             .apply_delta(&self.virtual_editor_buffer, delta);
-                        self.virtual_galley_cache.apply_delta(
-                            delta,
-                            self.virtual_editor_buffer.line_count(),
-                            self.virtual_editor_buffer.revision(),
-                        );
+                        self.virtual_galley_cache
+                            .apply_delta(delta, self.virtual_editor_buffer.line_count());
                         self.highlight_edit_hint = None;
                     }
                 }
@@ -747,11 +741,8 @@ impl LocalPasteApp {
                         let _ = self
                             .virtual_layout
                             .apply_delta(&self.virtual_editor_buffer, delta);
-                        self.virtual_galley_cache.apply_delta(
-                            delta,
-                            self.virtual_editor_buffer.line_count(),
-                            self.virtual_editor_buffer.revision(),
-                        );
+                        self.virtual_galley_cache
+                            .apply_delta(delta, self.virtual_editor_buffer.line_count());
                         self.highlight_edit_hint = None;
                     }
                 }

@@ -18,7 +18,7 @@ use editor::{EditorBuffer, EditorLineIndex, EditorMode};
 use eframe::egui::{self, text::CCursor, Color32, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
 use highlight::{
-    build_virtual_line_job, build_virtual_line_job_owned, spawn_highlight_worker,
+    build_virtual_line_job, build_virtual_line_segment_job_owned, spawn_highlight_worker,
     syntect_language_hint, syntect_theme_key, EditorLayoutCache, EditorLayoutRequest,
     HighlightRender, HighlightRequestMeta, HighlightWorker, HighlightWorkerResult, SyntectSettings,
     VirtualEditHint,

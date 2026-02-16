@@ -147,6 +147,21 @@ impl RopeBuffer {
         self.rope.slice(start..end).to_string()
     }
 
+    /// Writes a UTF-8 snapshot for the given char range into `out`.
+    pub(crate) fn slice_chars_into(&self, range: Range<usize>, out: &mut String) {
+        out.clear();
+        let start = range.start.min(self.char_len);
+        let end = range.end.min(self.char_len);
+        if start >= end {
+            return;
+        }
+        let slice = self.rope.slice(start..end);
+        out.reserve(slice.len_bytes());
+        for chunk in slice.chunks() {
+            out.push_str(chunk);
+        }
+    }
+
     /// Replace a char range with new text.
     pub(crate) fn replace_char_range(
         &mut self,
@@ -222,5 +237,15 @@ mod tests {
         assert_eq!(out, "alpha");
         buf.line_without_newline_into(1, &mut out);
         assert_eq!(out, "beta");
+    }
+
+    #[test]
+    fn slice_chars_into_overwrites_existing_buffer() {
+        let buf = RopeBuffer::new("alpha\nbeta\ngamma");
+        let mut out = String::from("stale");
+        buf.slice_chars_into(6..10, &mut out);
+        assert_eq!(out, "beta");
+        buf.slice_chars_into(0..5, &mut out);
+        assert_eq!(out, "alpha");
     }
 }

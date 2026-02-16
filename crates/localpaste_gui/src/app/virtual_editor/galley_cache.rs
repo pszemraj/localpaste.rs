@@ -1,6 +1,7 @@
-//! Per-line galley cache for the virtual editor render path.
+//! Per-line/per-visual-row galley cache for the virtual editor render path.
 
 use super::buffer::VirtualEditDelta;
+use super::visual_rows::splice_vec_by_delta;
 use eframe::egui::{Color32, FontId, Galley};
 use std::sync::Arc;
 
@@ -31,168 +32,105 @@ impl VirtualGalleyContext {
     }
 }
 
-struct CachedVirtualGalley {
-    galley: Arc<Galley>,
+#[derive(Default)]
+struct LineGalleyCache {
+    rows: Vec<Option<Arc<Galley>>>,
 }
 
 #[derive(Default)]
 pub(crate) struct VirtualGalleyCache {
-    entries: Vec<Option<CachedVirtualGalley>>,
+    lines: Vec<LineGalleyCache>,
     context: Option<VirtualGalleyContext>,
-    revision: u64,
 }
 
 impl VirtualGalleyCache {
-    pub(crate) fn prepare_frame(
-        &mut self,
-        line_count: usize,
-        revision: u64,
-        context: VirtualGalleyContext,
-    ) {
+    pub(crate) fn prepare_frame(&mut self, line_count: usize, context: VirtualGalleyContext) {
         let context_changed = self
             .context
             .as_ref()
             .map(|current| current != &context)
             .unwrap_or(true);
-        if context_changed || self.revision != revision {
-            self.entries.clear();
-            self.entries.resize_with(line_count, || None);
-            self.context = Some(context);
-            self.revision = revision;
-            return;
-        }
-
-        if self.entries.len() != line_count {
-            self.entries.clear();
-            self.entries.resize_with(line_count, || None);
+        if context_changed || self.lines.len() != line_count {
+            self.lines.clear();
+            self.lines.resize_with(line_count, LineGalleyCache::default);
         }
         self.context = Some(context);
     }
 
-    pub(crate) fn apply_delta(
-        &mut self,
-        delta: VirtualEditDelta,
-        line_count: usize,
-        revision: u64,
-    ) {
-        if !apply_delta_to_entries(&mut self.entries, delta, line_count) {
-            self.entries.clear();
-            self.entries.resize_with(line_count, || None);
+    pub(crate) fn apply_delta(&mut self, delta: VirtualEditDelta, line_count: usize) {
+        if self.lines.is_empty() {
+            self.lines.resize_with(line_count, LineGalleyCache::default);
+            return;
         }
-        self.revision = revision;
+        if !splice_vec_by_delta(&mut self.lines, delta, line_count, LineGalleyCache::default) {
+            self.lines.clear();
+            self.lines.resize_with(line_count, LineGalleyCache::default);
+        }
     }
 
-    pub(crate) fn get(&self, line_idx: usize) -> Option<Arc<Galley>> {
-        self.entries
+    pub(crate) fn sync_line_rows(&mut self, line_idx: usize, visual_rows: usize) {
+        let Some(line) = self.lines.get_mut(line_idx) else {
+            return;
+        };
+        let visual_rows = visual_rows.max(1);
+        if line.rows.len() != visual_rows {
+            line.rows.clear();
+            line.rows.resize_with(visual_rows, || None);
+        }
+    }
+
+    pub(crate) fn get(&self, line_idx: usize, row_in_line: usize) -> Option<Arc<Galley>> {
+        self.lines
             .get(line_idx)
-            .and_then(|entry| entry.as_ref().map(|cached| cached.galley.clone()))
+            .and_then(|line| line.rows.get(row_in_line))
+            .and_then(|entry| entry.clone())
     }
 
-    pub(crate) fn insert(&mut self, line_idx: usize, galley: Arc<Galley>) {
-        if let Some(slot) = self.entries.get_mut(line_idx) {
-            *slot = Some(CachedVirtualGalley { galley });
+    pub(crate) fn insert(&mut self, line_idx: usize, row_in_line: usize, galley: Arc<Galley>) {
+        let Some(line) = self.lines.get_mut(line_idx) else {
+            return;
+        };
+        if let Some(slot) = line.rows.get_mut(row_in_line) {
+            *slot = Some(galley);
         }
     }
-}
-
-fn apply_delta_to_entries<T>(
-    entries: &mut Vec<Option<T>>,
-    delta: VirtualEditDelta,
-    new_len: usize,
-) -> bool {
-    if entries.is_empty() {
-        entries.resize_with(new_len, || None);
-        return true;
-    }
-
-    let old_len = entries.len();
-    let old_start = delta.start_line;
-    let old_end_exclusive = delta.old_end_line.saturating_add(1);
-    if old_start >= old_len || old_end_exclusive > old_len {
-        return false;
-    }
-    if delta.new_end_line >= new_len {
-        return false;
-    }
-
-    let new_count = delta
-        .new_end_line
-        .saturating_sub(delta.start_line)
-        .saturating_add(1);
-    let old_count = old_end_exclusive.saturating_sub(old_start);
-    let expected_len = old_len.saturating_sub(old_count).saturating_add(new_count);
-    if expected_len != new_len {
-        return false;
-    }
-
-    let mut replacement: Vec<Option<T>> = Vec::with_capacity(new_count);
-    replacement.resize_with(new_count, || None);
-    entries.splice(old_start..old_end_exclusive, replacement);
-    entries.len() == new_len
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn marker_vec(values: &[Option<u32>]) -> Vec<Option<u32>> {
-        values.to_vec()
+    #[test]
+    fn apply_delta_splices_line_cache_without_touching_suffix_prefix() {
+        let mut cache = VirtualGalleyCache {
+            lines: vec![
+                LineGalleyCache::default(),
+                LineGalleyCache::default(),
+                LineGalleyCache::default(),
+                LineGalleyCache::default(),
+            ],
+            context: None,
+        };
+        let delta = VirtualEditDelta {
+            start_line: 1,
+            old_end_line: 2,
+            new_end_line: 3,
+            char_delta: 0,
+        };
+        cache.apply_delta(delta, 5);
+        assert_eq!(cache.lines.len(), 5);
     }
 
     #[test]
-    fn apply_delta_to_entries_handles_insert_delete_and_reject_cases() {
-        struct Case {
-            before: Vec<Option<u32>>,
-            delta: VirtualEditDelta,
-            new_len: usize,
-            expected_ok: bool,
-            after: Vec<Option<u32>>,
-        }
-
-        let cases = vec![
-            Case {
-                before: marker_vec(&[Some(10), Some(20), Some(30), Some(40)]),
-                delta: VirtualEditDelta {
-                    start_line: 1,
-                    old_end_line: 1,
-                    new_end_line: 2,
-                    char_delta: 5,
-                },
-                new_len: 5,
-                expected_ok: true,
-                after: marker_vec(&[Some(10), None, None, Some(30), Some(40)]),
-            },
-            Case {
-                before: marker_vec(&[Some(10), Some(20), Some(30), Some(40), Some(50)]),
-                delta: VirtualEditDelta {
-                    start_line: 1,
-                    old_end_line: 3,
-                    new_end_line: 1,
-                    char_delta: -8,
-                },
-                new_len: 3,
-                expected_ok: true,
-                after: marker_vec(&[Some(10), None, Some(50)]),
-            },
-            Case {
-                before: marker_vec(&[Some(1), Some(2)]),
-                delta: VirtualEditDelta {
-                    start_line: 5,
-                    old_end_line: 5,
-                    new_end_line: 5,
-                    char_delta: 0,
-                },
-                new_len: 2,
-                expected_ok: false,
-                after: marker_vec(&[Some(1), Some(2)]),
-            },
-        ];
-
-        for case in cases {
-            let mut entries = case.before.clone();
-            let ok = apply_delta_to_entries(&mut entries, case.delta, case.new_len);
-            assert_eq!(ok, case.expected_ok);
-            assert_eq!(entries, case.after);
-        }
+    fn sync_line_rows_resets_row_cache_when_row_count_changes() {
+        let mut cache = VirtualGalleyCache::default();
+        cache.prepare_frame(
+            2,
+            VirtualGalleyContext::new(300.0, 1, false, &FontId::monospace(14.0), Color32::WHITE),
+        );
+        cache.sync_line_rows(0, 2);
+        assert_eq!(cache.lines[0].rows.len(), 2);
+        cache.sync_line_rows(0, 1);
+        assert_eq!(cache.lines[0].rows.len(), 1);
     }
 }

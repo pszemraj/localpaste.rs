@@ -395,7 +395,7 @@ pub(super) fn build_virtual_line_job(
 
 /// Builds a layout job for a single rendered line in the virtual preview/editor
 /// when the caller already owns the line text buffer.
-pub(super) fn build_virtual_line_job_owned(
+fn build_virtual_line_job_owned(
     ui: &egui::Ui,
     line: String,
     editor_font: &FontId,
@@ -436,6 +436,77 @@ pub(super) fn build_virtual_line_job_owned(
                 format: render_span_to_format(span, editor_font),
             });
         }
+    }
+
+    job.wrap.max_width = f32::INFINITY;
+    job
+}
+
+/// Builds a layout job for a wrapped visual-row segment from a physical line.
+///
+/// `line_byte_range` is relative to the original physical line bytes and is used
+/// to intersect highlight spans onto this segment.
+pub(super) fn build_virtual_line_segment_job_owned(
+    ui: &egui::Ui,
+    segment: String,
+    editor_font: &FontId,
+    render_line: Option<&HighlightRenderLine>,
+    use_plain: bool,
+    line_byte_range: Range<usize>,
+) -> LayoutJob {
+    if use_plain || render_line.is_none() {
+        return plain_layout_job_owned(ui, segment, editor_font, f32::INFINITY);
+    }
+    let render_line = render_line.expect("render line checked above");
+    let mut job = LayoutJob {
+        text: segment,
+        ..Default::default()
+    };
+    let line_len = job.text.len();
+    let default_format = TextFormat {
+        font_id: editor_font.clone(),
+        color: ui.visuals().text_color(),
+        ..Default::default()
+    };
+
+    if line_len == 0 {
+        job.wrap.max_width = f32::INFINITY;
+        return job;
+    }
+    if render_line.spans.is_empty() {
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: 0..line_len,
+            format: default_format,
+        });
+        job.wrap.max_width = f32::INFINITY;
+        return job;
+    }
+
+    for span in &render_line.spans {
+        let start = span.range.start.max(line_byte_range.start);
+        let end = span.range.end.min(line_byte_range.end);
+        if start >= end {
+            continue;
+        }
+        let local_start = start.saturating_sub(line_byte_range.start).min(line_len);
+        let local_end = end.saturating_sub(line_byte_range.start).min(line_len);
+        if local_start >= local_end {
+            continue;
+        }
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: local_start..local_end,
+            format: render_span_to_format(span, editor_font),
+        });
+    }
+
+    if job.sections.is_empty() {
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: 0..line_len,
+            format: default_format,
+        });
     }
 
     job.wrap.max_width = f32::INFINITY;
