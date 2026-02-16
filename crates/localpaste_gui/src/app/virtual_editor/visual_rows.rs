@@ -210,12 +210,23 @@ impl VisualRowLayoutCache {
     pub(crate) fn row_char_range(&self, buffer: &RopeBuffer, row: usize) -> Range<usize> {
         let (line, row_in_line) = self.row_to_line(row);
         let cols = self.wrap_cols.max(1);
+        let metrics = self
+            .line_metrics
+            .get(line)
+            .copied()
+            .unwrap_or_else(|| LineWrapMetrics {
+                chars: buffer.line_len_chars(line),
+                columns: buffer.line_len_chars(line),
+                visual_rows: 1,
+            });
 
-        let line_len = buffer.line_len_chars(line);
-        let start_col = row_in_line.saturating_mul(cols).min(line_len);
-        let end_col = start_col.saturating_add(cols).min(line_len);
-        let start = buffer.line_col_to_char(line, start_col);
-        let end = buffer.line_col_to_char(line, end_col);
+        let start_columns = row_in_line.saturating_mul(cols);
+        let end_columns = start_columns.saturating_add(cols);
+        let start_char = line_char_for_display_columns(buffer, line, metrics, start_columns);
+        let end_char = line_char_for_display_columns(buffer, line, metrics, end_columns);
+
+        let start = buffer.line_col_to_char(line, start_char);
+        let end = buffer.line_col_to_char(line, end_char.max(start_char));
         start..end
     }
 }
@@ -276,6 +287,32 @@ fn measure_line_columns(buffer: &RopeBuffer, idx: usize, chars: usize) -> usize 
         .filter(|c| *c != '\n' && *c != '\r')
         .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
         .sum()
+}
+
+fn line_char_for_display_columns(
+    buffer: &RopeBuffer,
+    line: usize,
+    metrics: LineWrapMetrics,
+    target_columns: usize,
+) -> usize {
+    if metrics.columns == metrics.chars {
+        return target_columns.min(metrics.chars);
+    }
+
+    use unicode_width::UnicodeWidthChar;
+
+    let mut consumed_columns = 0usize;
+    let mut consumed_chars = 0usize;
+    let line_slice = buffer.rope().line(line).slice(..metrics.chars);
+    for ch in line_slice.chars() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        if consumed_columns.saturating_add(width) > target_columns {
+            break;
+        }
+        consumed_columns = consumed_columns.saturating_add(width);
+        consumed_chars = consumed_chars.saturating_add(1);
+    }
+    consumed_chars
 }
 
 #[cfg(test)]
@@ -381,5 +418,37 @@ mod tests {
         assert_eq!(cache.line_metrics[0].columns, 3);
         assert_eq!(cache.line_metrics[1].columns, 4);
         assert_eq!(cache.line_metrics[2].columns, 2);
+    }
+
+    #[test]
+    fn row_char_range_for_wide_glyph_lines_does_not_drop_second_row_content() {
+        let (buffer, cache) = rebuild_cache_for("🦀🦀🦀🦀🦀🦀\n", 50.0, 10.0, 5.0);
+        assert_eq!(cache.wrap_columns(), 10);
+        assert_eq!(cache.line_visual_rows(0), 2);
+
+        let row0 = cache.row_char_range(&buffer, 0);
+        let row1 = cache.row_char_range(&buffer, 1);
+        assert_eq!(buffer.slice_chars(row0.clone()), "🦀🦀🦀🦀🦀");
+        assert_eq!(buffer.slice_chars(row1.clone()), "🦀");
+        assert_eq!(row0.end, row1.start);
+    }
+
+    #[test]
+    fn row_char_ranges_reassemble_original_line_for_mixed_width_content() {
+        let (buffer, cache) = rebuild_cache_for("🦀a你b🦀z\n", 25.0, 10.0, 5.0);
+        let rows = cache.line_visual_rows(0);
+        assert!(rows >= 2);
+
+        let mut rebuilt = String::new();
+        let mut previous_end = None;
+        for row in 0..rows {
+            let range = cache.row_char_range(&buffer, row);
+            if let Some(prev) = previous_end {
+                assert_eq!(prev, range.start);
+            }
+            previous_end = Some(range.end);
+            rebuilt.push_str(buffer.slice_chars(range).as_str());
+        }
+        assert_eq!(rebuilt, buffer.line_without_newline(0));
     }
 }
