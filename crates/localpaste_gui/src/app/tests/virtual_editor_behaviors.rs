@@ -148,6 +148,36 @@ fn virtual_command_classification_respects_focus_policy() {
 }
 
 #[test]
+fn virtual_editor_focus_persists_across_frames_without_pointer_input() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("line one\nline two\n");
+    harness.app.focus_editor_next = true;
+
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let mut style = (*ctx.style()).clone();
+    style.text_styles.insert(
+        egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
+        egui::FontId::new(14.0, egui::FontFamily::Monospace),
+    );
+    ctx.set_style(style);
+
+    let _ = ctx.run(Default::default(), |ctx| {
+        harness.app.render_editor_panel(ctx);
+    });
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+
+    let _ = ctx.run(Default::default(), |ctx| {
+        harness.app.render_editor_panel(ctx);
+    });
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+}
+
+#[test]
 fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
     fn setup_selection(app: &mut LocalPasteApp) {
         app.reset_virtual_editor("abcdef");
