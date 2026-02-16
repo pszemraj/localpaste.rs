@@ -30,6 +30,22 @@ impl LocalPasteApp {
         );
     }
 
+    pub(super) fn trace_highlight_lazy<F>(&self, event: &str, details: F)
+    where
+        F: FnOnce() -> String,
+    {
+        if !self.highlight_trace_enabled {
+            return;
+        }
+        let details = details();
+        info!(
+            target: "localpaste_gui::highlight",
+            event = event,
+            details = details.as_str(),
+            "highlight trace"
+        );
+    }
+
     pub(super) fn clear_highlight_state(&mut self) {
         self.highlight_pending = None;
         self.highlight_render = None;
@@ -89,14 +105,12 @@ impl LocalPasteApp {
                 self.trace_highlight("pending_clear", "pending request matched worker render");
             }
         }
-        self.trace_highlight(
-            "queue",
+        self.trace_highlight_lazy("queue", || {
             format!(
                 "queued staged render revision={} text_len={}",
                 render.revision, render.text_len
             )
-            .as_str(),
-        );
+        });
         self.highlight_staged = Some(render);
     }
 
@@ -169,14 +183,12 @@ impl LocalPasteApp {
         let Some(render) = self.highlight_staged.take() else {
             return;
         };
-        self.trace_highlight(
-            "apply",
+        self.trace_highlight_lazy("apply", || {
             format!(
                 "applied staged render revision={} text_len={}",
                 render.revision, render.text_len
             )
-            .as_str(),
-        );
+        });
         self.highlight_render = Some(render);
         self.highlight_version = self.highlight_version.wrapping_add(1);
     }
@@ -188,14 +200,12 @@ impl LocalPasteApp {
         if !self.staged_matches_active_snapshot(&staged) {
             let active_revision = self.active_revision();
             let active_text_len = self.active_text_len_bytes();
-            self.trace_highlight(
-                "drop_stale_staged",
+            self.trace_highlight_lazy("drop_stale_staged", || {
                 format!(
                     "staged rev={} len={} active rev={} len={}",
                     staged.revision, staged.text_len, active_revision, active_text_len
                 )
-                .as_str(),
-            );
+            });
             self.highlight_staged = None;
             return;
         }
@@ -317,14 +327,12 @@ impl LocalPasteApp {
                 .then_with(|| left.text_len.cmp(&right.text_len))
         })
         .map(|render| (render.revision, render.text_len));
-        self.trace_highlight(
-            "request",
+        self.trace_highlight_lazy("request", || {
             format!(
                 "dispatch revision={} text_len={} lang={} theme={} paste={}",
                 revision, text_len, language_hint, theme_key, paste_id
             )
-            .as_str(),
-        );
+        });
         let request = HighlightRequest {
             paste_id: paste_id.to_string(),
             revision,
