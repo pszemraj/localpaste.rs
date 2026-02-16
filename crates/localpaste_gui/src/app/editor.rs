@@ -6,6 +6,8 @@ use std::any::TypeId;
 use std::fmt;
 use tracing::warn;
 
+use super::text_coords::line_for_char;
+
 /// Delta summary for the most recent text mutation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct EditDelta {
@@ -17,10 +19,6 @@ pub(super) struct EditDelta {
     pub(super) new_end_line: usize,
     /// Character delta (`new_chars - old_chars`) from the mutation.
     pub(super) char_delta: isize,
-}
-
-fn line_for_char(rope: &Rope, char_index: usize) -> usize {
-    rope.char_to_line(char_index.min(rope.len_chars()))
 }
 
 fn trim_line_endings(mut line: &str) -> &str {

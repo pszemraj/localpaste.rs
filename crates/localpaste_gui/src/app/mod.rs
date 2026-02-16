@@ -7,6 +7,7 @@ mod perf_trace;
 mod shutdown;
 mod state_ops;
 mod style;
+mod text_coords;
 mod ui;
 mod util;
 mod virtual_editor;

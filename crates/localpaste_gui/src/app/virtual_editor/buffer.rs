@@ -4,6 +4,8 @@ use ropey::Rope;
 use std::fmt;
 use std::ops::Range;
 
+use crate::app::text_coords::line_for_char;
+
 /// Delta summary for a virtual editor text mutation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct VirtualEditDelta {
@@ -15,10 +17,6 @@ pub(crate) struct VirtualEditDelta {
     pub(crate) new_end_line: usize,
     /// Character delta (`new_chars - old_chars`) from the mutation.
     pub(crate) char_delta: isize,
-}
-
-fn line_for_char(rope: &Rope, char_index: usize) -> usize {
-    rope.char_to_line(char_index.min(rope.len_chars()))
 }
 
 /// Rope-backed content buffer used by the virtualized editor path.
