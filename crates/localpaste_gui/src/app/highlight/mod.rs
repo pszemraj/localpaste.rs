@@ -1,5 +1,8 @@
 //! Syntax highlighting caches and worker support for the native GUI editor.
 
+mod syntax;
+#[cfg(test)]
+mod tests;
 mod worker;
 
 use eframe::egui::{
@@ -15,6 +18,7 @@ use syntect::highlighting::{HighlightState, Highlighter, Style, ThemeSet};
 use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
+pub(super) use syntax::{resolve_syntax, syntect_language_hint};
 pub(super) use worker::{spawn_highlight_worker, HighlightWorker};
 
 /// Cached layout state for highlighted editor content.
@@ -486,101 +490,6 @@ pub(super) fn build_virtual_line_segment_job_owned(
     job
 }
 
-fn normalized_syntax_key(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect()
-}
-
-fn try_resolve_syntax_candidate<'a>(
-    ps: &'a syntect::parsing::SyntaxSet,
-    candidate: &str,
-) -> Option<&'a syntect::parsing::SyntaxReference> {
-    let trimmed = candidate.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if let Some(syntax) = ps.find_syntax_by_name(trimmed) {
-        return Some(syntax);
-    }
-    if let Some(syntax) = ps.find_syntax_by_extension(trimmed) {
-        return Some(syntax);
-    }
-
-    for syntax in ps.syntaxes() {
-        if syntax.name.eq_ignore_ascii_case(trimmed) {
-            return Some(syntax);
-        }
-    }
-
-    let normalized = normalized_syntax_key(trimmed);
-    if !normalized.is_empty() {
-        for syntax in ps.syntaxes() {
-            if normalized_syntax_key(syntax.name.as_str()) == normalized {
-                return Some(syntax);
-            }
-        }
-    }
-
-    ps.syntaxes().iter().find(|syntax| {
-        syntax
-            .file_extensions
-            .iter()
-            .any(|ext| ext.eq_ignore_ascii_case(trimmed))
-    })
-}
-
-fn syntax_fallback_candidates(hint_lower: &str) -> &'static [&'static str] {
-    match hint_lower {
-        "cs" => &["C#", "cs"],
-        "shell" => &["Bourne Again Shell (bash)", "bash", "sh"],
-        "cpp" => &["C++", "cpp", "cc"],
-        "objectivec" => &["Objective-C", "m"],
-        "dockerfile" => &["Dockerfile", "bash", "sh"],
-        "makefile" => &["Makefile", "make"],
-        "latex" => &["LaTeX", "tex"],
-        // Syntect defaults used by egui do not ship native grammars for these in all bundles.
-        // Keep explicit fallback only for high-priority labels to avoid hiding unsupported
-        // language gaps behind misleading tokenization.
-        "typescript" => &["JavaScript", "js", "ts"],
-        "toml" => &["Java Properties", "properties", "YAML", "yaml"],
-        "swift" => &["Rust", "rs", "Go", "go", "Objective-C"],
-        "powershell" => &["ps1", "Bourne Again Shell (bash)", "bash", "sh"],
-        "sass" => &["sass", "Ruby Haml", "css"],
-        _ => &[],
-    }
-}
-
-fn resolve_syntax<'a>(
-    ps: &'a syntect::parsing::SyntaxSet,
-    hint: &str,
-) -> &'a syntect::parsing::SyntaxReference {
-    let hint_trimmed = hint.trim();
-    if hint_trimmed.is_empty() {
-        return ps.find_syntax_plain_text();
-    }
-
-    let hint_lower = hint_trimmed.to_ascii_lowercase();
-    if matches!(hint_lower.as_str(), "text" | "txt" | "plain" | "plaintext") {
-        return ps.find_syntax_plain_text();
-    }
-
-    if let Some(syntax) = try_resolve_syntax_candidate(ps, hint_trimmed) {
-        return syntax;
-    }
-
-    for candidate in syntax_fallback_candidates(hint_lower.as_str()) {
-        if let Some(syntax) = try_resolve_syntax_candidate(ps, candidate) {
-            return syntax;
-        }
-    }
-
-    ps.find_syntax_plain_text()
-}
-
 /// Provides reusable syntect sets for worker and UI layouts.
 pub(super) struct SyntectSettings {
     pub(super) ps: SyntaxSet,
@@ -999,135 +908,5 @@ impl HighlightRequestMeta {
             && self.language_hint == render.language_hint
             && self.theme_key == render.theme_key
             && self.paste_id == render.paste_id
-    }
-}
-
-/// Normalizes user-facing language names into syntect-compatible hints.
-pub(super) fn syntect_language_hint(language: &str) -> String {
-    let canonical = localpaste_core::detection::canonical::canonicalize(language);
-    if canonical.is_empty() {
-        "text".to_string()
-    } else {
-        canonical
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_style() -> HighlightStyle {
-        HighlightStyle {
-            color: [120, 180, 240, 255],
-            italics: false,
-            underline: false,
-        }
-    }
-
-    fn test_span(range: Range<usize>) -> HighlightSpan {
-        HighlightSpan {
-            range,
-            style: test_style(),
-        }
-    }
-
-    fn assert_sections_cover(job: &LayoutJob, len: usize) {
-        let mut ranges: Vec<Range<usize>> = job
-            .sections
-            .iter()
-            .map(|section| section.byte_range.clone())
-            .collect();
-        ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start).then_with(|| a.end.cmp(&b.end)));
-        let mut cursor = 0usize;
-        for range in ranges {
-            assert!(
-                range.start <= cursor,
-                "layout job has gap before {}",
-                range.start
-            );
-            cursor = cursor.max(range.end);
-        }
-        assert_eq!(cursor, len);
-    }
-
-    fn assert_has_section(job: &LayoutJob, expected: Range<usize>) {
-        assert!(
-            job.sections
-                .iter()
-                .any(|section| section.byte_range.start == expected.start
-                    && section.byte_range.end == expected.end),
-            "expected section {:?} not found",
-            expected
-        );
-    }
-
-    #[test]
-    fn virtual_line_job_fills_gaps_for_partial_stale_spans() {
-        egui::__run_test_ctx(|ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let font = egui::FontId::monospace(14.0);
-                let render_line = HighlightRenderLine {
-                    len: 6,
-                    spans: vec![test_span(0..2), test_span(4..5)],
-                };
-                let job = build_virtual_line_job(ui, "abcdef", &font, Some(&render_line), false);
-
-                assert_sections_cover(&job, 6);
-                assert_has_section(&job, 2..4);
-                assert_has_section(&job, 5..6);
-            });
-        });
-    }
-
-    #[test]
-    fn virtual_line_segment_job_fills_prefix_and_suffix_gaps() {
-        egui::__run_test_ctx(|ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let font = egui::FontId::monospace(14.0);
-                let render_line = HighlightRenderLine {
-                    len: 6,
-                    spans: vec![test_span(2..3)],
-                };
-                let job = build_virtual_line_segment_job_owned(
-                    ui,
-                    "bcde".to_string(),
-                    &font,
-                    Some(&render_line),
-                    false,
-                    1..5,
-                );
-
-                assert_sections_cover(&job, 4);
-                assert_has_section(&job, 0..1);
-                assert_has_section(&job, 2..4);
-            });
-        });
-    }
-
-    #[test]
-    fn render_job_fills_unstyled_gaps_with_default_format() {
-        egui::__run_test_ctx(|ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let font = egui::FontId::monospace(14.0);
-                let text = "abcdef\n";
-                let render = HighlightRender {
-                    paste_id: "alpha".to_string(),
-                    revision: 1,
-                    text_len: text.len(),
-                    language_hint: "rust".to_string(),
-                    theme_key: "base16-mocha.dark".to_string(),
-                    lines: vec![HighlightRenderLine {
-                        len: text.len(),
-                        spans: vec![test_span(0..2), test_span(4..5)],
-                    }],
-                };
-                let cache = EditorLayoutCache::default();
-                let job = cache.build_render_job(ui, text, &render, &font);
-
-                assert_sections_cover(&job, text.len());
-                assert_has_section(&job, 2..4);
-                assert_has_section(&job, 5..text.len());
-            });
-        });
     }
 }
