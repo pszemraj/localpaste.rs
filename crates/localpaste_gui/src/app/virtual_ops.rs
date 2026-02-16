@@ -157,9 +157,14 @@ impl LocalPasteApp {
         self.virtual_layout = WrapLayoutCache::default();
         self.virtual_galley_cache = VirtualGalleyCache::default();
         self.virtual_line_scratch.clear();
+        self.reset_virtual_caret_blink();
         self.content_hash_cache = None;
         self.virtual_drag_active = false;
         self.reset_virtual_click_streak();
+    }
+
+    pub(super) fn reset_virtual_caret_blink(&mut self) {
+        self.virtual_caret_phase_start = Instant::now();
     }
 
     pub(super) fn reset_virtual_click_streak(&mut self) {
@@ -383,6 +388,8 @@ impl LocalPasteApp {
         let mut result = VirtualApplyResult::default();
         let now = Instant::now();
         for command in commands {
+            let cursor_before = self.virtual_editor_state.cursor();
+            let changed_before = result.changed;
             match command {
                 VirtualInputCommand::SelectAll => {
                     self.virtual_editor_state
@@ -768,6 +775,11 @@ impl LocalPasteApp {
                     self.virtual_editor_state.ime.preedit_text.clear();
                     self.virtual_editor_state.clear_preferred_column();
                 }
+            }
+            if self.virtual_editor_state.cursor() != cursor_before
+                || result.changed != changed_before
+            {
+                self.reset_virtual_caret_blink();
             }
         }
         result

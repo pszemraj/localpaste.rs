@@ -315,3 +315,40 @@ fn word_range_at_selects_word() {
     let selected: String = text.chars().skip(start).take(end - start).collect();
     assert_eq!(selected, "hello");
 }
+
+#[test]
+fn caret_blink_reset_behavior_depends_on_cursor_or_text_change() {
+    enum Expectation {
+        Reset,
+        Unchanged,
+    }
+
+    let cases = [
+        (
+            vec![VirtualInputCommand::MoveRight {
+                select: false,
+                word: false,
+            }],
+            Expectation::Reset,
+        ),
+        (vec![VirtualInputCommand::Copy], Expectation::Unchanged),
+    ];
+
+    for (commands, expected) in cases {
+        let mut harness = make_app();
+        harness.app.reset_virtual_editor("ab");
+        harness.app.editor_mode = EditorMode::VirtualEditor;
+        let before = Instant::now() - Duration::from_secs(3);
+        harness.app.virtual_caret_phase_start = before;
+
+        let ctx = egui::Context::default();
+        let _ = harness
+            .app
+            .apply_virtual_commands(&ctx, commands.as_slice());
+
+        match expected {
+            Expectation::Reset => assert!(harness.app.virtual_caret_phase_start > before),
+            Expectation::Unchanged => assert_eq!(harness.app.virtual_caret_phase_start, before),
+        }
+    }
+}

@@ -268,6 +268,7 @@ impl LocalPasteApp {
         if self.focus_editor_next {
             ui.memory_mut(|m| m.request_focus(editor_id));
             self.virtual_editor_state.has_focus = true;
+            self.reset_virtual_caret_blink();
             self.focus_editor_next = false;
         }
 
@@ -330,6 +331,7 @@ impl LocalPasteApp {
                 ui.memory_mut(|m| m.request_focus(editor_id));
                 focused = true;
                 self.virtual_editor_state.has_focus = true;
+                self.reset_virtual_caret_blink();
                 editor_interacted = true;
             } else if background_response.lost_focus() {
                 self.virtual_editor_state.has_focus = false;
@@ -453,9 +455,11 @@ impl LocalPasteApp {
                         self.virtual_editor_state
                             .set_cursor(global, self.virtual_editor_buffer.len_chars());
                         self.virtual_editor_state.clear_preferred_column();
+                        self.reset_virtual_caret_blink();
                     }
                     RowAction::Triple { line_idx } => {
                         self.virtual_select_line(line_idx);
+                        self.reset_virtual_caret_blink();
                     }
                     RowAction::Double {
                         line_idx,
@@ -479,6 +483,7 @@ impl LocalPasteApp {
                                 .set_cursor(global, self.virtual_editor_buffer.len_chars());
                         }
                         self.virtual_editor_state.clear_preferred_column();
+                        self.reset_virtual_caret_blink();
                     }
                     RowAction::DragStart { global } => {
                         self.virtual_editor_state
@@ -490,6 +495,7 @@ impl LocalPasteApp {
                         );
                         self.virtual_drag_active = true;
                         self.virtual_editor_state.clear_preferred_column();
+                        self.reset_virtual_caret_blink();
                     }
                 }
             }
@@ -536,6 +542,7 @@ impl LocalPasteApp {
                             self.virtual_editor_buffer.len_chars(),
                             true,
                         );
+                        self.reset_virtual_caret_blink();
                     }
                     let scroll_delta = drag_autoscroll_delta(
                         pointer_pos.y,
@@ -552,6 +559,12 @@ impl LocalPasteApp {
             }
 
             let selection_fill = ui.visuals().selection.bg_fill;
+            let now = Instant::now();
+            let blink_ticks = now
+                .duration_since(self.virtual_caret_phase_start)
+                .as_millis()
+                / CARET_BLINK_INTERVAL.as_millis().max(1);
+            let caret_visible = blink_ticks % 2 == 0;
             for row in rows {
                 let galley = row.galley;
                 if let Some(selection) =
@@ -568,7 +581,7 @@ impl LocalPasteApp {
                 ui.painter()
                     .galley(row.rect.min, galley.clone(), ui.visuals().text_color());
 
-                if focused {
+                if focused && caret_visible {
                     let cursor = self.virtual_editor_state.cursor();
                     let line_end = row.line_start.saturating_add(row.line_chars);
                     if cursor >= row.line_start && cursor <= line_end {

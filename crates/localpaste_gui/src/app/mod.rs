@@ -83,6 +83,7 @@ pub(crate) struct LocalPasteApp {
     virtual_layout: WrapLayoutCache,
     virtual_galley_cache: VirtualGalleyCache,
     virtual_line_scratch: String,
+    virtual_caret_phase_start: Instant,
     virtual_drag_active: bool,
     virtual_viewport_height: f32,
     virtual_line_height: f32,
@@ -174,6 +175,7 @@ const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 8.0;
 const DRAG_AUTOSCROLL_EDGE_DISTANCE: f32 = 24.0;
 const DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME: f32 = 0.5;
 const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
+const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
@@ -443,6 +445,7 @@ impl LocalPasteApp {
             virtual_layout: WrapLayoutCache::default(),
             virtual_galley_cache: VirtualGalleyCache::default(),
             virtual_line_scratch: String::new(),
+            virtual_caret_phase_start: Instant::now(),
             virtual_drag_active: false,
             virtual_editor_active: false,
             virtual_viewport_height: 0.0,
@@ -952,6 +955,17 @@ impl eframe::App for LocalPasteApp {
         }
         if let Some(toast) = self.toasts.front() {
             let until = toast.expires_at.saturating_duration_since(Instant::now());
+            repaint_after = repaint_after.min(until);
+        }
+        if self.editor_mode == EditorMode::VirtualEditor
+            && (self.virtual_editor_active
+                || self.virtual_editor_state.has_focus
+                || ctx.memory(|m| m.has_focus(focus_id)))
+        {
+            let elapsed = Instant::now().saturating_duration_since(self.virtual_caret_phase_start);
+            let interval_ms = CARET_BLINK_INTERVAL.as_millis().max(1);
+            let remainder_ms = interval_ms - (elapsed.as_millis() % interval_ms);
+            let until = Duration::from_millis(remainder_ms as u64).max(Duration::from_millis(1));
             repaint_after = repaint_after.min(until);
         }
         ctx.request_repaint_after(repaint_after);
