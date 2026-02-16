@@ -95,7 +95,6 @@ pub(crate) struct LocalPasteApp {
     highlight_staged: Option<HighlightRender>,
     highlight_version: u64,
     highlight_edit_hint: Option<VirtualEditHint>,
-    content_hash_cache: Option<ContentHashCacheEntry>,
     last_interaction_at: Option<Instant>,
     last_editor_click_at: Option<Instant>,
     last_editor_click_pos: Option<egui::Pos2>,
@@ -245,14 +244,6 @@ struct InputTraceFrame<'a> {
     deferred_focus_commands: &'a [VirtualInputCommand],
     deferred_copy_commands: &'a [VirtualInputCommand],
     apply_result: VirtualApplyResult,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ContentHashCacheEntry {
-    is_virtual_editor: bool,
-    revision: u64,
-    text_len: usize,
-    hash: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -462,7 +453,6 @@ impl LocalPasteApp {
             highlight_staged: None,
             highlight_version: 0,
             highlight_edit_hint: None,
-            content_hash_cache: None,
             syntect: SyntectSettings::default(),
             db_path,
             locks,

@@ -687,17 +687,6 @@ pub(super) fn hash_bytes(bytes: &[u8]) -> u64 {
     hash_bytes_step(FNV_OFFSET, bytes)
 }
 
-pub(super) fn hash_text_chunks<'a, I>(chunks: I) -> u64
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let mut hash = FNV_OFFSET;
-    for chunk in chunks {
-        hash = hash_bytes_step(hash, chunk.as_bytes());
-    }
-    hash
-}
-
 pub(super) fn align_old_lines_by_hash<T, F>(
     old_lines: Vec<T>,
     new_hashes: &[u64],
@@ -799,7 +788,6 @@ pub(super) struct HighlightRender {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text_len: usize,
-    pub(super) content_hash: u64,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
     pub(super) lines: Vec<HighlightRenderLine>,
@@ -811,9 +799,8 @@ pub(super) struct HighlightPatch {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text_len: usize,
-    pub(super) content_hash: u64,
     pub(super) base_revision: u64,
-    pub(super) base_content_hash: u64,
+    pub(super) base_text_len: usize,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
     pub(super) total_lines: usize,
@@ -844,14 +831,12 @@ impl HighlightRender {
         &self,
         revision: u64,
         text_len: usize,
-        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         paste_id: &str,
     ) -> bool {
         self.revision == revision
             && self.text_len == text_len
-            && self.content_hash == content_hash
             && self.matches_context(paste_id, language_hint, theme_key)
     }
 }
@@ -862,12 +847,11 @@ pub(super) struct HighlightRequest {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text: String,
-    pub(super) content_hash: u64,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
     pub(super) edit_hint: Option<VirtualEditHint>,
     pub(super) patch_base_revision: Option<u64>,
-    pub(super) patch_base_content_hash: Option<u64>,
+    pub(super) patch_base_text_len: Option<usize>,
 }
 
 /// Lightweight edit metadata captured from virtual-editor operations.
@@ -884,7 +868,6 @@ pub(super) struct HighlightRequestMeta {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text_len: usize,
-    pub(super) content_hash: u64,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
 }
@@ -894,14 +877,12 @@ impl HighlightRequestMeta {
         &self,
         revision: u64,
         text_len: usize,
-        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         paste_id: &str,
     ) -> bool {
         self.revision == revision
             && self.text_len == text_len
-            && self.content_hash == content_hash
             && self.language_hint == language_hint
             && self.theme_key == theme_key
             && self.paste_id == paste_id
@@ -910,7 +891,6 @@ impl HighlightRequestMeta {
     pub(super) fn matches_render(&self, render: &HighlightRender) -> bool {
         self.revision == render.revision
             && self.text_len == render.text_len
-            && self.content_hash == render.content_hash
             && self.language_hint == render.language_hint
             && self.theme_key == render.theme_key
             && self.paste_id == render.paste_id

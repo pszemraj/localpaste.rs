@@ -1,13 +1,9 @@
 //! Highlight request, staging, and apply lifecycle for the editor.
 
-use super::highlight::{
-    hash_bytes, hash_text_chunks, HighlightPatch, HighlightRender, HighlightRequest,
-    HighlightRequestMeta,
-};
+use super::highlight::{HighlightPatch, HighlightRender, HighlightRequest, HighlightRequestMeta};
 use super::{
-    ContentHashCacheEntry, LocalPasteApp, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_DEBOUNCE_LARGE,
-    HIGHLIGHT_DEBOUNCE_LARGE_BYTES, HIGHLIGHT_DEBOUNCE_MEDIUM, HIGHLIGHT_PLAIN_THRESHOLD,
-    HIGHLIGHT_TINY_EDIT_MAX_CHARS,
+    LocalPasteApp, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_DEBOUNCE_LARGE, HIGHLIGHT_DEBOUNCE_LARGE_BYTES,
+    HIGHLIGHT_DEBOUNCE_MEDIUM, HIGHLIGHT_PLAIN_THRESHOLD, HIGHLIGHT_TINY_EDIT_MAX_CHARS,
 };
 use std::time::{Duration, Instant};
 use tracing::info;
@@ -20,34 +16,6 @@ impl LocalPasteApp {
         staged.paste_id == selected_id
             && staged.revision == self.active_revision()
             && staged.text_len == self.active_text_len_bytes()
-            && staged.content_hash == self.active_content_hash()
-    }
-
-    pub(super) fn active_content_hash(&mut self) -> u64 {
-        let is_virtual_editor = self.is_virtual_editor_mode();
-        let revision = self.active_revision();
-        let text_len = self.active_text_len_bytes();
-        if let Some(cached) = self.content_hash_cache {
-            if cached.is_virtual_editor == is_virtual_editor
-                && cached.revision == revision
-                && cached.text_len == text_len
-            {
-                return cached.hash;
-            }
-        }
-
-        let hash = if is_virtual_editor {
-            hash_text_chunks(self.virtual_editor_buffer.rope().chunks())
-        } else {
-            hash_bytes(self.selected_content.as_str().as_bytes())
-        };
-        self.content_hash_cache = Some(ContentHashCacheEntry {
-            is_virtual_editor,
-            revision,
-            text_len,
-            hash,
-        });
-        hash
     }
 
     pub(super) fn trace_highlight(&self, event: &str, details: &str) {
@@ -87,8 +55,7 @@ impl LocalPasteApp {
                 render.language_hint.as_str(),
                 render.theme_key.as_str(),
             ) && (current.revision > render.revision
-                || (current.revision == render.revision
-                    && current.content_hash == render.content_hash))
+                || (current.revision == render.revision && current.text_len >= render.text_len))
             {
                 self.trace_highlight(
                     "drop",
@@ -110,8 +77,7 @@ impl LocalPasteApp {
                 render.language_hint.as_str(),
                 render.theme_key.as_str(),
             ) && (staged.revision > render.revision
-                || (staged.revision == render.revision
-                    && staged.content_hash == render.content_hash))
+                || (staged.revision == render.revision && staged.text_len >= render.text_len))
             {
                 self.trace_highlight("drop", "render ignored: older/equal than staged revision");
                 return;
@@ -155,14 +121,14 @@ impl LocalPasteApp {
                 patch.language_hint.as_str(),
                 patch.theme_key.as_str(),
             ) && render.revision == patch.base_revision
-                && render.content_hash == patch.base_content_hash
+                && render.text_len == patch.base_text_len
         })
         .cloned() else {
             self.trace_highlight("drop", "patch ignored: no matching active render to merge");
             return;
         };
         if base.revision > patch.revision
-            || (base.revision == patch.revision && base.content_hash == patch.content_hash)
+            || (base.revision == patch.revision && base.text_len >= patch.text_len)
         {
             self.trace_highlight(
                 "drop",
@@ -193,7 +159,6 @@ impl LocalPasteApp {
             paste_id: patch.paste_id,
             revision: patch.revision,
             text_len: patch.text_len,
-            content_hash: patch.content_hash,
             language_hint: patch.language_hint,
             theme_key: patch.theme_key,
             lines: merged_lines,
@@ -240,8 +205,7 @@ impl LocalPasteApp {
                 staged.language_hint.as_str(),
                 staged.theme_key.as_str(),
             ) && (current.revision > staged.revision
-                || (current.revision == staged.revision
-                    && current.content_hash == staged.content_hash))
+                || (current.revision == staged.revision && current.text_len >= staged.text_len))
             {
                 self.trace_highlight("drop", "staged render superseded by current render");
                 self.highlight_staged = None;
@@ -267,7 +231,6 @@ impl LocalPasteApp {
 
     pub(super) fn should_request_highlight(
         &self,
-        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         debounce_active: bool,
@@ -280,40 +243,19 @@ impl LocalPasteApp {
             return false;
         }
         if let Some(pending) = &self.highlight_pending {
-            if pending.matches(
-                revision,
-                text_len,
-                content_hash,
-                language_hint,
-                theme_key,
-                paste_id,
-            ) {
+            if pending.matches(revision, text_len, language_hint, theme_key, paste_id) {
                 self.trace_highlight("skip_request", "matching highlight request already pending");
                 return false;
             }
         }
         if let Some(render) = &self.highlight_render {
-            if render.matches_exact(
-                revision,
-                text_len,
-                content_hash,
-                language_hint,
-                theme_key,
-                paste_id,
-            ) {
+            if render.matches_exact(revision, text_len, language_hint, theme_key, paste_id) {
                 self.trace_highlight("skip_request", "exact render already available");
                 return false;
             }
         }
         if let Some(render) = &self.highlight_staged {
-            if render.matches_exact(
-                revision,
-                text_len,
-                content_hash,
-                language_hint,
-                theme_key,
-                paste_id,
-            ) {
+            if render.matches_exact(revision, text_len, language_hint, theme_key, paste_id) {
                 self.trace_highlight("skip_request", "exact render already staged");
                 return false;
             }
@@ -352,7 +294,6 @@ impl LocalPasteApp {
         &mut self,
         revision: u64,
         text: String,
-        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         paste_id: &str,
@@ -373,14 +314,14 @@ impl LocalPasteApp {
         .max_by(|left, right| {
             left.revision
                 .cmp(&right.revision)
-                .then_with(|| left.content_hash.cmp(&right.content_hash))
+                .then_with(|| left.text_len.cmp(&right.text_len))
         })
-        .map(|render| (render.revision, render.content_hash));
+        .map(|render| (render.revision, render.text_len));
         self.trace_highlight(
             "request",
             format!(
-                "dispatch revision={} text_len={} hash={} lang={} theme={} paste={}",
-                revision, text_len, content_hash, language_hint, theme_key, paste_id
+                "dispatch revision={} text_len={} lang={} theme={} paste={}",
+                revision, text_len, language_hint, theme_key, paste_id
             )
             .as_str(),
         );
@@ -388,18 +329,16 @@ impl LocalPasteApp {
             paste_id: paste_id.to_string(),
             revision,
             text,
-            content_hash,
             language_hint: language_hint.to_string(),
             theme_key: theme_key.to_string(),
             edit_hint,
             patch_base_revision: patch_base.map(|(base_revision, _)| base_revision),
-            patch_base_content_hash: patch_base.map(|(_, base_hash)| base_hash),
+            patch_base_text_len: patch_base.map(|(_, base_text_len)| base_text_len),
         };
         self.highlight_pending = Some(HighlightRequestMeta {
             paste_id: paste_id.to_string(),
             revision,
             text_len,
-            content_hash,
             language_hint: language_hint.to_string(),
             theme_key: theme_key.to_string(),
         });

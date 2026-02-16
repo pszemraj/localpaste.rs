@@ -159,7 +159,6 @@ impl LocalPasteApp {
         self.virtual_galley_cache = VirtualGalleyCache::default();
         self.virtual_line_scratch.clear();
         self.reset_virtual_caret_blink();
-        self.content_hash_cache = None;
         self.highlight_edit_hint = None;
         self.virtual_drag_active = false;
         self.reset_virtual_click_streak();
