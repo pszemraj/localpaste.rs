@@ -30,11 +30,11 @@ LocalPaste is a local-first paste manager with a shared core and multiple fronte
 
 Workspace crates:
 
-- [`crates/localpaste_core`](crates/localpaste_core): config, models, storage, transaction helpers, invariants.
-- [`crates/localpaste_server`](crates/localpaste_server): Axum routing, middleware, handlers, embedded server helper.
-- [`crates/localpaste_gui`](crates/localpaste_gui): native app shell, backend worker, editor flows.
-- [`crates/localpaste_cli`](crates/localpaste_cli): HTTP client and endpoint discovery logic.
-- [`crates/localpaste_tools`](crates/localpaste_tools): test data generation and repo hygiene checks (`check-loc`, `check-ast-dupes`).
+- [`../crates/localpaste_core`](../crates/localpaste_core): config, models, storage, transaction helpers, invariants.
+- [`../crates/localpaste_server`](../crates/localpaste_server): Axum routing, middleware, handlers, embedded server helper.
+- [`../crates/localpaste_gui`](../crates/localpaste_gui): native app shell, backend worker, editor flows.
+- [`../crates/localpaste_cli`](../crates/localpaste_cli): HTTP client and endpoint discovery logic.
+- [`../crates/localpaste_tools`](../crates/localpaste_tools): test data generation and repo hygiene checks (`check-loc`, `check-ast-dupes`).
 
 ```mermaid
 flowchart LR
@@ -114,7 +114,7 @@ sequenceDiagram
 ## 3) Storage Design
 
 Storage contract and compatibility policy are defined in
-[docs/storage.md](docs/storage.md).
+[storage.md](storage.md).
 Architecture summary:
 
 Primary tables:
@@ -130,9 +130,9 @@ Derived/index tables:
 
 Primary implementation:
 
-- [`crates/localpaste_core/src/db/mod.rs`](crates/localpaste_core/src/db/mod.rs)
-- [`crates/localpaste_core/src/db/paste/mod.rs`](crates/localpaste_core/src/db/paste/mod.rs)
-- [`crates/localpaste_core/src/db/folder.rs`](crates/localpaste_core/src/db/folder.rs)
+- [`../crates/localpaste_core/src/db/mod.rs`](../crates/localpaste_core/src/db/mod.rs)
+- [`../crates/localpaste_core/src/db/paste/mod.rs`](../crates/localpaste_core/src/db/paste/mod.rs)
+- [`../crates/localpaste_core/src/db/folder.rs`](../crates/localpaste_core/src/db/folder.rs)
 
 ## 4) Consistency Model
 
@@ -144,11 +144,11 @@ redb write transactions are atomic across all opened tables, so LocalPaste now u
 
 Core transaction helper:
 
-- [`crates/localpaste_core/src/db/transactions.rs`](crates/localpaste_core/src/db/transactions.rs)
+- [`../crates/localpaste_core/src/db/transactions.rs`](../crates/localpaste_core/src/db/transactions.rs)
 
 Folder shared operations and invariant repair:
 
-- [`crates/localpaste_core/src/folder_ops.rs`](crates/localpaste_core/src/folder_ops.rs)
+- [`../crates/localpaste_core/src/folder_ops.rs`](../crates/localpaste_core/src/folder_ops.rs)
 
 ```mermaid
 flowchart TD
@@ -185,18 +185,18 @@ Two lock layers are used:
 
 Lock reference:
 
-- [docs/dev/locking-model.md](docs/dev/locking-model.md)
+- [dev/locking-model.md](dev/locking-model.md)
 
 Primary implementation:
 
-- [`crates/localpaste_core/src/db/lock.rs`](crates/localpaste_core/src/db/lock.rs)
-- [`crates/localpaste_server/src/locks.rs`](crates/localpaste_server/src/locks.rs)
+- [`../crates/localpaste_core/src/db/lock.rs`](../crates/localpaste_core/src/db/lock.rs)
+- [`../crates/localpaste_server/src/locks.rs`](../crates/localpaste_server/src/locks.rs)
 
 ## 7) HTTP Layer And Security Boundaries
 
 Axum router and middleware live in:
 
-- [`crates/localpaste_server/src/lib.rs`](crates/localpaste_server/src/lib.rs)
+- [`../crates/localpaste_server/src/lib.rs`](../crates/localpaste_server/src/lib.rs)
 
 Current boundary rules:
 
@@ -208,7 +208,7 @@ Current boundary rules:
 ## 8) Language Detection And Highlighting
 
 Detection/highlight behavior is defined in
-[docs/language-detection.md](docs/language-detection.md).
+[language-detection.md](language-detection.md).
 Architecture-level summary:
 
 - Detection is centralized in `localpaste_core::detection`.
@@ -216,7 +216,7 @@ Architecture-level summary:
 - Auto-detect flow is `Magika -> heuristic fallback`, with label normalization before persistence/filtering.
 - Manual language mode bypasses auto re-detection on content edits.
 - GUI highlighting resolves syntaxes via a multi-step resolver and falls back to plain text when no safe grammar match exists.
-- Virtual-editor async highlight debounce/staging/patch behavior is defined in [docs/language-detection.md](docs/language-detection.md#virtual-editor-async-highlight-flow).
+- Virtual-editor async highlight debounce/staging/patch behavior is defined in [language-detection.md](language-detection.md#virtual-editor-async-highlight-flow).
 
 ## 9) GUI Save Pipeline
 
@@ -230,9 +230,9 @@ Key properties:
 
 Relevant code:
 
-- [`crates/localpaste_gui/src/app/state_ops.rs`](crates/localpaste_gui/src/app/state_ops.rs)
-- [`crates/localpaste_gui/src/app/shutdown.rs`](crates/localpaste_gui/src/app/shutdown.rs)
-- [`crates/localpaste_gui/src/backend/worker.rs`](crates/localpaste_gui/src/backend/worker.rs)
+- [`../crates/localpaste_gui/src/app/state_ops.rs`](../crates/localpaste_gui/src/app/state_ops.rs)
+- [`../crates/localpaste_gui/src/app/shutdown.rs`](../crates/localpaste_gui/src/app/shutdown.rs)
+- [`../crates/localpaste_gui/src/backend/worker.rs`](../crates/localpaste_gui/src/backend/worker.rs)
 
 ```mermaid
 sequenceDiagram
@@ -261,15 +261,15 @@ Embedded server discovery path:
 
 Relevant code:
 
-- [`crates/localpaste_server/src/embedded.rs`](crates/localpaste_server/src/embedded.rs)
-- [`crates/localpaste_cli/src/main.rs`](crates/localpaste_cli/src/main.rs)
+- [`../crates/localpaste_server/src/embedded.rs`](../crates/localpaste_server/src/embedded.rs)
+- [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)
 
 ## 11) Validation Strategy
 
 Repository-level quality gates are defined in:
 
-- [AGENTS.md](AGENTS.md)
-- [docs/dev/devlog.md](docs/dev/devlog.md)
+- [../AGENTS.md](../AGENTS.md)
+- [dev/devlog.md](dev/devlog.md)
 
 Core themes:
 
@@ -281,5 +281,5 @@ Core themes:
 
 ## 12) Active Follow-Ups
 
-- Engineering backlog: [docs/dev/backlog.md](docs/dev/backlog.md)
-- GUI perf validation protocol: [docs/dev/gui-perf-protocol.md](docs/dev/gui-perf-protocol.md)
+- Engineering backlog: [dev/backlog.md](dev/backlog.md)
+- GUI perf validation protocol: [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md)

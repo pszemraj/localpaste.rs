@@ -8,7 +8,7 @@ Use this protocol for release-gate evidence and regression checks.
 - English-first editor workflows only.
 - Runtime topology for this protocol: the GUI owns the DB lock and runs the embedded API endpoint in-process.
 - Do not run standalone `localpaste` concurrently against the same `DB_PATH` while running GUI perf checks.
-- Detection/highlight behavior definitions (including virtual-editor async debounce/staging policy) are maintained in [docs/language-detection.md](docs/language-detection.md).
+- Detection/highlight behavior definitions (including virtual-editor async debounce/staging policy) are maintained in [../language-detection.md](../language-detection.md).
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
   - average FPS `>= 45`
@@ -30,7 +30,7 @@ Use this protocol for release-gate evidence and regression checks.
 
 ## Prereqs
 
-Use the build matrix in [devlog.md](docs/dev/devlog.md).
+Use the build matrix in [devlog.md](devlog.md).
 Minimum binaries required for this protocol:
 
 - `localpaste_tools` / `generate-test-data`
@@ -39,7 +39,7 @@ Minimum binaries required for this protocol:
 ## Runbook
 
 Use this runbook for reproducible perf checks:
-Flag behavior/meanings are documented in [gui-notes.md](docs/dev/gui-notes.md); this runbook only pins values used during perf validation.
+Flag behavior/meanings are documented in [gui-notes.md](gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell
 $env:DB_PATH = Join-Path $env:TEMP "lpaste-perf-$([guid]::NewGuid().ToString('N'))"
@@ -56,7 +56,7 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
 While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks.
-For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](docs/dev/devlog.md) with `localpaste` + `lpaste`.
+For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](devlog.md) with `localpaste` + `lpaste`.
 
 ## Dataset Expectations
 
@@ -70,6 +70,11 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 
 ## Manual Verification Checklist
 
+Run the full functional GUI checklist first:
+[gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive).
+
+Perf gating in this protocol is based on the checks below:
+
 1. Medium (~1-10KB) code paste: typing at start/middle/end stays responsive.
 2. Large (~10-50KB) code paste: highlight remains visible while edits debounce/refresh.
 3. Large-to-very-large (~50-256KB) code paste: async/staged highlight remains stable; transient plain fallback is acceptable during refresh but should not stick.
@@ -79,9 +84,7 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 7. Idle baseline scenario: open a ~200KB paste and wait without interaction; verify CPU drops near idle between repaint intervals.
 8. Long document paste (thousands of lines): rapid scroll and mid-document typing show no major hitching.
 9. Window resize reflow: no long plain-text gaps after resize.
-10. Shortcut sanity: `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, unfocused `Ctrl/Cmd+V`.
-11. Clipboard reliability: `Ctrl/Cmd+C/X/V` including unfocused mutation guard behavior.
-12. Trace sanity (when enabled):
+10. Trace sanity (when enabled):
    - input trace: deterministic `virtual input frame` routing outcomes
    - highlight trace: deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) with stale staged renders dropped.
    - editor perf trace: `virtual_input_frame`, `virtual_edit_apply`, and `virtual_editor_render` events present with non-zero timing fields while typing in virtual editor mode.
@@ -89,7 +92,7 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 
 ## Related Docs
 
-- Editor flags and trace env vars: [gui-notes.md](docs/dev/gui-notes.md)
-- Detection/normalization/highlight behavior: [docs/language-detection.md](docs/language-detection.md)
-- Open perf follow-ups: [backlog.md](docs/dev/backlog.md)
-- System architecture context: [docs/architecture.md](docs/architecture.md)
+- Editor flags and trace env vars: [gui-notes.md](gui-notes.md)
+- Detection/normalization/highlight behavior: [../language-detection.md](../language-detection.md)
+- Open perf follow-ups: [backlog.md](backlog.md)
+- System architecture context: [../architecture.md](../architecture.md)

@@ -3,10 +3,10 @@
 Scope:
 
 - Security defaults, threat model, and security-relevant env toggles are defined here.
-- Storage/backend compatibility policy is documented in [docs/storage.md](docs/storage.md).
-- Service operation and lock-recovery procedures are documented in [docs/deployment.md](docs/deployment.md).
-- Detection/runtime-provider toggles (for example `MAGIKA_FORCE_CPU`) are documented in [docs/language-detection.md](docs/language-detection.md).
-- Build/run command matrices are documented in [docs/dev/devlog.md](docs/dev/devlog.md).
+- Storage/backend compatibility policy is documented in [storage.md](storage.md).
+- Service operation and lock-recovery procedures are documented in [deployment.md](deployment.md).
+- Detection/runtime-provider toggles (for example `MAGIKA_FORCE_CPU`) are documented in [language-detection.md](language-detection.md).
+- Build/run command matrices are documented in [dev/devlog.md](dev/devlog.md).
 
 ---
 
@@ -28,8 +28,8 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 - **CORS restrictions**: In strict mode, only accepts loopback origins that match the active listener port
 - **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options
 - **Request size limits**: Enforced at transport layer (default: 10MB)
-- **Storage durability**: defined in [docs/storage.md](docs/storage.md)
-- **Single-writer owner lock**: semantics in [docs/dev/locking-model.md](docs/dev/locking-model.md)
+- **Storage durability**: defined in [storage.md](storage.md)
+- **Single-writer owner lock**: semantics in [dev/locking-model.md](dev/locking-model.md)
 
 ## Environment Variables
 
@@ -57,8 +57,8 @@ To add a referrer policy, configure your reverse proxy or extend the Axum middle
 
 ### Lock Management Policy
 
-Operational lock-recovery procedures are documented in [docs/deployment.md](docs/deployment.md).
-Lock behavior semantics are documented in [docs/dev/locking-model.md](docs/dev/locking-model.md).
+Operational lock-recovery procedures are documented in [deployment.md](deployment.md).
+Lock behavior semantics are documented in [dev/locking-model.md](dev/locking-model.md).
 Security expectation:
 
 - Treat uncertain lock ownership as unsafe.
@@ -73,7 +73,7 @@ If you need to expose LocalPaste publicly, follow these steps:
 
 ### 1. Enable Public Binding
 
-Build/run mechanics are documented in [docs/deployment.md](docs/deployment.md) and [docs/dev/devlog.md](docs/dev/devlog.md).
+Build/run mechanics are documented in [deployment.md](deployment.md) and [dev/devlog.md](dev/devlog.md).
 This section only defines the security-relevant overrides:
 
 ```bash
@@ -134,10 +134,10 @@ server {
    ```
 
 2. **Monitoring**: Watch logs for unusual activity
-   Use the service/logging patterns in [docs/deployment.md](docs/deployment.md).
+   Use the service/logging patterns in [deployment.md](deployment.md).
 
 3. **Backups**: Regular database backups
-   Use the backup and retention procedures in [docs/deployment.md](docs/deployment.md).
+   Use the backup and retention procedures in [deployment.md](deployment.md).
 
 4. **Access Control**: Use firewall rules
 

@@ -1,7 +1,7 @@
 # LocalPaste Desktop Palette
 
 These palette values are defined in the rewrite theme module:
-[`crates/localpaste_gui/src/app/style.rs`](crates/localpaste_gui/src/app/style.rs).
+[`../../crates/localpaste_gui/src/app/style.rs`](../../crates/localpaste_gui/src/app/style.rs).
 
 | Token                    | Hex         | Notes                       |
 | ------------------------ | ----------- | --------------------------- |
@@ -14,7 +14,7 @@ These palette values are defined in the rewrite theme module:
 | `COLOR_ACCENT`           | `#E57000`   | Primary actions, selection  |
 | `COLOR_ACCENT_HOVER`     | `#CE422B`   | Accent hover state          |
 | `COLOR_SELECTION_STROKE` | `#3B82F6`   | Selection outline           |
-| `COLOR_SELECTION_FILL`   | `#3B82F655` | Selection fill (with alpha) |
+| `COLOR_SELECTION_FILL_RGBA` | `#3B82F655` | Selection fill RGBA tuple (`[r,g,b,a]`) |
 | `COLOR_BORDER`           | `#30363D`   | Divider strokes             |
 
 ## Editor Font
@@ -22,4 +22,4 @@ These palette values are defined in the rewrite theme module:
 The native editor uses [the 0xProto font](https://github.com/0xType/0xProto) (Regular NL) under the SIL Open Font License ([release 2.502](https://github.com/0xType/0xProto/releases/tag/2.502))
 
 Font files and license live at
-[`assets/fonts/0xProto`](assets/fonts/0xProto).
+[`../../assets/fonts/0xProto`](../../assets/fonts/0xProto).

@@ -1,9 +1,9 @@
 # Development Guide
 
 This guide covers the development workflow.
-Topic-specific references are listed in [docs/README.md](docs/README.md).
+Topic-specific references are listed in [../README.md](../README.md).
 This guide includes the binary/build/run command matrix used in day-to-day development.
-System architecture context lives in [docs/architecture.md](docs/architecture.md).
+System architecture context lives in [../architecture.md](../architecture.md).
 
 ## Workspace Layout
 
@@ -68,8 +68,8 @@ Topology note:
 - Use standalone `localpaste` for headless/server-only operation.
 - Embedded GUI API writes the active endpoint to `DB_PATH/.api-addr`; `lpaste` auto-uses it when `--server` and `LP_SERVER` are unset (unless `--no-discovery` is set).
 
-For editor-mode flags and tracing env vars, see [GUI notes](docs/dev/gui-notes.md).
-For repeatable GUI perf validation, see [GUI perf protocol](docs/dev/gui-perf-protocol.md).
+For editor-mode flags and tracing env vars, see [GUI notes](gui-notes.md).
+For repeatable GUI perf validation, see [GUI perf protocol](gui-perf-protocol.md).
 
 ## Validation Loop
 
@@ -100,32 +100,18 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 rustdoc-checker crates --strict
 ```
 
-Language detection/normalization/highlight behavior is tracked in [docs/language-detection.md](docs/language-detection.md).
+Language detection/normalization/highlight behavior is tracked in [../language-detection.md](../language-detection.md).
 
 ## Behavior Contracts
 
 This file is intentionally command/workflow-focused. For runtime behavior contracts, use:
 
-- System/runtime architecture: [docs/architecture.md](docs/architecture.md)
-- Security defaults and env policy: [docs/security.md](docs/security.md)
-- Service operation and lock recovery: [docs/deployment.md](docs/deployment.md)
-- Lock semantics and API `423 Locked` behavior: [docs/dev/locking-model.md](docs/dev/locking-model.md)
-- Detection/normalization/highlight behavior: [docs/language-detection.md](docs/language-detection.md)
+- System/runtime architecture: [../architecture.md](../architecture.md)
+- Security defaults and env policy: [../security.md](../security.md)
+- Service operation and lock recovery: [../deployment.md](../deployment.md)
+- Lock semantics and API `423 Locked` behavior: [locking-model.md](locking-model.md)
+- Detection/normalization/highlight behavior: [../language-detection.md](../language-detection.md)
 - API wiring + handler behavior in code:
-  - [`crates/localpaste_server/src/lib.rs`](crates/localpaste_server/src/lib.rs)
-  - [`crates/localpaste_server/src/handlers/paste.rs`](crates/localpaste_server/src/handlers/paste.rs)
-
-## Related Docs
-
-- System architecture: [docs/architecture.md](docs/architecture.md)
-- Security defaults and public exposure: [docs/security.md](docs/security.md)
-- Service management: [docs/deployment.md](docs/deployment.md)
-- Storage/backend compatibility: [docs/storage.md](docs/storage.md)
-- Lock behavior model: [locking-model.md](docs/dev/locking-model.md)
-- Perf protocol: [gui-perf-protocol.md](docs/dev/gui-perf-protocol.md)
-- Language detection/normalization/highlight behavior: [docs/language-detection.md](docs/language-detection.md)
-- Engineering backlog: [backlog.md](docs/dev/backlog.md)
-
-## Backlog
-
-Deferred technical work is tracked in [backlog.md](docs/dev/backlog.md).
+  - [`../../crates/localpaste_server/src/lib.rs`](../../crates/localpaste_server/src/lib.rs)
+  - [`../../crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs)
+- Engineering backlog: [backlog.md](backlog.md)
