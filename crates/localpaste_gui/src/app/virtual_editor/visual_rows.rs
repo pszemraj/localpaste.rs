@@ -127,9 +127,12 @@ impl VisualRowLayoutCache {
         for line in old_start..=delta.new_end_line {
             replacement.push(measure_line(buffer, line, self.wrap_cols.max(1)));
         }
-        self.line_metrics
-            .splice(old_start..old_end_excl, replacement);
-        if self.line_metrics.len() != new_len {
+        let mut replacement_iter = replacement.into_iter();
+        if !splice_vec_by_delta(&mut self.line_metrics, delta, new_len, || {
+            replacement_iter
+                .next()
+                .expect("replacement count was validated against delta")
+        }) {
             return false;
         }
 
