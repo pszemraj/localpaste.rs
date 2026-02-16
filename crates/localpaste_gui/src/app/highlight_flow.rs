@@ -60,13 +60,18 @@ impl LocalPasteApp {
         }
     }
 
-    fn staged_matches_active_snapshot(&mut self, staged: &HighlightRender) -> bool {
+    fn staged_matches_active_snapshot(
+        &self,
+        staged_paste_id: &str,
+        staged_revision: u64,
+        staged_text_len: usize,
+    ) -> bool {
         let Some(selected_id) = self.selected_id.as_deref() else {
             return false;
         };
-        staged.paste_id == selected_id
-            && staged.revision == self.active_revision()
-            && staged.text_len == self.active_text_len_bytes()
+        staged_paste_id == selected_id
+            && staged_revision == self.active_revision()
+            && staged_text_len == self.active_text_len_bytes()
     }
 
     pub(super) fn trace_highlight(&self, event: &str, details: &str) {
@@ -297,7 +302,7 @@ impl LocalPasteApp {
             return;
         }
 
-        let mut merged_lines = base.lines.clone();
+        let mut merged_lines = base.lines;
         merged_lines.splice(range, patch.lines);
         self.queue_highlight_render(HighlightRender {
             paste_id: patch.paste_id,
@@ -327,28 +332,40 @@ impl LocalPasteApp {
     }
 
     pub(super) fn maybe_apply_staged_highlight(&mut self, now: Instant) {
-        let Some(staged) = self.highlight_staged.as_ref().cloned() else {
+        let Some((
+            staged_paste_id,
+            staged_revision,
+            staged_text_len,
+            staged_language_hint,
+            staged_theme_key,
+        )) = self.highlight_staged.as_ref().map(|staged| {
+            (
+                staged.paste_id.as_str(),
+                staged.revision,
+                staged.text_len,
+                staged.language_hint.as_str(),
+                staged.theme_key.as_str(),
+            )
+        })
+        else {
             return;
         };
-        if !self.staged_matches_active_snapshot(&staged) {
+        if !self.staged_matches_active_snapshot(staged_paste_id, staged_revision, staged_text_len) {
             let active_revision = self.active_revision();
             let active_text_len = self.active_text_len_bytes();
             self.trace_highlight_lazy("drop_stale_staged", || {
                 format!(
                     "staged rev={} len={} active rev={} len={}",
-                    staged.revision, staged.text_len, active_revision, active_text_len
+                    staged_revision, staged_text_len, active_revision, active_text_len
                 )
             });
             self.highlight_staged = None;
             return;
         }
         if let Some(current) = &self.highlight_render {
-            if current.matches_context(
-                staged.paste_id.as_str(),
-                staged.language_hint.as_str(),
-                staged.theme_key.as_str(),
-            ) && (current.revision > staged.revision
-                || (current.revision == staged.revision && current.text_len >= staged.text_len))
+            if current.matches_context(staged_paste_id, staged_language_hint, staged_theme_key)
+                && (current.revision > staged_revision
+                    || (current.revision == staged_revision && current.text_len >= staged_text_len))
             {
                 self.trace_highlight("drop", "staged render superseded by current render");
                 self.highlight_staged = None;

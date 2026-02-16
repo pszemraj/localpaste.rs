@@ -158,7 +158,6 @@ impl LocalPasteApp {
                     .unwrap_or("base16-mocha.dark");
                 let revision = self.active_revision();
                 let text_len = self.active_text_len_bytes();
-                let mut content_snapshot_for_dispatch: Option<String> = None;
                 let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
                 let use_virtual_editor = self.editor_mode == EditorMode::VirtualEditor;
                 let needs_worker_render = use_virtual_preview || use_virtual_editor;
@@ -177,12 +176,9 @@ impl LocalPasteApp {
                         id.as_str(),
                     );
                 if should_request {
-                    let content_snapshot = content_snapshot_for_dispatch
-                        .take()
-                        .unwrap_or_else(|| self.active_snapshot());
                     self.dispatch_highlight_request(
                         revision,
-                        content_snapshot,
+                        self.active_snapshot(),
                         &language_hint,
                         theme_key,
                         id.as_str(),

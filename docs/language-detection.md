@@ -107,7 +107,7 @@ Virtual-editor highlight behavior is async and staged to avoid mid-burst visual 
 
 Flow:
 
-1. UI sends a highlight request keyed by paste/context (`paste_id`, `revision`, `content_hash`, `language_hint`, `theme_key`).
+1. UI sends a highlight request keyed by paste/context (`paste_id`, `revision`, `text_len`, `language_hint`, `theme_key`).
 2. Worker coalesces queued requests and computes either:
    - full render (`HighlightRender`), or
    - changed-range patch (`HighlightPatch`) when the UI base snapshot matches the worker cache base.
@@ -120,9 +120,10 @@ Current policy constants (virtual editor):
 
 - idle apply threshold: `200ms`
 - adaptive debounce windows:
-  - tiny edits (`<=4` changed chars, `<=2` touched lines): `0ms`
+  - tiny edits (`<=4` changed chars, `<=2` touched lines): `15ms`
   - medium edits: `35ms`
   - larger supported buffers (`>=64KB`): `50ms`
+  - async highlighting disabled: `0ms` (synchronous/no debounce path)
 - plain rendering guardrail: `>=256KB` content
 
 Primary implementation:
