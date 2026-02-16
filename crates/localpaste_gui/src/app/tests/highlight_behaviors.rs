@@ -571,6 +571,7 @@ fn apply_staged_highlight_patch_evicts_only_changed_virtual_lines() {
             false,
             &egui::FontId::monospace(14.0),
             egui::Color32::WHITE,
+            1.0,
         ),
     );
     for idx in 0..3 {

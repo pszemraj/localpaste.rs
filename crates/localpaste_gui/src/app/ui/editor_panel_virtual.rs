@@ -322,6 +322,7 @@ impl LocalPasteApp {
                 use_plain,
                 editor_font,
                 ui.visuals().text_color(),
+                ui.ctx().pixels_per_point(),
             ),
         );
         let mut focused = ui.memory(|m| m.has_focus(editor_id));

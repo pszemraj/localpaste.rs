@@ -12,6 +12,7 @@ pub(crate) struct VirtualGalleyContext {
     // Highlight invalidation is driven explicitly from highlight_flow
     // via evict_line_range/evict_all; keep context geometry/style-only.
     use_plain: bool,
+    pixels_per_point_bits: u32,
     font_id: FontId,
     text_color: Color32,
 }
@@ -22,10 +23,12 @@ impl VirtualGalleyContext {
         use_plain: bool,
         font_id: &FontId,
         text_color: Color32,
+        pixels_per_point: f32,
     ) -> Self {
         Self {
             wrap_width_bits: wrap_width.max(0.0).round().to_bits(),
             use_plain,
+            pixels_per_point_bits: pixels_per_point.to_bits(),
             font_id: font_id.clone(),
             text_color,
         }
@@ -159,7 +162,7 @@ mod tests {
         let mut cache = VirtualGalleyCache::default();
         cache.prepare_frame(
             2,
-            VirtualGalleyContext::new(300.0, false, &FontId::monospace(14.0), Color32::WHITE),
+            VirtualGalleyContext::new(300.0, false, &FontId::monospace(14.0), Color32::WHITE, 1.0),
         );
         cache.sync_line_rows(0, 2);
         assert_eq!(cache.lines[0].rows.len(), 2);
@@ -172,7 +175,7 @@ mod tests {
         let mut cache = VirtualGalleyCache::default();
         cache.prepare_frame(
             3,
-            VirtualGalleyContext::new(300.0, false, &FontId::monospace(14.0), Color32::WHITE),
+            VirtualGalleyContext::new(300.0, false, &FontId::monospace(14.0), Color32::WHITE, 1.0),
         );
         for idx in 0..3 {
             cache.sync_line_rows(idx, 1);
@@ -183,5 +186,24 @@ mod tests {
         assert!(cache.get(0, 0).is_some());
         assert!(cache.get(1, 0).is_none());
         assert!(cache.get(2, 0).is_some());
+    }
+
+    #[test]
+    fn prepare_frame_invalidates_cached_rows_when_pixels_per_point_changes() {
+        let mut cache = VirtualGalleyCache::default();
+        cache.prepare_frame(
+            1,
+            VirtualGalleyContext::new(300.0, false, &FontId::monospace(14.0), Color32::WHITE, 1.0),
+        );
+        cache.sync_line_rows(0, 1);
+        cache.insert(0, 0, shaped_test_galley());
+        assert!(cache.get(0, 0).is_some());
+
+        cache.prepare_frame(
+            1,
+            VirtualGalleyContext::new(300.0, false, &FontId::monospace(14.0), Color32::WHITE, 1.25),
+        );
+        cache.sync_line_rows(0, 1);
+        assert!(cache.get(0, 0).is_none());
     }
 }
