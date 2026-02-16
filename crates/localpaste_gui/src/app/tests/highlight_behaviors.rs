@@ -327,14 +327,64 @@ fn highlight_request_skips_when_staged_matches() {
     };
     harness.app.highlight_staged = Some(render);
     let should = harness.app.should_request_highlight(
-        0,
-        harness.app.selected_content.len(),
+        hash_bytes(harness.app.selected_content.as_str().as_bytes()),
         "py",
         "base16-mocha.dark",
         false,
         "alpha",
     );
     assert!(!should);
+}
+
+#[test]
+fn active_content_hash_cache_invalidates_on_text_edit() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::TextEdit;
+    let before = harness.app.active_content_hash();
+
+    <EditorBuffer as egui::TextBuffer>::insert_text(&mut harness.app.selected_content, "x", 0);
+
+    let after = harness.app.active_content_hash();
+    assert_ne!(before, after);
+    assert_eq!(
+        after,
+        hash_bytes(harness.app.selected_content.as_str().as_bytes())
+    );
+}
+
+#[test]
+fn active_content_hash_cache_invalidates_on_editor_reset() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::TextEdit;
+    let _ = harness.app.active_content_hash();
+
+    harness
+        .app
+        .selected_content
+        .reset("updated content".to_string());
+    harness.app.reset_virtual_editor("updated content");
+
+    let after = harness.app.active_content_hash();
+    assert_eq!(
+        after,
+        hash_bytes(harness.app.selected_content.as_str().as_bytes())
+    );
+}
+
+#[test]
+fn active_content_hash_cache_tracks_editor_mode_switches() {
+    let mut harness = make_app();
+    harness.app.selected_content.reset("alpha".to_string());
+    harness.app.reset_virtual_editor("beta");
+
+    harness.app.editor_mode = EditorMode::TextEdit;
+    let text_hash = harness.app.active_content_hash();
+    assert_eq!(text_hash, hash_bytes("alpha".as_bytes()));
+
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    let virtual_hash = harness.app.active_content_hash();
+    assert_eq!(virtual_hash, hash_bytes("beta".as_bytes()));
+    assert_ne!(text_hash, virtual_hash);
 }
 
 #[test]

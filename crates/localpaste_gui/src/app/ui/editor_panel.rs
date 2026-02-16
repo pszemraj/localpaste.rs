@@ -1,6 +1,5 @@
 //! Central editor panel rendering for TextEdit, virtual preview, and virtual editor modes.
 
-use super::super::highlight::{hash_bytes, hash_text_chunks};
 use super::super::*;
 use eframe::egui;
 
@@ -167,13 +166,7 @@ impl LocalPasteApp {
                 let revision = self.active_revision();
                 let text_len = self.active_text_len_bytes();
                 let mut content_snapshot_for_dispatch: Option<String> = None;
-                let content_hash = if is_large {
-                    0
-                } else if self.is_virtual_editor_mode() {
-                    hash_text_chunks(self.virtual_editor_buffer.rope().chunks())
-                } else {
-                    hash_bytes(self.selected_content.as_str().as_bytes())
-                };
+                let content_hash = if is_large { 0 } else { self.active_content_hash() };
                 let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
                 let use_virtual_editor = self.editor_mode == EditorMode::VirtualEditor;
                 let needs_worker_render = use_virtual_preview || use_virtual_editor;
@@ -181,8 +174,7 @@ impl LocalPasteApp {
                     !is_large && (text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES || needs_worker_render);
                 let should_request = async_mode
                     && self.should_request_highlight(
-                        revision,
-                        text_len,
+                        content_hash,
                         &language_hint,
                         theme_key,
                         debounce_active,
@@ -245,21 +237,23 @@ impl LocalPasteApp {
                 } else {
                     debounce_active && !has_render
                 };
-                self.trace_highlight(
-                    "frame",
-                    format!(
-                        "revision={} text_len={} async={} has_render={} has_render_ctx={} has_staged={} has_staged_ctx={} use_plain={}",
-                        revision,
-                        text_len,
-                        async_mode,
-                        has_render,
-                        has_context_render,
-                        has_staged_render,
-                        has_staged_context,
-                        use_plain
-                    )
-                    .as_str(),
-                );
+                if self.highlight_trace_enabled {
+                    self.trace_highlight(
+                        "frame",
+                        format!(
+                            "revision={} text_len={} async={} has_render={} has_render_ctx={} has_staged={} has_staged_ctx={} use_plain={}",
+                            revision,
+                            text_len,
+                            async_mode,
+                            has_render,
+                            has_context_render,
+                            has_staged_render,
+                            has_staged_context,
+                            use_plain
+                        )
+                        .as_str(),
+                    );
+                }
                 let highlight_render = self.highlight_render.take();
                 let highlight_render_match = highlight_render
                     .as_ref()

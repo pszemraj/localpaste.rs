@@ -3,27 +3,48 @@
 use super::highlight::{
     hash_bytes, hash_text_chunks, HighlightRender, HighlightRequest, HighlightRequestMeta,
 };
-use super::{LocalPasteApp, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_PLAIN_THRESHOLD};
+use super::{
+    ContentHashCacheEntry, LocalPasteApp, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_PLAIN_THRESHOLD,
+};
 use std::time::Instant;
 use tracing::info;
 
 impl LocalPasteApp {
-    fn staged_matches_active_snapshot(&self, staged: &HighlightRender) -> bool {
+    fn staged_matches_active_snapshot(&mut self, staged: &HighlightRender) -> bool {
         let Some(selected_id) = self.selected_id.as_deref() else {
             return false;
         };
         staged.paste_id == selected_id
             && staged.revision == self.active_revision()
             && staged.text_len == self.active_text_len_bytes()
-            && staged.content_hash == self.active_text_hash()
+            && staged.content_hash == self.active_content_hash()
     }
 
-    fn active_text_hash(&self) -> u64 {
-        if self.is_virtual_editor_mode() {
+    pub(super) fn active_content_hash(&mut self) -> u64 {
+        let is_virtual_editor = self.is_virtual_editor_mode();
+        let revision = self.active_revision();
+        let text_len = self.active_text_len_bytes();
+        if let Some(cached) = self.content_hash_cache {
+            if cached.is_virtual_editor == is_virtual_editor
+                && cached.revision == revision
+                && cached.text_len == text_len
+            {
+                return cached.hash;
+            }
+        }
+
+        let hash = if is_virtual_editor {
             hash_text_chunks(self.virtual_editor_buffer.rope().chunks())
         } else {
             hash_bytes(self.selected_content.as_str().as_bytes())
-        }
+        };
+        self.content_hash_cache = Some(ContentHashCacheEntry {
+            is_virtual_editor,
+            revision,
+            text_len,
+            hash,
+        });
+        hash
     }
 
     pub(super) fn trace_highlight(&self, event: &str, details: &str) {
@@ -126,10 +147,10 @@ impl LocalPasteApp {
     }
 
     pub(super) fn maybe_apply_staged_highlight(&mut self, now: Instant) {
-        let Some(staged) = self.highlight_staged.as_ref() else {
+        let Some(staged) = self.highlight_staged.as_ref().cloned() else {
             return;
         };
-        if !self.staged_matches_active_snapshot(staged) {
+        if !self.staged_matches_active_snapshot(&staged) {
             let active_revision = self.active_revision();
             let active_text_len = self.active_text_len_bytes();
             self.trace_highlight(
@@ -183,18 +204,18 @@ impl LocalPasteApp {
 
     pub(super) fn should_request_highlight(
         &self,
-        revision: u64,
-        text_len: usize,
+        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         debounce_active: bool,
         paste_id: &str,
     ) -> bool {
+        let revision = self.active_revision();
+        let text_len = self.active_text_len_bytes();
         if text_len >= HIGHLIGHT_PLAIN_THRESHOLD {
             self.trace_highlight("skip_request", "plain threshold exceeded");
             return false;
         }
-        let content_hash = self.active_text_hash();
         if let Some(pending) = &self.highlight_pending {
             if pending.matches(
                 revision,
