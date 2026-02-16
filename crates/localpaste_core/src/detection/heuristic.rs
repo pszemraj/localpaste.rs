@@ -53,12 +53,20 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("perl".to_string());
     }
 
-    if lower.contains("write-host")
+    let has_ps_command = lower.contains("write-host")
         || lower.contains("$psversiontable")
         || lower.contains("set-strictmode")
-        || lower.contains("get-childitem")
-        || lower.contains("param(")
-    {
+        || lower.contains("get-childitem");
+    let has_param_block = lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("param(") || trimmed.starts_with("param (")
+    });
+    let has_ps_variable = lower.contains("$env:")
+        || lower.contains("$ps")
+        || lower.contains("$_")
+        || lower.contains("$true")
+        || lower.contains("$false");
+    if has_ps_command || (has_param_block && has_ps_variable) {
         return Some("powershell".to_string());
     }
 

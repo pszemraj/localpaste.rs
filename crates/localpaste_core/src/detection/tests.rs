@@ -52,6 +52,12 @@ fn heuristic_detects_expanded_fallback_languages() {
 }
 
 #[test]
+fn heuristic_does_not_treat_param_call_alone_as_powershell() {
+    let cases = [("param(foo)\nvalue = 1\n", None)];
+    assert_detection_cases(cases.as_slice());
+}
+
+#[test]
 fn canonicalization_matrix_handles_aliases() {
     let cases = [
         ("csharp", "cs"),
