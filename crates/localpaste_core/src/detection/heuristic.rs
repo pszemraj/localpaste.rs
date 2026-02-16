@@ -1,5 +1,6 @@
 //! Heuristic language detection fallback for text content.
 
+use super::looks_like_yaml;
 use crate::models::paste::is_markdown_content;
 
 /// Best-effort language detection based on simple heuristics.
@@ -99,16 +100,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("shell".to_string());
     }
 
-    let yaml_pairs = lines()
-        .filter(|l| {
-            let t = l.trim();
-            if t.is_empty() || t.starts_with('#') {
-                return false;
-            }
-            (t.starts_with("- ") || t.contains(": ")) && !t.contains('{')
-        })
-        .count();
-    if ((lower.starts_with("---") && yaml_pairs >= 1) || yaml_pairs >= 2) && !sample.contains('{') {
+    if looks_like_yaml(sample) {
         return Some("yaml".to_string());
     }
 

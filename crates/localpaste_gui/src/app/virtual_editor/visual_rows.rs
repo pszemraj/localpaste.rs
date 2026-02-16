@@ -6,14 +6,6 @@ use super::buffer::{RopeBuffer, VirtualEditDelta};
 use std::ops::Range;
 use unicode_width::UnicodeWidthChar;
 
-fn div_ceil(value: usize, divisor: usize) -> usize {
-    if value == 0 {
-        0
-    } else {
-        (value - 1) / divisor + 1
-    }
-}
-
 /// Wrap metrics for a single physical line.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LineWrapMetrics {
@@ -285,7 +277,6 @@ impl VisualRowLayoutCache {
     /// Global char range covered by a visual row.
     pub(crate) fn row_char_range(&self, buffer: &RopeBuffer, row: usize) -> Range<usize> {
         let (line, row_in_line) = self.row_to_line(row);
-        let cols = self.wrap_cols.max(1);
         let metrics = self
             .line_metrics
             .get(line)
@@ -295,14 +286,15 @@ impl VisualRowLayoutCache {
                 columns: buffer.line_len_chars(line),
                 visual_rows: 1,
             });
-
-        let start_columns = row_in_line.saturating_mul(cols);
-        let end_columns = start_columns.saturating_add(cols);
-        let start_char = line_char_for_display_columns(buffer, line, metrics, start_columns);
-        let end_char = line_char_for_display_columns(buffer, line, metrics, end_columns);
-
-        let start = buffer.line_col_to_char(line, start_char);
-        let end = buffer.line_col_to_char(line, end_char.max(start_char));
+        let local_range = line_row_char_range(
+            buffer,
+            line,
+            metrics.chars,
+            self.wrap_cols.max(1),
+            row_in_line,
+        );
+        let start = buffer.line_col_to_char(line, local_range.start);
+        let end = buffer.line_col_to_char(line, local_range.end.max(local_range.start));
         start..end
     }
 }
@@ -344,7 +336,7 @@ where
 fn measure_line(buffer: &RopeBuffer, line: usize, cols: usize) -> LineWrapMetrics {
     let chars = buffer.line_len_chars(line);
     let columns = measure_line_columns(buffer, line, chars);
-    let visual_rows = div_ceil(columns.max(1), cols).max(1);
+    let visual_rows = measure_line_visual_rows(buffer, line, chars, cols.max(1));
     LineWrapMetrics {
         chars,
         columns,
@@ -363,6 +355,68 @@ fn measure_line_columns(buffer: &RopeBuffer, idx: usize, chars: usize) -> usize 
         .filter(|c| *c != '\n' && *c != '\r')
         .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
         .sum()
+}
+
+fn measure_line_visual_rows(buffer: &RopeBuffer, line: usize, chars: usize, cols: usize) -> usize {
+    if chars == 0 {
+        return 1;
+    }
+
+    let cols = cols.max(1);
+    let mut rows = 1usize;
+    let mut row_columns = 0usize;
+    let line_slice = buffer.rope().line(line).slice(..chars);
+    for ch in line_slice.chars() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        if width == 0 {
+            continue;
+        }
+        if row_columns > 0 && row_columns.saturating_add(width) > cols {
+            rows = rows.saturating_add(1);
+            row_columns = 0;
+        }
+        row_columns = row_columns.saturating_add(width);
+    }
+
+    rows.max(1)
+}
+
+fn line_row_char_range(
+    buffer: &RopeBuffer,
+    line: usize,
+    chars: usize,
+    cols: usize,
+    row_in_line: usize,
+) -> Range<usize> {
+    if chars == 0 {
+        return 0..0;
+    }
+
+    let cols = cols.max(1);
+    let mut current_row = 0usize;
+    let mut row_start = 0usize;
+    let mut row_columns = 0usize;
+    let line_slice = buffer.rope().line(line).slice(..chars);
+    for (idx, ch) in line_slice.chars().enumerate() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        if width > 0 && row_columns > 0 && row_columns.saturating_add(width) > cols {
+            if current_row == row_in_line {
+                return row_start..idx;
+            }
+            current_row = current_row.saturating_add(1);
+            row_start = idx;
+            row_columns = 0;
+        }
+        if width > 0 {
+            row_columns = row_columns.saturating_add(width);
+        }
+    }
+
+    if current_row == row_in_line {
+        row_start..chars
+    } else {
+        chars..chars
+    }
 }
 
 fn line_char_for_display_columns(
@@ -545,6 +599,17 @@ mod tests {
         assert_eq!(buffer.slice_chars(row0.clone()), "🦀🦀🦀🦀🦀");
         assert_eq!(buffer.slice_chars(row1.clone()), "🦀");
         assert_eq!(row0.end, row1.start);
+    }
+
+    #[test]
+    fn row_char_range_does_not_emit_empty_first_row_for_single_wide_glyph() {
+        let (buffer, cache) = rebuild_cache_for("🦀\n", 5.0, 10.0, 5.0);
+        assert_eq!(cache.wrap_columns(), 1);
+        assert_eq!(cache.line_visual_rows(0), 1);
+
+        let row0 = cache.row_char_range(&buffer, 0);
+        assert_eq!(buffer.slice_chars(row0.clone()), "🦀");
+        assert!(row0.end > row0.start);
     }
 
     #[test]

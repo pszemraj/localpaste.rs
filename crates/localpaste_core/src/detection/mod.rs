@@ -45,29 +45,79 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     Some(label.to_string())
 }
 
-#[cfg(feature = "magika")]
-fn looks_like_yaml(content: &str) -> bool {
+pub(crate) fn looks_like_yaml(content: &str) -> bool {
     let trimmed = content.trim_start();
     if trimmed.starts_with("---") {
         return true;
     }
 
-    let yaml_pairs = content
-        .lines()
-        .take(512)
-        .filter(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                return false;
-            }
-            (trimmed.starts_with("- ")
-                || trimmed.contains(": ")
-                || (trimmed.ends_with(':') && trimmed.len() > 1))
-                && !trimmed.contains('{')
-        })
-        .count();
+    let mut yaml_pairs = 0usize;
+    let mut meaningful_lines = 0usize;
+    let mut first_meaningful_line: Option<&str> = None;
 
-    yaml_pairs >= 2
+    for line in content.lines().take(512) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        meaningful_lines = meaningful_lines.saturating_add(1);
+        if first_meaningful_line.is_none() {
+            first_meaningful_line = Some(trimmed);
+        }
+        if (trimmed.starts_with("- ")
+            || trimmed.contains(": ")
+            || (trimmed.ends_with(':') && trimmed.len() > 1))
+            && !trimmed.contains('{')
+        {
+            yaml_pairs = yaml_pairs.saturating_add(1);
+        }
+    }
+
+    if yaml_pairs >= 2 {
+        return true;
+    }
+
+    if yaml_pairs == 1 && meaningful_lines == 1 {
+        return first_meaningful_line
+            .map(looks_like_single_line_yaml_mapping)
+            .unwrap_or(false);
+    }
+
+    false
+}
+
+fn looks_like_single_line_yaml_mapping(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.contains('{') {
+        return false;
+    }
+    if trimmed.starts_with("- ") {
+        return true;
+    }
+
+    let Some((raw_key, raw_value)) = trimmed.split_once(':') else {
+        return false;
+    };
+    let key = raw_key.trim();
+    if key.is_empty() {
+        return false;
+    }
+    if key.contains(char::is_whitespace)
+        && !(key.starts_with('"') && key.ends_with('"'))
+        && !(key.starts_with('\'') && key.ends_with('\''))
+    {
+        return false;
+    }
+
+    let value = raw_value.trim();
+    if value.contains('{') || value.contains(';') {
+        return false;
+    }
+    if !value.starts_with('"') && !value.starts_with('\'') && value.split_whitespace().count() > 3 {
+        return false;
+    }
+
+    true
 }
 
 #[cfg(feature = "magika")]
