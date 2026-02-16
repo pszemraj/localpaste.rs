@@ -14,6 +14,9 @@ Use this protocol for release-gate evidence and regression checks.
   - p95 frame time `<= 25 ms`
   - no multi-second plain fallback during newline-burst editing.
 
+> [!IMPORTANT]
+> Reuse of a shared `DB_PATH` with another writer invalidates perf results and can introduce lock contention artifacts.
+
 ## Automated Test Budget (CI/Headless)
 
 - Automated headless tests use a broad regression budget, not release gating:

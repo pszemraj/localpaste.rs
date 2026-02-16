@@ -29,6 +29,9 @@ For auto-detected language (`language_is_manual == false`):
 
 For manual language (`language_is_manual == true`), content edits do not re-run auto detection.
 
+> [!IMPORTANT]
+> Manual language selection disables automatic re-detection on edits until you switch back to auto mode.
+
 Magika session lifecycle:
 - lazy singleton (`OnceLock<Result<Mutex<magika::Session>, String>>`),
 - guarded with `Mutex` because Magika identify calls require `&mut self`,
@@ -86,6 +89,9 @@ Current high-priority fallback labels:
 
 Currently metadata-only (plain rendering) labels:
 - `zig`, `scss`, `kotlin`, `elixir`, `dart`
+
+> [!NOTE]
+> These labels remain useful for metadata/search/filtering even when rendering is plain text.
 
 ## Runtime Provider Default (Magika)
 

@@ -17,6 +17,9 @@ Runtime note:
 - `localpaste-gui` opens and owns the DB path, and runs an embedded API endpoint for compatibility while GUI is open.
 - `localpaste` is the headless alternative and should not be run concurrently on the same `DB_PATH` as the GUI.
 
+> [!WARNING]
+> Do not run `localpaste-gui` and standalone `localpaste` against the same `DB_PATH` at the same time.
+
 ## Quick Start
 
 GUI is the default workspace target:

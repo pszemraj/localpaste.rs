@@ -16,6 +16,9 @@ This document defines the storage and on-disk compatibility contract for LocalPa
 - Existing sled-era artifacts are considered incompatible with current runtime.
 - If `data.redb` is missing and legacy sled artifacts are present, startup fails with an explicit incompatible-storage error.
 
+> [!CAUTION]
+> Sled-era data is not auto-migrated. Use a fresh `DB_PATH` for current builds unless you explicitly convert data yourself.
+
 ## Durability and Atomicity
 
 - redb write transactions are commit-durable.

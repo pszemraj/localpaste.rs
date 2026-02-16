@@ -68,6 +68,9 @@ Security expectation:
 
 If you need to expose LocalPaste publicly, follow these steps:
 
+> [!WARNING]
+> Setting `ALLOW_PUBLIC_ACCESS=1` relaxes loopback-only protections. Use it only behind a firewall/reverse proxy you control.
+
 ### 1. Enable Public Binding
 
 Build/run mechanics are documented in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md) and [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).

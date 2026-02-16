@@ -20,6 +20,9 @@ Important runtime rule:
 
 - Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` at the same time.
 
+> [!IMPORTANT]
+> Use separate `DB_PATH` values when testing GUI and standalone server concurrently.
+
 ## Storage Backend Note
 
 Storage/backend compatibility policy is documented in
@@ -57,6 +60,9 @@ lsof -i :38411
 ```
 
 Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
+
+> [!CAUTION]
+> `kill -9` can leave stale lock state and require manual recovery on next start.
 
 ### Lock Safety
 

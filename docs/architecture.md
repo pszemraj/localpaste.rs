@@ -71,6 +71,9 @@ Important invariant:
 
 - Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` concurrently.
 
+> [!IMPORTANT]
+> LocalPaste enforces a single writer per `DB_PATH`. Run GUI and standalone server on separate DB paths when both are needed.
+
 ```mermaid
 sequenceDiagram
     participant GUI as localpaste-gui
