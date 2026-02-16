@@ -3,7 +3,7 @@
 This index keeps `docs/dev` navigable and clarifies what is active vs historical.
 For repository-wide ownership rules, see [docs/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md).
 
-## Active (Canonical) Dev Docs
+## Active Dev Docs
 
 - Development workflow and command matrix:
   [devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md)
@@ -18,7 +18,7 @@ For repository-wide ownership rules, see [docs/README.md](https://github.com/psz
 - Engineering backlog:
   [backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
 
-Cross-cutting non-dev canonical docs:
+Cross-cutting non-dev primary docs:
 - Storage/backend compatibility: [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md)
 - Architecture walkthrough: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
 - Language detection pipeline: [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)

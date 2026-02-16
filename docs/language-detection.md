@@ -1,11 +1,10 @@
 # Language Detection And Highlighting
 
-This is the canonical behavior contract for language detection, canonicalization,
+This is the primary behavior reference for language detection, normalization,
 and syntax highlighting in LocalPaste.
 
 Implementation roots:
 - Core detection entrypoint: [`crates/localpaste_core/src/detection/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/detection/mod.rs)
-- Canonical labels/options: [`crates/localpaste_core/src/detection/canonical.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/detection/canonical.rs)
 - GUI syntax resolver: [`crates/localpaste_gui/src/app/highlight.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/highlight.rs)
 
 ## Feature Topology
@@ -24,9 +23,9 @@ For auto-detected language (`language_is_manual == false`):
    - run Magika detection,
    - reject non-text results,
    - reject generic labels (`txt`, `randomtxt`, `unknown`, `empty`, `undefined`),
-   - canonicalize and return if non-empty and not `text`.
+   - normalize and return if non-empty and not `text`.
 2. Otherwise (or if Magika is unavailable/fails/generic), run heuristic fallback.
-3. Canonicalize heuristic label and return unless empty/`text`.
+3. Normalize heuristic label and return unless empty/`text`.
 
 For manual language (`language_is_manual == true`), content edits do not re-run auto detection.
 
@@ -35,9 +34,9 @@ Magika session lifecycle:
 - guarded with `Mutex` because Magika identify calls require `&mut self`,
 - `prewarm()` is called in GUI/server startup paths to avoid first-save load latency.
 
-## Canonicalization Contract
+## Normalization Contract
 
-Canonicalization normalizes legacy aliases and user-entered variants to stable labels (examples):
+Normalization maps legacy aliases and user-entered variants to stable labels (examples):
 
 - `csharp`, `c#` -> `cs`
 - `c++` -> `cpp`
@@ -51,17 +50,17 @@ Canonicalization normalizes legacy aliases and user-entered variants to stable l
 
 Unknown values pass through in lowercase.
 
-Manual language picker values are defined centrally in `MANUAL_LANGUAGE_OPTIONS` and stored as canonical values.
+Manual language picker values are defined centrally in `MANUAL_LANGUAGE_OPTIONS` and stored as normalized values.
 
 ## Filter And Search Semantics
 
-Language filter matching canonicalizes both:
+Language filter matching normalizes both:
 - stored language metadata,
 - incoming filter value.
 
 This preserves interoperability across legacy and current labels (for example, `csharp` and `cs`).
 
-Search ranking also checks canonicalized language values to avoid losing metadata relevance as stored labels evolve.
+Search ranking also checks normalized language values to avoid losing metadata relevance as stored labels evolve.
 
 ## GUI Highlight Resolution
 

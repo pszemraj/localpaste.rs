@@ -1,6 +1,6 @@
 # Storage Contract
 
-This is the canonical storage and on-disk compatibility contract for LocalPaste.rs.
+This is the primary storage and on-disk compatibility contract for LocalPaste.rs.
 Other docs should link here instead of repeating backend/storage details.
 
 ## Backend and File Layout
@@ -29,7 +29,7 @@ Other docs should link here instead of repeating backend/storage details.
 - Do not run `localpaste-gui` and standalone `localpaste` concurrently on the same `DB_PATH`.
 - For isolated local testing, use distinct `DB_PATH` directories.
 
-## Related Canonical Docs
+## Related Docs
 
 - System architecture: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
 - Service operations: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)

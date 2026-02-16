@@ -65,7 +65,7 @@ Runtime/provider note:
 
 - `MAGIKA_FORCE_CPU=true` is the default (see `.env.example`), so Magika uses CPU execution provider even when GPU is available.
 
-Canonical build/run/validation command matrices are maintained in:
+Build/run/validation command matrices are maintained in:
 [`docs/dev/devlog.md`](docs/dev/devlog.md).
 
 ## Configuration and Ops

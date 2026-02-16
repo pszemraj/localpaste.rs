@@ -1,7 +1,7 @@
 # GUI Notes
 
 Use this document for rewrite GUI behavior notes and env flags.
-For detection/canonicalization/highlight pipeline semantics, use [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
+For detection/normalization/highlight pipeline semantics, use [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
 For perf validation steps/gates, use [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
 
 ## Runtime Flags
@@ -63,7 +63,7 @@ Use this checklist when touching detection/highlight/filter code.
 
 ## Edit Locks
 
-Detailed lock semantics are canonical in [locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
+Detailed lock semantics are documented in [locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
 GUI-specific behavior remains:
 
 - Opening a paste in GUI acquires a paste edit lock for the app instance owner.

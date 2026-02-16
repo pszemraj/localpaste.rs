@@ -1,6 +1,6 @@
 # LocalPaste Desktop Palette
 
-These canonical values are defined in the rewrite theme module:
+These palette values are defined in the rewrite theme module:
 [`crates/localpaste_gui/src/app/style.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/style.rs).
 
 | Token                  | Hex       | Notes                      |

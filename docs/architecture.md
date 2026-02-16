@@ -1,8 +1,8 @@
 # LocalPaste Architecture
 
-This document is the canonical system walkthrough for LocalPaste.rs.
+This document is the primary system walkthrough for LocalPaste.rs.
 For command-level developer workflows, use [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
-For language detection/canonicalization/highlight behavior, use [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
+For language detection/normalization/highlight behavior, use [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
 For storage/backend compatibility rules, use [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 For security posture, use [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
 For service operations, use [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
@@ -98,11 +98,11 @@ sequenceDiagram
 
 ## 3) Storage Design
 
-Canonical on-disk contract and compatibility policy are defined in
+Storage contract and compatibility policy are defined in
 [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 Architecture summary:
 
-Canonical tables:
+Primary tables:
 
 - `pastes`: authoritative full paste rows.
 - `folders`: authoritative folder rows.
@@ -138,12 +138,12 @@ Folder shared operations and invariant repair:
 ```mermaid
 flowchart TD
     W["Write request (create/update/delete/move)"] --> T["Open single redb write transaction"]
-    T --> C["Update canonical + derived tables"]
+    T --> C["Update primary + derived tables"]
     C --> K{"commit() succeeds?"}
     K -- yes --> OK["All changes visible atomically"]
     K -- no --> ABORT["No partial rows committed"]
 
-    R["Read request (list/search/meta)"] --> I["Read from canonical/metadata tables"]
+    R["Read request (list/search/meta)"] --> I["Read from primary/metadata tables"]
 ```
 
 ## 5) Read And Write Paths
@@ -159,7 +159,7 @@ The project centralizes sensitive folder assignment/delete logic in shared core 
 Read behavior:
 
 - list/search use metadata/index projections backed by atomic write consistency,
-- no stale-index canonical fallback path is required.
+- no stale-index primary-table fallback path is required.
 
 ## 6) Locking And Concurrency
 
@@ -168,7 +168,7 @@ Two lock layers are used:
 1. DB owner lock (filesystem/process-wide): one writer process per DB path.
 2. Paste edit locks (in-memory/paste-scoped): prevent API/CLI/bulk mutations on GUI-open pastes.
 
-Canonical lock reference:
+Lock reference:
 
 - [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
 
@@ -192,13 +192,13 @@ Current boundary rules:
 
 ## 8) Language Detection And Highlighting
 
-Canonical detection/highlight behavior is defined in
+Detection/highlight behavior is defined in
 [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
 Architecture-level summary:
 
 - Detection is centralized in `localpaste_core::detection`.
 - `localpaste_core` keeps `magika` opt-in; GUI/server enable it by default, CLI remains heuristic-only by default.
-- Auto-detect flow is `Magika -> heuristic fallback`, with canonical label normalization before persistence/filtering.
+- Auto-detect flow is `Magika -> heuristic fallback`, with label normalization before persistence/filtering.
 - Manual language mode bypasses auto re-detection on content edits.
 - GUI highlighting resolves syntaxes via a multi-step resolver and falls back to plain text when no safe grammar match exists.
 

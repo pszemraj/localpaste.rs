@@ -1,6 +1,6 @@
 # Engineering Backlog
 
-This file is the canonical engineering backlog for deferred technical follow-ups.
+This file is the primary engineering backlog for deferred technical follow-ups.
 Status uses the same checklist markers as other dev docs:
 
 - [ ] not started
@@ -16,11 +16,11 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or retired now that owner-lock probing is primary.
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR`).
 - [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)) and capture refreshed perf evidence in release notes.
-- [ ] Enforce key/value identity checks for canonical paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
+- [ ] Enforce key/value identity checks for primary paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
 - [ ] Narrow `PasteDb` mutation API so folder assignment changes cannot bypass folder-count transaction paths.
 - [ ] Track folder-count decrement failures with a persistent repair marker and run opportunistic `reconcile_folder_invariants` recovery in long-lived processes.
 - [ ] Add an explicit runtime reconcile entrypoint/scheduler for metadata indexes so degraded states are repaired without restart.
-- [ ] Add low-cost semantic drift detection for `pastes_meta` rows (without canonical content deserialization in list/search hot paths), e.g. metadata hash/version marker validation at write/reconcile time.
+- [ ] Add low-cost semantic drift detection for `pastes_meta` rows (without full content deserialization in list/search hot paths), e.g. metadata hash/version marker validation at write/reconcile time.
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).

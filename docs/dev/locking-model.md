@@ -1,6 +1,6 @@
 # Locking Model
 
-This is the canonical lock-behavior reference for LocalPaste.
+This is the primary lock-behavior reference for LocalPaste.
 Use this file for lock semantics instead of repeating lock details in API/GUI docs.
 
 ## Scope
