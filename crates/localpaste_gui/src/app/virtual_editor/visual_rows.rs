@@ -378,6 +378,15 @@ fn line_char_for_display_columns(
     let line_slice = buffer.rope().line(line).slice(..metrics.chars);
     for ch in line_slice.chars() {
         let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        if width == 0 {
+            // Keep leading zero-width codepoints anchored to visual column 0 so
+            // row starts/cursor mapping never skip them.
+            if target_columns == 0 && consumed_columns == 0 {
+                continue;
+            }
+            consumed_chars = consumed_chars.saturating_add(1);
+            continue;
+        }
         if consumed_columns.saturating_add(width) > target_columns {
             break;
         }
@@ -541,5 +550,29 @@ mod tests {
             rebuilt.push_str(buffer.slice_chars(range).as_str());
         }
         assert_eq!(rebuilt, buffer.line_without_newline(0));
+    }
+
+    #[test]
+    fn line_display_column_to_char_preserves_leading_zero_width_prefix() {
+        let text = "\u{0301}a\u{200D}b\n";
+        let (buffer, cache) = rebuild_cache_for(text, 200.0, 10.0, 5.0);
+
+        assert_eq!(cache.line_columns(&buffer, 0), 2);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 0), 0);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 1), 3);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 2), 4);
+    }
+
+    #[test]
+    fn row_char_range_keeps_leading_zero_width_codepoints_in_first_row() {
+        let (buffer, cache) = rebuild_cache_for("\u{0301}ab\n", 5.0, 10.0, 5.0);
+        assert_eq!(cache.wrap_columns(), 1);
+        assert_eq!(cache.line_visual_rows(0), 2);
+
+        let row0 = cache.row_char_range(&buffer, 0);
+        let row1 = cache.row_char_range(&buffer, 1);
+        assert_eq!(buffer.slice_chars(row0.clone()), "\u{0301}a");
+        assert_eq!(buffer.slice_chars(row1.clone()), "b");
+        assert_eq!(row0.end, row1.start);
     }
 }
