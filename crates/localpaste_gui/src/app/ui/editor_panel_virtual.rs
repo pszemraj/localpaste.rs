@@ -301,6 +301,17 @@ impl LocalPasteApp {
             );
         }
         let total_height = self.virtual_layout.total_height();
+        self.virtual_galley_cache.prepare_frame(
+            line_count,
+            self.virtual_editor_buffer.revision(),
+            VirtualGalleyContext::new(
+                wrap_width,
+                self.highlight_version,
+                use_plain,
+                editor_font,
+                ui.visuals().text_color(),
+            ),
+        );
         let mut focused = ui.memory(|m| m.has_focus(editor_id));
         let mut editor_interacted = false;
         scroll.show_viewport(ui, |ui, viewport| {
@@ -323,10 +334,13 @@ impl LocalPasteApp {
             } else if background_response.lost_focus() {
                 self.virtual_editor_state.has_focus = false;
             }
+            let viewport_rows =
+                ((viewport.height() / self.virtual_line_height.max(1.0)).ceil() as usize).max(1);
+            let overscan_lines = 10usize.max(viewport_rows / 2);
             let visible = self.virtual_layout.visible_range(
                 viewport.min.y,
                 viewport.height(),
-                VIRTUAL_OVERSCAN_LINES,
+                overscan_lines,
             );
             struct RowRender {
                 line_start: usize,
@@ -359,9 +373,12 @@ impl LocalPasteApp {
                 let line_chars = self.virtual_layout.line_chars(line_idx);
                 let render_line =
                     highlight_render_match.and_then(|render| render.lines.get(line_idx));
-                let mut job = build_virtual_line_job(ui, line, editor_font, render_line, use_plain);
-                job.wrap.max_width = wrap_width;
-                let galley = ui.fonts_mut(|f| f.layout_job(job));
+                let galley = self.virtual_galley_cache.galley_for_line(line_idx, || {
+                    let mut job =
+                        build_virtual_line_job(ui, line, editor_font, render_line, use_plain);
+                    job.wrap.max_width = wrap_width;
+                    ui.fonts_mut(|f| f.layout_job(job))
+                });
                 let row_top = content_origin.y + self.virtual_layout.line_top(line_idx);
                 let row_bottom = content_origin.y + self.virtual_layout.line_bottom(line_idx);
                 let rect = egui::Rect::from_min_max(

@@ -3,8 +3,8 @@
 use super::editor::EditorMode;
 use super::util::word_range_at;
 use super::virtual_editor::{
-    EditIntent, RecordedEdit, VirtualEditorHistory, VirtualEditorState, VirtualInputCommand,
-    WrapLayoutCache,
+    EditIntent, RecordedEdit, VirtualEditorHistory, VirtualEditorState, VirtualGalleyCache,
+    VirtualInputCommand, WrapLayoutCache,
 };
 use super::{
     is_editor_word_char, next_virtual_click_count, LocalPasteApp, VirtualApplyResult,
@@ -155,6 +155,7 @@ impl LocalPasteApp {
         self.virtual_editor_state = VirtualEditorState::default();
         self.virtual_editor_history = VirtualEditorHistory::default();
         self.virtual_layout = WrapLayoutCache::default();
+        self.virtual_galley_cache = VirtualGalleyCache::default();
         self.content_hash_cache = None;
         self.virtual_drag_active = false;
         self.reset_virtual_click_streak();
@@ -346,6 +347,11 @@ impl LocalPasteApp {
             let _ = self
                 .virtual_layout
                 .apply_delta(&self.virtual_editor_buffer, delta);
+            self.virtual_galley_cache.apply_delta(
+                delta,
+                self.virtual_editor_buffer.line_count(),
+                self.virtual_editor_buffer.revision(),
+            );
         }
         let inserted_chars = replacement.chars().count();
         let after_cursor = start.saturating_add(inserted_chars);
@@ -674,6 +680,11 @@ impl LocalPasteApp {
                         let _ = self
                             .virtual_layout
                             .apply_delta(&self.virtual_editor_buffer, delta);
+                        self.virtual_galley_cache.apply_delta(
+                            delta,
+                            self.virtual_editor_buffer.line_count(),
+                            self.virtual_editor_buffer.revision(),
+                        );
                     }
                 }
                 VirtualInputCommand::Redo => {
@@ -686,6 +697,11 @@ impl LocalPasteApp {
                         let _ = self
                             .virtual_layout
                             .apply_delta(&self.virtual_editor_buffer, delta);
+                        self.virtual_galley_cache.apply_delta(
+                            delta,
+                            self.virtual_editor_buffer.line_count(),
+                            self.virtual_editor_buffer.revision(),
+                        );
                     }
                 }
                 VirtualInputCommand::ImeEnabled => {

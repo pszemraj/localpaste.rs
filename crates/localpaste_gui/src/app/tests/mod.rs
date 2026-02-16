@@ -100,6 +100,7 @@ fn make_app() -> TestHarness {
         virtual_editor_state: VirtualEditorState::default(),
         virtual_editor_history: VirtualEditorHistory::default(),
         virtual_layout: WrapLayoutCache::default(),
+        virtual_galley_cache: VirtualGalleyCache::default(),
         virtual_drag_active: false,
         virtual_editor_active: false,
         virtual_viewport_height: 0.0,

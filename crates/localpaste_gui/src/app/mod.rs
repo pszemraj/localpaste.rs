@@ -34,7 +34,8 @@ use tracing::{info, warn};
 use util::{display_language_label, env_flag_enabled, status_language_filter_label, word_range_at};
 use virtual_editor::{
     commands_from_events, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
-    VirtualEditorState, VirtualInputCommand, WrapLayoutCache,
+    VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext, VirtualInputCommand,
+    WrapLayoutCache,
 };
 use virtual_view::{VirtualCursor, VirtualSelectionState};
 
@@ -80,6 +81,7 @@ pub(crate) struct LocalPasteApp {
     virtual_editor_state: VirtualEditorState,
     virtual_editor_history: VirtualEditorHistory,
     virtual_layout: WrapLayoutCache,
+    virtual_galley_cache: VirtualGalleyCache,
     virtual_drag_active: bool,
     virtual_viewport_height: f32,
     virtual_line_height: f32,
@@ -174,7 +176,6 @@ const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
 const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
-const VIRTUAL_OVERSCAN_LINES: usize = 3;
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
 
@@ -439,6 +440,7 @@ impl LocalPasteApp {
             virtual_editor_state: VirtualEditorState::default(),
             virtual_editor_history: VirtualEditorHistory::default(),
             virtual_layout: WrapLayoutCache::default(),
+            virtual_galley_cache: VirtualGalleyCache::default(),
             virtual_drag_active: false,
             virtual_editor_active: false,
             virtual_viewport_height: 0.0,
