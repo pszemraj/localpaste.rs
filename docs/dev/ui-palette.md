@@ -1,7 +1,7 @@
 # LocalPaste Desktop Palette
 
 These palette values are defined in the rewrite theme module:
-[`crates/localpaste_gui/src/app/style.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/style.rs).
+[`crates/localpaste_gui/src/app/style.rs`](../../crates/localpaste_gui/src/app/style.rs).
 
 | Token                    | Hex         | Notes                       |
 | ------------------------ | ----------- | --------------------------- |
@@ -22,4 +22,4 @@ These palette values are defined in the rewrite theme module:
 The native editor uses [the 0xProto font](https://github.com/0xType/0xProto) (Regular NL) under the SIL Open Font License ([release 2.502](https://github.com/0xType/0xProto/releases/tag/2.502))
 
 Font files and license live at
-[`assets/fonts/0xProto`](https://github.com/pszemraj/localpaste.rs/blob/main/assets/fonts/0xProto).
+[`assets/fonts/0xProto`](../../assets/fonts/0xProto).
