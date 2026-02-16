@@ -54,6 +54,91 @@ Use this checklist when touching detection/highlight/filter code.
 9. Re-run shortcut sanity checks after language UI edits:
    - `Ctrl/Cmd+S`, `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+F`, `Ctrl/Cmd+K`.
 
+## Manual GUI Human-Step Checklist (Comprehensive)
+
+Use this when a change touches GUI interaction/state logic and you want an end-to-end manual pass.
+
+### Preflight Commands
+
+1. Build release binaries:
+   - `cargo build -p localpaste_server --bin localpaste --release`
+   - `cargo build -p localpaste_gui --bin localpaste-gui --release`
+2. Run seeded virtual-editor GUI harness:
+   - `.\scratch\virtualizedgui-perf-run.ps1 -Profile Release -VirtualMode Editor -PerfLog -InputTrace -HighlightTrace -SeedHighlightMatrix -SeedHighlightMatrixAutoDetect -KeepDb -Port 38973`
+3. Expected script output before GUI launch:
+   - seeded paste table printed
+   - `Seed verification passed.`
+
+### Script Status / Flags
+
+- `scratch/virtualizedgui-perf-run.ps1` parameters are current:
+  - `DbPath`, `Port`, `KeepDb`, `NoGui`, `Build`, `NoMagika`, `SeedHighlightMatrix`, `SeedHighlightMatrixAutoDetect`, `Profile`, `VirtualMode`, `PerfLog`, `InputTrace`, `HighlightTrace`
+- `-SeedHighlightMatrixAutoDetect` is meaningful only when `-SeedHighlightMatrix` is also set.
+- `-PerfLog` sets `LOCALPASTE_EDITOR_PERF_LOG=1`; backend perf logging is separate (`LOCALPASTE_BACKEND_PERF_LOG=1`).
+
+### Manual Checklist
+
+1. Launch sanity:
+   - GUI opens without panic/crash, status bar shows API endpoint and expected mode (`virtual editor`).
+2. Initial dataset sanity:
+   - Sidebar includes seeded pastes such as `perf-medium-python`, `perf-100kb-python`, `perf-300kb-rust`, `perf-scroll-5k-lines`.
+3. Focus behavior:
+   - Click editor, type a character, caret remains visible and blinking.
+4. Core shortcuts:
+   - `Ctrl/Cmd+N`: creates/selects a new paste.
+   - `Ctrl/Cmd+S`: save transitions status from dirty -> saved.
+   - `Ctrl/Cmd+Delete`: deletes selected paste and list updates.
+   - `Ctrl/Cmd+F`: focuses sidebar search input.
+   - `Ctrl/Cmd+K`: opens command palette.
+5. Command palette actions:
+   - Open selected paste from palette.
+   - Delete from palette and confirm list removal.
+   - Copy raw/copy fenced commands complete and close/open behavior is correct.
+6. Search and filters:
+   - Sidebar query narrows results and clearing query restores list.
+   - Smart collections (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) re-scope results.
+   - Bottom language filter stacks with active collection (not replacing it).
+7. Metadata/properties:
+   - Open Properties drawer, edit name/tags/language, save, and confirm list projection updates.
+8. Clipboard/editing baseline:
+   - `Ctrl/Cmd+C`, `Ctrl/Cmd+X`, `Ctrl/Cmd+V`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Y` behave correctly in virtual editor mode.
+9. Virtual editor selection:
+   - Double-click selects word.
+   - Triple-click selects line.
+   - Drag selection across lines keeps expected range and autoscroll direction.
+10. Wrap-boundary regression: down-move boundary intent:
+    - Paste content `abcd\nab\n`.
+    - Make editor narrow enough to wrap at ~4 columns.
+    - Put caret at end of `abcd` and press `Down`.
+    - Expected: caret lands at end of short row (`ab`), not column 0.
+11. Wrap-boundary regression: repeated up from exact boundary:
+    - Paste content `wxyz\nabcdefgh\n`.
+    - Keep wrap at ~4 columns.
+    - Place caret at end of `abcdefgh`, press `Up` twice.
+    - Expected: second `Up` continues movement to previous physical line end (`wxyz`), not stuck on internal boundary.
+12. Wide-glyph wrapping regression:
+    - Paste `🦀` (or `你好`) and make viewport very narrow (`wrap_cols` effectively 1).
+    - Expected: no blank first visual row; glyph remains visible; caret/selection maps to glyph correctly.
+13. Highlight matrix auto-detect sanity:
+    - Open several `lang-*` seeded pastes and verify language chip/highlighting is plausible for each.
+14. Manual plain override:
+    - Set language to `Plain text` in Properties, save, confirm chip shows `plain`.
+    - Edit into obvious code; expected: remains plain until switched back to auto.
+15. Large buffer fallback:
+    - Open `perf-300kb-rust`; expected: plain rendering by design (`>=256KB`) with smooth scrolling.
+16. Mid-size perf sanity:
+    - Open `perf-scroll-5k-lines`, scroll rapidly, type near middle, no major hitching.
+17. Window reflow:
+    - Resize window repeatedly; expected: no persistent plain-text gap artifacts and caret remains aligned.
+18. Lock behavior sanity:
+    - While GUI is open on a paste, verify external API mutation attempts against same paste are lock-gated (423 behavior per lock model).
+19. Trace sanity (if enabled):
+    - Input trace logs show deterministic virtual input routing.
+    - Highlight trace logs show queue/worker/apply flow with stale drops when applicable.
+    - Perf logs emit frame percentiles (`avg/p50/p95/p99/worst`) periodically.
+20. Persistence check:
+    - Close GUI and relaunch with same `DB_PATH` (kept by `-KeepDb`), verify seeded/edited content persists.
+
 ## Edit Locks
 
 Detailed lock semantics are documented in [locking-model.md](docs/dev/locking-model.md).
