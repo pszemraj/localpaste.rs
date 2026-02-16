@@ -437,6 +437,66 @@ fn normalized_syntax_key(value: &str) -> String {
         .collect()
 }
 
+fn try_resolve_syntax_candidate<'a>(
+    ps: &'a syntect::parsing::SyntaxSet,
+    candidate: &str,
+) -> Option<&'a syntect::parsing::SyntaxReference> {
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(syntax) = ps.find_syntax_by_name(trimmed) {
+        return Some(syntax);
+    }
+    if let Some(syntax) = ps.find_syntax_by_extension(trimmed) {
+        return Some(syntax);
+    }
+
+    for syntax in ps.syntaxes() {
+        if syntax.name.eq_ignore_ascii_case(trimmed) {
+            return Some(syntax);
+        }
+    }
+
+    let normalized = normalized_syntax_key(trimmed);
+    if !normalized.is_empty() {
+        for syntax in ps.syntaxes() {
+            if normalized_syntax_key(syntax.name.as_str()) == normalized {
+                return Some(syntax);
+            }
+        }
+    }
+
+    ps.syntaxes().iter().find(|syntax| {
+        syntax
+            .file_extensions
+            .iter()
+            .any(|ext| ext.eq_ignore_ascii_case(trimmed))
+    })
+}
+
+fn syntax_fallback_candidates(hint_lower: &str) -> &'static [&'static str] {
+    match hint_lower {
+        "cs" => &["C#", "cs"],
+        "shell" => &["Bourne Again Shell (bash)", "bash", "sh"],
+        "cpp" => &["C++", "cpp", "cc"],
+        "objectivec" => &["Objective-C", "m"],
+        "dockerfile" => &["Dockerfile", "bash", "sh"],
+        "makefile" => &["Makefile", "make"],
+        "latex" => &["LaTeX", "tex"],
+        // Syntect defaults used by egui do not ship native grammars for these in all bundles.
+        // Keep explicit fallback only for high-priority labels to avoid hiding unsupported
+        // language gaps behind misleading tokenization.
+        "typescript" => &["ts", "JavaScript", "js"],
+        "toml" => &["yaml", "YAML", "properties"],
+        "swift" => &["Objective-C", "C++", "c"],
+        "powershell" => &["ps1", "Bourne Again Shell (bash)", "bash", "sh"],
+        "sass" => &["sass", "Ruby Haml", "css"],
+        _ => &[],
+    }
+}
+
 fn resolve_syntax<'a>(
     ps: &'a syntect::parsing::SyntaxSet,
     hint: &str,
@@ -451,54 +511,12 @@ fn resolve_syntax<'a>(
         return ps.find_syntax_plain_text();
     }
 
-    if let Some(syntax) = ps.find_syntax_by_name(hint_trimmed) {
-        return syntax;
-    }
-    if let Some(syntax) = ps.find_syntax_by_extension(hint_trimmed) {
+    if let Some(syntax) = try_resolve_syntax_candidate(ps, hint_trimmed) {
         return syntax;
     }
 
-    for syntax in ps.syntaxes() {
-        if syntax.name.eq_ignore_ascii_case(hint_trimmed) {
-            return syntax;
-        }
-    }
-
-    let hint_normalized = normalized_syntax_key(&hint_lower);
-    if !hint_normalized.is_empty() {
-        for syntax in ps.syntaxes() {
-            if normalized_syntax_key(syntax.name.as_str()) == hint_normalized {
-                return syntax;
-            }
-        }
-    }
-
-    for syntax in ps.syntaxes() {
-        if syntax
-            .file_extensions
-            .iter()
-            .any(|ext| ext.eq_ignore_ascii_case(&hint_lower))
-        {
-            return syntax;
-        }
-    }
-
-    let alias = match hint_lower.as_str() {
-        "cs" => "C#",
-        "shell" => "Bourne Again Shell (bash)",
-        "cpp" => "C++",
-        "powershell" => "PowerShell",
-        "objectivec" => "Objective-C",
-        "dockerfile" => "Dockerfile",
-        "makefile" => "Makefile",
-        "latex" => "LaTeX",
-        _ => "",
-    };
-    if !alias.is_empty() {
-        if let Some(syntax) = ps.find_syntax_by_name(alias) {
-            return syntax;
-        }
-        if let Some(syntax) = ps.find_syntax_by_extension(alias) {
+    for candidate in syntax_fallback_candidates(hint_lower.as_str()) {
+        if let Some(syntax) = try_resolve_syntax_candidate(ps, candidate) {
             return syntax;
         }
     }
@@ -1073,15 +1091,10 @@ mod resolver_tests {
     #[test]
     fn resolve_syntax_handles_alias_labels() {
         let settings = SyntectSettings::default();
-        for label in ["cs", "shell", "cpp"] {
+        for label in ["cs", "shell", "cpp", "powershell"] {
             let syntax = resolve_syntax(&settings.ps, label);
             assert_ne!(syntax.name, "Plain Text", "label: {label}");
         }
-        // No PowerShell grammar ships in all syntect bundles.
-        assert_eq!(
-            resolve_syntax(&settings.ps, "powershell").name,
-            "Plain Text"
-        );
     }
 
     #[test]
@@ -1101,5 +1114,32 @@ mod resolver_tests {
         assert_eq!(syntect_language_hint(" csharp "), "cs");
         assert_eq!(syntect_language_hint("bash"), "shell");
         assert_eq!(syntect_language_hint(""), "text");
+    }
+
+    #[test]
+    fn resolve_syntax_high_priority_and_new_language_matrix() {
+        let settings = SyntectSettings::default();
+        let labels = ["typescript", "toml", "swift", "powershell"];
+        let mut plain_labels = Vec::new();
+        for label in labels {
+            let syntax = resolve_syntax(&settings.ps, label);
+            if syntax.name == "Plain Text" {
+                plain_labels.push(label);
+            }
+        }
+        assert!(
+            plain_labels.is_empty(),
+            "labels that still resolve to plain text: {:?}",
+            plain_labels
+        );
+    }
+
+    #[test]
+    fn resolve_syntax_leaves_known_unsupported_labels_as_plain_text() {
+        let settings = SyntectSettings::default();
+        for label in ["zig", "scss", "kotlin", "elixir", "dart"] {
+            let syntax = resolve_syntax(&settings.ps, label);
+            assert_eq!(syntax.name, "Plain Text", "label: {label}");
+        }
     }
 }

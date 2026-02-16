@@ -49,6 +49,13 @@ Use this checklist when touching detection/highlight/filter code.
 7. Validate syntax resolver behavior:
    - `cs`, `shell`, `cpp`, `powershell` should highlight (non-plain grammar).
    - Unknown label and `text`/`txt` should render plain text.
+   - High-priority fallback mappings when native grammar is unavailable:
+     - `typescript` -> JavaScript grammar
+     - `toml` -> YAML/properties grammar
+     - `swift` -> Objective-C/C++ grammar
+     - `powershell` -> bash grammar
+   - Languages currently kept as metadata/filter labels with plain rendering (no fallback grammar mapping):
+     - `zig`, `scss`, `kotlin`, `elixir`, `dart`
 8. Validate large-buffer guardrail:
    - Paste content >= 256KB and verify display is plain regardless of language metadata.
 9. Re-run shortcut sanity checks after language UI edits:
