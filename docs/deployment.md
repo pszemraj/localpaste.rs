@@ -1,6 +1,23 @@
 # Running LocalPaste as a Background Service
 
-> These instructions apply to the headless `localpaste` server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
+These instructions apply to the headless `localpaste` server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
+
+---
+
+- [Related Docs](#related-docs)
+- [Quick Start](#quick-start)
+- [Storage Backend Note](#storage-backend-note)
+- [Process Management](#process-management)
+- [Linux (systemd)](#linux-systemd)
+- [macOS (launchd)](#macos-launchd)
+- [Windows](#windows)
+- [Common Patterns](#common-patterns)
+- [Embedded API Address Discovery (.api-addr)](#embedded-api-address-discovery-api-addr)
+
+---
+
+## Related Docs
+
 > Security posture, bind policy, and public exposure guidance: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
 > Storage backend and compatibility policy: [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 > Development build/run command matrix: [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).

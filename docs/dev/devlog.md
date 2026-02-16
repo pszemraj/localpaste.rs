@@ -62,6 +62,7 @@ cargo run -p localpaste_server --bin localpaste --release
 ```
 
 Topology note:
+
 - `localpaste-gui` owns the DB lock for its `DB_PATH` and hosts an embedded API endpoint for compatibility.
 - Do not run `localpaste` concurrently on the same `DB_PATH` as the GUI.
 - Use standalone `localpaste` for headless/server-only operation.

@@ -4,6 +4,7 @@ This document describes language detection, normalization, and syntax
 highlighting behavior in LocalPaste.
 
 Implementation roots:
+
 - Core detection entrypoint: [`crates/localpaste_core/src/detection/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/detection/mod.rs)
 - GUI syntax resolver: [`crates/localpaste_gui/src/app/highlight.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/highlight.rs)
 
@@ -33,6 +34,7 @@ For manual language (`language_is_manual == true`), content edits do not re-run 
 > Manual language selection disables automatic re-detection on edits until you switch back to auto mode.
 
 Magika session lifecycle:
+
 - lazy singleton (`OnceLock<Result<Mutex<magika::Session>, String>>`),
 - guarded with `Mutex` because Magika identify calls require `&mut self`,
 - `prewarm()` is called in GUI/server startup paths to avoid first-save load latency.
@@ -58,6 +60,7 @@ Manual language picker values are defined centrally in `MANUAL_LANGUAGE_OPTIONS`
 ## Filter And Search Semantics
 
 Language filter matching normalizes both:
+
 - stored language metadata,
 - incoming filter value.
 
@@ -78,16 +81,19 @@ GUI highlight resolution uses a multi-step strategy instead of a fixed name tabl
 7. plain text
 
 Policy:
+
 - Keep explicit fallback mapping narrow and intentional.
 - Preserve unsupported-language visibility by keeping their metadata labels even when rendering falls back to plain text.
 
 Current high-priority fallback labels:
+
 - `typescript`
 - `toml`
 - `swift`
 - `powershell`
 
 Currently metadata-only (plain rendering) labels:
+
 - `zig`, `scss`, `kotlin`, `elixir`, `dart`
 
 > [!NOTE]

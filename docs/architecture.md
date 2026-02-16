@@ -1,11 +1,23 @@
 # LocalPaste Architecture
 
 This document is the system walkthrough for LocalPaste.rs.
-For command-level developer workflows, use [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
-For language detection/normalization/highlight behavior, use [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
-For storage/backend compatibility rules, use [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
-For security posture, use [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
-For service operations, use [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
+
+---
+
+- [1) System At A Glance](#1-system-at-a-glance)
+- [2) Runtime Topologies](#2-runtime-topologies)
+- [3) Storage Design](#3-storage-design)
+- [4) Consistency Model](#4-consistency-model)
+- [5) Read And Write Paths](#5-read-and-write-paths)
+- [6) Locking And Concurrency](#6-locking-and-concurrency)
+- [7) HTTP Layer And Security Boundaries](#7-http-layer-and-security-boundaries)
+- [8) Language Detection And Highlighting](#8-language-detection-and-highlighting)
+- [9) GUI Save Pipeline](#9-gui-save-pipeline)
+- [10) Discovery And Trust](#10-discovery-and-trust)
+- [11) Validation Strategy](#11-validation-strategy)
+- [12) Active Follow-Ups](#12-active-follow-ups)
+
+---
 
 ## 1) System At A Glance
 
