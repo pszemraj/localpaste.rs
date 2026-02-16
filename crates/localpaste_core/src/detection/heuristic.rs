@@ -335,18 +335,6 @@ pub(crate) fn detect(content: &str) -> Option<String> {
             2,
         ),
         (
-            "swift",
-            &[
-                "import foundation",
-                "guard let",
-                "protocol ",
-                "func ",
-                "let ",
-                "var ",
-            ],
-            2,
-        ),
-        (
             "dart",
             &[
                 "void main()",
