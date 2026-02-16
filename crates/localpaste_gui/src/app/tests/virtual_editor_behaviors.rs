@@ -216,6 +216,45 @@ fn virtual_vertical_move_target_returns_global_char_offset() {
 }
 
 #[test]
+fn page_navigation_initializes_preferred_column_from_current_cursor() {
+    let mut harness = make_app();
+    harness
+        .app
+        .reset_virtual_editor("0123456789\nabcdefghij\nklmnopqrst\n");
+    harness
+        .app
+        .virtual_layout
+        .rebuild(&harness.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+    harness.app.virtual_viewport_height = 1.0;
+    harness.app.virtual_line_height = 1.0;
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    let start = harness.app.virtual_editor_buffer.line_col_to_char(0, 5);
+    harness.app.virtual_editor_state.set_cursor(start, len);
+    harness.app.virtual_editor_state.clear_preferred_column();
+
+    let ctx = egui::Context::default();
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::PageDown { select: false }]);
+    let (line, col) = harness
+        .app
+        .virtual_editor_buffer
+        .char_to_line_col(harness.app.virtual_editor_state.cursor());
+    assert_eq!((line, col), (1, 5));
+
+    harness.app.virtual_editor_state.clear_preferred_column();
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::PageUp { select: false }]);
+    let (line, col) = harness
+        .app
+        .virtual_editor_buffer
+        .char_to_line_col(harness.app.virtual_editor_state.cursor());
+    assert_eq!((line, col), (0, 5));
+}
+
+#[test]
 fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
     fn setup_selection(app: &mut LocalPasteApp) {
         app.reset_virtual_editor("abcdef");

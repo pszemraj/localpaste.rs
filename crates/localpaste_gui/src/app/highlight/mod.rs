@@ -348,34 +348,34 @@ impl EditorLayoutCache {
             if line_start >= text.len() {
                 break;
             }
-            if line.spans.is_empty() && line.len > 0 {
-                job.sections.push(LayoutSection {
-                    leading_space: 0.0,
-                    byte_range: line_start..(line_start + line.len).min(text.len()),
-                    format: default_format.clone(),
-                });
-            } else {
-                for span in &line.spans {
-                    let start = line_start.saturating_add(span.range.start);
-                    let end = line_start.saturating_add(span.range.end);
-                    if start >= text.len() || end > text.len() || start >= end {
-                        continue;
-                    }
-                    job.sections.push(LayoutSection {
-                        leading_space: 0.0,
-                        byte_range: start..end,
-                        format: render_span_to_format(span, editor_font),
-                    });
+            let line_end = line_start.saturating_add(line.len).min(text.len());
+            let line_len = line_end.saturating_sub(line_start);
+            let mut styled_sections = Vec::with_capacity(line.spans.len());
+            for span in &line.spans {
+                let start = span.range.start.min(line_len);
+                let end = span.range.end.min(line_len);
+                if start >= end {
+                    continue;
                 }
+                styled_sections.push((start..end, render_span_to_format(span, editor_font)));
             }
+            push_sections_with_default_gaps(
+                &mut job,
+                line_start,
+                line_len,
+                &default_format,
+                styled_sections,
+            );
             line_start = line_start.saturating_add(line.len);
         }
         if line_start < text.len() {
-            job.sections.push(LayoutSection {
-                leading_space: 0.0,
-                byte_range: line_start..text.len(),
-                format: default_format,
-            });
+            push_sections_with_default_gaps(
+                &mut job,
+                line_start,
+                text.len().saturating_sub(line_start),
+                &default_format,
+                Vec::new(),
+            );
         }
 
         job
@@ -417,26 +417,16 @@ fn build_virtual_line_job_owned(
         ..Default::default()
     };
 
-    if render_line.spans.is_empty() && line_len > 0 {
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: 0..line_len,
-            format: default_format,
-        });
-    } else {
-        for span in &render_line.spans {
-            let start = span.range.start.min(line_len);
-            let end = span.range.end.min(line_len);
-            if start >= end {
-                continue;
-            }
-            job.sections.push(LayoutSection {
-                leading_space: 0.0,
-                byte_range: start..end,
-                format: render_span_to_format(span, editor_font),
-            });
+    let mut styled_sections = Vec::with_capacity(render_line.spans.len());
+    for span in &render_line.spans {
+        let start = span.range.start.min(line_len);
+        let end = span.range.end.min(line_len);
+        if start >= end {
+            continue;
         }
+        styled_sections.push((start..end, render_span_to_format(span, editor_font)));
     }
+    push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
 
     job.wrap.max_width = f32::INFINITY;
     job
@@ -473,16 +463,7 @@ pub(super) fn build_virtual_line_segment_job_owned(
         job.wrap.max_width = f32::INFINITY;
         return job;
     }
-    if render_line.spans.is_empty() {
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: 0..line_len,
-            format: default_format,
-        });
-        job.wrap.max_width = f32::INFINITY;
-        return job;
-    }
-
+    let mut styled_sections = Vec::with_capacity(render_line.spans.len());
     for span in &render_line.spans {
         let start = span.range.start.max(line_byte_range.start);
         let end = span.range.end.min(line_byte_range.end);
@@ -494,20 +475,12 @@ pub(super) fn build_virtual_line_segment_job_owned(
         if local_start >= local_end {
             continue;
         }
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: local_start..local_end,
-            format: render_span_to_format(span, editor_font),
-        });
+        styled_sections.push((
+            local_start..local_end,
+            render_span_to_format(span, editor_font),
+        ));
     }
-
-    if job.sections.is_empty() {
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: 0..line_len,
-            format: default_format,
-        });
-    }
+    push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
 
     job.wrap.max_width = f32::INFINITY;
     job
@@ -678,6 +651,67 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
         let mut section = section.clone();
         section.byte_range = (section.byte_range.start + offset)..(section.byte_range.end + offset);
         job.sections.push(section);
+    }
+}
+
+fn push_sections_with_default_gaps(
+    job: &mut LayoutJob,
+    offset: usize,
+    line_len: usize,
+    default_format: &TextFormat,
+    mut styled_sections: Vec<(Range<usize>, TextFormat)>,
+) {
+    if line_len == 0 {
+        return;
+    }
+    if styled_sections.is_empty() {
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: offset..(offset + line_len),
+            format: default_format.clone(),
+        });
+        return;
+    }
+
+    styled_sections.sort_unstable_by(|a, b| {
+        a.0.start
+            .cmp(&b.0.start)
+            .then_with(|| a.0.end.cmp(&b.0.end))
+    });
+
+    let mut cursor = 0usize;
+    for (range, format) in styled_sections {
+        let start = range.start.min(line_len);
+        let end = range.end.min(line_len);
+        if start >= end {
+            continue;
+        }
+
+        if start > cursor {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: (offset + cursor)..(offset + start),
+                format: default_format.clone(),
+            });
+        }
+
+        let styled_start = start.max(cursor);
+        if styled_start < end {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: (offset + styled_start)..(offset + end),
+                format,
+            });
+            cursor = end;
+        }
+    }
+
+    if cursor < line_len {
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: (offset + cursor)..(offset + line_len),
+            format: default_format.clone(),
+        });
     }
 }
 
@@ -975,5 +1009,125 @@ pub(super) fn syntect_language_hint(language: &str) -> String {
         "text".to_string()
     } else {
         canonical
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_style() -> HighlightStyle {
+        HighlightStyle {
+            color: [120, 180, 240, 255],
+            italics: false,
+            underline: false,
+        }
+    }
+
+    fn test_span(range: Range<usize>) -> HighlightSpan {
+        HighlightSpan {
+            range,
+            style: test_style(),
+        }
+    }
+
+    fn assert_sections_cover(job: &LayoutJob, len: usize) {
+        let mut ranges: Vec<Range<usize>> = job
+            .sections
+            .iter()
+            .map(|section| section.byte_range.clone())
+            .collect();
+        ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start).then_with(|| a.end.cmp(&b.end)));
+        let mut cursor = 0usize;
+        for range in ranges {
+            assert!(
+                range.start <= cursor,
+                "layout job has gap before {}",
+                range.start
+            );
+            cursor = cursor.max(range.end);
+        }
+        assert_eq!(cursor, len);
+    }
+
+    fn assert_has_section(job: &LayoutJob, expected: Range<usize>) {
+        assert!(
+            job.sections
+                .iter()
+                .any(|section| section.byte_range.start == expected.start
+                    && section.byte_range.end == expected.end),
+            "expected section {:?} not found",
+            expected
+        );
+    }
+
+    #[test]
+    fn virtual_line_job_fills_gaps_for_partial_stale_spans() {
+        egui::__run_test_ctx(|ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let font = egui::FontId::monospace(14.0);
+                let render_line = HighlightRenderLine {
+                    len: 6,
+                    spans: vec![test_span(0..2), test_span(4..5)],
+                };
+                let job = build_virtual_line_job(ui, "abcdef", &font, Some(&render_line), false);
+
+                assert_sections_cover(&job, 6);
+                assert_has_section(&job, 2..4);
+                assert_has_section(&job, 5..6);
+            });
+        });
+    }
+
+    #[test]
+    fn virtual_line_segment_job_fills_prefix_and_suffix_gaps() {
+        egui::__run_test_ctx(|ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let font = egui::FontId::monospace(14.0);
+                let render_line = HighlightRenderLine {
+                    len: 6,
+                    spans: vec![test_span(2..3)],
+                };
+                let job = build_virtual_line_segment_job_owned(
+                    ui,
+                    "bcde".to_string(),
+                    &font,
+                    Some(&render_line),
+                    false,
+                    1..5,
+                );
+
+                assert_sections_cover(&job, 4);
+                assert_has_section(&job, 0..1);
+                assert_has_section(&job, 2..4);
+            });
+        });
+    }
+
+    #[test]
+    fn render_job_fills_unstyled_gaps_with_default_format() {
+        egui::__run_test_ctx(|ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let font = egui::FontId::monospace(14.0);
+                let text = "abcdef\n";
+                let render = HighlightRender {
+                    paste_id: "alpha".to_string(),
+                    revision: 1,
+                    text_len: text.len(),
+                    language_hint: "rust".to_string(),
+                    theme_key: "base16-mocha.dark".to_string(),
+                    lines: vec![HighlightRenderLine {
+                        len: text.len(),
+                        spans: vec![test_span(0..2), test_span(4..5)],
+                    }],
+                };
+                let cache = EditorLayoutCache::default();
+                let job = cache.build_render_job(ui, text, &render, &font);
+
+                assert_sections_cover(&job, text.len());
+                assert_has_section(&job, 2..4);
+                assert_has_section(&job, 5..text.len());
+            });
+        });
     }
 }

@@ -21,6 +21,15 @@ use std::time::Instant;
 use tracing::info;
 
 impl LocalPasteApp {
+    fn virtual_preferred_column_for_cursor(&self, cursor: usize) -> usize {
+        let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
+        let display_col =
+            self.virtual_layout
+                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
+        let cols = self.virtual_layout.wrap_columns().max(1);
+        display_col % cols
+    }
+
     pub(super) fn handle_large_editor_click(
         &mut self,
         output: &TextEditOutput,
@@ -645,19 +654,14 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::MoveUp { select } => {
-                    let (line, col) = self
-                        .virtual_editor_buffer
-                        .char_to_line_col(self.virtual_editor_state.cursor());
-                    let col = self.virtual_layout.line_char_to_display_column(
-                        &self.virtual_editor_buffer,
-                        line,
-                        col,
-                    );
-                    let cols = self.virtual_layout.wrap_columns().max(1);
-                    let preferred = self
-                        .virtual_editor_state
-                        .preferred_column()
-                        .unwrap_or(col % cols);
+                    let preferred =
+                        self.virtual_editor_state
+                            .preferred_column()
+                            .unwrap_or_else(|| {
+                                self.virtual_preferred_column_for_cursor(
+                                    self.virtual_editor_state.cursor(),
+                                )
+                            });
                     self.virtual_editor_state.set_preferred_column(preferred);
                     let target = self.virtual_move_vertical_target(
                         self.virtual_editor_state.cursor(),
@@ -671,19 +675,14 @@ impl LocalPasteApp {
                     );
                 }
                 VirtualInputCommand::MoveDown { select } => {
-                    let (line, col) = self
-                        .virtual_editor_buffer
-                        .char_to_line_col(self.virtual_editor_state.cursor());
-                    let col = self.virtual_layout.line_char_to_display_column(
-                        &self.virtual_editor_buffer,
-                        line,
-                        col,
-                    );
-                    let cols = self.virtual_layout.wrap_columns().max(1);
-                    let preferred = self
-                        .virtual_editor_state
-                        .preferred_column()
-                        .unwrap_or(col % cols);
+                    let preferred =
+                        self.virtual_editor_state
+                            .preferred_column()
+                            .unwrap_or_else(|| {
+                                self.virtual_preferred_column_for_cursor(
+                                    self.virtual_editor_state.cursor(),
+                                )
+                            });
                     self.virtual_editor_state.set_preferred_column(preferred);
                     let target = self.virtual_move_vertical_target(
                         self.virtual_editor_state.cursor(),
@@ -701,7 +700,10 @@ impl LocalPasteApp {
                         .floor() as usize)
                         .max(1);
                     let mut target = self.virtual_editor_state.cursor();
-                    let preferred = self.virtual_editor_state.preferred_column().unwrap_or(0);
+                    let preferred = self
+                        .virtual_editor_state
+                        .preferred_column()
+                        .unwrap_or_else(|| self.virtual_preferred_column_for_cursor(target));
                     self.virtual_editor_state.set_preferred_column(preferred);
                     for _ in 0..rows {
                         target = self.virtual_move_vertical_target(target, preferred, true);
@@ -720,7 +722,10 @@ impl LocalPasteApp {
                         .floor() as usize)
                         .max(1);
                     let mut target = self.virtual_editor_state.cursor();
-                    let preferred = self.virtual_editor_state.preferred_column().unwrap_or(0);
+                    let preferred = self
+                        .virtual_editor_state
+                        .preferred_column()
+                        .unwrap_or_else(|| self.virtual_preferred_column_for_cursor(target));
                     self.virtual_editor_state.set_preferred_column(preferred);
                     for _ in 0..rows {
                         let next = self.virtual_move_vertical_target(target, preferred, false);
