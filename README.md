@@ -71,6 +71,7 @@ Canonical build/run/validation command matrices are maintained in:
 ## Configuration and Ops
 
 - System architecture walkthrough: [`docs/architecture.md`](docs/architecture.md)
+- Language detection + highlighting behavior: [`docs/language-detection.md`](docs/language-detection.md)
 - Storage/backend compatibility contract: [`docs/storage.md`](docs/storage.md)
 - Security and environment variables: [`docs/security.md`](docs/security.md)
 - Service/background operation: [`docs/deployment.md`](docs/deployment.md)

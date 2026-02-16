@@ -9,6 +9,7 @@ For any concept, keep one canonical definition and replace duplicate prose elsew
 | --- | --- |
 | Product/project overview | [README.md](https://github.com/pszemraj/localpaste.rs/blob/main/README.md) |
 | System architecture walkthrough | [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md) |
+| Language detection + canonicalization + highlight resolution | [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md) |
 | Storage backend + compatibility contract | [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md) |
 | Security posture + public exposure | [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md) |
 | Service/background operation + lock recovery | [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md) |
@@ -18,11 +19,8 @@ For any concept, keep one canonical definition and replace duplicate prose elsew
 | API route behavior/response shape | [crates/localpaste_server/src/handlers/paste.rs](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/paste.rs) |
 | GUI runtime flags + behavior notes | [docs/dev/gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md) |
 | GUI perf validation protocol + thresholds | [docs/dev/gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md) |
-| Rewrite parity status + merge gate | [docs/dev/parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md) |
 | Engineering backlog | [docs/dev/backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md) |
 | UI visual tokens | [docs/dev/ui-palette.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/ui-palette.md) |
-| Folder invariants audit details (historical) | [docs/dev/folder-audit-matrix-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-matrix-2026-02-13.md) |
-| Folder invariants audit summary (historical) | [docs/dev/folder-audit-report-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-report-2026-02-13.md) |
 
 ## Documentation Rules
 
@@ -31,6 +29,7 @@ For any concept, keep one canonical definition and replace duplicate prose elsew
 - Do not duplicate command matrices, env-flag definitions, or merge-gate checklists.
 - Mark historical/superseded docs clearly as non-normative.
 
-## Historical/Superseded Docs
+## Historical Artifacts
 
-- Historical artifacts are now tracked only in [docs/dev/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/README.md).
+- Historical deep-dive artifacts that are no longer active have been removed from the live docs tree.
+- Use repository history (`git log -- docs/...`) when historical context is required.

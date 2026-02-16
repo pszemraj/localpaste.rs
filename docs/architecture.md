@@ -2,6 +2,7 @@
 
 This document is the canonical system walkthrough for LocalPaste.rs.
 For command-level developer workflows, use [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+For language detection/canonicalization/highlight behavior, use [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
 For storage/backend compatibility rules, use [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 For security posture, use [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
 For service operations, use [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
@@ -13,7 +14,7 @@ LocalPaste is a local-first paste manager with a shared core and multiple fronte
 - Desktop GUI (`localpaste-gui`) is the primary UX.
 - Headless HTTP API server (`localpaste`) supports automation and integrations.
 - CLI (`lpaste`) calls HTTP endpoints and can auto-discover the GUI embedded API.
-- Tools (`generate-test-data`, `check-loc`) support fixtures and repository hygiene.
+- Tools (`generate-test-data`, `check-loc`, `check-ast-dupes`) support fixtures and repository hygiene.
 
 Workspace crates:
 
@@ -21,7 +22,7 @@ Workspace crates:
 - [`crates/localpaste_server`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server): Axum routing, middleware, handlers, embedded server helper.
 - [`crates/localpaste_gui`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui): native app shell, backend worker, editor flows.
 - [`crates/localpaste_cli`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_cli): HTTP client and endpoint discovery logic.
-- [`crates/localpaste_tools`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_tools): test data generation and line-count checks.
+- [`crates/localpaste_tools`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_tools): test data generation and repo hygiene checks (`check-loc`, `check-ast-dupes`).
 
 ```mermaid
 flowchart LR
@@ -29,7 +30,7 @@ flowchart LR
     GUI -->|"embedded API"| ES["EmbeddedServer (axum)"]
     CLI["lpaste"] -->|"HTTP"| ES
     CLI -->|"HTTP"| HS["localpaste (headless server)"]
-    TOOLS["generate-test-data / check-loc"] --> CORE["localpaste_core"]
+    TOOLS["generate-test-data / check-loc / check-ast-dupes"] --> CORE["localpaste_core"]
     ES --> CORE
     HS --> CORE
     GUIB --> CORE
@@ -189,13 +190,25 @@ Current boundary rules:
 - security headers are always set (`CSP`, `X-Frame-Options`, `X-Content-Type-Options`),
 - server identity header (`x-localpaste-server: 1`) is set for trust checks.
 
-## 8) GUI Save Pipeline
+## 8) Language Detection And Highlighting
+
+Canonical detection/highlight behavior is defined in
+[docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
+Architecture-level summary:
+
+- Detection is centralized in `localpaste_core::detection`.
+- `localpaste_core` keeps `magika` opt-in; GUI/server enable it by default, CLI remains heuristic-only by default.
+- Auto-detect flow is `Magika -> heuristic fallback`, with canonical label normalization before persistence/filtering.
+- Manual language mode bypasses auto re-detection on content edits.
+- GUI highlighting resolves syntaxes via a multi-step resolver and falls back to plain text when no safe grammar match exists.
+
+## 9) GUI Save Pipeline
 
 The GUI uses a command/event backend worker so UI rendering stays non-blocking.
 
 Key properties:
 
-- autosave and manual save dispatch through backend commands,
+- autosave and keyboard-triggered manual saves dispatch through backend commands,
 - metadata save path is separate from content save path,
 - shutdown force-enqueues final dirty snapshots before backend shutdown acknowledgement.
 
@@ -220,7 +233,7 @@ sequenceDiagram
     W-->>UI: ShutdownComplete
 ```
 
-## 9) Discovery And Trust
+## 10) Discovery And Trust
 
 Embedded server discovery path:
 
@@ -235,7 +248,7 @@ Relevant code:
 - [`crates/localpaste_server/src/embedded.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/embedded.rs)
 - [`crates/localpaste_cli/src/main.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_cli/src/main.rs)
 
-## 10) Validation Strategy
+## 11) Validation Strategy
 
 Repository-level quality gates are defined in:
 
@@ -250,7 +263,7 @@ Core themes:
 - line-count policy checks,
 - targeted regression tests for lock/invariant/shutdown edge cases.
 
-## 11) Active Follow-Ups
+## 12) Active Follow-Ups
 
-- Rewrite readiness/perf gate: [docs/dev/parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
 - Engineering backlog: [docs/dev/backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
+- GUI perf validation protocol: [docs/dev/gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)

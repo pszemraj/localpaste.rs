@@ -1,7 +1,7 @@
 # GUI Notes
 
 Use this document for rewrite GUI behavior notes and env flags.
-For rollout status, use [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md).
+For detection/canonicalization/highlight pipeline semantics, use [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
 For perf validation steps/gates, use [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
 
 ## Runtime Flags

@@ -7,8 +7,6 @@ For repository-wide ownership rules, see [docs/README.md](https://github.com/psz
 
 - Development workflow and command matrix:
   [devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md)
-- Rewrite readiness and release gate:
-  [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
 - GUI runtime flags and behavior notes:
   [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md)
 - GUI perf protocol and thresholds:
@@ -22,12 +20,5 @@ For repository-wide ownership rules, see [docs/README.md](https://github.com/psz
 
 Cross-cutting non-dev canonical docs:
 - Storage/backend compatibility: [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md)
-
-## Historical Reference Docs
-
-- Folder invariants matrix:
-  [folder-audit-matrix-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-matrix-2026-02-13.md)
-- Folder hardening report:
-  [folder-audit-report-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-report-2026-02-13.md)
-
-Historical docs are evidence artifacts, not active behavior specs.
+- Architecture walkthrough: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
+- Language detection pipeline: [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)

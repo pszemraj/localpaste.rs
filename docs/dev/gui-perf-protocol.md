@@ -79,5 +79,6 @@ The canonical runbook seeds a large mixed dataset via `generate-test-data`:
 ## Related Docs
 
 - Editor flags and trace env vars: [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md)
-- Rewrite parity gate: [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
+- Detection/canonicalization/highlight behavior: [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)
+- Open perf follow-ups: [backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
 - System architecture context: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)

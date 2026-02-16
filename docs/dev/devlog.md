@@ -28,6 +28,8 @@ localpaste.rs/
 - `localpaste` - headless API server (`crates/localpaste_server`)
 - `lpaste` - CLI client (`crates/localpaste_cli`)
 - `generate-test-data` - synthetic dataset tool (`crates/localpaste_tools`)
+- `check-loc` - line-count policy checker (`crates/localpaste_tools`)
+- `check-ast-dupes` - semantic duplicate/dead-symbol audit (`crates/localpaste_tools`)
 
 ## Build Matrix
 
@@ -43,6 +45,8 @@ cargo build -p localpaste_cli --bin lpaste --release
 
 # Tooling
 cargo build -p localpaste_tools --bin generate-test-data --release
+cargo build -p localpaste_tools --bin check-loc --release
+cargo build -p localpaste_tools --bin check-ast-dupes --release
 ```
 
 ## Run Matrix
@@ -82,15 +86,21 @@ cargo check --workspace --all-targets --all-features
 # 4) LoC policy check
 cargo run -p localpaste_tools --bin check-loc -- --max-lines 1000 --warn-lines 900
 
-# 5) targeted tests for touched areas
+# 5) duplicate/dead-symbol audit (required on refactors)
+cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
+
+# 6) targeted tests for touched areas
 # cargo test -p <crate>
 
-# 6) runtime smoke (server + CLI CRUD)
+# 7) runtime smoke (server + CLI CRUD)
 # run isolated server+CLI CRUD flow with localpaste + lpaste
 # (new -> list -> search -> get -> delete), then verify persistence across restart
+
+# 8) docs contract check
+rustdoc-checker crates --strict
 ```
 
-Parity/release gate status is tracked in [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md).
+Language detection/canonicalization/highlight behavior is tracked in [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
 
 ## Behavior Contracts
 
@@ -100,7 +110,7 @@ This file is intentionally command/workflow-focused. For runtime behavior contra
 - Security defaults and env policy: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
 - Service operation and lock recovery: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
 - Lock semantics and API `423 Locked` behavior: [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
-- Rewrite parity/deprecation status: [docs/dev/parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
+- Detection/canonicalization/highlight behavior: [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)
 - API wiring + handler behavior in code:
   - [`crates/localpaste_server/src/lib.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/lib.rs)
   - [`crates/localpaste_server/src/handlers/paste.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/paste.rs)
@@ -113,10 +123,8 @@ This file is intentionally command/workflow-focused. For runtime behavior contra
 - Storage/backend compatibility: [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md)
 - Lock behavior model: [locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
 - Perf protocol: [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)
-- Rewrite parity checklist: [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
+- Language detection/canonicalization/highlight behavior: [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)
 - Engineering backlog: [backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
-- Folder audit matrix (2026-02-13): [folder-audit-matrix-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-matrix-2026-02-13.md)
-- Folder audit report (2026-02-13): [folder-audit-report-2026-02-13.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/folder-audit-report-2026-02-13.md)
 
 ## Backlog
 

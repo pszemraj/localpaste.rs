@@ -1,0 +1,108 @@
+# Language Detection And Highlighting
+
+This is the canonical behavior contract for language detection, canonicalization,
+and syntax highlighting in LocalPaste.
+
+Implementation roots:
+- Core detection entrypoint: [`crates/localpaste_core/src/detection/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/detection/mod.rs)
+- Canonical labels/options: [`crates/localpaste_core/src/detection/canonical.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/detection/canonical.rs)
+- GUI syntax resolver: [`crates/localpaste_gui/src/app/highlight.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/highlight.rs)
+
+## Feature Topology
+
+- `localpaste_core` keeps `magika` as opt-in (`default = []`).
+- `localpaste_gui` and `localpaste_server` enable `magika` by default.
+- `localpaste_cli` uses `localpaste_core` defaults, so it is heuristic-only unless explicitly feature-enabled in downstream builds.
+
+This keeps GUI/server detection broad by default while preserving portability for core/CLI users.
+
+## Detection Flow
+
+For auto-detected language (`language_is_manual == false`):
+
+1. If `magika` feature is enabled:
+   - run Magika detection,
+   - reject non-text results,
+   - reject generic labels (`txt`, `randomtxt`, `unknown`, `empty`, `undefined`),
+   - canonicalize and return if non-empty and not `text`.
+2. Otherwise (or if Magika is unavailable/fails/generic), run heuristic fallback.
+3. Canonicalize heuristic label and return unless empty/`text`.
+
+For manual language (`language_is_manual == true`), content edits do not re-run auto detection.
+
+Magika session lifecycle:
+- lazy singleton (`OnceLock<Result<Mutex<magika::Session>, String>>`),
+- guarded with `Mutex` because Magika identify calls require `&mut self`,
+- `prewarm()` is called in GUI/server startup paths to avoid first-save load latency.
+
+## Canonicalization Contract
+
+Canonicalization normalizes legacy aliases and user-entered variants to stable labels (examples):
+
+- `csharp`, `c#` -> `cs`
+- `c++` -> `cpp`
+- `bash`, `sh`, `zsh` -> `shell`
+- `pwsh`, `ps1` -> `powershell`
+- `yml` -> `yaml`
+- `js` -> `javascript`
+- `ts` -> `typescript`
+- `md` -> `markdown`
+- `plaintext`, `plain text`, `plain`, `txt` -> `text`
+
+Unknown values pass through in lowercase.
+
+Manual language picker values are defined centrally in `MANUAL_LANGUAGE_OPTIONS` and stored as canonical values.
+
+## Filter And Search Semantics
+
+Language filter matching canonicalizes both:
+- stored language metadata,
+- incoming filter value.
+
+This preserves interoperability across legacy and current labels (for example, `csharp` and `cs`).
+
+Search ranking also checks canonicalized language values to avoid losing metadata relevance as stored labels evolve.
+
+## GUI Highlight Resolution
+
+GUI highlight resolution uses a multi-step strategy instead of a fixed name table:
+
+1. exact syntax name
+2. exact extension
+3. case-insensitive name
+4. normalized-name match (alphanumeric only)
+5. case-insensitive extension scan
+6. explicit fallback candidates for known mismatches/high-priority labels
+7. plain text
+
+Policy:
+- Keep explicit fallback mapping narrow and intentional.
+- Preserve unsupported-language visibility by keeping their metadata labels even when rendering falls back to plain text.
+
+Current high-priority fallback labels:
+- `typescript`
+- `toml`
+- `swift`
+- `powershell`
+
+Currently metadata-only (plain rendering) labels:
+- `zig`, `scss`, `kotlin`, `elixir`, `dart`
+
+## Runtime Provider Default (Magika)
+
+When Magika is enabled, runtime defaults to CPU execution provider:
+
+- env var: `MAGIKA_FORCE_CPU`
+- default: `true`
+- falsey values (`0`, `false`, `no`, `off`) allow runtime/provider defaults
+
+Reference: [`.env.example`](https://github.com/pszemraj/localpaste.rs/blob/main/.env.example)
+
+## Validation Targets
+
+When touching detection/highlight behavior, validate:
+
+- core detection tests (`localpaste_core::detection::tests`),
+- GUI resolver tests (`localpaste_gui::app::highlight::resolver_tests`),
+- GUI manual checks in [docs/dev/gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md),
+- GUI perf checks in [docs/dev/gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).

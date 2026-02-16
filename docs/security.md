@@ -4,6 +4,7 @@ Canonical scope:
 - Security defaults, threat model, and security-relevant env toggles are defined here.
 - Storage/backend compatibility policy is canonical in [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 - Service operation and lock-recovery procedures are canonical in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
+- Detection/runtime-provider toggles (for example `MAGIKA_FORCE_CPU`) are canonical in [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
 - Build/run command matrices are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ---
