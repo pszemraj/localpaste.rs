@@ -192,12 +192,18 @@ fn virtual_vertical_move_target_returns_global_char_offset() {
         .virtual_editor_buffer
         .line_col_to_char(1, desired_col);
 
-    let moved_up = harness
-        .app
-        .virtual_move_vertical_target(start, desired_col, true);
-    let moved_down = harness
-        .app
-        .virtual_move_vertical_target(start, desired_col, false);
+    let moved_up = harness.app.virtual_move_vertical_target(
+        start,
+        desired_col,
+        true,
+        WrapBoundaryAffinity::Downstream,
+    );
+    let moved_down = harness.app.virtual_move_vertical_target(
+        start,
+        desired_col,
+        false,
+        WrapBoundaryAffinity::Downstream,
+    );
 
     assert_eq!(
         moved_up,
@@ -229,9 +235,12 @@ fn virtual_vertical_move_target_clamps_to_short_row_end_boundary() {
         .app
         .virtual_editor_buffer
         .line_col_to_char(0, desired_col);
-    let moved_down = harness
-        .app
-        .virtual_move_vertical_target(start, desired_col, false);
+    let moved_down = harness.app.virtual_move_vertical_target(
+        start,
+        desired_col,
+        false,
+        WrapBoundaryAffinity::Downstream,
+    );
 
     assert_eq!(
         moved_down,
@@ -262,6 +271,35 @@ fn move_down_preserves_wrap_boundary_end_of_line_intent() {
         .virtual_editor_buffer
         .char_to_line_col(harness.app.virtual_editor_state.cursor());
     assert_eq!((line, col), (1, 2));
+}
+
+#[test]
+fn repeated_move_up_from_wrap_boundary_reaches_previous_line() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("wxyz\nabcdefgh\n");
+    harness
+        .app
+        .virtual_layout
+        .rebuild(&harness.app.virtual_editor_buffer, 4.0, 1.0, 1.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    let start = harness.app.virtual_editor_buffer.line_col_to_char(1, 8);
+    harness.app.virtual_editor_state.set_cursor(start, len);
+    harness.app.virtual_editor_state.clear_preferred_column();
+
+    let ctx = egui::Context::default();
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
+
+    let (line, col) = harness
+        .app
+        .virtual_editor_buffer
+        .char_to_line_col(harness.app.virtual_editor_state.cursor());
+    assert_eq!((line, col), (0, 4));
 }
 
 #[test]

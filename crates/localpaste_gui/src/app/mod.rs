@@ -39,7 +39,7 @@ use util::{display_language_label, env_flag_enabled, status_language_filter_labe
 use virtual_editor::{
     commands_from_events, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
     VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext, VirtualInputCommand,
-    WrapLayoutCache,
+    WrapBoundaryAffinity, WrapLayoutCache,
 };
 use virtual_view::{VirtualCursor, VirtualSelectionState};
 
