@@ -158,59 +158,67 @@ mod tests {
     use super::{apply_language_choice, AUTO_LANGUAGE};
 
     #[test]
-    fn auto_mode_with_detected_language_does_not_dirty_or_clear_language() {
-        let mut is_manual = false;
-        let mut language = Some("rust".to_string());
-        let mut metadata_dirty = false;
+    fn apply_language_choice_transition_matrix() {
+        struct Case {
+            is_manual: bool,
+            language: Option<&'static str>,
+            metadata_dirty: bool,
+            language_choice: &'static str,
+            current_manual_value: &'static str,
+            expected_manual: bool,
+            expected_language: Option<&'static str>,
+            expected_dirty: bool,
+        }
 
-        apply_language_choice(
-            &mut is_manual,
-            &mut language,
-            &mut metadata_dirty,
-            AUTO_LANGUAGE,
-            "rust",
-        );
+        let cases = [
+            Case {
+                is_manual: false,
+                language: Some("rust"),
+                metadata_dirty: false,
+                language_choice: AUTO_LANGUAGE,
+                current_manual_value: "rust",
+                expected_manual: false,
+                expected_language: Some("rust"),
+                expected_dirty: false,
+            },
+            Case {
+                is_manual: true,
+                language: Some("python"),
+                metadata_dirty: false,
+                language_choice: AUTO_LANGUAGE,
+                current_manual_value: "python",
+                expected_manual: false,
+                expected_language: Some("python"),
+                expected_dirty: true,
+            },
+            Case {
+                is_manual: false,
+                language: Some("rust"),
+                metadata_dirty: false,
+                language_choice: "typescript",
+                current_manual_value: "rust",
+                expected_manual: true,
+                expected_language: Some("typescript"),
+                expected_dirty: true,
+            },
+        ];
 
-        assert!(!is_manual);
-        assert_eq!(language.as_deref(), Some("rust"));
-        assert!(!metadata_dirty);
-    }
+        for case in cases {
+            let mut is_manual = case.is_manual;
+            let mut language = case.language.map(str::to_string);
+            let mut metadata_dirty = case.metadata_dirty;
 
-    #[test]
-    fn manual_to_auto_marks_dirty_but_preserves_language_value() {
-        let mut is_manual = true;
-        let mut language = Some("python".to_string());
-        let mut metadata_dirty = false;
+            apply_language_choice(
+                &mut is_manual,
+                &mut language,
+                &mut metadata_dirty,
+                case.language_choice,
+                case.current_manual_value,
+            );
 
-        apply_language_choice(
-            &mut is_manual,
-            &mut language,
-            &mut metadata_dirty,
-            AUTO_LANGUAGE,
-            "python",
-        );
-
-        assert!(!is_manual);
-        assert_eq!(language.as_deref(), Some("python"));
-        assert!(metadata_dirty);
-    }
-
-    #[test]
-    fn auto_to_manual_sets_manual_language_and_marks_dirty() {
-        let mut is_manual = false;
-        let mut language = Some("rust".to_string());
-        let mut metadata_dirty = false;
-
-        apply_language_choice(
-            &mut is_manual,
-            &mut language,
-            &mut metadata_dirty,
-            "typescript",
-            "rust",
-        );
-
-        assert!(is_manual);
-        assert_eq!(language.as_deref(), Some("typescript"));
-        assert!(metadata_dirty);
+            assert_eq!(is_manual, case.expected_manual);
+            assert_eq!(language.as_deref(), case.expected_language);
+            assert_eq!(metadata_dirty, case.expected_dirty);
+        }
     }
 }

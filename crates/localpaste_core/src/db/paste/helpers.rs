@@ -269,37 +269,32 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     #[test]
-    fn legacy_language_manual_flag_defaults_to_auto_mode() {
-        let legacy = LegacyPaste {
-            id: "legacy-id".to_string(),
-            name: "legacy".to_string(),
-            content: "pub fn main() {\n    let x = 1;\n    println!(\"hello\");\n}".to_string(),
-            language: Some("rust".to_string()),
-            folder_id: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            tags: Vec::new(),
-            is_markdown: false,
-        };
-        let migrated: Paste = legacy.into();
-        assert!(!migrated.language_is_manual);
-    }
+    fn legacy_language_manual_flag_migrates_in_auto_mode() {
+        let legacy_cases = [
+            (
+                "legacy-id",
+                "legacy",
+                "pub fn main() {\n    let x = 1;\n    println!(\"hello\");\n}",
+                Some("rust"),
+            ),
+            ("legacy-id-2", "legacy-2", "fn main() {}", Some("python")),
+        ];
 
-    #[test]
-    fn legacy_language_manual_flag_stays_auto_even_when_language_diverges() {
-        let legacy = LegacyPaste {
-            id: "legacy-id-2".to_string(),
-            name: "legacy-2".to_string(),
-            content: "fn main() {}".to_string(),
-            language: Some("python".to_string()),
-            folder_id: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            tags: Vec::new(),
-            is_markdown: false,
-        };
-        let migrated: Paste = legacy.into();
-        assert!(!migrated.language_is_manual);
+        for (id, name, content, language) in legacy_cases {
+            let legacy = LegacyPaste {
+                id: id.to_string(),
+                name: name.to_string(),
+                content: content.to_string(),
+                language: language.map(str::to_string),
+                folder_id: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                tags: Vec::new(),
+                is_markdown: false,
+            };
+            let migrated: Paste = legacy.into();
+            assert!(!migrated.language_is_manual);
+        }
     }
 
     #[test]

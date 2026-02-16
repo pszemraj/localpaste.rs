@@ -341,15 +341,6 @@ mod resolver_tests {
     }
 
     #[test]
-    fn resolve_syntax_handles_alias_labels() {
-        let settings = SyntectSettings::default();
-        for label in ["cs", "shell", "cpp", "powershell"] {
-            let syntax = resolve_syntax(&settings.ps, label);
-            assert_ne!(syntax.name, "Plain Text", "label: {label}");
-        }
-    }
-
-    #[test]
     fn resolve_syntax_falls_back_to_plain_for_unknown_or_text() {
         let settings = SyntectSettings::default();
         assert_eq!(
@@ -369,11 +360,26 @@ mod resolver_tests {
     }
 
     #[test]
-    fn resolve_syntax_leaves_known_unsupported_labels_as_plain_text() {
+    fn resolve_syntax_alias_and_unsupported_matrix() {
         let settings = SyntectSettings::default();
-        for label in ["zig", "scss", "kotlin", "elixir", "dart"] {
+        let cases = [
+            ("cs", false),
+            ("shell", false),
+            ("cpp", false),
+            ("powershell", false),
+            ("zig", true),
+            ("scss", true),
+            ("kotlin", true),
+            ("elixir", true),
+            ("dart", true),
+        ];
+        for (label, expect_plain) in cases {
             let syntax = resolve_syntax(&settings.ps, label);
-            assert_eq!(syntax.name, "Plain Text", "label: {label}");
+            if expect_plain {
+                assert_eq!(syntax.name, "Plain Text", "label: {label}");
+            } else {
+                assert_ne!(syntax.name, "Plain Text", "label: {label}");
+            }
         }
     }
 
