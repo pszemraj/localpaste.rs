@@ -23,6 +23,16 @@ fn line_for_char(rope: &Rope, char_index: usize) -> usize {
     rope.char_to_line(char_index.min(rope.len_chars()))
 }
 
+fn trim_line_endings(mut line: &str) -> &str {
+    if let Some(trimmed) = line.strip_suffix('\n') {
+        line = trimmed;
+    }
+    if let Some(trimmed) = line.strip_suffix('\r') {
+        line = trimmed;
+    }
+    line
+}
+
 /// Tracks the current editor buffer text and simple revision counters.
 #[derive(Default)]
 pub(super) struct EditorBuffer {
@@ -109,6 +119,7 @@ pub(super) struct EditorLineIndex {
 struct LineEntry {
     start: usize,
     len: usize,
+    char_len: usize,
 }
 
 impl EditorLineIndex {
@@ -131,18 +142,30 @@ impl EditorLineIndex {
         for (idx, byte) in text.as_bytes().iter().enumerate() {
             if *byte == b'\n' {
                 let len = idx + 1 - start;
-                self.lines.push(LineEntry { start, len });
+                let line = trim_line_endings(&text[start..(start + len)]);
+                self.lines.push(LineEntry {
+                    start,
+                    len,
+                    char_len: line.chars().count(),
+                });
                 start = idx + 1;
             }
         }
         if start <= text.len() {
+            let len = text.len().saturating_sub(start);
+            let line = trim_line_endings(&text[start..]);
             self.lines.push(LineEntry {
                 start,
-                len: text.len().saturating_sub(start),
+                len,
+                char_len: line.chars().count(),
             });
         }
         if self.lines.is_empty() {
-            self.lines.push(LineEntry { start: 0, len: 0 });
+            self.lines.push(LineEntry {
+                start: 0,
+                len: 0,
+                char_len: 0,
+            });
         }
         self.revision = revision;
         self.text_len = text.len();
@@ -161,14 +184,11 @@ impl EditorLineIndex {
     }
 
     pub(super) fn line_without_newline<'a>(&self, text: &'a str, index: usize) -> &'a str {
-        let mut line = self.line_slice(text, index);
-        if let Some(trimmed) = line.strip_suffix('\n') {
-            line = trimmed;
-        }
-        if let Some(trimmed) = line.strip_suffix('\r') {
-            line = trimmed;
-        }
-        line
+        trim_line_endings(self.line_slice(text, index))
+    }
+
+    pub(super) fn line_len_chars(&self, index: usize) -> usize {
+        self.lines.get(index).map(|line| line.char_len).unwrap_or(0)
     }
 }
 
@@ -395,6 +415,19 @@ mod tests {
     #[test]
     fn line_range_chars_excludes_missing_newline_for_last_line() {
         assert_line_range_chars_selection("one\ntwo", 5, "two");
+    }
+
+    #[test]
+    fn editor_line_index_caches_char_lengths_without_newline_suffixes() {
+        let text = "ab\néç\r\n🦀";
+        let mut index = EditorLineIndex::default();
+        index.rebuild(7, text);
+
+        assert_eq!(index.line_count(), 3);
+        assert_eq!(index.line_len_chars(0), 2);
+        assert_eq!(index.line_len_chars(1), 2);
+        assert_eq!(index.line_len_chars(2), 1);
+        assert_eq!(index.line_without_newline(text, 1), "éç");
     }
 
     fn assert_line_range_chars_selection(text: &str, char_index: usize, expected: &str) {

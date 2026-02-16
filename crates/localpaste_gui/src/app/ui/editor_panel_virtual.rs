@@ -58,7 +58,7 @@ impl LocalPasteApp {
                 let render_line =
                     highlight_render_match.and_then(|render| render.lines.get(line_idx));
                 let job = build_virtual_line_job(ui, line, editor_font, render_line, use_plain);
-                let line_chars = line.chars().count();
+                let line_chars = self.editor_lines.line_len_chars(line_idx);
                 let galley = ui.fonts_mut(|f| f.layout_job(job));
                 let row_width = ui.available_width();
                 let (rect, response) =
@@ -356,7 +356,7 @@ impl LocalPasteApp {
                 let line_start = self.virtual_editor_buffer.line_col_to_char(line_idx, 0);
                 let line_owned = self.virtual_editor_buffer.line_without_newline(line_idx);
                 let line = line_owned.as_str();
-                let line_chars = line.chars().count();
+                let line_chars = self.virtual_layout.line_chars(line_idx);
                 let render_line =
                     highlight_render_match.and_then(|render| render.lines.get(line_idx));
                 let mut job = build_virtual_line_job(ui, line, editor_font, render_line, use_plain);

@@ -182,6 +182,14 @@ impl WrapLayoutCache {
         self.line_metrics.get(line).copied()
     }
 
+    /// Returns cached character count for a physical line.
+    pub(crate) fn line_chars(&self, line: usize) -> usize {
+        self.line_metrics
+            .get(line)
+            .map(|metrics| metrics.chars)
+            .unwrap_or(0)
+    }
+
     /// Number of monospace columns used by the current wrap configuration.
     pub(crate) fn wrap_columns(&self) -> usize {
         self.wrap_cols.max(1)
@@ -296,5 +304,13 @@ mod tests {
         for line in 0..buffer.line_count() {
             assert_eq!(cache.line_metrics(line), rebuilt.line_metrics(line));
         }
+    }
+
+    #[test]
+    fn line_chars_uses_cached_measurements() {
+        let (_buffer, cache) = rebuild_cache_for("ab\néç\n🦀", 200.0, 10.0, 5.0);
+        assert_eq!(cache.line_chars(0), 2);
+        assert_eq!(cache.line_chars(1), 2);
+        assert_eq!(cache.line_chars(2), 1);
     }
 }
