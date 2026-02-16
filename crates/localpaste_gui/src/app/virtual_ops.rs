@@ -18,6 +18,7 @@ use eframe::egui::{
 };
 use std::ops::Range;
 use std::time::Instant;
+use tracing::info;
 
 impl LocalPasteApp {
     pub(super) fn handle_large_editor_click(
@@ -353,24 +354,52 @@ impl LocalPasteApp {
         let deleted_newlines = deleted.chars().filter(|ch| *ch == '\n').count();
         let touched_lines = inserted_newlines.max(deleted_newlines).saturating_add(1);
         let before_cursor = self.virtual_editor_state.cursor();
+        let perf_enabled = self.perf_log_enabled;
+        let rope_started = perf_enabled.then(Instant::now);
         let delta = self
             .virtual_editor_buffer
             .replace_char_range(start..end, replacement);
+        let rope_apply_ms = rope_started
+            .map(|started| started.elapsed().as_secs_f32() * 1000.0)
+            .unwrap_or(0.0);
         if let Some(delta) = delta {
+            let layout_started = perf_enabled.then(Instant::now);
             let _ = self
                 .virtual_layout
                 .apply_delta(&self.virtual_editor_buffer, delta);
+            let layout_apply_ms = layout_started
+                .map(|started| started.elapsed().as_secs_f32() * 1000.0)
+                .unwrap_or(0.0);
+            let galley_started = perf_enabled.then(Instant::now);
             self.virtual_galley_cache.apply_delta(
                 delta,
                 self.virtual_editor_buffer.line_count(),
                 self.virtual_editor_buffer.revision(),
             );
+            let galley_apply_ms = galley_started
+                .map(|started| started.elapsed().as_secs_f32() * 1000.0)
+                .unwrap_or(0.0);
             self.highlight_edit_hint = Some(VirtualEditHint {
                 start_line,
                 touched_lines,
                 inserted_chars,
                 deleted_chars,
             });
+            if perf_enabled {
+                info!(
+                    target: "localpaste_gui::perf",
+                    event = "virtual_edit_apply",
+                    revision = self.virtual_editor_buffer.revision(),
+                    start_char = start,
+                    end_char = end,
+                    inserted_chars = inserted_chars,
+                    deleted_chars = deleted_chars,
+                    rope_apply_ms = rope_apply_ms,
+                    layout_apply_ms = layout_apply_ms,
+                    galley_apply_ms = galley_apply_ms,
+                    "virtual editor mutation + cache patch timings"
+                );
+            }
         }
         let after_cursor = start.saturating_add(inserted_chars);
         self.virtual_editor_state

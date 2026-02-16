@@ -74,13 +74,17 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 2. Large (~10-50KB) code paste: highlight remains visible while edits debounce/refresh.
 3. Large-to-very-large (~50-256KB) code paste: async/staged highlight remains stable; transient plain fallback is acceptable during refresh but should not stick.
 4. Huge (`>= 256KB`) code paste: plain fallback mode is active by design and scrolling remains smooth.
-5. Long document paste (thousands of lines): rapid scroll and mid-document typing show no major hitching.
-6. Window resize reflow: no long plain-text gaps after resize.
-7. Shortcut sanity: `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, unfocused `Ctrl/Cmd+V`.
-8. Clipboard reliability: `Ctrl/Cmd+C/X/V` including unfocused mutation guard behavior.
-9. Trace sanity (when enabled):
+5. Sustained typing scenario: in a 5K-50K line document, hold a key for 3 seconds near the middle; verify no visible hitching and p95 trend stays under target budget.
+6. Long-line typing scenario: open a single wrapped minified line (JSON/log payload), type near the middle, and verify no multi-frame stalls.
+7. Idle baseline scenario: open a ~200KB paste and wait without interaction; verify CPU drops near idle between repaint intervals.
+8. Long document paste (thousands of lines): rapid scroll and mid-document typing show no major hitching.
+9. Window resize reflow: no long plain-text gaps after resize.
+10. Shortcut sanity: `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, unfocused `Ctrl/Cmd+V`.
+11. Clipboard reliability: `Ctrl/Cmd+C/X/V` including unfocused mutation guard behavior.
+12. Trace sanity (when enabled):
    - input trace: deterministic `virtual input frame` routing outcomes
    - highlight trace: deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) with stale staged renders dropped.
+   - editor perf trace: `virtual_input_frame`, `virtual_edit_apply`, and `virtual_editor_render` events present with non-zero timing fields while typing in virtual editor mode.
    - backend perf trace: list/search cache hit+miss counters and per-query latency logs (`localpaste_gui::backend_perf` target).
 
 ## Related Docs

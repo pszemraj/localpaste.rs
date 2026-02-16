@@ -2,6 +2,7 @@
 
 use super::super::*;
 use eframe::egui;
+use tracing::info;
 
 impl LocalPasteApp {
     pub(super) fn render_virtual_preview_panel(
@@ -273,6 +274,14 @@ impl LocalPasteApp {
         }
 
         let wrap_width = ui.available_width().max(1.0);
+        let perf_enabled = self.perf_log_enabled;
+        let frame_started = perf_enabled.then(Instant::now);
+        let mut layout_rebuild_ms = 0.0f32;
+        let mut visible_lines = 0usize;
+        let mut galley_hits = 0usize;
+        let mut galley_misses = 0usize;
+        let mut galley_build_ms = 0.0f32;
+        let mut paint_ms = 0.0f32;
         let char_width = ui.fonts_mut(|f| {
             f.layout_no_wrap(
                 "W".to_owned(),
@@ -294,12 +303,16 @@ impl LocalPasteApp {
             char_width,
             line_count,
         ) {
+            let rebuild_started = perf_enabled.then(Instant::now);
             self.virtual_layout.rebuild(
                 &self.virtual_editor_buffer,
                 wrap_width,
                 self.virtual_line_height,
                 char_width,
             );
+            if let Some(started) = rebuild_started {
+                layout_rebuild_ms = started.elapsed().as_secs_f32() * 1000.0;
+            }
         }
         let total_height = self.virtual_layout.total_height();
         self.virtual_galley_cache.prepare_frame(
@@ -344,6 +357,7 @@ impl LocalPasteApp {
                 viewport.height(),
                 overscan_lines,
             );
+            visible_lines = visible.len();
             struct RowRender {
                 line_start: usize,
                 line_chars: usize,
@@ -374,8 +388,12 @@ impl LocalPasteApp {
                 let render_line =
                     highlight_render_match.and_then(|render| render.lines.get(line_idx));
                 let galley = if let Some(cached) = self.virtual_galley_cache.get(line_idx) {
+                    if perf_enabled {
+                        galley_hits = galley_hits.saturating_add(1);
+                    }
                     cached
                 } else {
+                    let build_started = perf_enabled.then(Instant::now);
                     self.virtual_editor_buffer
                         .line_without_newline_into(line_idx, &mut self.virtual_line_scratch);
                     let mut job = build_virtual_line_job_owned(
@@ -388,6 +406,10 @@ impl LocalPasteApp {
                     job.wrap.max_width = wrap_width;
                     let shaped = ui.fonts_mut(|f| f.layout_job(job));
                     self.virtual_galley_cache.insert(line_idx, shaped.clone());
+                    if let Some(started) = build_started {
+                        galley_build_ms += started.elapsed().as_secs_f32() * 1000.0;
+                        galley_misses = galley_misses.saturating_add(1);
+                    }
                     shaped
                 };
                 let row_top = content_origin.y + self.virtual_layout.line_top(line_idx);
@@ -565,6 +587,7 @@ impl LocalPasteApp {
                 .as_millis()
                 / CARET_BLINK_INTERVAL.as_millis().max(1);
             let caret_visible = blink_ticks % 2 == 0;
+            let paint_started = perf_enabled.then(Instant::now);
             for row in rows {
                 let galley = row.galley;
                 if let Some(selection) =
@@ -597,10 +620,28 @@ impl LocalPasteApp {
                     }
                 }
             }
+            if let Some(started) = paint_started {
+                paint_ms = started.elapsed().as_secs_f32() * 1000.0;
+            }
         });
         self.virtual_editor_active = focused
             || self.virtual_editor_state.has_focus
             || self.virtual_drag_active
             || editor_interacted;
+        if let Some(started) = frame_started {
+            let total_ms = started.elapsed().as_secs_f32() * 1000.0;
+            info!(
+                target: "localpaste_gui::perf",
+                event = "virtual_editor_render",
+                visible_lines = visible_lines,
+                galley_hits = galley_hits,
+                galley_misses = galley_misses,
+                galley_build_ms = galley_build_ms,
+                layout_rebuild_ms = layout_rebuild_ms,
+                paint_ms = paint_ms,
+                total_ms = total_ms,
+                "virtual editor frame breakdown"
+            );
+        }
     }
 }

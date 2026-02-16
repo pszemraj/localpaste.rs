@@ -3,6 +3,7 @@
 mod editor;
 mod highlight;
 mod highlight_flow;
+mod perf_trace;
 mod shutdown;
 mod state_ops;
 mod style;
@@ -25,6 +26,7 @@ use highlight::{
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
+use perf_trace::VirtualInputPerfStats;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::ops::Range;
@@ -517,34 +519,6 @@ impl LocalPasteApp {
         }
     }
 
-    fn trace_input(&self, frame: InputTraceFrame<'_>) {
-        if !self.editor_input_trace_enabled {
-            return;
-        }
-        info!(
-            target: "localpaste_gui::input",
-            mode = ?self.editor_mode,
-            editor_active = self.virtual_editor_active,
-            focus_active_pre = frame.focus_active_pre,
-            focus_active_post = frame.focus_active_post,
-            egui_focus_pre = frame.egui_focus_pre,
-            egui_focus_post = frame.egui_focus_post,
-            copy_ready_post = frame.copy_ready_post,
-            selection_chars = frame.selection_chars,
-            immediate_focus_count = frame.immediate_focus_commands.len(),
-            deferred_focus_count = frame.deferred_focus_commands.len(),
-            deferred_copy_count = frame.deferred_copy_commands.len(),
-            immediate_focus = ?frame.immediate_focus_commands,
-            deferred_focus = ?frame.deferred_focus_commands,
-            deferred_copy = ?frame.deferred_copy_commands,
-            changed = frame.apply_result.changed,
-            copied = frame.apply_result.copied,
-            cut = frame.apply_result.cut,
-            pasted = frame.apply_result.pasted,
-            "virtual input frame"
-        );
-    }
-
     fn track_frame_metrics(&mut self) {
         let now = Instant::now();
         if let Some(last) = self.last_frame_at {
@@ -686,8 +660,14 @@ impl eframe::App for LocalPasteApp {
         let mut deferred_focus_commands: Vec<VirtualInputCommand> = Vec::new();
         let mut deferred_copy_commands: Vec<VirtualInputCommand> = Vec::new();
         let mut immediate_apply_result = VirtualApplyResult::default();
+        let mut input_route_ms = 0.0f32;
+        let mut immediate_apply_ms = 0.0f32;
+        let mut deferred_focus_apply_ms = 0.0f32;
+        let mut deferred_copy_apply_ms = 0.0f32;
         if self.is_virtual_editor_mode() {
+            let route_started = Instant::now();
             let commands = ctx.input(|input| commands_from_events(&input.events, true));
+            input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
             for command in commands {
                 match classify_virtual_command(&command, focus_active_pre) {
                     VirtualCommandBucket::DeferredCopy => {
@@ -716,7 +696,9 @@ impl eframe::App for LocalPasteApp {
                     }
                 }
             }
+            let immediate_started = Instant::now();
             immediate_apply_result = self.apply_virtual_commands(ctx, &immediate_focus_commands);
+            immediate_apply_ms += immediate_started.elapsed().as_secs_f32() * 1000.0;
             if immediate_apply_result.changed {
                 self.mark_dirty();
             }
@@ -838,7 +820,9 @@ impl eframe::App for LocalPasteApp {
                 fallback_commands.push(VirtualInputCommand::Redo);
             }
             if !fallback_commands.is_empty() {
+                let fallback_started = Instant::now();
                 let fallback_result = self.apply_virtual_commands(ctx, &fallback_commands);
+                immediate_apply_ms += fallback_started.elapsed().as_secs_f32() * 1000.0;
                 immediate_apply_result.changed |= fallback_result.changed;
                 immediate_apply_result.copied |= fallback_result.copied;
                 immediate_apply_result.cut |= fallback_result.cut;
@@ -881,14 +865,18 @@ impl eframe::App for LocalPasteApp {
                 || ctx.memory(|m| m.has_focus(focus_id)));
         let copy_ready_post = focus_active_post || has_virtual_selection_post;
         if focus_active_post {
+            let deferred_started = Instant::now();
             deferred_focus_apply_result =
                 self.apply_virtual_commands(ctx, &deferred_focus_commands);
+            deferred_focus_apply_ms = deferred_started.elapsed().as_secs_f32() * 1000.0;
             if deferred_focus_apply_result.changed {
                 self.mark_dirty();
             }
         }
         if copy_ready_post {
+            let deferred_started = Instant::now();
             deferred_copy_apply_result = self.apply_virtual_commands(ctx, &deferred_copy_commands);
+            deferred_copy_apply_ms = deferred_started.elapsed().as_secs_f32() * 1000.0;
             if deferred_copy_apply_result.changed {
                 self.mark_dirty();
             }
@@ -933,6 +921,18 @@ impl eframe::App for LocalPasteApp {
             deferred_copy_commands: &deferred_copy_commands,
             apply_result: combined_apply,
         });
+        self.trace_virtual_input_perf(
+            &immediate_focus_commands,
+            &deferred_focus_commands,
+            &deferred_copy_commands,
+            VirtualInputPerfStats {
+                input_route_ms,
+                immediate_apply_ms,
+                deferred_focus_apply_ms,
+                deferred_copy_apply_ms,
+                apply_result: combined_apply,
+            },
+        );
 
         self.render_status_bar(ctx);
         self.render_toasts(ctx);
