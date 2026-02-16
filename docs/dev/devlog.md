@@ -1,9 +1,8 @@
 # Development Guide
 
-This is the primary development workflow document.
-For topic-specific details, link to the primary docs in [docs/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md).
-This is the primary source for binary/build/run command matrices.
-Other docs should link here instead of repeating command matrices.
+This guide covers the development workflow.
+Topic-specific references are listed in [docs/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md).
+This guide includes the binary/build/run command matrix used in day-to-day development.
 System architecture context lives in [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md).
 
 ## Workspace Layout

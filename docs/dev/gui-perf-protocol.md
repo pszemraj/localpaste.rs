@@ -1,6 +1,6 @@
 # GUI Perf Test Protocol (Rewrite)
 
-This is the primary perf validation procedure for the rewrite GUI.
+This document defines the perf validation procedure for the rewrite GUI.
 Use this protocol for release-gate evidence and regression checks.
 
 ## Scope
@@ -31,7 +31,7 @@ Minimum binaries required for this protocol:
 
 ## Runbook
 
-Use this runbook as the primary source for reproducible perf checks:
+Use this runbook for reproducible perf checks:
 Flag behavior/meanings are documented in [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell

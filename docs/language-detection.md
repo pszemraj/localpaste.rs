@@ -1,7 +1,7 @@
 # Language Detection And Highlighting
 
-This is the primary behavior reference for language detection, normalization,
-and syntax highlighting in LocalPaste.
+This document describes language detection, normalization, and syntax
+highlighting behavior in LocalPaste.
 
 Implementation roots:
 - Core detection entrypoint: [`crates/localpaste_core/src/detection/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/detection/mod.rs)

@@ -1,10 +1,9 @@
 # Running LocalPaste as a Background Service
 
 > These instructions apply to the headless `localpaste` server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
-> This is the primary service-operation runbook. Other docs should link here for stop/restart/lock-recovery guidance instead of duplicating procedures.
-> Security posture, bind policy, and public exposure guidance are documented in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
-> Storage backend and compatibility policy are documented in [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
-> Build/run command matrices for development are documented in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+> Security posture, bind policy, and public exposure guidance: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
+> Storage backend and compatibility policy: [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
+> Development build/run command matrix: [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ## Quick Start
 
@@ -18,6 +17,7 @@ echo $! > ~/.cache/localpaste/localpaste.pid
 ```
 
 Important runtime rule:
+
 - Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` at the same time.
 
 ## Storage Backend Note
@@ -60,7 +60,7 @@ Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
 
 ### Lock Safety
 
-This section is the primary operational guidance for writer coordination.
+This section contains operational guidance for writer coordination.
 Security policy context remains in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
 Lock behavior semantics are documented in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
 

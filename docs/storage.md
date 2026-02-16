@@ -1,7 +1,6 @@
 # Storage Contract
 
-This is the primary storage and on-disk compatibility contract for LocalPaste.rs.
-Other docs should link here instead of repeating backend/storage details.
+This document defines the storage and on-disk compatibility contract for LocalPaste.rs.
 
 ## Backend and File Layout
 

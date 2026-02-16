@@ -18,7 +18,7 @@ For repository-wide ownership rules, see [docs/README.md](https://github.com/psz
 - Engineering backlog:
   [backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
 
-Cross-cutting non-dev primary docs:
+Cross-cutting non-dev docs:
 - Storage/backend compatibility: [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md)
 - Architecture walkthrough: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
 - Language detection pipeline: [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)
