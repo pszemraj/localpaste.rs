@@ -141,9 +141,6 @@ impl LocalPasteApp {
                     {
                         self.save_metadata_now();
                     }
-                    if ui.button("Save").clicked() {
-                        self.save_now();
-                    }
                     if ui.button("Export").clicked() {
                         self.export_selected_paste();
                     }

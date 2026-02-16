@@ -51,8 +51,8 @@ Use this checklist when touching detection/highlight/filter code.
    - Unknown label and `text`/`txt` should render plain text.
    - High-priority fallback mappings when native grammar is unavailable:
      - `typescript` -> JavaScript grammar
-     - `toml` -> YAML/properties grammar
-     - `swift` -> Objective-C/C++ grammar
+     - `toml` -> Java Properties grammar (then YAML fallback)
+     - `swift` -> Rust/Go grammar
      - `powershell` -> bash grammar
    - Languages currently kept as metadata/filter labels with plain rendering (no fallback grammar mapping):
      - `zig`, `scss`, `kotlin`, `elixir`, `dart`

@@ -22,7 +22,6 @@ impl LocalPasteApp {
                 let mut pending_language_filter: Option<Option<String>> = None;
                 let mut pending_tag_search: Option<String> = None;
                 let mut apply_metadata = false;
-                let mut save_requested = false;
                 let mut copy_requested = false;
                 let mut copy_link_requested = false;
                 let mut duplicate_requested = false;
@@ -69,9 +68,6 @@ impl LocalPasteApp {
                         {
                             apply_metadata = true;
                         }
-                        if ui.small_button("Save").clicked() {
-                            save_requested = true;
-                        }
                         if ui.small_button("Copy").clicked() {
                             copy_requested = true;
                         }
@@ -100,9 +96,6 @@ impl LocalPasteApp {
                 }
                 if apply_metadata {
                     self.save_metadata_now();
-                }
-                if save_requested {
-                    self.save_now();
                 }
                 if copy_requested {
                     self.clipboard_outgoing = Some(self.active_snapshot());

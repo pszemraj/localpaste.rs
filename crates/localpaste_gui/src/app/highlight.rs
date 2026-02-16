@@ -488,9 +488,9 @@ fn syntax_fallback_candidates(hint_lower: &str) -> &'static [&'static str] {
         // Syntect defaults used by egui do not ship native grammars for these in all bundles.
         // Keep explicit fallback only for high-priority labels to avoid hiding unsupported
         // language gaps behind misleading tokenization.
-        "typescript" => &["ts", "JavaScript", "js"],
-        "toml" => &["yaml", "YAML", "properties"],
-        "swift" => &["Objective-C", "C++", "c"],
+        "typescript" => &["JavaScript", "js", "ts"],
+        "toml" => &["Java Properties", "properties", "YAML", "yaml"],
+        "swift" => &["Rust", "rs", "Go", "go", "Objective-C"],
         "powershell" => &["ps1", "Bourne Again Shell (bash)", "bash", "sh"],
         "sass" => &["sass", "Ruby Haml", "css"],
         _ => &[],
@@ -1065,7 +1065,40 @@ pub(super) fn syntect_language_hint(language: &str) -> String {
 
 #[cfg(test)]
 mod resolver_tests {
-    use super::{resolve_syntax, syntect_language_hint, SyntectSettings};
+    use super::{
+        hash_bytes, highlight_in_worker, resolve_syntax, syntect_language_hint, HighlightRender,
+        HighlightRequest, HighlightWorkerCache, SyntectSettings,
+    };
+
+    fn render_for_label(settings: &SyntectSettings, label: &str, text: &str) -> HighlightRender {
+        let mut cache = HighlightWorkerCache::default();
+        let req = HighlightRequest {
+            paste_id: "test".to_string(),
+            revision: 1,
+            text: text.to_string(),
+            content_hash: hash_bytes(text.as_bytes()),
+            language_hint: label.to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+        };
+        highlight_in_worker(settings, &mut cache, req)
+    }
+
+    fn has_non_default_coloring(settings: &SyntectSettings, render: &HighlightRender) -> bool {
+        let theme = settings
+            .ts
+            .themes
+            .get(render.theme_key.as_str())
+            .expect("theme exists");
+        let default = theme
+            .settings
+            .foreground
+            .map(|color| [color.r, color.g, color.b, color.a]);
+        render
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .any(|span| Some(span.style.color) != default)
+    }
 
     #[test]
     fn resolve_syntax_handles_common_canonical_labels() {
@@ -1117,29 +1150,41 @@ mod resolver_tests {
     }
 
     #[test]
-    fn resolve_syntax_high_priority_and_new_language_matrix() {
-        let settings = SyntectSettings::default();
-        let labels = ["typescript", "toml", "swift", "powershell"];
-        let mut plain_labels = Vec::new();
-        for label in labels {
-            let syntax = resolve_syntax(&settings.ps, label);
-            if syntax.name == "Plain Text" {
-                plain_labels.push(label);
-            }
-        }
-        assert!(
-            plain_labels.is_empty(),
-            "labels that still resolve to plain text: {:?}",
-            plain_labels
-        );
-    }
-
-    #[test]
     fn resolve_syntax_leaves_known_unsupported_labels_as_plain_text() {
         let settings = SyntectSettings::default();
         for label in ["zig", "scss", "kotlin", "elixir", "dart"] {
             let syntax = resolve_syntax(&settings.ps, label);
             assert_eq!(syntax.name, "Plain Text", "label: {label}");
+        }
+    }
+
+    #[test]
+    fn high_priority_fallbacks_produce_non_default_coloring() {
+        let settings = SyntectSettings::default();
+        let cases = [
+            (
+                "typescript",
+                "type User = { name: string };\nconst user: User = { name: \"ada\" };",
+            ),
+            (
+                "toml",
+                "[tool.localpaste]\nname = \"demo\"\nenabled = true\n",
+            ),
+            (
+                "swift",
+                "import Foundation\nstruct User { let id: Int }\nfunc main() { print(\"hi\") }\n",
+            ),
+            (
+                "powershell",
+                "param([string]$Name)\nWrite-Host \"hello $Name\"\n",
+            ),
+        ];
+        for (label, content) in cases {
+            let render = render_for_label(&settings, label, content);
+            assert!(
+                has_non_default_coloring(&settings, &render),
+                "expected non-default coloring for {label}"
+            );
         }
     }
 }
