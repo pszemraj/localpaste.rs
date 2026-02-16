@@ -701,6 +701,9 @@ impl LocalPasteApp {
         if self.selected_id.is_some() {
             self.save_status = SaveStatus::Dirty;
             self.last_edit_at = Some(Instant::now());
+            if !self.is_virtual_editor_mode() {
+                self.highlight_edit_hint = None;
+            }
         }
     }
 

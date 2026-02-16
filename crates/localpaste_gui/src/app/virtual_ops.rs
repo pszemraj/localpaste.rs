@@ -1,6 +1,7 @@
 //! Virtual editor operations: selection, cursor motion, editing, and command application.
 
 use super::editor::EditorMode;
+use super::highlight::VirtualEditHint;
 use super::util::word_range_at;
 use super::virtual_editor::{
     EditIntent, RecordedEdit, VirtualEditorHistory, VirtualEditorState, VirtualGalleyCache,
@@ -159,6 +160,7 @@ impl LocalPasteApp {
         self.virtual_line_scratch.clear();
         self.reset_virtual_caret_blink();
         self.content_hash_cache = None;
+        self.highlight_edit_hint = None;
         self.virtual_drag_active = false;
         self.reset_virtual_click_streak();
     }
@@ -344,7 +346,13 @@ impl LocalPasteApp {
         if start == end && replacement.is_empty() {
             return false;
         }
+        let start_line = self.virtual_editor_buffer.char_to_line_col(start).0;
         let deleted = self.virtual_editor_buffer.slice_chars(start..end);
+        let deleted_chars = end.saturating_sub(start);
+        let inserted_chars = replacement.chars().count();
+        let inserted_newlines = replacement.chars().filter(|ch| *ch == '\n').count();
+        let deleted_newlines = deleted.chars().filter(|ch| *ch == '\n').count();
+        let touched_lines = inserted_newlines.max(deleted_newlines).saturating_add(1);
         let before_cursor = self.virtual_editor_state.cursor();
         let delta = self
             .virtual_editor_buffer
@@ -358,8 +366,13 @@ impl LocalPasteApp {
                 self.virtual_editor_buffer.line_count(),
                 self.virtual_editor_buffer.revision(),
             );
+            self.highlight_edit_hint = Some(VirtualEditHint {
+                start_line,
+                touched_lines,
+                inserted_chars,
+                deleted_chars,
+            });
         }
-        let inserted_chars = replacement.chars().count();
         let after_cursor = start.saturating_add(inserted_chars);
         self.virtual_editor_state
             .set_cursor(after_cursor, self.virtual_editor_buffer.len_chars());
@@ -693,6 +706,7 @@ impl LocalPasteApp {
                             self.virtual_editor_buffer.line_count(),
                             self.virtual_editor_buffer.revision(),
                         );
+                        self.highlight_edit_hint = None;
                     }
                 }
                 VirtualInputCommand::Redo => {
@@ -710,6 +724,7 @@ impl LocalPasteApp {
                             self.virtual_editor_buffer.line_count(),
                             self.virtual_editor_buffer.revision(),
                         );
+                        self.highlight_edit_hint = None;
                     }
                 }
                 VirtualInputCommand::ImeEnabled => {

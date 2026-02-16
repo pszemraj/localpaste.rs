@@ -3,8 +3,8 @@
 use super::super::util::env_flag_enabled;
 use super::{
     align_old_lines_by_hash, hash_bytes, line_hash_matches, line_start_state_matches,
-    resolve_syntax, HighlightRender, HighlightRenderLine, HighlightRequest, HighlightSpan,
-    HighlightStateSnapshot, HighlightStyle, SyntectSettings,
+    resolve_syntax, HighlightPatch, HighlightRender, HighlightRenderLine, HighlightRequest,
+    HighlightSpan, HighlightStateSnapshot, HighlightStyle, HighlightWorkerResult, SyntectSettings,
 };
 use crossbeam_channel::{Receiver, Sender};
 use std::thread;
@@ -17,7 +17,7 @@ use tracing::info;
 /// Background worker handles syntect highlighting off the UI thread.
 pub(crate) struct HighlightWorker {
     pub(crate) tx: Sender<HighlightRequest>,
-    pub(crate) rx: Receiver<HighlightRender>,
+    pub(crate) rx: Receiver<HighlightWorkerResult>,
 }
 
 #[derive(Default)]
@@ -25,6 +25,8 @@ struct HighlightWorkerCache {
     language_hint: String,
     theme_key: String,
     lines: Vec<HighlightWorkerLine>,
+    last_revision: Option<u64>,
+    last_content_hash: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -81,12 +83,17 @@ fn highlight_in_worker(
     settings: &SyntectSettings,
     cache: &mut HighlightWorkerCache,
     req: HighlightRequest,
-) -> HighlightRender {
+) -> HighlightWorkerResult {
+    let edit_hint = req.edit_hint;
     if cache.language_hint != req.language_hint || cache.theme_key != req.theme_key {
         cache.language_hint = req.language_hint.clone();
         cache.theme_key = req.theme_key.clone();
         cache.lines.clear();
+        cache.last_revision = None;
+        cache.last_content_hash = None;
     }
+    let cache_base_revision = cache.last_revision;
+    let cache_base_content_hash = cache.last_content_hash;
 
     let syntax = resolve_syntax(&settings.ps, &req.language_hint);
     let theme = settings
@@ -101,7 +108,10 @@ fn highlight_in_worker(
                 spans: Vec::new(),
             })
             .collect();
-        return HighlightRender {
+        cache.lines.clear();
+        cache.last_revision = Some(req.revision);
+        cache.last_content_hash = Some(req.content_hash);
+        return HighlightWorkerResult::Render(HighlightRender {
             paste_id: req.paste_id,
             revision: req.revision,
             text_len: req.text.len(),
@@ -109,9 +119,10 @@ fn highlight_in_worker(
             language_hint: req.language_hint,
             theme_key: req.theme_key,
             lines,
-        };
+        });
     };
 
+    let had_cached_lines = !cache.lines.is_empty();
     let lines: Vec<&str> = LinesWithEndings::from(req.text.as_str()).collect();
     let new_hashes: Vec<u64> = lines
         .iter()
@@ -133,6 +144,8 @@ fn highlight_in_worker(
     let mut new_lines = Vec::with_capacity(lines.len().max(1));
     let mut render_lines = Vec::with_capacity(lines.len().max(1));
     let mut prev_line_reused = false;
+    let mut changed_start: Option<usize> = None;
+    let mut changed_end: usize = 0;
 
     for (idx, line) in lines.iter().enumerate() {
         let line_hash = new_hashes[idx];
@@ -158,6 +171,10 @@ fn highlight_in_worker(
             prev_line_reused = true;
             continue;
         }
+        if changed_start.is_none() {
+            changed_start = Some(idx);
+        }
+        changed_end = idx;
 
         let mut spans = Vec::new();
         if let Ok(ops) = parse_state.parse_line(line, &settings.ps) {
@@ -210,8 +227,10 @@ fn highlight_in_worker(
     }
 
     cache.lines = new_lines;
+    cache.last_revision = Some(req.revision);
+    cache.last_content_hash = Some(req.content_hash);
 
-    HighlightRender {
+    let render = HighlightRender {
         paste_id: req.paste_id,
         revision: req.revision,
         text_len: req.text.len(),
@@ -219,14 +238,48 @@ fn highlight_in_worker(
         language_hint: req.language_hint,
         theme_key: req.theme_key,
         lines: render_lines,
+    };
+    if had_cached_lines
+        && req.patch_base_revision == cache_base_revision
+        && req.patch_base_content_hash == cache_base_content_hash
+    {
+        if let Some(start) = changed_start {
+            let hinted_start = edit_hint
+                .map(|hint| hint.start_line.min(render.lines.len().saturating_sub(1)))
+                .unwrap_or(start);
+            let start = start.min(hinted_start);
+            let end_exclusive = changed_end.saturating_add(1);
+            if end_exclusive > start && end_exclusive <= render.lines.len() {
+                let changed = start..end_exclusive;
+                if changed.len() < render.lines.len() {
+                    return HighlightWorkerResult::Patch(HighlightPatch {
+                        paste_id: render.paste_id.clone(),
+                        revision: render.revision,
+                        text_len: render.text_len,
+                        content_hash: render.content_hash,
+                        base_revision: cache_base_revision
+                            .expect("cached worker base revision required for patch"),
+                        base_content_hash: cache_base_content_hash
+                            .expect("cached worker base hash required for patch"),
+                        language_hint: render.language_hint.clone(),
+                        theme_key: render.theme_key.clone(),
+                        total_lines: render.lines.len(),
+                        line_range: changed.clone(),
+                        lines: render.lines[changed].to_vec(),
+                    });
+                }
+            }
+        }
     }
+    HighlightWorkerResult::Render(render)
 }
 
 #[cfg(test)]
 mod resolver_tests {
     use super::super::{resolve_syntax, syntect_language_hint};
     use super::{
-        hash_bytes, highlight_in_worker, HighlightRender, HighlightRequest, SyntectSettings,
+        hash_bytes, highlight_in_worker, HighlightRender, HighlightRequest, HighlightWorkerResult,
+        SyntectSettings,
     };
     use crate::app::highlight::worker::HighlightWorkerCache;
 
@@ -239,8 +292,14 @@ mod resolver_tests {
             content_hash: hash_bytes(text.as_bytes()),
             language_hint: label.to_string(),
             theme_key: "base16-mocha.dark".to_string(),
+            edit_hint: None,
+            patch_base_revision: None,
+            patch_base_content_hash: None,
         };
-        highlight_in_worker(settings, &mut cache, req)
+        match highlight_in_worker(settings, &mut cache, req) {
+            HighlightWorkerResult::Render(render) => render,
+            HighlightWorkerResult::Patch(_) => panic!("expected full render for cold worker cache"),
+        }
     }
 
     fn has_non_default_coloring(settings: &SyntectSettings, render: &HighlightRender) -> bool {
@@ -346,5 +405,55 @@ mod resolver_tests {
                 "expected non-default coloring for {label}"
             );
         }
+    }
+
+    #[test]
+    fn worker_emits_patch_only_when_ui_base_matches_worker_cache() {
+        let settings = SyntectSettings::default();
+        let mut cache = HighlightWorkerCache::default();
+        let text_v1 = "let a = 1;\nlet b = 2;\n";
+        let req_v1 = HighlightRequest {
+            paste_id: "test".to_string(),
+            revision: 1,
+            text: text_v1.to_string(),
+            content_hash: hash_bytes(text_v1.as_bytes()),
+            language_hint: "rust".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            edit_hint: None,
+            patch_base_revision: None,
+            patch_base_content_hash: None,
+        };
+        let first = highlight_in_worker(&settings, &mut cache, req_v1);
+        assert!(matches!(first, HighlightWorkerResult::Render(_)));
+
+        let text_v2 = "let a = 1;\nlet b = 3;\n";
+        let req_v2_patch = HighlightRequest {
+            paste_id: "test".to_string(),
+            revision: 2,
+            text: text_v2.to_string(),
+            content_hash: hash_bytes(text_v2.as_bytes()),
+            language_hint: "rust".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            edit_hint: None,
+            patch_base_revision: Some(1),
+            patch_base_content_hash: Some(hash_bytes(text_v1.as_bytes())),
+        };
+        let second = highlight_in_worker(&settings, &mut cache, req_v2_patch);
+        assert!(matches!(second, HighlightWorkerResult::Patch(_)));
+
+        let text_v3 = "let a = 4;\nlet b = 3;\n";
+        let req_v3_wrong_base = HighlightRequest {
+            paste_id: "test".to_string(),
+            revision: 3,
+            text: text_v3.to_string(),
+            content_hash: hash_bytes(text_v3.as_bytes()),
+            language_hint: "rust".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            edit_hint: None,
+            patch_base_revision: Some(0),
+            patch_base_content_hash: Some(123),
+        };
+        let third = highlight_in_worker(&settings, &mut cache, req_v3_wrong_base);
+        assert!(matches!(third, HighlightWorkerResult::Render(_)));
     }
 }

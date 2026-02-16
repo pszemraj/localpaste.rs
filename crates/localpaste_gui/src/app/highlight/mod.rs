@@ -778,6 +778,21 @@ pub(super) struct HighlightRenderLine {
     spans: Vec<HighlightSpan>,
 }
 
+impl HighlightRenderLine {
+    #[cfg(test)]
+    pub(super) fn plain(len: usize) -> Self {
+        Self {
+            len,
+            spans: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn len_for_test(&self) -> usize {
+        self.len
+    }
+}
+
 /// Highlight rendering output for an entire buffer snapshot.
 #[derive(Clone)]
 pub(super) struct HighlightRender {
@@ -788,6 +803,29 @@ pub(super) struct HighlightRender {
     pub(super) language_hint: String,
     pub(super) theme_key: String,
     pub(super) lines: Vec<HighlightRenderLine>,
+}
+
+/// Highlight patch output for a changed line range within a buffer snapshot.
+#[derive(Clone)]
+pub(super) struct HighlightPatch {
+    pub(super) paste_id: String,
+    pub(super) revision: u64,
+    pub(super) text_len: usize,
+    pub(super) content_hash: u64,
+    pub(super) base_revision: u64,
+    pub(super) base_content_hash: u64,
+    pub(super) language_hint: String,
+    pub(super) theme_key: String,
+    pub(super) total_lines: usize,
+    pub(super) line_range: Range<usize>,
+    pub(super) lines: Vec<HighlightRenderLine>,
+}
+
+/// Worker output event carrying either full-highlight render or range patch.
+#[derive(Clone)]
+pub(super) enum HighlightWorkerResult {
+    Render(HighlightRender),
+    Patch(HighlightPatch),
 }
 
 impl HighlightRender {
@@ -827,6 +865,18 @@ pub(super) struct HighlightRequest {
     pub(super) content_hash: u64,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
+    pub(super) edit_hint: Option<VirtualEditHint>,
+    pub(super) patch_base_revision: Option<u64>,
+    pub(super) patch_base_content_hash: Option<u64>,
+}
+
+/// Lightweight edit metadata captured from virtual-editor operations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct VirtualEditHint {
+    pub(super) start_line: usize,
+    pub(super) touched_lines: usize,
+    pub(super) inserted_chars: usize,
+    pub(super) deleted_chars: usize,
 }
 
 /// Metadata used to coalesce highlight requests while typing.

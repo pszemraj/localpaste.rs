@@ -151,13 +151,6 @@ impl LocalPasteApp {
                     .cloned()
                     .unwrap_or_else(|| TextStyle::Monospace.resolve(ui.style()));
                 let language_hint = syntect_language_hint(language.as_deref().unwrap_or("text"));
-                let debounce_active = self
-                    .last_edit_at
-                    .map(|last| {
-                        self.active_text_len_bytes() >= HIGHLIGHT_DEBOUNCE_MIN_BYTES
-                            && last.elapsed() < HIGHLIGHT_DEBOUNCE
-                    })
-                    .unwrap_or(false);
                 let theme = (!is_large).then(|| CodeTheme::from_memory(ui.ctx(), ui.style()));
                 let theme_key = theme
                     .as_ref()
@@ -172,6 +165,11 @@ impl LocalPasteApp {
                 let needs_worker_render = use_virtual_preview || use_virtual_editor;
                 let async_mode =
                     !is_large && (text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES || needs_worker_render);
+                let debounce_window = self.highlight_debounce_window(text_len, async_mode);
+                let debounce_active = self
+                    .last_edit_at
+                    .map(|last| last.elapsed() < debounce_window)
+                    .unwrap_or(false);
                 let should_request = async_mode
                     && self.should_request_highlight(
                         content_hash,
@@ -187,6 +185,7 @@ impl LocalPasteApp {
                     self.dispatch_highlight_request(
                         revision,
                         content_snapshot,
+                        content_hash,
                         &language_hint,
                         theme_key,
                         id.as_str(),

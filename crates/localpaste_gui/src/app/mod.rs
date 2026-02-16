@@ -19,7 +19,8 @@ use egui_extras::syntax_highlighting::CodeTheme;
 use highlight::{
     build_virtual_line_job, build_virtual_line_job_owned, spawn_highlight_worker,
     syntect_language_hint, syntect_theme_key, EditorLayoutCache, EditorLayoutRequest,
-    HighlightRender, HighlightRequestMeta, HighlightWorker, SyntectSettings,
+    HighlightRender, HighlightRequestMeta, HighlightWorker, HighlightWorkerResult, SyntectSettings,
+    VirtualEditHint,
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
@@ -93,6 +94,7 @@ pub(crate) struct LocalPasteApp {
     highlight_render: Option<HighlightRender>,
     highlight_staged: Option<HighlightRender>,
     highlight_version: u64,
+    highlight_edit_hint: Option<VirtualEditHint>,
     content_hash_cache: Option<ContentHashCacheEntry>,
     last_interaction_at: Option<Instant>,
     last_editor_click_at: Option<Instant>,
@@ -167,7 +169,10 @@ pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
 const PALETTE_SEARCH_LIMIT: usize = 40;
-const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(150);
+const HIGHLIGHT_DEBOUNCE_MEDIUM: Duration = Duration::from_millis(35);
+const HIGHLIGHT_DEBOUNCE_LARGE: Duration = Duration::from_millis(50);
+const HIGHLIGHT_DEBOUNCE_LARGE_BYTES: usize = 64 * 1024;
+const HIGHLIGHT_TINY_EDIT_MAX_CHARS: usize = 4;
 const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
 const HIGHLIGHT_APPLY_IDLE: Duration = Duration::from_millis(200);
 const EDITOR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(300);
@@ -456,6 +461,7 @@ impl LocalPasteApp {
             highlight_render: None,
             highlight_staged: None,
             highlight_version: 0,
+            highlight_edit_hint: None,
             content_hash_cache: None,
             syntect: SyntectSettings::default(),
             db_path,
@@ -661,8 +667,11 @@ impl eframe::App for LocalPasteApp {
             ctx.send_cmd(egui::OutputCommand::CopyText(text));
         }
 
-        while let Ok(render) = self.highlight_worker.rx.try_recv() {
-            self.queue_highlight_render(render);
+        while let Ok(result) = self.highlight_worker.rx.try_recv() {
+            match result {
+                HighlightWorkerResult::Render(render) => self.queue_highlight_render(render),
+                HighlightWorkerResult::Patch(patch) => self.queue_highlight_patch(patch),
+            }
         }
 
         if !self.is_virtual_editor_mode() {

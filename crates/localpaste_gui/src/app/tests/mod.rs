@@ -113,6 +113,7 @@ fn make_app() -> TestHarness {
         highlight_render: None,
         highlight_staged: None,
         highlight_version: 0,
+        highlight_edit_hint: None,
         content_hash_cache: None,
         syntect: SyntectSettings::default(),
         db_path: db_path_str,
