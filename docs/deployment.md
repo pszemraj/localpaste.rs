@@ -42,13 +42,9 @@ Important runtime rule:
 
 ## Storage Backend Note
 
-Storage/backend compatibility policy is documented in
-[docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
-Operationally:
-
-- Current runtime expects `DB_PATH/data.redb`.
-- Legacy sled-era data is incompatible with this build.
-- Use a fresh `DB_PATH` when moving from older sled-era versions.
+Storage/backend compatibility policy is defined in
+[docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md) and is the source of truth.
+Use that document for backend/file-layout and compatibility details.
 
 For stop/restart/cleanup procedures, use [Stopping LocalPaste Safely](#stopping-localpaste-safely).
 

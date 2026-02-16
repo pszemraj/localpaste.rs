@@ -216,6 +216,7 @@ Architecture-level summary:
 - Auto-detect flow is `Magika -> heuristic fallback`, with label normalization before persistence/filtering.
 - Manual language mode bypasses auto re-detection on content edits.
 - GUI highlighting resolves syntaxes via a multi-step resolver and falls back to plain text when no safe grammar match exists.
+- Virtual-editor async highlight debounce/staging/patch behavior is defined in [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md#virtual-editor-async-highlight-flow).
 
 ## 9) GUI Save Pipeline
 

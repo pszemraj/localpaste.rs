@@ -24,5 +24,4 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
-- [ ] Review `check-ast-dupes --include-tests` hit in `crates/localpaste_gui/src/app/virtual_editor/layout.rs` (high-similarity test bodies) and decide whether to keep as-is with rationale or consolidate shared setup.
 - [ ] Review `check-ast-dupes` hit between `TransactionOps::create_paste_with_folder` and `TransactionOps::move_paste_between_folders` in `crates/localpaste_core/src/db/transactions.rs`; either consolidate shared logic or document intentional duplication.

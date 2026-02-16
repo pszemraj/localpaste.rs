@@ -1,7 +1,7 @@
 # GUI Notes
 
 Use this document for rewrite GUI behavior notes and env flags.
-For detection/normalization/highlight pipeline semantics, use [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
+Detection/normalization/highlight semantics are defined in [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md) and should be treated as canonical.
 For perf validation steps/gates, use [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
 
 ## Runtime Flags
@@ -25,7 +25,7 @@ For perf validation steps/gates, use [gui-perf-protocol.md](https://github.com/p
 - When no explicit language filter is selected, the status bar label mirrors the selected paste language when known; it falls back to `Any` only when language is unknown.
 - Sidebar list refresh and sidebar search run on metadata projections (`name/tags/language/folder`) and do not deserialize full paste content.
 - Large buffers (`>= 256KB`) intentionally use plain-text rendering.
-- Highlight updates are debounced (150ms) and staged so existing render stays visible during async refresh.
+- Virtual-editor highlight debounce/staging policy is defined in [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md#virtual-editor-async-highlight-flow).
 - Language display behavior is explicit: auto + unset -> `auto`; manual + unset -> `plain`.
 - Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
 - Folder create/edit/move controls are intentionally removed from the rewrite GUI; organization is smart-filter + search based.
@@ -46,16 +46,9 @@ Use this checklist when touching detection/highlight/filter code.
 6. Validate alias interoperability in UI filtering:
    - Set active language filter to `cs`; verify both `csharp` and `cs` pastes remain visible.
    - Set active language filter to `shell`; verify `bash`/`sh` labeled content matches.
-7. Validate syntax resolver behavior:
-   - `cs`, `shell`, `cpp`, `powershell` should highlight (non-plain grammar).
-   - Unknown label and `text`/`txt` should render plain text.
-   - High-priority fallback mappings when native grammar is unavailable:
-     - `typescript` -> JavaScript grammar
-     - `toml` -> Java Properties grammar (then YAML fallback)
-     - `swift` -> Rust/Go grammar
-     - `powershell` -> bash grammar
-   - Languages currently kept as metadata/filter labels with plain rendering (no fallback grammar mapping):
-     - `zig`, `scss`, `kotlin`, `elixir`, `dart`
+7. Validate syntax resolver behavior against the canonical matrix in [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md#gui-highlight-resolution):
+   - alias labels should resolve to non-plain grammars where expected,
+   - unsupported labels should remain metadata-visible while rendering plain text.
 8. Validate large-buffer guardrail:
    - Paste content >= 256KB and verify display is plain regardless of language metadata.
 9. Re-run shortcut sanity checks after language UI edits:

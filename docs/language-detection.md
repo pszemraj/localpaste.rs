@@ -6,7 +6,9 @@ highlighting behavior in LocalPaste.
 Implementation roots:
 
 - Core detection entrypoint: [`crates/localpaste_core/src/detection/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/detection/mod.rs)
-- GUI syntax resolver: [`crates/localpaste_gui/src/app/highlight.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/highlight.rs)
+- GUI highlight pipeline entrypoints:
+  - [`crates/localpaste_gui/src/app/highlight/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/highlight/mod.rs)
+  - [`crates/localpaste_gui/src/app/highlight/worker.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/highlight/worker.rs)
 
 ## Feature Topology
 
@@ -99,6 +101,36 @@ Currently metadata-only (plain rendering) labels:
 > [!NOTE]
 > These labels remain useful for metadata/search/filtering even when rendering is plain text.
 
+## Virtual Editor Async Highlight Flow
+
+Virtual-editor highlight behavior is async and staged to avoid mid-burst visual churn while typing.
+
+Flow:
+
+1. UI sends a highlight request keyed by paste/context (`paste_id`, `revision`, `content_hash`, `language_hint`, `theme_key`).
+2. Worker coalesces queued requests and computes either:
+   - full render (`HighlightRender`), or
+   - changed-range patch (`HighlightPatch`) when the UI base snapshot matches the worker cache base.
+3. UI merges matching patches into staged/current highlight state.
+4. Staged highlight applies:
+   - immediately only when there is no current render,
+   - otherwise only after idle threshold.
+
+Current policy constants (virtual editor):
+
+- idle apply threshold: `200ms`
+- adaptive debounce windows:
+  - tiny edits (`<=4` changed chars, `<=2` touched lines): `0ms`
+  - medium edits: `35ms`
+  - larger supported buffers (`>=64KB`): `50ms`
+- plain rendering guardrail: `>=256KB` content
+
+Primary implementation:
+
+- request/stage/apply lifecycle: [`crates/localpaste_gui/src/app/highlight_flow.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/highlight_flow.rs)
+- virtual edit hint capture: [`crates/localpaste_gui/src/app/virtual_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/virtual_ops.rs)
+- editor dispatch and debounce usage: [`crates/localpaste_gui/src/app/ui/editor_panel.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/ui/editor_panel.rs)
+
 ## Runtime Provider Default (Magika)
 
 When Magika is enabled, runtime defaults to CPU execution provider:
@@ -114,6 +146,6 @@ Reference: [`.env.example`](https://github.com/pszemraj/localpaste.rs/blob/main/
 When touching detection/highlight behavior, validate:
 
 - core detection tests (`localpaste_core::detection::tests`),
-- GUI resolver tests (`localpaste_gui::app::highlight::resolver_tests`),
+- GUI resolver/worker tests (`localpaste_gui::app::highlight::worker::resolver_tests`),
 - GUI manual checks in [docs/dev/gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md),
 - GUI perf checks in [docs/dev/gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
