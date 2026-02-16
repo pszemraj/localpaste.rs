@@ -58,6 +58,23 @@ fn heuristic_does_not_treat_param_call_alone_as_powershell() {
 }
 
 #[test]
+fn heuristic_avoids_common_single_token_false_positives() {
+    let cases = [
+        (
+            "const tpl = \"<div class='x'>\";\nconsole.log(tpl);\n",
+            Some("javascript"),
+        ),
+        (
+            "fn main() { let d = std::time::Duration::from_secs(1); println!(\"{:?}\", d); }",
+            Some("rust"),
+        ),
+        ("status report:\ndone\n", None),
+        ("note: use strict; while migrating config", None),
+    ];
+    assert_detection_cases(cases.as_slice());
+}
+
+#[test]
 fn canonicalization_matrix_handles_aliases() {
     let cases = [
         ("csharp", "cs"),

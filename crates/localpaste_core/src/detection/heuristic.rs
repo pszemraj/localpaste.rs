@@ -30,25 +30,36 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     }
 
     // HTML before generic XML so we don't mis-classify.
+    // Require either a strong root marker or multiple tag hits near document-like syntax.
+    let html_tag_hits = [
+        "<html", "<head", "<body", "<div", "<span", "<script", "<style",
+    ]
+    .iter()
+    .filter(|tag| lower.contains(**tag))
+    .count();
     if lower.contains("<!doctype html")
         || lower.contains("<html")
-        || lower.contains("<body")
-        || lower.contains("<div")
+        || (sample.trim_start().starts_with('<') && html_tag_hits >= 2)
     {
         return Some("html".to_string());
     }
 
     if lower.starts_with("<?xml")
-        || (sample.starts_with('<') && lower.contains("</") && !lower.contains("<html"))
+        || (sample.trim_start().starts_with('<')
+            && lower.contains("</")
+            && !lower.contains("<html")
+            && !lower.contains("<!doctype html"))
     {
         return Some("xml".to_string());
     }
 
+    let perl_hits = ["use strict;", "use warnings;", "my $", "sub ", "package "]
+        .iter()
+        .filter(|kw| lower.contains(**kw))
+        .count();
     if lower.starts_with("#!/usr/bin/env perl")
         || lower.starts_with("#!/usr/bin/perl")
-        || lower.contains("use strict;")
-        || lower.contains("use warnings;")
-        || lower.contains("my $")
+        || perl_hits >= 2
     {
         return Some("perl".to_string());
     }
@@ -70,11 +81,20 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("powershell".to_string());
     }
 
+    let shell_hits = [
+        (lower.contains("echo ") && lower.contains('$')),
+        lower.contains("\nfi"),
+        lower.contains("\ndone"),
+        lower.contains("if ["),
+        lower.contains(" then\n"),
+        (lower.contains("case ") && lower.contains(" esac")),
+    ]
+    .iter()
+    .filter(|hit| **hit)
+    .count();
     if lower.starts_with("#!/bin/")
         || lower.starts_with("#!/usr/bin/env bash")
-        || (lower.contains("echo ") && lower.contains('$') && lower.contains('\n'))
-        || lower.contains("\nfi")
-        || lower.contains("\ndone")
+        || (shell_hits >= 2 && lower.contains('\n'))
     {
         return Some("shell".to_string());
     }
@@ -88,7 +108,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
             (t.starts_with("- ") || t.contains(": ")) && !t.contains('{')
         })
         .count();
-    if (lower.starts_with("---") || yaml_pairs >= 2) && !sample.contains('{') {
+    if ((lower.starts_with("---") && yaml_pairs >= 1) || yaml_pairs >= 2) && !sample.contains('{') {
         return Some("yaml".to_string());
     }
 
@@ -113,10 +133,17 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("markdown".to_string());
     }
 
-    if lower.contains("\\begin{")
-        || lower.contains("\\documentclass")
-        || lower.contains("\\section")
-    {
+    let latex_hits = [
+        "\\begin{",
+        "\\end{",
+        "\\usepackage",
+        "\\section",
+        "\\subsection",
+    ]
+    .iter()
+    .filter(|kw| lower.contains(**kw))
+    .count();
+    if lower.contains("\\documentclass") || latex_hits >= 2 {
         return Some("latex".to_string());
     }
 
@@ -141,15 +168,23 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         |keywords: &[&str]| -> usize { keywords.iter().filter(|kw| lower.contains(*kw)).count() };
 
     // Specialized checks for languages with distinctive constructs.
-    if lower.contains("using system")
-        || (lower.contains("namespace ") && lower.contains("class ") && lower.contains("console."))
+    let cs_has_using_system = lower.contains("using system");
+    let cs_has_namespace_class = lower.contains("namespace ") && lower.contains("class ");
+    let cs_has_console = lower.contains("console.");
+    if (cs_has_using_system && (cs_has_namespace_class || cs_has_console))
+        || (cs_has_namespace_class && cs_has_console)
     {
         return Some("csharp".to_string());
     }
 
-    if lower.contains("std::")
-        || lower.contains("using namespace std")
+    let cpp_has_std_scope = lower.contains("std::");
+    let cpp_has_usage = lower.contains("cout")
+        || lower.contains("vector<")
+        || lower.contains("::iterator")
+        || lower.contains("int main(");
+    if lower.contains("using namespace std")
         || lower.contains("template <")
+        || (cpp_has_std_scope && cpp_has_usage)
     {
         return Some("cpp".to_string());
     }
@@ -158,8 +193,15 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("c".to_string());
     }
 
-    if lower.contains("import foundation")
-        || (lower.contains("func ") && (lower.contains("guard let") || lower.contains("protocol ")))
+    let swift_has_import = lower.contains("import foundation");
+    let swift_has_func = lower.contains("func ");
+    let swift_has_shape = lower.contains("print(")
+        || lower.contains("guard let")
+        || lower.contains("protocol ")
+        || lower.contains("let ")
+        || lower.contains("var ");
+    if (swift_has_import && swift_has_func && swift_has_shape)
+        || (swift_has_func && (lower.contains("guard let") || lower.contains("protocol ")))
     {
         return Some("swift".to_string());
     }
