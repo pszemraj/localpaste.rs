@@ -216,6 +216,30 @@ fn virtual_vertical_move_target_returns_global_char_offset() {
 }
 
 #[test]
+fn virtual_vertical_move_target_clamps_to_short_row_end_boundary() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("abcdefghij\nabcde\n");
+    harness
+        .app
+        .virtual_layout
+        .rebuild(&harness.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+
+    let desired_col = 8usize;
+    let start = harness
+        .app
+        .virtual_editor_buffer
+        .line_col_to_char(0, desired_col);
+    let moved_down = harness
+        .app
+        .virtual_move_vertical_target(start, desired_col, false);
+
+    assert_eq!(
+        moved_down,
+        harness.app.virtual_editor_buffer.line_col_to_char(1, 5)
+    );
+}
+
+#[test]
 fn page_navigation_initializes_preferred_column_from_current_cursor() {
     let mut harness = make_app();
     harness

@@ -322,9 +322,10 @@ impl LocalPasteApp {
         let target_display_col = if row_start >= target_line_cols {
             target_line_cols
         } else {
-            row_start
-                + desired_col_in_row
-                    .min(target_line_cols.saturating_sub(row_start).saturating_sub(1))
+            // Clamp to the target row boundary so vertical navigation can land at
+            // end-of-row for shorter rows instead of one column early.
+            let row_len = target_line_cols.saturating_sub(row_start).min(cols);
+            row_start + desired_col_in_row.min(row_len)
         };
         let target_line_char = self.virtual_layout.line_display_column_to_char(
             &self.virtual_editor_buffer,
