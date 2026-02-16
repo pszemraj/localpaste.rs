@@ -317,11 +317,13 @@ impl LocalPasteApp {
                 + desired_col_in_row
                     .min(target_line_cols.saturating_sub(row_start).saturating_sub(1))
         };
-        self.virtual_layout.line_display_column_to_char(
+        let target_line_char = self.virtual_layout.line_display_column_to_char(
             &self.virtual_editor_buffer,
             target_line,
             target_display_col,
-        )
+        );
+        self.virtual_editor_buffer
+            .line_col_to_char(target_line, target_line_char)
     }
 
     pub(super) fn virtual_selection_for_line(

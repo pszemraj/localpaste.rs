@@ -400,6 +400,9 @@ impl LocalPasteApp {
                             segment_range.clone(),
                             &mut self.virtual_line_scratch,
                         );
+                        // `Galley` retains `LayoutJob.text`, so each cache miss needs an owned
+                        // per-row `String` anyway; move the scratch buffer into the job to avoid
+                        // an extra clone/allocation on the miss path.
                         let mut job = build_virtual_line_segment_job_owned(
                             ui,
                             std::mem::take(&mut self.virtual_line_scratch),
