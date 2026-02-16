@@ -207,37 +207,6 @@ fn paste_saved_reprojects_non_search_results_for_active_language_filter() {
 }
 
 #[test]
-fn maybe_dispatch_palette_search_requires_debounce_and_dedupes() {
-    let mut harness = make_app();
-    harness.app.command_palette_open = true;
-    harness.app.set_command_palette_query("alpha".to_string());
-
-    harness.app.palette_search_last_input_at = Some(Instant::now());
-    harness.app.maybe_dispatch_palette_search();
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
-
-    harness.app.palette_search_last_input_at =
-        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
-    harness.app.maybe_dispatch_palette_search();
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::SearchPalette { query, limit } => {
-            assert_eq!(query, "alpha");
-            assert_eq!(limit, PALETTE_SEARCH_LIMIT);
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    harness.app.maybe_dispatch_palette_search();
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
-}
-
-#[test]
 fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
     let mut harness = make_app();
     harness.app.command_palette_open = true;
@@ -284,73 +253,112 @@ fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
 }
 
 #[test]
-fn maybe_dispatch_search_requires_debounce_and_dedupes() {
-    let mut harness = make_app();
-    harness.app.set_search_query("rust".to_string());
-
-    harness.app.search_last_input_at = Some(Instant::now());
-    harness.app.maybe_dispatch_search();
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
-
-    harness.app.search_last_input_at =
-        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
-    harness.app.maybe_dispatch_search();
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::SearchPastes {
-            query,
-            limit,
-            folder_id,
-            language,
-        } => {
-            assert_eq!(query, "rust");
-            assert_eq!(limit, localpaste_core::DEFAULT_SEARCH_PASTES_LIMIT);
-            assert!(folder_id.is_none());
-            assert!(language.is_none());
-        }
-        other => panic!("unexpected command: {:?}", other),
+fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
+    enum DispatchKind {
+        SidebarSearch,
+        PaletteSearch,
     }
 
-    harness.app.maybe_dispatch_search();
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
+    for kind in [DispatchKind::SidebarSearch, DispatchKind::PaletteSearch] {
+        let mut harness = make_app();
+        match kind {
+            DispatchKind::PaletteSearch => {
+                harness.app.command_palette_open = true;
+                harness.app.set_command_palette_query("alpha".to_string());
 
-    let now = Utc::now();
-    harness.app.apply_event(CoreEvent::PasteList {
-        items: vec![
-            PasteSummary {
-                id: "alpha".to_string(),
-                name: "Alpha".to_string(),
-                language: None,
-                content_len: 7,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-            },
-            PasteSummary {
-                id: "beta".to_string(),
-                name: "Beta".to_string(),
-                language: Some("rust".to_string()),
-                content_len: 4,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-            },
-        ],
-    });
-    assert!(
-        harness.app.search_last_sent.is_empty(),
-        "list refresh during active search should invalidate cached query"
-    );
+                harness.app.palette_search_last_input_at = Some(Instant::now());
+                harness.app.maybe_dispatch_palette_search();
+                assert!(matches!(
+                    harness.cmd_rx.try_recv(),
+                    Err(TryRecvError::Empty)
+                ));
 
-    harness.app.maybe_dispatch_search();
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "rust"),
-        other => panic!("unexpected command: {:?}", other),
+                harness.app.palette_search_last_input_at =
+                    Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+                harness.app.maybe_dispatch_palette_search();
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::SearchPalette { query, limit } => {
+                        assert_eq!(query, "alpha");
+                        assert_eq!(limit, PALETTE_SEARCH_LIMIT);
+                    }
+                    other => panic!("unexpected command: {:?}", other),
+                }
+
+                harness.app.maybe_dispatch_palette_search();
+                assert!(matches!(
+                    harness.cmd_rx.try_recv(),
+                    Err(TryRecvError::Empty)
+                ));
+            }
+            DispatchKind::SidebarSearch => {
+                harness.app.set_search_query("rust".to_string());
+
+                harness.app.search_last_input_at = Some(Instant::now());
+                harness.app.maybe_dispatch_search();
+                assert!(matches!(
+                    harness.cmd_rx.try_recv(),
+                    Err(TryRecvError::Empty)
+                ));
+
+                harness.app.search_last_input_at =
+                    Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+                harness.app.maybe_dispatch_search();
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::SearchPastes {
+                        query,
+                        limit,
+                        folder_id,
+                        language,
+                    } => {
+                        assert_eq!(query, "rust");
+                        assert_eq!(limit, localpaste_core::DEFAULT_SEARCH_PASTES_LIMIT);
+                        assert!(folder_id.is_none());
+                        assert!(language.is_none());
+                    }
+                    other => panic!("unexpected command: {:?}", other),
+                }
+
+                harness.app.maybe_dispatch_search();
+                assert!(matches!(
+                    harness.cmd_rx.try_recv(),
+                    Err(TryRecvError::Empty)
+                ));
+
+                let now = Utc::now();
+                harness.app.apply_event(CoreEvent::PasteList {
+                    items: vec![
+                        PasteSummary {
+                            id: "alpha".to_string(),
+                            name: "Alpha".to_string(),
+                            language: None,
+                            content_len: 7,
+                            updated_at: now,
+                            folder_id: None,
+                            tags: Vec::new(),
+                        },
+                        PasteSummary {
+                            id: "beta".to_string(),
+                            name: "Beta".to_string(),
+                            language: Some("rust".to_string()),
+                            content_len: 4,
+                            updated_at: now,
+                            folder_id: None,
+                            tags: Vec::new(),
+                        },
+                    ],
+                });
+                assert!(
+                    harness.app.search_last_sent.is_empty(),
+                    "list refresh during active search should invalidate cached query"
+                );
+
+                harness.app.maybe_dispatch_search();
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "rust"),
+                    other => panic!("unexpected command: {:?}", other),
+                }
+            }
+        }
     }
 }
 
