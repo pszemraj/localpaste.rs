@@ -856,16 +856,18 @@ fn attr_meta_contains(attr: &Attribute, attr_name: &str, needle: &str) -> bool {
     attr.path().is_ident(attr_name) && attr.meta.to_token_stream().to_string().contains(needle)
 }
 
-fn has_cfg_attr(attrs: &[Attribute]) -> bool {
+fn has_attr_meta_contains(attrs: &[Attribute], attr_name: &str, needle: &str) -> bool {
     attrs
         .iter()
-        .any(|attr| attr_meta_contains(attr, "cfg", "test"))
+        .any(|attr| attr_meta_contains(attr, attr_name, needle))
+}
+
+fn has_cfg_attr(attrs: &[Attribute]) -> bool {
+    has_attr_meta_contains(attrs, "cfg", "test")
 }
 
 fn allows_dead_code(attrs: &[Attribute]) -> bool {
-    attrs
-        .iter()
-        .any(|attr| attr_meta_contains(attr, "allow", "dead_code"))
+    has_attr_meta_contains(attrs, "allow", "dead_code")
 }
 
 fn normalize_path(path: &Path) -> String {
