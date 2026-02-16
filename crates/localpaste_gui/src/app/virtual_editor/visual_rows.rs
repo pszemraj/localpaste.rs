@@ -399,6 +399,8 @@ fn line_row_char_range(
     let line_slice = buffer.rope().line(line).slice(..chars);
     for (idx, ch) in line_slice.chars().enumerate() {
         let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        // Only wrap after at least one visible glyph has been placed in this row.
+        // This prevents empty leading rows when a single glyph is wider than `cols`.
         if width > 0 && row_columns > 0 && row_columns.saturating_add(width) > cols {
             if current_row == row_in_line {
                 return row_start..idx;
