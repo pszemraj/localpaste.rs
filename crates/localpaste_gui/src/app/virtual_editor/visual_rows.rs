@@ -174,7 +174,10 @@ impl VisualRowLayoutCache {
         self.line_metrics
             .get(line)
             .map(|m| m.columns)
-            .unwrap_or_else(|| measure_line_columns(buffer, line, self.line_chars(line)))
+            .unwrap_or_else(|| {
+                let line_chars = buffer.line_len_chars(line);
+                measure_line_columns(buffer, line, line_chars)
+            })
     }
 
     /// Convert a character offset within a line to display columns.
@@ -224,13 +227,14 @@ impl VisualRowLayoutCache {
         if line >= buffer.line_count() {
             return 0;
         }
+        let fallback_chars = buffer.line_len_chars(line);
         let metrics = self
             .line_metrics
             .get(line)
             .copied()
             .unwrap_or_else(|| LineWrapMetrics {
-                chars: self.line_chars(line),
-                columns: measure_line_columns(buffer, line, self.line_chars(line)),
+                chars: fallback_chars,
+                columns: measure_line_columns(buffer, line, fallback_chars),
                 visual_rows: 1,
             });
         let target_columns = target_columns.min(metrics.columns);
@@ -518,6 +522,16 @@ mod tests {
         assert_eq!(cache.line_display_column_to_char(&buffer, 0, 4), 2);
         assert_eq!(cache.line_display_column_to_char(&buffer, 0, 6), 4);
         assert_eq!(cache.line_display_column_to_char(&buffer, 0, 7), 4);
+    }
+
+    #[test]
+    fn missing_metrics_fallback_uses_buffer_line_length_for_ascii_lines() {
+        let buffer = RopeBuffer::new("abcdef\n");
+        let cache = VisualRowLayoutCache::default();
+
+        assert_eq!(cache.line_columns(&buffer, 0), 6);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 3), 3);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 8), 6);
     }
 
     #[test]

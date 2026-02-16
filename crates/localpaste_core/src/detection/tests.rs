@@ -132,6 +132,10 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         refine_magika_label("yaml", "name: app\nservices:\n  - web\n"),
         Some("yaml".to_string())
     );
+    assert_eq!(
+        refine_magika_label("yaml", "services:\n  web:\n    image: nginx\n"),
+        Some("yaml".to_string())
+    );
 }
 
 #[cfg(feature = "magika")]

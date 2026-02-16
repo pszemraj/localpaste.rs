@@ -60,7 +60,10 @@ fn looks_like_yaml(content: &str) -> bool {
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 return false;
             }
-            (trimmed.starts_with("- ") || trimmed.contains(": ")) && !trimmed.contains('{')
+            (trimmed.starts_with("- ")
+                || trimmed.contains(": ")
+                || (trimmed.ends_with(':') && trimmed.len() > 1))
+                && !trimmed.contains('{')
         })
         .count();
 
