@@ -73,6 +73,10 @@ For repeatable GUI perf validation, see [GUI perf protocol](gui-perf-protocol.md
 
 ## Validation Loop
 
+Policy source of truth:
+[../../AGENTS.md](../../AGENTS.md) defines mandatory validation gates and when smoke/manual GUI checks are required.
+This section is the quick command reference used during active development.
+
 ```bash
 # 1) format
 cargo fmt --all
@@ -99,6 +103,9 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 # 8) docs contract check
 rustdoc-checker crates --strict
 ```
+
+- Canonical smoke script variants: [../../AGENTS.md#smoke-test-run-after-any-apicore-change](../../AGENTS.md#smoke-test-run-after-any-apicore-change)
+- Canonical manual GUI checklist: [gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
 
 Language detection/normalization/highlight behavior is tracked in [../language-detection.md](../language-detection.md).
 

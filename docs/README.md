@@ -8,6 +8,7 @@ Use this page as the canonical map of where each concept is defined.
 | Topic                                                     | Doc                                                                                                                                                  |
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Product/project overview                                  | [../README.md](../README.md)                                                                           |
+| Agent protocol + mandatory validation gates               | [../AGENTS.md](../AGENTS.md)                                                         |
 | System architecture walkthrough                           | [architecture.md](architecture.md)                                                     |
 | Language detection + normalization + highlight resolution | [language-detection.md](language-detection.md)                                         |
 | Storage backend + compatibility contract                  | [storage.md](storage.md)                                                               |

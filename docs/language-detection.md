@@ -95,16 +95,14 @@ The canonical fallback coverage matrix is tested in:
 
 - [`../crates/localpaste_gui/src/app/highlight/worker.rs`](../crates/localpaste_gui/src/app/highlight/worker.rs) (`resolver_tests`)
 
-At the time of writing, high-priority fallback labels include:
+Examples covered by the resolver tests include:
 
-- `typescript`, `toml`, `swift`, `powershell`, `sass`
-
-Metadata-only (plain rendering) labels in the current test matrix include:
-
-- `zig`, `scss`, `kotlin`, `elixir`, `dart`
+- fallback-to-grammar labels (for example: `typescript`, `powershell`, `sass`)
+- metadata-only/plain-render labels (for example: `zig`, `kotlin`, `dart`)
 
 > [!NOTE]
-> These labels remain useful for metadata/search/filtering even when rendering is plain text.
+> Keep code/tests as the authoritative mapping and coverage list to avoid doc drift.
+> Metadata-only labels remain useful for search/filtering even when rendering is plain text.
 
 ## Virtual Editor Async Highlight Flow
 
