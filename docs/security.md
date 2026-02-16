@@ -1,21 +1,22 @@
 # Security Configuration
 
-Canonical scope:
+Scope:
+
 - Security defaults, threat model, and security-relevant env toggles are defined here.
-- Storage/backend compatibility policy is canonical in [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
-- Service operation and lock-recovery procedures are canonical in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
-- Build/run command matrices are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+- Storage/backend compatibility policy is documented in [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
+- Service operation and lock-recovery procedures are documented in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
+- Detection/runtime-provider toggles (for example `MAGIKA_FORCE_CPU`) are documented in [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
+- Build/run command matrices are documented in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ---
 
-- [Security Configuration](#security-configuration)
-  - [Default Security Settings](#default-security-settings)
-  - [Environment Variables](#environment-variables)
-  - [Public Exposure (Not Recommended)](#public-exposure-not-recommended)
-  - [Security Best Practices](#security-best-practices)
-  - [Threat Model](#threat-model)
-  - [Reporting Security Issues](#reporting-security-issues)
-  - [Compliance Notes](#compliance-notes)
+- [Default Security Settings](#default-security-settings)
+- [Environment Variables](#environment-variables)
+- [Public Exposure (Not Recommended)](#public-exposure-not-recommended)
+- [Security Best Practices](#security-best-practices)
+- [Threat Model](#threat-model)
+- [Reporting Security Issues](#reporting-security-issues)
+- [Compliance Notes](#compliance-notes)
 
 ---
 
@@ -34,13 +35,13 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 
 ### Network Configuration
 
-| Variable              | Default           | Description                                                                    |
-| --------------------- | ----------------- | ------------------------------------------------------------------------------ |
-| `PORT`                | `38411`           | Listener port used when `BIND` is unset                                        |
-| `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback requires `ALLOW_PUBLIC_ACCESS=1`)            |
-| `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind                        |
-| `MAX_PASTE_SIZE`      | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend)          |
-| `AUTO_BACKUP`         | disabled          | Create DB backup on startup when existing DB is present                         |
+| Variable              | Default           | Description                                                           |
+| --------------------- | ----------------- | --------------------------------------------------------------------- |
+| `PORT`                | `38411`           | Listener port used when `BIND` is unset                               |
+| `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback requires `ALLOW_PUBLIC_ACCESS=1`)   |
+| `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind               |
+| `MAX_PASTE_SIZE`      | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend) |
+| `AUTO_BACKUP`         | disabled          | Create DB backup on startup when existing DB is present               |
 
 `localpaste` startup now fails fast on malformed `BIND`/`PORT`/size/boolean env values so invalid deployment configuration is explicit.
 
@@ -56,8 +57,8 @@ To add a referrer policy, configure your reverse proxy or extend the Axum middle
 
 ### Lock Management Policy
 
-Operational lock-recovery procedures are canonical in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
-Lock behavior semantics are canonical in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
+Operational lock-recovery procedures are documented in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
+Lock behavior semantics are documented in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
 Security expectation:
 
 - Treat uncertain lock ownership as unsafe.
@@ -67,9 +68,12 @@ Security expectation:
 
 If you need to expose LocalPaste publicly, follow these steps:
 
+> [!WARNING]
+> Setting `ALLOW_PUBLIC_ACCESS=1` relaxes loopback-only protections. Use it only behind a firewall/reverse proxy you control.
+
 ### 1. Enable Public Binding
 
-Build/run mechanics are canonical in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md) and [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+Build/run mechanics are documented in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md) and [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 This section only defines the security-relevant overrides:
 
 ```bash
@@ -130,7 +134,7 @@ server {
    ```
 
 2. **Monitoring**: Watch logs for unusual activity
-   Use the canonical service/logging patterns in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
+   Use the service/logging patterns in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
 
 3. **Backups**: Regular database backups
    Use the backup and retention procedures in [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).

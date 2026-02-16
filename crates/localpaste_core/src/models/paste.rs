@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::detect_language as detect_language_impl;
+
 /// Paste metadata stored in the database and returned by the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Paste {
@@ -72,6 +74,41 @@ pub struct ListQuery {
 }
 
 impl Paste {
+    /// Create a new paste with explicit language/manual-state values.
+    ///
+    /// This constructor is used by callers that already resolved language and
+    /// want to avoid duplicate detection work during creation paths.
+    ///
+    /// # Arguments
+    /// - `content`: Paste content.
+    /// - `name`: Paste display name.
+    /// - `language`: Precomputed or manually provided language label.
+    /// - `language_is_manual`: Whether language should be treated as user-managed.
+    ///
+    /// # Returns
+    /// A new [`Paste`] instance.
+    pub fn new_with_language(
+        content: String,
+        name: String,
+        language: Option<String>,
+        language_is_manual: bool,
+    ) -> Self {
+        let now = Utc::now();
+        let is_markdown = is_markdown_content(&content);
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            content,
+            language,
+            language_is_manual,
+            folder_id: None,
+            created_at: now,
+            updated_at: now,
+            tags: Vec::new(),
+            is_markdown,
+        }
+    }
+
     /// Create a new paste with inferred language and defaults.
     ///
     /// # Arguments
@@ -81,21 +118,8 @@ impl Paste {
     /// # Returns
     /// A new [`Paste`] instance.
     pub fn new(content: String, name: String) -> Self {
-        let now = Utc::now();
         let language = detect_language(&content);
-        let is_markdown = is_markdown_content(&content);
-        Self {
-            id: Uuid::new_v4().to_string(),
-            name,
-            content,
-            language,
-            language_is_manual: false,
-            folder_id: None,
-            created_at: now,
-            updated_at: now,
-            tags: Vec::new(),
-            is_markdown,
-        }
+        Self::new_with_language(content, name, language, false)
     }
 }
 
@@ -120,9 +144,8 @@ impl From<&Paste> for PasteMeta {
 /// Lowercased language when non-empty after trimming, otherwise `None`.
 pub fn normalize_language_filter(language: Option<&str>) -> Option<String> {
     language
-        .map(str::trim)
+        .map(crate::detection::canonical::canonicalize)
         .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase())
 }
 
 fn is_markdown_heading_line(line: &str) -> bool {
@@ -177,284 +200,10 @@ pub fn is_markdown_content(content: &str) -> bool {
     })
 }
 
-/// Best-effort language detection based on simple heuristics.
-///
-/// Detection samples only the first portion of text to keep allocation and scan
-/// costs bounded for large pastes.
+/// Detect language for paste content using core detection adapters.
 ///
 /// # Returns
-/// Detected language identifier, or `None` if unknown.
+/// Canonical language label when detection succeeds, otherwise `None`.
 pub fn detect_language(content: &str) -> Option<String> {
-    const SAMPLE_MAX_BYTES: usize = 64 * 1024;
-    const SAMPLE_MAX_LINES: usize = 512;
-
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let sample = utf8_prefix(trimmed, SAMPLE_MAX_BYTES);
-    let lower = sample.to_ascii_lowercase();
-    let lines = || sample.lines().take(SAMPLE_MAX_LINES);
-
-    // JSON: structural check without full parsing (avoids expensive serde_json)
-    if sample.starts_with('{') || sample.starts_with('[') {
-        // When sampling truncates very large JSON payloads, the prefix may not end
-        // with the final closing delimiter. Keep large-document detection stable.
-        let sample_truncated = sample.len() < trimmed.len();
-        let looks_closed = sample.ends_with('}') || sample.ends_with(']');
-        if sample.contains('"')
-            && (sample.contains(':') || sample.starts_with('['))
-            && (looks_closed || sample_truncated)
-        {
-            return Some("json".to_string());
-        }
-    }
-
-    // HTML before generic XML so we don't mis-classify
-    if lower.contains("<!doctype html")
-        || lower.contains("<html")
-        || lower.contains("<body")
-        || lower.contains("<div")
-    {
-        return Some("html".to_string());
-    }
-
-    if lower.starts_with("<?xml")
-        || (sample.starts_with('<') && lower.contains("</") && !lower.contains("<html"))
-    {
-        return Some("xml".to_string());
-    }
-
-    if lower.starts_with("#!/bin/")
-        || lower.starts_with("#!/usr/bin/env bash")
-        || (lower.contains("echo ") && lower.contains('$') && lower.contains('\n'))
-        || lower.contains("\nfi")
-        || lower.contains("\ndone")
-    {
-        return Some("shell".to_string());
-    }
-
-    let yaml_pairs = lines()
-        .filter(|l| {
-            let t = l.trim();
-            if t.is_empty() || t.starts_with('#') {
-                return false;
-            }
-            (t.starts_with("- ") || t.contains(": ")) && !t.contains('{')
-        })
-        .count();
-    if (lower.starts_with("---") || yaml_pairs >= 2) && !sample.contains('{') {
-        return Some("yaml".to_string());
-    }
-
-    let has_toml_header = lines().any(|l| {
-        let t = l.trim();
-        t.starts_with('[') && t.ends_with(']') && t.len() > 2
-    });
-    let toml_assignments = lines()
-        .filter(|l| {
-            let t = l.trim();
-            if t.is_empty() || t.starts_with('#') || t.starts_with('[') {
-                return false;
-            }
-            t.contains('=') && !t.contains("==")
-        })
-        .count();
-    if has_toml_header && toml_assignments >= 1 {
-        return Some("toml".to_string());
-    }
-
-    if is_markdown_content(sample) {
-        return Some("markdown".to_string());
-    }
-
-    if lower.contains("\\begin{")
-        || lower.contains("\\documentclass")
-        || lower.contains("\\section")
-    {
-        return Some("latex".to_string());
-    }
-
-    if lower.contains('{') && lower.contains('}') && lower.contains(':') && lower.contains(';') {
-        let css_tokens = [
-            "color:",
-            "background",
-            "margin",
-            "padding",
-            "font-",
-            "display",
-            "position",
-            "flex",
-            "grid",
-        ];
-        if css_tokens.iter().any(|token| lower.contains(token)) {
-            return Some("css".to_string());
-        }
-    }
-
-    let keyword_hits =
-        |keywords: &[&str]| -> usize { keywords.iter().filter(|kw| lower.contains(*kw)).count() };
-
-    // Specialised checks for languages with distinctive constructs
-    if lower.contains("using system")
-        || (lower.contains("namespace ") && lower.contains("class ") && lower.contains("console."))
-    {
-        return Some("csharp".to_string());
-    }
-
-    if lower.contains("std::")
-        || lower.contains("using namespace std")
-        || lower.contains("template <")
-    {
-        return Some("cpp".to_string());
-    }
-
-    if lower.contains("#include") && (lower.contains("int main") || lower.contains("printf")) {
-        return Some("c".to_string());
-    }
-
-    let scored_languages: &[(&str, &[&str], usize)] = &[
-        (
-            "rust",
-            &[
-                "fn ", "impl", "crate::", "let ", "mut ", "pub ", "struct ", "enum", "match ",
-                "trait",
-            ],
-            2,
-        ),
-        (
-            "python",
-            &[
-                "def ",
-                "import ",
-                "from ",
-                "class ",
-                "self",
-                "async def",
-                "elif",
-                "print(",
-            ],
-            2,
-        ),
-        (
-            "javascript",
-            &[
-                "function",
-                "const ",
-                "let ",
-                "=>",
-                "console.",
-                "document.",
-                "export ",
-                "import ",
-            ],
-            2,
-        ),
-        (
-            "typescript",
-            &[
-                "interface ",
-                " type ",
-                ": string",
-                ": number",
-                "implements ",
-                " enum ",
-                "<t>",
-                "readonly ",
-            ],
-            2,
-        ),
-        (
-            "go",
-            &[
-                "package ",
-                "func ",
-                "fmt.",
-                "defer ",
-                "go ",
-                "chan",
-                "interface",
-                "select {",
-            ],
-            2,
-        ),
-        (
-            "java",
-            &[
-                "public class",
-                "import java.",
-                "system.out",
-                " implements ",
-                " extends ",
-                " void main",
-            ],
-            2,
-        ),
-        (
-            "csharp",
-            &[
-                "using system",
-                "namespace ",
-                "public class",
-                "console.",
-                " async ",
-                " task<",
-                " get;",
-            ],
-            2,
-        ),
-        (
-            "sql",
-            &[
-                "select ",
-                "insert ",
-                "update ",
-                "delete ",
-                " from ",
-                " where ",
-                " join ",
-                "create table",
-            ],
-            2,
-        ),
-        (
-            "latex",
-            &[
-                "\\begin{",
-                "\\end{",
-                "\\usepackage",
-                "\\documentclass",
-                "\\section",
-            ],
-            2,
-        ),
-    ];
-
-    let mut best_match: Option<(&str, usize)> = None;
-    for (lang, keywords, threshold) in scored_languages {
-        let hits = keyword_hits(keywords);
-        if hits >= *threshold {
-            match best_match {
-                Some((_, best_hits)) if best_hits >= hits => {}
-                _ => best_match = Some((*lang, hits)),
-            }
-        }
-    }
-
-    if let Some((lang, _)) = best_match {
-        return Some(lang.to_string());
-    }
-
-    None
-}
-
-fn utf8_prefix(content: &str, max_bytes: usize) -> &str {
-    if content.len() <= max_bytes {
-        return content;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !content.is_char_boundary(end) {
-        end = end.saturating_sub(1);
-    }
-    &content[..end]
+    detect_language_impl(content)
 }

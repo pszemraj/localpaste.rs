@@ -1,10 +1,23 @@
 # LocalPaste Architecture
 
-This document is the canonical system walkthrough for LocalPaste.rs.
-For command-level developer workflows, use [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
-For storage/backend compatibility rules, use [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
-For security posture, use [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
-For service operations, use [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md).
+This document is the system walkthrough for LocalPaste.rs.
+
+---
+
+- [1) System At A Glance](#1-system-at-a-glance)
+- [2) Runtime Topologies](#2-runtime-topologies)
+- [3) Storage Design](#3-storage-design)
+- [4) Consistency Model](#4-consistency-model)
+- [5) Read And Write Paths](#5-read-and-write-paths)
+- [6) Locking And Concurrency](#6-locking-and-concurrency)
+- [7) HTTP Layer And Security Boundaries](#7-http-layer-and-security-boundaries)
+- [8) Language Detection And Highlighting](#8-language-detection-and-highlighting)
+- [9) GUI Save Pipeline](#9-gui-save-pipeline)
+- [10) Discovery And Trust](#10-discovery-and-trust)
+- [11) Validation Strategy](#11-validation-strategy)
+- [12) Active Follow-Ups](#12-active-follow-ups)
+
+---
 
 ## 1) System At A Glance
 
@@ -13,7 +26,7 @@ LocalPaste is a local-first paste manager with a shared core and multiple fronte
 - Desktop GUI (`localpaste-gui`) is the primary UX.
 - Headless HTTP API server (`localpaste`) supports automation and integrations.
 - CLI (`lpaste`) calls HTTP endpoints and can auto-discover the GUI embedded API.
-- Tools (`generate-test-data`, `check-loc`) support fixtures and repository hygiene.
+- Tools (`generate-test-data`, `check-loc`, `check-ast-dupes`) support fixtures and repository hygiene.
 
 Workspace crates:
 
@@ -21,7 +34,7 @@ Workspace crates:
 - [`crates/localpaste_server`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server): Axum routing, middleware, handlers, embedded server helper.
 - [`crates/localpaste_gui`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui): native app shell, backend worker, editor flows.
 - [`crates/localpaste_cli`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_cli): HTTP client and endpoint discovery logic.
-- [`crates/localpaste_tools`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_tools): test data generation and line-count checks.
+- [`crates/localpaste_tools`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_tools): test data generation and repo hygiene checks (`check-loc`, `check-ast-dupes`).
 
 ```mermaid
 flowchart LR
@@ -29,7 +42,7 @@ flowchart LR
     GUI -->|"embedded API"| ES["EmbeddedServer (axum)"]
     CLI["lpaste"] -->|"HTTP"| ES
     CLI -->|"HTTP"| HS["localpaste (headless server)"]
-    TOOLS["generate-test-data / check-loc"] --> CORE["localpaste_core"]
+    TOOLS["generate-test-data / check-loc / check-ast-dupes"] --> CORE["localpaste_core"]
     ES --> CORE
     HS --> CORE
     GUIB --> CORE
@@ -70,6 +83,9 @@ Important invariant:
 
 - Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` concurrently.
 
+> [!IMPORTANT]
+> LocalPaste enforces a single writer per `DB_PATH`. Run GUI and standalone server on separate DB paths when both are needed.
+
 ```mermaid
 sequenceDiagram
     participant GUI as localpaste-gui
@@ -97,11 +113,11 @@ sequenceDiagram
 
 ## 3) Storage Design
 
-Canonical on-disk contract and compatibility policy are defined in
+Storage contract and compatibility policy are defined in
 [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 Architecture summary:
 
-Canonical tables:
+Primary tables:
 
 - `pastes`: authoritative full paste rows.
 - `folders`: authoritative folder rows.
@@ -137,12 +153,12 @@ Folder shared operations and invariant repair:
 ```mermaid
 flowchart TD
     W["Write request (create/update/delete/move)"] --> T["Open single redb write transaction"]
-    T --> C["Update canonical + derived tables"]
+    T --> C["Update authoritative + derived tables"]
     C --> K{"commit() succeeds?"}
     K -- yes --> OK["All changes visible atomically"]
     K -- no --> ABORT["No partial rows committed"]
 
-    R["Read request (list/search/meta)"] --> I["Read from canonical/metadata tables"]
+    R["Read request (list/search/meta)"] --> I["Read from authoritative/metadata tables"]
 ```
 
 ## 5) Read And Write Paths
@@ -158,7 +174,7 @@ The project centralizes sensitive folder assignment/delete logic in shared core 
 Read behavior:
 
 - list/search use metadata/index projections backed by atomic write consistency,
-- no stale-index canonical fallback path is required.
+- no stale-index authoritative-table fallback path is required.
 
 ## 6) Locking And Concurrency
 
@@ -167,7 +183,7 @@ Two lock layers are used:
 1. DB owner lock (filesystem/process-wide): one writer process per DB path.
 2. Paste edit locks (in-memory/paste-scoped): prevent API/CLI/bulk mutations on GUI-open pastes.
 
-Canonical lock reference:
+Lock reference:
 
 - [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
 
@@ -189,13 +205,25 @@ Current boundary rules:
 - security headers are always set (`CSP`, `X-Frame-Options`, `X-Content-Type-Options`),
 - server identity header (`x-localpaste-server: 1`) is set for trust checks.
 
-## 8) GUI Save Pipeline
+## 8) Language Detection And Highlighting
+
+Detection/highlight behavior is defined in
+[docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
+Architecture-level summary:
+
+- Detection is centralized in `localpaste_core::detection`.
+- `localpaste_core` keeps `magika` opt-in; GUI/server enable it by default, CLI remains heuristic-only by default.
+- Auto-detect flow is `Magika -> heuristic fallback`, with label normalization before persistence/filtering.
+- Manual language mode bypasses auto re-detection on content edits.
+- GUI highlighting resolves syntaxes via a multi-step resolver and falls back to plain text when no safe grammar match exists.
+
+## 9) GUI Save Pipeline
 
 The GUI uses a command/event backend worker so UI rendering stays non-blocking.
 
 Key properties:
 
-- autosave and manual save dispatch through backend commands,
+- autosave and keyboard-triggered manual saves dispatch through backend commands,
 - metadata save path is separate from content save path,
 - shutdown force-enqueues final dirty snapshots before backend shutdown acknowledgement.
 
@@ -220,7 +248,7 @@ sequenceDiagram
     W-->>UI: ShutdownComplete
 ```
 
-## 9) Discovery And Trust
+## 10) Discovery And Trust
 
 Embedded server discovery path:
 
@@ -235,7 +263,7 @@ Relevant code:
 - [`crates/localpaste_server/src/embedded.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/embedded.rs)
 - [`crates/localpaste_cli/src/main.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_cli/src/main.rs)
 
-## 10) Validation Strategy
+## 11) Validation Strategy
 
 Repository-level quality gates are defined in:
 
@@ -250,7 +278,7 @@ Core themes:
 - line-count policy checks,
 - targeted regression tests for lock/invariant/shutdown edge cases.
 
-## 11) Active Follow-Ups
+## 12) Active Follow-Ups
 
-- Rewrite readiness/perf gate: [docs/dev/parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
 - Engineering backlog: [docs/dev/backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
+- GUI perf validation protocol: [docs/dev/gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)

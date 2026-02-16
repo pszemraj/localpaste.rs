@@ -6,6 +6,8 @@ pub mod config;
 pub mod constants;
 /// Database access layer and transactions.
 pub mod db;
+/// Language detection adapters and canonicalization.
+pub mod detection;
 /// Process-global environment mutation helpers.
 pub mod env;
 /// Application error types (storage/domain).
@@ -28,4 +30,5 @@ pub use constants::{
     DEFAULT_SEARCH_PASTES_LIMIT,
 };
 pub use db::Database;
+pub use detection::detect_language;
 pub use error::AppError;

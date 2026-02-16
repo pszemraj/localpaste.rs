@@ -486,7 +486,7 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteMetaSaved { paste } => {
             assert!(!paste.language_is_manual);
-            assert!(paste.language.is_none());
+            assert!(paste.language.is_some());
             assert_eq!(paste.tags, vec!["tooling".to_string()]);
         }
         other => panic!("unexpected event: {:?}", other),

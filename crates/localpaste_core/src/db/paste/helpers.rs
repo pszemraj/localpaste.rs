@@ -56,10 +56,11 @@ pub(super) fn language_matches_filter(language: Option<&str>, filter: Option<&st
     let Some(filter) = filter else {
         return true;
     };
+    let canonical_filter = crate::detection::canonical::canonicalize(filter);
     language
-        .map(str::trim)
+        .map(crate::detection::canonical::canonicalize)
         .filter(|value| !value.is_empty())
-        .map(|value| value.eq_ignore_ascii_case(filter))
+        .map(|value| value == canonical_filter)
         .unwrap_or(false)
 }
 
@@ -78,6 +79,7 @@ pub(super) fn meta_matches_filters(
 
 pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
     let mut score = 0;
+    let canonical_query = crate::detection::canonical::canonicalize(query_lower);
     if meta.name.to_lowercase().contains(query_lower) {
         score += 10;
     }
@@ -91,7 +93,14 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
     if meta
         .language
         .as_ref()
-        .map(|lang| lang.to_lowercase().contains(query_lower))
+        .map(|lang| {
+            let language_lower = lang.to_lowercase();
+            let canonical_language = crate::detection::canonical::canonicalize(lang);
+            language_lower.contains(query_lower)
+                || canonical_language.contains(query_lower)
+                || (!canonical_query.is_empty()
+                    && (language_lower == canonical_query || canonical_language == canonical_query))
+        })
         .unwrap_or(false)
     {
         score += 2;
@@ -235,14 +244,15 @@ impl From<LegacyPaste> for Paste {
             tags,
             is_markdown,
         } = old;
-        let language_is_manual =
-            infer_legacy_language_is_manual(content.as_str(), language.as_deref());
         Self {
             id,
             name,
             content,
             language,
-            language_is_manual,
+            // Legacy rows predate persisted manual intent. Keep migration deterministic
+            // and cheap by defaulting to auto-detect mode instead of re-running detector
+            // logic during deserialization.
+            language_is_manual: false,
             folder_id,
             created_at,
             updated_at,
@@ -252,27 +262,14 @@ impl From<LegacyPaste> for Paste {
     }
 }
 
-fn infer_legacy_language_is_manual(content: &str, stored_language: Option<&str>) -> bool {
-    let Some(stored) = stored_language
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return false;
-    };
-    let inferred = detect_language(content);
-    inferred
-        .as_deref()
-        .map(|value| !value.eq_ignore_ascii_case(stored))
-        .unwrap_or(true)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{infer_legacy_language_is_manual, reverse_timestamp_key, LegacyPaste, Paste};
+    use super::{reverse_timestamp_key, score_meta_match, LegacyPaste, Paste};
+    use crate::models::paste::PasteMeta;
     use chrono::{TimeZone, Utc};
 
     #[test]
-    fn legacy_language_manual_flag_preserves_auto_detected_values() {
+    fn legacy_language_manual_flag_defaults_to_auto_mode() {
         let legacy = LegacyPaste {
             id: "legacy-id".to_string(),
             name: "legacy".to_string(),
@@ -289,11 +286,20 @@ mod tests {
     }
 
     #[test]
-    fn legacy_language_manual_flag_marks_divergent_language_as_manual() {
-        assert!(infer_legacy_language_is_manual(
-            "fn main() {}",
-            Some("python")
-        ));
+    fn legacy_language_manual_flag_stays_auto_even_when_language_diverges() {
+        let legacy = LegacyPaste {
+            id: "legacy-id-2".to_string(),
+            name: "legacy-2".to_string(),
+            content: "fn main() {}".to_string(),
+            language: Some("python".to_string()),
+            folder_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            tags: Vec::new(),
+            is_markdown: false,
+        };
+        let migrated: Paste = legacy.into();
+        assert!(!migrated.language_is_manual);
     }
 
     #[test]
@@ -303,5 +309,47 @@ mod tests {
             .single()
             .expect("valid timestamp");
         assert_eq!(reverse_timestamp_key(pre_epoch), u64::MAX);
+    }
+
+    #[test]
+    fn language_filter_aliases_match_canonical_values() {
+        assert!(super::language_matches_filter(Some("csharp"), Some("cs")));
+        assert!(super::language_matches_filter(Some("cs"), Some("csharp")));
+        assert!(super::language_matches_filter(Some("bash"), Some("shell")));
+        assert!(super::language_matches_filter(
+            Some("pwsh"),
+            Some("powershell")
+        ));
+    }
+
+    #[test]
+    fn search_language_scoring_respects_aliases() {
+        let base = PasteMeta {
+            id: "id-1".to_string(),
+            name: "sample".to_string(),
+            language: None,
+            folder_id: None,
+            updated_at: Utc::now(),
+            tags: Vec::new(),
+            content_len: 10,
+            is_markdown: false,
+        };
+
+        let cs_meta = PasteMeta {
+            language: Some("cs".to_string()),
+            ..base.clone()
+        };
+        let csharp_meta = PasteMeta {
+            language: Some("csharp".to_string()),
+            ..base.clone()
+        };
+        let css_meta = PasteMeta {
+            language: Some("css".to_string()),
+            ..base
+        };
+
+        assert_eq!(score_meta_match(&cs_meta, "csharp"), 2);
+        assert_eq!(score_meta_match(&csharp_meta, "cs"), 2);
+        assert_eq!(score_meta_match(&css_meta, "csharp"), 0);
     }
 }

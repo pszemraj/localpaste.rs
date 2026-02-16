@@ -1,7 +1,6 @@
 # Storage Contract
 
-This is the canonical storage and on-disk compatibility contract for LocalPaste.rs.
-Other docs should link here instead of repeating backend/storage details.
+This document defines the storage and on-disk compatibility contract for LocalPaste.rs.
 
 ## Backend and File Layout
 
@@ -17,6 +16,9 @@ Other docs should link here instead of repeating backend/storage details.
 - Existing sled-era artifacts are considered incompatible with current runtime.
 - If `data.redb` is missing and legacy sled artifacts are present, startup fails with an explicit incompatible-storage error.
 
+> [!CAUTION]
+> Sled-era data is not auto-migrated. Use a fresh `DB_PATH` for current builds unless you explicitly convert data yourself.
+
 ## Durability and Atomicity
 
 - redb write transactions are commit-durable.
@@ -29,7 +31,7 @@ Other docs should link here instead of repeating backend/storage details.
 - Do not run `localpaste-gui` and standalone `localpaste` concurrently on the same `DB_PATH`.
 - For isolated local testing, use distinct `DB_PATH` directories.
 
-## Related Canonical Docs
+## Related Docs
 
 - System architecture: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
 - Service operations: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)

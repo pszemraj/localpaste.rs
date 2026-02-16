@@ -114,6 +114,22 @@ mod tests {
     }
 
     #[test]
+    fn owner_lock_reacquire_succeeds_after_guard_drop() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        std::fs::create_dir_all(&db_path).expect("db dir");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        let guard =
+            acquire_owner_lock_for_lifetime(db_path_str.as_str()).expect("acquire owner lock");
+        drop(guard);
+
+        let reacquired =
+            acquire_owner_lock_for_lifetime(db_path_str.as_str()).expect("reacquire owner lock");
+        drop(reacquired);
+    }
+
+    #[test]
     fn owner_lock_path_appends_owner_lock_filename() {
         let path = owner_lock_path("some-db");
         assert!(path.ends_with(DB_OWNER_LOCK_FILE_NAME));

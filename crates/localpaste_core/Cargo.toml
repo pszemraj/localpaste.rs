@@ -20,6 +20,12 @@ rand.workspace = true
 thiserror = "1.0"
 tracing.workspace = true
 fs2 = "0.4"
+magika = { workspace = true, optional = true }
+ort = { workspace = true, optional = true }
+
+[features]
+default = []
+magika = ["dep:magika", "dep:ort"]
 
 [dev-dependencies]
 tempfile.workspace = true

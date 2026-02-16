@@ -1,14 +1,30 @@
 # Running LocalPaste as a Background Service
 
-> These instructions apply to the headless `localpaste` server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
-> This is the canonical service-operation runbook. Other docs should link here for stop/restart/lock-recovery guidance instead of duplicating procedures.
-> Security posture, bind policy, and public exposure guidance are canonical in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
-> Storage backend and compatibility policy are canonical in [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
-> Build/run command matrices for development are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+These instructions apply to the headless `localpaste` server. The desktop GUI (`localpaste-gui`) is intended to be launched manually.
+
+---
+
+- [Related Docs](#related-docs)
+- [Quick Start](#quick-start)
+- [Storage Backend Note](#storage-backend-note)
+- [Process Management](#process-management)
+- [Linux (systemd)](#linux-systemd)
+- [macOS (launchd)](#macos-launchd)
+- [Windows](#windows)
+- [Common Patterns](#common-patterns)
+- [Embedded API Address Discovery (.api-addr)](#embedded-api-address-discovery-api-addr)
+
+---
+
+## Related Docs
+
+> Security posture, bind policy, and public exposure guidance: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
+> Storage backend and compatibility policy: [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
+> Development build/run command matrix: [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 
 ## Quick Start
 
-Build/install commands are canonical in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+Build/install commands are documented in [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 The examples below assume the server binary is available at `$HOME/.cargo/bin/localpaste` (the default `cargo install` location on Unix-like systems).
 
 ```bash
@@ -18,11 +34,15 @@ echo $! > ~/.cache/localpaste/localpaste.pid
 ```
 
 Important runtime rule:
+
 - Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` at the same time.
+
+> [!IMPORTANT]
+> Use separate `DB_PATH` values when testing GUI and standalone server concurrently.
 
 ## Storage Backend Note
 
-Storage/backend compatibility policy is canonical in
+Storage/backend compatibility policy is documented in
 [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md).
 Operationally:
 
@@ -58,11 +78,14 @@ lsof -i :38411
 
 Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
 
+> [!CAUTION]
+> `kill -9` can leave stale lock state and require manual recovery on next start.
+
 ### Lock Safety
 
-This section is the canonical operational guidance for writer coordination.
+This section contains operational guidance for writer coordination.
 Security policy context remains in [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md).
-Lock behavior semantics are canonical in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
+Lock behavior semantics are documented in [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
 
 - LocalPaste uses a process-lifetime owner lock file (`db.owner.lock`) in the DB directory.
 - Startup acquires that owner lock before opening redb; a second writer on the same `DB_PATH` is rejected.
@@ -205,7 +228,7 @@ curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "S
 
 ## Embedded API Address Discovery (.api-addr)
 
-This section is operational-only. Canonical discovery/trust behavior is defined in:
+This section is operational-only. Discovery/trust behavior is defined in:
 
 - [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md) (discovery + trust model)
 - [`crates/localpaste_cli/src/main.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_cli/src/main.rs) (actual endpoint resolution logic)

@@ -338,6 +338,44 @@ fn highlight_request_skips_when_staged_matches() {
 }
 
 #[test]
+fn virtual_editor_requests_highlight_for_small_markdown_buffers() {
+    let mut harness = make_app();
+    let markdown = "# Title\n\n- item\n";
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.edit_language = Some("markdown".to_string());
+    harness.app.edit_language_is_manual = true;
+    harness.app.selected_content.reset(markdown.to_string());
+    harness.app.reset_virtual_editor(markdown);
+
+    egui::__run_test_ctx(|ctx| {
+        let mut style = (*ctx.style()).clone();
+        style.text_styles.insert(
+            egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
+            egui::FontId::new(14.0, egui::FontFamily::Monospace),
+        );
+        ctx.set_style(style);
+        harness.app.render_editor_panel(ctx);
+    });
+
+    let pending = harness
+        .app
+        .highlight_pending
+        .as_ref()
+        .expect("expected highlight request for virtual markdown");
+    assert_eq!(
+        pending.paste_id,
+        harness
+            .app
+            .selected_paste
+            .as_ref()
+            .expect("selected paste")
+            .id
+    );
+    assert_eq!(pending.language_hint, "markdown");
+    assert_eq!(pending.text_len, markdown.len());
+}
+
+#[test]
 fn queue_highlight_render_ignores_older_revision_when_current_exists() {
     let mut harness = make_app();
     harness.app.highlight_render = Some(HighlightRender {

@@ -1,6 +1,6 @@
 # GUI Perf Test Protocol (Rewrite)
 
-This is the canonical perf validation procedure for the rewrite GUI.
+This document defines the perf validation procedure for the rewrite GUI.
 Use this protocol for release-gate evidence and regression checks.
 
 ## Scope
@@ -14,6 +14,9 @@ Use this protocol for release-gate evidence and regression checks.
   - p95 frame time `<= 25 ms`
   - no multi-second plain fallback during newline-burst editing.
 
+> [!IMPORTANT]
+> Reuse of a shared `DB_PATH` with another writer invalidates perf results and can introduce lock contention artifacts.
+
 ## Automated Test Budget (CI/Headless)
 
 - Automated headless tests use a broad regression budget, not release gating:
@@ -23,16 +26,16 @@ Use this protocol for release-gate evidence and regression checks.
 
 ## Prereqs
 
-Use the canonical build matrix in [devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+Use the build matrix in [devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
 Minimum binaries required for this protocol:
 
 - `localpaste_tools` / `generate-test-data`
 - `localpaste_gui` / `localpaste-gui`
 
-## Canonical Runbook
+## Runbook
 
-Use this runbook as the canonical source for reproducible perf checks:
-Flag behavior/meanings are canonical in [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md); this runbook only pins values used during perf validation.
+Use this runbook for reproducible perf checks:
+Flag behavior/meanings are documented in [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell
 $env:DB_PATH = Join-Path $env:TEMP "lpaste-perf-$([guid]::NewGuid().ToString('N'))"
@@ -53,7 +56,7 @@ For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke 
 
 ## Dataset Expectations
 
-The canonical runbook seeds a large mixed dataset via `generate-test-data`:
+This runbook seeds a large mixed dataset via `generate-test-data`:
 
 - 10k pastes by default (configurable with `--count`)
 - weighted content-size distribution (small/medium/large/very large)
@@ -79,5 +82,6 @@ The canonical runbook seeds a large mixed dataset via `generate-test-data`:
 ## Related Docs
 
 - Editor flags and trace env vars: [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md)
-- Rewrite parity gate: [parity-checklist.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/parity-checklist.md)
+- Detection/normalization/highlight behavior: [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)
+- Open perf follow-ups: [backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
 - System architecture context: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)

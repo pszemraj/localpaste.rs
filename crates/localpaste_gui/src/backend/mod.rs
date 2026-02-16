@@ -598,7 +598,7 @@ mod tests {
                 assert_eq!(paste.id, paste_id);
                 assert!(paste.folder_id.is_none());
                 assert!(!paste.language_is_manual);
-                assert!(paste.language.is_none());
+                assert!(paste.language.is_some());
             }
             other => panic!("unexpected event: {:?}", other),
         }

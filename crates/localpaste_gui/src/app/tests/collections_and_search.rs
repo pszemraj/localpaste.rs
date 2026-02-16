@@ -588,6 +588,39 @@ fn language_filter_options_dedupe_case_variants() {
 }
 
 #[test]
+fn language_filter_aliases_match_in_client_projection() {
+    let mut harness = make_app();
+    let now = Utc::now();
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![
+            PasteSummary {
+                id: "legacy-csharp".to_string(),
+                name: "legacy".to_string(),
+                language: Some("csharp".to_string()),
+                content_len: 10,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+            PasteSummary {
+                id: "new-cs".to_string(),
+                name: "new".to_string(),
+                language: Some("cs".to_string()),
+                content_len: 10,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+        ],
+    });
+
+    harness
+        .app
+        .set_active_language_filter(Some("cs".to_string()));
+    assert_eq!(harness.app.pastes.len(), 2);
+}
+
+#[test]
 fn smart_collections_match_time_and_content_facets() {
     let mut harness = make_app();
     let now = Utc::now();

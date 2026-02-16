@@ -209,11 +209,7 @@ impl EditorLayoutCache {
         self.highlight_cache
             .clear_if_mismatch(language_hint, theme_key);
 
-        let syntax = settings
-            .ps
-            .find_syntax_by_name(language_hint)
-            .or_else(|| settings.ps.find_syntax_by_extension(language_hint))
-            .unwrap_or_else(|| settings.ps.find_syntax_plain_text());
+        let syntax = resolve_syntax(&settings.ps, language_hint);
         let theme = settings
             .ts
             .themes
@@ -431,6 +427,101 @@ pub(super) fn build_virtual_line_job(
 
     job.wrap.max_width = f32::INFINITY;
     job
+}
+
+fn normalized_syntax_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+fn try_resolve_syntax_candidate<'a>(
+    ps: &'a syntect::parsing::SyntaxSet,
+    candidate: &str,
+) -> Option<&'a syntect::parsing::SyntaxReference> {
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(syntax) = ps.find_syntax_by_name(trimmed) {
+        return Some(syntax);
+    }
+    if let Some(syntax) = ps.find_syntax_by_extension(trimmed) {
+        return Some(syntax);
+    }
+
+    for syntax in ps.syntaxes() {
+        if syntax.name.eq_ignore_ascii_case(trimmed) {
+            return Some(syntax);
+        }
+    }
+
+    let normalized = normalized_syntax_key(trimmed);
+    if !normalized.is_empty() {
+        for syntax in ps.syntaxes() {
+            if normalized_syntax_key(syntax.name.as_str()) == normalized {
+                return Some(syntax);
+            }
+        }
+    }
+
+    ps.syntaxes().iter().find(|syntax| {
+        syntax
+            .file_extensions
+            .iter()
+            .any(|ext| ext.eq_ignore_ascii_case(trimmed))
+    })
+}
+
+fn syntax_fallback_candidates(hint_lower: &str) -> &'static [&'static str] {
+    match hint_lower {
+        "cs" => &["C#", "cs"],
+        "shell" => &["Bourne Again Shell (bash)", "bash", "sh"],
+        "cpp" => &["C++", "cpp", "cc"],
+        "objectivec" => &["Objective-C", "m"],
+        "dockerfile" => &["Dockerfile", "bash", "sh"],
+        "makefile" => &["Makefile", "make"],
+        "latex" => &["LaTeX", "tex"],
+        // Syntect defaults used by egui do not ship native grammars for these in all bundles.
+        // Keep explicit fallback only for high-priority labels to avoid hiding unsupported
+        // language gaps behind misleading tokenization.
+        "typescript" => &["JavaScript", "js", "ts"],
+        "toml" => &["Java Properties", "properties", "YAML", "yaml"],
+        "swift" => &["Rust", "rs", "Go", "go", "Objective-C"],
+        "powershell" => &["ps1", "Bourne Again Shell (bash)", "bash", "sh"],
+        "sass" => &["sass", "Ruby Haml", "css"],
+        _ => &[],
+    }
+}
+
+fn resolve_syntax<'a>(
+    ps: &'a syntect::parsing::SyntaxSet,
+    hint: &str,
+) -> &'a syntect::parsing::SyntaxReference {
+    let hint_trimmed = hint.trim();
+    if hint_trimmed.is_empty() {
+        return ps.find_syntax_plain_text();
+    }
+
+    let hint_lower = hint_trimmed.to_ascii_lowercase();
+    if matches!(hint_lower.as_str(), "text" | "txt" | "plain" | "plaintext") {
+        return ps.find_syntax_plain_text();
+    }
+
+    if let Some(syntax) = try_resolve_syntax_candidate(ps, hint_trimmed) {
+        return syntax;
+    }
+
+    for candidate in syntax_fallback_candidates(hint_lower.as_str()) {
+        if let Some(syntax) = try_resolve_syntax_candidate(ps, candidate) {
+            return syntax;
+        }
+    }
+
+    ps.find_syntax_plain_text()
 }
 
 /// Provides reusable syntect sets for worker and UI layouts.
@@ -828,11 +919,7 @@ fn highlight_in_worker(
         cache.lines.clear();
     }
 
-    let syntax = settings
-        .ps
-        .find_syntax_by_name(&req.language_hint)
-        .or_else(|| settings.ps.find_syntax_by_extension(&req.language_hint))
-        .unwrap_or_else(|| settings.ps.find_syntax_plain_text());
+    let syntax = resolve_syntax(&settings.ps, &req.language_hint);
     let theme = settings
         .ts
         .themes
@@ -968,24 +1055,136 @@ fn highlight_in_worker(
 
 /// Normalizes user-facing language names into syntect-compatible hints.
 pub(super) fn syntect_language_hint(language: &str) -> String {
-    let lang = language.trim().to_ascii_lowercase();
-    match lang.as_str() {
-        "python" => "py".to_string(),
-        "javascript" | "js" => "js".to_string(),
-        "typescript" | "ts" => "ts".to_string(),
-        "markdown" | "md" => "md".to_string(),
-        "csharp" | "cs" => "cs".to_string(),
-        "cpp" | "c++" => "cpp".to_string(),
-        "shell" | "bash" | "sh" => "sh".to_string(),
-        "plaintext" | "plain" | "text" => "txt".to_string(),
-        "yaml" | "yml" => "yaml".to_string(),
-        "toml" => "toml".to_string(),
-        "json" => "json".to_string(),
-        "rust" => "rs".to_string(),
-        "go" => "go".to_string(),
-        "html" => "html".to_string(),
-        "xml" => "xml".to_string(),
-        "sql" => "sql".to_string(),
-        _ => lang,
+    let canonical = localpaste_core::detection::canonical::canonicalize(language);
+    if canonical.is_empty() {
+        "text".to_string()
+    } else {
+        canonical
+    }
+}
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::{
+        hash_bytes, highlight_in_worker, resolve_syntax, syntect_language_hint, HighlightRender,
+        HighlightRequest, HighlightWorkerCache, SyntectSettings,
+    };
+
+    fn render_for_label(settings: &SyntectSettings, label: &str, text: &str) -> HighlightRender {
+        let mut cache = HighlightWorkerCache::default();
+        let req = HighlightRequest {
+            paste_id: "test".to_string(),
+            revision: 1,
+            text: text.to_string(),
+            content_hash: hash_bytes(text.as_bytes()),
+            language_hint: label.to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+        };
+        highlight_in_worker(settings, &mut cache, req)
+    }
+
+    fn has_non_default_coloring(settings: &SyntectSettings, render: &HighlightRender) -> bool {
+        let theme = settings
+            .ts
+            .themes
+            .get(render.theme_key.as_str())
+            .expect("theme exists");
+        let default = theme
+            .settings
+            .foreground
+            .map(|color| [color.r, color.g, color.b, color.a]);
+        render
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .any(|span| Some(span.style.color) != default)
+    }
+
+    #[test]
+    fn resolve_syntax_handles_common_canonical_labels() {
+        let settings = SyntectSettings::default();
+        let cases = [
+            "rust",
+            "python",
+            "javascript",
+            "go",
+            "java",
+            "html",
+            "css",
+            "json",
+            "yaml",
+            "sql",
+        ];
+        for label in cases {
+            let syntax = resolve_syntax(&settings.ps, label);
+            assert_ne!(syntax.name, "Plain Text", "label: {label}");
+        }
+    }
+
+    #[test]
+    fn resolve_syntax_handles_alias_labels() {
+        let settings = SyntectSettings::default();
+        for label in ["cs", "shell", "cpp", "powershell"] {
+            let syntax = resolve_syntax(&settings.ps, label);
+            assert_ne!(syntax.name, "Plain Text", "label: {label}");
+        }
+    }
+
+    #[test]
+    fn resolve_syntax_falls_back_to_plain_for_unknown_or_text() {
+        let settings = SyntectSettings::default();
+        assert_eq!(
+            resolve_syntax(&settings.ps, "somethingtotallyunknown").name,
+            "Plain Text"
+        );
+        assert_eq!(resolve_syntax(&settings.ps, "").name, "Plain Text");
+        assert_eq!(resolve_syntax(&settings.ps, "text").name, "Plain Text");
+        assert_eq!(resolve_syntax(&settings.ps, "txt").name, "Plain Text");
+    }
+
+    #[test]
+    fn syntect_hint_uses_canonical_labels() {
+        assert_eq!(syntect_language_hint(" csharp "), "cs");
+        assert_eq!(syntect_language_hint("bash"), "shell");
+        assert_eq!(syntect_language_hint(""), "text");
+    }
+
+    #[test]
+    fn resolve_syntax_leaves_known_unsupported_labels_as_plain_text() {
+        let settings = SyntectSettings::default();
+        for label in ["zig", "scss", "kotlin", "elixir", "dart"] {
+            let syntax = resolve_syntax(&settings.ps, label);
+            assert_eq!(syntax.name, "Plain Text", "label: {label}");
+        }
+    }
+
+    #[test]
+    fn high_priority_fallbacks_produce_non_default_coloring() {
+        let settings = SyntectSettings::default();
+        let cases = [
+            (
+                "typescript",
+                "type User = { name: string };\nconst user: User = { name: \"ada\" };",
+            ),
+            (
+                "toml",
+                "[tool.localpaste]\nname = \"demo\"\nenabled = true\n",
+            ),
+            (
+                "swift",
+                "import Foundation\nstruct User { let id: Int }\nfunc main() { print(\"hi\") }\n",
+            ),
+            (
+                "powershell",
+                "param([string]$Name)\nWrite-Host \"hello $Name\"\n",
+            ),
+        ];
+        for (label, content) in cases {
+            let render = render_for_label(&settings, label, content);
+            assert!(
+                has_non_default_coloring(&settings, &render),
+                "expected non-default coloring for {label}"
+            );
+        }
     }
 }
