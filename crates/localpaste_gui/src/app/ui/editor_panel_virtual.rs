@@ -333,6 +333,7 @@ impl LocalPasteApp {
             struct RowRender {
                 segment_start: usize,
                 segment_chars: usize,
+                ends_line: bool,
                 rect: egui::Rect,
                 galley: Arc<egui::Galley>,
             }
@@ -374,6 +375,8 @@ impl LocalPasteApp {
                     .rope()
                     .char_to_byte(segment_range.end)
                     .saturating_sub(line_start_byte);
+                let line_visual_rows = self.virtual_layout.line_visual_rows(line_idx);
+                let ends_line = row_in_line.saturating_add(1) >= line_visual_rows;
                 let render_line =
                     highlight_render_match.and_then(|render| render.lines.get(line_idx));
                 self.virtual_galley_cache
@@ -454,6 +457,7 @@ impl LocalPasteApp {
                 rows.push(RowRender {
                     segment_start: segment_range.start,
                     segment_chars,
+                    ends_line,
                     rect,
                     galley,
                 });
@@ -599,7 +603,12 @@ impl LocalPasteApp {
                 if focused && caret_visible {
                     let cursor = self.virtual_editor_state.cursor();
                     let segment_end = row.segment_start.saturating_add(row.segment_chars);
-                    if cursor >= row.segment_start && cursor <= segment_end {
+                    let shows_caret = if cursor < segment_end {
+                        true
+                    } else {
+                        cursor == segment_end && row.ends_line
+                    };
+                    if cursor >= row.segment_start && shows_caret {
                         let local_col = cursor.saturating_sub(row.segment_start);
                         let caret_rect = galley.pos_from_cursor(CCursor::new(local_col));
                         let x = row.rect.min.x + caret_rect.min.x;

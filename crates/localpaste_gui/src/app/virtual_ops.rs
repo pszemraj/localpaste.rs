@@ -273,9 +273,11 @@ impl LocalPasteApp {
     ) -> usize {
         let cols = self.virtual_layout.wrap_columns().max(1);
         let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
-        let line_len = self.virtual_editor_buffer.line_len_chars(line);
-        let rows = ((line_len.max(1) - 1) / cols) + 1;
-        let row = (col / cols).min(rows.saturating_sub(1));
+        let cursor_display_col =
+            self.virtual_layout
+                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
+        let rows = self.virtual_layout.line_visual_rows(line).max(1);
+        let row = (cursor_display_col / cols).min(rows.saturating_sub(1));
         let line_count = self.virtual_editor_buffer.line_count();
 
         let target_line_and_row: Option<(usize, usize)> = if up {
@@ -283,8 +285,7 @@ impl LocalPasteApp {
                 Some((line, row - 1))
             } else if line > 0 {
                 let prev_line = line - 1;
-                let prev_len = self.virtual_editor_buffer.line_len_chars(prev_line);
-                let prev_rows = ((prev_len.max(1) - 1) / cols) + 1;
+                let prev_rows = self.virtual_layout.line_visual_rows(prev_line).max(1);
                 Some((prev_line, prev_rows.saturating_sub(1)))
             } else {
                 None
@@ -304,15 +305,23 @@ impl LocalPasteApp {
                 self.virtual_editor_buffer.len_chars()
             };
         };
-        let target_len = self.virtual_editor_buffer.line_len_chars(target_line);
+        let target_line_cols = self
+            .virtual_layout
+            .line_columns(&self.virtual_editor_buffer, target_line);
         let row_start = target_row.saturating_mul(cols);
-        let line_col = if row_start >= target_len {
-            target_len
+        let desired_col_in_row = desired_col_in_row.min(cols.saturating_sub(1));
+        let target_display_col = if row_start >= target_line_cols {
+            target_line_cols
         } else {
-            row_start + desired_col_in_row.min(target_len - row_start)
+            row_start
+                + desired_col_in_row
+                    .min(target_line_cols.saturating_sub(row_start).saturating_sub(1))
         };
-        self.virtual_editor_buffer
-            .line_col_to_char(target_line, line_col)
+        self.virtual_layout.line_display_column_to_char(
+            &self.virtual_editor_buffer,
+            target_line,
+            target_display_col,
+        )
     }
 
     pub(super) fn virtual_selection_for_line(
@@ -634,9 +643,14 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::MoveUp { select } => {
-                    let (_, col) = self
+                    let (line, col) = self
                         .virtual_editor_buffer
                         .char_to_line_col(self.virtual_editor_state.cursor());
+                    let col = self.virtual_layout.line_char_to_display_column(
+                        &self.virtual_editor_buffer,
+                        line,
+                        col,
+                    );
                     let cols = self.virtual_layout.wrap_columns().max(1);
                     let preferred = self
                         .virtual_editor_state
@@ -655,9 +669,14 @@ impl LocalPasteApp {
                     );
                 }
                 VirtualInputCommand::MoveDown { select } => {
-                    let (_, col) = self
+                    let (line, col) = self
                         .virtual_editor_buffer
                         .char_to_line_col(self.virtual_editor_state.cursor());
+                    let col = self.virtual_layout.line_char_to_display_column(
+                        &self.virtual_editor_buffer,
+                        line,
+                        col,
+                    );
                     let cols = self.virtual_layout.wrap_columns().max(1);
                     let preferred = self
                         .virtual_editor_state

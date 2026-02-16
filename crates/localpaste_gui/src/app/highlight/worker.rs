@@ -122,6 +122,7 @@ fn highlight_in_worker(
     };
 
     let had_cached_lines = !cache.lines.is_empty();
+    let cached_line_count = cache.lines.len();
     let lines: Vec<&str> = LinesWithEndings::from(req.text.as_str()).collect();
     let new_hashes: Vec<u64> = lines
         .iter()
@@ -238,6 +239,7 @@ fn highlight_in_worker(
         lines: render_lines,
     };
     if had_cached_lines
+        && cached_line_count == render.lines.len()
         && req.patch_base_revision == cache_base_revision
         && req.patch_base_text_len == cache_base_text_len
     {
@@ -454,5 +456,39 @@ mod resolver_tests {
         };
         let third = highlight_in_worker(&settings, &mut cache, req_v3_wrong_base);
         assert!(matches!(third, HighlightWorkerResult::Render(_)));
+    }
+
+    #[test]
+    fn worker_emits_full_render_when_line_count_changes() {
+        let settings = SyntectSettings::default();
+        let mut cache = HighlightWorkerCache::default();
+
+        let text_v1 = "let a = 1;\nlet b = 2;\n";
+        let req_v1 = HighlightRequest {
+            paste_id: "test".to_string(),
+            revision: 1,
+            text: text_v1.to_string(),
+            language_hint: "rust".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            edit_hint: None,
+            patch_base_revision: None,
+            patch_base_text_len: None,
+        };
+        let first = highlight_in_worker(&settings, &mut cache, req_v1);
+        assert!(matches!(first, HighlightWorkerResult::Render(_)));
+
+        let text_v2 = "let a = 1;\nlet inserted = 9;\nlet b = 2;\n";
+        let req_v2_line_insert = HighlightRequest {
+            paste_id: "test".to_string(),
+            revision: 2,
+            text: text_v2.to_string(),
+            language_hint: "rust".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            edit_hint: None,
+            patch_base_revision: Some(1),
+            patch_base_text_len: Some(text_v1.len()),
+        };
+        let second = highlight_in_worker(&settings, &mut cache, req_v2_line_insert);
+        assert!(matches!(second, HighlightWorkerResult::Render(_)));
     }
 }

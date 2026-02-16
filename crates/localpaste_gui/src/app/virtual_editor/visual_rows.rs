@@ -4,6 +4,7 @@
 
 use super::buffer::{RopeBuffer, VirtualEditDelta};
 use std::ops::Range;
+use unicode_width::UnicodeWidthChar;
 
 fn div_ceil(value: usize, divisor: usize) -> usize {
     if value == 0 {
@@ -163,6 +164,77 @@ impl VisualRowLayoutCache {
     /// Cached character length for a line.
     pub(crate) fn line_chars(&self, line: usize) -> usize {
         self.line_metrics.get(line).map(|m| m.chars).unwrap_or(0)
+    }
+
+    /// Cached display column width for a line.
+    pub(crate) fn line_columns(&self, buffer: &RopeBuffer, line: usize) -> usize {
+        if line >= buffer.line_count() {
+            return 0;
+        }
+        self.line_metrics
+            .get(line)
+            .map(|m| m.columns)
+            .unwrap_or_else(|| measure_line_columns(buffer, line, self.line_chars(line)))
+    }
+
+    /// Convert a character offset within a line to display columns.
+    pub(crate) fn line_char_to_display_column(
+        &self,
+        buffer: &RopeBuffer,
+        line: usize,
+        char_column: usize,
+    ) -> usize {
+        if line >= buffer.line_count() {
+            return 0;
+        }
+        let line_chars = buffer.line_len_chars(line);
+        let char_column = char_column.min(line_chars);
+        let metrics = self
+            .line_metrics
+            .get(line)
+            .copied()
+            .unwrap_or(LineWrapMetrics {
+                chars: line_chars,
+                columns: line_chars,
+                visual_rows: 1,
+            });
+        if metrics.columns == metrics.chars {
+            return char_column;
+        }
+
+        let mut consumed_columns = 0usize;
+        let line_slice = buffer.rope().line(line).slice(..line_chars);
+        for (idx, ch) in line_slice.chars().enumerate() {
+            if idx >= char_column {
+                break;
+            }
+            consumed_columns =
+                consumed_columns.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(1));
+        }
+        consumed_columns
+    }
+
+    /// Convert display columns within a line to a character offset.
+    pub(crate) fn line_display_column_to_char(
+        &self,
+        buffer: &RopeBuffer,
+        line: usize,
+        target_columns: usize,
+    ) -> usize {
+        if line >= buffer.line_count() {
+            return 0;
+        }
+        let metrics = self
+            .line_metrics
+            .get(line)
+            .copied()
+            .unwrap_or_else(|| LineWrapMetrics {
+                chars: self.line_chars(line),
+                columns: measure_line_columns(buffer, line, self.line_chars(line)),
+                visual_rows: 1,
+            });
+        let target_columns = target_columns.min(metrics.columns);
+        line_char_for_display_columns(buffer, line, metrics, target_columns)
     }
 
     /// Cached visual-row count for a line.
@@ -418,6 +490,25 @@ mod tests {
         assert_eq!(cache.line_metrics[0].columns, 3);
         assert_eq!(cache.line_metrics[1].columns, 4);
         assert_eq!(cache.line_metrics[2].columns, 2);
+    }
+
+    #[test]
+    fn line_column_conversions_round_trip_for_wide_content() {
+        let text = "🦀a你b\n";
+        let (buffer, cache) = rebuild_cache_for(text, 200.0, 10.0, 5.0);
+        assert_eq!(cache.line_columns(&buffer, 0), 6);
+        assert_eq!(cache.line_char_to_display_column(&buffer, 0, 0), 0);
+        assert_eq!(cache.line_char_to_display_column(&buffer, 0, 1), 2);
+        assert_eq!(cache.line_char_to_display_column(&buffer, 0, 2), 3);
+        assert_eq!(cache.line_char_to_display_column(&buffer, 0, 3), 5);
+        assert_eq!(cache.line_char_to_display_column(&buffer, 0, 4), 6);
+
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 0), 0);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 2), 1);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 3), 2);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 4), 2);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 6), 4);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 7), 4);
     }
 
     #[test]
