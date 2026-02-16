@@ -3,6 +3,32 @@
 use super::super::*;
 use eframe::egui;
 
+const AUTO_LANGUAGE: &str = "__auto__";
+
+fn apply_language_choice(
+    edit_language_is_manual: &mut bool,
+    edit_language: &mut Option<String>,
+    metadata_dirty: &mut bool,
+    language_choice: &str,
+    current_manual_value: &str,
+) {
+    if language_choice == AUTO_LANGUAGE {
+        // Auto mode still carries a detected language value for highlighting/filter labels.
+        // Only mark dirty when transitioning from manual -> auto.
+        if *edit_language_is_manual {
+            *edit_language_is_manual = false;
+            *metadata_dirty = true;
+        }
+        return;
+    }
+
+    if !*edit_language_is_manual || current_manual_value != language_choice {
+        *edit_language_is_manual = true;
+        *edit_language = Some(language_choice.to_string());
+        *metadata_dirty = true;
+    }
+}
+
 impl LocalPasteApp {
     pub(crate) fn render_properties_drawer(&mut self, ctx: &egui::Context) {
         if !self.properties_drawer_open || self.selected_id.is_none() {
@@ -46,7 +72,6 @@ impl LocalPasteApp {
 
                 ui.add_space(6.0);
                 ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
-                const AUTO_LANGUAGE: &str = "__auto__";
                 let current_manual_value = self
                     .edit_language
                     .as_deref()
@@ -84,17 +109,13 @@ impl LocalPasteApp {
                             );
                         }
                     });
-                if language_choice == AUTO_LANGUAGE {
-                    if self.edit_language_is_manual || self.edit_language.is_some() {
-                        self.edit_language_is_manual = false;
-                        self.edit_language = None;
-                        self.metadata_dirty = true;
-                    }
-                } else if !self.edit_language_is_manual || current_manual_value != language_choice {
-                    self.edit_language_is_manual = true;
-                    self.edit_language = Some(language_choice);
-                    self.metadata_dirty = true;
-                }
+                apply_language_choice(
+                    &mut self.edit_language_is_manual,
+                    &mut self.edit_language,
+                    &mut self.metadata_dirty,
+                    language_choice.as_str(),
+                    current_manual_value.as_str(),
+                );
 
                 ui.add_space(6.0);
                 ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
@@ -132,5 +153,67 @@ impl LocalPasteApp {
         if !keep_open {
             self.properties_drawer_open = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_language_choice, AUTO_LANGUAGE};
+
+    #[test]
+    fn auto_mode_with_detected_language_does_not_dirty_or_clear_language() {
+        let mut is_manual = false;
+        let mut language = Some("rust".to_string());
+        let mut metadata_dirty = false;
+
+        apply_language_choice(
+            &mut is_manual,
+            &mut language,
+            &mut metadata_dirty,
+            AUTO_LANGUAGE,
+            "rust",
+        );
+
+        assert!(!is_manual);
+        assert_eq!(language.as_deref(), Some("rust"));
+        assert!(!metadata_dirty);
+    }
+
+    #[test]
+    fn manual_to_auto_marks_dirty_but_preserves_language_value() {
+        let mut is_manual = true;
+        let mut language = Some("python".to_string());
+        let mut metadata_dirty = false;
+
+        apply_language_choice(
+            &mut is_manual,
+            &mut language,
+            &mut metadata_dirty,
+            AUTO_LANGUAGE,
+            "python",
+        );
+
+        assert!(!is_manual);
+        assert_eq!(language.as_deref(), Some("python"));
+        assert!(metadata_dirty);
+    }
+
+    #[test]
+    fn auto_to_manual_sets_manual_language_and_marks_dirty() {
+        let mut is_manual = false;
+        let mut language = Some("rust".to_string());
+        let mut metadata_dirty = false;
+
+        apply_language_choice(
+            &mut is_manual,
+            &mut language,
+            &mut metadata_dirty,
+            "typescript",
+            "rust",
+        );
+
+        assert!(is_manual);
+        assert_eq!(language.as_deref(), Some("typescript"));
+        assert!(metadata_dirty);
     }
 }
