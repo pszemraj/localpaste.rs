@@ -156,6 +156,7 @@ impl LocalPasteApp {
         self.virtual_editor_history = VirtualEditorHistory::default();
         self.virtual_layout = WrapLayoutCache::default();
         self.virtual_galley_cache = VirtualGalleyCache::default();
+        self.virtual_line_scratch.clear();
         self.content_hash_cache = None;
         self.virtual_drag_active = false;
         self.reset_virtual_click_streak();

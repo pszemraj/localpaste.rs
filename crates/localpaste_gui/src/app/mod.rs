@@ -17,9 +17,9 @@ use editor::{EditorBuffer, EditorLineIndex, EditorMode};
 use eframe::egui::{self, text::CCursor, Color32, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
 use highlight::{
-    build_virtual_line_job, spawn_highlight_worker, syntect_language_hint, syntect_theme_key,
-    EditorLayoutCache, EditorLayoutRequest, HighlightRender, HighlightRequestMeta, HighlightWorker,
-    SyntectSettings,
+    build_virtual_line_job, build_virtual_line_job_owned, spawn_highlight_worker,
+    syntect_language_hint, syntect_theme_key, EditorLayoutCache, EditorLayoutRequest,
+    HighlightRender, HighlightRequestMeta, HighlightWorker, SyntectSettings,
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
@@ -82,6 +82,7 @@ pub(crate) struct LocalPasteApp {
     virtual_editor_history: VirtualEditorHistory,
     virtual_layout: WrapLayoutCache,
     virtual_galley_cache: VirtualGalleyCache,
+    virtual_line_scratch: String,
     virtual_drag_active: bool,
     virtual_viewport_height: f32,
     virtual_line_height: f32,
@@ -441,6 +442,7 @@ impl LocalPasteApp {
             virtual_editor_history: VirtualEditorHistory::default(),
             virtual_layout: WrapLayoutCache::default(),
             virtual_galley_cache: VirtualGalleyCache::default(),
+            virtual_line_scratch: String::new(),
             virtual_drag_active: false,
             virtual_editor_active: false,
             virtual_viewport_height: 0.0,

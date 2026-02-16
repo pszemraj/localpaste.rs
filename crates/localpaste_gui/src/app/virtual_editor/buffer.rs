@@ -95,12 +95,24 @@ impl RopeBuffer {
 
     /// Returns a line as UTF-8 without trailing `\\r?\\n`.
     pub(crate) fn line_without_newline(&self, line: usize) -> String {
+        let mut out = String::new();
+        self.line_without_newline_into(line, &mut out);
+        out
+    }
+
+    /// Writes a line as UTF-8 without trailing `\\r?\\n` into `out`.
+    pub(crate) fn line_without_newline_into(&self, line: usize, out: &mut String) {
+        out.clear();
         if line >= self.line_count() {
-            return String::new();
+            return;
         }
         let line_slice = self.rope.line(line);
         let keep_chars = self.line_len_chars(line);
-        line_slice.slice(..keep_chars).to_string()
+        let trimmed = line_slice.slice(..keep_chars);
+        out.reserve(trimmed.len_bytes());
+        for chunk in trimmed.chunks() {
+            out.push_str(chunk);
+        }
     }
 
     /// Returns the character length of a line without trailing `\\r?\\n`.
@@ -200,5 +212,15 @@ mod tests {
         assert!(delta.new_end_line >= 1);
         assert_eq!(buf.line_without_newline(1), "dos");
         assert_eq!(buf.line_without_newline(2), "zwei");
+    }
+
+    #[test]
+    fn line_without_newline_into_overwrites_existing_buffer() {
+        let buf = RopeBuffer::new("alpha\nbeta");
+        let mut out = String::from("stale");
+        buf.line_without_newline_into(0, &mut out);
+        assert_eq!(out, "alpha");
+        buf.line_without_newline_into(1, &mut out);
+        assert_eq!(out, "beta");
     }
 }

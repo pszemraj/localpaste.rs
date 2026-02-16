@@ -390,30 +390,43 @@ pub(super) fn build_virtual_line_job(
     render_line: Option<&HighlightRenderLine>,
     use_plain: bool,
 ) -> LayoutJob {
+    build_virtual_line_job_owned(ui, line.to_owned(), editor_font, render_line, use_plain)
+}
+
+/// Builds a layout job for a single rendered line in the virtual preview/editor
+/// when the caller already owns the line text buffer.
+pub(super) fn build_virtual_line_job_owned(
+    ui: &egui::Ui,
+    line: String,
+    editor_font: &FontId,
+    render_line: Option<&HighlightRenderLine>,
+    use_plain: bool,
+) -> LayoutJob {
     if use_plain || render_line.is_none() {
-        return plain_layout_job(ui, line, editor_font, f32::INFINITY);
+        return plain_layout_job_owned(ui, line, editor_font, f32::INFINITY);
     }
     let render_line = render_line.expect("render line checked above");
     let mut job = LayoutJob {
-        text: line.to_owned(),
+        text: line,
         ..Default::default()
     };
+    let line_len = job.text.len();
     let default_format = TextFormat {
         font_id: editor_font.clone(),
         color: ui.visuals().text_color(),
         ..Default::default()
     };
 
-    if render_line.spans.is_empty() && !line.is_empty() {
+    if render_line.spans.is_empty() && line_len > 0 {
         job.sections.push(LayoutSection {
             leading_space: 0.0,
-            byte_range: 0..line.len(),
+            byte_range: 0..line_len,
             format: default_format,
         });
     } else {
         for span in &render_line.spans {
-            let start = span.range.start.min(line.len());
-            let end = span.range.end.min(line.len());
+            let start = span.range.start.min(line_len);
+            let end = span.range.end.min(line_len);
             if start >= end {
                 continue;
             }
@@ -598,8 +611,17 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
 }
 
 fn plain_layout_job(ui: &egui::Ui, text: &str, editor_font: &FontId, wrap_width: f32) -> LayoutJob {
+    plain_layout_job_owned(ui, text.to_owned(), editor_font, wrap_width)
+}
+
+fn plain_layout_job_owned(
+    ui: &egui::Ui,
+    text: String,
+    editor_font: &FontId,
+    wrap_width: f32,
+) -> LayoutJob {
     LayoutJob::simple(
-        text.to_owned(),
+        text,
         editor_font.clone(),
         ui.visuals().text_color(),
         wrap_width,

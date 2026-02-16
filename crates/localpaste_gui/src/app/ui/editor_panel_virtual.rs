@@ -356,8 +356,8 @@ impl LocalPasteApp {
                     line_idx: usize,
                 },
                 Double {
+                    line_idx: usize,
                     line_start: usize,
-                    line: String,
                     column: usize,
                 },
                 DragStart {
@@ -368,17 +368,26 @@ impl LocalPasteApp {
             let mut pending_action: Option<RowAction> = None;
             for line_idx in visible {
                 let line_start = self.virtual_editor_buffer.line_col_to_char(line_idx, 0);
-                let line_owned = self.virtual_editor_buffer.line_without_newline(line_idx);
-                let line = line_owned.as_str();
                 let line_chars = self.virtual_layout.line_chars(line_idx);
                 let render_line =
                     highlight_render_match.and_then(|render| render.lines.get(line_idx));
-                let galley = self.virtual_galley_cache.galley_for_line(line_idx, || {
-                    let mut job =
-                        build_virtual_line_job(ui, line, editor_font, render_line, use_plain);
+                let galley = if let Some(cached) = self.virtual_galley_cache.get(line_idx) {
+                    cached
+                } else {
+                    self.virtual_editor_buffer
+                        .line_without_newline_into(line_idx, &mut self.virtual_line_scratch);
+                    let mut job = build_virtual_line_job_owned(
+                        ui,
+                        std::mem::take(&mut self.virtual_line_scratch),
+                        editor_font,
+                        render_line,
+                        use_plain,
+                    );
                     job.wrap.max_width = wrap_width;
-                    ui.fonts_mut(|f| f.layout_job(job))
-                });
+                    let shaped = ui.fonts_mut(|f| f.layout_job(job));
+                    self.virtual_galley_cache.insert(line_idx, shaped.clone());
+                    shaped
+                };
                 let row_top = content_origin.y + self.virtual_layout.line_top(line_idx);
                 let row_bottom = content_origin.y + self.virtual_layout.line_bottom(line_idx);
                 let rect = egui::Rect::from_min_max(
@@ -413,8 +422,8 @@ impl LocalPasteApp {
                                 2 => {
                                     editor_interacted = true;
                                     pending_action = Some(RowAction::Double {
+                                        line_idx,
                                         line_start,
-                                        line: line.to_string(),
                                         column: cursor.index.min(line_chars),
                                     });
                                 }
@@ -449,10 +458,11 @@ impl LocalPasteApp {
                         self.virtual_select_line(line_idx);
                     }
                     RowAction::Double {
+                        line_idx,
                         line_start,
-                        line,
                         column,
                     } => {
+                        let line = self.virtual_editor_buffer.line_without_newline(line_idx);
                         if let Some((start, end)) = word_range_at(line.as_str(), column) {
                             let global_start = line_start.saturating_add(start);
                             let global_end = line_start.saturating_add(end);

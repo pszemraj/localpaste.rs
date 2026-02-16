@@ -82,21 +82,16 @@ impl VirtualGalleyCache {
         self.revision = revision;
     }
 
-    pub(crate) fn galley_for_line<F>(&mut self, line_idx: usize, build: F) -> Arc<Galley>
-    where
-        F: FnOnce() -> Arc<Galley>,
-    {
-        if let Some(Some(entry)) = self.entries.get(line_idx) {
-            return entry.galley.clone();
-        }
+    pub(crate) fn get(&self, line_idx: usize) -> Option<Arc<Galley>> {
+        self.entries
+            .get(line_idx)
+            .and_then(|entry| entry.as_ref().map(|cached| cached.galley.clone()))
+    }
 
-        let galley = build();
+    pub(crate) fn insert(&mut self, line_idx: usize, galley: Arc<Galley>) {
         if let Some(slot) = self.entries.get_mut(line_idx) {
-            *slot = Some(CachedVirtualGalley {
-                galley: galley.clone(),
-            });
+            *slot = Some(CachedVirtualGalley { galley });
         }
-        galley
     }
 }
 
