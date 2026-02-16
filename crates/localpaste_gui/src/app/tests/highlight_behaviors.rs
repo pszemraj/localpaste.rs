@@ -480,6 +480,45 @@ fn queue_highlight_patch_prefers_latest_staged_base() {
 }
 
 #[test]
+fn queue_highlight_patch_clears_matching_pending_request() {
+    let mut harness = make_app();
+    harness.app.highlight_staged = Some(HighlightRender {
+        paste_id: "alpha".to_string(),
+        revision: 11,
+        text_len: harness.app.selected_content.len(),
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        lines: vec![
+            HighlightRenderLine::plain(4),
+            HighlightRenderLine::plain(5),
+            HighlightRenderLine::plain(6),
+        ],
+    });
+    harness.app.highlight_pending = Some(super::super::highlight::HighlightRequestMeta {
+        paste_id: "alpha".to_string(),
+        revision: 12,
+        text_len: harness.app.selected_content.len(),
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+    });
+
+    harness.app.queue_highlight_patch(HighlightPatch {
+        paste_id: "alpha".to_string(),
+        revision: 12,
+        text_len: harness.app.selected_content.len(),
+        base_revision: 11,
+        base_text_len: harness.app.selected_content.len(),
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        total_lines: 3,
+        line_range: 1..2,
+        lines: vec![HighlightRenderLine::plain(99)],
+    });
+
+    assert!(harness.app.highlight_pending.is_none());
+}
+
+#[test]
 fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
     let mut harness = make_app();
     harness.app.highlight_render = Some(HighlightRender {

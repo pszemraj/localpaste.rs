@@ -15,7 +15,6 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Reduce virtual-editor highlight request payload cost by avoiding full `Rope -> String` snapshots on tiny edits (e.g., Rope payload channel and worker-side line iteration), then re-tune tiny-edit debounce.
 - [ ] Avoid full `Vec<HighlightRenderLine>` clone during patch merge (`queue_highlight_patch`) for very large files; evaluate shared line storage or copy-on-write spans.
 - [ ] Investigate worker-side highlight diffing that avoids full line-hash scans for every request (especially tiny edits), while preserving patch correctness and stale-result dropping semantics.
-- [ ] Remove the remaining virtual-editor double-click line `String` allocation in `editor_panel_virtual` by reusing scratch buffers (`line_without_newline_into`) to keep pointer-interaction paths allocation-light.
 - [ ] Revisit backend query-cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or retired now that owner-lock probing is the preferred path.
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR`).

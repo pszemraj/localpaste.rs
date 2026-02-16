@@ -92,6 +92,7 @@ impl RopeBuffer {
     }
 
     /// Returns a line as UTF-8 without trailing `\\r?\\n`.
+    #[cfg(test)]
     pub(crate) fn line_without_newline(&self, line: usize) -> String {
         let mut out = String::new();
         self.line_without_newline_into(line, &mut out);

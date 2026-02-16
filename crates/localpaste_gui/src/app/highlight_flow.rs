@@ -175,6 +175,84 @@ impl LocalPasteApp {
             self.trace_highlight("drop", "patch ignored: paste id mismatch");
             return;
         }
+        let staged_matches_base = self
+            .highlight_staged
+            .as_ref()
+            .map(|render| {
+                render.matches_context(
+                    patch.paste_id.as_str(),
+                    patch.language_hint.as_str(),
+                    patch.theme_key.as_str(),
+                ) && render.revision == patch.base_revision
+                    && render.text_len == patch.base_text_len
+            })
+            .unwrap_or(false);
+        if staged_matches_base {
+            // Fast path: patch can be applied directly to staged render without cloning all lines.
+            let range = patch.line_range.clone();
+            {
+                let staged = self
+                    .highlight_staged
+                    .as_mut()
+                    .expect("staged render should exist");
+                if staged.revision > patch.revision
+                    || (staged.revision == patch.revision && staged.text_len >= patch.text_len)
+                {
+                    self.trace_highlight(
+                        "drop",
+                        "patch ignored: stale/duplicate against current staged base",
+                    );
+                    return;
+                }
+                if staged.lines.len() != patch.total_lines {
+                    self.trace_highlight(
+                        "drop",
+                        "patch ignored: line-count mismatch; waiting for full render",
+                    );
+                    return;
+                }
+                if range.end > patch.total_lines || range.start > range.end {
+                    self.trace_highlight("drop", "patch ignored: invalid line range");
+                    return;
+                }
+                if patch.lines.len() != range.len() {
+                    self.trace_highlight(
+                        "drop",
+                        "patch ignored: range and patch line count mismatch",
+                    );
+                    return;
+                }
+                staged.lines.splice(range, patch.lines);
+                staged.revision = patch.revision;
+                staged.text_len = patch.text_len;
+                staged.language_hint = patch.language_hint;
+                staged.theme_key = patch.theme_key;
+            }
+            if let Some(staged) = self.highlight_staged.as_ref() {
+                if let Some(pending) = &self.highlight_pending {
+                    if pending.matches(
+                        staged.revision,
+                        staged.text_len,
+                        staged.language_hint.as_str(),
+                        staged.theme_key.as_str(),
+                        staged.paste_id.as_str(),
+                    ) {
+                        self.highlight_pending = None;
+                        self.trace_highlight(
+                            "pending_clear",
+                            "pending request matched staged patch",
+                        );
+                    }
+                }
+                self.trace_highlight_lazy("queue", || {
+                    format!(
+                        "merged patch into staged render revision={} text_len={}",
+                        staged.revision, staged.text_len
+                    )
+                });
+            }
+            return;
+        }
         let Some(base) = [
             self.highlight_staged.as_ref(),
             self.highlight_render.as_ref(),

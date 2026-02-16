@@ -487,8 +487,14 @@ impl LocalPasteApp {
                         line_start,
                         column_in_line,
                     } => {
-                        let line = self.virtual_editor_buffer.line_without_newline(line_idx);
-                        if let Some((start, end)) = word_range_at(line.as_str(), column_in_line) {
+                        let word_range = {
+                            self.virtual_editor_buffer.line_without_newline_into(
+                                line_idx,
+                                &mut self.virtual_line_scratch,
+                            );
+                            word_range_at(self.virtual_line_scratch.as_str(), column_in_line)
+                        };
+                        if let Some((start, end)) = word_range {
                             let global_start = line_start.saturating_add(start);
                             let global_end = line_start.saturating_add(end);
                             self.virtual_editor_state
