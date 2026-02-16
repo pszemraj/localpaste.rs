@@ -319,7 +319,6 @@ impl LocalPasteApp {
             line_count,
             VirtualGalleyContext::new(
                 wrap_width,
-                self.highlight_version,
                 use_plain,
                 editor_font,
                 ui.visuals().text_color(),
@@ -355,6 +354,7 @@ impl LocalPasteApp {
             }
             let mut rows = Vec::with_capacity(range.len());
             let mut pending_action: Option<RowAction> = None;
+            let mut last_synced_line: Option<usize> = None;
             for row_idx in range {
                 let (line_idx, row_in_line) = self.virtual_layout.row_to_line(row_idx);
                 let line_start = self.virtual_editor_buffer.line_col_to_char(line_idx, 0);
@@ -379,8 +379,11 @@ impl LocalPasteApp {
                 let ends_line = row_in_line.saturating_add(1) >= line_visual_rows;
                 let render_line =
                     highlight_render_match.and_then(|render| render.lines.get(line_idx));
-                self.virtual_galley_cache
-                    .sync_line_rows(line_idx, self.virtual_layout.line_visual_rows(line_idx));
+                if last_synced_line != Some(line_idx) {
+                    self.virtual_galley_cache
+                        .sync_line_rows(line_idx, line_visual_rows);
+                    last_synced_line = Some(line_idx);
+                }
                 let galley = if let Some(cached) =
                     self.virtual_galley_cache.get(line_idx, row_in_line)
                 {

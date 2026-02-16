@@ -818,13 +818,13 @@ where
     aligned
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct HighlightSpan {
     range: Range<usize>,
     style: HighlightStyle,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct HighlightStyle {
     color: [u8; 4],
     italics: bool,
@@ -832,7 +832,7 @@ struct HighlightStyle {
 }
 
 /// Highlight spans for a single rendered line.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct HighlightRenderLine {
     len: usize,
     spans: Vec<HighlightSpan>,

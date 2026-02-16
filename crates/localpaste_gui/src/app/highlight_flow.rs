@@ -3,12 +3,63 @@
 use super::highlight::{HighlightPatch, HighlightRender, HighlightRequest, HighlightRequestMeta};
 use super::{
     LocalPasteApp, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_DEBOUNCE_LARGE, HIGHLIGHT_DEBOUNCE_LARGE_BYTES,
-    HIGHLIGHT_DEBOUNCE_MEDIUM, HIGHLIGHT_PLAIN_THRESHOLD, HIGHLIGHT_TINY_EDIT_MAX_CHARS,
+    HIGHLIGHT_DEBOUNCE_MEDIUM, HIGHLIGHT_DEBOUNCE_TINY, HIGHLIGHT_PLAIN_THRESHOLD,
+    HIGHLIGHT_TINY_EDIT_MAX_CHARS,
 };
+use std::ops::Range;
 use std::time::{Duration, Instant};
 use tracing::info;
 
+enum HighlightGalleyInvalidation {
+    None,
+    LineRange(Range<usize>),
+    All,
+}
+
 impl LocalPasteApp {
+    fn highlight_galley_invalidation_for_apply(
+        previous: Option<&HighlightRender>,
+        next: &HighlightRender,
+    ) -> HighlightGalleyInvalidation {
+        let Some(previous) = previous else {
+            return HighlightGalleyInvalidation::All;
+        };
+        if !previous.matches_context(
+            next.paste_id.as_str(),
+            next.language_hint.as_str(),
+            next.theme_key.as_str(),
+        ) || previous.lines.len() != next.lines.len()
+        {
+            return HighlightGalleyInvalidation::All;
+        }
+
+        let mut first_changed: Option<usize> = None;
+        let mut last_changed: Option<usize> = None;
+        for idx in 0..next.lines.len() {
+            if previous.lines.get(idx) != next.lines.get(idx) {
+                first_changed.get_or_insert(idx);
+                last_changed = Some(idx);
+            }
+        }
+
+        match (first_changed, last_changed) {
+            (Some(start), Some(end)) => HighlightGalleyInvalidation::LineRange(start..(end + 1)),
+            _ => HighlightGalleyInvalidation::None,
+        }
+    }
+
+    fn apply_highlight_galley_invalidation(&mut self, invalidation: HighlightGalleyInvalidation) {
+        match invalidation {
+            HighlightGalleyInvalidation::None => {}
+            HighlightGalleyInvalidation::LineRange(range) => {
+                self.virtual_galley_cache.evict_line_range(range);
+            }
+            HighlightGalleyInvalidation::All => {
+                self.virtual_galley_cache.evict_all();
+            }
+        }
+    }
+
     fn staged_matches_active_snapshot(&mut self, staged: &HighlightRender) -> bool {
         let Some(selected_id) = self.selected_id.as_deref() else {
             return false;
@@ -51,6 +102,7 @@ impl LocalPasteApp {
         self.highlight_render = None;
         self.highlight_staged = None;
         self.highlight_edit_hint = None;
+        self.virtual_galley_cache.evict_all();
         self.highlight_version = self.highlight_version.wrapping_add(1);
         self.trace_highlight("clear", "cleared pending/render/staged");
     }
@@ -183,12 +235,15 @@ impl LocalPasteApp {
         let Some(render) = self.highlight_staged.take() else {
             return;
         };
+        let invalidation =
+            Self::highlight_galley_invalidation_for_apply(self.highlight_render.as_ref(), &render);
         self.trace_highlight_lazy("apply", || {
             format!(
                 "applied staged render revision={} text_len={}",
                 render.revision, render.text_len
             )
         });
+        self.apply_highlight_galley_invalidation(invalidation);
         self.highlight_render = Some(render);
         self.highlight_version = self.highlight_version.wrapping_add(1);
     }
@@ -290,7 +345,7 @@ impl LocalPasteApp {
                 .inserted_chars
                 .saturating_add(edit_hint.deleted_chars);
             if changed_chars <= HIGHLIGHT_TINY_EDIT_MAX_CHARS && edit_hint.touched_lines <= 2 {
-                return Duration::ZERO;
+                return HIGHLIGHT_DEBOUNCE_TINY;
             }
         }
         if text_len >= HIGHLIGHT_DEBOUNCE_LARGE_BYTES {

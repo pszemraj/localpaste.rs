@@ -3,12 +3,14 @@
 use super::buffer::VirtualEditDelta;
 use super::visual_rows::splice_vec_by_delta;
 use eframe::egui::{Color32, FontId, Galley};
+use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct VirtualGalleyContext {
     wrap_width_bits: u32,
-    highlight_version: u64,
+    // Highlight invalidation is driven explicitly from highlight_flow
+    // via evict_line_range/evict_all; keep context geometry/style-only.
     use_plain: bool,
     font_id: FontId,
     text_color: Color32,
@@ -17,14 +19,12 @@ pub(crate) struct VirtualGalleyContext {
 impl VirtualGalleyContext {
     pub(crate) fn new(
         wrap_width: f32,
-        highlight_version: u64,
         use_plain: bool,
         font_id: &FontId,
         text_color: Color32,
     ) -> Self {
         Self {
             wrap_width_bits: wrap_width.max(0.0).round().to_bits(),
-            highlight_version,
             use_plain,
             font_id: font_id.clone(),
             text_color,
@@ -94,11 +94,44 @@ impl VirtualGalleyCache {
             *slot = Some(galley);
         }
     }
+
+    pub(crate) fn evict_all(&mut self) {
+        for line in &mut self.lines {
+            for row in &mut line.rows {
+                *row = None;
+            }
+        }
+    }
+
+    pub(crate) fn evict_line_range(&mut self, range: Range<usize>) {
+        if range.is_empty() {
+            return;
+        }
+        let start = range.start.min(self.lines.len());
+        let end = range.end.min(self.lines.len());
+        for idx in start..end {
+            if let Some(line) = self.lines.get_mut(idx) {
+                for row in &mut line.rows {
+                    *row = None;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shaped_test_galley() -> Arc<Galley> {
+        let mut galley = None;
+        eframe::egui::__run_test_ctx(|ctx| {
+            galley = Some(ctx.fonts_mut(|fonts| {
+                fonts.layout_no_wrap("x".to_owned(), FontId::monospace(14.0), Color32::LIGHT_GRAY)
+            }));
+        });
+        galley.expect("test galley")
+    }
 
     #[test]
     fn apply_delta_splices_line_cache_without_touching_suffix_prefix() {
@@ -126,11 +159,29 @@ mod tests {
         let mut cache = VirtualGalleyCache::default();
         cache.prepare_frame(
             2,
-            VirtualGalleyContext::new(300.0, 1, false, &FontId::monospace(14.0), Color32::WHITE),
+            VirtualGalleyContext::new(300.0, false, &FontId::monospace(14.0), Color32::WHITE),
         );
         cache.sync_line_rows(0, 2);
         assert_eq!(cache.lines[0].rows.len(), 2);
         cache.sync_line_rows(0, 1);
         assert_eq!(cache.lines[0].rows.len(), 1);
+    }
+
+    #[test]
+    fn evict_line_range_only_clears_targeted_lines() {
+        let mut cache = VirtualGalleyCache::default();
+        cache.prepare_frame(
+            3,
+            VirtualGalleyContext::new(300.0, false, &FontId::monospace(14.0), Color32::WHITE),
+        );
+        for idx in 0..3 {
+            cache.sync_line_rows(idx, 1);
+            cache.insert(idx, 0, shaped_test_galley());
+        }
+
+        cache.evict_line_range(1..2);
+        assert!(cache.get(0, 0).is_some());
+        assert!(cache.get(1, 0).is_none());
+        assert!(cache.get(2, 0).is_some());
     }
 }

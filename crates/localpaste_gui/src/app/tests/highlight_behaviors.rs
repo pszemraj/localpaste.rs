@@ -2,6 +2,21 @@
 
 use super::super::highlight::{HighlightPatch, HighlightRenderLine, VirtualEditHint};
 use super::*;
+use std::sync::Arc;
+
+fn shaped_test_galley() -> Arc<egui::Galley> {
+    let mut galley = None;
+    egui::__run_test_ctx(|ctx| {
+        galley = Some(ctx.fonts_mut(|fonts| {
+            fonts.layout_no_wrap(
+                "x".to_owned(),
+                egui::FontId::monospace(14.0),
+                egui::Color32::LIGHT_GRAY,
+            )
+        }));
+    });
+    galley.expect("test galley")
+}
 
 #[test]
 fn highlight_cache_reuses_layout_when_unchanged() {
@@ -507,6 +522,58 @@ fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
 }
 
 #[test]
+fn apply_staged_highlight_patch_evicts_only_changed_virtual_lines() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.virtual_galley_cache.prepare_frame(
+        3,
+        VirtualGalleyContext::new(
+            420.0,
+            false,
+            &egui::FontId::monospace(14.0),
+            egui::Color32::WHITE,
+        ),
+    );
+    for idx in 0..3 {
+        harness.app.virtual_galley_cache.sync_line_rows(idx, 1);
+        harness
+            .app
+            .virtual_galley_cache
+            .insert(idx, 0, shaped_test_galley());
+    }
+    harness.app.highlight_render = Some(HighlightRender {
+        paste_id: "alpha".to_string(),
+        revision: 4,
+        text_len: harness.app.selected_content.len(),
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        lines: vec![
+            HighlightRenderLine::plain(3),
+            HighlightRenderLine::plain(4),
+            HighlightRenderLine::plain(5),
+        ],
+    });
+    harness.app.highlight_staged = Some(HighlightRender {
+        paste_id: "alpha".to_string(),
+        revision: 5,
+        text_len: harness.app.selected_content.len(),
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        lines: vec![
+            HighlightRenderLine::plain(3),
+            HighlightRenderLine::plain(99),
+            HighlightRenderLine::plain(5),
+        ],
+    });
+
+    harness.app.apply_staged_highlight();
+
+    assert!(harness.app.virtual_galley_cache.get(0, 0).is_some());
+    assert!(harness.app.virtual_galley_cache.get(1, 0).is_none());
+    assert!(harness.app.virtual_galley_cache.get(2, 0).is_some());
+}
+
+#[test]
 fn staged_highlight_waits_for_idle_in_virtual_editor_mode() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;
@@ -574,7 +641,7 @@ fn highlight_debounce_window_adapts_to_edit_size_and_buffer() {
     });
     assert_eq!(
         harness.app.highlight_debounce_window(16 * 1024, true),
-        Duration::ZERO
+        HIGHLIGHT_DEBOUNCE_TINY
     );
 
     harness.app.highlight_edit_hint = None;
