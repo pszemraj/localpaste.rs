@@ -5,10 +5,10 @@ highlighting behavior in LocalPaste.
 
 Implementation roots:
 
-- Core detection entrypoint: [`crates/localpaste_core/src/detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs)
+- Core detection entrypoint: [`crates/localpaste_core/src/detection/mod.rs`](crates/localpaste_core/src/detection/mod.rs)
 - GUI highlight pipeline entrypoints:
-  - [`crates/localpaste_gui/src/app/highlight/mod.rs`](../crates/localpaste_gui/src/app/highlight/mod.rs)
-  - [`crates/localpaste_gui/src/app/highlight/worker.rs`](../crates/localpaste_gui/src/app/highlight/worker.rs)
+  - [`crates/localpaste_gui/src/app/highlight/mod.rs`](crates/localpaste_gui/src/app/highlight/mod.rs)
+  - [`crates/localpaste_gui/src/app/highlight/worker.rs`](crates/localpaste_gui/src/app/highlight/worker.rs)
 
 ## Feature Topology
 
@@ -127,9 +127,9 @@ Current policy constants (virtual editor):
 
 Primary implementation:
 
-- request/stage/apply lifecycle: [`crates/localpaste_gui/src/app/highlight_flow.rs`](../crates/localpaste_gui/src/app/highlight_flow.rs)
-- virtual edit hint capture: [`crates/localpaste_gui/src/app/virtual_ops.rs`](../crates/localpaste_gui/src/app/virtual_ops.rs)
-- editor dispatch and debounce usage: [`crates/localpaste_gui/src/app/ui/editor_panel.rs`](../crates/localpaste_gui/src/app/ui/editor_panel.rs)
+- request/stage/apply lifecycle: [`crates/localpaste_gui/src/app/highlight_flow.rs`](crates/localpaste_gui/src/app/highlight_flow.rs)
+- virtual edit hint capture: [`crates/localpaste_gui/src/app/virtual_ops.rs`](crates/localpaste_gui/src/app/virtual_ops.rs)
+- editor dispatch and debounce usage: [`crates/localpaste_gui/src/app/ui/editor_panel.rs`](crates/localpaste_gui/src/app/ui/editor_panel.rs)
 
 ## Runtime Provider Default (Magika)
 
@@ -139,7 +139,7 @@ When Magika is enabled, runtime defaults to CPU execution provider:
 - default: `true`
 - falsey values (`0`, `false`, `no`, `off`) allow runtime/provider defaults
 
-Reference: [`.env.example`](../.env.example)
+Reference: [`.env.example`](.env.example)
 
 ## Validation Targets
 
@@ -147,5 +147,5 @@ When touching detection/highlight behavior, validate:
 
 - core detection tests (`localpaste_core::detection::tests`),
 - GUI resolver/worker tests (`localpaste_gui::app::highlight::worker::resolver_tests`),
-- GUI manual checks in [docs/dev/gui-notes.md](dev/gui-notes.md),
-- GUI perf checks in [docs/dev/gui-perf-protocol.md](dev/gui-perf-protocol.md).
+- GUI manual checks in [docs/dev/gui-notes.md](docs/dev/gui-notes.md),
+- GUI perf checks in [docs/dev/gui-perf-protocol.md](docs/dev/gui-perf-protocol.md).

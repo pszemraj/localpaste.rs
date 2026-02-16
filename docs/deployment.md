@@ -18,13 +18,13 @@ These instructions apply to the headless `localpaste` server. The desktop GUI (`
 
 ## Related Docs
 
-> Security posture, bind policy, and public exposure guidance: [docs/security.md](security.md).
-> Storage backend and compatibility policy: [docs/storage.md](storage.md).
-> Development build/run command matrix: [docs/dev/devlog.md](dev/devlog.md).
+> Security posture, bind policy, and public exposure guidance: [docs/security.md](docs/security.md).
+> Storage backend and compatibility policy: [docs/storage.md](docs/storage.md).
+> Development build/run command matrix: [docs/dev/devlog.md](docs/dev/devlog.md).
 
 ## Quick Start
 
-Build/install commands are documented in [docs/dev/devlog.md](dev/devlog.md).
+Build/install commands are documented in [docs/dev/devlog.md](docs/dev/devlog.md).
 The examples below assume the server binary is available at `$HOME/.cargo/bin/localpaste` (the default `cargo install` location on Unix-like systems).
 
 ```bash
@@ -43,7 +43,7 @@ Important runtime rule:
 ## Storage Backend Note
 
 Storage/backend compatibility policy is defined in
-[docs/storage.md](storage.md) and is the source of truth.
+[docs/storage.md](docs/storage.md) and is the source of truth.
 Use that document for backend/file-layout and compatibility details.
 
 For stop/restart/cleanup procedures, use [Stopping LocalPaste Safely](#stopping-localpaste-safely).
@@ -80,8 +80,8 @@ Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
 ### Lock Safety
 
 This section contains operational guidance for writer coordination.
-Security policy context remains in [docs/security.md](security.md).
-Lock behavior semantics are documented in [docs/dev/locking-model.md](dev/locking-model.md).
+Security policy context remains in [docs/security.md](docs/security.md).
+Lock behavior semantics are documented in [docs/dev/locking-model.md](docs/dev/locking-model.md).
 
 - LocalPaste uses a process-lifetime owner lock file (`db.owner.lock`) in the DB directory.
 - Startup acquires that owner lock before opening redb; a second writer on the same `DB_PATH` is rejected.
@@ -226,8 +226,8 @@ curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "S
 
 This section is operational-only. Discovery/trust behavior is defined in:
 
-- [docs/architecture.md](architecture.md) (discovery + trust model)
-- [`crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs) (actual endpoint resolution logic)
+- [docs/architecture.md](docs/architecture.md) (discovery + trust model)
+- [`crates/localpaste_cli/src/main.rs`](crates/localpaste_cli/src/main.rs) (actual endpoint resolution logic)
 
 Operational summary:
 

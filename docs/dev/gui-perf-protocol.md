@@ -8,7 +8,7 @@ Use this protocol for release-gate evidence and regression checks.
 - English-first editor workflows only.
 - Runtime topology for this protocol: the GUI owns the DB lock and runs the embedded API endpoint in-process.
 - Do not run standalone `localpaste` concurrently against the same `DB_PATH` while running GUI perf checks.
-- Detection/highlight behavior definitions (including virtual-editor async debounce/staging policy) are maintained in [docs/language-detection.md](../language-detection.md).
+- Detection/highlight behavior definitions (including virtual-editor async debounce/staging policy) are maintained in [docs/language-detection.md](docs/language-detection.md).
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
   - average FPS `>= 45`
@@ -30,7 +30,7 @@ Use this protocol for release-gate evidence and regression checks.
 
 ## Prereqs
 
-Use the build matrix in [devlog.md](devlog.md).
+Use the build matrix in [devlog.md](docs/dev/devlog.md).
 Minimum binaries required for this protocol:
 
 - `localpaste_tools` / `generate-test-data`
@@ -39,7 +39,7 @@ Minimum binaries required for this protocol:
 ## Runbook
 
 Use this runbook for reproducible perf checks:
-Flag behavior/meanings are documented in [gui-notes.md](gui-notes.md); this runbook only pins values used during perf validation.
+Flag behavior/meanings are documented in [gui-notes.md](docs/dev/gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell
 $env:DB_PATH = Join-Path $env:TEMP "lpaste-perf-$([guid]::NewGuid().ToString('N'))"
@@ -56,7 +56,7 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
 While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks.
-For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](devlog.md) with `localpaste` + `lpaste`.
+For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](docs/dev/devlog.md) with `localpaste` + `lpaste`.
 
 ## Dataset Expectations
 
@@ -89,7 +89,7 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 
 ## Related Docs
 
-- Editor flags and trace env vars: [gui-notes.md](gui-notes.md)
-- Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md)
-- Open perf follow-ups: [backlog.md](backlog.md)
-- System architecture context: [docs/architecture.md](../architecture.md)
+- Editor flags and trace env vars: [gui-notes.md](docs/dev/gui-notes.md)
+- Detection/normalization/highlight behavior: [docs/language-detection.md](docs/language-detection.md)
+- Open perf follow-ups: [backlog.md](docs/dev/backlog.md)
+- System architecture context: [docs/architecture.md](docs/architecture.md)

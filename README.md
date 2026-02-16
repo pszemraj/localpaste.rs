@@ -2,7 +2,7 @@
 
 A fast, localhost-only pastebin with a modern editor, built in Rust.
 
-![LocalPaste Screenshot](/assets/ui.jpg)
+![LocalPaste Screenshot](assets/ui.jpg)
 
 ## What It Is
 
