@@ -15,7 +15,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Revisit backend query-cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or retired now that owner-lock probing is the preferred path.
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR`).
-- [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)) and capture refreshed perf evidence in release notes.
+- [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md)), capture refreshed perf evidence in release notes, and decide gate flip from `p95 <= 25 ms` to `p95 <= 16 ms`.
 - [ ] Enforce key/value identity checks for authoritative paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
 - [ ] Narrow `PasteDb` mutation API so folder assignment changes cannot bypass folder-count transaction paths.
 - [ ] Track folder-count decrement failures with a persistent repair marker and run opportunistic `reconcile_folder_invariants` recovery in long-lived processes.

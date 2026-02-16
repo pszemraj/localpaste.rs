@@ -13,6 +13,9 @@ Use this protocol for release-gate evidence and regression checks.
   - average FPS `>= 45`
   - p95 frame time `<= 25 ms`
   - no multi-second plain fallback during newline-burst editing.
+- Next gate target after virtual-editor Phase 1+2 perf changes:
+  - p95 frame time `<= 16 ms` once post-change measurements are captured and reviewed.
+  - Until that measurement evidence is captured, keep the current `<= 25 ms` release gate.
 
 > [!IMPORTANT]
 > Reuse of a shared `DB_PATH` with another writer invalidates perf results and can introduce lock contention artifacts.
