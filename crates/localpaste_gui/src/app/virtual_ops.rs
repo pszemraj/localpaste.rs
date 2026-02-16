@@ -27,7 +27,16 @@ impl LocalPasteApp {
             self.virtual_layout
                 .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
         let cols = self.virtual_layout.wrap_columns().max(1);
-        display_col % cols
+        let line_cols = self
+            .virtual_layout
+            .line_columns(&self.virtual_editor_buffer, line);
+        // Preserve wrap-boundary end-of-line intent (x == wrap width) so vertical
+        // navigation does not collapse to column 0 on the next line.
+        if display_col == line_cols && display_col > 0 && display_col % cols == 0 {
+            cols
+        } else {
+            display_col % cols
+        }
     }
 
     pub(super) fn handle_large_editor_click(
@@ -318,7 +327,7 @@ impl LocalPasteApp {
             .virtual_layout
             .line_columns(&self.virtual_editor_buffer, target_line);
         let row_start = target_row.saturating_mul(cols);
-        let desired_col_in_row = desired_col_in_row.min(cols.saturating_sub(1));
+        let desired_col_in_row = desired_col_in_row.min(cols);
         let target_display_col = if row_start >= target_line_cols {
             target_line_cols
         } else {
