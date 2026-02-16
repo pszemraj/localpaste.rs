@@ -2,6 +2,8 @@
 
 use super::canonical::canonicalize;
 use super::detect_language;
+#[cfg(feature = "magika")]
+use super::refine_magika_label;
 
 fn assert_detection_cases(cases: &[(&str, Option<&str>)]) {
     for (content, expected) in cases {
@@ -120,4 +122,27 @@ fn magika_detects_high_signal_code_snippets() {
             detected
         );
     }
+}
+
+#[cfg(feature = "magika")]
+#[test]
+fn magika_refinement_rejects_weak_yaml_shape() {
+    assert_eq!(refine_magika_label("yaml", "status report:\ndone\n"), None);
+    assert_eq!(
+        refine_magika_label("yaml", "name: app\nservices:\n  - web\n"),
+        Some("yaml".to_string())
+    );
+}
+
+#[cfg(feature = "magika")]
+#[test]
+fn magika_refinement_converts_plain_css_mislabeled_as_scss() {
+    assert_eq!(
+        refine_magika_label("scss", "body {\n  color: #333;\n  margin: 0;\n}"),
+        Some("css".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("scss", "$primary: #333;\nbody { color: $primary; }\n"),
+        Some("scss".to_string())
+    );
 }
