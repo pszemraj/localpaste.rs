@@ -155,16 +155,9 @@ impl LocalPasteApp {
     }
 
     pub(crate) fn send_palette_delete(&mut self, id: String) {
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::DeletePaste { id })
-            .is_err()
-        {
-            self.set_status("Delete failed: backend unavailable.");
-            return;
+        if self.send_delete_paste(id) {
+            self.command_palette_open = false;
         }
-        self.command_palette_open = false;
     }
 
     pub(crate) fn open_palette_selection(&mut self, id: String) {

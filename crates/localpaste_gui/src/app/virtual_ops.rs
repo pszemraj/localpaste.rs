@@ -20,35 +20,53 @@ use std::ops::Range;
 use std::time::Instant;
 use tracing::info;
 
+#[derive(Clone, Copy, Debug)]
+struct VirtualCursorWrapMetrics {
+    line: usize,
+    display_col: usize,
+    line_cols: usize,
+    wrap_cols: usize,
+}
+
+fn is_internal_wrap_boundary(display_col: usize, wrap_cols: usize, line_cols: usize) -> bool {
+    display_col > 0 && display_col % wrap_cols == 0 && display_col < line_cols
+}
+
 impl LocalPasteApp {
-    fn virtual_preferred_column_for_cursor(&self, cursor: usize) -> usize {
+    fn virtual_cursor_wrap_metrics(&self, cursor: usize) -> VirtualCursorWrapMetrics {
         let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
         let display_col =
             self.virtual_layout
                 .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
-        let cols = self.virtual_layout.wrap_columns().max(1);
+        let wrap_cols = self.virtual_layout.wrap_columns().max(1);
         let line_cols = self
             .virtual_layout
             .line_columns(&self.virtual_editor_buffer, line);
+        VirtualCursorWrapMetrics {
+            line,
+            display_col,
+            line_cols,
+            wrap_cols,
+        }
+    }
+
+    fn virtual_preferred_column_for_cursor(&self, cursor: usize) -> usize {
+        let metrics = self.virtual_cursor_wrap_metrics(cursor);
         // Preserve wrap-boundary end-of-line intent (x == wrap width) so vertical
         // navigation does not collapse to column 0 on the next line.
-        if display_col == line_cols && display_col > 0 && display_col % cols == 0 {
-            cols
+        if metrics.display_col == metrics.line_cols
+            && metrics.display_col > 0
+            && metrics.display_col % metrics.wrap_cols == 0
+        {
+            metrics.wrap_cols
         } else {
-            display_col % cols
+            metrics.display_col % metrics.wrap_cols
         }
     }
 
     fn virtual_is_internal_wrap_boundary_cursor(&self, cursor: usize) -> bool {
-        let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
-        let display_col =
-            self.virtual_layout
-                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
-        let cols = self.virtual_layout.wrap_columns().max(1);
-        let line_cols = self
-            .virtual_layout
-            .line_columns(&self.virtual_editor_buffer, line);
-        display_col > 0 && display_col % cols == 0 && display_col < line_cols
+        let metrics = self.virtual_cursor_wrap_metrics(cursor);
+        is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols)
     }
 
     fn vertical_boundary_affinity_for_target(
@@ -320,19 +338,11 @@ impl LocalPasteApp {
         up: bool,
         boundary_affinity: WrapBoundaryAffinity,
     ) -> usize {
-        let cols = self.virtual_layout.wrap_columns().max(1);
-        let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
-        let cursor_display_col =
-            self.virtual_layout
-                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
-        let rows = self.virtual_layout.line_visual_rows(line).max(1);
-        let line_cols = self
-            .virtual_layout
-            .line_columns(&self.virtual_editor_buffer, line);
-        let on_internal_wrap_boundary = cursor_display_col > 0
-            && cursor_display_col % cols == 0
-            && cursor_display_col < line_cols;
-        let mut row = (cursor_display_col / cols).min(rows.saturating_sub(1));
+        let metrics = self.virtual_cursor_wrap_metrics(cursor);
+        let rows = self.virtual_layout.line_visual_rows(metrics.line).max(1);
+        let on_internal_wrap_boundary =
+            is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols);
+        let mut row = (metrics.display_col / metrics.wrap_cols).min(rows.saturating_sub(1));
         if on_internal_wrap_boundary && boundary_affinity == WrapBoundaryAffinity::Upstream {
             row = row.saturating_sub(1);
         }
@@ -340,18 +350,18 @@ impl LocalPasteApp {
 
         let target_line_and_row: Option<(usize, usize)> = if up {
             if row > 0 {
-                Some((line, row - 1))
-            } else if line > 0 {
-                let prev_line = line - 1;
+                Some((metrics.line, row - 1))
+            } else if metrics.line > 0 {
+                let prev_line = metrics.line - 1;
                 let prev_rows = self.virtual_layout.line_visual_rows(prev_line).max(1);
                 Some((prev_line, prev_rows.saturating_sub(1)))
             } else {
                 None
             }
         } else if row + 1 < rows {
-            Some((line, row + 1))
-        } else if line + 1 < line_count {
-            Some((line + 1, 0usize))
+            Some((metrics.line, row + 1))
+        } else if metrics.line + 1 < line_count {
+            Some((metrics.line + 1, 0usize))
         } else {
             None
         };
@@ -366,14 +376,16 @@ impl LocalPasteApp {
         let target_line_cols = self
             .virtual_layout
             .line_columns(&self.virtual_editor_buffer, target_line);
-        let row_start = target_row.saturating_mul(cols);
-        let desired_col_in_row = desired_col_in_row.min(cols);
+        let row_start = target_row.saturating_mul(metrics.wrap_cols);
+        let desired_col_in_row = desired_col_in_row.min(metrics.wrap_cols);
         let target_display_col = if row_start >= target_line_cols {
             target_line_cols
         } else {
             // Clamp to the target row boundary so vertical navigation can land at
             // end-of-row for shorter rows instead of one column early.
-            let row_len = target_line_cols.saturating_sub(row_start).min(cols);
+            let row_len = target_line_cols
+                .saturating_sub(row_start)
+                .min(metrics.wrap_cols);
             row_start + desired_col_in_row.min(row_len)
         };
         let target_line_char = self.virtual_layout.line_display_column_to_char(

@@ -2,21 +2,6 @@
 
 use super::super::highlight::{HighlightPatch, HighlightRenderLine, VirtualEditHint};
 use super::*;
-use std::sync::Arc;
-
-fn shaped_test_galley() -> Arc<egui::Galley> {
-    let mut galley = None;
-    egui::__run_test_ctx(|ctx| {
-        galley = Some(ctx.fonts_mut(|fonts| {
-            fonts.layout_no_wrap(
-                "x".to_owned(),
-                egui::FontId::monospace(14.0),
-                egui::Color32::LIGHT_GRAY,
-            )
-        }));
-    });
-    galley.expect("test galley")
-}
 
 #[test]
 fn highlight_cache_reuses_layout_when_unchanged() {

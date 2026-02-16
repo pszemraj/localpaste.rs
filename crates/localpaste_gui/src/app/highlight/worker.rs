@@ -317,6 +317,31 @@ mod resolver_tests {
             .any(|span| Some(span.style.color) != default)
     }
 
+    fn rust_request(
+        revision: u64,
+        text: &str,
+        patch_base_revision: Option<u64>,
+        patch_base_text_len: Option<usize>,
+    ) -> HighlightRequest {
+        HighlightRequest {
+            paste_id: "test".to_string(),
+            revision,
+            text: text.to_string(),
+            language_hint: "rust".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            edit_hint: None,
+            patch_base_revision,
+            patch_base_text_len,
+        }
+    }
+
+    fn seed_worker_cache(settings: &SyntectSettings, cache: &mut HighlightWorkerCache) -> usize {
+        let text_v1 = "let a = 1;\nlet b = 2;\n";
+        let first = highlight_in_worker(settings, cache, rust_request(1, text_v1, None, None));
+        assert!(matches!(first, HighlightWorkerResult::Render(_)));
+        text_v1.len()
+    }
+
     #[test]
     fn resolve_syntax_handles_common_canonical_labels() {
         let settings = SyntectSettings::default();
@@ -415,45 +440,15 @@ mod resolver_tests {
     fn worker_emits_patch_only_when_ui_base_matches_worker_cache() {
         let settings = SyntectSettings::default();
         let mut cache = HighlightWorkerCache::default();
-        let text_v1 = "let a = 1;\nlet b = 2;\n";
-        let req_v1 = HighlightRequest {
-            paste_id: "test".to_string(),
-            revision: 1,
-            text: text_v1.to_string(),
-            language_hint: "rust".to_string(),
-            theme_key: "base16-mocha.dark".to_string(),
-            edit_hint: None,
-            patch_base_revision: None,
-            patch_base_text_len: None,
-        };
-        let first = highlight_in_worker(&settings, &mut cache, req_v1);
-        assert!(matches!(first, HighlightWorkerResult::Render(_)));
+        let base_text_len = seed_worker_cache(&settings, &mut cache);
 
         let text_v2 = "let a = 1;\nlet b = 3;\n";
-        let req_v2_patch = HighlightRequest {
-            paste_id: "test".to_string(),
-            revision: 2,
-            text: text_v2.to_string(),
-            language_hint: "rust".to_string(),
-            theme_key: "base16-mocha.dark".to_string(),
-            edit_hint: None,
-            patch_base_revision: Some(1),
-            patch_base_text_len: Some(text_v1.len()),
-        };
+        let req_v2_patch = rust_request(2, text_v2, Some(1), Some(base_text_len));
         let second = highlight_in_worker(&settings, &mut cache, req_v2_patch);
         assert!(matches!(second, HighlightWorkerResult::Patch(_)));
 
         let text_v3 = "let a = 4;\nlet b = 3;\n";
-        let req_v3_wrong_base = HighlightRequest {
-            paste_id: "test".to_string(),
-            revision: 3,
-            text: text_v3.to_string(),
-            language_hint: "rust".to_string(),
-            theme_key: "base16-mocha.dark".to_string(),
-            edit_hint: None,
-            patch_base_revision: Some(0),
-            patch_base_text_len: Some(123),
-        };
+        let req_v3_wrong_base = rust_request(3, text_v3, Some(0), Some(123));
         let third = highlight_in_worker(&settings, &mut cache, req_v3_wrong_base);
         assert!(matches!(third, HighlightWorkerResult::Render(_)));
     }
@@ -462,32 +457,10 @@ mod resolver_tests {
     fn worker_emits_full_render_when_line_count_changes() {
         let settings = SyntectSettings::default();
         let mut cache = HighlightWorkerCache::default();
-
-        let text_v1 = "let a = 1;\nlet b = 2;\n";
-        let req_v1 = HighlightRequest {
-            paste_id: "test".to_string(),
-            revision: 1,
-            text: text_v1.to_string(),
-            language_hint: "rust".to_string(),
-            theme_key: "base16-mocha.dark".to_string(),
-            edit_hint: None,
-            patch_base_revision: None,
-            patch_base_text_len: None,
-        };
-        let first = highlight_in_worker(&settings, &mut cache, req_v1);
-        assert!(matches!(first, HighlightWorkerResult::Render(_)));
+        let base_text_len = seed_worker_cache(&settings, &mut cache);
 
         let text_v2 = "let a = 1;\nlet inserted = 9;\nlet b = 2;\n";
-        let req_v2_line_insert = HighlightRequest {
-            paste_id: "test".to_string(),
-            revision: 2,
-            text: text_v2.to_string(),
-            language_hint: "rust".to_string(),
-            theme_key: "base16-mocha.dark".to_string(),
-            edit_hint: None,
-            patch_base_revision: Some(1),
-            patch_base_text_len: Some(text_v1.len()),
-        };
+        let req_v2_line_insert = rust_request(2, text_v2, Some(1), Some(base_text_len));
         let second = highlight_in_worker(&settings, &mut cache, req_v2_line_insert);
         assert!(matches!(second, HighlightWorkerResult::Render(_)));
     }

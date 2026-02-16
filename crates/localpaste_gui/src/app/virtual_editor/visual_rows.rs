@@ -472,6 +472,30 @@ mod tests {
         (buffer, cache)
     }
 
+    fn assert_row_segments(
+        text: &str,
+        wrap_width: f32,
+        expected_wrap_cols: usize,
+        expected_segments: &[&str],
+    ) {
+        let (buffer, cache) = rebuild_cache_for(text, wrap_width, 10.0, 5.0);
+        assert_eq!(cache.wrap_columns(), expected_wrap_cols);
+        assert_eq!(cache.line_visual_rows(0), expected_segments.len());
+
+        let mut previous_end = None;
+        for (row, expected) in expected_segments.iter().enumerate() {
+            let range = cache.row_char_range(&buffer, row);
+            if let Some(prev) = previous_end {
+                assert_eq!(prev, range.start);
+            }
+            assert_eq!(buffer.slice_chars(range.clone()), *expected);
+            if !expected.is_empty() {
+                assert!(range.end > range.start);
+            }
+            previous_end = Some(range.end);
+        }
+    }
+
     #[test]
     fn row_mapping_matches_expected_prefix_sum() {
         let (_buffer, cache) = rebuild_cache_for("1234567890\n12\n123456", 30.0, 10.0, 5.0);
@@ -592,26 +616,12 @@ mod tests {
 
     #[test]
     fn row_char_range_for_wide_glyph_lines_does_not_drop_second_row_content() {
-        let (buffer, cache) = rebuild_cache_for("🦀🦀🦀🦀🦀🦀\n", 50.0, 10.0, 5.0);
-        assert_eq!(cache.wrap_columns(), 10);
-        assert_eq!(cache.line_visual_rows(0), 2);
-
-        let row0 = cache.row_char_range(&buffer, 0);
-        let row1 = cache.row_char_range(&buffer, 1);
-        assert_eq!(buffer.slice_chars(row0.clone()), "🦀🦀🦀🦀🦀");
-        assert_eq!(buffer.slice_chars(row1.clone()), "🦀");
-        assert_eq!(row0.end, row1.start);
+        assert_row_segments("🦀🦀🦀🦀🦀🦀\n", 50.0, 10, &["🦀🦀🦀🦀🦀", "🦀"]);
     }
 
     #[test]
     fn row_char_range_does_not_emit_empty_first_row_for_single_wide_glyph() {
-        let (buffer, cache) = rebuild_cache_for("🦀\n", 5.0, 10.0, 5.0);
-        assert_eq!(cache.wrap_columns(), 1);
-        assert_eq!(cache.line_visual_rows(0), 1);
-
-        let row0 = cache.row_char_range(&buffer, 0);
-        assert_eq!(buffer.slice_chars(row0.clone()), "🦀");
-        assert!(row0.end > row0.start);
+        assert_row_segments("🦀\n", 5.0, 1, &["🦀"]);
     }
 
     #[test]
@@ -646,14 +656,6 @@ mod tests {
 
     #[test]
     fn row_char_range_keeps_leading_zero_width_codepoints_in_first_row() {
-        let (buffer, cache) = rebuild_cache_for("\u{0301}ab\n", 5.0, 10.0, 5.0);
-        assert_eq!(cache.wrap_columns(), 1);
-        assert_eq!(cache.line_visual_rows(0), 2);
-
-        let row0 = cache.row_char_range(&buffer, 0);
-        let row1 = cache.row_char_range(&buffer, 1);
-        assert_eq!(buffer.slice_chars(row0.clone()), "\u{0301}a");
-        assert_eq!(buffer.slice_chars(row1.clone()), "b");
-        assert_eq!(row0.end, row1.start);
+        assert_row_segments("\u{0301}ab\n", 5.0, 1, &["\u{0301}a", "b"]);
     }
 }

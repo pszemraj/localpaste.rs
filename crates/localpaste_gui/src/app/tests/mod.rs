@@ -41,6 +41,20 @@ fn test_summary(id: &str, name: &str, language: Option<&str>, content_len: usize
     }
 }
 
+pub(super) fn shaped_test_galley() -> Arc<egui::Galley> {
+    let mut galley = None;
+    egui::__run_test_ctx(|ctx| {
+        galley = Some(ctx.fonts_mut(|fonts| {
+            fonts.layout_no_wrap(
+                "x".to_owned(),
+                egui::FontId::monospace(14.0),
+                egui::Color32::LIGHT_GRAY,
+            )
+        }));
+    });
+    galley.expect("test galley")
+}
+
 fn make_app() -> TestHarness {
     let (cmd_tx, cmd_rx) = unbounded();
     let (_evt_tx, evt_rx) = unbounded();

@@ -684,16 +684,22 @@ impl LocalPasteApp {
         }
     }
 
+    pub(super) fn send_delete_paste(&mut self, id: String) -> bool {
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::DeletePaste { id })
+            .is_err()
+        {
+            self.set_status("Delete failed: backend unavailable.");
+            return false;
+        }
+        true
+    }
+
     pub(super) fn delete_selected(&mut self) {
         if let Some(id) = self.selected_id.clone() {
-            if self
-                .backend
-                .cmd_tx
-                .send(CoreCmd::DeletePaste { id })
-                .is_err()
-            {
-                self.set_status("Delete failed: backend unavailable.");
-            }
+            let _sent = self.send_delete_paste(id);
         }
     }
 

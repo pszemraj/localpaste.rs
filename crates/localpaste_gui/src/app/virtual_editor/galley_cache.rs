@@ -125,16 +125,7 @@ impl VirtualGalleyCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn shaped_test_galley() -> Arc<Galley> {
-        let mut galley = None;
-        eframe::egui::__run_test_ctx(|ctx| {
-            galley = Some(ctx.fonts_mut(|fonts| {
-                fonts.layout_no_wrap("x".to_owned(), FontId::monospace(14.0), Color32::LIGHT_GRAY)
-            }));
-        });
-        galley.expect("test galley")
-    }
+    use crate::app::tests::shaped_test_galley;
 
     #[test]
     fn apply_delta_splices_line_cache_without_touching_suffix_prefix() {
