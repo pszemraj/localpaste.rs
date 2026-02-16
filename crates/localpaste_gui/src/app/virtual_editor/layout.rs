@@ -20,6 +20,8 @@ pub(crate) struct WrapLineMetrics {
     pub(crate) height_px: f32,
     /// Character count of the source line (without newline).
     pub(crate) chars: usize,
+    /// Display column count for wrapped layout calculations.
+    pub(crate) columns: usize,
 }
 
 impl Default for WrapLineMetrics {
@@ -28,6 +30,7 @@ impl Default for WrapLineMetrics {
             visual_rows: 1,
             height_px: 0.0,
             chars: 0,
+            columns: 0,
         }
     }
 }
@@ -242,13 +245,30 @@ impl WrapLayoutCache {
 
 fn measure_line(buffer: &RopeBuffer, idx: usize, cols: usize, line_height: f32) -> WrapLineMetrics {
     let chars = buffer.line_len_chars(idx);
-    let visual_rows = div_ceil(chars.max(1), cols).max(1);
+    let columns = measure_line_columns(buffer, idx, chars);
+    let visual_rows = div_ceil(columns.max(1), cols).max(1);
     let height_px = visual_rows as f32 * line_height.max(1.0);
     WrapLineMetrics {
         visual_rows,
         height_px,
         chars,
+        columns,
     }
+}
+
+fn measure_line_columns(buffer: &RopeBuffer, idx: usize, chars: usize) -> usize {
+    let line = buffer.rope().line(idx);
+
+    // Fast path for common ASCII-only source lines.
+    if line.chunks().all(|chunk| chunk.is_ascii()) {
+        return chars;
+    }
+
+    use unicode_width::UnicodeWidthChar;
+    line.chars()
+        .filter(|c| *c != '\n' && *c != '\r')
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
+        .sum()
 }
 
 #[cfg(test)]
@@ -312,5 +332,17 @@ mod tests {
         assert_eq!(cache.line_chars(0), 2);
         assert_eq!(cache.line_chars(1), 2);
         assert_eq!(cache.line_chars(2), 1);
+    }
+
+    #[test]
+    fn measure_line_columns_accounts_for_wide_unicode() {
+        let buffer = RopeBuffer::new("abc\n你好\n🦀\n");
+        let ascii = measure_line(&buffer, 0, 80, 10.0);
+        let cjk = measure_line(&buffer, 1, 80, 10.0);
+        let emoji = measure_line(&buffer, 2, 80, 10.0);
+
+        assert_eq!(ascii.columns, 3);
+        assert_eq!(cjk.columns, 4);
+        assert_eq!(emoji.columns, 2);
     }
 }
