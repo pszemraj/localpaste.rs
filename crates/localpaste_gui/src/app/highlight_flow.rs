@@ -105,6 +105,18 @@ impl LocalPasteApp {
                 };
             }
         }
+        if next.base_revision == Some(previous.revision)
+            && next.base_text_len == Some(previous.text_len)
+        {
+            if let Some(range) = next.changed_line_range.as_ref() {
+                let start = range.start.min(next.lines.len());
+                let end = range.end.min(next.lines.len());
+                if start < end {
+                    return HighlightGalleyInvalidation::LineRange(start..end);
+                }
+                return HighlightGalleyInvalidation::None;
+            }
+        }
         HighlightGalleyInvalidation::All
     }
 
@@ -306,8 +318,16 @@ impl LocalPasteApp {
                 staged.lines.splice(range, patch.lines);
                 staged.revision = patch.revision;
                 staged.text_len = patch.text_len;
+                staged.base_revision = Some(patch.base_revision);
+                staged.base_text_len = Some(patch.base_text_len);
                 staged.language_hint = patch.language_hint;
                 staged.theme_key = patch.theme_key;
+                staged.changed_line_range = match staged.changed_line_range.take() {
+                    Some(existing) => {
+                        Some(existing.start.min(hint_range.start)..existing.end.max(hint_range.end))
+                    }
+                    None => Some(hint_range.clone()),
+                };
                 self.highlight_staged_invalidation =
                     Some(Self::merge_staged_invalidation_with_patch(
                         self.highlight_staged_invalidation.take(),
@@ -402,12 +422,12 @@ impl LocalPasteApp {
                 self.highlight_staged_invalidation.clone(),
                 patch.base_revision,
                 patch.base_text_len,
-                hint_range,
+                hint_range.clone(),
             )),
             PatchBaseSource::Current => Some(StagedHighlightInvalidation {
                 base_revision: patch.base_revision,
                 base_text_len: patch.base_text_len,
-                line_ranges: vec![hint_range],
+                line_ranges: vec![hint_range.clone()],
             }),
         };
         self.queue_highlight_render_with_invalidation(
@@ -415,8 +435,11 @@ impl LocalPasteApp {
                 paste_id: patch.paste_id,
                 revision: patch.revision,
                 text_len: patch.text_len,
+                base_revision: Some(patch.base_revision),
+                base_text_len: Some(patch.base_text_len),
                 language_hint: patch.language_hint,
                 theme_key: patch.theme_key,
+                changed_line_range: Some(hint_range.clone()),
                 lines: merged_lines,
             },
             staged_invalidation,

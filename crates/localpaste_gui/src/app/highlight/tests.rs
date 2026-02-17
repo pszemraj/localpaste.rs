@@ -99,8 +99,11 @@ fn render_job_fills_unstyled_gaps_with_default_format() {
                 paste_id: "alpha".to_string(),
                 revision: 1,
                 text_len: text.len(),
+                base_revision: None,
+                base_text_len: None,
                 language_hint: "rust".to_string(),
                 theme_key: "base16-mocha.dark".to_string(),
+                changed_line_range: None,
                 lines: vec![HighlightRenderLine {
                     len: text.len(),
                     spans: vec![test_span(0..2), test_span(4..5)],

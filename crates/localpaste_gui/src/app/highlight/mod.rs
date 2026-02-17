@@ -803,8 +803,14 @@ pub(super) struct HighlightRender {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text_len: usize,
+    /// Worker base snapshot used to compute `changed_line_range`.
+    pub(super) base_revision: Option<u64>,
+    pub(super) base_text_len: Option<usize>,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
+    /// Best-effort changed line range versus the previous worker snapshot.
+    /// `None` means unknown and callers should fall back to structural diffing.
+    pub(super) changed_line_range: Option<Range<usize>>,
     pub(super) lines: Vec<HighlightRenderLine>,
 }
 

@@ -8,7 +8,7 @@ use super::virtual_editor::{
 };
 use super::{
     is_editor_word_char, next_virtual_click_count, LocalPasteApp, VirtualApplyResult,
-    EDITOR_DOUBLE_CLICK_DISTANCE, EDITOR_DOUBLE_CLICK_WINDOW, MAX_RENDER_CHARS_PER_LINE,
+    EDITOR_DOUBLE_CLICK_DISTANCE, EDITOR_DOUBLE_CLICK_WINDOW,
 };
 use eframe::egui::{
     self,
@@ -47,7 +47,7 @@ impl LocalPasteApp {
         let full_chars = self.virtual_editor_buffer.line_len_chars(line);
         let cached_chars = self.virtual_layout.line_chars(line);
         if cached_chars == 0 {
-            full_chars.min(MAX_RENDER_CHARS_PER_LINE)
+            full_chars
         } else {
             cached_chars.min(full_chars)
         }

@@ -804,19 +804,6 @@ impl LocalPasteApp {
             || self.virtual_editor_state.has_focus
             || self.virtual_drag_active
             || editor_interacted;
-        if self.virtual_layout.has_render_capped_lines() {
-            let capped_lines = self.virtual_layout.render_capped_line_count();
-            let line_label = if capped_lines == 1 { "line" } else { "lines" };
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(format!(
-                    "Rendering truncated after {} chars on {} {}.",
-                    MAX_RENDER_CHARS_PER_LINE, capped_lines, line_label
-                ))
-                .small()
-                .color(COLOR_TEXT_MUTED),
-            );
-        }
         if let Some(started) = frame_started {
             let total_ms = started.elapsed().as_secs_f32() * 1000.0;
             info!(
@@ -882,19 +869,17 @@ mod tests {
     }
 
     #[test]
-    fn virtual_editor_double_click_selection_clamps_to_render_cap() {
+    fn virtual_editor_double_click_selection_respects_clamp_callback() {
         let line_start = 17usize;
-        let render_end = line_start.saturating_add(MAX_RENDER_CHARS_PER_LINE);
-        let line = "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64));
+        let clamp_end = line_start.saturating_add(32);
+        let line = "a".repeat(96);
 
-        let bounds = virtual_editor_double_click_selection_bounds(
-            line_start,
-            MAX_RENDER_CHARS_PER_LINE.saturating_sub(1),
-            line.as_str(),
-            |global| global.min(render_end),
-        )
-        .expect("expected word bounds");
+        let bounds =
+            virtual_editor_double_click_selection_bounds(line_start, 31, line.as_str(), |global| {
+                global.min(clamp_end)
+            })
+            .expect("expected word bounds");
 
-        assert_eq!(bounds, (line_start, render_end));
+        assert_eq!(bounds, (line_start, clamp_end));
     }
 }

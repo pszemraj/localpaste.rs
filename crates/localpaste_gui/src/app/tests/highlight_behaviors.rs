@@ -209,16 +209,22 @@ fn staged_highlight_waits_for_idle() {
         paste_id: "alpha".to_string(),
         revision: active_revision.saturating_sub(1),
         text_len: active_len,
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: Vec::new(),
     });
     let render = HighlightRender {
         paste_id: "alpha".to_string(),
         revision: active_revision,
         text_len: active_len,
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: Vec::new(),
     };
     harness.app.highlight_staged = Some(render.clone());
@@ -257,8 +263,11 @@ fn staged_highlight_applies_immediately_without_current_render() {
         paste_id: "alpha".to_string(),
         revision: active_revision,
         text_len: active_len,
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: Vec::new(),
     });
     let now = Instant::now();
@@ -287,8 +296,11 @@ fn staged_highlight_stale_matrix_drops_mismatched_revision_or_length_without_ver
             paste_id: "alpha".to_string(),
             revision: active_revision,
             text_len: active_len,
+            base_revision: None,
+            base_text_len: None,
             language_hint: "py".to_string(),
             theme_key: "base16-mocha.dark".to_string(),
+            changed_line_range: None,
             lines: Vec::new(),
         };
         match kind {
@@ -312,8 +324,11 @@ fn highlight_request_skips_when_staged_matches() {
         paste_id: "alpha".to_string(),
         revision: 0,
         text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: Vec::new(),
     };
     harness.app.highlight_staged = Some(render);
@@ -403,8 +418,11 @@ fn virtual_editor_plain_threshold_clears_stale_highlight_state() {
         paste_id: "alpha".to_string(),
         revision,
         text_len,
+        base_revision: None,
+        base_text_len: None,
         language_hint: "markdown".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: vec![HighlightRenderLine::plain(large_markdown.len())],
     };
     harness.app.highlight_render = Some(stale_render.clone());
@@ -445,16 +463,22 @@ fn queue_highlight_render_ignores_older_revision_when_current_exists() {
         paste_id: "alpha".to_string(),
         revision: 9,
         text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: Vec::new(),
     });
     harness.app.queue_highlight_render(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 4,
         text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: Vec::new(),
     });
 
@@ -477,8 +501,11 @@ fn paste_saved_keeps_existing_highlight_render() {
         paste_id: "alpha".to_string(),
         revision: 42,
         text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: Vec::new(),
     });
 
@@ -538,8 +565,11 @@ fn apply_patch_sequence_and_collect_evictions(
         paste_id: "alpha".to_string(),
         revision: base_revision,
         text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: plain_lines(base_line_lens),
     });
     for patch in patches {
@@ -570,8 +600,11 @@ fn queue_highlight_patch_prefers_latest_staged_base() {
         paste_id: "alpha".to_string(),
         revision: 10,
         text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: vec![
             HighlightRenderLine::plain(1),
             HighlightRenderLine::plain(2),
@@ -582,8 +615,11 @@ fn queue_highlight_patch_prefers_latest_staged_base() {
         paste_id: "alpha".to_string(),
         revision: 11,
         text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: vec![
             HighlightRenderLine::plain(4),
             HighlightRenderLine::plain(5),
@@ -624,8 +660,11 @@ fn queue_highlight_patch_clears_matching_pending_request() {
         paste_id: "alpha".to_string(),
         revision: 11,
         text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: vec![
             HighlightRenderLine::plain(4),
             HighlightRenderLine::plain(5),
@@ -663,8 +702,11 @@ fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
         paste_id: "alpha".to_string(),
         revision: 5,
         text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: vec![
             HighlightRenderLine::plain(2),
             HighlightRenderLine::plain(2),
@@ -751,16 +793,22 @@ fn staged_highlight_waits_for_idle_in_virtual_editor_mode() {
         paste_id: "alpha".to_string(),
         revision: 0,
         text_len: harness.app.active_text_len_bytes(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: Vec::new(),
     });
     harness.app.highlight_staged = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 1,
         text_len: harness.app.active_text_len_bytes(),
+        base_revision: None,
+        base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
         lines: Vec::new(),
     });
     let now = Instant::now();

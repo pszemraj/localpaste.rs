@@ -562,7 +562,7 @@ fn page_navigation_initializes_preferred_column_from_current_cursor() {
 }
 
 #[test]
-fn long_line_navigation_commands_stay_within_render_cap() {
+fn long_line_navigation_commands_cross_legacy_render_cap_without_truncation() {
     let mut harness = make_app();
     let text = format!(
         "{}\n",
@@ -571,33 +571,46 @@ fn long_line_navigation_commands_stay_within_render_cap() {
     configure_virtual_editor_with_wrap(&mut harness.app, text.as_str(), 50000.0);
 
     let len = harness.app.virtual_editor_buffer.len_chars();
-    let capped = harness
+    let legacy_cap = harness
         .app
         .virtual_editor_buffer
         .line_col_to_char(0, MAX_RENDER_CHARS_PER_LINE);
-    harness.app.virtual_editor_state.set_cursor(capped, len);
-    let before = harness.app.virtual_editor_buffer.to_string();
+    harness.app.virtual_editor_state.set_cursor(legacy_cap, len);
     let ctx = egui::Context::default();
+    let line_end = harness
+        .app
+        .virtual_editor_buffer
+        .line_col_to_char(0, text.chars().count().saturating_sub(1));
 
-    let commands = [
-        VirtualInputCommand::MoveRight {
+    let right = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveRight {
             select: false,
             word: false,
-        },
-        VirtualInputCommand::MoveEnd { select: false },
-        VirtualInputCommand::MoveRight {
-            select: false,
-            word: true,
-        },
-        VirtualInputCommand::DeleteForward { word: true },
-    ];
+        }],
+    );
+    assert!(!right.changed);
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        legacy_cap.saturating_add(1)
+    );
 
-    for command in commands {
-        let result = harness.app.apply_virtual_commands(&ctx, &[command]);
-        assert!(!result.changed);
-        assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
-        assert_eq!(harness.app.virtual_editor_buffer.to_string(), before);
-    }
+    let move_end = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveEnd { select: false }]);
+    assert!(!move_end.changed);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), line_end);
+
+    harness.app.virtual_editor_state.set_cursor(legacy_cap, len);
+    let delete_tail = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
+    assert!(delete_tail.changed);
+    assert_eq!(
+        harness.app.virtual_editor_buffer.line_len_chars(0),
+        MAX_RENDER_CHARS_PER_LINE
+    );
+    assert_eq!(harness.app.virtual_editor_state.cursor(), legacy_cap);
 }
 
 #[test]
@@ -672,7 +685,7 @@ fn word_delete_crosses_line_boundaries() {
 }
 
 #[test]
-fn undo_restores_clamped_cursor_for_render_capped_lines() {
+fn undo_restores_full_cursor_for_long_lines() {
     let mut harness = make_app();
     let long_line = "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64));
     configure_virtual_editor_with_wrap(&mut harness.app, long_line.as_str(), 50000.0);
@@ -697,21 +710,16 @@ fn undo_restores_clamped_cursor_for_render_capped_lines() {
     assert!(undo_result.changed);
     assert_eq!(harness.app.virtual_editor_buffer.to_string(), long_line);
 
-    let capped = harness
-        .app
-        .virtual_editor_buffer
-        .line_col_to_char(0, MAX_RENDER_CHARS_PER_LINE);
-    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), long_line_end);
 
     let insert_result = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::InsertText("y".to_string())]);
     assert!(insert_result.changed);
-    let inserted = harness
-        .app
-        .virtual_editor_buffer
-        .slice_chars(capped..capped.saturating_add(1));
-    assert_eq!(inserted, "y");
+    assert_eq!(
+        harness.app.virtual_editor_buffer.to_string(),
+        format!("{long_line}y")
+    );
 }
 
 #[test]
