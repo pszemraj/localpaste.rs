@@ -435,19 +435,26 @@ impl LocalPasteApp {
         if !async_mode {
             return Duration::ZERO;
         }
+        let size_window = if text_len >= HIGHLIGHT_DEBOUNCE_LARGE_BYTES {
+            HIGHLIGHT_DEBOUNCE_LARGE
+        } else {
+            HIGHLIGHT_DEBOUNCE_MEDIUM
+        };
         if let Some(edit_hint) = self.highlight_edit_hint {
             let changed_chars = edit_hint
                 .inserted_chars
                 .saturating_add(edit_hint.deleted_chars);
-            if changed_chars <= HIGHLIGHT_TINY_EDIT_MAX_CHARS && edit_hint.touched_lines <= 2 {
+            // Tiny-edit fast debounce is only safe on sub-large buffers; large
+            // buffers should keep the larger window to avoid per-keystroke
+            // snapshot churn on the UI thread.
+            if changed_chars <= HIGHLIGHT_TINY_EDIT_MAX_CHARS
+                && edit_hint.touched_lines <= 2
+                && text_len < HIGHLIGHT_DEBOUNCE_LARGE_BYTES
+            {
                 return HIGHLIGHT_DEBOUNCE_TINY;
             }
         }
-        if text_len >= HIGHLIGHT_DEBOUNCE_LARGE_BYTES {
-            HIGHLIGHT_DEBOUNCE_LARGE
-        } else {
-            HIGHLIGHT_DEBOUNCE_MEDIUM
-        }
+        size_window
     }
 
     pub(super) fn dispatch_highlight_request(

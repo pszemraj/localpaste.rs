@@ -15,6 +15,8 @@ pub(crate) struct LineWrapMetrics {
     pub(crate) columns: usize,
     /// Number of visual rows occupied under current wrap columns.
     pub(crate) visual_rows: usize,
+    /// True when char index and display column are guaranteed 1:1.
+    pub(crate) ascii_only: bool,
 }
 
 /// Visual-row layout cache with prefix-row mapping.
@@ -168,7 +170,7 @@ impl VisualRowLayoutCache {
             .map(|m| m.columns)
             .unwrap_or_else(|| {
                 let line_chars = buffer.line_len_chars(line);
-                measure_line_columns(buffer, line, line_chars)
+                measure_line_columns(buffer, line, line_chars).0
             })
     }
 
@@ -184,16 +186,16 @@ impl VisualRowLayoutCache {
         }
         let line_chars = buffer.line_len_chars(line);
         let char_column = char_column.min(line_chars);
-        let metrics = self
-            .line_metrics
-            .get(line)
-            .copied()
-            .unwrap_or(LineWrapMetrics {
+        let metrics = self.line_metrics.get(line).copied().unwrap_or_else(|| {
+            let (columns, ascii_only) = measure_line_columns(buffer, line, line_chars);
+            LineWrapMetrics {
                 chars: line_chars,
-                columns: line_chars,
+                columns,
                 visual_rows: 1,
-            });
-        if metrics.columns == metrics.chars {
+                ascii_only,
+            }
+        });
+        if metrics.ascii_only {
             return char_column;
         }
 
@@ -220,15 +222,15 @@ impl VisualRowLayoutCache {
             return 0;
         }
         let fallback_chars = buffer.line_len_chars(line);
-        let metrics = self
-            .line_metrics
-            .get(line)
-            .copied()
-            .unwrap_or_else(|| LineWrapMetrics {
+        let metrics = self.line_metrics.get(line).copied().unwrap_or_else(|| {
+            let (columns, ascii_only) = measure_line_columns(buffer, line, fallback_chars);
+            LineWrapMetrics {
                 chars: fallback_chars,
-                columns: measure_line_columns(buffer, line, fallback_chars),
+                columns,
                 visual_rows: 1,
-            });
+                ascii_only,
+            }
+        });
         let target_columns = target_columns.min(metrics.columns);
         line_char_for_display_columns(buffer, line, metrics, target_columns)
     }
@@ -285,6 +287,7 @@ impl VisualRowLayoutCache {
                 chars: buffer.line_len_chars(line),
                 columns: buffer.line_len_chars(line),
                 visual_rows: 1,
+                ascii_only: false,
             });
         let local_range = line_row_char_range(
             buffer,
@@ -335,26 +338,29 @@ where
 
 fn measure_line(buffer: &RopeBuffer, line: usize, cols: usize) -> LineWrapMetrics {
     let chars = buffer.line_len_chars(line);
-    let columns = measure_line_columns(buffer, line, chars);
+    let (columns, ascii_only) = measure_line_columns(buffer, line, chars);
     let visual_rows = measure_line_visual_rows(buffer, line, chars, cols.max(1));
     LineWrapMetrics {
         chars,
         columns,
         visual_rows,
+        ascii_only,
     }
 }
 
-fn measure_line_columns(buffer: &RopeBuffer, idx: usize, chars: usize) -> usize {
+fn measure_line_columns(buffer: &RopeBuffer, idx: usize, chars: usize) -> (usize, bool) {
     let line = buffer.rope().line(idx);
     if line.chunks().all(|chunk| chunk.is_ascii()) {
-        return chars;
+        return (chars, true);
     }
 
     use unicode_width::UnicodeWidthChar;
-    line.chars()
+    let columns = line
+        .chars()
         .filter(|c| *c != '\n' && *c != '\r')
         .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
-        .sum()
+        .sum();
+    (columns, false)
 }
 
 fn measure_line_visual_rows(buffer: &RopeBuffer, line: usize, chars: usize, cols: usize) -> usize {
@@ -371,6 +377,8 @@ fn measure_line_visual_rows(buffer: &RopeBuffer, line: usize, chars: usize, cols
         if width == 0 {
             continue;
         }
+        // Wrap only after at least one visible glyph has been placed. This
+        // lets over-wide glyphs at row start consume the current row.
         if row_columns > 0 && row_columns.saturating_add(width) > cols {
             rows = rows.saturating_add(1);
             row_columns = 0;
@@ -427,7 +435,7 @@ fn line_char_for_display_columns(
     metrics: LineWrapMetrics,
     target_columns: usize,
 ) -> usize {
-    if metrics.columns == metrics.chars {
+    if metrics.ascii_only {
         return target_columns.min(metrics.chars);
     }
 
@@ -625,6 +633,11 @@ mod tests {
     }
 
     #[test]
+    fn row_char_range_wrap_cols_one_wide_plus_ascii_preserves_both_rows() {
+        assert_row_segments("🦀a\n", 5.0, 1, &["🦀", "a"]);
+    }
+
+    #[test]
     fn row_char_ranges_reassemble_original_line_for_mixed_width_content() {
         let (buffer, cache) = rebuild_cache_for("🦀a你b🦀z\n", 25.0, 10.0, 5.0);
         let rows = cache.line_visual_rows(0);
@@ -657,5 +670,19 @@ mod tests {
     #[test]
     fn row_char_range_keeps_leading_zero_width_codepoints_in_first_row() {
         assert_row_segments("\u{0301}ab\n", 5.0, 1, &["\u{0301}a", "b"]);
+    }
+
+    #[test]
+    fn mixed_width_equal_totals_do_not_trigger_unit_width_shortcuts() {
+        let text = "你\u{0301}a\n";
+        let (buffer, cache) = rebuild_cache_for(text, 200.0, 10.0, 5.0);
+        assert_eq!(cache.line_chars(0), 3);
+        assert_eq!(cache.line_columns(&buffer, 0), 3);
+
+        assert_eq!(cache.line_char_to_display_column(&buffer, 0, 1), 2);
+        assert_eq!(cache.line_char_to_display_column(&buffer, 0, 2), 2);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 1), 0);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 2), 2);
+        assert_eq!(cache.line_display_column_to_char(&buffer, 0, 3), 3);
     }
 }

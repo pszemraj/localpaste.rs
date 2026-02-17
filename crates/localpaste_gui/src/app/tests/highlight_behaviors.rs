@@ -668,6 +668,12 @@ fn highlight_debounce_window_adapts_to_edit_size_and_buffer() {
         harness.app.highlight_debounce_window(16 * 1024, true),
         HIGHLIGHT_DEBOUNCE_TINY
     );
+    assert_eq!(
+        harness
+            .app
+            .highlight_debounce_window(HIGHLIGHT_DEBOUNCE_LARGE_BYTES, true),
+        HIGHLIGHT_DEBOUNCE_LARGE
+    );
 
     harness.app.highlight_edit_hint = None;
     assert_eq!(
