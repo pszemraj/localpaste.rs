@@ -232,4 +232,8 @@ fn magika_refinement_converts_plain_css_mislabeled_as_scss() {
         refine_magika_label("scss", "$primary: #333;\nbody { color: $primary; }\n"),
         Some("scss".to_string())
     );
+    assert_eq!(
+        refine_magika_label("scss", "%button-base {\n  color: red;\n}\n"),
+        Some("scss".to_string())
+    );
 }

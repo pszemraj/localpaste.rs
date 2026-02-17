@@ -185,12 +185,28 @@ fn looks_like_plain_css(content: &str) -> bool {
         || lower.contains("@mixin")
         || lower.contains("@include")
         || lower.contains("@extend")
-        || lower.contains("#{");
+        || lower.contains("#{")
+        || content_has_scss_placeholder_selector(content);
     let has_nested_scss_selector = content_has_nested_scss_selector(&lower);
 
     // SCSS blocks can look like CSS but still include nested rules (for example
     // `.parent { .child { ... } }` or `.button { &:hover { ... } }`).
     has_css_block && !(has_scss_specific_tokens || has_nested_scss_selector)
+}
+
+#[cfg(feature = "magika")]
+fn content_has_scss_placeholder_selector(content: &str) -> bool {
+    for line in content.lines() {
+        let Some((selectors, _rest)) = line.split_once('{') else {
+            continue;
+        };
+        for selector in selectors.split(',') {
+            if selector.trim_start().starts_with('%') {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(feature = "magika")]
