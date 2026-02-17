@@ -2,6 +2,7 @@
 
 use super::canonical::canonicalize;
 use super::detect_language;
+use super::looks_like_yaml;
 #[cfg(feature = "magika")]
 use super::refine_magika_label;
 
@@ -24,11 +25,18 @@ fn heuristic_detects_existing_language_matrix() {
         ("#!/bin/bash\necho hello", Some("shell")),
         ("name: app\nservices:\n  - web", Some("yaml")),
         ("name: app", Some("yaml")),
-        ("root: {child: value}", Some("yaml")),
+        ("services: [web]\nversion: 3", Some("yaml")),
         ("[tool]\nname = \"demo\"\nversion = \"0.1.0\"", Some("toml")),
         ("just some plain text words", None),
     ];
     assert_detection_cases(cases.as_slice());
+}
+
+#[test]
+fn yaml_shape_helper_handles_flow_values_and_single_list_guard() {
+    assert!(looks_like_yaml("root: {child: value}\n"));
+    assert!(looks_like_yaml("services: [web]\nversion: 3\n"));
+    assert!(!looks_like_yaml("- item\n"));
 }
 
 #[test]
@@ -74,6 +82,7 @@ fn heuristic_avoids_common_single_token_false_positives() {
         ),
         ("status report:\ndone\n", None),
         ("note: use strict; while migrating config", None),
+        ("- item", Some("markdown")),
     ];
     assert_detection_cases(cases.as_slice());
 }
@@ -130,6 +139,7 @@ fn magika_detects_high_signal_code_snippets() {
 #[test]
 fn magika_refinement_rejects_weak_yaml_shape() {
     assert_eq!(refine_magika_label("yaml", "status report:\ndone\n"), None);
+    assert_eq!(refine_magika_label("yaml", "- item\n"), None);
     assert_eq!(
         refine_magika_label("yaml", "name: app"),
         Some("yaml".to_string())
@@ -144,6 +154,10 @@ fn magika_refinement_rejects_weak_yaml_shape() {
     );
     assert_eq!(
         refine_magika_label("yaml", "root: {child: value}\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "services: [web]\nversion: 3\n"),
         Some("yaml".to_string())
     );
 }

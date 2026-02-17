@@ -85,7 +85,7 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
 
     if yaml_pairs == 1 && meaningful_lines == 1 {
         return first_meaningful_line
-            .map(looks_like_single_line_yaml_mapping)
+            .map(|line| !line.starts_with("- ") && looks_like_single_line_yaml_mapping(line))
             .unwrap_or(false);
     }
 
@@ -123,7 +123,7 @@ fn looks_like_single_line_yaml_mapping(line: &str) -> bool {
         return looks_like_yaml_flow_mapping(value);
     }
     if value.contains('[') || value.contains(']') {
-        return false;
+        return looks_like_yaml_flow_sequence(value);
     }
     if value.contains(char::is_control) {
         return false;
@@ -150,6 +150,21 @@ fn looks_like_yaml_flow_mapping(value: &str) -> bool {
     // Flow-style YAML mappings (`key: {child: value}`) are valid and should
     // not be dropped by refinement; reject obvious CSS/JS-like shapes.
     inner.contains(':') && !inner.contains(';')
+}
+
+fn looks_like_yaml_flow_sequence(value: &str) -> bool {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return false;
+    }
+    if trimmed.len() < 2 {
+        return false;
+    }
+    if trimmed.contains(';') {
+        return false;
+    }
+
+    true
 }
 
 #[cfg(feature = "magika")]
