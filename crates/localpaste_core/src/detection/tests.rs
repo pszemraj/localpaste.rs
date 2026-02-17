@@ -24,6 +24,7 @@ fn heuristic_detects_existing_language_matrix() {
         ("#!/bin/bash\necho hello", Some("shell")),
         ("name: app\nservices:\n  - web", Some("yaml")),
         ("name: app", Some("yaml")),
+        ("root: {child: value}", Some("yaml")),
         ("[tool]\nname = \"demo\"\nversion = \"0.1.0\"", Some("toml")),
         ("just some plain text words", None),
     ];
@@ -139,6 +140,10 @@ fn magika_refinement_rejects_weak_yaml_shape() {
     );
     assert_eq!(
         refine_magika_label("yaml", "services:\n  web:\n    image: nginx\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "root: {child: value}\n"),
         Some("yaml".to_string())
     );
 }

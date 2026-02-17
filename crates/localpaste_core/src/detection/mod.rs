@@ -64,12 +64,18 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
         if first_meaningful_line.is_none() {
             first_meaningful_line = Some(trimmed);
         }
-        if (trimmed.starts_with("- ")
+        if trimmed.starts_with("- ")
             || trimmed.contains(": ")
-            || (trimmed.ends_with(':') && trimmed.len() > 1))
-            && !trimmed.contains('{')
+            || (trimmed.ends_with(':') && trimmed.len() > 1)
         {
-            yaml_pairs = yaml_pairs.saturating_add(1);
+            let yaml_like = if trimmed.ends_with(':') && trimmed.len() > 1 {
+                true
+            } else {
+                looks_like_single_line_yaml_mapping(trimmed)
+            };
+            if yaml_like {
+                yaml_pairs = yaml_pairs.saturating_add(1);
+            }
         }
     }
 
@@ -88,7 +94,7 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
 
 fn looks_like_single_line_yaml_mapping(line: &str) -> bool {
     let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.contains('{') {
+    if trimmed.is_empty() {
         return false;
     }
     if trimmed.starts_with("- ") {
@@ -110,7 +116,16 @@ fn looks_like_single_line_yaml_mapping(line: &str) -> bool {
     }
 
     let value = raw_value.trim();
-    if value.contains('{') || value.contains(';') {
+    if value.contains(';') {
+        return false;
+    }
+    if value.contains('{') || value.contains('}') {
+        return looks_like_yaml_flow_mapping(value);
+    }
+    if value.contains('[') || value.contains(']') {
+        return false;
+    }
+    if value.contains(char::is_control) {
         return false;
     }
     if !value.starts_with('"') && !value.starts_with('\'') && value.split_whitespace().count() > 3 {
@@ -118,6 +133,23 @@ fn looks_like_single_line_yaml_mapping(line: &str) -> bool {
     }
 
     true
+}
+
+fn looks_like_yaml_flow_mapping(value: &str) -> bool {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+        return false;
+    }
+
+    let inner = &trimmed[1..trimmed.len().saturating_sub(1)];
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return true;
+    }
+
+    // Flow-style YAML mappings (`key: {child: value}`) are valid and should
+    // not be dropped by refinement; reject obvious CSS/JS-like shapes.
+    inner.contains(':') && !inner.contains(';')
 }
 
 #[cfg(feature = "magika")]
