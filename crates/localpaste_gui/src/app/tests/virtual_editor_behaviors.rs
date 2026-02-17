@@ -280,6 +280,53 @@ fn tab_navigation_does_not_force_editor_focus_reacquire() {
 }
 
 #[test]
+fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("line one\n");
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+
+    let _ = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            ..Default::default()
+        },
+        |ctx| {
+            harness.app.render_editor_panel(ctx);
+        },
+    );
+    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
+
+    let click_pos = egui::pos2(240.0, 700.0);
+    let _ = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            events: vec![
+                egui::Event::PointerMoved(click_pos),
+                egui::Event::PointerButton {
+                    pos: click_pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ],
+            ..Default::default()
+        },
+        |ctx| {
+            harness.app.render_editor_panel(ctx);
+        },
+    );
+
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+}
+
+#[test]
 fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;

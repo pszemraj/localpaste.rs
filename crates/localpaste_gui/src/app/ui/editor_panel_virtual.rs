@@ -698,6 +698,22 @@ impl LocalPasteApp {
             egui::Sense::focusable_noninteractive(),
         );
         let mut egui_focus = ui.memory(|m| m.has_focus(editor_id));
+        // Treat any primary click inside the editor viewport as an explicit focus
+        // claim, even when no row hit-test action fired (e.g. empty space below
+        // the last visual row).
+        let clicked_inside_editor = ui.input(|input| {
+            input.pointer.button_pressed(egui::PointerButton::Primary)
+                && input
+                    .pointer
+                    .interact_pos()
+                    .or_else(|| input.pointer.latest_pos())
+                    .map(|pos| scroll_output.inner_rect.contains(pos))
+                    .unwrap_or(false)
+        });
+        if clicked_inside_editor {
+            ui.memory_mut(|m| m.request_focus(editor_id));
+            egui_focus = true;
+        }
         // Keep editor focus stable when no explicit blur occurred. This avoids
         // transient focus drops that can swallow Enter/Ctrl+A in virtual mode.
         if had_focus && !egui_focus {
