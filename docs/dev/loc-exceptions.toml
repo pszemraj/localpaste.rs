@@ -16,3 +16,8 @@ path = "crates/localpaste_gui/src/app/virtual_ops.rs"
 max_lines = 1100
 reason = "Virtual editor command reducer remains centralized while IME/wrap-cursor invariants are stabilized before extraction."
 
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/virtual_editor/visual_rows.rs"
+max_lines = 1100
+reason = "Visual-row metrics/coordinate mapping remains co-located while row-boundary cache behavior is stabilized with wide-char and render-cap invariants."
+

@@ -126,6 +126,7 @@ fn make_app() -> TestHarness {
         highlight_pending: None,
         highlight_render: None,
         highlight_staged: None,
+        highlight_staged_invalidation: None,
         highlight_version: 0,
         highlight_edit_hint: None,
         syntect: SyntectSettings::default(),

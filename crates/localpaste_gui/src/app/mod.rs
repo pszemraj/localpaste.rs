@@ -97,6 +97,7 @@ pub(crate) struct LocalPasteApp {
     highlight_pending: Option<HighlightRequestMeta>,
     highlight_render: Option<HighlightRender>,
     highlight_staged: Option<HighlightRender>,
+    highlight_staged_invalidation: Option<StagedHighlightInvalidation>,
     highlight_version: u64,
     highlight_edit_hint: Option<VirtualEditHint>,
     last_interaction_at: Option<Instant>,
@@ -143,7 +144,12 @@ enum SaveStatus {
     Dirty,
     Saving,
 }
-
+#[derive(Clone, Debug)]
+struct StagedHighlightInvalidation {
+    base_revision: u64,
+    base_text_len: usize,
+    line_ranges: Vec<Range<usize>>,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SidebarCollection {
     All,
@@ -457,6 +463,7 @@ impl LocalPasteApp {
             highlight_pending: None,
             highlight_render: None,
             highlight_staged: None,
+            highlight_staged_invalidation: None,
             highlight_version: 0,
             highlight_edit_hint: None,
             syntect: SyntectSettings::default(),

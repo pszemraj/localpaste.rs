@@ -127,6 +127,9 @@ pub(crate) struct VisualRowLayoutCache {
     char_width_bits: u32,
     wrap_cols: usize,
     line_metrics: Vec<LineWrapMetrics>,
+    // Optional per-line row boundaries (`row_start_char` for each visual row +
+    // trailing sentinel end). ASCII-only lines use O(1) arithmetic and store `None`.
+    line_row_boundaries: Vec<Option<Box<[usize]>>>,
     row_index: RowFenwick,
     render_capped_lines: usize,
     #[cfg(test)]
@@ -173,6 +176,7 @@ impl VisualRowLayoutCache {
             || self.line_height_bits != line_height.to_bits()
             || self.char_width_bits != char_width.to_bits()
             || self.line_metrics.len() != line_count
+            || self.line_row_boundaries.len() != line_count
             || self.row_index.len() != line_count
     }
 
@@ -194,14 +198,16 @@ impl VisualRowLayoutCache {
         self.wrap_cols = cols;
 
         self.line_metrics.clear();
+        self.line_row_boundaries.clear();
         self.render_capped_lines = 0;
 
         for line in 0..buffer.line_count() {
-            let metrics = measure_line(buffer, line, cols);
+            let (metrics, row_boundaries) = measure_line(buffer, line, cols);
             if metrics.render_capped {
                 self.render_capped_lines = self.render_capped_lines.saturating_add(1);
             }
             self.line_metrics.push(metrics);
+            self.line_row_boundaries.push(row_boundaries);
         }
         self.rebuild_row_index_from_metrics();
     }
@@ -210,7 +216,10 @@ impl VisualRowLayoutCache {
     ///
     /// Returns false when caller should do a full rebuild.
     pub(crate) fn apply_delta(&mut self, buffer: &RopeBuffer, delta: VirtualEditDelta) -> bool {
-        if self.line_metrics.is_empty() || self.row_index.len() != self.line_metrics.len() {
+        if self.line_metrics.is_empty()
+            || self.row_index.len() != self.line_metrics.len()
+            || self.line_row_boundaries.len() != self.line_metrics.len()
+        {
             return false;
         }
         if self.char_width_bits == 0 || self.line_height_bits == 0 {
@@ -250,8 +259,11 @@ impl VisualRowLayoutCache {
             .map(|metrics| metrics.visual_rows)
             .collect();
         let mut replacement = Vec::with_capacity(new_count);
+        let mut replacement_row_boundaries = Vec::with_capacity(new_count);
         for line in old_start..=delta.new_end_line {
-            replacement.push(measure_line(buffer, line, self.wrap_cols.max(1)));
+            let (metrics, row_boundaries) = measure_line(buffer, line, self.wrap_cols.max(1));
+            replacement.push(metrics);
+            replacement_row_boundaries.push(row_boundaries);
         }
         let removed_capped = self.line_metrics[old_start..old_end_excl]
             .iter()
@@ -264,6 +276,14 @@ impl VisualRowLayoutCache {
         let mut replacement_iter = replacement.into_iter();
         if !splice_vec_by_delta(&mut self.line_metrics, delta, new_len, || {
             replacement_iter
+                .next()
+                .expect("replacement count was validated against delta")
+        }) {
+            return false;
+        }
+        let mut row_boundaries_iter = replacement_row_boundaries.into_iter();
+        if !splice_vec_by_delta(&mut self.line_row_boundaries, delta, new_len, || {
+            row_boundaries_iter
                 .next()
                 .expect("replacement count was validated against delta")
         }) {
@@ -472,13 +492,34 @@ impl VisualRowLayoutCache {
                 ascii_only: false,
                 render_capped: buffer.line_len_chars(line) > MAX_RENDER_CHARS_PER_LINE,
             });
-        let local_range = line_row_char_range(
-            buffer,
-            line,
-            metrics.chars,
-            self.wrap_cols.max(1),
-            row_in_line,
-        );
+        let local_range = if metrics.ascii_only {
+            let cols = self.wrap_cols.max(1);
+            let start = row_in_line.saturating_mul(cols).min(metrics.chars);
+            let end = start.saturating_add(cols).min(metrics.chars);
+            start..end
+        } else if let Some(row_boundaries) = self
+            .line_row_boundaries
+            .get(line)
+            .and_then(|boundaries| boundaries.as_ref())
+        {
+            let max_row = row_boundaries.len().saturating_sub(2);
+            let row = row_in_line.min(max_row);
+            let start = row_boundaries.get(row).copied().unwrap_or(metrics.chars);
+            let end = row_boundaries
+                .get(row.saturating_add(1))
+                .copied()
+                .unwrap_or(metrics.chars)
+                .max(start);
+            start..end
+        } else {
+            line_row_char_range(
+                buffer,
+                line,
+                metrics.chars,
+                self.wrap_cols.max(1),
+                row_in_line,
+            )
+        };
         let start = buffer.line_col_to_char(line, local_range.start);
         let end = buffer.line_col_to_char(line, local_range.end.max(local_range.start));
         start..end
@@ -519,18 +560,58 @@ where
     vec.len() == new_len
 }
 
-fn measure_line(buffer: &RopeBuffer, line: usize, cols: usize) -> LineWrapMetrics {
+fn measure_line(
+    buffer: &RopeBuffer,
+    line: usize,
+    cols: usize,
+) -> (LineWrapMetrics, Option<Box<[usize]>>) {
     let full_chars = buffer.line_len_chars(line);
     let chars = full_chars.min(MAX_RENDER_CHARS_PER_LINE);
     let (columns, ascii_only) = measure_line_columns(buffer, line, chars);
     let visual_rows = measure_line_visual_rows(buffer, line, chars, cols.max(1));
-    LineWrapMetrics {
-        chars,
-        columns,
-        visual_rows,
-        ascii_only,
-        render_capped: full_chars > MAX_RENDER_CHARS_PER_LINE,
+    (
+        LineWrapMetrics {
+            chars,
+            columns,
+            visual_rows,
+            ascii_only,
+            render_capped: full_chars > MAX_RENDER_CHARS_PER_LINE,
+        },
+        measure_line_row_boundaries(buffer, line, chars, cols.max(1), ascii_only),
+    )
+}
+
+fn measure_line_row_boundaries(
+    buffer: &RopeBuffer,
+    line: usize,
+    chars: usize,
+    cols: usize,
+    ascii_only: bool,
+) -> Option<Box<[usize]>> {
+    if ascii_only {
+        return None;
     }
+    if chars == 0 {
+        return Some(vec![0usize, 0usize].into_boxed_slice());
+    }
+
+    let cols = cols.max(1);
+    let mut row_starts = Vec::new();
+    row_starts.push(0usize);
+    let mut row_columns = 0usize;
+    let line_slice = buffer.rope().line(line).slice(..chars);
+    for (idx, ch) in line_slice.chars().enumerate() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        if width > 0 && row_columns > 0 && row_columns.saturating_add(width) > cols {
+            row_starts.push(idx);
+            row_columns = 0;
+        }
+        if width > 0 {
+            row_columns = row_columns.saturating_add(width);
+        }
+    }
+    row_starts.push(chars);
+    Some(row_starts.into_boxed_slice())
 }
 
 fn measure_line_columns(buffer: &RopeBuffer, idx: usize, chars: usize) -> (usize, bool) {
@@ -961,5 +1042,18 @@ mod tests {
             cache.line_display_column_to_char(&buffer, 0, beyond_columns),
             MAX_RENDER_CHARS_PER_LINE
         );
+    }
+
+    #[test]
+    fn deep_ascii_wrapped_rows_map_directly_to_char_ranges() {
+        let text = format!("{}\n", "a".repeat(2_000));
+        let (buffer, cache) = rebuild_cache_for(text.as_str(), 50.0, 10.0, 5.0);
+        // wrap_width / char_width => 10 cols
+        assert_eq!(cache.wrap_columns(), 10);
+
+        let deep_row = 123usize;
+        let range = cache.row_char_range(&buffer, deep_row);
+        assert_eq!(range.end.saturating_sub(range.start), 10);
+        assert_eq!(buffer.slice_chars(range), "a".repeat(10));
     }
 }

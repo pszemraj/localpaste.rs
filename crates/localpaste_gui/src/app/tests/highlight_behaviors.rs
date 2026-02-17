@@ -490,6 +490,79 @@ fn paste_saved_keeps_existing_highlight_render() {
     assert_eq!(harness.app.highlight_version, 7);
 }
 
+fn prepare_virtual_galley_cache(harness: &mut TestHarness, line_count: usize) {
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.virtual_galley_cache.prepare_frame(
+        line_count,
+        VirtualGalleyContext::new(
+            420.0,
+            false,
+            &egui::FontId::monospace(14.0),
+            egui::Color32::WHITE,
+            1.0,
+        ),
+    );
+    for idx in 0..line_count {
+        harness.app.virtual_galley_cache.sync_line_rows(idx, 1);
+        harness
+            .app
+            .virtual_galley_cache
+            .insert(idx, 0, shaped_test_galley());
+    }
+}
+
+fn plain_lines(lengths: &[usize]) -> Vec<HighlightRenderLine> {
+    lengths
+        .iter()
+        .copied()
+        .map(HighlightRenderLine::plain)
+        .collect()
+}
+
+#[derive(Clone)]
+struct PatchSpec {
+    revision: u64,
+    base_revision: u64,
+    line_range: Range<usize>,
+    replacement_line_lens: Vec<usize>,
+}
+
+fn apply_patch_sequence_and_collect_evictions(
+    base_revision: u64,
+    base_line_lens: &[usize],
+    patches: &[PatchSpec],
+) -> Vec<bool> {
+    let mut harness = make_app();
+    prepare_virtual_galley_cache(&mut harness, base_line_lens.len());
+    harness.app.highlight_render = Some(HighlightRender {
+        paste_id: "alpha".to_string(),
+        revision: base_revision,
+        text_len: harness.app.selected_content.len(),
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        lines: plain_lines(base_line_lens),
+    });
+    for patch in patches {
+        harness.app.queue_highlight_patch(HighlightPatch {
+            paste_id: "alpha".to_string(),
+            revision: patch.revision,
+            text_len: harness.app.selected_content.len(),
+            base_revision: patch.base_revision,
+            base_text_len: harness.app.selected_content.len(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            total_lines: base_line_lens.len(),
+            line_range: patch.line_range.clone(),
+            lines: plain_lines(patch.replacement_line_lens.as_slice()),
+        });
+    }
+    harness.app.apply_staged_highlight();
+
+    (0..base_line_lens.len())
+        .map(|idx| harness.app.virtual_galley_cache.get(idx, 0).is_none())
+        .collect()
+}
+
 #[test]
 fn queue_highlight_patch_prefers_latest_staged_base() {
     let mut harness = make_app();
@@ -627,55 +700,42 @@ fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
 
 #[test]
 fn apply_staged_highlight_patch_evicts_only_changed_virtual_lines() {
-    let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
-    harness.app.virtual_galley_cache.prepare_frame(
-        3,
-        VirtualGalleyContext::new(
-            420.0,
-            false,
-            &egui::FontId::monospace(14.0),
-            egui::Color32::WHITE,
-            1.0,
-        ),
+    let evicted = apply_patch_sequence_and_collect_evictions(
+        4,
+        &[3, 4, 5],
+        &[PatchSpec {
+            revision: 5,
+            base_revision: 4,
+            line_range: 1..2,
+            replacement_line_lens: vec![99],
+        }],
     );
-    for idx in 0..3 {
-        harness.app.virtual_galley_cache.sync_line_rows(idx, 1);
-        harness
-            .app
-            .virtual_galley_cache
-            .insert(idx, 0, shaped_test_galley());
-    }
-    harness.app.highlight_render = Some(HighlightRender {
-        paste_id: "alpha".to_string(),
-        revision: 4,
-        text_len: harness.app.selected_content.len(),
-        language_hint: "py".to_string(),
-        theme_key: "base16-mocha.dark".to_string(),
-        lines: vec![
-            HighlightRenderLine::plain(3),
-            HighlightRenderLine::plain(4),
-            HighlightRenderLine::plain(5),
-        ],
-    });
-    harness.app.highlight_staged = Some(HighlightRender {
-        paste_id: "alpha".to_string(),
-        revision: 5,
-        text_len: harness.app.selected_content.len(),
-        language_hint: "py".to_string(),
-        theme_key: "base16-mocha.dark".to_string(),
-        lines: vec![
-            HighlightRenderLine::plain(3),
-            HighlightRenderLine::plain(99),
-            HighlightRenderLine::plain(5),
-        ],
-    });
 
-    harness.app.apply_staged_highlight();
+    assert_eq!(evicted, vec![false, true, false]);
+}
 
-    assert!(harness.app.virtual_galley_cache.get(0, 0).is_some());
-    assert!(harness.app.virtual_galley_cache.get(1, 0).is_none());
-    assert!(harness.app.virtual_galley_cache.get(2, 0).is_some());
+#[test]
+fn chained_highlight_patches_union_galley_invalidation_ranges() {
+    let evicted = apply_patch_sequence_and_collect_evictions(
+        10,
+        &[1, 2, 3, 4],
+        &[
+            PatchSpec {
+                revision: 11,
+                base_revision: 10,
+                line_range: 0..1,
+                replacement_line_lens: vec![10],
+            },
+            PatchSpec {
+                revision: 12,
+                base_revision: 11,
+                line_range: 2..3,
+                replacement_line_lens: vec![30],
+            },
+        ],
+    );
+
+    assert_eq!(evicted, vec![true, false, true, false]);
 }
 
 #[test]

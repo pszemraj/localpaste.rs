@@ -4,9 +4,9 @@ use super::highlight::{
     HighlightPatch, HighlightRender, HighlightRequest, HighlightRequestMeta, HighlightRequestText,
 };
 use super::{
-    LocalPasteApp, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_DEBOUNCE_LARGE, HIGHLIGHT_DEBOUNCE_LARGE_BYTES,
-    HIGHLIGHT_DEBOUNCE_MEDIUM, HIGHLIGHT_DEBOUNCE_TINY, HIGHLIGHT_PLAIN_THRESHOLD,
-    HIGHLIGHT_TINY_EDIT_MAX_CHARS,
+    LocalPasteApp, StagedHighlightInvalidation, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_DEBOUNCE_LARGE,
+    HIGHLIGHT_DEBOUNCE_LARGE_BYTES, HIGHLIGHT_DEBOUNCE_MEDIUM, HIGHLIGHT_DEBOUNCE_TINY,
+    HIGHLIGHT_PLAIN_THRESHOLD, HIGHLIGHT_TINY_EDIT_MAX_CHARS,
 };
 use std::ops::Range;
 use std::time::{Duration, Instant};
@@ -15,13 +15,60 @@ use tracing::info;
 enum HighlightGalleyInvalidation {
     None,
     LineRange(Range<usize>),
+    LineRanges(Vec<Range<usize>>),
     All,
 }
 
 impl LocalPasteApp {
+    fn insert_line_range(ranges: &mut Vec<Range<usize>>, mut incoming: Range<usize>) {
+        if incoming.is_empty() {
+            return;
+        }
+        let mut idx = 0usize;
+        while idx < ranges.len() {
+            let existing = &ranges[idx];
+            if incoming.end < existing.start {
+                break;
+            }
+            if incoming.start > existing.end {
+                idx = idx.saturating_add(1);
+                continue;
+            }
+            incoming = incoming.start.min(existing.start)..incoming.end.max(existing.end);
+            ranges.remove(idx);
+        }
+        ranges.insert(idx, incoming);
+    }
+
+    fn merge_staged_invalidation_with_patch(
+        existing: Option<StagedHighlightInvalidation>,
+        patch_base_revision: u64,
+        patch_base_text_len: usize,
+        patch_line_range: Range<usize>,
+    ) -> StagedHighlightInvalidation {
+        if let Some(existing) = existing {
+            let mut ranges = existing.line_ranges;
+            Self::insert_line_range(&mut ranges, patch_line_range);
+            StagedHighlightInvalidation {
+                base_revision: existing.base_revision,
+                base_text_len: existing.base_text_len,
+                line_ranges: ranges,
+            }
+        } else {
+            let mut ranges = Vec::new();
+            Self::insert_line_range(&mut ranges, patch_line_range);
+            StagedHighlightInvalidation {
+                base_revision: patch_base_revision,
+                base_text_len: patch_base_text_len,
+                line_ranges: ranges,
+            }
+        }
+    }
+
     fn highlight_galley_invalidation_for_apply(
         previous: Option<&HighlightRender>,
         next: &HighlightRender,
+        staged_invalidation: Option<&StagedHighlightInvalidation>,
     ) -> HighlightGalleyInvalidation {
         let Some(previous) = previous else {
             return HighlightGalleyInvalidation::All;
@@ -34,20 +81,31 @@ impl LocalPasteApp {
         {
             return HighlightGalleyInvalidation::All;
         }
-
-        let mut first_changed: Option<usize> = None;
-        let mut last_changed: Option<usize> = None;
-        for idx in 0..next.lines.len() {
-            if previous.lines.get(idx) != next.lines.get(idx) {
-                first_changed.get_or_insert(idx);
-                last_changed = Some(idx);
+        if let Some(staged_invalidation) = staged_invalidation {
+            if staged_invalidation.base_revision == previous.revision
+                && staged_invalidation.base_text_len == previous.text_len
+            {
+                let mut clipped = Vec::new();
+                for range in &staged_invalidation.line_ranges {
+                    let start = range.start.min(next.lines.len());
+                    let end = range.end.min(next.lines.len());
+                    if start < end {
+                        clipped.push(start..end);
+                    }
+                }
+                return match clipped.len() {
+                    0 => HighlightGalleyInvalidation::None,
+                    1 => HighlightGalleyInvalidation::LineRange(
+                        clipped
+                            .into_iter()
+                            .next()
+                            .expect("single clipped range exists"),
+                    ),
+                    _ => HighlightGalleyInvalidation::LineRanges(clipped),
+                };
             }
         }
-
-        match (first_changed, last_changed) {
-            (Some(start), Some(end)) => HighlightGalleyInvalidation::LineRange(start..(end + 1)),
-            _ => HighlightGalleyInvalidation::None,
-        }
+        HighlightGalleyInvalidation::All
     }
 
     fn apply_highlight_galley_invalidation(&mut self, invalidation: HighlightGalleyInvalidation) {
@@ -55,6 +113,11 @@ impl LocalPasteApp {
             HighlightGalleyInvalidation::None => {}
             HighlightGalleyInvalidation::LineRange(range) => {
                 self.virtual_galley_cache.evict_line_range(range);
+            }
+            HighlightGalleyInvalidation::LineRanges(ranges) => {
+                for range in ranges {
+                    self.virtual_galley_cache.evict_line_range(range);
+                }
             }
             HighlightGalleyInvalidation::All => {
                 self.virtual_galley_cache.evict_all();
@@ -108,13 +171,18 @@ impl LocalPasteApp {
         self.highlight_pending = None;
         self.highlight_render = None;
         self.highlight_staged = None;
+        self.highlight_staged_invalidation = None;
         self.highlight_edit_hint = None;
         self.virtual_galley_cache.evict_all();
         self.highlight_version = self.highlight_version.wrapping_add(1);
         self.trace_highlight("clear", "cleared pending/render/staged");
     }
 
-    pub(super) fn queue_highlight_render(&mut self, render: HighlightRender) {
+    fn queue_highlight_render_with_invalidation(
+        &mut self,
+        render: HighlightRender,
+        staged_invalidation: Option<StagedHighlightInvalidation>,
+    ) {
         let Some(selected_id) = self.selected_id.as_deref() else {
             self.trace_highlight("drop", "render ignored: no selected paste");
             return;
@@ -171,6 +239,11 @@ impl LocalPasteApp {
             )
         });
         self.highlight_staged = Some(render);
+        self.highlight_staged_invalidation = staged_invalidation;
+    }
+
+    pub(super) fn queue_highlight_render(&mut self, render: HighlightRender) {
+        self.queue_highlight_render_with_invalidation(render, None);
     }
 
     pub(super) fn queue_highlight_patch(&mut self, patch: HighlightPatch) {
@@ -229,11 +302,19 @@ impl LocalPasteApp {
                     );
                     return;
                 }
+                let hint_range = range.clone();
                 staged.lines.splice(range, patch.lines);
                 staged.revision = patch.revision;
                 staged.text_len = patch.text_len;
                 staged.language_hint = patch.language_hint;
                 staged.theme_key = patch.theme_key;
+                self.highlight_staged_invalidation =
+                    Some(Self::merge_staged_invalidation_with_patch(
+                        self.highlight_staged_invalidation.take(),
+                        patch.base_revision,
+                        patch.base_text_len,
+                        hint_range,
+                    ));
             }
             if let Some(staged) = self.highlight_staged.as_ref() {
                 if let Some(pending) = &self.highlight_pending {
@@ -260,21 +341,30 @@ impl LocalPasteApp {
             }
             return;
         }
-        let Some(base) = [
-            self.highlight_staged.as_ref(),
-            self.highlight_render.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        .find(|render| {
+        enum PatchBaseSource {
+            Staged,
+            Current,
+        }
+        let staged_base = self.highlight_staged.as_ref().filter(|render| {
             render.matches_context(
                 patch.paste_id.as_str(),
                 patch.language_hint.as_str(),
                 patch.theme_key.as_str(),
             ) && render.revision == patch.base_revision
                 && render.text_len == patch.base_text_len
-        })
-        .cloned() else {
+        });
+        let current_base = self.highlight_render.as_ref().filter(|render| {
+            render.matches_context(
+                patch.paste_id.as_str(),
+                patch.language_hint.as_str(),
+                patch.theme_key.as_str(),
+            ) && render.revision == patch.base_revision
+                && render.text_len == patch.base_text_len
+        });
+        let Some((base, base_source)) = staged_base
+            .map(|render| (render.clone(), PatchBaseSource::Staged))
+            .or_else(|| current_base.map(|render| (render.clone(), PatchBaseSource::Current)))
+        else {
             self.trace_highlight("drop", "patch ignored: no matching active render to merge");
             return;
         };
@@ -305,23 +395,44 @@ impl LocalPasteApp {
         }
 
         let mut merged_lines = base.lines;
+        let hint_range = range.clone();
         merged_lines.splice(range, patch.lines);
-        self.queue_highlight_render(HighlightRender {
-            paste_id: patch.paste_id,
-            revision: patch.revision,
-            text_len: patch.text_len,
-            language_hint: patch.language_hint,
-            theme_key: patch.theme_key,
-            lines: merged_lines,
-        });
+        let staged_invalidation = match base_source {
+            PatchBaseSource::Staged => Some(Self::merge_staged_invalidation_with_patch(
+                self.highlight_staged_invalidation.clone(),
+                patch.base_revision,
+                patch.base_text_len,
+                hint_range,
+            )),
+            PatchBaseSource::Current => Some(StagedHighlightInvalidation {
+                base_revision: patch.base_revision,
+                base_text_len: patch.base_text_len,
+                line_ranges: vec![hint_range],
+            }),
+        };
+        self.queue_highlight_render_with_invalidation(
+            HighlightRender {
+                paste_id: patch.paste_id,
+                revision: patch.revision,
+                text_len: patch.text_len,
+                language_hint: patch.language_hint,
+                theme_key: patch.theme_key,
+                lines: merged_lines,
+            },
+            staged_invalidation,
+        );
     }
 
     pub(super) fn apply_staged_highlight(&mut self) {
         let Some(render) = self.highlight_staged.take() else {
             return;
         };
-        let invalidation =
-            Self::highlight_galley_invalidation_for_apply(self.highlight_render.as_ref(), &render);
+        let staged_invalidation = self.highlight_staged_invalidation.take();
+        let invalidation = Self::highlight_galley_invalidation_for_apply(
+            self.highlight_render.as_ref(),
+            &render,
+            staged_invalidation.as_ref(),
+        );
         self.trace_highlight_lazy("apply", || {
             format!(
                 "applied staged render revision={} text_len={}",
@@ -362,6 +473,7 @@ impl LocalPasteApp {
                 )
             });
             self.highlight_staged = None;
+            self.highlight_staged_invalidation = None;
             return;
         }
         if let Some(current) = &self.highlight_render {
@@ -371,6 +483,7 @@ impl LocalPasteApp {
             {
                 self.trace_highlight("drop", "staged render superseded by current render");
                 self.highlight_staged = None;
+                self.highlight_staged_invalidation = None;
                 return;
             }
         }
