@@ -640,6 +640,8 @@ impl LocalPasteApp {
                     .as_millis()
                     / CARET_BLINK_INTERVAL.as_millis().max(1);
                 let caret_visible = blink_ticks % 2 == 0;
+                let clamped_caret_cursor =
+                    self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
                 let paint_started = perf_enabled.then(Instant::now);
                 for row in rows {
                     let galley = row.galley;
@@ -658,7 +660,7 @@ impl LocalPasteApp {
                         .galley(row.rect.min, galley.clone(), ui.visuals().text_color());
 
                     if focused && caret_visible {
-                        let cursor = self.virtual_editor_state.cursor();
+                        let cursor = clamped_caret_cursor;
                         let affinity = self.virtual_editor_state.wrap_boundary_affinity();
                         let segment_end = row.segment_start.saturating_add(row.segment_chars);
                         let at_row_start = cursor == row.segment_start;
@@ -699,6 +701,18 @@ impl LocalPasteApp {
         // Keep editor focus stable when no explicit blur occurred. This avoids
         // transient focus drops that can swallow Enter/Ctrl+A in virtual mode.
         if had_focus && !egui_focus {
+            let tab_navigation_blur = ui.input(|input| {
+                input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::Tab,
+                            pressed: true,
+                            ..
+                        }
+                    )
+                })
+            });
             let clicked_outside_editor = ui.input(|input| {
                 input.pointer.button_pressed(egui::PointerButton::Primary)
                     && input
@@ -708,7 +722,7 @@ impl LocalPasteApp {
                         .map(|pos| !scroll_output.inner_rect.contains(pos))
                         .unwrap_or(false)
             });
-            if !clicked_outside_editor && !ui.ctx().wants_keyboard_input() {
+            if !clicked_outside_editor && !tab_navigation_blur && !ui.ctx().wants_keyboard_input() {
                 ui.memory_mut(|m| m.request_focus(editor_id));
                 egui_focus = true;
             }

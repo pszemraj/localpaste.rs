@@ -9,7 +9,7 @@ use super::virtual_editor::{
 };
 use super::{
     is_editor_word_char, next_virtual_click_count, LocalPasteApp, VirtualApplyResult,
-    EDITOR_DOUBLE_CLICK_DISTANCE, EDITOR_DOUBLE_CLICK_WINDOW,
+    EDITOR_DOUBLE_CLICK_DISTANCE, EDITOR_DOUBLE_CLICK_WINDOW, MAX_RENDER_CHARS_PER_LINE,
 };
 use eframe::egui::{
     self,
@@ -33,7 +33,30 @@ fn is_internal_wrap_boundary(display_col: usize, wrap_cols: usize, line_cols: us
 }
 
 impl LocalPasteApp {
+    fn virtual_line_render_chars(&self, line: usize) -> usize {
+        let full_chars = self.virtual_editor_buffer.line_len_chars(line);
+        let cached_chars = self.virtual_layout.line_chars(line);
+        if cached_chars == 0 {
+            full_chars.min(MAX_RENDER_CHARS_PER_LINE)
+        } else {
+            cached_chars.min(full_chars)
+        }
+    }
+
+    pub(super) fn clamp_virtual_cursor_for_render(&self, char_index: usize) -> usize {
+        let clamped = char_index.min(self.virtual_editor_buffer.len_chars());
+        let (line, column) = self.virtual_editor_buffer.char_to_line_col(clamped);
+        let render_chars = self.virtual_line_render_chars(line);
+        if column <= render_chars {
+            clamped
+        } else {
+            self.virtual_editor_buffer
+                .line_col_to_char(line, render_chars)
+        }
+    }
+
     fn virtual_cursor_wrap_metrics(&self, cursor: usize) -> VirtualCursorWrapMetrics {
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
         let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
         let display_col =
             self.virtual_layout
@@ -296,36 +319,51 @@ impl LocalPasteApp {
     }
 
     pub(super) fn virtual_word_left(&self, cursor: usize) -> usize {
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
         if cursor == 0 {
             return 0;
         }
         let rope = self.virtual_editor_buffer.rope();
         let mut idx = cursor.min(self.virtual_editor_buffer.len_chars());
+        let (line, _) = self.virtual_editor_buffer.char_to_line_col(idx);
+        let line_start = self.virtual_editor_buffer.line_col_to_char(line, 0);
+        let line_end = self
+            .virtual_editor_buffer
+            .line_col_to_char(line, self.virtual_line_render_chars(line));
+        idx = idx.min(line_end);
         while idx > 0 && rope.char(idx - 1).is_whitespace() {
             idx -= 1;
+            if idx <= line_start {
+                break;
+            }
         }
-        if idx == 0 {
-            return 0;
+        if idx <= line_start {
+            return line_start;
         }
         let kind = is_editor_word_char(rope.char(idx - 1));
-        while idx > 0 && is_editor_word_char(rope.char(idx - 1)) == kind {
+        while idx > line_start && is_editor_word_char(rope.char(idx - 1)) == kind {
             idx -= 1;
         }
         idx
     }
 
     pub(super) fn virtual_word_right(&self, cursor: usize) -> usize {
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
         let rope = self.virtual_editor_buffer.rope();
-        let len = self.virtual_editor_buffer.len_chars();
-        let mut idx = cursor.min(len);
-        while idx < len && rope.char(idx).is_whitespace() {
+        let mut idx = cursor.min(self.virtual_editor_buffer.len_chars());
+        let (line, _) = self.virtual_editor_buffer.char_to_line_col(idx);
+        let line_end = self
+            .virtual_editor_buffer
+            .line_col_to_char(line, self.virtual_line_render_chars(line));
+        idx = idx.min(line_end);
+        while idx < line_end && rope.char(idx).is_whitespace() {
             idx += 1;
         }
-        if idx >= len {
-            return len;
+        if idx >= line_end {
+            return line_end;
         }
         let kind = is_editor_word_char(rope.char(idx));
-        while idx < len && is_editor_word_char(rope.char(idx)) == kind {
+        while idx < line_end && is_editor_word_char(rope.char(idx)) == kind {
             idx += 1;
         }
         idx
@@ -338,6 +376,7 @@ impl LocalPasteApp {
         up: bool,
         boundary_affinity: WrapBoundaryAffinity,
     ) -> usize {
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
         let metrics = self.virtual_cursor_wrap_metrics(cursor);
         let rows = self.virtual_layout.line_visual_rows(metrics.line).max(1);
         let on_internal_wrap_boundary =
@@ -481,6 +520,7 @@ impl LocalPasteApp {
             }
         }
         let after_cursor = start.saturating_add(inserted_chars);
+        let after_cursor = self.clamp_virtual_cursor_for_render(after_cursor);
         self.virtual_editor_state
             .set_cursor(after_cursor, self.virtual_editor_buffer.len_chars());
         if record_history {
@@ -656,6 +696,7 @@ impl LocalPasteApp {
                     } else {
                         cursor.saturating_sub(1)
                     };
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -682,6 +723,7 @@ impl LocalPasteApp {
                             .saturating_add(1)
                             .min(self.virtual_editor_buffer.len_chars())
                     };
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -693,7 +735,9 @@ impl LocalPasteApp {
                     let (line, _) = self
                         .virtual_editor_buffer
                         .char_to_line_col(self.virtual_editor_state.cursor());
-                    let target = self.virtual_editor_buffer.line_col_to_char(line, 0);
+                    let target = self.clamp_virtual_cursor_for_render(
+                        self.virtual_editor_buffer.line_col_to_char(line, 0),
+                    );
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -707,7 +751,8 @@ impl LocalPasteApp {
                         .char_to_line_col(self.virtual_editor_state.cursor());
                     let target = self
                         .virtual_editor_buffer
-                        .line_col_to_char(line, self.virtual_editor_buffer.line_len_chars(line));
+                        .line_col_to_char(line, self.virtual_line_render_chars(line));
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -732,6 +777,7 @@ impl LocalPasteApp {
                         true,
                         affinity,
                     );
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -758,6 +804,7 @@ impl LocalPasteApp {
                         false,
                         affinity,
                     );
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -781,6 +828,7 @@ impl LocalPasteApp {
                     for _ in 0..rows {
                         target =
                             self.virtual_move_vertical_target(target, preferred, true, affinity);
+                        target = self.clamp_virtual_cursor_for_render(target);
                         affinity =
                             self.vertical_boundary_affinity_for_target(target, preferred, true);
                         if target == 0 {
@@ -809,7 +857,7 @@ impl LocalPasteApp {
                     for _ in 0..rows {
                         let next =
                             self.virtual_move_vertical_target(target, preferred, false, affinity);
-                        target = next;
+                        target = self.clamp_virtual_cursor_for_render(next);
                         affinity =
                             self.vertical_boundary_affinity_for_target(target, preferred, false);
                         if target == self.virtual_editor_buffer.len_chars() {

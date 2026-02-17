@@ -249,6 +249,37 @@ fn virtual_editor_recovers_focus_when_state_had_focus_without_explicit_blur() {
 }
 
 #[test]
+fn tab_navigation_does_not_force_editor_focus_reacquire() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("line one\nline two\n");
+    harness.app.virtual_editor_state.has_focus = true;
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let tab_event = egui::Event::Key {
+        key: egui::Key::Tab,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::default(),
+    };
+    let _ = ctx.run(
+        egui::RawInput {
+            events: vec![tab_event],
+            ..Default::default()
+        },
+        |ctx| {
+            harness.app.render_editor_panel(ctx);
+        },
+    );
+
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(!harness.app.virtual_editor_state.has_focus);
+}
+
+#[test]
 fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;
@@ -474,6 +505,42 @@ fn page_navigation_initializes_preferred_column_from_current_cursor() {
         .virtual_editor_buffer
         .char_to_line_col(harness.app.virtual_editor_state.cursor());
     assert_eq!((line, col), (0, 5));
+}
+
+#[test]
+fn horizontal_navigation_stays_within_render_cap_for_long_lines() {
+    let mut harness = make_app();
+    let text = format!(
+        "{}\n",
+        "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64))
+    );
+    harness.app.reset_virtual_editor(text.as_str());
+    harness
+        .app
+        .virtual_layout
+        .rebuild(&harness.app.virtual_editor_buffer, 50000.0, 1.0, 1.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    let capped = harness
+        .app
+        .virtual_editor_buffer
+        .line_col_to_char(0, MAX_RENDER_CHARS_PER_LINE);
+    harness.app.virtual_editor_state.set_cursor(capped, len);
+    let ctx = egui::Context::default();
+
+    let _ = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveRight {
+            select: false,
+            word: false,
+        }],
+    );
+    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
+
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveEnd { select: false }]);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
 }
 
 #[test]
