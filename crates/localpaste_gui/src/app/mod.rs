@@ -5,6 +5,7 @@ mod highlight;
 mod highlight_flow;
 mod perf_trace;
 mod shutdown;
+mod state_accessors;
 mod state_ops;
 mod style;
 mod text_coords;

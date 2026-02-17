@@ -591,6 +591,129 @@ fn horizontal_navigation_stays_within_render_cap_for_long_lines() {
 }
 
 #[test]
+fn word_navigation_crosses_line_boundaries() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("alpha\nbeta gamma");
+    harness
+        .app
+        .virtual_layout
+        .rebuild(&harness.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    let first_line_end = harness.app.virtual_editor_buffer.line_col_to_char(0, 5);
+    harness
+        .app
+        .virtual_editor_state
+        .set_cursor(first_line_end, len);
+    let ctx = egui::Context::default();
+
+    let _ = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveRight {
+            select: false,
+            word: true,
+        }],
+    );
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        harness.app.virtual_editor_buffer.line_col_to_char(1, 4)
+    );
+
+    let _ = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveLeft {
+            select: false,
+            word: true,
+        }],
+    );
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        harness.app.virtual_editor_buffer.line_col_to_char(1, 0)
+    );
+}
+
+#[test]
+fn word_delete_crosses_line_boundaries() {
+    let ctx = egui::Context::default();
+
+    let mut forward = make_app();
+    forward.app.reset_virtual_editor("alpha\nbeta gamma");
+    forward
+        .app
+        .virtual_layout
+        .rebuild(&forward.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+    let forward_len = forward.app.virtual_editor_buffer.len_chars();
+    let first_line_end = forward.app.virtual_editor_buffer.line_col_to_char(0, 5);
+    forward
+        .app
+        .virtual_editor_state
+        .set_cursor(first_line_end, forward_len);
+    let forward_result = forward
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
+    assert!(forward_result.changed);
+    assert_eq!(forward.app.virtual_editor_buffer.to_string(), "alpha gamma");
+
+    let mut backward = make_app();
+    backward.app.reset_virtual_editor("alpha\nbeta gamma");
+    backward
+        .app
+        .virtual_layout
+        .rebuild(&backward.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+    let backward_len = backward.app.virtual_editor_buffer.len_chars();
+    let second_line_start = backward.app.virtual_editor_buffer.line_col_to_char(1, 0);
+    backward
+        .app
+        .virtual_editor_state
+        .set_cursor(second_line_start, backward_len);
+    let backward_result = backward
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::Backspace { word: true }]);
+    assert!(backward_result.changed);
+    assert_eq!(backward.app.virtual_editor_buffer.to_string(), "beta gamma");
+}
+
+#[test]
+fn word_navigation_respects_render_cap_for_long_lines() {
+    let mut harness = make_app();
+    let text = format!(
+        "{}\n",
+        "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64))
+    );
+    harness.app.reset_virtual_editor(text.as_str());
+    harness
+        .app
+        .virtual_layout
+        .rebuild(&harness.app.virtual_editor_buffer, 50000.0, 1.0, 1.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    let capped = harness
+        .app
+        .virtual_editor_buffer
+        .line_col_to_char(0, MAX_RENDER_CHARS_PER_LINE);
+    harness.app.virtual_editor_state.set_cursor(capped, len);
+    let before = harness.app.virtual_editor_buffer.to_string();
+    let ctx = egui::Context::default();
+
+    let move_result = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveRight {
+            select: false,
+            word: true,
+        }],
+    );
+    assert!(!move_result.changed);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
+
+    let delete_result = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
+    assert!(!delete_result.changed);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), before);
+}
+
+#[test]
 fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
     fn setup_selection(app: &mut LocalPasteApp) {
         app.reset_virtual_editor("abcdef");

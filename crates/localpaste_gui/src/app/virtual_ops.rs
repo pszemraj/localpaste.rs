@@ -1,6 +1,5 @@
 //! Virtual editor operations: selection, cursor motion, editing, and command application.
 
-use super::editor::EditorMode;
 use super::highlight::VirtualEditHint;
 use super::util::word_range_at;
 use super::virtual_editor::{
@@ -41,6 +40,18 @@ impl LocalPasteApp {
         } else {
             cached_chars.min(full_chars)
         }
+    }
+
+    fn virtual_line_render_boundary(&self, idx: usize) -> (usize, bool) {
+        let line = self.virtual_editor_buffer.char_to_line_col(idx).0;
+        let render_chars = self.virtual_line_render_chars(line);
+        let render_end = self
+            .virtual_editor_buffer
+            .line_col_to_char(line, render_chars);
+        (
+            render_end,
+            render_chars < self.virtual_editor_buffer.line_len_chars(line),
+        )
     }
 
     pub(super) fn clamp_virtual_cursor_for_render(&self, char_index: usize) -> usize {
@@ -99,12 +110,9 @@ impl LocalPasteApp {
         up: bool,
     ) -> WrapBoundaryAffinity {
         let cols = self.virtual_layout.wrap_columns().max(1);
-        if desired_col_in_row == cols && self.virtual_is_internal_wrap_boundary_cursor(cursor) {
-            if up {
-                WrapBoundaryAffinity::Upstream
-            } else {
-                WrapBoundaryAffinity::Downstream
-            }
+        if desired_col_in_row == cols && self.virtual_is_internal_wrap_boundary_cursor(cursor) && up
+        {
+            WrapBoundaryAffinity::Upstream
         } else {
             WrapBoundaryAffinity::Downstream
         }
@@ -205,42 +213,6 @@ impl LocalPasteApp {
         }
     }
 
-    pub(super) fn is_virtual_editor_mode(&self) -> bool {
-        self.editor_mode == EditorMode::VirtualEditor
-    }
-
-    pub(super) fn active_text_len_bytes(&self) -> usize {
-        if self.is_virtual_editor_mode() {
-            self.virtual_editor_buffer.len_bytes()
-        } else {
-            self.selected_content.len()
-        }
-    }
-
-    pub(super) fn active_text_chars(&self) -> usize {
-        if self.is_virtual_editor_mode() {
-            self.virtual_editor_buffer.len_chars()
-        } else {
-            self.selected_content.chars_len()
-        }
-    }
-
-    pub(super) fn active_revision(&self) -> u64 {
-        if self.is_virtual_editor_mode() {
-            self.virtual_editor_buffer.revision()
-        } else {
-            self.selected_content.revision()
-        }
-    }
-
-    pub(super) fn active_snapshot(&self) -> String {
-        if self.is_virtual_editor_mode() {
-            self.virtual_editor_buffer.to_string()
-        } else {
-            self.selected_content.to_string()
-        }
-    }
-
     pub(super) fn reset_virtual_editor(&mut self, text: &str) {
         self.virtual_editor_buffer.reset(text);
         self.virtual_editor_state = VirtualEditorState::default();
@@ -319,51 +291,71 @@ impl LocalPasteApp {
     }
 
     pub(super) fn virtual_word_left(&self, cursor: usize) -> usize {
-        let cursor = self.clamp_virtual_cursor_for_render(cursor);
-        if cursor == 0 {
+        let rope = self.virtual_editor_buffer.rope();
+        let mut idx = self
+            .clamp_virtual_cursor_for_render(cursor)
+            .min(self.virtual_editor_buffer.len_chars());
+        if idx == 0 {
             return 0;
         }
-        let rope = self.virtual_editor_buffer.rope();
-        let mut idx = cursor.min(self.virtual_editor_buffer.len_chars());
-        let (line, _) = self.virtual_editor_buffer.char_to_line_col(idx);
-        let line_start = self.virtual_editor_buffer.line_col_to_char(line, 0);
-        let line_end = self
-            .virtual_editor_buffer
-            .line_col_to_char(line, self.virtual_line_render_chars(line));
-        idx = idx.min(line_end);
-        while idx > 0 && rope.char(idx - 1).is_whitespace() {
-            idx -= 1;
-            if idx <= line_start {
+
+        while idx > 0 {
+            let line_end = self.virtual_line_render_boundary(idx).0;
+            if idx > line_end {
+                idx = line_end;
+                continue;
+            }
+            if !rope.char(idx - 1).is_whitespace() {
                 break;
             }
+            idx -= 1;
         }
-        if idx <= line_start {
-            return line_start;
+        if idx == 0 {
+            return 0;
         }
         let kind = is_editor_word_char(rope.char(idx - 1));
-        while idx > line_start && is_editor_word_char(rope.char(idx - 1)) == kind {
+
+        while idx > 0 {
+            let line_end = self.virtual_line_render_boundary(idx).0;
+            if idx > line_end {
+                idx = line_end;
+                continue;
+            }
+            if is_editor_word_char(rope.char(idx - 1)) != kind {
+                break;
+            }
             idx -= 1;
         }
         idx
     }
 
     pub(super) fn virtual_word_right(&self, cursor: usize) -> usize {
-        let cursor = self.clamp_virtual_cursor_for_render(cursor);
         let rope = self.virtual_editor_buffer.rope();
-        let mut idx = cursor.min(self.virtual_editor_buffer.len_chars());
-        let (line, _) = self.virtual_editor_buffer.char_to_line_col(idx);
-        let line_end = self
-            .virtual_editor_buffer
-            .line_col_to_char(line, self.virtual_line_render_chars(line));
-        idx = idx.min(line_end);
-        while idx < line_end && rope.char(idx).is_whitespace() {
+        let len = self.virtual_editor_buffer.len_chars();
+        let mut idx = self.clamp_virtual_cursor_for_render(cursor).min(len);
+        while idx < len {
+            let (line_end, capped) = self.virtual_line_render_boundary(idx);
+            if capped && idx >= line_end {
+                return line_end;
+            }
+            if !rope.char(idx).is_whitespace() {
+                break;
+            }
             idx += 1;
         }
-        if idx >= line_end {
-            return line_end;
+        if idx >= len {
+            return len;
         }
+
         let kind = is_editor_word_char(rope.char(idx));
-        while idx < line_end && is_editor_word_char(rope.char(idx)) == kind {
+        while idx < len {
+            let (line_end, capped) = self.virtual_line_render_boundary(idx);
+            if capped && idx >= line_end {
+                return line_end;
+            }
+            if is_editor_word_char(rope.char(idx)) != kind {
+                break;
+            }
             idx += 1;
         }
         idx
