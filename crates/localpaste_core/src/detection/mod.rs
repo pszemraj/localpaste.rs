@@ -75,7 +75,7 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
             let yaml_like = if trimmed.ends_with(':') && trimmed.len() > 1 {
                 true
             } else {
-                looks_like_single_line_yaml_mapping(trimmed)
+                looks_like_single_line_yaml_mapping(trimmed, true)
             };
             if yaml_like {
                 yaml_pairs = yaml_pairs.saturating_add(1);
@@ -89,7 +89,7 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
 
     if yaml_pairs == 1 && content_lines == 1 {
         return first_content_line
-            .map(|line| !line.starts_with("- ") && looks_like_single_line_yaml_mapping(line))
+            .map(|line| !line.starts_with("- ") && looks_like_single_line_yaml_mapping(line, false))
             .unwrap_or(false);
     }
 
@@ -100,7 +100,7 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
     false
 }
 
-fn looks_like_single_line_yaml_mapping(line: &str) -> bool {
+fn looks_like_single_line_yaml_mapping(line: &str, allow_unquoted_space_keys: bool) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return false;
@@ -116,10 +116,9 @@ fn looks_like_single_line_yaml_mapping(line: &str) -> bool {
     if key.is_empty() {
         return false;
     }
-    if key.contains(char::is_whitespace)
-        && !(key.starts_with('"') && key.ends_with('"'))
-        && !(key.starts_with('\'') && key.ends_with('\''))
-    {
+    let quoted_key = (key.starts_with('"') && key.ends_with('"'))
+        || (key.starts_with('\'') && key.ends_with('\''));
+    if key.contains(char::is_whitespace) && !allow_unquoted_space_keys && !quoted_key {
         return false;
     }
 

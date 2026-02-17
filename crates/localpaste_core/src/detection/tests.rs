@@ -25,6 +25,7 @@ fn heuristic_detects_existing_language_matrix() {
         ("#!/bin/bash\necho hello", Some("shell")),
         ("name: app\nservices:\n  - web", Some("yaml")),
         ("name: app", Some("yaml")),
+        ("display name: app\nport: 8080", Some("yaml")),
         ("services: [web]\nversion: 3", Some("yaml")),
         ("[tool]\nname = \"demo\"\nversion = \"0.1.0\"", Some("toml")),
         ("just some plain text words", None),
@@ -35,8 +36,14 @@ fn heuristic_detects_existing_language_matrix() {
 #[test]
 fn yaml_shape_helper_handles_flow_values_and_single_list_guard() {
     assert!(looks_like_yaml("root: {child: value}\n"));
+    assert!(looks_like_yaml("display name: api\nport: 8080\n"));
     assert!(looks_like_yaml("services: [web]\nversion: 3\n"));
     assert!(!looks_like_yaml("- item\n"));
+}
+
+#[test]
+fn yaml_shape_helper_keeps_single_line_spaced_key_guardrail() {
+    assert!(!looks_like_yaml("status report: done\n"));
 }
 
 #[test]
@@ -88,6 +95,7 @@ fn heuristic_avoids_common_single_token_false_positives() {
             Some("rust"),
         ),
         ("status report:\ndone\n", None),
+        ("status report: done", None),
         ("note: use strict; while migrating config", None),
         ("- item", Some("markdown")),
     ];
@@ -169,6 +177,10 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         Some("yaml".to_string())
     );
     assert_eq!(
+        refine_magika_label("yaml", "display name: api\nport: 8080\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
         refine_magika_label("yaml", "services:\n  web:\n    image: nginx\n"),
         Some("yaml".to_string())
     );
@@ -180,6 +192,7 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         refine_magika_label("yaml", "services: [web]\nversion: 3\n"),
         Some("yaml".to_string())
     );
+    assert_eq!(refine_magika_label("yaml", "status report: done\n"), None);
 }
 
 #[cfg(feature = "magika")]
