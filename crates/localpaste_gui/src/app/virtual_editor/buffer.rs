@@ -200,7 +200,10 @@ impl RopeBuffer {
 
 impl fmt::Display for RopeBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.rope.to_string().as_str())
+        for chunk in self.rope.chunks() {
+            f.write_str(chunk)?;
+        }
+        Ok(())
     }
 }
 
@@ -246,5 +249,12 @@ mod tests {
         assert_eq!(out, "beta");
         buf.slice_chars_into(0..5, &mut out);
         assert_eq!(out, "alpha");
+    }
+
+    #[test]
+    fn display_matches_buffer_snapshot() {
+        let text = format!("{}\n{}\n", "alpha".repeat(64), "beta".repeat(64));
+        let buf = RopeBuffer::new(text.as_str());
+        assert_eq!(buf.to_string(), text);
     }
 }

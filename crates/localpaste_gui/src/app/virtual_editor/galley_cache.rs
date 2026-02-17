@@ -54,6 +54,9 @@ impl VirtualGalleyCache {
             .map(|current| current != &context)
             .unwrap_or(true);
         if context_changed || self.lines.len() != line_count {
+            // Any context change (including pixels-per-point) requires fully
+            // reshaping visible rows; reusing old galleys would render with stale
+            // geometry and produce incorrect caret/selection hit-testing.
             self.lines.clear();
             self.lines.resize_with(line_count, LineGalleyCache::default);
         }

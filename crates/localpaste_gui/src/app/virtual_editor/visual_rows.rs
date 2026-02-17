@@ -147,6 +147,10 @@ impl VisualRowLayoutCache {
             return false;
         }
 
+        // We intentionally rebuild the tail prefix sums from `old_start` onward.
+        // This is O(remaining_lines), but the loop is tiny integer math and keeps
+        // the structure simple until million-line workloads justify a tree/indexed
+        // variant.
         self.prefix_rows.truncate(old_start.saturating_add(1));
         let mut total = self.prefix_rows.last().copied().unwrap_or(0);
         for idx in old_start..self.line_metrics.len() {

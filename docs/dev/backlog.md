@@ -12,7 +12,8 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Split `LocalPasteApp` into domain state groups (`EditorState`, `HighlightState`, `SearchState`, `UiState`) to reduce coupling and simplify test harness construction.
 - [ ] Extract the virtual input-routing/control-flow block from `LocalPasteApp::update` into a dedicated per-frame input pipeline API.
 - [ ] Add CI-friendly perf microbench coverage (list-from-metadata and highlight/layout paths) to catch regressions earlier than manual perf runs.
-- [ ] Reduce virtual-editor highlight request payload cost by avoiding full `Rope -> String` snapshots on tiny edits (e.g., Rope payload channel and worker-side line iteration), then re-tune tiny-edit debounce.
+- [ ] Reduce virtual-editor highlight request payload cost by changing highlight request transport from `String` snapshots to `Rope`/shared payload clones, with worker-side materialization only when needed; re-tune tiny-edit debounce after the move.
+- [ ] Evaluate whether `VisualRowLayoutCache::prefix_rows` should move to a tree/indexed structure (Fenwick/segment-like) if million-line workloads become a target; current tail rebuild (`O(lines-after-edit)`) is intentional for simplicity.
 - [~] Avoid full `Vec<HighlightRenderLine>` clone during patch merge (`queue_highlight_patch`) for very large files; one redundant `base.lines.clone()` was removed, but fallback-path `HighlightRender` cloning still needs structural refactor (e.g., base lookup plus move/patch without full render clone).
 - [ ] Investigate worker-side highlight diffing that avoids full line-hash scans for every request (especially tiny edits), while preserving patch correctness and stale-result dropping semantics.
 - [ ] Revisit backend query-cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
