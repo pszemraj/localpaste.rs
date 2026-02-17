@@ -39,6 +39,22 @@ fn preview_triple_click_selection_bounds(
     (start, end)
 }
 
+fn virtual_editor_double_click_selection_bounds<F>(
+    line_start: usize,
+    column_in_line: usize,
+    line: &str,
+    clamp_global: F,
+) -> Option<(usize, usize)>
+where
+    F: Fn(usize) -> usize,
+{
+    let (start, end) = word_range_at(line, column_in_line)?;
+    Some((
+        clamp_global(line_start.saturating_add(start)),
+        clamp_global(line_start.saturating_add(end)),
+    ))
+}
+
 impl LocalPasteApp {
     pub(super) fn render_virtual_preview_panel(
         &mut self,
@@ -561,16 +577,19 @@ impl LocalPasteApp {
                             line_start,
                             column_in_line,
                         } => {
-                            let word_range = {
+                            let word_bounds = {
                                 self.virtual_editor_buffer.line_without_newline_into(
                                     line_idx,
                                     &mut self.virtual_line_scratch,
                                 );
-                                word_range_at(self.virtual_line_scratch.as_str(), column_in_line)
+                                virtual_editor_double_click_selection_bounds(
+                                    line_start,
+                                    column_in_line,
+                                    self.virtual_line_scratch.as_str(),
+                                    |global| self.clamp_virtual_cursor_for_render(global),
+                                )
                             };
-                            if let Some((start, end)) = word_range {
-                                let global_start = line_start.saturating_add(start);
-                                let global_end = line_start.saturating_add(end);
+                            if let Some((global_start, global_end)) = word_bounds {
                                 self.virtual_editor_state.set_cursor(
                                     global_start,
                                     self.virtual_editor_buffer.len_chars(),
@@ -581,7 +600,9 @@ impl LocalPasteApp {
                                     true,
                                 );
                             } else {
-                                let global = line_start.saturating_add(column_in_line);
+                                let global = self.clamp_virtual_cursor_for_render(
+                                    line_start.saturating_add(column_in_line),
+                                );
                                 self.virtual_editor_state
                                     .set_cursor(global, self.virtual_editor_buffer.len_chars());
                             }
@@ -816,7 +837,10 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{editor_interaction_rect, preview_triple_click_selection_bounds};
+    use super::{
+        editor_interaction_rect, preview_triple_click_selection_bounds,
+        virtual_editor_double_click_selection_bounds,
+    };
     use crate::app::MAX_RENDER_CHARS_PER_LINE;
     use eframe::egui;
 
@@ -855,5 +879,22 @@ mod tests {
 
         assert_eq!((start.line, start.column), (2, 0));
         assert_eq!((end.line, end.column), (2, full_line_chars));
+    }
+
+    #[test]
+    fn virtual_editor_double_click_selection_clamps_to_render_cap() {
+        let line_start = 17usize;
+        let render_end = line_start.saturating_add(MAX_RENDER_CHARS_PER_LINE);
+        let line = "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64));
+
+        let bounds = virtual_editor_double_click_selection_bounds(
+            line_start,
+            MAX_RENDER_CHARS_PER_LINE.saturating_sub(1),
+            line.as_str(),
+            |global| global.min(render_end),
+        )
+        .expect("expected word bounds");
+
+        assert_eq!(bounds, (line_start, render_end));
     }
 }
