@@ -60,6 +60,34 @@ fn run_virtual_editor_frame(
     focus_active_pre
 }
 
+fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
+    let _ = ctx.run(input, |ctx| {
+        app.render_editor_panel(ctx);
+    });
+}
+
+fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+fn configure_virtual_editor_with_wrap(app: &mut LocalPasteApp, text: &str, wrap_width: f32) {
+    app.reset_virtual_editor(text);
+    app.virtual_layout
+        .rebuild(&app.virtual_editor_buffer, wrap_width, 1.0, 1.0);
+}
+
+fn set_virtual_cursor_at(app: &mut LocalPasteApp, line: usize, col: usize) {
+    let len = app.virtual_editor_buffer.len_chars();
+    let pos = app.virtual_editor_buffer.line_col_to_char(line, col);
+    app.virtual_editor_state.set_cursor(pos, len);
+}
+
 #[test]
 fn virtual_copy_and_cut_report_expected_mutation_state() {
     struct ClipboardCase {
@@ -110,19 +138,34 @@ fn virtual_copy_and_cut_report_expected_mutation_state() {
 
 #[test]
 fn ime_commit_and_disable_clear_preedit_state_with_expected_buffer_results() {
+    #[derive(Clone)]
+    enum TailAction {
+        Commit(&'static str),
+        Mutate(VirtualInputCommand),
+        None,
+    }
+
     struct ImeCase {
-        commit_text: Option<&'static str>,
+        tail_action: TailAction,
         expected_text: &'static str,
     }
 
     let cases = [
         ImeCase {
-            commit_text: Some("日"),
+            tail_action: TailAction::Commit("日"),
             expected_text: "a日b",
         },
         ImeCase {
-            commit_text: None,
+            tail_action: TailAction::None,
             expected_text: "ab",
+        },
+        ImeCase {
+            tail_action: TailAction::Mutate(VirtualInputCommand::Undo),
+            expected_text: "ab",
+        },
+        ImeCase {
+            tail_action: TailAction::Mutate(VirtualInputCommand::Backspace { word: false }),
+            expected_text: "b",
         },
     ];
 
@@ -133,12 +176,14 @@ fn ime_commit_and_disable_clear_preedit_state_with_expected_buffer_results() {
         harness.app.virtual_editor_state.set_cursor(1, len);
         let ctx = egui::Context::default();
 
-        let mut commands = vec![
-            VirtualInputCommand::ImeEnabled,
-            VirtualInputCommand::ImePreedit("に".to_string()),
-        ];
-        if let Some(commit_text) = case.commit_text {
-            commands.push(VirtualInputCommand::ImeCommit(commit_text.to_string()));
+        let mut commands = vec![VirtualInputCommand::ImeEnabled];
+        commands.push(VirtualInputCommand::ImePreedit("に".to_string()));
+        match case.tail_action {
+            TailAction::Commit(text) => {
+                commands.push(VirtualInputCommand::ImeCommit(text.to_string()));
+            }
+            TailAction::Mutate(command) => commands.push(command),
+            TailAction::None => {}
         }
         commands.push(VirtualInputCommand::ImeDisabled);
 
@@ -206,77 +251,62 @@ fn virtual_command_classification_respects_focus_policy() {
 }
 
 #[test]
-fn virtual_editor_focus_persists_across_frames_without_pointer_input() {
-    let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
-    harness.app.reset_virtual_editor("line one\nline two\n");
-    harness.app.focus_editor_next = true;
+fn virtual_editor_focus_transition_matrix() {
+    struct FocusCase {
+        focus_editor_next: bool,
+        state_has_focus: bool,
+        frames: Vec<Vec<egui::Event>>,
+        expect_focus: bool,
+    }
 
-    let ctx = egui::Context::default();
-    configure_virtual_editor_test_ctx(&ctx);
-
-    let _ = ctx.run(Default::default(), |ctx| {
-        harness.app.render_editor_panel(ctx);
-    });
-    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-    assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
-
-    let _ = ctx.run(Default::default(), |ctx| {
-        harness.app.render_editor_panel(ctx);
-    });
-    assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
-}
-
-#[test]
-fn virtual_editor_recovers_focus_when_state_had_focus_without_explicit_blur() {
-    let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
-    harness.app.reset_virtual_editor("line one\nline two\n");
-    harness.app.virtual_editor_state.has_focus = true;
-
-    let ctx = egui::Context::default();
-    configure_virtual_editor_test_ctx(&ctx);
-
-    let _ = ctx.run(Default::default(), |ctx| {
-        harness.app.render_editor_panel(ctx);
-    });
-
-    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-    assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
-}
-
-#[test]
-fn tab_navigation_does_not_force_editor_focus_reacquire() {
-    let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
-    harness.app.reset_virtual_editor("line one\nline two\n");
-    harness.app.virtual_editor_state.has_focus = true;
-
-    let ctx = egui::Context::default();
-    configure_virtual_editor_test_ctx(&ctx);
-    let tab_event = egui::Event::Key {
-        key: egui::Key::Tab,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers::default(),
-    };
-    let _ = ctx.run(
-        egui::RawInput {
-            events: vec![tab_event],
-            ..Default::default()
+    let cases = [
+        FocusCase {
+            focus_editor_next: true,
+            state_has_focus: false,
+            frames: vec![Vec::new(), Vec::new()],
+            expect_focus: true,
         },
-        |ctx| {
-            harness.app.render_editor_panel(ctx);
+        FocusCase {
+            focus_editor_next: false,
+            state_has_focus: true,
+            frames: vec![Vec::new()],
+            expect_focus: true,
         },
-    );
+        FocusCase {
+            focus_editor_next: false,
+            state_has_focus: true,
+            frames: vec![vec![key_event(egui::Key::Tab, egui::Modifiers::default())]],
+            expect_focus: false,
+        },
+    ];
 
-    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(!harness.app.virtual_editor_state.has_focus);
+    for case in cases {
+        let mut harness = make_app();
+        harness.app.editor_mode = EditorMode::VirtualEditor;
+        harness.app.reset_virtual_editor("line one\nline two\n");
+        harness.app.focus_editor_next = case.focus_editor_next;
+        harness.app.virtual_editor_state.has_focus = case.state_has_focus;
+
+        let ctx = egui::Context::default();
+        configure_virtual_editor_test_ctx(&ctx);
+        for events in case.frames {
+            run_editor_panel_once(
+                &mut harness.app,
+                &ctx,
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+        assert_eq!(ctx.memory(|m| m.has_focus(editor_id)), case.expect_focus);
+        assert_eq!(
+            harness.app.virtual_editor_state.has_focus,
+            case.expect_focus
+        );
+    }
 }
 
 #[test]
@@ -290,19 +320,20 @@ fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
     let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
 
-    let _ = ctx.run(
+    run_editor_panel_once(
+        &mut harness.app,
+        &ctx,
         egui::RawInput {
             screen_rect: Some(screen_rect),
             ..Default::default()
-        },
-        |ctx| {
-            harness.app.render_editor_panel(ctx);
         },
     );
     assert!(!ctx.memory(|m| m.has_focus(editor_id)));
 
     let click_pos = egui::pos2(240.0, 700.0);
-    let _ = ctx.run(
+    run_editor_panel_once(
+        &mut harness.app,
+        &ctx,
         egui::RawInput {
             screen_rect: Some(screen_rect),
             events: vec![
@@ -315,9 +346,6 @@ fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
                 },
             ],
             ..Default::default()
-        },
-        |ctx| {
-            harness.app.render_editor_panel(ctx);
         },
     );
 
@@ -351,13 +379,7 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
     let len = harness.app.virtual_editor_buffer.len_chars();
     let insert_at = harness.app.virtual_editor_buffer.line_col_to_char(0, 5);
     harness.app.virtual_editor_state.set_cursor(insert_at, len);
-    let enter_event = egui::Event::Key {
-        key: egui::Key::Enter,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers::default(),
-    };
+    let enter_event = key_event(egui::Key::Enter, egui::Modifiers::default());
     let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![enter_event]);
     assert!(focus_active_pre);
     assert_eq!(
@@ -371,16 +393,13 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
         assert!(ctx.memory(|m| m.has_focus(editor_id)));
     }
 
-    let select_all_event = egui::Event::Key {
-        key: egui::Key::A,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers {
+    let select_all_event = key_event(
+        egui::Key::A,
+        egui::Modifiers {
             command: true,
             ..Default::default()
         },
-    };
+    );
     let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![select_all_event]);
     assert!(focus_active_pre);
     let full_len = harness.app.virtual_editor_buffer.len_chars();
@@ -391,140 +410,128 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
 }
 
 #[test]
-fn virtual_vertical_move_target_returns_global_char_offset() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("aaaa\nbbbb\ncccc\n");
-    harness
-        .app
-        .virtual_layout
-        .rebuild(&harness.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+fn virtual_vertical_move_target_matrix() {
+    struct Case {
+        text: &'static str,
+        wrap_width: f32,
+        start_line: usize,
+        start_col: usize,
+        desired_col: usize,
+        up: bool,
+        expected_line: usize,
+        expected_col: usize,
+    }
 
-    let desired_col = 2usize;
-    let start = harness
-        .app
-        .virtual_editor_buffer
-        .line_col_to_char(1, desired_col);
+    let cases = [
+        Case {
+            text: "aaaa\nbbbb\ncccc\n",
+            wrap_width: 200.0,
+            start_line: 1,
+            start_col: 2,
+            desired_col: 2,
+            up: true,
+            expected_line: 0,
+            expected_col: 2,
+        },
+        Case {
+            text: "aaaa\nbbbb\ncccc\n",
+            wrap_width: 200.0,
+            start_line: 1,
+            start_col: 2,
+            desired_col: 2,
+            up: false,
+            expected_line: 2,
+            expected_col: 2,
+        },
+        Case {
+            text: "abcdefghij\nabcde\n",
+            wrap_width: 200.0,
+            start_line: 0,
+            start_col: 8,
+            desired_col: 8,
+            up: false,
+            expected_line: 1,
+            expected_col: 5,
+        },
+    ];
 
-    let moved_up = harness.app.virtual_move_vertical_target(
-        start,
-        desired_col,
-        true,
-        WrapBoundaryAffinity::Downstream,
-    );
-    let moved_down = harness.app.virtual_move_vertical_target(
-        start,
-        desired_col,
-        false,
-        WrapBoundaryAffinity::Downstream,
-    );
-
-    assert_eq!(
-        moved_up,
-        harness
+    for case in cases {
+        let mut harness = make_app();
+        configure_virtual_editor_with_wrap(&mut harness.app, case.text, case.wrap_width);
+        let start = harness
             .app
             .virtual_editor_buffer
-            .line_col_to_char(0, desired_col)
-    );
-    assert_eq!(
-        moved_down,
-        harness
+            .line_col_to_char(case.start_line, case.start_col);
+        let moved = harness.app.virtual_move_vertical_target(
+            start,
+            case.desired_col,
+            case.up,
+            WrapBoundaryAffinity::Downstream,
+        );
+        let (line, col) = harness.app.virtual_editor_buffer.char_to_line_col(moved);
+        assert_eq!((line, col), (case.expected_line, case.expected_col));
+    }
+}
+
+#[test]
+fn wrap_boundary_navigation_command_matrix() {
+    struct Case {
+        text: &'static str,
+        start_line: usize,
+        start_col: usize,
+        commands: Vec<VirtualInputCommand>,
+        expected_line: usize,
+        expected_col: usize,
+    }
+
+    let cases = [
+        Case {
+            text: "abcd\nab\n",
+            start_line: 0,
+            start_col: 4,
+            commands: vec![VirtualInputCommand::MoveDown { select: false }],
+            expected_line: 1,
+            expected_col: 2,
+        },
+        Case {
+            text: "wxyz\nabcdefgh\n",
+            start_line: 1,
+            start_col: 8,
+            commands: vec![
+                VirtualInputCommand::MoveUp { select: false },
+                VirtualInputCommand::MoveUp { select: false },
+            ],
+            expected_line: 0,
+            expected_col: 4,
+        },
+    ];
+
+    for case in cases {
+        let mut harness = make_app();
+        configure_virtual_editor_with_wrap(&mut harness.app, case.text, 4.0);
+        set_virtual_cursor_at(&mut harness.app, case.start_line, case.start_col);
+        harness.app.virtual_editor_state.clear_preferred_column();
+        let ctx = egui::Context::default();
+        for command in case.commands {
+            let _ = harness.app.apply_virtual_commands(&ctx, &[command]);
+        }
+
+        let (line, col) = harness
             .app
             .virtual_editor_buffer
-            .line_col_to_char(2, desired_col)
-    );
-}
-
-#[test]
-fn virtual_vertical_move_target_clamps_to_short_row_end_boundary() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("abcdefghij\nabcde\n");
-    harness
-        .app
-        .virtual_layout
-        .rebuild(&harness.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
-
-    let desired_col = 8usize;
-    let start = harness
-        .app
-        .virtual_editor_buffer
-        .line_col_to_char(0, desired_col);
-    let moved_down = harness.app.virtual_move_vertical_target(
-        start,
-        desired_col,
-        false,
-        WrapBoundaryAffinity::Downstream,
-    );
-
-    assert_eq!(
-        moved_down,
-        harness.app.virtual_editor_buffer.line_col_to_char(1, 5)
-    );
-}
-
-#[test]
-fn move_down_preserves_wrap_boundary_end_of_line_intent() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("abcd\nab\n");
-    harness
-        .app
-        .virtual_layout
-        .rebuild(&harness.app.virtual_editor_buffer, 4.0, 1.0, 1.0);
-
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    let start = harness.app.virtual_editor_buffer.line_col_to_char(0, 4);
-    harness.app.virtual_editor_state.set_cursor(start, len);
-    harness.app.virtual_editor_state.clear_preferred_column();
-    let ctx = egui::Context::default();
-    let _ = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (1, 2));
-}
-
-#[test]
-fn repeated_move_up_from_wrap_boundary_reaches_previous_line() {
-    let mut harness = make_app();
-    harness.app.reset_virtual_editor("wxyz\nabcdefgh\n");
-    harness
-        .app
-        .virtual_layout
-        .rebuild(&harness.app.virtual_editor_buffer, 4.0, 1.0, 1.0);
-
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    let start = harness.app.virtual_editor_buffer.line_col_to_char(1, 8);
-    harness.app.virtual_editor_state.set_cursor(start, len);
-    harness.app.virtual_editor_state.clear_preferred_column();
-
-    let ctx = egui::Context::default();
-    let _ = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
-    let _ = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
-
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 4));
+            .char_to_line_col(harness.app.virtual_editor_state.cursor());
+        assert_eq!((line, col), (case.expected_line, case.expected_col));
+    }
 }
 
 #[test]
 fn page_navigation_initializes_preferred_column_from_current_cursor() {
     let mut harness = make_app();
-    harness
-        .app
-        .reset_virtual_editor("0123456789\nabcdefghij\nklmnopqrst\n");
-    harness
-        .app
-        .virtual_layout
-        .rebuild(&harness.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+    configure_virtual_editor_with_wrap(
+        &mut harness.app,
+        "0123456789\nabcdefghij\nklmnopqrst\n",
+        200.0,
+    );
     harness.app.virtual_viewport_height = 1.0;
     harness.app.virtual_line_height = 1.0;
 
@@ -555,17 +562,13 @@ fn page_navigation_initializes_preferred_column_from_current_cursor() {
 }
 
 #[test]
-fn horizontal_navigation_stays_within_render_cap_for_long_lines() {
+fn long_line_navigation_commands_stay_within_render_cap() {
     let mut harness = make_app();
     let text = format!(
         "{}\n",
         "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64))
     );
-    harness.app.reset_virtual_editor(text.as_str());
-    harness
-        .app
-        .virtual_layout
-        .rebuild(&harness.app.virtual_editor_buffer, 50000.0, 1.0, 1.0);
+    configure_virtual_editor_with_wrap(&mut harness.app, text.as_str(), 50000.0);
 
     let len = harness.app.virtual_editor_buffer.len_chars();
     let capped = harness
@@ -573,31 +576,34 @@ fn horizontal_navigation_stays_within_render_cap_for_long_lines() {
         .virtual_editor_buffer
         .line_col_to_char(0, MAX_RENDER_CHARS_PER_LINE);
     harness.app.virtual_editor_state.set_cursor(capped, len);
+    let before = harness.app.virtual_editor_buffer.to_string();
     let ctx = egui::Context::default();
 
-    let _ = harness.app.apply_virtual_commands(
-        &ctx,
-        &[VirtualInputCommand::MoveRight {
+    let commands = [
+        VirtualInputCommand::MoveRight {
             select: false,
             word: false,
-        }],
-    );
-    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
+        },
+        VirtualInputCommand::MoveEnd { select: false },
+        VirtualInputCommand::MoveRight {
+            select: false,
+            word: true,
+        },
+        VirtualInputCommand::DeleteForward { word: true },
+    ];
 
-    let _ = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveEnd { select: false }]);
-    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
+    for command in commands {
+        let result = harness.app.apply_virtual_commands(&ctx, &[command]);
+        assert!(!result.changed);
+        assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
+        assert_eq!(harness.app.virtual_editor_buffer.to_string(), before);
+    }
 }
 
 #[test]
 fn word_navigation_crosses_line_boundaries() {
     let mut harness = make_app();
-    harness.app.reset_virtual_editor("alpha\nbeta gamma");
-    harness
-        .app
-        .virtual_layout
-        .rebuild(&harness.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+    configure_virtual_editor_with_wrap(&mut harness.app, "alpha\nbeta gamma", 200.0);
 
     let len = harness.app.virtual_editor_buffer.len_chars();
     let first_line_end = harness.app.virtual_editor_buffer.line_col_to_char(0, 5);
@@ -637,11 +643,7 @@ fn word_delete_crosses_line_boundaries() {
     let ctx = egui::Context::default();
 
     let mut forward = make_app();
-    forward.app.reset_virtual_editor("alpha\nbeta gamma");
-    forward
-        .app
-        .virtual_layout
-        .rebuild(&forward.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+    configure_virtual_editor_with_wrap(&mut forward.app, "alpha\nbeta gamma", 200.0);
     let forward_len = forward.app.virtual_editor_buffer.len_chars();
     let first_line_end = forward.app.virtual_editor_buffer.line_col_to_char(0, 5);
     forward
@@ -655,11 +657,7 @@ fn word_delete_crosses_line_boundaries() {
     assert_eq!(forward.app.virtual_editor_buffer.to_string(), "alpha gamma");
 
     let mut backward = make_app();
-    backward.app.reset_virtual_editor("alpha\nbeta gamma");
-    backward
-        .app
-        .virtual_layout
-        .rebuild(&backward.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+    configure_virtual_editor_with_wrap(&mut backward.app, "alpha\nbeta gamma", 200.0);
     let backward_len = backward.app.virtual_editor_buffer.len_chars();
     let second_line_start = backward.app.virtual_editor_buffer.line_col_to_char(1, 0);
     backward
@@ -674,54 +672,10 @@ fn word_delete_crosses_line_boundaries() {
 }
 
 #[test]
-fn word_navigation_respects_render_cap_for_long_lines() {
-    let mut harness = make_app();
-    let text = format!(
-        "{}\n",
-        "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64))
-    );
-    harness.app.reset_virtual_editor(text.as_str());
-    harness
-        .app
-        .virtual_layout
-        .rebuild(&harness.app.virtual_editor_buffer, 50000.0, 1.0, 1.0);
-
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    let capped = harness
-        .app
-        .virtual_editor_buffer
-        .line_col_to_char(0, MAX_RENDER_CHARS_PER_LINE);
-    harness.app.virtual_editor_state.set_cursor(capped, len);
-    let before = harness.app.virtual_editor_buffer.to_string();
-    let ctx = egui::Context::default();
-
-    let move_result = harness.app.apply_virtual_commands(
-        &ctx,
-        &[VirtualInputCommand::MoveRight {
-            select: false,
-            word: true,
-        }],
-    );
-    assert!(!move_result.changed);
-    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
-
-    let delete_result = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
-    assert!(!delete_result.changed);
-    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
-    assert_eq!(harness.app.virtual_editor_buffer.to_string(), before);
-}
-
-#[test]
 fn undo_restores_clamped_cursor_for_render_capped_lines() {
     let mut harness = make_app();
     let long_line = "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64));
-    harness.app.reset_virtual_editor(long_line.as_str());
-    harness
-        .app
-        .virtual_layout
-        .rebuild(&harness.app.virtual_editor_buffer, 50000.0, 1.0, 1.0);
+    configure_virtual_editor_with_wrap(&mut harness.app, long_line.as_str(), 50000.0);
 
     harness.app.virtual_select_line(0);
     let long_line_end = harness

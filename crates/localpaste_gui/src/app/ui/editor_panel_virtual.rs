@@ -807,18 +807,29 @@ mod tests {
     use eframe::egui;
 
     #[test]
-    fn interaction_rect_matches_inner_rect_without_scrollbar_gutter() {
-        let inner = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(180.0, 60.0));
-        let rect = editor_interaction_rect(inner, 180.0);
-        assert_eq!(rect, inner);
-    }
+    fn interaction_rect_handles_scrollbar_gutter_matrix() {
+        struct Case {
+            total_width: f32,
+            expected_extra_right: f32,
+        }
 
-    #[test]
-    fn interaction_rect_extends_right_edge_for_scrollbar_gutter() {
         let inner = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(180.0, 60.0));
-        let rect = editor_interaction_rect(inner, 194.0);
-        assert_eq!(rect.min, inner.min);
-        assert_eq!(rect.max.y, inner.max.y);
-        assert_eq!(rect.max.x, inner.max.x + 14.0);
+        let cases = [
+            Case {
+                total_width: 180.0,
+                expected_extra_right: 0.0,
+            },
+            Case {
+                total_width: 194.0,
+                expected_extra_right: 14.0,
+            },
+        ];
+
+        for case in cases {
+            let rect = editor_interaction_rect(inner, case.total_width);
+            assert_eq!(rect.min, inner.min);
+            assert_eq!(rect.max.y, inner.max.y);
+            assert_eq!(rect.max.x, inner.max.x + case.expected_extra_right);
+        }
     }
 }
