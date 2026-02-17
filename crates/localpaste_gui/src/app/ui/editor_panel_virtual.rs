@@ -16,6 +16,29 @@ fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rec
     )
 }
 
+fn preview_triple_click_selection_bounds(
+    line_idx: usize,
+    line_count: usize,
+    line_chars: usize,
+) -> (VirtualCursor, VirtualCursor) {
+    let start = VirtualCursor {
+        line: line_idx,
+        column: 0,
+    };
+    let end = if line_idx + 1 < line_count {
+        VirtualCursor {
+            line: line_idx + 1,
+            column: 0,
+        }
+    } else {
+        VirtualCursor {
+            line: line_idx,
+            column: line_chars,
+        }
+    };
+    (start, end)
+}
+
 impl LocalPasteApp {
     pub(super) fn render_virtual_preview_panel(
         &mut self,
@@ -128,7 +151,10 @@ impl LocalPasteApp {
                                 3 => {
                                     pending_action = Some(RowAction::Triple {
                                         line_idx,
-                                        line_chars: rendered_line_chars,
+                                        // Triple-click should target the full physical line.
+                                        // On the terminal line this must not be capped by render
+                                        // truncation, otherwise copy/select silently drops data.
+                                        line_chars: full_line_chars,
                                     });
                                 }
                                 2 => {
@@ -158,21 +184,8 @@ impl LocalPasteApp {
                         line_idx,
                         line_chars,
                     } => {
-                        let start = VirtualCursor {
-                            line: line_idx,
-                            column: 0,
-                        };
-                        let end = if line_idx + 1 < line_count {
-                            VirtualCursor {
-                                line: line_idx + 1,
-                                column: 0,
-                            }
-                        } else {
-                            VirtualCursor {
-                                line: line_idx,
-                                column: line_chars,
-                            }
-                        };
+                        let (start, end) =
+                            preview_triple_click_selection_bounds(line_idx, line_count, line_chars);
                         self.virtual_selection.select_range(start, end);
                     }
                     RowAction::Double { cursor, line } => {
@@ -803,7 +816,8 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::editor_interaction_rect;
+    use super::{editor_interaction_rect, preview_triple_click_selection_bounds};
+    use crate::app::MAX_RENDER_CHARS_PER_LINE;
     use eframe::egui;
 
     #[test]
@@ -831,5 +845,15 @@ mod tests {
             assert_eq!(rect.max.y, inner.max.y);
             assert_eq!(rect.max.x, inner.max.x + case.expected_extra_right);
         }
+    }
+
+    #[test]
+    fn preview_triple_click_terminal_line_uses_full_line_len() {
+        let full_line_chars = MAX_RENDER_CHARS_PER_LINE.saturating_add(64);
+
+        let (start, end) = preview_triple_click_selection_bounds(2, 3, full_line_chars);
+
+        assert_eq!((start.line, start.column), (2, 0));
+        assert_eq!((end.line, end.column), (2, full_line_chars));
     }
 }
