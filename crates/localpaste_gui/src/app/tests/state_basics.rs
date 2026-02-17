@@ -25,100 +25,117 @@ fn assert_delete_send_failure_keeps_lock_and_status(
 }
 
 #[test]
-fn paste_missing_clears_selection_and_removes_list_entry() {
-    let mut harness = make_app();
-    harness.app.apply_event(CoreEvent::PasteMissing {
-        id: "alpha".to_string(),
-    });
+fn paste_missing_updates_selection_and_list_matrix() {
+    enum MissingCase {
+        Selected,
+        NonSelected,
+    }
 
-    assert!(harness.app.pastes.is_empty());
-    assert!(harness.app.selected_id.is_none());
-    assert!(harness.app.selected_paste.is_none());
-    assert_eq!(harness.app.selected_content.len(), 0);
-    assert!(harness.app.status.is_some());
+    for case in [MissingCase::Selected, MissingCase::NonSelected] {
+        let mut harness = make_app();
+        match case {
+            MissingCase::Selected => {
+                harness.app.apply_event(CoreEvent::PasteMissing {
+                    id: "alpha".to_string(),
+                });
+
+                assert!(harness.app.pastes.is_empty());
+                assert!(harness.app.selected_id.is_none());
+                assert!(harness.app.selected_paste.is_none());
+                assert_eq!(harness.app.selected_content.len(), 0);
+                assert!(harness.app.status.is_some());
+            }
+            MissingCase::NonSelected => {
+                harness
+                    .app
+                    .pastes
+                    .push(test_summary("beta", "Beta", None, 4));
+
+                harness.app.apply_event(CoreEvent::PasteMissing {
+                    id: "beta".to_string(),
+                });
+
+                assert_eq!(harness.app.pastes.len(), 1);
+                assert_eq!(harness.app.pastes[0].id, "alpha");
+                assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+                assert!(harness.app.selected_paste.is_some());
+            }
+        }
+    }
 }
 
 #[test]
-fn paste_missing_non_selected_removes_list_entry() {
-    let mut harness = make_app();
-    harness
-        .app
-        .pastes
-        .push(test_summary("beta", "Beta", None, 4));
+fn paste_load_failed_updates_lock_and_selection_matrix() {
+    enum LoadFailedCase {
+        Selected,
+        Stale,
+    }
 
-    harness.app.apply_event(CoreEvent::PasteMissing {
-        id: "beta".to_string(),
-    });
+    for case in [LoadFailedCase::Selected, LoadFailedCase::Stale] {
+        let mut harness = make_app();
+        match case {
+            LoadFailedCase::Selected => {
+                harness
+                    .app
+                    .locks
+                    .acquire("alpha", &harness.app.lock_owner_id)
+                    .expect("acquire alpha lock");
+                harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
 
-    assert_eq!(harness.app.pastes.len(), 1);
-    assert_eq!(harness.app.pastes[0].id, "alpha");
-    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
-    assert!(harness.app.selected_paste.is_some());
-}
+                harness.app.apply_event(CoreEvent::PasteLoadFailed {
+                    id: "alpha".to_string(),
+                    message: "Get failed: injected".to_string(),
+                });
 
-#[test]
-fn paste_load_failed_for_selected_clears_lock_and_selection() {
-    let mut harness = make_app();
-    harness
-        .app
-        .locks
-        .acquire("alpha", &harness.app.lock_owner_id)
-        .expect("acquire alpha lock");
-    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
+                assert!(
+                    !harness.app.locks.is_locked("alpha").expect("is_locked"),
+                    "selected paste lock should be released on load failure"
+                );
+                assert!(harness.app.selected_id.is_none());
+                assert!(harness.app.selected_paste.is_none());
+                assert!(harness.app.pending_copy_action.is_none());
+                assert_eq!(
+                    harness
+                        .app
+                        .status
+                        .as_ref()
+                        .map(|status| status.text.as_str()),
+                    Some("Get failed: injected")
+                );
+            }
+            LoadFailedCase::Stale => {
+                harness.app.selected_id = Some("beta".to_string());
+                harness.app.selected_paste =
+                    Some(Paste::new("beta".to_string(), "Beta".to_string()));
+                harness
+                    .app
+                    .locks
+                    .acquire("beta", &harness.app.lock_owner_id)
+                    .expect("acquire beta lock");
+                harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
 
-    harness.app.apply_event(CoreEvent::PasteLoadFailed {
-        id: "alpha".to_string(),
-        message: "Get failed: injected".to_string(),
-    });
+                harness.app.apply_event(CoreEvent::PasteLoadFailed {
+                    id: "alpha".to_string(),
+                    message: "Get failed: stale".to_string(),
+                });
 
-    assert!(
-        !harness.app.locks.is_locked("alpha").expect("is_locked"),
-        "selected paste lock should be released on load failure"
-    );
-    assert!(harness.app.selected_id.is_none());
-    assert!(harness.app.selected_paste.is_none());
-    assert!(harness.app.pending_copy_action.is_none());
-    assert_eq!(
-        harness
-            .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Get failed: injected")
-    );
-}
-
-#[test]
-fn paste_load_failed_for_stale_id_does_not_unlock_current_selection() {
-    let mut harness = make_app();
-    harness.app.selected_id = Some("beta".to_string());
-    harness.app.selected_paste = Some(Paste::new("beta".to_string(), "Beta".to_string()));
-    harness
-        .app
-        .locks
-        .acquire("beta", &harness.app.lock_owner_id)
-        .expect("acquire beta lock");
-    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
-
-    harness.app.apply_event(CoreEvent::PasteLoadFailed {
-        id: "alpha".to_string(),
-        message: "Get failed: stale".to_string(),
-    });
-
-    assert!(
-        harness.app.locks.is_locked("beta").expect("is_locked"),
-        "stale load failure should not unlock current selection"
-    );
-    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
-    assert!(harness.app.pending_copy_action.is_none());
-    assert_eq!(
-        harness
-            .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Get failed: stale")
-    );
+                assert!(
+                    harness.app.locks.is_locked("beta").expect("is_locked"),
+                    "stale load failure should not unlock current selection"
+                );
+                assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+                assert!(harness.app.pending_copy_action.is_none());
+                assert_eq!(
+                    harness
+                        .app
+                        .status
+                        .as_ref()
+                        .map(|status| status.text.as_str()),
+                    Some("Get failed: stale")
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -167,27 +184,37 @@ fn editor_buffer_tracks_char_len() {
 }
 
 #[test]
-fn delete_selected_keeps_lock_until_delete_event() {
-    let mut harness = make_app();
-    harness
-        .app
-        .locks
-        .acquire("alpha", &harness.app.lock_owner_id)
-        .expect("acquire alpha lock");
-    assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
-
-    harness.app.delete_selected();
-    assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
-
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::DeletePaste { id } => assert_eq!(id, "alpha"),
-        other => panic!("expected delete command, got {:?}", other),
+fn delete_actions_keep_lock_until_delete_event_matrix() {
+    enum DeleteAction {
+        Selected,
+        Palette,
     }
 
-    harness.app.apply_event(CoreEvent::PasteDeleted {
-        id: "alpha".to_string(),
-    });
-    assert!(!harness.app.locks.is_locked("alpha").expect("is_locked"));
+    for action in [DeleteAction::Selected, DeleteAction::Palette] {
+        let mut harness = make_app();
+        harness
+            .app
+            .locks
+            .acquire("alpha", &harness.app.lock_owner_id)
+            .expect("acquire alpha lock");
+        assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
+
+        match action {
+            DeleteAction::Selected => harness.app.delete_selected(),
+            DeleteAction::Palette => harness.app.send_palette_delete("alpha".to_string()),
+        }
+        assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
+
+        match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::DeletePaste { id } => assert_eq!(id, "alpha"),
+            other => panic!("expected delete command, got {:?}", other),
+        }
+
+        harness.app.apply_event(CoreEvent::PasteDeleted {
+            id: "alpha".to_string(),
+        });
+        assert!(!harness.app.locks.is_locked("alpha").expect("is_locked"));
+    }
 }
 
 #[test]
@@ -200,30 +227,6 @@ fn paste_deleted_clears_pending_copy_action_for_deleted_id() {
     });
 
     assert!(harness.app.pending_copy_action.is_none());
-}
-
-#[test]
-fn palette_delete_keeps_lock_until_delete_event() {
-    let mut harness = make_app();
-    harness
-        .app
-        .locks
-        .acquire("alpha", &harness.app.lock_owner_id)
-        .expect("acquire alpha lock");
-    assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
-
-    harness.app.send_palette_delete("alpha".to_string());
-    assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
-
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::DeletePaste { id } => assert_eq!(id, "alpha"),
-        other => panic!("expected delete command, got {:?}", other),
-    }
-
-    harness.app.apply_event(CoreEvent::PasteDeleted {
-        id: "alpha".to_string(),
-    });
-    assert!(!harness.app.locks.is_locked("alpha").expect("is_locked"));
 }
 
 #[test]
@@ -245,14 +248,10 @@ fn create_new_paste_send_failure_shows_error_status() {
 }
 
 #[test]
-fn delete_selected_send_failure_keeps_lock_and_shows_error_status() {
+fn delete_send_failure_keeps_lock_and_shows_error_status_matrix() {
     assert_delete_send_failure_keeps_lock_and_status(|app| app.delete_selected());
-}
-
-#[test]
-fn palette_delete_send_failure_keeps_lock_and_shows_error_status() {
     assert_delete_send_failure_keeps_lock_and_status(|app| {
-        app.send_palette_delete("alpha".to_string());
+        app.send_palette_delete("alpha".to_string())
     });
 }
 
@@ -299,72 +298,75 @@ fn palette_copy_send_failure_when_selected_paste_missing_is_cleared() {
 }
 
 #[test]
-fn palette_copy_raw_for_loaded_selection_sets_clipboard() {
-    let mut harness = make_app();
-    if let Some(paste) = harness.app.selected_paste.as_mut() {
-        paste.id = "alpha".to_string();
+fn palette_copy_success_matrix_uses_expected_content_and_language() {
+    struct PaletteCopyCase {
+        fenced: bool,
+        saved_content: &'static str,
+        selected_content: &'static str,
+        paste_language: Option<&'static str>,
+        edit_language: Option<&'static str>,
+        expected_clipboard: &'static str,
     }
-    harness.app.pending_copy_action = None;
 
-    harness.app.queue_palette_copy("alpha".to_string(), false);
+    let cases = [
+        PaletteCopyCase {
+            fenced: false,
+            saved_content: "content",
+            selected_content: "content",
+            paste_language: None,
+            edit_language: None,
+            expected_clipboard: "content",
+        },
+        PaletteCopyCase {
+            fenced: true,
+            saved_content: "content",
+            selected_content: "content",
+            paste_language: Some("rust"),
+            edit_language: None,
+            expected_clipboard: "```rust\ncontent\n```",
+        },
+        PaletteCopyCase {
+            fenced: false,
+            saved_content: "saved",
+            selected_content: "unsaved",
+            paste_language: Some("rust"),
+            edit_language: None,
+            expected_clipboard: "unsaved",
+        },
+        PaletteCopyCase {
+            fenced: true,
+            saved_content: "saved",
+            selected_content: "unsaved",
+            paste_language: Some("rust"),
+            edit_language: Some("python"),
+            expected_clipboard: "```python\nunsaved\n```",
+        },
+    ];
 
-    assert_eq!(harness.app.clipboard_outgoing.as_deref(), Some("content"));
-    assert!(harness.app.pending_copy_action.is_none());
-}
+    for case in cases {
+        let mut harness = make_app();
+        if let Some(paste) = harness.app.selected_paste.as_mut() {
+            paste.id = "alpha".to_string();
+            paste.content = case.saved_content.to_string();
+            paste.language = case.paste_language.map(str::to_string);
+        }
+        harness
+            .app
+            .selected_content
+            .reset(case.selected_content.to_string());
+        harness.app.edit_language = case.edit_language.map(str::to_string);
+        harness.app.pending_copy_action = None;
 
-#[test]
-fn palette_copy_fenced_for_loaded_selection_sets_language_block() {
-    let mut harness = make_app();
-    if let Some(paste) = harness.app.selected_paste.as_mut() {
-        paste.id = "alpha".to_string();
-        paste.language = Some("rust".to_string());
+        harness
+            .app
+            .queue_palette_copy("alpha".to_string(), case.fenced);
+
+        assert_eq!(
+            harness.app.clipboard_outgoing.as_deref(),
+            Some(case.expected_clipboard)
+        );
+        assert!(harness.app.pending_copy_action.is_none());
     }
-    harness.app.pending_copy_action = None;
-
-    harness.app.queue_palette_copy("alpha".to_string(), true);
-
-    assert_eq!(
-        harness.app.clipboard_outgoing.as_deref(),
-        Some("```rust\ncontent\n```")
-    );
-    assert!(harness.app.pending_copy_action.is_none());
-}
-
-#[test]
-fn palette_copy_raw_for_selected_uses_unsaved_editor_content() {
-    let mut harness = make_app();
-    if let Some(paste) = harness.app.selected_paste.as_mut() {
-        paste.id = "alpha".to_string();
-        paste.content = "saved".to_string();
-    }
-    harness.app.selected_content.reset("unsaved".to_string());
-    harness.app.pending_copy_action = None;
-
-    harness.app.queue_palette_copy("alpha".to_string(), false);
-
-    assert_eq!(harness.app.clipboard_outgoing.as_deref(), Some("unsaved"));
-    assert!(harness.app.pending_copy_action.is_none());
-}
-
-#[test]
-fn palette_copy_fenced_for_selected_prefers_editor_language_override() {
-    let mut harness = make_app();
-    if let Some(paste) = harness.app.selected_paste.as_mut() {
-        paste.id = "alpha".to_string();
-        paste.language = Some("rust".to_string());
-        paste.content = "saved".to_string();
-    }
-    harness.app.selected_content.reset("unsaved".to_string());
-    harness.app.edit_language = Some("python".to_string());
-    harness.app.pending_copy_action = None;
-
-    harness.app.queue_palette_copy("alpha".to_string(), true);
-
-    assert_eq!(
-        harness.app.clipboard_outgoing.as_deref(),
-        Some("```python\nunsaved\n```")
-    );
-    assert!(harness.app.pending_copy_action.is_none());
 }
 
 #[test]

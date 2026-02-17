@@ -5,8 +5,10 @@ highlighting behavior in LocalPaste.
 
 Implementation roots:
 
-- Core detection entrypoint: [`crates/localpaste_core/src/detection/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/detection/mod.rs)
-- GUI syntax resolver: [`crates/localpaste_gui/src/app/highlight.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/highlight.rs)
+- Core detection entrypoint: [`../crates/localpaste_core/src/detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs)
+- GUI highlight pipeline entrypoints:
+  - [`../crates/localpaste_gui/src/app/highlight/mod.rs`](../crates/localpaste_gui/src/app/highlight/mod.rs)
+  - [`../crates/localpaste_gui/src/app/highlight/worker.rs`](../crates/localpaste_gui/src/app/highlight/worker.rs)
 
 ## Feature Topology
 
@@ -85,19 +87,53 @@ Policy:
 - Keep explicit fallback mapping narrow and intentional.
 - Preserve unsupported-language visibility by keeping their metadata labels even when rendering falls back to plain text.
 
-Current high-priority fallback labels:
+The canonical fallback candidate mapping is defined in:
 
-- `typescript`
-- `toml`
-- `swift`
-- `powershell`
+- [`../crates/localpaste_gui/src/app/highlight/syntax.rs`](../crates/localpaste_gui/src/app/highlight/syntax.rs) (`syntax_fallback_candidates`)
 
-Currently metadata-only (plain rendering) labels:
+The canonical fallback coverage matrix is tested in:
 
-- `zig`, `scss`, `kotlin`, `elixir`, `dart`
+- [`../crates/localpaste_gui/src/app/highlight/worker.rs`](../crates/localpaste_gui/src/app/highlight/worker.rs) (`resolver_tests`)
+
+Examples covered by the resolver tests include:
+
+- fallback-to-grammar labels (for example: `typescript`, `powershell`, `sass`)
+- metadata-only/plain-render labels (for example: `zig`, `kotlin`, `dart`)
 
 > [!NOTE]
-> These labels remain useful for metadata/search/filtering even when rendering is plain text.
+> Keep code/tests as the authoritative mapping and coverage list to avoid doc drift.
+> Metadata-only labels remain useful for search/filtering even when rendering is plain text.
+
+## Virtual Editor Async Highlight Flow
+
+Virtual-editor highlight behavior is async and staged to avoid mid-burst visual churn while typing.
+
+Flow:
+
+1. UI sends a highlight request keyed by paste/context (`paste_id`, `revision`, `text_len`, `language_hint`, `theme_key`).
+2. Worker coalesces queued requests and computes either:
+   - full render (`HighlightRender`), or
+   - changed-range patch (`HighlightPatch`) when the UI base snapshot matches the worker cache base.
+3. UI merges matching patches into staged/current highlight state.
+4. Staged highlight applies:
+   - immediately only when there is no current render,
+   - otherwise only after idle threshold.
+
+Current policy constants (virtual editor):
+
+- idle apply threshold: `200ms`
+- adaptive debounce windows:
+  - tiny edits (`<=4` changed chars, `<=2` touched lines): `15ms`
+  - medium edits: `35ms`
+  - larger supported buffers (`>=64KB`): `50ms`
+  - async highlighting disabled: `0ms` (synchronous/no debounce path)
+- plain rendering guardrail: `>=256KB` content
+
+Primary implementation:
+
+- request/stage/apply lifecycle: [`../crates/localpaste_gui/src/app/highlight_flow.rs`](../crates/localpaste_gui/src/app/highlight_flow.rs)
+- virtual edit hint capture: [`../crates/localpaste_gui/src/app/virtual_ops.rs`](../crates/localpaste_gui/src/app/virtual_ops.rs)
+- editor dispatch and debounce usage: [`../crates/localpaste_gui/src/app/ui/editor_panel.rs`](../crates/localpaste_gui/src/app/ui/editor_panel.rs)
 
 ## Runtime Provider Default (Magika)
 
@@ -107,13 +143,21 @@ When Magika is enabled, runtime defaults to CPU execution provider:
 - default: `true`
 - falsey values (`0`, `false`, `no`, `off`) allow runtime/provider defaults
 
-Reference: [`.env.example`](https://github.com/pszemraj/localpaste.rs/blob/main/.env.example)
+Reference: [`../.env.example`](../.env.example)
+
+## YAML Refinement Guardrail
+
+YAML auto-detection keeps single-line mappings valid (for example, `key: value`) while still rejecting obvious non-YAML noise when refining model output.
+
+Primary implementation:
+
+- [`../crates/localpaste_core/src/detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs)
 
 ## Validation Targets
 
 When touching detection/highlight behavior, validate:
 
 - core detection tests (`localpaste_core::detection::tests`),
-- GUI resolver tests (`localpaste_gui::app::highlight::resolver_tests`),
-- GUI manual checks in [docs/dev/gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md),
-- GUI perf checks in [docs/dev/gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
+- GUI resolver/worker tests (`localpaste_gui::app::highlight::worker::resolver_tests`),
+- GUI manual checks in [dev/gui-notes.md](dev/gui-notes.md),
+- GUI perf checks in [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md).

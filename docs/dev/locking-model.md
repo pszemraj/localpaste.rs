@@ -20,16 +20,16 @@ LocalPaste has two lock layers with different purposes:
 1. **Database owner lock (filesystem / process-wide)**
    - File: `db.owner.lock`
    - Purpose: prevent multiple LocalPaste writers on the same `DB_PATH`.
-   - Primary implementation: [`crates/localpaste_core/src/db/lock.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/db/lock.rs)
+   - Primary implementation: [`../../crates/localpaste_core/src/db/lock.rs`](../../crates/localpaste_core/src/db/lock.rs)
 2. **Paste edit locks (in-memory / paste-scoped)**
    - Purpose: prevent API/CLI or bulk folder mutations from mutating a paste currently open in GUI editing flows.
-   - Primary implementation: [`crates/localpaste_server/src/locks.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/locks.rs)
+   - Primary implementation: [`../../crates/localpaste_server/src/locks.rs`](../../crates/localpaste_server/src/locks.rs)
 
 ## Paste Edit Lock Semantics
 
 Lock manager type:
 
-- [`PasteLockManager`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/locks.rs)
+- [`PasteLockManager`](../../crates/localpaste_server/src/locks.rs)
 
 Owner identity:
 
@@ -59,15 +59,15 @@ Poison handling:
 Single-paste mutation paths:
 
 - API update/delete acquire `begin_mutation` before storage mutation.
-  - [`crates/localpaste_server/src/handlers/paste.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/paste.rs)
+  - [`../../crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs)
 
 Folder delete path:
 
 - Folder delete computes affected descendant paste IDs under the folder transaction lock.
 - It then acquires a batch mutation guard for exactly that set before migration/delete proceeds.
-  - Core guarded entrypoint: [`crates/localpaste_core/src/folder_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_core/src/folder_ops.rs)
-  - API handler usage: [`crates/localpaste_server/src/handlers/folder.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/folder.rs)
-  - GUI backend parity usage: [`crates/localpaste_gui/src/backend/worker/folder.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/backend/worker/folder.rs)
+  - Core guarded entrypoint: [`../../crates/localpaste_core/src/folder_ops.rs`](../../crates/localpaste_core/src/folder_ops.rs)
+  - API handler usage: [`../../crates/localpaste_server/src/handlers/folder.rs`](../../crates/localpaste_server/src/handlers/folder.rs)
+  - GUI backend parity usage: [`../../crates/localpaste_gui/src/backend/worker/folder.rs`](../../crates/localpaste_gui/src/backend/worker/folder.rs)
 
 ## GUI Ownership
 
@@ -76,8 +76,8 @@ Each GUI app instance uses a stable lock owner ID for its session lifetime:
 - Acquire on selection/open.
 - Release on deselection/drop.
 - Primary paths:
-  - [`crates/localpaste_gui/src/app/mod.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/mod.rs)
-  - [`crates/localpaste_gui/src/app/state_ops.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/src/app/state_ops.rs)
+  - [`../../crates/localpaste_gui/src/app/mod.rs`](../../crates/localpaste_gui/src/app/mod.rs)
+  - [`../../crates/localpaste_gui/src/app/state_ops.rs`](../../crates/localpaste_gui/src/app/state_ops.rs)
 
 ## Error Surface Contract
 
@@ -86,16 +86,16 @@ Unexpected lock-manager failures map to storage/internal errors.
 
 Shared mapping helpers:
 
-- [`map_paste_mutation_lock_error`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/locks.rs)
-- [`map_folder_delete_lock_error`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/locks.rs)
+- [`map_paste_mutation_lock_error`](../../crates/localpaste_server/src/locks.rs)
+- [`map_folder_delete_lock_error`](../../crates/localpaste_server/src/locks.rs)
 
 ## Regression Coverage
 
 Primary lock tests:
 
 - Server lock manager unit tests:
-  - [`crates/localpaste_server/src/locks.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/locks.rs)
+  - [`../../crates/localpaste_server/src/locks.rs`](../../crates/localpaste_server/src/locks.rs)
 - API integration lock behavior:
-  - [`crates/localpaste_server/tests/api_integration.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/tests/api_integration.rs)
+  - [`../../crates/localpaste_server/tests/api_integration.rs`](../../crates/localpaste_server/tests/api_integration.rs)
 - GUI/backend parity + lock behavior:
-  - [`crates/localpaste_gui/tests/headless_workflows.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_gui/tests/headless_workflows.rs)
+  - [`../../crates/localpaste_gui/tests/headless_workflows.rs`](../../crates/localpaste_gui/tests/headless_workflows.rs)

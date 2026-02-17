@@ -684,16 +684,22 @@ impl LocalPasteApp {
         }
     }
 
+    pub(super) fn send_delete_paste(&mut self, id: String) -> bool {
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::DeletePaste { id })
+            .is_err()
+        {
+            self.set_status("Delete failed: backend unavailable.");
+            return false;
+        }
+        true
+    }
+
     pub(super) fn delete_selected(&mut self) {
         if let Some(id) = self.selected_id.clone() {
-            if self
-                .backend
-                .cmd_tx
-                .send(CoreCmd::DeletePaste { id })
-                .is_err()
-            {
-                self.set_status("Delete failed: backend unavailable.");
-            }
+            let _sent = self.send_delete_paste(id);
         }
     }
 
@@ -701,6 +707,9 @@ impl LocalPasteApp {
         if self.selected_id.is_some() {
             self.save_status = SaveStatus::Dirty;
             self.last_edit_at = Some(Instant::now());
+            if !self.is_virtual_editor_mode() {
+                self.highlight_edit_hint = None;
+            }
         }
     }
 

@@ -33,7 +33,7 @@ This document defines the storage and on-disk compatibility contract for LocalPa
 
 ## Related Docs
 
-- System architecture: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
-- Service operations: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
-- Lock semantics: [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
-- Security posture: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
+- System architecture: [architecture.md](architecture.md)
+- Service operations: [deployment.md](deployment.md)
+- Lock semantics: [dev/locking-model.md](dev/locking-model.md)
+- Security posture: [security.md](security.md)

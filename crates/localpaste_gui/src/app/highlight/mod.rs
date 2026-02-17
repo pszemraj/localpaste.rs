@@ -1,21 +1,26 @@
 //! Syntax highlighting caches and worker support for the native GUI editor.
 
-use super::util::env_flag_enabled;
-use crossbeam_channel::{Receiver, Sender};
+mod syntax;
+#[cfg(test)]
+mod tests;
+mod worker;
+
 use eframe::egui::{
     self,
     text::{LayoutJob, LayoutSection, TextFormat},
     Color32, FontId, Stroke,
 };
 use egui_extras::syntax_highlighting::CodeTheme;
+use ropey::Rope;
 use std::ops::Range;
 use std::sync::Arc;
-use std::thread;
 use std::time::Instant;
 use syntect::highlighting::{HighlightState, Highlighter, Style, ThemeSet};
 use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
 use syntect::util::LinesWithEndings;
-use tracing::info;
+
+pub(super) use syntax::{resolve_syntax, syntect_language_hint};
+pub(super) use worker::{spawn_highlight_worker, HighlightWorker};
 
 /// Cached layout state for highlighted editor content.
 #[derive(Default)]
@@ -348,34 +353,34 @@ impl EditorLayoutCache {
             if line_start >= text.len() {
                 break;
             }
-            if line.spans.is_empty() && line.len > 0 {
-                job.sections.push(LayoutSection {
-                    leading_space: 0.0,
-                    byte_range: line_start..(line_start + line.len).min(text.len()),
-                    format: default_format.clone(),
-                });
-            } else {
-                for span in &line.spans {
-                    let start = line_start.saturating_add(span.range.start);
-                    let end = line_start.saturating_add(span.range.end);
-                    if start >= text.len() || end > text.len() || start >= end {
-                        continue;
-                    }
-                    job.sections.push(LayoutSection {
-                        leading_space: 0.0,
-                        byte_range: start..end,
-                        format: render_span_to_format(span, editor_font),
-                    });
+            let line_end = line_start.saturating_add(line.len).min(text.len());
+            let line_len = line_end.saturating_sub(line_start);
+            let mut styled_sections = Vec::with_capacity(line.spans.len());
+            for span in &line.spans {
+                let start = span.range.start.min(line_len);
+                let end = span.range.end.min(line_len);
+                if start >= end {
+                    continue;
                 }
+                styled_sections.push((start..end, render_span_to_format(span, editor_font)));
             }
+            push_sections_with_default_gaps(
+                &mut job,
+                line_start,
+                line_len,
+                &default_format,
+                styled_sections,
+            );
             line_start = line_start.saturating_add(line.len);
         }
         if line_start < text.len() {
-            job.sections.push(LayoutSection {
-                leading_space: 0.0,
-                byte_range: line_start..text.len(),
-                format: default_format,
-            });
+            push_sections_with_default_gaps(
+                &mut job,
+                line_start,
+                text.len().saturating_sub(line_start),
+                &default_format,
+                Vec::new(),
+            );
         }
 
         job
@@ -390,138 +395,100 @@ pub(super) fn build_virtual_line_job(
     render_line: Option<&HighlightRenderLine>,
     use_plain: bool,
 ) -> LayoutJob {
+    build_virtual_line_job_owned(ui, line.to_owned(), editor_font, render_line, use_plain)
+}
+
+/// Builds a layout job for a single rendered line in the virtual preview/editor
+/// when the caller already owns the line text buffer.
+fn build_virtual_line_job_owned(
+    ui: &egui::Ui,
+    line: String,
+    editor_font: &FontId,
+    render_line: Option<&HighlightRenderLine>,
+    use_plain: bool,
+) -> LayoutJob {
     if use_plain || render_line.is_none() {
-        return plain_layout_job(ui, line, editor_font, f32::INFINITY);
+        return plain_layout_job_owned(ui, line, editor_font, f32::INFINITY);
     }
     let render_line = render_line.expect("render line checked above");
     let mut job = LayoutJob {
-        text: line.to_owned(),
+        text: line,
         ..Default::default()
     };
+    let line_len = job.text.len();
     let default_format = TextFormat {
         font_id: editor_font.clone(),
         color: ui.visuals().text_color(),
         ..Default::default()
     };
 
-    if render_line.spans.is_empty() && !line.is_empty() {
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: 0..line.len(),
-            format: default_format,
-        });
-    } else {
-        for span in &render_line.spans {
-            let start = span.range.start.min(line.len());
-            let end = span.range.end.min(line.len());
-            if start >= end {
-                continue;
-            }
-            job.sections.push(LayoutSection {
-                leading_space: 0.0,
-                byte_range: start..end,
-                format: render_span_to_format(span, editor_font),
-            });
+    let mut styled_sections = Vec::with_capacity(render_line.spans.len());
+    for span in &render_line.spans {
+        let start = span.range.start.min(line_len);
+        let end = span.range.end.min(line_len);
+        if start >= end {
+            continue;
         }
+        styled_sections.push((start..end, render_span_to_format(span, editor_font)));
     }
+    push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
 
     job.wrap.max_width = f32::INFINITY;
     job
 }
 
-fn normalized_syntax_key(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect()
-}
-
-fn try_resolve_syntax_candidate<'a>(
-    ps: &'a syntect::parsing::SyntaxSet,
-    candidate: &str,
-) -> Option<&'a syntect::parsing::SyntaxReference> {
-    let trimmed = candidate.trim();
-    if trimmed.is_empty() {
-        return None;
+/// Builds a layout job for a wrapped visual-row segment from a physical line.
+///
+/// `line_byte_range` is relative to the original physical line bytes and is used
+/// to intersect highlight spans onto this segment.
+pub(super) fn build_virtual_line_segment_job_owned(
+    ui: &egui::Ui,
+    segment: String,
+    editor_font: &FontId,
+    render_line: Option<&HighlightRenderLine>,
+    use_plain: bool,
+    line_byte_range: Range<usize>,
+) -> LayoutJob {
+    if use_plain || render_line.is_none() {
+        return plain_layout_job_owned(ui, segment, editor_font, f32::INFINITY);
     }
+    let render_line = render_line.expect("render line checked above");
+    let mut job = LayoutJob {
+        text: segment,
+        ..Default::default()
+    };
+    let line_len = job.text.len();
+    let default_format = TextFormat {
+        font_id: editor_font.clone(),
+        color: ui.visuals().text_color(),
+        ..Default::default()
+    };
 
-    if let Some(syntax) = ps.find_syntax_by_name(trimmed) {
-        return Some(syntax);
+    if line_len == 0 {
+        job.wrap.max_width = f32::INFINITY;
+        return job;
     }
-    if let Some(syntax) = ps.find_syntax_by_extension(trimmed) {
-        return Some(syntax);
-    }
-
-    for syntax in ps.syntaxes() {
-        if syntax.name.eq_ignore_ascii_case(trimmed) {
-            return Some(syntax);
+    let mut styled_sections = Vec::with_capacity(render_line.spans.len());
+    for span in &render_line.spans {
+        let start = span.range.start.max(line_byte_range.start);
+        let end = span.range.end.min(line_byte_range.end);
+        if start >= end {
+            continue;
         }
-    }
-
-    let normalized = normalized_syntax_key(trimmed);
-    if !normalized.is_empty() {
-        for syntax in ps.syntaxes() {
-            if normalized_syntax_key(syntax.name.as_str()) == normalized {
-                return Some(syntax);
-            }
+        let local_start = start.saturating_sub(line_byte_range.start).min(line_len);
+        let local_end = end.saturating_sub(line_byte_range.start).min(line_len);
+        if local_start >= local_end {
+            continue;
         }
+        styled_sections.push((
+            local_start..local_end,
+            render_span_to_format(span, editor_font),
+        ));
     }
+    push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
 
-    ps.syntaxes().iter().find(|syntax| {
-        syntax
-            .file_extensions
-            .iter()
-            .any(|ext| ext.eq_ignore_ascii_case(trimmed))
-    })
-}
-
-fn syntax_fallback_candidates(hint_lower: &str) -> &'static [&'static str] {
-    match hint_lower {
-        "cs" => &["C#", "cs"],
-        "shell" => &["Bourne Again Shell (bash)", "bash", "sh"],
-        "cpp" => &["C++", "cpp", "cc"],
-        "objectivec" => &["Objective-C", "m"],
-        "dockerfile" => &["Dockerfile", "bash", "sh"],
-        "makefile" => &["Makefile", "make"],
-        "latex" => &["LaTeX", "tex"],
-        // Syntect defaults used by egui do not ship native grammars for these in all bundles.
-        // Keep explicit fallback only for high-priority labels to avoid hiding unsupported
-        // language gaps behind misleading tokenization.
-        "typescript" => &["JavaScript", "js", "ts"],
-        "toml" => &["Java Properties", "properties", "YAML", "yaml"],
-        "swift" => &["Rust", "rs", "Go", "go", "Objective-C"],
-        "powershell" => &["ps1", "Bourne Again Shell (bash)", "bash", "sh"],
-        "sass" => &["sass", "Ruby Haml", "css"],
-        _ => &[],
-    }
-}
-
-fn resolve_syntax<'a>(
-    ps: &'a syntect::parsing::SyntaxSet,
-    hint: &str,
-) -> &'a syntect::parsing::SyntaxReference {
-    let hint_trimmed = hint.trim();
-    if hint_trimmed.is_empty() {
-        return ps.find_syntax_plain_text();
-    }
-
-    let hint_lower = hint_trimmed.to_ascii_lowercase();
-    if matches!(hint_lower.as_str(), "text" | "txt" | "plain" | "plaintext") {
-        return ps.find_syntax_plain_text();
-    }
-
-    if let Some(syntax) = try_resolve_syntax_candidate(ps, hint_trimmed) {
-        return syntax;
-    }
-
-    for candidate in syntax_fallback_candidates(hint_lower.as_str()) {
-        if let Some(syntax) = try_resolve_syntax_candidate(ps, candidate) {
-            return syntax;
-        }
-    }
-
-    ps.find_syntax_plain_text()
+    job.wrap.max_width = f32::INFINITY;
+    job
 }
 
 /// Provides reusable syntect sets for worker and UI layouts.
@@ -597,9 +564,79 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
     }
 }
 
+fn push_sections_with_default_gaps(
+    job: &mut LayoutJob,
+    offset: usize,
+    line_len: usize,
+    default_format: &TextFormat,
+    mut styled_sections: Vec<(Range<usize>, TextFormat)>,
+) {
+    if line_len == 0 {
+        return;
+    }
+    if styled_sections.is_empty() {
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: offset..(offset + line_len),
+            format: default_format.clone(),
+        });
+        return;
+    }
+
+    styled_sections.sort_unstable_by(|a, b| {
+        a.0.start
+            .cmp(&b.0.start)
+            .then_with(|| a.0.end.cmp(&b.0.end))
+    });
+
+    let mut cursor = 0usize;
+    for (range, format) in styled_sections {
+        let start = range.start.min(line_len);
+        let end = range.end.min(line_len);
+        if start >= end {
+            continue;
+        }
+
+        if start > cursor {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: (offset + cursor)..(offset + start),
+                format: default_format.clone(),
+            });
+        }
+
+        let styled_start = start.max(cursor);
+        if styled_start < end {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: (offset + styled_start)..(offset + end),
+                format,
+            });
+            cursor = end;
+        }
+    }
+
+    if cursor < line_len {
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: (offset + cursor)..(offset + line_len),
+            format: default_format.clone(),
+        });
+    }
+}
+
 fn plain_layout_job(ui: &egui::Ui, text: &str, editor_font: &FontId, wrap_width: f32) -> LayoutJob {
+    plain_layout_job_owned(ui, text.to_owned(), editor_font, wrap_width)
+}
+
+fn plain_layout_job_owned(
+    ui: &egui::Ui,
+    text: String,
+    editor_font: &FontId,
+    wrap_width: f32,
+) -> LayoutJob {
     LayoutJob::simple(
-        text.to_owned(),
+        text,
         editor_font.clone(),
         ui.visuals().text_color(),
         wrap_width,
@@ -665,17 +702,6 @@ pub(super) fn hash_bytes(bytes: &[u8]) -> u64 {
     hash_bytes_step(FNV_OFFSET, bytes)
 }
 
-pub(super) fn hash_text_chunks<'a, I>(chunks: I) -> u64
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let mut hash = FNV_OFFSET;
-    for chunk in chunks {
-        hash = hash_bytes_step(hash, chunk.as_bytes());
-    }
-    hash
-}
-
 pub(super) fn align_old_lines_by_hash<T, F>(
     old_lines: Vec<T>,
     new_hashes: &[u64],
@@ -736,13 +762,13 @@ where
     aligned
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct HighlightSpan {
     range: Range<usize>,
     style: HighlightStyle,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct HighlightStyle {
     color: [u8; 4],
     italics: bool,
@@ -750,10 +776,25 @@ struct HighlightStyle {
 }
 
 /// Highlight spans for a single rendered line.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct HighlightRenderLine {
     len: usize,
     spans: Vec<HighlightSpan>,
+}
+
+impl HighlightRenderLine {
+    #[cfg(test)]
+    pub(super) fn plain(len: usize) -> Self {
+        Self {
+            len,
+            spans: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn len_for_test(&self) -> usize {
+        self.len
+    }
 }
 
 /// Highlight rendering output for an entire buffer snapshot.
@@ -762,10 +803,37 @@ pub(super) struct HighlightRender {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text_len: usize,
-    pub(super) content_hash: u64,
+    /// Worker base snapshot used to compute `changed_line_range`.
+    pub(super) base_revision: Option<u64>,
+    pub(super) base_text_len: Option<usize>,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
+    /// Best-effort changed line range versus the previous worker snapshot.
+    /// `None` means unknown and callers should fall back to structural diffing.
+    pub(super) changed_line_range: Option<Range<usize>>,
     pub(super) lines: Vec<HighlightRenderLine>,
+}
+
+/// Highlight patch output for a changed line range within a buffer snapshot.
+#[derive(Clone)]
+pub(super) struct HighlightPatch {
+    pub(super) paste_id: String,
+    pub(super) revision: u64,
+    pub(super) text_len: usize,
+    pub(super) base_revision: u64,
+    pub(super) base_text_len: usize,
+    pub(super) language_hint: String,
+    pub(super) theme_key: String,
+    pub(super) total_lines: usize,
+    pub(super) line_range: Range<usize>,
+    pub(super) lines: Vec<HighlightRenderLine>,
+}
+
+/// Worker output event carrying either full-highlight render or range patch.
+#[derive(Clone)]
+pub(super) enum HighlightWorkerResult {
+    Render(HighlightRender),
+    Patch(HighlightPatch),
 }
 
 impl HighlightRender {
@@ -784,14 +852,12 @@ impl HighlightRender {
         &self,
         revision: u64,
         text_len: usize,
-        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         paste_id: &str,
     ) -> bool {
         self.revision == revision
             && self.text_len == text_len
-            && self.content_hash == content_hash
             && self.matches_context(paste_id, language_hint, theme_key)
     }
 }
@@ -801,10 +867,44 @@ impl HighlightRender {
 pub(super) struct HighlightRequest {
     pub(super) paste_id: String,
     pub(super) revision: u64,
-    pub(super) text: String,
-    pub(super) content_hash: u64,
+    pub(super) text: HighlightRequestText,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
+    pub(super) edit_hint: Option<VirtualEditHint>,
+    pub(super) patch_base_revision: Option<u64>,
+    pub(super) patch_base_text_len: Option<usize>,
+}
+
+/// Snapshot payload transported to the highlight worker.
+#[derive(Clone)]
+pub(super) enum HighlightRequestText {
+    Owned(String),
+    Rope(Rope),
+}
+
+impl HighlightRequestText {
+    pub(super) fn len_bytes(&self) -> usize {
+        match self {
+            Self::Owned(text) => text.len(),
+            Self::Rope(rope) => rope.len_bytes(),
+        }
+    }
+
+    pub(super) fn into_string(self) -> String {
+        match self {
+            Self::Owned(text) => text,
+            Self::Rope(rope) => rope.to_string(),
+        }
+    }
+}
+
+/// Lightweight edit metadata captured from virtual-editor operations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct VirtualEditHint {
+    pub(super) start_line: usize,
+    pub(super) touched_lines: usize,
+    pub(super) inserted_chars: usize,
+    pub(super) deleted_chars: usize,
 }
 
 /// Metadata used to coalesce highlight requests while typing.
@@ -812,7 +912,6 @@ pub(super) struct HighlightRequestMeta {
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text_len: usize,
-    pub(super) content_hash: u64,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
 }
@@ -822,14 +921,12 @@ impl HighlightRequestMeta {
         &self,
         revision: u64,
         text_len: usize,
-        content_hash: u64,
         language_hint: &str,
         theme_key: &str,
         paste_id: &str,
     ) -> bool {
         self.revision == revision
             && self.text_len == text_len
-            && self.content_hash == content_hash
             && self.language_hint == language_hint
             && self.theme_key == theme_key
             && self.paste_id == paste_id
@@ -838,353 +935,8 @@ impl HighlightRequestMeta {
     pub(super) fn matches_render(&self, render: &HighlightRender) -> bool {
         self.revision == render.revision
             && self.text_len == render.text_len
-            && self.content_hash == render.content_hash
             && self.language_hint == render.language_hint
             && self.theme_key == render.theme_key
             && self.paste_id == render.paste_id
-    }
-}
-
-/// Background worker handles syntect highlighting off the UI thread.
-pub(super) struct HighlightWorker {
-    pub(super) tx: Sender<HighlightRequest>,
-    pub(super) rx: Receiver<HighlightRender>,
-}
-
-#[derive(Default)]
-struct HighlightWorkerCache {
-    language_hint: String,
-    theme_key: String,
-    lines: Vec<HighlightWorkerLine>,
-}
-
-#[derive(Clone)]
-struct HighlightWorkerLine {
-    hash: u64,
-    len: usize,
-    spans: Vec<HighlightSpan>,
-    end_state: HighlightStateSnapshot,
-}
-
-/// Spawns the syntect worker thread and returns its channel endpoints.
-pub(super) fn spawn_highlight_worker() -> HighlightWorker {
-    let (tx, rx_cmd) = crossbeam_channel::unbounded();
-    let (tx_evt, rx_evt) = crossbeam_channel::unbounded();
-    let trace_enabled = env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE");
-
-    thread::Builder::new()
-        .name("localpaste-gui-highlight".to_string())
-        .spawn(move || {
-            let settings = SyntectSettings::default();
-            let mut cache = HighlightWorkerCache::default();
-            for req in rx_cmd.iter() {
-                let mut latest: HighlightRequest = req;
-                // Coalesce backlog bursts so stale highlight work is skipped.
-                while let Ok(next) = rx_cmd.try_recv() {
-                    latest = next;
-                }
-                let started = Instant::now();
-                let trace_paste_id = latest.paste_id.clone();
-                let trace_revision = latest.revision;
-                let trace_len = latest.text.len();
-                let render = highlight_in_worker(&settings, &mut cache, latest);
-                let _ = tx_evt.send(render);
-                if trace_enabled {
-                    let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
-                    info!(
-                        target: "localpaste_gui::highlight",
-                        event = "worker_done",
-                        paste_id = trace_paste_id.as_str(),
-                        revision = trace_revision,
-                        text_len = trace_len,
-                        elapsed_ms = elapsed_ms,
-                        "highlight worker pass"
-                    );
-                }
-            }
-        })
-        .expect("spawn highlight worker");
-
-    HighlightWorker { tx, rx: rx_evt }
-}
-
-fn highlight_in_worker(
-    settings: &SyntectSettings,
-    cache: &mut HighlightWorkerCache,
-    req: HighlightRequest,
-) -> HighlightRender {
-    if cache.language_hint != req.language_hint || cache.theme_key != req.theme_key {
-        cache.language_hint = req.language_hint.clone();
-        cache.theme_key = req.theme_key.clone();
-        cache.lines.clear();
-    }
-
-    let syntax = resolve_syntax(&settings.ps, &req.language_hint);
-    let theme = settings
-        .ts
-        .themes
-        .get(req.theme_key.as_str())
-        .or_else(|| settings.ts.themes.values().next());
-    let Some(theme) = theme else {
-        let lines = LinesWithEndings::from(req.text.as_str())
-            .map(|line| HighlightRenderLine {
-                len: line.len(),
-                spans: Vec::new(),
-            })
-            .collect();
-        return HighlightRender {
-            paste_id: req.paste_id,
-            revision: req.revision,
-            text_len: req.text.len(),
-            content_hash: req.content_hash,
-            language_hint: req.language_hint,
-            theme_key: req.theme_key,
-            lines,
-        };
-    };
-
-    let lines: Vec<&str> = LinesWithEndings::from(req.text.as_str()).collect();
-    let new_hashes: Vec<u64> = lines
-        .iter()
-        .map(|line| hash_bytes(line.as_bytes()))
-        .collect();
-    let mut old_lines =
-        align_old_lines_by_hash(std::mem::take(&mut cache.lines), &new_hashes, |line| {
-            line.hash
-        });
-
-    let highlighter = Highlighter::new(theme);
-    let mut parse_state = ParseState::new(syntax);
-    let mut highlight_state = HighlightState::new(&highlighter, ScopeStack::new());
-    let default_state = HighlightStateSnapshot {
-        parse: parse_state.clone(),
-        highlight: highlight_state.clone(),
-    };
-
-    let mut new_lines = Vec::with_capacity(lines.len().max(1));
-    let mut render_lines = Vec::with_capacity(lines.len().max(1));
-    let mut prev_line_reused = false;
-
-    for (idx, line) in lines.iter().enumerate() {
-        let line_hash = new_hashes[idx];
-        if line_start_state_matches(
-            idx,
-            prev_line_reused,
-            &old_lines,
-            &parse_state,
-            &highlight_state,
-            &default_state,
-            |line: &HighlightWorkerLine| &line.end_state,
-        ) && line_hash_matches(&old_lines, idx, line_hash, |line: &HighlightWorkerLine| {
-            line.hash
-        }) {
-            let old_line = old_lines[idx].take().expect("checked Some");
-            parse_state = old_line.end_state.parse.clone();
-            highlight_state = old_line.end_state.highlight.clone();
-            render_lines.push(HighlightRenderLine {
-                len: old_line.len,
-                spans: old_line.spans.clone(),
-            });
-            new_lines.push(old_line);
-            prev_line_reused = true;
-            continue;
-        }
-
-        let mut spans = Vec::new();
-        if let Ok(ops) = parse_state.parse_line(line, &settings.ps) {
-            let iter = syntect::highlighting::RangedHighlightIterator::new(
-                &mut highlight_state,
-                &ops[..],
-                line,
-                &highlighter,
-            );
-            for (style, _token, range) in iter {
-                if range.is_empty() {
-                    continue;
-                }
-                spans.push(HighlightSpan {
-                    range,
-                    style: HighlightStyle {
-                        color: [
-                            style.foreground.r,
-                            style.foreground.g,
-                            style.foreground.b,
-                            style.foreground.a,
-                        ],
-                        italics: style
-                            .font_style
-                            .contains(syntect::highlighting::FontStyle::ITALIC),
-                        underline: style
-                            .font_style
-                            .contains(syntect::highlighting::FontStyle::UNDERLINE),
-                    },
-                });
-            }
-        }
-
-        let end_state = HighlightStateSnapshot {
-            parse: parse_state.clone(),
-            highlight: highlight_state.clone(),
-        };
-        let line_len = line.len();
-        new_lines.push(HighlightWorkerLine {
-            hash: line_hash,
-            len: line_len,
-            spans: spans.clone(),
-            end_state,
-        });
-        render_lines.push(HighlightRenderLine {
-            len: line_len,
-            spans,
-        });
-        prev_line_reused = false;
-    }
-
-    cache.lines = new_lines;
-
-    HighlightRender {
-        paste_id: req.paste_id,
-        revision: req.revision,
-        text_len: req.text.len(),
-        content_hash: req.content_hash,
-        language_hint: req.language_hint,
-        theme_key: req.theme_key,
-        lines: render_lines,
-    }
-}
-
-/// Normalizes user-facing language names into syntect-compatible hints.
-pub(super) fn syntect_language_hint(language: &str) -> String {
-    let canonical = localpaste_core::detection::canonical::canonicalize(language);
-    if canonical.is_empty() {
-        "text".to_string()
-    } else {
-        canonical
-    }
-}
-
-#[cfg(test)]
-mod resolver_tests {
-    use super::{
-        hash_bytes, highlight_in_worker, resolve_syntax, syntect_language_hint, HighlightRender,
-        HighlightRequest, HighlightWorkerCache, SyntectSettings,
-    };
-
-    fn render_for_label(settings: &SyntectSettings, label: &str, text: &str) -> HighlightRender {
-        let mut cache = HighlightWorkerCache::default();
-        let req = HighlightRequest {
-            paste_id: "test".to_string(),
-            revision: 1,
-            text: text.to_string(),
-            content_hash: hash_bytes(text.as_bytes()),
-            language_hint: label.to_string(),
-            theme_key: "base16-mocha.dark".to_string(),
-        };
-        highlight_in_worker(settings, &mut cache, req)
-    }
-
-    fn has_non_default_coloring(settings: &SyntectSettings, render: &HighlightRender) -> bool {
-        let theme = settings
-            .ts
-            .themes
-            .get(render.theme_key.as_str())
-            .expect("theme exists");
-        let default = theme
-            .settings
-            .foreground
-            .map(|color| [color.r, color.g, color.b, color.a]);
-        render
-            .lines
-            .iter()
-            .flat_map(|line| line.spans.iter())
-            .any(|span| Some(span.style.color) != default)
-    }
-
-    #[test]
-    fn resolve_syntax_handles_common_canonical_labels() {
-        let settings = SyntectSettings::default();
-        let cases = [
-            "rust",
-            "python",
-            "javascript",
-            "go",
-            "java",
-            "html",
-            "css",
-            "json",
-            "yaml",
-            "sql",
-        ];
-        for label in cases {
-            let syntax = resolve_syntax(&settings.ps, label);
-            assert_ne!(syntax.name, "Plain Text", "label: {label}");
-        }
-    }
-
-    #[test]
-    fn resolve_syntax_handles_alias_labels() {
-        let settings = SyntectSettings::default();
-        for label in ["cs", "shell", "cpp", "powershell"] {
-            let syntax = resolve_syntax(&settings.ps, label);
-            assert_ne!(syntax.name, "Plain Text", "label: {label}");
-        }
-    }
-
-    #[test]
-    fn resolve_syntax_falls_back_to_plain_for_unknown_or_text() {
-        let settings = SyntectSettings::default();
-        assert_eq!(
-            resolve_syntax(&settings.ps, "somethingtotallyunknown").name,
-            "Plain Text"
-        );
-        assert_eq!(resolve_syntax(&settings.ps, "").name, "Plain Text");
-        assert_eq!(resolve_syntax(&settings.ps, "text").name, "Plain Text");
-        assert_eq!(resolve_syntax(&settings.ps, "txt").name, "Plain Text");
-    }
-
-    #[test]
-    fn syntect_hint_uses_canonical_labels() {
-        assert_eq!(syntect_language_hint(" csharp "), "cs");
-        assert_eq!(syntect_language_hint("bash"), "shell");
-        assert_eq!(syntect_language_hint(""), "text");
-    }
-
-    #[test]
-    fn resolve_syntax_leaves_known_unsupported_labels_as_plain_text() {
-        let settings = SyntectSettings::default();
-        for label in ["zig", "scss", "kotlin", "elixir", "dart"] {
-            let syntax = resolve_syntax(&settings.ps, label);
-            assert_eq!(syntax.name, "Plain Text", "label: {label}");
-        }
-    }
-
-    #[test]
-    fn high_priority_fallbacks_produce_non_default_coloring() {
-        let settings = SyntectSettings::default();
-        let cases = [
-            (
-                "typescript",
-                "type User = { name: string };\nconst user: User = { name: \"ada\" };",
-            ),
-            (
-                "toml",
-                "[tool.localpaste]\nname = \"demo\"\nenabled = true\n",
-            ),
-            (
-                "swift",
-                "import Foundation\nstruct User { let id: Int }\nfunc main() { print(\"hi\") }\n",
-            ),
-            (
-                "powershell",
-                "param([string]$Name)\nWrite-Host \"hello $Name\"\n",
-            ),
-        ];
-        for (label, content) in cases {
-            let render = render_for_label(&settings, label, content);
-            assert!(
-                has_non_default_coloring(&settings, &render),
-                "expected non-default coloring for {label}"
-            );
-        }
     }
 }

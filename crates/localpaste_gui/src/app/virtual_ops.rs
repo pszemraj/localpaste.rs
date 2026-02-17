@@ -1,10 +1,10 @@
 //! Virtual editor operations: selection, cursor motion, editing, and command application.
 
-use super::editor::EditorMode;
+use super::highlight::VirtualEditHint;
 use super::util::word_range_at;
 use super::virtual_editor::{
-    EditIntent, RecordedEdit, VirtualEditorHistory, VirtualEditorState, VirtualInputCommand,
-    WrapLayoutCache,
+    EditIntent, RecordedEdit, VirtualEditDelta, VirtualEditorHistory, VirtualEditorState,
+    VirtualGalleyCache, VirtualInputCommand, WrapBoundaryAffinity, WrapLayoutCache,
 };
 use super::{
     is_editor_word_char, next_virtual_click_count, LocalPasteApp, VirtualApplyResult,
@@ -17,8 +17,115 @@ use eframe::egui::{
 };
 use std::ops::Range;
 use std::time::Instant;
+use tracing::info;
+
+#[derive(Clone, Copy, Debug)]
+struct VirtualCursorWrapMetrics {
+    line: usize,
+    display_col: usize,
+    line_cols: usize,
+    wrap_cols: usize,
+}
+
+fn is_internal_wrap_boundary(display_col: usize, wrap_cols: usize, line_cols: usize) -> bool {
+    display_col > 0 && display_col % wrap_cols == 0 && display_col < line_cols
+}
 
 impl LocalPasteApp {
+    fn clamp_virtual_cursor_state_for_render(&mut self) -> bool {
+        let cursor = self.virtual_editor_state.cursor();
+        let clamped = self.clamp_virtual_cursor_for_render(cursor);
+        if clamped == cursor {
+            return false;
+        }
+        self.virtual_editor_state
+            .set_cursor(clamped, self.virtual_editor_buffer.len_chars());
+        true
+    }
+
+    fn virtual_line_render_chars(&self, line: usize) -> usize {
+        let full_chars = self.virtual_editor_buffer.line_len_chars(line);
+        let cached_chars = self.virtual_layout.line_chars(line);
+        if cached_chars == 0 {
+            full_chars
+        } else {
+            cached_chars.min(full_chars)
+        }
+    }
+
+    fn virtual_line_render_boundary(&self, idx: usize) -> (usize, bool) {
+        let line = self.virtual_editor_buffer.char_to_line_col(idx).0;
+        let render_chars = self.virtual_line_render_chars(line);
+        let render_end = self
+            .virtual_editor_buffer
+            .line_col_to_char(line, render_chars);
+        (
+            render_end,
+            render_chars < self.virtual_editor_buffer.line_len_chars(line),
+        )
+    }
+
+    pub(super) fn clamp_virtual_cursor_for_render(&self, char_index: usize) -> usize {
+        let clamped = char_index.min(self.virtual_editor_buffer.len_chars());
+        let (line, column) = self.virtual_editor_buffer.char_to_line_col(clamped);
+        let render_chars = self.virtual_line_render_chars(line);
+        if column <= render_chars {
+            clamped
+        } else {
+            self.virtual_editor_buffer
+                .line_col_to_char(line, render_chars)
+        }
+    }
+
+    fn virtual_cursor_wrap_metrics(&self, cursor: usize) -> VirtualCursorWrapMetrics {
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
+        let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
+        let display_col =
+            self.virtual_layout
+                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
+        let wrap_cols = self.virtual_layout.wrap_columns().max(1);
+        let line_cols = self
+            .virtual_layout
+            .line_columns(&self.virtual_editor_buffer, line);
+        VirtualCursorWrapMetrics {
+            line,
+            display_col,
+            line_cols,
+            wrap_cols,
+        }
+    }
+    fn virtual_preferred_column_for_cursor(&self, cursor: usize) -> usize {
+        let metrics = self.virtual_cursor_wrap_metrics(cursor);
+        if metrics.display_col == metrics.line_cols
+            && metrics.display_col > 0
+            && metrics.display_col % metrics.wrap_cols == 0
+        {
+            metrics.wrap_cols
+        } else {
+            metrics.display_col % metrics.wrap_cols
+        }
+    }
+
+    fn virtual_is_internal_wrap_boundary_cursor(&self, cursor: usize) -> bool {
+        let metrics = self.virtual_cursor_wrap_metrics(cursor);
+        is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols)
+    }
+
+    fn vertical_boundary_affinity_for_target(
+        &self,
+        cursor: usize,
+        desired_col_in_row: usize,
+        up: bool,
+    ) -> WrapBoundaryAffinity {
+        let cols = self.virtual_layout.wrap_columns().max(1);
+        if desired_col_in_row == cols && self.virtual_is_internal_wrap_boundary_cursor(cursor) && up
+        {
+            WrapBoundaryAffinity::Upstream
+        } else {
+            WrapBoundaryAffinity::Downstream
+        }
+    }
+
     pub(super) fn handle_large_editor_click(
         &mut self,
         output: &TextEditOutput,
@@ -114,49 +221,21 @@ impl LocalPasteApp {
         }
     }
 
-    pub(super) fn is_virtual_editor_mode(&self) -> bool {
-        self.editor_mode == EditorMode::VirtualEditor
-    }
-
-    pub(super) fn active_text_len_bytes(&self) -> usize {
-        if self.is_virtual_editor_mode() {
-            self.virtual_editor_buffer.len_bytes()
-        } else {
-            self.selected_content.len()
-        }
-    }
-
-    pub(super) fn active_text_chars(&self) -> usize {
-        if self.is_virtual_editor_mode() {
-            self.virtual_editor_buffer.len_chars()
-        } else {
-            self.selected_content.chars_len()
-        }
-    }
-
-    pub(super) fn active_revision(&self) -> u64 {
-        if self.is_virtual_editor_mode() {
-            self.virtual_editor_buffer.revision()
-        } else {
-            self.selected_content.revision()
-        }
-    }
-
-    pub(super) fn active_snapshot(&self) -> String {
-        if self.is_virtual_editor_mode() {
-            self.virtual_editor_buffer.to_string()
-        } else {
-            self.selected_content.to_string()
-        }
-    }
-
     pub(super) fn reset_virtual_editor(&mut self, text: &str) {
         self.virtual_editor_buffer.reset(text);
         self.virtual_editor_state = VirtualEditorState::default();
         self.virtual_editor_history = VirtualEditorHistory::default();
         self.virtual_layout = WrapLayoutCache::default();
+        self.virtual_galley_cache = VirtualGalleyCache::default();
+        self.virtual_line_scratch.clear();
+        self.reset_virtual_caret_blink();
+        self.highlight_edit_hint = None;
         self.virtual_drag_active = false;
         self.reset_virtual_click_streak();
+    }
+
+    pub(super) fn reset_virtual_caret_blink(&mut self) {
+        self.virtual_caret_phase_start = Instant::now();
     }
 
     pub(super) fn reset_virtual_click_streak(&mut self) {
@@ -220,19 +299,39 @@ impl LocalPasteApp {
     }
 
     pub(super) fn virtual_word_left(&self, cursor: usize) -> usize {
-        if cursor == 0 {
+        let rope = self.virtual_editor_buffer.rope();
+        let mut idx = self
+            .clamp_virtual_cursor_for_render(cursor)
+            .min(self.virtual_editor_buffer.len_chars());
+        if idx == 0 {
             return 0;
         }
-        let rope = self.virtual_editor_buffer.rope();
-        let mut idx = cursor.min(self.virtual_editor_buffer.len_chars());
-        while idx > 0 && rope.char(idx - 1).is_whitespace() {
+
+        while idx > 0 {
+            let line_end = self.virtual_line_render_boundary(idx).0;
+            if idx > line_end {
+                idx = line_end;
+                continue;
+            }
+            if !rope.char(idx - 1).is_whitespace() {
+                break;
+            }
             idx -= 1;
         }
         if idx == 0 {
             return 0;
         }
         let kind = is_editor_word_char(rope.char(idx - 1));
-        while idx > 0 && is_editor_word_char(rope.char(idx - 1)) == kind {
+
+        while idx > 0 {
+            let line_end = self.virtual_line_render_boundary(idx).0;
+            if idx > line_end {
+                idx = line_end;
+                continue;
+            }
+            if is_editor_word_char(rope.char(idx - 1)) != kind {
+                break;
+            }
             idx -= 1;
         }
         idx
@@ -241,15 +340,30 @@ impl LocalPasteApp {
     pub(super) fn virtual_word_right(&self, cursor: usize) -> usize {
         let rope = self.virtual_editor_buffer.rope();
         let len = self.virtual_editor_buffer.len_chars();
-        let mut idx = cursor.min(len);
-        while idx < len && rope.char(idx).is_whitespace() {
+        let mut idx = self.clamp_virtual_cursor_for_render(cursor).min(len);
+        while idx < len {
+            let (line_end, capped) = self.virtual_line_render_boundary(idx);
+            if capped && idx >= line_end {
+                return line_end;
+            }
+            if !rope.char(idx).is_whitespace() {
+                break;
+            }
             idx += 1;
         }
         if idx >= len {
             return len;
         }
+
         let kind = is_editor_word_char(rope.char(idx));
-        while idx < len && is_editor_word_char(rope.char(idx)) == kind {
+        while idx < len {
+            let (line_end, capped) = self.virtual_line_render_boundary(idx);
+            if capped && idx >= line_end {
+                return line_end;
+            }
+            if is_editor_word_char(rope.char(idx)) != kind {
+                break;
+            }
             idx += 1;
         }
         idx
@@ -260,29 +374,33 @@ impl LocalPasteApp {
         cursor: usize,
         desired_col_in_row: usize,
         up: bool,
+        boundary_affinity: WrapBoundaryAffinity,
     ) -> usize {
-        let cols = self.virtual_layout.wrap_columns().max(1);
-        let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
-        let line_len = self.virtual_editor_buffer.line_len_chars(line);
-        let rows = ((line_len.max(1) - 1) / cols) + 1;
-        let row = (col / cols).min(rows.saturating_sub(1));
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
+        let metrics = self.virtual_cursor_wrap_metrics(cursor);
+        let rows = self.virtual_layout.line_visual_rows(metrics.line).max(1);
+        let on_internal_wrap_boundary =
+            is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols);
+        let mut row = (metrics.display_col / metrics.wrap_cols).min(rows.saturating_sub(1));
+        if on_internal_wrap_boundary && boundary_affinity == WrapBoundaryAffinity::Upstream {
+            row = row.saturating_sub(1);
+        }
         let line_count = self.virtual_editor_buffer.line_count();
 
         let target_line_and_row: Option<(usize, usize)> = if up {
             if row > 0 {
-                Some((line, row - 1))
-            } else if line > 0 {
-                let prev_line = line - 1;
-                let prev_len = self.virtual_editor_buffer.line_len_chars(prev_line);
-                let prev_rows = ((prev_len.max(1) - 1) / cols) + 1;
+                Some((metrics.line, row - 1))
+            } else if metrics.line > 0 {
+                let prev_line = metrics.line - 1;
+                let prev_rows = self.virtual_layout.line_visual_rows(prev_line).max(1);
                 Some((prev_line, prev_rows.saturating_sub(1)))
             } else {
                 None
             }
         } else if row + 1 < rows {
-            Some((line, row + 1))
-        } else if line + 1 < line_count {
-            Some((line + 1, 0usize))
+            Some((metrics.line, row + 1))
+        } else if metrics.line + 1 < line_count {
+            Some((metrics.line + 1, 0usize))
         } else {
             None
         };
@@ -294,15 +412,28 @@ impl LocalPasteApp {
                 self.virtual_editor_buffer.len_chars()
             };
         };
-        let target_len = self.virtual_editor_buffer.line_len_chars(target_line);
-        let row_start = target_row.saturating_mul(cols);
-        let line_col = if row_start >= target_len {
-            target_len
+        let target_line_cols = self
+            .virtual_layout
+            .line_columns(&self.virtual_editor_buffer, target_line);
+        let row_start = target_row.saturating_mul(metrics.wrap_cols);
+        let desired_col_in_row = desired_col_in_row.min(metrics.wrap_cols);
+        let target_display_col = if row_start >= target_line_cols {
+            target_line_cols
         } else {
-            row_start + desired_col_in_row.min(target_len - row_start)
+            // Clamp to the target row boundary so vertical navigation can land at
+            // end-of-row for shorter rows instead of one column early.
+            let row_len = target_line_cols
+                .saturating_sub(row_start)
+                .min(metrics.wrap_cols);
+            row_start + desired_col_in_row.min(row_len)
         };
+        let target_line_char = self.virtual_layout.line_display_column_to_char(
+            &self.virtual_editor_buffer,
+            target_line,
+            target_display_col,
+        );
         self.virtual_editor_buffer
-            .line_col_to_char(target_line, line_col)
+            .line_col_to_char(target_line, target_line_char)
     }
 
     pub(super) fn virtual_selection_for_line(
@@ -323,6 +454,52 @@ impl LocalPasteApp {
         Some(local_start..local_end)
     }
 
+    fn apply_virtual_layout_delta_with_recovery(
+        &mut self,
+        delta: VirtualEditDelta,
+        mut galley_apply_ms: Option<&mut f32>,
+    ) -> bool {
+        if self
+            .virtual_layout
+            .apply_delta(&self.virtual_editor_buffer, delta)
+        {
+            let galley_started = galley_apply_ms.as_ref().map(|_| Instant::now());
+            self.virtual_galley_cache
+                .apply_delta(delta, self.virtual_editor_buffer.line_count());
+            if let (Some(slot), Some(started)) = (galley_apply_ms.as_mut(), galley_started) {
+                **slot = started.elapsed().as_secs_f32() * 1000.0;
+            }
+            return true;
+        }
+        let rebuilt = self
+            .virtual_layout
+            .rebuild_with_cached_geometry(&self.virtual_editor_buffer);
+        if !rebuilt {
+            self.virtual_layout = WrapLayoutCache::default();
+        }
+        let galley_started = galley_apply_ms.as_ref().map(|_| Instant::now());
+        self.virtual_galley_cache.evict_all();
+        if let (Some(slot), Some(started)) = (galley_apply_ms.as_mut(), galley_started) {
+            **slot = started.elapsed().as_secs_f32() * 1000.0;
+        }
+        rebuilt
+    }
+
+    fn cancel_virtual_ime_preedit_if_active(&mut self, now: Instant) -> bool {
+        let had_preedit = self.virtual_editor_state.ime.preedit_range.is_some()
+            || !self.virtual_editor_state.ime.preedit_text.is_empty();
+        let changed = if let Some(range) = self.virtual_editor_state.ime.preedit_range.take() {
+            self.replace_virtual_range(range, "", EditIntent::Other, false, now)
+        } else {
+            false
+        };
+        if had_preedit {
+            self.virtual_editor_state.ime.preedit_text.clear();
+            self.virtual_editor_state.ime.enabled = false;
+        }
+        changed
+    }
+
     pub(super) fn replace_virtual_range(
         &mut self,
         range: Range<usize>,
@@ -336,18 +513,56 @@ impl LocalPasteApp {
         if start == end && replacement.is_empty() {
             return false;
         }
+        let start_line = self.virtual_editor_buffer.char_to_line_col(start).0;
         let deleted = self.virtual_editor_buffer.slice_chars(start..end);
-        let before_cursor = self.virtual_editor_state.cursor();
+        let deleted_chars = end.saturating_sub(start);
+        let inserted_chars = replacement.chars().count();
+        let inserted_newlines = replacement.chars().filter(|ch| *ch == '\n').count();
+        let deleted_newlines = deleted.chars().filter(|ch| *ch == '\n').count();
+        let touched_lines = inserted_newlines.max(deleted_newlines).saturating_add(1);
+        let before_cursor =
+            self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
+        let perf_enabled = self.perf_log_enabled;
+        let rope_started = perf_enabled.then(Instant::now);
         let delta = self
             .virtual_editor_buffer
             .replace_char_range(start..end, replacement);
+        let rope_apply_ms =
+            rope_started.map_or(0.0, |started| started.elapsed().as_secs_f32() * 1000.0);
         if let Some(delta) = delta {
-            let _ = self
-                .virtual_layout
-                .apply_delta(&self.virtual_editor_buffer, delta);
+            let mut galley_apply_ms = 0.0f32;
+            let layout_started = perf_enabled.then(Instant::now);
+            let layout_recovered = self.apply_virtual_layout_delta_with_recovery(
+                delta,
+                perf_enabled.then_some(&mut galley_apply_ms),
+            );
+            let layout_apply_ms =
+                layout_started.map_or(0.0, |started| started.elapsed().as_secs_f32() * 1000.0);
+            self.highlight_edit_hint = Some(VirtualEditHint {
+                start_line,
+                touched_lines,
+                inserted_chars,
+                deleted_chars,
+            });
+            if perf_enabled {
+                info!(
+                    target: "localpaste_gui::perf",
+                    event = "virtual_edit_apply",
+                    revision = self.virtual_editor_buffer.revision(),
+                    start_char = start,
+                    end_char = end,
+                    inserted_chars = inserted_chars,
+                    deleted_chars = deleted_chars,
+                    rope_apply_ms = rope_apply_ms,
+                    layout_apply_ms = layout_apply_ms,
+                    galley_apply_ms = galley_apply_ms,
+                    layout_recovered = layout_recovered,
+                    "virtual editor mutation + cache patch timings"
+                );
+            }
         }
-        let inserted_chars = replacement.chars().count();
         let after_cursor = start.saturating_add(inserted_chars);
+        let after_cursor = self.clamp_virtual_cursor_for_render(after_cursor);
         self.virtual_editor_state
             .set_cursor(after_cursor, self.virtual_editor_buffer.len_chars());
         if record_history {
@@ -375,6 +590,8 @@ impl LocalPasteApp {
         let mut result = VirtualApplyResult::default();
         let now = Instant::now();
         for command in commands {
+            let cursor_before = self.virtual_editor_state.cursor();
+            let changed_before = result.changed;
             match command {
                 VirtualInputCommand::SelectAll => {
                     self.virtual_editor_state
@@ -387,6 +604,7 @@ impl LocalPasteApp {
                     }
                 }
                 VirtualInputCommand::Cut => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     if let Some(range) = self.virtual_editor_state.selection_range() {
                         if let Some(selection) = self.virtual_selected_text() {
                             ctx.send_cmd(egui::OutputCommand::CopyText(selection));
@@ -400,6 +618,7 @@ impl LocalPasteApp {
                     }
                 }
                 VirtualInputCommand::Paste(text) => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let cursor = self.virtual_editor_state.cursor();
                     let range = self
                         .virtual_editor_state
@@ -428,6 +647,7 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::InsertNewline => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let cursor = self.virtual_editor_state.cursor();
                     let range = self
                         .virtual_editor_state
@@ -438,6 +658,7 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::InsertTab => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let cursor = self.virtual_editor_state.cursor();
                     let range = self
                         .virtual_editor_state
@@ -448,6 +669,7 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::Backspace { word } => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     if let Some(range) = self.virtual_editor_state.selection_range() {
                         result.changed |= self.replace_virtual_range(
                             range,
@@ -477,6 +699,7 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::DeleteForward { word } => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     if let Some(range) = self.virtual_editor_state.selection_range() {
                         result.changed |= self.replace_virtual_range(
                             range,
@@ -521,6 +744,7 @@ impl LocalPasteApp {
                     } else {
                         cursor.saturating_sub(1)
                     };
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -547,6 +771,7 @@ impl LocalPasteApp {
                             .saturating_add(1)
                             .min(self.virtual_editor_buffer.len_chars())
                     };
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -558,7 +783,9 @@ impl LocalPasteApp {
                     let (line, _) = self
                         .virtual_editor_buffer
                         .char_to_line_col(self.virtual_editor_state.cursor());
-                    let target = self.virtual_editor_buffer.line_col_to_char(line, 0);
+                    let target = self.clamp_virtual_cursor_for_render(
+                        self.virtual_editor_buffer.line_col_to_char(line, 0),
+                    );
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -572,7 +799,8 @@ impl LocalPasteApp {
                         .char_to_line_col(self.virtual_editor_state.cursor());
                     let target = self
                         .virtual_editor_buffer
-                        .line_col_to_char(line, self.virtual_editor_buffer.line_len_chars(line));
+                        .line_col_to_char(line, self.virtual_line_render_chars(line));
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -581,45 +809,57 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::MoveUp { select } => {
-                    let (_, col) = self
-                        .virtual_editor_buffer
-                        .char_to_line_col(self.virtual_editor_state.cursor());
-                    let cols = self.virtual_layout.wrap_columns().max(1);
-                    let preferred = self
-                        .virtual_editor_state
-                        .preferred_column()
-                        .unwrap_or(col % cols);
+                    let preferred =
+                        self.virtual_editor_state
+                            .preferred_column()
+                            .unwrap_or_else(|| {
+                                self.virtual_preferred_column_for_cursor(
+                                    self.virtual_editor_state.cursor(),
+                                )
+                            });
                     self.virtual_editor_state.set_preferred_column(preferred);
+                    let affinity = self.virtual_editor_state.wrap_boundary_affinity();
                     let target = self.virtual_move_vertical_target(
                         self.virtual_editor_state.cursor(),
                         preferred,
                         true,
+                        affinity,
                     );
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
                         *select,
                     );
+                    self.virtual_editor_state.set_wrap_boundary_affinity(
+                        self.vertical_boundary_affinity_for_target(target, preferred, true),
+                    );
                 }
                 VirtualInputCommand::MoveDown { select } => {
-                    let (_, col) = self
-                        .virtual_editor_buffer
-                        .char_to_line_col(self.virtual_editor_state.cursor());
-                    let cols = self.virtual_layout.wrap_columns().max(1);
-                    let preferred = self
-                        .virtual_editor_state
-                        .preferred_column()
-                        .unwrap_or(col % cols);
+                    let preferred =
+                        self.virtual_editor_state
+                            .preferred_column()
+                            .unwrap_or_else(|| {
+                                self.virtual_preferred_column_for_cursor(
+                                    self.virtual_editor_state.cursor(),
+                                )
+                            });
                     self.virtual_editor_state.set_preferred_column(preferred);
+                    let affinity = self.virtual_editor_state.wrap_boundary_affinity();
                     let target = self.virtual_move_vertical_target(
                         self.virtual_editor_state.cursor(),
                         preferred,
                         false,
+                        affinity,
                     );
+                    let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
                         *select,
+                    );
+                    self.virtual_editor_state.set_wrap_boundary_affinity(
+                        self.vertical_boundary_affinity_for_target(target, preferred, false),
                     );
                 }
                 VirtualInputCommand::PageUp { select } => {
@@ -627,10 +867,18 @@ impl LocalPasteApp {
                         .floor() as usize)
                         .max(1);
                     let mut target = self.virtual_editor_state.cursor();
-                    let preferred = self.virtual_editor_state.preferred_column().unwrap_or(0);
+                    let preferred = self
+                        .virtual_editor_state
+                        .preferred_column()
+                        .unwrap_or_else(|| self.virtual_preferred_column_for_cursor(target));
                     self.virtual_editor_state.set_preferred_column(preferred);
+                    let mut affinity = self.virtual_editor_state.wrap_boundary_affinity();
                     for _ in 0..rows {
-                        target = self.virtual_move_vertical_target(target, preferred, true);
+                        target =
+                            self.virtual_move_vertical_target(target, preferred, true, affinity);
+                        target = self.clamp_virtual_cursor_for_render(target);
+                        affinity =
+                            self.vertical_boundary_affinity_for_target(target, preferred, true);
                         if target == 0 {
                             break;
                         }
@@ -640,17 +888,26 @@ impl LocalPasteApp {
                         self.virtual_editor_buffer.len_chars(),
                         *select,
                     );
+                    self.virtual_editor_state
+                        .set_wrap_boundary_affinity(affinity);
                 }
                 VirtualInputCommand::PageDown { select } => {
                     let rows = ((self.virtual_viewport_height / self.virtual_line_height.max(1.0))
                         .floor() as usize)
                         .max(1);
                     let mut target = self.virtual_editor_state.cursor();
-                    let preferred = self.virtual_editor_state.preferred_column().unwrap_or(0);
+                    let preferred = self
+                        .virtual_editor_state
+                        .preferred_column()
+                        .unwrap_or_else(|| self.virtual_preferred_column_for_cursor(target));
                     self.virtual_editor_state.set_preferred_column(preferred);
+                    let mut affinity = self.virtual_editor_state.wrap_boundary_affinity();
                     for _ in 0..rows {
-                        let next = self.virtual_move_vertical_target(target, preferred, false);
-                        target = next;
+                        let next =
+                            self.virtual_move_vertical_target(target, preferred, false, affinity);
+                        target = self.clamp_virtual_cursor_for_render(next);
+                        affinity =
+                            self.vertical_boundary_affinity_for_target(target, preferred, false);
                         if target == self.virtual_editor_buffer.len_chars() {
                             break;
                         }
@@ -660,31 +917,33 @@ impl LocalPasteApp {
                         self.virtual_editor_buffer.len_chars(),
                         *select,
                     );
+                    self.virtual_editor_state
+                        .set_wrap_boundary_affinity(affinity);
                 }
                 VirtualInputCommand::Undo => {
-                    self.virtual_editor_state.ime.preedit_range = None;
-                    self.virtual_editor_state.ime.preedit_text.clear();
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let delta = self.virtual_editor_history.undo(
                         &mut self.virtual_editor_buffer,
                         &mut self.virtual_editor_state,
                     );
                     if let Some(delta) = delta {
                         result.changed = true;
-                        let _ = self
-                            .virtual_layout
-                            .apply_delta(&self.virtual_editor_buffer, delta);
+                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta, None);
+                        let _cursor_clamped = self.clamp_virtual_cursor_state_for_render();
+                        self.highlight_edit_hint = None;
                     }
                 }
                 VirtualInputCommand::Redo => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let delta = self.virtual_editor_history.redo(
                         &mut self.virtual_editor_buffer,
                         &mut self.virtual_editor_state,
                     );
                     if let Some(delta) = delta {
                         result.changed = true;
-                        let _ = self
-                            .virtual_layout
-                            .apply_delta(&self.virtual_editor_buffer, delta);
+                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta, None);
+                        let _cursor_clamped = self.clamp_virtual_cursor_state_for_render();
+                        self.highlight_edit_hint = None;
                     }
                 }
                 VirtualInputCommand::ImeEnabled => {
@@ -742,14 +1001,16 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::ImeDisabled => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     self.virtual_editor_state.ime.enabled = false;
-                    if let Some(range) = self.virtual_editor_state.ime.preedit_range.take() {
-                        result.changed |=
-                            self.replace_virtual_range(range, "", EditIntent::Other, false, now);
-                    }
                     self.virtual_editor_state.ime.preedit_text.clear();
                     self.virtual_editor_state.clear_preferred_column();
                 }
+            }
+            if self.virtual_editor_state.cursor() != cursor_before
+                || result.changed != changed_before
+            {
+                self.reset_virtual_caret_blink();
             }
         }
         result

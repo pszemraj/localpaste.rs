@@ -41,6 +41,20 @@ fn test_summary(id: &str, name: &str, language: Option<&str>, content_len: usize
     }
 }
 
+pub(super) fn shaped_test_galley() -> Arc<egui::Galley> {
+    let mut galley = None;
+    egui::__run_test_ctx(|ctx| {
+        galley = Some(ctx.fonts_mut(|fonts| {
+            fonts.layout_no_wrap(
+                "x".to_owned(),
+                egui::FontId::monospace(14.0),
+                egui::Color32::LIGHT_GRAY,
+            )
+        }));
+    });
+    galley.expect("test galley")
+}
+
 fn make_app() -> TestHarness {
     let (cmd_tx, cmd_rx) = unbounded();
     let (_evt_tx, evt_rx) = unbounded();
@@ -100,6 +114,9 @@ fn make_app() -> TestHarness {
         virtual_editor_state: VirtualEditorState::default(),
         virtual_editor_history: VirtualEditorHistory::default(),
         virtual_layout: WrapLayoutCache::default(),
+        virtual_galley_cache: VirtualGalleyCache::default(),
+        virtual_line_scratch: String::new(),
+        virtual_caret_phase_start: Instant::now(),
         virtual_drag_active: false,
         virtual_editor_active: false,
         virtual_viewport_height: 0.0,
@@ -109,7 +126,9 @@ fn make_app() -> TestHarness {
         highlight_pending: None,
         highlight_render: None,
         highlight_staged: None,
+        highlight_staged_invalidation: None,
         highlight_version: 0,
+        highlight_edit_hint: None,
         syntect: SyntectSettings::default(),
         db_path: db_path_str,
         locks,

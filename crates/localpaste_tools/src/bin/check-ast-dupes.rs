@@ -536,45 +536,59 @@ fn ends_with_segments(candidate: &[String], suffix: &[String]) -> bool {
 }
 
 fn print_dead_findings(functions: &[FunctionInfo], dead: &[DeadFinding], args: &Args) {
-    if dead.is_empty() {
-        println!("likely-dead internal symbols: none");
-        return;
-    }
-
-    println!(
-        "likely-dead internal symbols (heuristic, top {}, pub included: {}):",
-        dead.len(),
-        args.include_pub
+    print_dead_report(
+        functions,
+        dead,
+        format!(
+            "likely-dead internal symbols (heuristic, top {}, pub included: {}):",
+            dead.len(),
+            args.include_pub
+        )
+        .as_str(),
+        "likely-dead internal symbols: none",
+        |_finding| String::new(),
     );
-    for finding in dead {
-        let info = &functions[finding.id];
-        println!(
-            "  {}:{} `{}` vis={:?}",
-            normalize_path(info.file.as_path()),
-            info.line,
-            info.symbol,
-            info.vis
-        );
-    }
 }
 
 fn print_visibility_candidates(functions: &[FunctionInfo], findings: &[DeadFinding]) {
+    print_dead_report(
+        functions,
+        findings,
+        "visibility-tighten candidates (used only in defining module):",
+        "visibility-tighten candidates (pub(crate)/restricted): none",
+        |finding| {
+            format!(
+                " refs_total={} refs_outside_module={}",
+                finding.refs_total, finding.refs_outside_module
+            )
+        },
+    );
+}
+
+fn print_dead_report<F>(
+    functions: &[FunctionInfo],
+    findings: &[DeadFinding],
+    header: &str,
+    empty_line: &str,
+    mut extra: F,
+) where
+    F: FnMut(&DeadFinding) -> String,
+{
     if findings.is_empty() {
-        println!("visibility-tighten candidates (pub(crate)/restricted): none");
+        println!("{}", empty_line);
         return;
     }
 
-    println!("visibility-tighten candidates (used only in defining module):");
+    println!("{}", header);
     for finding in findings {
         let info = &functions[finding.id];
         println!(
-            "  {}:{} `{}` vis={:?} refs_total={} refs_outside_module={}",
+            "  {}:{} `{}` vis={:?}{}",
             normalize_path(info.file.as_path()),
             info.line,
             info.symbol,
             info.vis,
-            finding.refs_total,
-            finding.refs_outside_module
+            extra(finding)
         );
     }
 }
@@ -842,16 +856,18 @@ fn attr_meta_contains(attr: &Attribute, attr_name: &str, needle: &str) -> bool {
     attr.path().is_ident(attr_name) && attr.meta.to_token_stream().to_string().contains(needle)
 }
 
-fn has_cfg_attr(attrs: &[Attribute]) -> bool {
+fn has_attr_meta_contains(attrs: &[Attribute], attr_name: &str, needle: &str) -> bool {
     attrs
         .iter()
-        .any(|attr| attr_meta_contains(attr, "cfg", "test"))
+        .any(|attr| attr_meta_contains(attr, attr_name, needle))
+}
+
+fn has_cfg_attr(attrs: &[Attribute]) -> bool {
+    has_attr_meta_contains(attrs, "cfg", "test")
 }
 
 fn allows_dead_code(attrs: &[Attribute]) -> bool {
-    attrs
-        .iter()
-        .any(|attr| attr_meta_contains(attr, "allow", "dead_code"))
+    has_attr_meta_contains(attrs, "allow", "dead_code")
 }
 
 fn normalize_path(path: &Path) -> String {

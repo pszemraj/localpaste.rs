@@ -4,6 +4,8 @@ use ropey::Rope;
 use std::fmt;
 use std::ops::Range;
 
+use crate::app::text_coords::line_for_char;
+
 /// Delta summary for a virtual editor text mutation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct VirtualEditDelta {
@@ -15,10 +17,6 @@ pub(crate) struct VirtualEditDelta {
     pub(crate) new_end_line: usize,
     /// Character delta (`new_chars - old_chars`) from the mutation.
     pub(crate) char_delta: isize,
-}
-
-fn line_for_char(rope: &Rope, char_index: usize) -> usize {
-    rope.char_to_line(char_index.min(rope.len_chars()))
 }
 
 /// Rope-backed content buffer used by the virtualized editor path.
@@ -94,13 +92,26 @@ impl RopeBuffer {
     }
 
     /// Returns a line as UTF-8 without trailing `\\r?\\n`.
+    #[cfg(test)]
     pub(crate) fn line_without_newline(&self, line: usize) -> String {
+        let mut out = String::new();
+        self.line_without_newline_into(line, &mut out);
+        out
+    }
+
+    /// Writes a line as UTF-8 without trailing `\\r?\\n` into `out`.
+    pub(crate) fn line_without_newline_into(&self, line: usize, out: &mut String) {
+        out.clear();
         if line >= self.line_count() {
-            return String::new();
+            return;
         }
         let line_slice = self.rope.line(line);
         let keep_chars = self.line_len_chars(line);
-        line_slice.slice(..keep_chars).to_string()
+        let trimmed = line_slice.slice(..keep_chars);
+        out.reserve(trimmed.len_bytes());
+        for chunk in trimmed.chunks() {
+            out.push_str(chunk);
+        }
     }
 
     /// Returns the character length of a line without trailing `\\r?\\n`.
@@ -133,6 +144,21 @@ impl RopeBuffer {
             return String::new();
         }
         self.rope.slice(start..end).to_string()
+    }
+
+    /// Writes a UTF-8 snapshot for the given char range into `out`.
+    pub(crate) fn slice_chars_into(&self, range: Range<usize>, out: &mut String) {
+        out.clear();
+        let start = range.start.min(self.char_len);
+        let end = range.end.min(self.char_len);
+        if start >= end {
+            return;
+        }
+        let slice = self.rope.slice(start..end);
+        out.reserve(slice.len_bytes());
+        for chunk in slice.chunks() {
+            out.push_str(chunk);
+        }
     }
 
     /// Replace a char range with new text.
@@ -174,7 +200,10 @@ impl RopeBuffer {
 
 impl fmt::Display for RopeBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.rope.to_string().as_str())
+        for chunk in self.rope.chunks() {
+            f.write_str(chunk)?;
+        }
+        Ok(())
     }
 }
 
@@ -200,5 +229,32 @@ mod tests {
         assert!(delta.new_end_line >= 1);
         assert_eq!(buf.line_without_newline(1), "dos");
         assert_eq!(buf.line_without_newline(2), "zwei");
+    }
+
+    #[test]
+    fn line_without_newline_into_overwrites_existing_buffer() {
+        let buf = RopeBuffer::new("alpha\nbeta");
+        let mut out = String::from("stale");
+        buf.line_without_newline_into(0, &mut out);
+        assert_eq!(out, "alpha");
+        buf.line_without_newline_into(1, &mut out);
+        assert_eq!(out, "beta");
+    }
+
+    #[test]
+    fn slice_chars_into_overwrites_existing_buffer() {
+        let buf = RopeBuffer::new("alpha\nbeta\ngamma");
+        let mut out = String::from("stale");
+        buf.slice_chars_into(6..10, &mut out);
+        assert_eq!(out, "beta");
+        buf.slice_chars_into(0..5, &mut out);
+        assert_eq!(out, "alpha");
+    }
+
+    #[test]
+    fn display_matches_buffer_snapshot() {
+        let text = format!("{}\n{}\n", "alpha".repeat(64), "beta".repeat(64));
+        let buf = RopeBuffer::new(text.as_str());
+        assert_eq!(buf.to_string(), text);
     }
 }

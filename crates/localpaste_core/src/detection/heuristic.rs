@@ -1,5 +1,6 @@
 //! Heuristic language detection fallback for text content.
 
+use super::looks_like_yaml;
 use crate::models::paste::is_markdown_content;
 
 /// Best-effort language detection based on simple heuristics.
@@ -14,6 +15,17 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     let sample = utf8_prefix(trimmed, SAMPLE_MAX_BYTES);
     let lower = sample.to_ascii_lowercase();
     let lines = || sample.lines().take(SAMPLE_MAX_LINES);
+    let shebang = shebang_interpreter(sample);
+
+    if matches!(
+        shebang.as_deref(),
+        Some("python" | "python2" | "python3" | "pypy" | "pypy3")
+    ) {
+        return Some("python".to_string());
+    }
+    if matches!(shebang.as_deref(), Some("node" | "nodejs" | "deno" | "bun")) {
+        return Some("javascript".to_string());
+    }
 
     // JSON: structural check without full parsing (avoids expensive serde_json).
     if sample.starts_with('{') || sample.starts_with('[') {
@@ -57,10 +69,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         .iter()
         .filter(|kw| lower.contains(**kw))
         .count();
-    if lower.starts_with("#!/usr/bin/env perl")
-        || lower.starts_with("#!/usr/bin/perl")
-        || perl_hits >= 2
-    {
+    if matches!(shebang.as_deref(), Some("perl")) || perl_hits >= 2 {
         return Some("perl".to_string());
     }
 
@@ -92,23 +101,15 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     .iter()
     .filter(|hit| **hit)
     .count();
-    if lower.starts_with("#!/bin/")
-        || lower.starts_with("#!/usr/bin/env bash")
-        || (shell_hits >= 2 && lower.contains('\n'))
-    {
+    let shebang_is_shell = matches!(
+        shebang.as_deref(),
+        Some("sh" | "bash" | "zsh" | "ksh" | "dash" | "fish" | "ash")
+    );
+    if shebang_is_shell || (shell_hits >= 2 && lower.contains('\n')) {
         return Some("shell".to_string());
     }
 
-    let yaml_pairs = lines()
-        .filter(|l| {
-            let t = l.trim();
-            if t.is_empty() || t.starts_with('#') {
-                return false;
-            }
-            (t.starts_with("- ") || t.contains(": ")) && !t.contains('{')
-        })
-        .count();
-    if ((lower.starts_with("---") && yaml_pairs >= 1) || yaml_pairs >= 2) && !sample.contains('{') {
+    if looks_like_yaml(sample) {
         return Some("yaml".to_string());
     }
 
@@ -127,6 +128,14 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         .count();
     if has_toml_header && toml_assignments >= 1 {
         return Some("toml".to_string());
+    }
+
+    if looks_like_python_from_import(sample) {
+        return Some("python".to_string());
+    }
+
+    if looks_like_sql(sample) {
+        return Some("sql".to_string());
     }
 
     if is_markdown_content(sample) {
@@ -220,7 +229,6 @@ pub(crate) fn detect(content: &str) -> Option<String> {
             &[
                 "def ",
                 "import ",
-                "from ",
                 "class ",
                 "self",
                 "async def",
@@ -297,20 +305,6 @@ pub(crate) fn detect(content: &str) -> Option<String> {
             2,
         ),
         (
-            "sql",
-            &[
-                "select ",
-                "insert ",
-                "update ",
-                "delete ",
-                " from ",
-                " where ",
-                " join ",
-                "create table",
-            ],
-            2,
-        ),
-        (
             "latex",
             &[
                 "\\begin{",
@@ -359,7 +353,14 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         ),
         (
             "lua",
-            &["local ", "function ", "end", "require(", "then", "elseif"],
+            &[
+                "local ",
+                "function ",
+                "require(",
+                "elseif",
+                "pairs(",
+                "ipairs(",
+            ],
             2,
         ),
         (
@@ -401,6 +402,138 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     }
 
     None
+}
+
+fn shebang_interpreter(sample: &str) -> Option<String> {
+    let first_line = sample.lines().next()?.trim();
+    let interpreter_line = first_line.strip_prefix("#!")?.trim();
+    if interpreter_line.is_empty() {
+        return None;
+    }
+
+    let mut parts = interpreter_line.split_whitespace();
+    let first = parts.next()?;
+    let mut interpreter = first;
+    if path_basename(first).eq_ignore_ascii_case("env") {
+        for arg in parts {
+            if arg.starts_with('-') {
+                continue;
+            }
+            interpreter = arg;
+            break;
+        }
+    }
+
+    let basename = path_basename(interpreter).trim();
+    if basename.is_empty() {
+        return None;
+    }
+    Some(basename.to_ascii_lowercase())
+}
+
+fn path_basename(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+fn looks_like_python_from_import(sample: &str) -> bool {
+    sample.lines().take(512).any(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return false;
+        }
+        let Some(rest) = trimmed.strip_prefix("from ") else {
+            return false;
+        };
+        let Some((module, imported)) = rest.split_once(" import ") else {
+            return false;
+        };
+        let module = module.trim();
+        let imported = imported.trim();
+        !module.is_empty()
+            && !imported.is_empty()
+            && module
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
+    })
+}
+
+fn looks_like_sql(sample: &str) -> bool {
+    sample.lines().take(512).any(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("--") || trimmed.starts_with('#') {
+            return false;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        looks_like_select_sql_line(lower.as_str())
+            || looks_like_insert_sql_line(lower.as_str())
+            || looks_like_update_sql_line(lower.as_str())
+            || looks_like_delete_sql_line(lower.as_str())
+            || lower.starts_with("create table ")
+            || lower.starts_with("alter table ")
+            || lower.starts_with("drop table ")
+    })
+}
+
+fn looks_like_select_sql_line(line: &str) -> bool {
+    let Some(after_select) = line.strip_prefix("select ") else {
+        return false;
+    };
+    let Some((projection, from_tail)) = after_select.split_once(" from ") else {
+        return false;
+    };
+    let projection = projection.trim();
+    if projection.is_empty() {
+        return false;
+    }
+    let projection_sqlish = projection.contains(',')
+        || projection.contains('*')
+        || projection.contains('.')
+        || projection.contains('(')
+        || is_sql_identifier(projection);
+    if !projection_sqlish {
+        return false;
+    }
+
+    let source = from_tail
+        .split_whitespace()
+        .next()
+        .map(|token| token.trim_matches(|ch: char| matches!(ch, ',' | ';')))
+        .unwrap_or("");
+    is_sql_identifier_path(source)
+}
+
+fn looks_like_insert_sql_line(line: &str) -> bool {
+    line.starts_with("insert into ")
+        && (line.contains(" values ")
+            || line.contains(" select ")
+            || line.contains(" default values"))
+}
+
+fn looks_like_update_sql_line(line: &str) -> bool {
+    line.starts_with("update ") && line.contains(" set ")
+}
+
+fn looks_like_delete_sql_line(line: &str) -> bool {
+    line.starts_with("delete from ") && (line.contains(" where ") || line.ends_with(';'))
+}
+
+fn is_sql_identifier_path(token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    token.split('.').all(is_sql_identifier)
+}
+
+fn is_sql_identifier(token: &str) -> bool {
+    let token = token.trim_matches(|ch| matches!(ch, '"' | '\'' | '`' | '[' | ']'));
+    let mut chars = token.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn utf8_prefix(content: &str, max_bytes: usize) -> &str {

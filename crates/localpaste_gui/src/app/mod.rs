@@ -3,9 +3,12 @@
 mod editor;
 mod highlight;
 mod highlight_flow;
+mod perf_trace;
 mod shutdown;
+mod state_accessors;
 mod state_ops;
 mod style;
+mod text_coords;
 mod ui;
 mod util;
 mod virtual_editor;
@@ -17,13 +20,15 @@ use editor::{EditorBuffer, EditorLineIndex, EditorMode};
 use eframe::egui::{self, text::CCursor, Color32, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
 use highlight::{
-    build_virtual_line_job, spawn_highlight_worker, syntect_language_hint, syntect_theme_key,
-    EditorLayoutCache, EditorLayoutRequest, HighlightRender, HighlightRequestMeta, HighlightWorker,
-    SyntectSettings,
+    build_virtual_line_job, build_virtual_line_segment_job_owned, spawn_highlight_worker,
+    syntect_language_hint, syntect_theme_key, EditorLayoutCache, EditorLayoutRequest,
+    HighlightRender, HighlightRequestMeta, HighlightRequestText, HighlightWorker,
+    HighlightWorkerResult, SyntectSettings, VirtualEditHint,
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
+use perf_trace::VirtualInputPerfStats;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::ops::Range;
@@ -34,7 +39,8 @@ use tracing::{info, warn};
 use util::{display_language_label, env_flag_enabled, status_language_filter_label, word_range_at};
 use virtual_editor::{
     commands_from_events, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
-    VirtualEditorState, VirtualInputCommand, WrapLayoutCache,
+    VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext, VirtualInputCommand,
+    WrapBoundaryAffinity, WrapLayoutCache,
 };
 use virtual_view::{VirtualCursor, VirtualSelectionState};
 
@@ -80,6 +86,9 @@ pub(crate) struct LocalPasteApp {
     virtual_editor_state: VirtualEditorState,
     virtual_editor_history: VirtualEditorHistory,
     virtual_layout: WrapLayoutCache,
+    virtual_galley_cache: VirtualGalleyCache,
+    virtual_line_scratch: String,
+    virtual_caret_phase_start: Instant,
     virtual_drag_active: bool,
     virtual_viewport_height: f32,
     virtual_line_height: f32,
@@ -88,7 +97,9 @@ pub(crate) struct LocalPasteApp {
     highlight_pending: Option<HighlightRequestMeta>,
     highlight_render: Option<HighlightRender>,
     highlight_staged: Option<HighlightRender>,
+    highlight_staged_invalidation: Option<StagedHighlightInvalidation>,
     highlight_version: u64,
+    highlight_edit_hint: Option<VirtualEditHint>,
     last_interaction_at: Option<Instant>,
     last_editor_click_at: Option<Instant>,
     last_editor_click_pos: Option<egui::Pos2>,
@@ -133,7 +144,12 @@ enum SaveStatus {
     Dirty,
     Saving,
 }
-
+#[derive(Clone, Debug)]
+struct StagedHighlightInvalidation {
+    base_revision: u64,
+    base_text_len: usize,
+    line_ranges: Vec<Range<usize>>,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SidebarCollection {
     All,
@@ -162,7 +178,12 @@ pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
 const PALETTE_SEARCH_LIMIT: usize = 40;
-const HIGHLIGHT_DEBOUNCE: Duration = Duration::from_millis(150);
+pub(crate) const MAX_RENDER_CHARS_PER_LINE: usize = 10_000;
+const HIGHLIGHT_DEBOUNCE_MEDIUM: Duration = Duration::from_millis(35);
+const HIGHLIGHT_DEBOUNCE_LARGE: Duration = Duration::from_millis(50);
+const HIGHLIGHT_DEBOUNCE_TINY: Duration = Duration::from_millis(15);
+const HIGHLIGHT_DEBOUNCE_LARGE_BYTES: usize = 64 * 1024;
+const HIGHLIGHT_TINY_EDIT_MAX_CHARS: usize = 4;
 const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
 const HIGHLIGHT_APPLY_IDLE: Duration = Duration::from_millis(200);
 const EDITOR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(300);
@@ -170,10 +191,10 @@ const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 8.0;
 const DRAG_AUTOSCROLL_EDGE_DISTANCE: f32 = 24.0;
 const DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME: f32 = 0.5;
 const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
+const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
-const VIRTUAL_OVERSCAN_LINES: usize = 3;
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
 
@@ -430,6 +451,9 @@ impl LocalPasteApp {
             virtual_editor_state: VirtualEditorState::default(),
             virtual_editor_history: VirtualEditorHistory::default(),
             virtual_layout: WrapLayoutCache::default(),
+            virtual_galley_cache: VirtualGalleyCache::default(),
+            virtual_line_scratch: String::new(),
+            virtual_caret_phase_start: Instant::now(),
             virtual_drag_active: false,
             virtual_editor_active: false,
             virtual_viewport_height: 0.0,
@@ -439,7 +463,9 @@ impl LocalPasteApp {
             highlight_pending: None,
             highlight_render: None,
             highlight_staged: None,
+            highlight_staged_invalidation: None,
             highlight_version: 0,
+            highlight_edit_hint: None,
             syntect: SyntectSettings::default(),
             db_path,
             locks,
@@ -502,34 +528,6 @@ impl LocalPasteApp {
             );
             self.set_status("Lock release failed; restart app if edits remain blocked.");
         }
-    }
-
-    fn trace_input(&self, frame: InputTraceFrame<'_>) {
-        if !self.editor_input_trace_enabled {
-            return;
-        }
-        info!(
-            target: "localpaste_gui::input",
-            mode = ?self.editor_mode,
-            editor_active = self.virtual_editor_active,
-            focus_active_pre = frame.focus_active_pre,
-            focus_active_post = frame.focus_active_post,
-            egui_focus_pre = frame.egui_focus_pre,
-            egui_focus_post = frame.egui_focus_post,
-            copy_ready_post = frame.copy_ready_post,
-            selection_chars = frame.selection_chars,
-            immediate_focus_count = frame.immediate_focus_commands.len(),
-            deferred_focus_count = frame.deferred_focus_commands.len(),
-            deferred_copy_count = frame.deferred_copy_commands.len(),
-            immediate_focus = ?frame.immediate_focus_commands,
-            deferred_focus = ?frame.deferred_focus_commands,
-            deferred_copy = ?frame.deferred_copy_commands,
-            changed = frame.apply_result.changed,
-            copied = frame.apply_result.copied,
-            cut = frame.apply_result.cut,
-            pasted = frame.apply_result.pasted,
-            "virtual input frame"
-        );
     }
 
     fn track_frame_metrics(&mut self) {
@@ -644,8 +642,11 @@ impl eframe::App for LocalPasteApp {
             ctx.send_cmd(egui::OutputCommand::CopyText(text));
         }
 
-        while let Ok(render) = self.highlight_worker.rx.try_recv() {
-            self.queue_highlight_render(render);
+        while let Ok(result) = self.highlight_worker.rx.try_recv() {
+            match result {
+                HighlightWorkerResult::Render(render) => self.queue_highlight_render(render),
+                HighlightWorkerResult::Patch(patch) => self.queue_highlight_patch(patch),
+            }
         }
 
         if !self.is_virtual_editor_mode() {
@@ -670,8 +671,14 @@ impl eframe::App for LocalPasteApp {
         let mut deferred_focus_commands: Vec<VirtualInputCommand> = Vec::new();
         let mut deferred_copy_commands: Vec<VirtualInputCommand> = Vec::new();
         let mut immediate_apply_result = VirtualApplyResult::default();
+        let mut input_route_ms = 0.0f32;
+        let mut immediate_apply_ms = 0.0f32;
+        let mut deferred_focus_apply_ms = 0.0f32;
+        let mut deferred_copy_apply_ms = 0.0f32;
         if self.is_virtual_editor_mode() {
+            let route_started = Instant::now();
             let commands = ctx.input(|input| commands_from_events(&input.events, true));
+            input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
             for command in commands {
                 match classify_virtual_command(&command, focus_active_pre) {
                     VirtualCommandBucket::DeferredCopy => {
@@ -700,7 +707,9 @@ impl eframe::App for LocalPasteApp {
                     }
                 }
             }
+            let immediate_started = Instant::now();
             immediate_apply_result = self.apply_virtual_commands(ctx, &immediate_focus_commands);
+            immediate_apply_ms += immediate_started.elapsed().as_secs_f32() * 1000.0;
             if immediate_apply_result.changed {
                 self.mark_dirty();
             }
@@ -822,7 +831,9 @@ impl eframe::App for LocalPasteApp {
                 fallback_commands.push(VirtualInputCommand::Redo);
             }
             if !fallback_commands.is_empty() {
+                let fallback_started = Instant::now();
                 let fallback_result = self.apply_virtual_commands(ctx, &fallback_commands);
+                immediate_apply_ms += fallback_started.elapsed().as_secs_f32() * 1000.0;
                 immediate_apply_result.changed |= fallback_result.changed;
                 immediate_apply_result.copied |= fallback_result.copied;
                 immediate_apply_result.cut |= fallback_result.cut;
@@ -865,14 +876,18 @@ impl eframe::App for LocalPasteApp {
                 || ctx.memory(|m| m.has_focus(focus_id)));
         let copy_ready_post = focus_active_post || has_virtual_selection_post;
         if focus_active_post {
+            let deferred_started = Instant::now();
             deferred_focus_apply_result =
                 self.apply_virtual_commands(ctx, &deferred_focus_commands);
+            deferred_focus_apply_ms = deferred_started.elapsed().as_secs_f32() * 1000.0;
             if deferred_focus_apply_result.changed {
                 self.mark_dirty();
             }
         }
         if copy_ready_post {
+            let deferred_started = Instant::now();
             deferred_copy_apply_result = self.apply_virtual_commands(ctx, &deferred_copy_commands);
+            deferred_copy_apply_ms = deferred_started.elapsed().as_secs_f32() * 1000.0;
             if deferred_copy_apply_result.changed {
                 self.mark_dirty();
             }
@@ -917,6 +932,18 @@ impl eframe::App for LocalPasteApp {
             deferred_copy_commands: &deferred_copy_commands,
             apply_result: combined_apply,
         });
+        self.trace_virtual_input_perf(
+            &immediate_focus_commands,
+            &deferred_focus_commands,
+            &deferred_copy_commands,
+            VirtualInputPerfStats {
+                input_route_ms,
+                immediate_apply_ms,
+                deferred_focus_apply_ms,
+                deferred_copy_apply_ms,
+                apply_result: combined_apply,
+            },
+        );
 
         self.render_status_bar(ctx);
         self.render_toasts(ctx);
@@ -938,6 +965,17 @@ impl eframe::App for LocalPasteApp {
         }
         if let Some(toast) = self.toasts.front() {
             let until = toast.expires_at.saturating_duration_since(Instant::now());
+            repaint_after = repaint_after.min(until);
+        }
+        if self.editor_mode == EditorMode::VirtualEditor
+            && (self.virtual_editor_active
+                || self.virtual_editor_state.has_focus
+                || ctx.memory(|m| m.has_focus(focus_id)))
+        {
+            let elapsed = Instant::now().saturating_duration_since(self.virtual_caret_phase_start);
+            let interval_ms = CARET_BLINK_INTERVAL.as_millis().max(1);
+            let remainder_ms = interval_ms - (elapsed.as_millis() % interval_ms);
+            let until = Duration::from_millis(remainder_ms as u64).max(Duration::from_millis(1));
             repaint_after = repaint_after.min(until);
         }
         ctx.request_repaint_after(repaint_after);

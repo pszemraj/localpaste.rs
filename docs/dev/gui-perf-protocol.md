@@ -8,11 +8,15 @@ Use this protocol for release-gate evidence and regression checks.
 - English-first editor workflows only.
 - Runtime topology for this protocol: the GUI owns the DB lock and runs the embedded API endpoint in-process.
 - Do not run standalone `localpaste` concurrently against the same `DB_PATH` while running GUI perf checks.
+- Detection/highlight behavior definitions (including virtual-editor async debounce/staging policy) are maintained in [docs/language-detection.md](../language-detection.md).
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
   - average FPS `>= 45`
   - p95 frame time `<= 25 ms`
   - no multi-second plain fallback during newline-burst editing.
+- Next gate target after virtual-editor Phase 1+2 perf changes:
+  - p95 frame time `<= 16 ms` once post-change measurements are captured and reviewed.
+  - Until that measurement evidence is captured, keep the current `<= 25 ms` release gate.
 
 > [!IMPORTANT]
 > Reuse of a shared `DB_PATH` with another writer invalidates perf results and can introduce lock contention artifacts.
@@ -26,7 +30,7 @@ Use this protocol for release-gate evidence and regression checks.
 
 ## Prereqs
 
-Use the build matrix in [devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+Use the build matrix in [devlog.md](devlog.md).
 Minimum binaries required for this protocol:
 
 - `localpaste_tools` / `generate-test-data`
@@ -35,7 +39,7 @@ Minimum binaries required for this protocol:
 ## Runbook
 
 Use this runbook for reproducible perf checks:
-Flag behavior/meanings are documented in [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md); this runbook only pins values used during perf validation.
+Flag behavior/meanings are documented in [gui-notes.md](gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell
 $env:DB_PATH = Join-Path $env:TEMP "lpaste-perf-$([guid]::NewGuid().ToString('N'))"
@@ -52,7 +56,7 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
 While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks.
-For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md) with `localpaste` + `lpaste`.
+For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](devlog.md) with `localpaste` + `lpaste`.
 
 ## Dataset Expectations
 
@@ -66,22 +70,29 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 
 ## Manual Verification Checklist
 
+Run the full functional GUI checklist first:
+[gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive).
+
+Perf gating in this protocol is based on the checks below:
+
 1. Medium (~1-10KB) code paste: typing at start/middle/end stays responsive.
 2. Large (~10-50KB) code paste: highlight remains visible while edits debounce/refresh.
 3. Large-to-very-large (~50-256KB) code paste: async/staged highlight remains stable; transient plain fallback is acceptable during refresh but should not stick.
 4. Huge (`>= 256KB`) code paste: plain fallback mode is active by design and scrolling remains smooth.
-5. Long document paste (thousands of lines): rapid scroll and mid-document typing show no major hitching.
-6. Window resize reflow: no long plain-text gaps after resize.
-7. Shortcut sanity: `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, unfocused `Ctrl/Cmd+V`.
-8. Clipboard reliability: `Ctrl/Cmd+C/X/V` including unfocused mutation guard behavior.
-9. Trace sanity (when enabled):
+5. Sustained typing scenario: in a 5K-50K line document, hold a key for 3 seconds near the middle; verify no visible hitching and p95 trend stays under target budget.
+6. Long-line typing scenario: open a single wrapped minified line (JSON/log payload), type near the middle, and verify no multi-frame stalls.
+7. Idle baseline scenario: open a ~200KB paste and wait without interaction; verify CPU drops near idle between repaint intervals.
+8. Long document paste (thousands of lines): rapid scroll and mid-document typing show no major hitching.
+9. Window resize reflow: no long plain-text gaps after resize.
+10. Trace sanity (when enabled):
    - input trace: deterministic `virtual input frame` routing outcomes
    - highlight trace: deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) with stale staged renders dropped.
+   - editor perf trace: `virtual_input_frame`, `virtual_edit_apply`, and `virtual_editor_render` events present with non-zero timing fields while typing in virtual editor mode.
    - backend perf trace: list/search cache hit+miss counters and per-query latency logs (`localpaste_gui::backend_perf` target).
 
 ## Related Docs
 
-- Editor flags and trace env vars: [gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md)
-- Detection/normalization/highlight behavior: [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)
-- Open perf follow-ups: [backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
-- System architecture context: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
+- Editor flags and trace env vars: [gui-notes.md](gui-notes.md)
+- Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md)
+- Open perf follow-ups: [backlog.md](backlog.md)
+- System architecture context: [docs/architecture.md](../architecture.md)

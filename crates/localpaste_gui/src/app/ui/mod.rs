@@ -2,6 +2,7 @@
 
 pub(super) mod command_palette;
 pub(super) mod editor_panel;
+pub(super) mod editor_panel_virtual;
 pub(super) mod properties_drawer;
 pub(super) mod shortcut_help;
 pub(super) mod sidebar;

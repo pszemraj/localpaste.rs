@@ -2,6 +2,9 @@
 
 use super::canonical::canonicalize;
 use super::detect_language;
+use super::looks_like_yaml;
+#[cfg(feature = "magika")]
+use super::refine_magika_label;
 
 fn assert_detection_cases(cases: &[(&str, Option<&str>)]) {
     for (content, expected) in cases {
@@ -21,10 +24,34 @@ fn heuristic_detects_existing_language_matrix() {
         ("const x = () => console.log('hi');", Some("javascript")),
         ("#!/bin/bash\necho hello", Some("shell")),
         ("name: app\nservices:\n  - web", Some("yaml")),
+        ("name: app", Some("yaml")),
+        ("display name: app\nport: 8080", Some("yaml")),
+        ("services: [web]\nversion: 3", Some("yaml")),
+        ("select id, name from users where active = 1", Some("sql")),
         ("[tool]\nname = \"demo\"\nversion = \"0.1.0\"", Some("toml")),
         ("just some plain text words", None),
     ];
     assert_detection_cases(cases.as_slice());
+}
+
+#[test]
+fn yaml_shape_helper_handles_flow_values_and_single_list_guard() {
+    assert!(looks_like_yaml("root: {child: value}\n"));
+    assert!(looks_like_yaml("display name: api\nport: 8080\n"));
+    assert!(looks_like_yaml("services: [web]\nversion: 3\n"));
+    assert!(!looks_like_yaml("- item\n"));
+}
+
+#[test]
+fn yaml_shape_helper_keeps_single_line_spaced_key_guardrail() {
+    assert!(!looks_like_yaml("status report: done\n"));
+}
+
+#[test]
+fn yaml_shape_helper_requires_yaml_body_after_doc_start() {
+    assert!(looks_like_yaml("---\nname: app\n"));
+    assert!(!looks_like_yaml("---\njust a separator\n"));
+    assert!(!looks_like_yaml("---\n- item\n"));
 }
 
 #[test]
@@ -52,6 +79,21 @@ fn heuristic_detects_expanded_fallback_languages() {
 }
 
 #[test]
+fn heuristic_handles_shebang_and_import_conflict_matrix() {
+    let cases = [
+        ("#!/bin/python\nprint('hi')", Some("python")),
+        ("#!/usr/bin/env python\nprint('hi')", Some("python")),
+        ("#!/bin/node\nconsole.log('hi')", Some("javascript")),
+        ("#!/usr/bin/env bash\necho hi", Some("shell")),
+        (
+            "import { x } from 'module';\nconsole.log(x);",
+            Some("javascript"),
+        ),
+    ];
+    assert_detection_cases(cases.as_slice());
+}
+
+#[test]
 fn heuristic_does_not_treat_param_call_alone_as_powershell() {
     let cases = [("param(foo)\nvalue = 1\n", None)];
     assert_detection_cases(cases.as_slice());
@@ -69,9 +111,21 @@ fn heuristic_avoids_common_single_token_false_positives() {
             Some("rust"),
         ),
         ("status report:\ndone\n", None),
+        ("status report: done", None),
+        ("please select one option from menu where possible", None),
+        ("if then end", None),
         ("note: use strict; while migrating config", None),
+        ("- item", Some("markdown")),
     ];
     assert_detection_cases(cases.as_slice());
+}
+
+#[test]
+fn markdown_separator_content_is_not_mislabeled_as_yaml() {
+    assert_ne!(
+        detect_language("---\njust a separator\n").as_deref(),
+        Some("yaml")
+    );
 }
 
 #[test]
@@ -120,4 +174,66 @@ fn magika_detects_high_signal_code_snippets() {
             detected
         );
     }
+}
+
+#[cfg(feature = "magika")]
+#[test]
+fn magika_refinement_rejects_weak_yaml_shape() {
+    assert_eq!(refine_magika_label("yaml", "status report:\ndone\n"), None);
+    assert_eq!(refine_magika_label("yaml", "- item\n"), None);
+    assert_eq!(refine_magika_label("yaml", "---\njust a separator\n"), None);
+    assert_eq!(
+        refine_magika_label("yaml", "---\nname: app\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "name: app"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "name: app\nservices:\n  - web\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "display name: api\nport: 8080\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "services:\n  web:\n    image: nginx\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "root: {child: value}\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "services: [web]\nversion: 3\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(refine_magika_label("yaml", "status report: done\n"), None);
+}
+
+#[cfg(feature = "magika")]
+#[test]
+fn magika_refinement_converts_plain_css_mislabeled_as_scss() {
+    assert_eq!(
+        refine_magika_label("scss", "body {\n  color: #333;\n  margin: 0;\n}"),
+        Some("css".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("scss", ".parent {\n  .child {\n    color: red;\n  }\n}\n"),
+        Some("scss".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("scss", ".button {\n  &:hover {\n    color: red;\n  }\n}\n"),
+        Some("scss".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("scss", "$primary: #333;\nbody { color: $primary; }\n"),
+        Some("scss".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("scss", "%button-base {\n  color: red;\n}\n"),
+        Some("scss".to_string())
+    );
 }

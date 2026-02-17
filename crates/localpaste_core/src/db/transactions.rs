@@ -80,6 +80,14 @@ fn apply_folder_count_transition(
 }
 
 impl TransactionOps {
+    fn with_folder_guard<T, F>(db: &Database, f: F) -> Result<T, AppError>
+    where
+        F: FnOnce(&FolderTxnGuard<'_>) -> Result<T, AppError>,
+    {
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        f(&guard)
+    }
+
     /// Acquire the global folder transaction guard.
     ///
     /// This typed guard must be passed to guarded mutation helpers to guarantee
@@ -115,8 +123,9 @@ impl TransactionOps {
         paste: &Paste,
         folder_id: &str,
     ) -> Result<(), AppError> {
-        let guard = Self::acquire_folder_txn_guard(db)?;
-        Self::create_paste_with_folder_locked(db, &guard, paste, folder_id)
+        Self::with_folder_guard(db, |guard| {
+            Self::create_paste_with_folder_locked(db, guard, paste, folder_id)
+        })
     }
 
     /// Create a paste while holding a folder transaction guard.
@@ -185,8 +194,9 @@ impl TransactionOps {
     /// # Errors
     /// Returns an error when storage access or deserialization fails.
     pub fn delete_paste_with_folder(db: &Database, paste_id: &str) -> Result<bool, AppError> {
-        let guard = Self::acquire_folder_txn_guard(db)?;
-        Self::delete_paste_with_folder_locked(db, &guard, paste_id)
+        Self::with_folder_guard(db, |guard| {
+            Self::delete_paste_with_folder_locked(db, guard, paste_id)
+        })
     }
 
     /// Delete a paste while holding a folder transaction guard.
@@ -253,8 +263,9 @@ impl TransactionOps {
         new_folder_id: Option<&str>,
         update_req: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
-        let guard = Self::acquire_folder_txn_guard(db)?;
-        Self::move_paste_between_folders_locked(db, &guard, paste_id, new_folder_id, update_req)
+        Self::with_folder_guard(db, |guard| {
+            Self::move_paste_between_folders_locked(db, guard, paste_id, new_folder_id, update_req)
+        })
     }
 
     /// Move a paste between folders while holding a folder transaction guard.

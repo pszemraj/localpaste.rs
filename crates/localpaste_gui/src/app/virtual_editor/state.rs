@@ -10,12 +10,23 @@ pub(crate) struct ImeState {
     pub(crate) preedit_text: String,
 }
 
+/// Affinity for caret positions that land exactly on internal wrap boundaries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum WrapBoundaryAffinity {
+    /// Boundary belongs to the previous visual row (caret draws at row end).
+    Upstream,
+    /// Boundary belongs to the next visual row (caret draws at row start).
+    #[default]
+    Downstream,
+}
+
 /// Mutable editor interaction state independent of rendering.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct VirtualEditorState {
     cursor: usize,
     anchor: Option<usize>,
     preferred_column: Option<usize>,
+    wrap_boundary_affinity: WrapBoundaryAffinity,
     pub(crate) has_focus: bool,
     pub(crate) ime: ImeState,
 }
@@ -31,11 +42,17 @@ impl VirtualEditorState {
         self.preferred_column
     }
 
+    /// Returns wrap-boundary affinity for the current cursor.
+    pub(crate) fn wrap_boundary_affinity(&self) -> WrapBoundaryAffinity {
+        self.wrap_boundary_affinity
+    }
+
     /// Sets the cursor, clearing any active selection.
     pub(crate) fn set_cursor(&mut self, char_index: usize, text_len: usize) {
         self.cursor = char_index.min(text_len);
         self.anchor = None;
         self.preferred_column = None;
+        self.wrap_boundary_affinity = WrapBoundaryAffinity::Downstream;
     }
 
     /// Moves cursor to a new char index.
@@ -55,6 +72,7 @@ impl VirtualEditorState {
     pub(crate) fn select_all(&mut self, text_len: usize) {
         self.anchor = Some(0);
         self.cursor = text_len;
+        self.wrap_boundary_affinity = WrapBoundaryAffinity::Downstream;
     }
 
     /// Returns a normalized selected range, if any.
@@ -75,9 +93,15 @@ impl VirtualEditorState {
         self.preferred_column = Some(column);
     }
 
+    /// Sets wrap-boundary affinity for subsequent vertical navigation/rendering.
+    pub(crate) fn set_wrap_boundary_affinity(&mut self, affinity: WrapBoundaryAffinity) {
+        self.wrap_boundary_affinity = affinity;
+    }
+
     /// Clears preferred visual column hint.
     pub(crate) fn clear_preferred_column(&mut self) {
         self.preferred_column = None;
+        self.wrap_boundary_affinity = WrapBoundaryAffinity::Downstream;
     }
 }
 

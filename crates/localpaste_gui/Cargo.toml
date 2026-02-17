@@ -21,15 +21,13 @@ egui_extras = { version = "0.33", features = ["syntect"] }
 syntect = "5.3"
 ropey = "1.6"
 unicode-segmentation = "1.11"
+unicode-width = "0.2"
 chrono = { workspace = true, features = ["serde"] }
 rfd = "0.14"
-puffin = { version = "0.19", optional = true }
 
 [features]
 default = ["magika"]
 magika = ["localpaste_core/magika", "localpaste_server/magika"]
-debug-tools = []
-profile = ["puffin"]
 
 [dev-dependencies]
 tempfile.workspace = true

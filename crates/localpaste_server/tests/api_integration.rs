@@ -1,13 +1,14 @@
 //! Integration tests for the LocalPaste HTTP API.
 
+mod support;
+
 use axum::http::StatusCode;
 use axum_test::TestServer;
 use localpaste_server::{
-    create_app, models::folder::Folder, AppState, Config, Database, LockOwnerId, PasteLockManager,
+    create_app, models::folder::Folder, AppState, Config, Database, LockOwnerId,
 };
 use serde_json::json;
-use std::path::Path;
-use std::sync::Arc;
+use support::{setup_test_server, test_config_for_db_path, test_server_for_config};
 use tempfile::TempDir;
 
 const EXPECTED_FOLDER_DEPRECATION_WARNING: &str =
@@ -23,37 +24,9 @@ fn assert_meta_only_shape_header(response: &axum_test::TestResponse) {
     response.assert_header("x-localpaste-response-shape", "meta-only");
 }
 
-fn test_config_for_db_path(db_path: &Path) -> Config {
-    Config {
-        port: 0, // Let OS assign port
-        db_path: db_path.to_str().unwrap().to_string(),
-        max_paste_size: 10_000_000,
-        auto_save_interval: 2000,
-        auto_backup: false, // Disable auto-backup in tests
-    }
-}
-
-fn test_server_for_config(config: Config) -> (TestServer, Arc<PasteLockManager>) {
-    let db = Database::new(&config.db_path).unwrap();
-    let locks = Arc::new(PasteLockManager::default());
-    let state = AppState::with_locks(config, db, locks.clone());
-    let app = create_app(state, false);
-    let server = TestServer::new(app).unwrap();
-    (server, locks)
-}
-
-async fn setup_test_server() -> (TestServer, TempDir, Arc<PasteLockManager>) {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
-
-    let config = test_config_for_db_path(&db_path);
-    let (server, locks) = test_server_for_config(config);
-    (server, temp_dir, locks)
-}
-
 #[tokio::test]
 async fn test_paste_lifecycle() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     // Create a paste
     let create_response = server
@@ -103,7 +76,7 @@ async fn test_paste_lifecycle() {
 
 #[tokio::test]
 async fn test_folder_lifecycle() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     // Create a folder
     let create_response = server
@@ -196,7 +169,7 @@ async fn test_folder_lifecycle() {
 
 #[tokio::test]
 async fn test_paste_with_folder() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     // Create a folder first
     let folder_response = server
@@ -263,7 +236,7 @@ async fn test_paste_with_folder() {
 
 #[tokio::test]
 async fn test_paste_search() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     // Create multiple pastes
     server
@@ -303,7 +276,7 @@ async fn test_paste_search() {
 
 #[tokio::test]
 async fn test_search_language_filter_is_case_insensitive_and_trimmed() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     server
         .post("/api/paste")
@@ -346,7 +319,7 @@ async fn test_search_language_filter_is_case_insensitive_and_trimmed() {
 
 #[tokio::test]
 async fn test_search_empty_or_whitespace_query_returns_no_results() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     server
         .post("/api/paste")
@@ -374,7 +347,7 @@ async fn test_search_empty_or_whitespace_query_returns_no_results() {
 
 #[tokio::test]
 async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     // Content-only match (should be excluded from /api/search/meta).
     server
@@ -423,7 +396,7 @@ async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
 
 #[tokio::test]
 async fn test_delete_folder_rejects_when_descendant_paste_is_locked() {
-    let (server, _temp, locks) = setup_test_server().await;
+    let (server, _temp, locks) = setup_test_server();
 
     let folder_response = server
         .post("/api/folder")
@@ -489,7 +462,7 @@ async fn test_delete_folder_rejects_when_descendant_paste_is_locked() {
 
 #[tokio::test]
 async fn test_max_paste_size_enforcement() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     // Create a very large content string (11MB, exceeding the 10MB limit)
     let large_content = "x".repeat(11_000_000);
@@ -597,7 +570,7 @@ async fn test_strict_cors_origin_matrix() {
 
 #[tokio::test]
 async fn test_invalid_folder_association() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     let missing_folder_id = "non-existent-folder-id";
 
@@ -709,7 +682,7 @@ async fn test_server_rejects_assignments_to_delete_marked_folder() {
 
 #[tokio::test]
 async fn test_whitespace_folder_ids_normalize_consistently() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     // Parent id containing only whitespace should normalize to top-level.
     let top_level_response = server
@@ -843,7 +816,7 @@ async fn test_whitespace_folder_ids_normalize_consistently() {
 
 #[tokio::test]
 async fn test_update_folder_rejects_cycle() {
-    let (server, _temp, _locks) = setup_test_server().await;
+    let (server, _temp, _locks) = setup_test_server();
 
     // Create parent folder
     let parent_response = server
@@ -948,7 +921,7 @@ async fn test_locked_paste_mutation_matrix_rejects_until_all_holders_release() {
 
     let cases = [LockedMutationKind::Delete, LockedMutationKind::Update];
     for kind in cases {
-        let (server, _temp, locks) = setup_test_server().await;
+        let (server, _temp, locks) = setup_test_server();
 
         let create_response = server
             .post("/api/paste")
