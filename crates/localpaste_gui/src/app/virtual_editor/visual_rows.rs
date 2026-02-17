@@ -22,7 +22,103 @@ pub(crate) struct LineWrapMetrics {
     pub(crate) render_capped: bool,
 }
 
-/// Visual-row layout cache with prefix-row mapping.
+#[derive(Clone, Debug, Default)]
+struct RowFenwick {
+    tree: Vec<usize>,
+}
+
+impl RowFenwick {
+    fn len(&self) -> usize {
+        self.tree.len().saturating_sub(1)
+    }
+
+    #[cfg(test)]
+    fn clear(&mut self) {
+        self.tree.clear();
+    }
+
+    fn rebuild_from_metrics(&mut self, metrics: &[LineWrapMetrics]) {
+        let len = metrics.len();
+        self.tree.clear();
+        self.tree.resize(len.saturating_add(1), 0);
+        for (idx, entry) in metrics.iter().enumerate() {
+            self.tree[idx.saturating_add(1)] = entry.visual_rows;
+        }
+        for idx in 1..=len {
+            let parent = idx.saturating_add(idx & idx.wrapping_neg());
+            if parent <= len {
+                self.tree[parent] = self.tree[parent].saturating_add(self.tree[idx]);
+            }
+        }
+    }
+
+    fn total_rows(&self) -> usize {
+        self.prefix_sum_exclusive(self.len())
+    }
+
+    fn prefix_sum_exclusive(&self, end: usize) -> usize {
+        let mut idx = end.min(self.len());
+        let mut sum = 0usize;
+        while idx > 0 {
+            sum = sum.saturating_add(self.tree[idx]);
+            idx = idx.saturating_sub(idx & idx.wrapping_neg());
+        }
+        sum
+    }
+
+    fn add_signed(&mut self, line: usize, diff: isize) -> bool {
+        if diff == 0 {
+            return true;
+        }
+        let len = self.len();
+        if line >= len {
+            return false;
+        }
+        let delta = diff.unsigned_abs();
+        let mut idx = line.saturating_add(1);
+        while idx <= len {
+            if diff > 0 {
+                self.tree[idx] = self.tree[idx].saturating_add(delta);
+            } else {
+                let Some(next) = self.tree[idx].checked_sub(delta) else {
+                    return false;
+                };
+                self.tree[idx] = next;
+            }
+            idx = idx.saturating_add(idx & idx.wrapping_neg());
+        }
+        true
+    }
+
+    fn line_for_row(&self, row: usize) -> Option<usize> {
+        let len = self.len();
+        if len == 0 {
+            return None;
+        }
+        let mut bit = 1usize;
+        while bit < len {
+            bit <<= 1;
+        }
+
+        let mut idx = 0usize;
+        let mut consumed = 0usize;
+        let mut step = bit;
+        while step > 0 {
+            let next = idx.saturating_add(step);
+            if next <= len {
+                let candidate = consumed.saturating_add(self.tree[next]);
+                if candidate <= row {
+                    idx = next;
+                    consumed = candidate;
+                }
+            }
+            step >>= 1;
+        }
+        Some(idx.min(len.saturating_sub(1)))
+    }
+}
+
+/// Visual-row layout cache with Fenwick-backed row index mapping.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct VisualRowLayoutCache {
     revision: u64,
@@ -31,11 +127,38 @@ pub(crate) struct VisualRowLayoutCache {
     char_width_bits: u32,
     wrap_cols: usize,
     line_metrics: Vec<LineWrapMetrics>,
-    prefix_rows: Vec<usize>,
+    row_index: RowFenwick,
     render_capped_lines: usize,
+    #[cfg(test)]
+    row_index_rebuilds: u64,
+    #[cfg(test)]
+    row_index_incremental_updates: u64,
 }
 
 impl VisualRowLayoutCache {
+    fn rebuild_row_index_from_metrics(&mut self) {
+        self.row_index.rebuild_from_metrics(&self.line_metrics);
+        #[cfg(test)]
+        {
+            self.row_index_rebuilds = self.row_index_rebuilds.saturating_add(1);
+        }
+    }
+
+    fn apply_row_index_delta(&mut self, line: usize, diff: isize) -> bool {
+        if diff == 0 {
+            return true;
+        }
+        if !self.row_index.add_signed(line, diff) {
+            return false;
+        }
+        #[cfg(test)]
+        {
+            self.row_index_incremental_updates =
+                self.row_index_incremental_updates.saturating_add(1);
+        }
+        true
+    }
+
     /// Returns true when geometry/text keys no longer match.
     pub(crate) fn needs_rebuild(
         &self,
@@ -50,10 +173,10 @@ impl VisualRowLayoutCache {
             || self.line_height_bits != line_height.to_bits()
             || self.char_width_bits != char_width.to_bits()
             || self.line_metrics.len() != line_count
-            || self.prefix_rows.len() != line_count.saturating_add(1)
+            || self.row_index.len() != line_count
     }
 
-    /// Rebuild all line metrics + prefix rows.
+    /// Rebuild all line metrics + row index.
     pub(crate) fn rebuild(
         &mut self,
         buffer: &RopeBuffer,
@@ -71,27 +194,23 @@ impl VisualRowLayoutCache {
         self.wrap_cols = cols;
 
         self.line_metrics.clear();
-        self.prefix_rows.clear();
-        self.prefix_rows.push(0);
         self.render_capped_lines = 0;
 
-        let mut total_rows = 0usize;
         for line in 0..buffer.line_count() {
             let metrics = measure_line(buffer, line, cols);
-            total_rows = total_rows.saturating_add(metrics.visual_rows);
             if metrics.render_capped {
                 self.render_capped_lines = self.render_capped_lines.saturating_add(1);
             }
             self.line_metrics.push(metrics);
-            self.prefix_rows.push(total_rows);
         }
+        self.rebuild_row_index_from_metrics();
     }
 
     /// Patch-update metrics by edit delta.
     ///
     /// Returns false when caller should do a full rebuild.
     pub(crate) fn apply_delta(&mut self, buffer: &RopeBuffer, delta: VirtualEditDelta) -> bool {
-        if self.line_metrics.is_empty() || self.prefix_rows.len() != self.line_metrics.len() + 1 {
+        if self.line_metrics.is_empty() || self.row_index.len() != self.line_metrics.len() {
             return false;
         }
         if self.char_width_bits == 0 || self.line_height_bits == 0 {
@@ -126,6 +245,10 @@ impl VisualRowLayoutCache {
             return false;
         }
 
+        let old_visual_rows: Vec<usize> = self.line_metrics[old_start..old_end_excl]
+            .iter()
+            .map(|metrics| metrics.visual_rows)
+            .collect();
         let mut replacement = Vec::with_capacity(new_count);
         for line in old_start..=delta.new_end_line {
             replacement.push(measure_line(buffer, line, self.wrap_cols.max(1)));
@@ -146,19 +269,28 @@ impl VisualRowLayoutCache {
         }) {
             return false;
         }
-
-        // We intentionally rebuild the tail prefix sums from `old_start` onward.
-        // This is O(remaining_lines), but the loop is tiny integer math and keeps
-        // the structure simple until million-line workloads justify a tree/indexed
-        // variant.
-        self.prefix_rows.truncate(old_start.saturating_add(1));
-        let mut total = self.prefix_rows.last().copied().unwrap_or(0);
-        for idx in old_start..self.line_metrics.len() {
-            total = total.saturating_add(self.line_metrics[idx].visual_rows);
-            self.prefix_rows.push(total);
-        }
-        if self.prefix_rows.len() != self.line_metrics.len() + 1 {
-            return false;
+        if old_count != new_count {
+            self.rebuild_row_index_from_metrics();
+        } else {
+            for (offset, old_rows) in old_visual_rows.iter().enumerate() {
+                let new_rows = self.line_metrics[old_start.saturating_add(offset)].visual_rows;
+                let diff = if new_rows >= *old_rows {
+                    let delta = new_rows.saturating_sub(*old_rows);
+                    match isize::try_from(delta) {
+                        Ok(value) => value,
+                        Err(_) => return false,
+                    }
+                } else {
+                    let delta = old_rows.saturating_sub(new_rows);
+                    match isize::try_from(delta) {
+                        Ok(value) => -value,
+                        Err(_) => return false,
+                    }
+                };
+                if !self.apply_row_index_delta(old_start.saturating_add(offset), diff) {
+                    return false;
+                }
+            }
         }
         self.render_capped_lines = self
             .render_capped_lines
@@ -195,7 +327,7 @@ impl VisualRowLayoutCache {
 
     /// Total visual row count.
     pub(crate) fn total_rows(&self) -> usize {
-        self.prefix_rows.last().copied().unwrap_or(0)
+        self.row_index.total_rows()
     }
 
     /// Returns true when at least one line is render-capped.
@@ -302,33 +434,27 @@ impl VisualRowLayoutCache {
     /// Start visual row for a physical line.
     #[cfg(test)]
     pub(crate) fn line_start_row(&self, line: usize) -> usize {
-        self.prefix_rows
-            .get(line)
-            .copied()
-            .unwrap_or_else(|| self.total_rows())
+        if line > self.line_metrics.len() {
+            return self.total_rows();
+        }
+        self.row_index.prefix_sum_exclusive(line)
     }
 
     /// Map visual row to (physical line, row in that line).
     pub(crate) fn row_to_line(&self, row: usize) -> (usize, usize) {
-        if self.line_metrics.is_empty() || self.prefix_rows.len() != self.line_metrics.len() + 1 {
+        if self.line_metrics.is_empty() || self.row_index.len() != self.line_metrics.len() {
             return (0, 0);
         }
         let total = self.total_rows().max(1);
         let row = row.min(total.saturating_sub(1));
-
-        let mut lo = 0usize;
-        let mut hi = self.line_metrics.len();
-        while lo < hi {
-            let mid = (lo + hi) / 2;
-            if self.prefix_rows[mid + 1] <= row {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        let line = lo.min(self.line_metrics.len().saturating_sub(1));
+        let line = self
+            .row_index
+            .line_for_row(row)
+            .unwrap_or(0)
+            .min(self.line_metrics.len().saturating_sub(1));
         let max_row = self.line_visual_rows(line).saturating_sub(1);
-        let row_in_line = row.saturating_sub(self.prefix_rows[line]).min(max_row);
+        let line_start = self.row_index.prefix_sum_exclusive(line);
+        let row_in_line = row.saturating_sub(line_start).min(max_row);
         (line, row_in_line)
     }
 
@@ -629,13 +755,35 @@ mod tests {
     fn rebuild_with_cached_geometry_recovers_after_cache_corruption() {
         let (buffer, mut cache) = rebuild_cache_for("one\ntwo\n", 50.0, 10.0, 5.0);
         let expected_total_rows = cache.total_rows();
-        cache.prefix_rows.clear();
+        cache.row_index.clear();
         assert!(cache.rebuild_with_cached_geometry(&buffer));
-        assert_eq!(
-            cache.prefix_rows.len(),
-            buffer.line_count().saturating_add(1)
-        );
+        assert_eq!(cache.row_index.len(), buffer.line_count());
         assert_eq!(cache.total_rows(), expected_total_rows);
+    }
+
+    #[test]
+    fn apply_delta_uses_incremental_row_index_updates_when_line_count_unchanged() {
+        let data_lines = 200_000usize;
+        let mut text = String::with_capacity(data_lines.saturating_mul(2).saturating_add(8));
+        text.push_str("a\n");
+        for _ in 1..data_lines {
+            text.push_str("x\n");
+        }
+
+        let mut buffer = RopeBuffer::new(text.as_str());
+        let mut cache = VisualRowLayoutCache::default();
+        cache.rebuild(&buffer, 4.0, 10.0, 1.0);
+        let initial_line_count = buffer.line_count();
+        let initial_total_rows = cache.total_rows();
+        let rebuilds_before = cache.row_index_rebuilds;
+        let updates_before = cache.row_index_incremental_updates;
+
+        let delta = buffer.replace_char_range(0..1, "aaaaa").expect("delta");
+        assert!(cache.apply_delta(&buffer, delta));
+        assert_eq!(buffer.line_count(), initial_line_count);
+        assert_eq!(cache.row_index_rebuilds, rebuilds_before);
+        assert!(cache.row_index_incremental_updates > updates_before);
+        assert_eq!(cache.total_rows(), initial_total_rows.saturating_add(1));
     }
 
     #[test]
