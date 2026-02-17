@@ -3,6 +3,7 @@
 //! Scroll domain is visual rows, not physical lines.
 
 use super::buffer::{RopeBuffer, VirtualEditDelta};
+use crate::app::MAX_RENDER_CHARS_PER_LINE;
 use std::ops::Range;
 use unicode_width::UnicodeWidthChar;
 
@@ -17,6 +18,8 @@ pub(crate) struct LineWrapMetrics {
     pub(crate) visual_rows: usize,
     /// True when char index and display column are guaranteed 1:1.
     pub(crate) ascii_only: bool,
+    /// True when rendering is capped before physical end-of-line.
+    pub(crate) render_capped: bool,
 }
 
 /// Visual-row layout cache with prefix-row mapping.
@@ -29,6 +32,7 @@ pub(crate) struct VisualRowLayoutCache {
     wrap_cols: usize,
     line_metrics: Vec<LineWrapMetrics>,
     prefix_rows: Vec<usize>,
+    render_capped_lines: usize,
 }
 
 impl VisualRowLayoutCache {
@@ -69,11 +73,15 @@ impl VisualRowLayoutCache {
         self.line_metrics.clear();
         self.prefix_rows.clear();
         self.prefix_rows.push(0);
+        self.render_capped_lines = 0;
 
         let mut total_rows = 0usize;
         for line in 0..buffer.line_count() {
             let metrics = measure_line(buffer, line, cols);
             total_rows = total_rows.saturating_add(metrics.visual_rows);
+            if metrics.render_capped {
+                self.render_capped_lines = self.render_capped_lines.saturating_add(1);
+            }
             self.line_metrics.push(metrics);
             self.prefix_rows.push(total_rows);
         }
@@ -122,6 +130,14 @@ impl VisualRowLayoutCache {
         for line in old_start..=delta.new_end_line {
             replacement.push(measure_line(buffer, line, self.wrap_cols.max(1)));
         }
+        let removed_capped = self.line_metrics[old_start..old_end_excl]
+            .iter()
+            .filter(|metrics| metrics.render_capped)
+            .count();
+        let added_capped = replacement
+            .iter()
+            .filter(|metrics| metrics.render_capped)
+            .count();
         let mut replacement_iter = replacement.into_iter();
         if !splice_vec_by_delta(&mut self.line_metrics, delta, new_len, || {
             replacement_iter
@@ -140,6 +156,10 @@ impl VisualRowLayoutCache {
         if self.prefix_rows.len() != self.line_metrics.len() + 1 {
             return false;
         }
+        self.render_capped_lines = self
+            .render_capped_lines
+            .saturating_sub(removed_capped)
+            .saturating_add(added_capped);
 
         self.revision = buffer.revision();
         true
@@ -153,6 +173,16 @@ impl VisualRowLayoutCache {
     /// Total visual row count.
     pub(crate) fn total_rows(&self) -> usize {
         self.prefix_rows.last().copied().unwrap_or(0)
+    }
+
+    /// Returns true when at least one line is render-capped.
+    pub(crate) fn has_render_capped_lines(&self) -> bool {
+        self.render_capped_lines > 0
+    }
+
+    /// Returns number of lines currently affected by render cap.
+    pub(crate) fn render_capped_line_count(&self) -> usize {
+        self.render_capped_lines
     }
 
     /// Cached character length for a line.
@@ -169,7 +199,7 @@ impl VisualRowLayoutCache {
             .get(line)
             .map(|m| m.columns)
             .unwrap_or_else(|| {
-                let line_chars = buffer.line_len_chars(line);
+                let line_chars = buffer.line_len_chars(line).min(MAX_RENDER_CHARS_PER_LINE);
                 measure_line_columns(buffer, line, line_chars).0
             })
     }
@@ -184,8 +214,7 @@ impl VisualRowLayoutCache {
         if line >= buffer.line_count() {
             return 0;
         }
-        let line_chars = buffer.line_len_chars(line);
-        let char_column = char_column.min(line_chars);
+        let line_chars = buffer.line_len_chars(line).min(MAX_RENDER_CHARS_PER_LINE);
         let metrics = self.line_metrics.get(line).copied().unwrap_or_else(|| {
             let (columns, ascii_only) = measure_line_columns(buffer, line, line_chars);
             LineWrapMetrics {
@@ -193,8 +222,10 @@ impl VisualRowLayoutCache {
                 columns,
                 visual_rows: 1,
                 ascii_only,
+                render_capped: buffer.line_len_chars(line) > MAX_RENDER_CHARS_PER_LINE,
             }
         });
+        let char_column = char_column.min(metrics.chars);
         if metrics.ascii_only {
             return char_column;
         }
@@ -222,6 +253,7 @@ impl VisualRowLayoutCache {
             return 0;
         }
         let fallback_chars = buffer.line_len_chars(line);
+        let fallback_chars = fallback_chars.min(MAX_RENDER_CHARS_PER_LINE);
         let metrics = self.line_metrics.get(line).copied().unwrap_or_else(|| {
             let (columns, ascii_only) = measure_line_columns(buffer, line, fallback_chars);
             LineWrapMetrics {
@@ -229,6 +261,7 @@ impl VisualRowLayoutCache {
                 columns,
                 visual_rows: 1,
                 ascii_only,
+                render_capped: buffer.line_len_chars(line) > MAX_RENDER_CHARS_PER_LINE,
             }
         });
         let target_columns = target_columns.min(metrics.columns);
@@ -284,10 +317,11 @@ impl VisualRowLayoutCache {
             .get(line)
             .copied()
             .unwrap_or_else(|| LineWrapMetrics {
-                chars: buffer.line_len_chars(line),
-                columns: buffer.line_len_chars(line),
+                chars: buffer.line_len_chars(line).min(MAX_RENDER_CHARS_PER_LINE),
+                columns: buffer.line_len_chars(line).min(MAX_RENDER_CHARS_PER_LINE),
                 visual_rows: 1,
                 ascii_only: false,
+                render_capped: buffer.line_len_chars(line) > MAX_RENDER_CHARS_PER_LINE,
             });
         let local_range = line_row_char_range(
             buffer,
@@ -337,7 +371,8 @@ where
 }
 
 fn measure_line(buffer: &RopeBuffer, line: usize, cols: usize) -> LineWrapMetrics {
-    let chars = buffer.line_len_chars(line);
+    let full_chars = buffer.line_len_chars(line);
+    let chars = full_chars.min(MAX_RENDER_CHARS_PER_LINE);
     let (columns, ascii_only) = measure_line_columns(buffer, line, chars);
     let visual_rows = measure_line_visual_rows(buffer, line, chars, cols.max(1));
     LineWrapMetrics {
@@ -345,6 +380,7 @@ fn measure_line(buffer: &RopeBuffer, line: usize, cols: usize) -> LineWrapMetric
         columns,
         visual_rows,
         ascii_only,
+        render_capped: full_chars > MAX_RENDER_CHARS_PER_LINE,
     }
 }
 
@@ -684,5 +720,38 @@ mod tests {
         assert_eq!(cache.line_display_column_to_char(&buffer, 0, 1), 0);
         assert_eq!(cache.line_display_column_to_char(&buffer, 0, 2), 2);
         assert_eq!(cache.line_display_column_to_char(&buffer, 0, 3), 3);
+    }
+
+    #[test]
+    fn long_line_metrics_cap_rendered_chars_and_report_capped_lines() {
+        let text = format!(
+            "{}\n",
+            "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(250))
+        );
+        let (buffer, cache) = rebuild_cache_for(text.as_str(), 200.0, 10.0, 5.0);
+
+        assert_eq!(buffer.line_len_chars(0), MAX_RENDER_CHARS_PER_LINE + 250);
+        assert_eq!(cache.line_chars(0), MAX_RENDER_CHARS_PER_LINE);
+        assert!(cache.has_render_capped_lines());
+        assert_eq!(cache.render_capped_line_count(), 1);
+    }
+
+    #[test]
+    fn long_line_column_mappings_clamp_at_render_cap() {
+        let text = format!(
+            "{}\n",
+            "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(500))
+        );
+        let (buffer, cache) = rebuild_cache_for(text.as_str(), 2000.0, 10.0, 1.0);
+
+        let beyond = MAX_RENDER_CHARS_PER_LINE.saturating_add(400);
+        assert_eq!(
+            cache.line_char_to_display_column(&buffer, 0, beyond),
+            MAX_RENDER_CHARS_PER_LINE
+        );
+        assert_eq!(
+            cache.line_display_column_to_char(&buffer, 0, beyond),
+            MAX_RENDER_CHARS_PER_LINE
+        );
     }
 }

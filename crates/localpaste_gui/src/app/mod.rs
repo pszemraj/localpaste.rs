@@ -171,6 +171,7 @@ pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
 const PALETTE_SEARCH_LIMIT: usize = 40;
+pub(crate) const MAX_RENDER_CHARS_PER_LINE: usize = 10_000;
 const HIGHLIGHT_DEBOUNCE_MEDIUM: Duration = Duration::from_millis(35);
 const HIGHLIGHT_DEBOUNCE_LARGE: Duration = Duration::from_millis(50);
 const HIGHLIGHT_DEBOUNCE_TINY: Duration = Duration::from_millis(15);

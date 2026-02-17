@@ -1,6 +1,7 @@
 //! Virtual preview/editor rendering extracted from the main editor panel.
 
 use super::super::*;
+use crate::app::text_coords::prefix_by_chars;
 use eframe::egui;
 use tracing::info;
 
@@ -27,6 +28,7 @@ impl LocalPasteApp {
         let mut last_virtual_click_pos = self.last_virtual_click_pos;
         let mut last_virtual_click_line = self.last_virtual_click_line;
         let mut last_virtual_click_count = self.last_virtual_click_count;
+        let mut preview_render_capped_lines = 0usize;
         scroll.show_rows(ui, row_height, line_count, |ui, range| {
             ui.set_min_width(ui.available_width());
             let sense = egui::Sense::click_and_drag();
@@ -56,10 +58,25 @@ impl LocalPasteApp {
             let mut pending_action: Option<RowAction<'_>> = None;
             for line_idx in range {
                 let line = self.editor_lines.line_without_newline(text, line_idx);
+                let full_line_chars = self.editor_lines.line_len_chars(line_idx);
+                let rendered_line_chars = full_line_chars.min(MAX_RENDER_CHARS_PER_LINE);
+                if full_line_chars > MAX_RENDER_CHARS_PER_LINE {
+                    preview_render_capped_lines = preview_render_capped_lines.saturating_add(1);
+                }
+                let line_for_render = if full_line_chars > MAX_RENDER_CHARS_PER_LINE {
+                    prefix_by_chars(line, MAX_RENDER_CHARS_PER_LINE)
+                } else {
+                    line
+                };
                 let render_line =
                     highlight_render_match.and_then(|render| render.lines.get(line_idx));
-                let job = build_virtual_line_job(ui, line, editor_font, render_line, use_plain);
-                let line_chars = self.editor_lines.line_len_chars(line_idx);
+                let job = build_virtual_line_job(
+                    ui,
+                    line_for_render,
+                    editor_font,
+                    render_line,
+                    use_plain,
+                );
                 let galley = ui.fonts_mut(|f| f.layout_job(job));
                 let row_width = ui.available_width();
                 let (rect, response) =
@@ -73,7 +90,7 @@ impl LocalPasteApp {
                         let cursor = galley.cursor_from_pos(local_pos);
                         let vcursor = VirtualCursor {
                             line: line_idx,
-                            column: cursor.index,
+                            column: cursor.index.min(rendered_line_chars),
                         };
                         if response.drag_started() {
                             last_virtual_click_at = None;
@@ -100,7 +117,7 @@ impl LocalPasteApp {
                                 3 => {
                                     pending_action = Some(RowAction::Triple {
                                         line_idx,
-                                        line_chars,
+                                        line_chars: rendered_line_chars,
                                     });
                                 }
                                 2 => {
@@ -120,7 +137,7 @@ impl LocalPasteApp {
                     line_idx,
                     rect,
                     galley,
-                    line_chars,
+                    line_chars: rendered_line_chars,
                 });
             }
 
@@ -249,6 +266,22 @@ impl LocalPasteApp {
         self.last_virtual_click_line = last_virtual_click_line;
         self.last_virtual_click_count = last_virtual_click_count;
         self.virtual_editor_active = false;
+        if preview_render_capped_lines > 0 {
+            let line_label = if preview_render_capped_lines == 1 {
+                "line"
+            } else {
+                "lines"
+            };
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(format!(
+                    "Rendering truncated after {} chars on {} visible {}.",
+                    MAX_RENDER_CHARS_PER_LINE, preview_render_capped_lines, line_label
+                ))
+                .small()
+                .color(COLOR_TEXT_MUTED),
+            );
+        }
     }
 
     pub(super) fn render_virtual_editor_panel(
@@ -670,6 +703,19 @@ impl LocalPasteApp {
             || self.virtual_editor_state.has_focus
             || self.virtual_drag_active
             || editor_interacted;
+        if self.virtual_layout.has_render_capped_lines() {
+            let capped_lines = self.virtual_layout.render_capped_line_count();
+            let line_label = if capped_lines == 1 { "line" } else { "lines" };
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(format!(
+                    "Rendering truncated after {} chars on {} {}.",
+                    MAX_RENDER_CHARS_PER_LINE, capped_lines, line_label
+                ))
+                .small()
+                .color(COLOR_TEXT_MUTED),
+            );
+        }
         if let Some(started) = frame_started {
             let total_ms = started.elapsed().as_secs_f32() * 1000.0;
             info!(
