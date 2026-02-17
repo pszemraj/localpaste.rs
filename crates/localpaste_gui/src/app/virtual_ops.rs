@@ -485,6 +485,21 @@ impl LocalPasteApp {
         rebuilt
     }
 
+    fn cancel_virtual_ime_preedit_if_active(&mut self, now: Instant) -> bool {
+        let had_preedit = self.virtual_editor_state.ime.preedit_range.is_some()
+            || !self.virtual_editor_state.ime.preedit_text.is_empty();
+        let changed = if let Some(range) = self.virtual_editor_state.ime.preedit_range.take() {
+            self.replace_virtual_range(range, "", EditIntent::Other, false, now)
+        } else {
+            false
+        };
+        if had_preedit {
+            self.virtual_editor_state.ime.preedit_text.clear();
+            self.virtual_editor_state.ime.enabled = false;
+        }
+        changed
+    }
+
     pub(super) fn replace_virtual_range(
         &mut self,
         range: Range<usize>,
@@ -589,6 +604,7 @@ impl LocalPasteApp {
                     }
                 }
                 VirtualInputCommand::Cut => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     if let Some(range) = self.virtual_editor_state.selection_range() {
                         if let Some(selection) = self.virtual_selected_text() {
                             ctx.send_cmd(egui::OutputCommand::CopyText(selection));
@@ -602,6 +618,7 @@ impl LocalPasteApp {
                     }
                 }
                 VirtualInputCommand::Paste(text) => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let cursor = self.virtual_editor_state.cursor();
                     let range = self
                         .virtual_editor_state
@@ -630,6 +647,7 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::InsertNewline => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let cursor = self.virtual_editor_state.cursor();
                     let range = self
                         .virtual_editor_state
@@ -640,6 +658,7 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::InsertTab => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let cursor = self.virtual_editor_state.cursor();
                     let range = self
                         .virtual_editor_state
@@ -650,6 +669,7 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::Backspace { word } => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     if let Some(range) = self.virtual_editor_state.selection_range() {
                         result.changed |= self.replace_virtual_range(
                             range,
@@ -679,6 +699,7 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::DeleteForward { word } => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     if let Some(range) = self.virtual_editor_state.selection_range() {
                         result.changed |= self.replace_virtual_range(
                             range,
@@ -900,8 +921,7 @@ impl LocalPasteApp {
                         .set_wrap_boundary_affinity(affinity);
                 }
                 VirtualInputCommand::Undo => {
-                    self.virtual_editor_state.ime.preedit_range = None;
-                    self.virtual_editor_state.ime.preedit_text.clear();
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let delta = self.virtual_editor_history.undo(
                         &mut self.virtual_editor_buffer,
                         &mut self.virtual_editor_state,
@@ -914,6 +934,7 @@ impl LocalPasteApp {
                     }
                 }
                 VirtualInputCommand::Redo => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let delta = self.virtual_editor_history.redo(
                         &mut self.virtual_editor_buffer,
                         &mut self.virtual_editor_state,
@@ -980,11 +1001,8 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::ImeDisabled => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     self.virtual_editor_state.ime.enabled = false;
-                    if let Some(range) = self.virtual_editor_state.ime.preedit_range.take() {
-                        result.changed |=
-                            self.replace_virtual_range(range, "", EditIntent::Other, false, now);
-                    }
                     self.virtual_editor_state.ime.preedit_text.clear();
                     self.virtual_editor_state.clear_preferred_column();
                 }

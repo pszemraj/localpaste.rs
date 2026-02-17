@@ -192,3 +192,4 @@ mod save_and_metadata;
 mod shutdown_behavior;
 mod state_basics;
 mod virtual_editor_behaviors;
+mod virtual_editor_ime_regressions;
