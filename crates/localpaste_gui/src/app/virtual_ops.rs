@@ -94,11 +94,8 @@ impl LocalPasteApp {
             wrap_cols,
         }
     }
-
     fn virtual_preferred_column_for_cursor(&self, cursor: usize) -> usize {
         let metrics = self.virtual_cursor_wrap_metrics(cursor);
-        // Preserve wrap-boundary end-of-line intent (x == wrap width) so vertical
-        // navigation does not collapse to column 0 on the next line.
         if metrics.display_col == metrics.line_cols
             && metrics.display_col > 0
             && metrics.display_col % metrics.wrap_cols == 0
@@ -457,26 +454,34 @@ impl LocalPasteApp {
         Some(local_start..local_end)
     }
 
-    fn apply_virtual_layout_delta_with_recovery(&mut self, delta: VirtualEditDelta) -> bool {
+    fn apply_virtual_layout_delta_with_recovery(
+        &mut self,
+        delta: VirtualEditDelta,
+        mut galley_apply_ms: Option<&mut f32>,
+    ) -> bool {
         if self
             .virtual_layout
             .apply_delta(&self.virtual_editor_buffer, delta)
         {
+            let galley_started = galley_apply_ms.as_ref().map(|_| Instant::now());
             self.virtual_galley_cache
                 .apply_delta(delta, self.virtual_editor_buffer.line_count());
+            if let (Some(slot), Some(started)) = (galley_apply_ms.as_mut(), galley_started) {
+                **slot = started.elapsed().as_secs_f32() * 1000.0;
+            }
             return true;
         }
-
-        // `apply_delta` failed invariant checks. Rebuild immediately from cached
-        // geometry when possible so subsequent cursor/layout operations in the
-        // same input pass use consistent row metrics.
         let rebuilt = self
             .virtual_layout
             .rebuild_with_cached_geometry(&self.virtual_editor_buffer);
         if !rebuilt {
             self.virtual_layout = WrapLayoutCache::default();
         }
+        let galley_started = galley_apply_ms.as_ref().map(|_| Instant::now());
         self.virtual_galley_cache.evict_all();
+        if let (Some(slot), Some(started)) = (galley_apply_ms.as_mut(), galley_started) {
+            **slot = started.elapsed().as_secs_f32() * 1000.0;
+        }
         rebuilt
     }
 
@@ -500,9 +505,6 @@ impl LocalPasteApp {
         let inserted_newlines = replacement.chars().filter(|ch| *ch == '\n').count();
         let deleted_newlines = deleted.chars().filter(|ch| *ch == '\n').count();
         let touched_lines = inserted_newlines.max(deleted_newlines).saturating_add(1);
-        // Persist undo anchors in the same renderable cursor domain used by
-        // live navigation/caret drawing so undo cannot restore an off-screen
-        // insertion point on render-capped lines.
         let before_cursor =
             self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
         let perf_enabled = self.perf_log_enabled;
@@ -510,19 +512,17 @@ impl LocalPasteApp {
         let delta = self
             .virtual_editor_buffer
             .replace_char_range(start..end, replacement);
-        let rope_apply_ms = rope_started
-            .map(|started| started.elapsed().as_secs_f32() * 1000.0)
-            .unwrap_or(0.0);
+        let rope_apply_ms =
+            rope_started.map_or(0.0, |started| started.elapsed().as_secs_f32() * 1000.0);
         if let Some(delta) = delta {
+            let mut galley_apply_ms = 0.0f32;
             let layout_started = perf_enabled.then(Instant::now);
-            let layout_recovered = self.apply_virtual_layout_delta_with_recovery(delta);
-            let layout_apply_ms = layout_started
-                .map(|started| started.elapsed().as_secs_f32() * 1000.0)
-                .unwrap_or(0.0);
-            let galley_started = perf_enabled.then(Instant::now);
-            let galley_apply_ms = galley_started
-                .map(|started| started.elapsed().as_secs_f32() * 1000.0)
-                .unwrap_or(0.0);
+            let layout_recovered = self.apply_virtual_layout_delta_with_recovery(
+                delta,
+                perf_enabled.then_some(&mut galley_apply_ms),
+            );
+            let layout_apply_ms =
+                layout_started.map_or(0.0, |started| started.elapsed().as_secs_f32() * 1000.0);
             self.highlight_edit_hint = Some(VirtualEditHint {
                 start_line,
                 touched_lines,
@@ -908,7 +908,7 @@ impl LocalPasteApp {
                     );
                     if let Some(delta) = delta {
                         result.changed = true;
-                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta);
+                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta, None);
                         let _cursor_clamped = self.clamp_virtual_cursor_state_for_render();
                         self.highlight_edit_hint = None;
                     }
@@ -920,7 +920,7 @@ impl LocalPasteApp {
                     );
                     if let Some(delta) = delta {
                         result.changed = true;
-                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta);
+                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta, None);
                         let _cursor_clamped = self.clamp_virtual_cursor_state_for_render();
                         self.highlight_edit_hint = None;
                     }
