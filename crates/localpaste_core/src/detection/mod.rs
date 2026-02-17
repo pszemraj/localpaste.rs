@@ -187,8 +187,60 @@ fn looks_like_plain_css(content: &str) -> bool {
         || lower.contains("@include")
         || lower.contains("@extend")
         || lower.contains("#{");
+    let has_nested_scss_selector = content_has_nested_scss_selector(&lower);
 
-    has_css_block && !has_scss_specific_tokens
+    // SCSS blocks can look like CSS but still include nested rules (for example
+    // `.parent { .child { ... } }` or `.button { &:hover { ... } }`).
+    has_css_block && !(has_scss_specific_tokens || has_nested_scss_selector)
+}
+
+#[cfg(feature = "magika")]
+fn content_has_nested_scss_selector(content: &str) -> bool {
+    let mut block_depth = 0usize;
+    for line in content.lines() {
+        let mut idx = 0usize;
+        while idx < line.len() {
+            let ch = line.as_bytes()[idx];
+            if ch == b'{' {
+                let selector = line[..idx].trim();
+                if block_depth > 0 && appears_nested_scss_selector(selector) {
+                    return true;
+                }
+                block_depth = block_depth.saturating_add(1);
+            } else if ch == b'}' {
+                block_depth = block_depth.saturating_sub(1);
+            }
+            idx += 1;
+        }
+    }
+
+    false
+}
+
+#[cfg(feature = "magika")]
+fn appears_nested_scss_selector(selector: &str) -> bool {
+    let selector = selector.trim().trim_end_matches(',');
+    if selector.is_empty() || selector.ends_with(';') {
+        return false;
+    }
+    if selector.starts_with('@') {
+        return false;
+    }
+    if selector == "from" || selector == "to" {
+        return false;
+    }
+
+    selector.starts_with('&')
+        || selector.starts_with('.')
+        || selector.starts_with('#')
+        || selector.starts_with(':')
+        || selector.starts_with('>')
+        || selector.starts_with('+')
+        || selector.starts_with('~')
+        || selector.starts_with('[')
+        || selector.starts_with('*')
+        || selector.contains('&')
+        || selector.chars().any(|c| c.is_ascii_alphabetic())
 }
 
 /// Initialize the Magika model session early when available.
