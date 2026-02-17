@@ -32,6 +32,17 @@ fn is_internal_wrap_boundary(display_col: usize, wrap_cols: usize, line_cols: us
 }
 
 impl LocalPasteApp {
+    fn clamp_virtual_cursor_state_for_render(&mut self) -> bool {
+        let cursor = self.virtual_editor_state.cursor();
+        let clamped = self.clamp_virtual_cursor_for_render(cursor);
+        if clamped == cursor {
+            return false;
+        }
+        self.virtual_editor_state
+            .set_cursor(clamped, self.virtual_editor_buffer.len_chars());
+        true
+    }
+
     fn virtual_line_render_chars(&self, line: usize) -> usize {
         let full_chars = self.virtual_editor_buffer.line_len_chars(line);
         let cached_chars = self.virtual_layout.line_chars(line);
@@ -489,7 +500,11 @@ impl LocalPasteApp {
         let inserted_newlines = replacement.chars().filter(|ch| *ch == '\n').count();
         let deleted_newlines = deleted.chars().filter(|ch| *ch == '\n').count();
         let touched_lines = inserted_newlines.max(deleted_newlines).saturating_add(1);
-        let before_cursor = self.virtual_editor_state.cursor();
+        // Persist undo anchors in the same renderable cursor domain used by
+        // live navigation/caret drawing so undo cannot restore an off-screen
+        // insertion point on render-capped lines.
+        let before_cursor =
+            self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
         let perf_enabled = self.perf_log_enabled;
         let rope_started = perf_enabled.then(Instant::now);
         let delta = self
@@ -894,6 +909,7 @@ impl LocalPasteApp {
                     if let Some(delta) = delta {
                         result.changed = true;
                         let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta);
+                        let _cursor_clamped = self.clamp_virtual_cursor_state_for_render();
                         self.highlight_edit_hint = None;
                     }
                 }
@@ -905,6 +921,7 @@ impl LocalPasteApp {
                     if let Some(delta) = delta {
                         result.changed = true;
                         let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta);
+                        let _cursor_clamped = self.clamp_virtual_cursor_state_for_render();
                         self.highlight_edit_hint = None;
                     }
                 }

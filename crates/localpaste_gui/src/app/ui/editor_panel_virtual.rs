@@ -5,6 +5,17 @@ use crate::app::text_coords::prefix_by_chars;
 use eframe::egui;
 use tracing::info;
 
+fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rect {
+    let scrollbar_gutter = (wrap_width - inner_rect.width()).max(0.0);
+    if scrollbar_gutter <= 0.0 {
+        return inner_rect;
+    }
+    egui::Rect::from_min_max(
+        inner_rect.min,
+        egui::pos2(inner_rect.max.x + scrollbar_gutter, inner_rect.max.y),
+    )
+}
+
 impl LocalPasteApp {
     pub(super) fn render_virtual_preview_panel(
         &mut self,
@@ -694,10 +705,13 @@ impl LocalPasteApp {
                     paint_ms = started.elapsed().as_secs_f32() * 1000.0;
                 }
             });
+        // Include scrollbar gutter when classifying inside/outside editor clicks.
+        // Scrollbar interaction should not be treated as an external blur.
+        let interaction_rect = editor_interaction_rect(scroll_output.inner_rect, wrap_width);
         // Keep a focusable widget for this ID alive each frame so keyboard focus
         // persists between pointer interactions.
         let focus_response = ui.interact(
-            scroll_output.inner_rect,
+            interaction_rect,
             editor_id,
             egui::Sense::focusable_noninteractive(),
         );
@@ -711,7 +725,7 @@ impl LocalPasteApp {
                     .pointer
                     .interact_pos()
                     .or_else(|| input.pointer.latest_pos())
-                    .map(|pos| scroll_output.inner_rect.contains(pos))
+                    .map(|pos| interaction_rect.contains(pos))
                     .unwrap_or(false)
         });
         if clicked_inside_editor {
@@ -739,7 +753,7 @@ impl LocalPasteApp {
                         .pointer
                         .interact_pos()
                         .or_else(|| input.pointer.latest_pos())
-                        .map(|pos| !scroll_output.inner_rect.contains(pos))
+                        .map(|pos| !interaction_rect.contains(pos))
                         .unwrap_or(false)
             });
             if !clicked_outside_editor && !tab_navigation_blur && !ui.ctx().wants_keyboard_input() {
@@ -784,5 +798,27 @@ impl LocalPasteApp {
                 "virtual editor frame breakdown"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::editor_interaction_rect;
+    use eframe::egui;
+
+    #[test]
+    fn interaction_rect_matches_inner_rect_without_scrollbar_gutter() {
+        let inner = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(180.0, 60.0));
+        let rect = editor_interaction_rect(inner, 180.0);
+        assert_eq!(rect, inner);
+    }
+
+    #[test]
+    fn interaction_rect_extends_right_edge_for_scrollbar_gutter() {
+        let inner = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(180.0, 60.0));
+        let rect = editor_interaction_rect(inner, 194.0);
+        assert_eq!(rect.min, inner.min);
+        assert_eq!(rect.max.y, inner.max.y);
+        assert_eq!(rect.max.x, inner.max.x + 14.0);
     }
 }

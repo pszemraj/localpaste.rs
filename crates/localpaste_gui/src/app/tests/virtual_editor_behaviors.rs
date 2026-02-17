@@ -714,6 +714,53 @@ fn word_navigation_respects_render_cap_for_long_lines() {
 }
 
 #[test]
+fn undo_restores_clamped_cursor_for_render_capped_lines() {
+    let mut harness = make_app();
+    let long_line = "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64));
+    harness.app.reset_virtual_editor(long_line.as_str());
+    harness
+        .app
+        .virtual_layout
+        .rebuild(&harness.app.virtual_editor_buffer, 50000.0, 1.0, 1.0);
+
+    harness.app.virtual_select_line(0);
+    let long_line_end = harness
+        .app
+        .virtual_editor_buffer
+        .line_col_to_char(0, long_line.chars().count());
+    assert_eq!(harness.app.virtual_editor_state.cursor(), long_line_end);
+
+    let ctx = egui::Context::default();
+    let replace_result = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::InsertText("z".to_string())]);
+    assert!(replace_result.changed);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "z");
+
+    let undo_result = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo]);
+    assert!(undo_result.changed);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), long_line);
+
+    let capped = harness
+        .app
+        .virtual_editor_buffer
+        .line_col_to_char(0, MAX_RENDER_CHARS_PER_LINE);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), capped);
+
+    let insert_result = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::InsertText("y".to_string())]);
+    assert!(insert_result.changed);
+    let inserted = harness
+        .app
+        .virtual_editor_buffer
+        .slice_chars(capped..capped.saturating_add(1));
+    assert_eq!(inserted, "y");
+}
+
+#[test]
 fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
     fn setup_selection(app: &mut LocalPasteApp) {
         app.reset_virtual_editor("abcdef");
