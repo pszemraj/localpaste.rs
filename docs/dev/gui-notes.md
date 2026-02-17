@@ -65,18 +65,22 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
 1. Build release binaries:
    - `cargo build -p localpaste_server --bin localpaste --release`
    - `cargo build -p localpaste_gui --bin localpaste-gui --release`
-2. Run seeded virtual-editor GUI harness:
-   - `.\scratch\virtualizedgui-perf-run.ps1 -Profile Release -VirtualMode Editor -PerfLog -InputTrace -HighlightTrace -SeedHighlightMatrix -SeedHighlightMatrixAutoDetect -KeepDb -Port 38973`
-3. Expected script output before GUI launch:
-   - seeded paste table printed
-   - `Seed verification passed.`
+2. Seed a large dataset:
+   - `cargo run -p localpaste_tools --bin generate-test-data -- --clear --count 10000 --folders 50`
+3. Run GUI in virtual editor mode with traces enabled (PowerShell example):
+   - `$env:LOCALPASTE_VIRTUAL_EDITOR='1'`
+   - `$env:LOCALPASTE_EDITOR_PERF_LOG='1'`
+   - `$env:LOCALPASTE_EDITOR_INPUT_TRACE='1'`
+   - `$env:LOCALPASTE_HIGHLIGHT_TRACE='1'`
+   - `cargo run -p localpaste_gui --bin localpaste-gui --release`
 
-### Script Status / Flags
+### Run Flags
 
-- [`../../scratch/virtualizedgui-perf-run.ps1`](../../scratch/virtualizedgui-perf-run.ps1) parameters are current:
-  - `DbPath`, `Port`, `KeepDb`, `NoGui`, `Build`, `NoMagika`, `SeedHighlightMatrix`, `SeedHighlightMatrixAutoDetect`, `Profile`, `VirtualMode`, `PerfLog`, `InputTrace`, `HighlightTrace`
-- `-SeedHighlightMatrixAutoDetect` is meaningful only when `-SeedHighlightMatrix` is also set.
-- `-PerfLog` sets `LOCALPASTE_EDITOR_PERF_LOG=1`; backend perf logging is separate (`LOCALPASTE_BACKEND_PERF_LOG=1`).
+- `LOCALPASTE_VIRTUAL_EDITOR=1` ensures editable virtual mode for this checklist.
+- `LOCALPASTE_EDITOR_PERF_LOG=1` enables periodic UI perf snapshots.
+- `LOCALPASTE_EDITOR_INPUT_TRACE=1` enables input routing logs.
+- `LOCALPASTE_HIGHLIGHT_TRACE=1` enables highlight lifecycle logs.
+- Backend perf logging is separate: `LOCALPASTE_BACKEND_PERF_LOG=1`.
 
 ### Manual Checklist
 

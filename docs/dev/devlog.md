@@ -74,7 +74,7 @@ For repeatable GUI perf validation, see [GUI perf protocol](gui-perf-protocol.md
 ## Validation Loop
 
 Policy source of truth:
-[../../AGENTS.md](../../AGENTS.md) defines mandatory validation gates and when smoke/manual GUI checks are required.
+This document and linked `docs/dev/*` references define mandatory validation gates and when smoke/manual GUI checks are required.
 This section is the quick command reference used during active development.
 
 ```bash
@@ -104,7 +104,7 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 rustdoc-checker crates --strict
 ```
 
-- Canonical smoke script variants: [../../AGENTS.md#smoke-test-run-after-any-apicore-change](../../AGENTS.md#smoke-test-run-after-any-apicore-change)
+- Canonical smoke flow: [Validation Loop step 7](#validation-loop)
 - Canonical manual GUI checklist: [gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
 
 Language detection/normalization/highlight behavior is tracked in [../language-detection.md](../language-detection.md).

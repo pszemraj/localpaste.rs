@@ -8,14 +8,14 @@ Use this page as the canonical map of where each concept is defined.
 | Topic                                                     | Doc                                                                                                                                                  |
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Product/project overview                                  | [../README.md](../README.md)                                                                           |
-| Agent protocol + mandatory validation gates               | [../AGENTS.md](../AGENTS.md)                                                         |
+| Validation workflow + mandatory quality gates             | [dev/devlog.md](dev/devlog.md)                                                       |
 | System architecture walkthrough                           | [architecture.md](architecture.md)                                                     |
 | Language detection + normalization + highlight resolution | [language-detection.md](language-detection.md)                                         |
 | Storage backend + compatibility contract                  | [storage.md](storage.md)                                                               |
 | Security posture + public exposure                        | [security.md](security.md)                                                             |
 | Service/background operation + lock recovery              | [deployment.md](deployment.md)                                                         |
 | Dev docs index                                            | [dev/README.md](dev/README.md)                                                         |
-| Development workflow (build/run/test/debug)               | [dev/devlog.md](dev/devlog.md)                                                         |
+| Development workflow (build/run/test/debug)               | [dev/devlog.md](dev/devlog.md)                                                       |
 | Locking behavior (DB owner lock + paste edit locks)       | [dev/locking-model.md](dev/locking-model.md)                                           |
 | API route behavior/response shape                         | [../crates/localpaste_server/src/handlers/paste.rs](../crates/localpaste_server/src/handlers/paste.rs) |
 | GUI runtime flags + behavior notes                        | [dev/gui-notes.md](dev/gui-notes.md)                                                   |

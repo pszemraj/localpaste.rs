@@ -268,8 +268,9 @@ Relevant code:
 
 Repository-level quality gates are defined in:
 
-- [../AGENTS.md](../AGENTS.md)
 - [dev/devlog.md](dev/devlog.md)
+- [dev/gui-notes.md](dev/gui-notes.md)
+- [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md)
 
 Core themes:
 
