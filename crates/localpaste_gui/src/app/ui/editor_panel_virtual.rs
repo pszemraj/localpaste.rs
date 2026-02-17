@@ -359,6 +359,7 @@ impl LocalPasteApp {
             ),
         );
         let mut focused = ui.memory(|m| m.has_focus(editor_id));
+        let had_focus = focused || self.virtual_editor_state.has_focus;
         let mut editor_interacted = false;
         let scroll_output =
             scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
@@ -694,10 +695,28 @@ impl LocalPasteApp {
             editor_id,
             egui::Sense::focusable_noninteractive(),
         );
-        if focus_response.gained_focus() {
+        let mut egui_focus = ui.memory(|m| m.has_focus(editor_id));
+        // Keep editor focus stable when no explicit blur occurred. This avoids
+        // transient focus drops that can swallow Enter/Ctrl+A in virtual mode.
+        if had_focus && !egui_focus {
+            let clicked_outside_editor = ui.input(|input| {
+                input.pointer.button_pressed(egui::PointerButton::Primary)
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .or_else(|| input.pointer.latest_pos())
+                        .map(|pos| !scroll_output.inner_rect.contains(pos))
+                        .unwrap_or(false)
+            });
+            if !clicked_outside_editor && !ui.ctx().wants_keyboard_input() {
+                ui.memory_mut(|m| m.request_focus(editor_id));
+                egui_focus = true;
+            }
+        }
+        if focus_response.gained_focus() || (egui_focus && !had_focus) {
             self.reset_virtual_caret_blink();
         }
-        focused = focus_response.has_focus();
+        focused = egui_focus;
         self.virtual_editor_state.has_focus = focused;
         self.virtual_editor_active = focused
             || self.virtual_editor_state.has_focus

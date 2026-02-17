@@ -178,6 +178,31 @@ fn virtual_editor_focus_persists_across_frames_without_pointer_input() {
 }
 
 #[test]
+fn virtual_editor_recovers_focus_when_state_had_focus_without_explicit_blur() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("line one\nline two\n");
+    harness.app.virtual_editor_state.has_focus = true;
+
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let mut style = (*ctx.style()).clone();
+    style.text_styles.insert(
+        egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
+        egui::FontId::new(14.0, egui::FontFamily::Monospace),
+    );
+    ctx.set_style(style);
+
+    let _ = ctx.run(Default::default(), |ctx| {
+        harness.app.render_editor_panel(ctx);
+    });
+
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+}
+
+#[test]
 fn virtual_vertical_move_target_returns_global_char_offset() {
     let mut harness = make_app();
     harness.app.reset_virtual_editor("aaaa\nbbbb\ncccc\n");
