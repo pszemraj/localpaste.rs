@@ -385,13 +385,13 @@ fn measure_line(buffer: &RopeBuffer, line: usize, cols: usize) -> LineWrapMetric
 }
 
 fn measure_line_columns(buffer: &RopeBuffer, idx: usize, chars: usize) -> (usize, bool) {
-    let line = buffer.rope().line(idx);
-    if line.chunks().all(|chunk| chunk.is_ascii()) {
+    let line_slice = buffer.rope().line(idx).slice(..chars);
+    if line_slice.chunks().all(|chunk| chunk.is_ascii()) {
         return (chars, true);
     }
 
     use unicode_width::UnicodeWidthChar;
-    let columns = line
+    let columns = line_slice
         .chars()
         .filter(|c| *c != '\n' && *c != '\r')
         .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
@@ -751,6 +751,30 @@ mod tests {
         );
         assert_eq!(
             cache.line_display_column_to_char(&buffer, 0, beyond),
+            MAX_RENDER_CHARS_PER_LINE
+        );
+    }
+
+    #[test]
+    fn long_non_ascii_line_column_mappings_clamp_at_render_cap() {
+        let text = format!(
+            "{}\n",
+            "🦀".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(300))
+        );
+        let (buffer, cache) = rebuild_cache_for(text.as_str(), 40_000.0, 10.0, 1.0);
+
+        let capped_columns = MAX_RENDER_CHARS_PER_LINE.saturating_mul(2);
+        let beyond_chars = MAX_RENDER_CHARS_PER_LINE.saturating_add(200);
+        let beyond_columns = capped_columns.saturating_add(400);
+
+        assert_eq!(cache.line_chars(0), MAX_RENDER_CHARS_PER_LINE);
+        assert_eq!(cache.line_columns(&buffer, 0), capped_columns);
+        assert_eq!(
+            cache.line_char_to_display_column(&buffer, 0, beyond_chars),
+            capped_columns
+        );
+        assert_eq!(
+            cache.line_display_column_to_char(&buffer, 0, beyond_columns),
             MAX_RENDER_CHARS_PER_LINE
         );
     }
