@@ -2,10 +2,10 @@
 
 Use this document for rewrite GUI behavior notes and env flags.
 Detection/normalization/highlight semantics are defined in
-[docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)
+[docs/language-detection.md](../language-detection.md)
 and should be treated as canonical.
 For perf validation steps/gates, use
-[docs/dev/gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
+[docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Runtime Flags
 
@@ -29,7 +29,7 @@ For perf validation steps/gates, use
 - Sidebar list refresh and sidebar search run on metadata projections (`name/tags/language/folder`) and do not deserialize full paste content.
 - Large buffers (`>= 256KB`) intentionally use plain-text rendering.
 - Virtual-editor highlight debounce/staging policy is defined in
-  [docs/language-detection.md#virtual-editor-async-highlight-flow](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md#virtual-editor-async-highlight-flow).
+  [docs/language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
 - Language display behavior is explicit: auto + unset -> `auto`; manual + unset -> `plain`.
 - Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
 - Folder create/edit/move controls are intentionally removed from the rewrite GUI; organization is smart-filter + search based.
@@ -55,7 +55,7 @@ Use this checklist when touching detection/highlight/filter code.
    - Set active language filter to `cs`; verify both `csharp` and `cs` pastes remain visible.
    - Set active language filter to `shell`; verify `bash`/`sh` labeled content matches.
 7. Validate syntax resolver behavior against the canonical matrix in
-   [docs/language-detection.md#gui-highlight-resolution](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md#gui-highlight-resolution):
+   [docs/language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.
 8. Validate large-buffer guardrail:
@@ -155,7 +155,7 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
 
 ## Edit Locks
 
-Detailed lock semantics are documented in [locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md).
+Detailed lock semantics are documented in [locking-model.md](locking-model.md).
 GUI-specific behavior remains:
 
 - Opening a paste in GUI acquires a paste edit lock for the app instance owner.

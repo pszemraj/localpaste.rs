@@ -2,7 +2,7 @@
 
 A fast, localhost-only pastebin with a modern editor, built in Rust.
 
-![LocalPaste Screenshot](https://github.com/pszemraj/localpaste.rs/blob/main/assets/ui.jpg)
+![LocalPaste Screenshot](assets/ui.jpg)
 
 ## What It Is
 
@@ -69,17 +69,17 @@ Runtime/provider note:
 - `MAGIKA_FORCE_CPU=true` is the default (see `.env.example`), so Magika uses CPU execution provider even when GPU is available.
 
 Build/run/validation command matrices are maintained in:
-[`docs/dev/devlog.md`](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md).
+[`docs/dev/devlog.md`](docs/dev/devlog.md).
 
 ## Configuration and Ops
 
-- System architecture walkthrough: [`docs/architecture.md`](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
-- Language detection + highlighting behavior: [`docs/language-detection.md`](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)
-- Storage/backend compatibility contract: [`docs/storage.md`](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md)
-- Security and environment variables: [`docs/security.md`](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
-- Service/background operation: [`docs/deployment.md`](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
-- Locking semantics (_owner lock + paste edit locks_): [`docs/dev/locking-model.md`](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
-- Documentation index: [`docs/README.md`](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md)
+- System architecture walkthrough: [`docs/architecture.md`](docs/architecture.md)
+- Language detection + highlighting behavior: [`docs/language-detection.md`](docs/language-detection.md)
+- Storage/backend compatibility contract: [`docs/storage.md`](docs/storage.md)
+- Security and environment variables: [`docs/security.md`](docs/security.md)
+- Service/background operation: [`docs/deployment.md`](docs/deployment.md)
+- Locking semantics (_owner lock + paste edit locks_): [`docs/dev/locking-model.md`](docs/dev/locking-model.md)
+- Documentation index: [`docs/README.md`](docs/README.md)
 
 ## License
 
