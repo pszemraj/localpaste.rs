@@ -22,8 +22,8 @@ use egui_extras::syntax_highlighting::CodeTheme;
 use highlight::{
     build_virtual_line_job, build_virtual_line_segment_job_owned, spawn_highlight_worker,
     syntect_language_hint, syntect_theme_key, EditorLayoutCache, EditorLayoutRequest,
-    HighlightRender, HighlightRequestMeta, HighlightWorker, HighlightWorkerResult, SyntectSettings,
-    VirtualEditHint,
+    HighlightRender, HighlightRequestMeta, HighlightRequestText, HighlightWorker,
+    HighlightWorkerResult, SyntectSettings, VirtualEditHint,
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};

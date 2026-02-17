@@ -447,8 +447,12 @@ impl LocalPasteApp {
                             use_plain,
                             segment_start_byte..segment_end_byte,
                         );
-                        job.wrap.max_width = wrap_width;
+                        job.wrap.max_width = f32::INFINITY;
                         let shaped = ui.fonts_mut(|f| f.layout_job(job));
+                        debug_assert!(
+                            shaped.rows.len() <= 1,
+                            "virtual row segment produced wrapped galley"
+                        );
                         self.virtual_galley_cache
                             .insert(line_idx, row_in_line, shaped.clone());
                         if let Some(started) = build_started {

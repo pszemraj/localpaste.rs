@@ -1,6 +1,9 @@
 //! Highlight cache/render alignment tests for editor and staged-highlight flows.
 
-use super::super::highlight::{HighlightPatch, HighlightRenderLine, VirtualEditHint};
+use super::super::highlight::{
+    HighlightPatch, HighlightRenderLine, HighlightRequestMeta, HighlightRequestText,
+    VirtualEditHint,
+};
 use super::*;
 
 #[test]
@@ -323,6 +326,12 @@ fn highlight_request_skips_when_staged_matches() {
 #[test]
 fn virtual_editor_requests_highlight_for_small_markdown_buffers() {
     let mut harness = make_app();
+    let (req_tx, req_rx) = crossbeam_channel::unbounded();
+    let (_evt_tx, evt_rx) = crossbeam_channel::unbounded();
+    harness.app.highlight_worker = HighlightWorker {
+        tx: req_tx,
+        rx: evt_rx,
+    };
     let markdown = "# Title\n\n- item\n";
     harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.edit_language = Some("markdown".to_string());
@@ -356,6 +365,77 @@ fn virtual_editor_requests_highlight_for_small_markdown_buffers() {
     );
     assert_eq!(pending.language_hint, "markdown");
     assert_eq!(pending.text_len, markdown.len());
+    let request = req_rx
+        .try_recv()
+        .expect("virtual mode should dispatch a highlight request");
+    assert!(
+        matches!(request.text, HighlightRequestText::Rope(_)),
+        "virtual mode should send rope snapshots to the worker"
+    );
+}
+
+#[test]
+fn virtual_editor_plain_threshold_clears_stale_highlight_state() {
+    let mut harness = make_app();
+    let (req_tx, req_rx) = crossbeam_channel::unbounded();
+    let (_evt_tx, evt_rx) = crossbeam_channel::unbounded();
+    harness.app.highlight_worker = HighlightWorker {
+        tx: req_tx,
+        rx: evt_rx,
+    };
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.edit_language = Some("markdown".to_string());
+    harness.app.edit_language_is_manual = true;
+    let large_markdown = format!("# {}\n", "x".repeat(HIGHLIGHT_PLAIN_THRESHOLD));
+    harness.app.selected_content.reset(large_markdown.clone());
+    harness.app.reset_virtual_editor(large_markdown.as_str());
+
+    let revision = harness.app.active_revision();
+    let text_len = harness.app.active_text_len_bytes();
+    harness.app.highlight_pending = Some(HighlightRequestMeta {
+        paste_id: "alpha".to_string(),
+        revision,
+        text_len,
+        language_hint: "markdown".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+    });
+    let stale_render = HighlightRender {
+        paste_id: "alpha".to_string(),
+        revision,
+        text_len,
+        language_hint: "markdown".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        lines: vec![HighlightRenderLine::plain(large_markdown.len())],
+    };
+    harness.app.highlight_render = Some(stale_render.clone());
+    harness.app.highlight_staged = Some(stale_render);
+    let version_before = harness.app.highlight_version;
+
+    egui::__run_test_ctx(|ctx| {
+        let mut style = (*ctx.style()).clone();
+        style.text_styles.insert(
+            egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
+            egui::FontId::new(14.0, egui::FontFamily::Monospace),
+        );
+        ctx.set_style(style);
+        harness.app.render_editor_panel(ctx);
+    });
+
+    assert!(harness.app.highlight_pending.is_none());
+    assert!(harness.app.highlight_render.is_none());
+    assert!(harness.app.highlight_staged.is_none());
+    assert!(
+        matches!(
+            req_rx.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Empty)
+        ),
+        "large virtual buffers should not dispatch worker highlight requests"
+    );
+    assert_eq!(
+        harness.app.highlight_version,
+        version_before.saturating_add(1),
+        "clearing stale state should bump highlight version"
+    );
 }
 
 #[test]

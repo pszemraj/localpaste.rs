@@ -3,8 +3,8 @@
 use super::highlight::VirtualEditHint;
 use super::util::word_range_at;
 use super::virtual_editor::{
-    EditIntent, RecordedEdit, VirtualEditorHistory, VirtualEditorState, VirtualGalleyCache,
-    VirtualInputCommand, WrapBoundaryAffinity, WrapLayoutCache,
+    EditIntent, RecordedEdit, VirtualEditDelta, VirtualEditorHistory, VirtualEditorState,
+    VirtualGalleyCache, VirtualInputCommand, WrapBoundaryAffinity, WrapLayoutCache,
 };
 use super::{
     is_editor_word_char, next_virtual_click_count, LocalPasteApp, VirtualApplyResult,
@@ -446,6 +446,29 @@ impl LocalPasteApp {
         Some(local_start..local_end)
     }
 
+    fn apply_virtual_layout_delta_with_recovery(&mut self, delta: VirtualEditDelta) -> bool {
+        if self
+            .virtual_layout
+            .apply_delta(&self.virtual_editor_buffer, delta)
+        {
+            self.virtual_galley_cache
+                .apply_delta(delta, self.virtual_editor_buffer.line_count());
+            return true;
+        }
+
+        // `apply_delta` failed invariant checks. Rebuild immediately from cached
+        // geometry when possible so subsequent cursor/layout operations in the
+        // same input pass use consistent row metrics.
+        let rebuilt = self
+            .virtual_layout
+            .rebuild_with_cached_geometry(&self.virtual_editor_buffer);
+        if !rebuilt {
+            self.virtual_layout = WrapLayoutCache::default();
+        }
+        self.virtual_galley_cache.evict_all();
+        rebuilt
+    }
+
     pub(super) fn replace_virtual_range(
         &mut self,
         range: Range<usize>,
@@ -477,15 +500,11 @@ impl LocalPasteApp {
             .unwrap_or(0.0);
         if let Some(delta) = delta {
             let layout_started = perf_enabled.then(Instant::now);
-            let _ = self
-                .virtual_layout
-                .apply_delta(&self.virtual_editor_buffer, delta);
+            let layout_recovered = self.apply_virtual_layout_delta_with_recovery(delta);
             let layout_apply_ms = layout_started
                 .map(|started| started.elapsed().as_secs_f32() * 1000.0)
                 .unwrap_or(0.0);
             let galley_started = perf_enabled.then(Instant::now);
-            self.virtual_galley_cache
-                .apply_delta(delta, self.virtual_editor_buffer.line_count());
             let galley_apply_ms = galley_started
                 .map(|started| started.elapsed().as_secs_f32() * 1000.0)
                 .unwrap_or(0.0);
@@ -507,6 +526,7 @@ impl LocalPasteApp {
                     rope_apply_ms = rope_apply_ms,
                     layout_apply_ms = layout_apply_ms,
                     galley_apply_ms = galley_apply_ms,
+                    layout_recovered = layout_recovered,
                     "virtual editor mutation + cache patch timings"
                 );
             }
@@ -873,11 +893,7 @@ impl LocalPasteApp {
                     );
                     if let Some(delta) = delta {
                         result.changed = true;
-                        let _ = self
-                            .virtual_layout
-                            .apply_delta(&self.virtual_editor_buffer, delta);
-                        self.virtual_galley_cache
-                            .apply_delta(delta, self.virtual_editor_buffer.line_count());
+                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta);
                         self.highlight_edit_hint = None;
                     }
                 }
@@ -888,11 +904,7 @@ impl LocalPasteApp {
                     );
                     if let Some(delta) = delta {
                         result.changed = true;
-                        let _ = self
-                            .virtual_layout
-                            .apply_delta(&self.virtual_editor_buffer, delta);
-                        self.virtual_galley_cache
-                            .apply_delta(delta, self.virtual_editor_buffer.line_count());
+                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta);
                         self.highlight_edit_hint = None;
                     }
                 }

@@ -57,7 +57,7 @@ pub(crate) fn spawn_highlight_worker() -> HighlightWorker {
                 let started = Instant::now();
                 let trace_paste_id = latest.paste_id.clone();
                 let trace_revision = latest.revision;
-                let trace_len = latest.text.len();
+                let trace_len = latest.text.len_bytes();
                 let render = highlight_in_worker(&settings, &mut cache, latest);
                 let _ = tx_evt.send(render);
                 if trace_enabled {
@@ -84,10 +84,22 @@ fn highlight_in_worker(
     cache: &mut HighlightWorkerCache,
     req: HighlightRequest,
 ) -> HighlightWorkerResult {
-    let edit_hint = req.edit_hint;
-    if cache.language_hint != req.language_hint || cache.theme_key != req.theme_key {
-        cache.language_hint = req.language_hint.clone();
-        cache.theme_key = req.theme_key.clone();
+    let HighlightRequest {
+        paste_id,
+        revision,
+        text,
+        language_hint,
+        theme_key,
+        edit_hint,
+        patch_base_revision,
+        patch_base_text_len,
+    } = req;
+    let text = text.into_string();
+    let text_len = text.len();
+
+    if cache.language_hint != language_hint || cache.theme_key != theme_key {
+        cache.language_hint = language_hint.clone();
+        cache.theme_key = theme_key.clone();
         cache.lines.clear();
         cache.last_revision = None;
         cache.last_text_len = None;
@@ -95,35 +107,35 @@ fn highlight_in_worker(
     let cache_base_revision = cache.last_revision;
     let cache_base_text_len = cache.last_text_len;
 
-    let syntax = resolve_syntax(&settings.ps, &req.language_hint);
+    let syntax = resolve_syntax(&settings.ps, language_hint.as_str());
     let theme = settings
         .ts
         .themes
-        .get(req.theme_key.as_str())
+        .get(theme_key.as_str())
         .or_else(|| settings.ts.themes.values().next());
     let Some(theme) = theme else {
-        let lines = LinesWithEndings::from(req.text.as_str())
+        let lines = LinesWithEndings::from(text.as_str())
             .map(|line| HighlightRenderLine {
                 len: line.len(),
                 spans: Vec::new(),
             })
             .collect();
         cache.lines.clear();
-        cache.last_revision = Some(req.revision);
-        cache.last_text_len = Some(req.text.len());
+        cache.last_revision = Some(revision);
+        cache.last_text_len = Some(text_len);
         return HighlightWorkerResult::Render(HighlightRender {
-            paste_id: req.paste_id,
-            revision: req.revision,
-            text_len: req.text.len(),
-            language_hint: req.language_hint,
-            theme_key: req.theme_key,
+            paste_id,
+            revision,
+            text_len,
+            language_hint,
+            theme_key,
             lines,
         });
     };
 
     let had_cached_lines = !cache.lines.is_empty();
     let cached_line_count = cache.lines.len();
-    let lines: Vec<&str> = LinesWithEndings::from(req.text.as_str()).collect();
+    let lines: Vec<&str> = LinesWithEndings::from(text.as_str()).collect();
     let new_hashes: Vec<u64> = lines
         .iter()
         .map(|line| hash_bytes(line.as_bytes()))
@@ -227,21 +239,21 @@ fn highlight_in_worker(
     }
 
     cache.lines = new_lines;
-    cache.last_revision = Some(req.revision);
-    cache.last_text_len = Some(req.text.len());
+    cache.last_revision = Some(revision);
+    cache.last_text_len = Some(text_len);
 
     let render = HighlightRender {
-        paste_id: req.paste_id,
-        revision: req.revision,
-        text_len: req.text.len(),
-        language_hint: req.language_hint,
-        theme_key: req.theme_key,
+        paste_id,
+        revision,
+        text_len,
+        language_hint,
+        theme_key,
         lines: render_lines,
     };
     if had_cached_lines
         && cached_line_count == render.lines.len()
-        && req.patch_base_revision == cache_base_revision
-        && req.patch_base_text_len == cache_base_text_len
+        && patch_base_revision == cache_base_revision
+        && patch_base_text_len == cache_base_text_len
     {
         if let Some(start) = changed_start {
             let hinted_start = edit_hint
@@ -275,7 +287,7 @@ fn highlight_in_worker(
 
 #[cfg(test)]
 mod resolver_tests {
-    use super::super::{resolve_syntax, syntect_language_hint};
+    use super::super::{resolve_syntax, syntect_language_hint, HighlightRequestText};
     use super::{
         highlight_in_worker, HighlightRender, HighlightRequest, HighlightWorkerResult,
         SyntectSettings,
@@ -287,7 +299,7 @@ mod resolver_tests {
         let req = HighlightRequest {
             paste_id: "test".to_string(),
             revision: 1,
-            text: text.to_string(),
+            text: HighlightRequestText::Owned(text.to_string()),
             language_hint: label.to_string(),
             theme_key: "base16-mocha.dark".to_string(),
             edit_hint: None,
@@ -326,7 +338,7 @@ mod resolver_tests {
         HighlightRequest {
             paste_id: "test".to_string(),
             revision,
-            text: text.to_string(),
+            text: HighlightRequestText::Owned(text.to_string()),
             language_hint: "rust".to_string(),
             theme_key: "base16-mocha.dark".to_string(),
             edit_hint: None,
@@ -463,5 +475,23 @@ mod resolver_tests {
         let req_v2_line_insert = rust_request(2, text_v2, Some(1), Some(base_text_len));
         let second = highlight_in_worker(&settings, &mut cache, req_v2_line_insert);
         assert!(matches!(second, HighlightWorkerResult::Render(_)));
+    }
+
+    #[test]
+    fn worker_accepts_rope_payload_requests() {
+        let settings = SyntectSettings::default();
+        let mut cache = HighlightWorkerCache::default();
+        let req = HighlightRequest {
+            paste_id: "test".to_string(),
+            revision: 1,
+            text: HighlightRequestText::Rope(ropey::Rope::from_str("let a = 1;\n")),
+            language_hint: "rust".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            edit_hint: None,
+            patch_base_revision: None,
+            patch_base_text_len: None,
+        };
+        let out = highlight_in_worker(&settings, &mut cache, req);
+        assert!(matches!(out, HighlightWorkerResult::Render(_)));
     }
 }

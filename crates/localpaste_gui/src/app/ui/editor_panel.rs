@@ -158,6 +158,15 @@ impl LocalPasteApp {
                     .unwrap_or("base16-mocha.dark");
                 let revision = self.active_revision();
                 let text_len = self.active_text_len_bytes();
+                if is_large
+                    && (self.highlight_pending.is_some()
+                        || self.highlight_render.is_some()
+                        || self.highlight_staged.is_some())
+                {
+                    // Crossing into plain-threshold mode should drop any stale
+                    // staged/current highlight state so large buffers stay plain.
+                    self.clear_highlight_state();
+                }
                 let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
                 let use_virtual_editor = self.editor_mode == EditorMode::VirtualEditor;
                 let needs_worker_render = use_virtual_preview || use_virtual_editor;
@@ -176,9 +185,14 @@ impl LocalPasteApp {
                         id.as_str(),
                     );
                 if should_request {
+                    let request_text = if self.is_virtual_editor_mode() {
+                        HighlightRequestText::Rope(self.virtual_editor_buffer.rope().clone())
+                    } else {
+                        HighlightRequestText::Owned(self.selected_content.to_string())
+                    };
                     self.dispatch_highlight_request(
                         revision,
-                        self.active_snapshot(),
+                        request_text,
                         &language_hint,
                         theme_key,
                         id.as_str(),
@@ -220,6 +234,9 @@ impl LocalPasteApp {
                     .as_ref()
                     .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
                     .is_some();
+                // `is_large` and `should_request_highlight` share the same
+                // threshold guard; once large, we force plain rendering and do
+                // not allow context-only highlight fallback.
                 let use_plain = if is_large {
                     true
                 } else if async_mode {
@@ -257,7 +274,7 @@ impl LocalPasteApp {
                         )
                     })
                     .or_else(|| {
-                        if async_mode {
+                        if async_mode && !is_large {
                             highlight_render.as_ref().filter(|render| {
                                 render.matches_context(id.as_str(), &language_hint, theme_key)
                             })

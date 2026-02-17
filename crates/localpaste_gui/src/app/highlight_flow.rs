@@ -1,6 +1,8 @@
 //! Highlight request, staging, and apply lifecycle for the editor.
 
-use super::highlight::{HighlightPatch, HighlightRender, HighlightRequest, HighlightRequestMeta};
+use super::highlight::{
+    HighlightPatch, HighlightRender, HighlightRequest, HighlightRequestMeta, HighlightRequestText,
+};
 use super::{
     LocalPasteApp, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_DEBOUNCE_LARGE, HIGHLIGHT_DEBOUNCE_LARGE_BYTES,
     HIGHLIGHT_DEBOUNCE_MEDIUM, HIGHLIGHT_DEBOUNCE_TINY, HIGHLIGHT_PLAIN_THRESHOLD,
@@ -460,12 +462,12 @@ impl LocalPasteApp {
     pub(super) fn dispatch_highlight_request(
         &mut self,
         revision: u64,
-        text: String,
+        text: HighlightRequestText,
         language_hint: &str,
         theme_key: &str,
         paste_id: &str,
     ) {
-        let text_len = text.len();
+        let text_len = text.len_bytes();
         let edit_hint = if self.is_virtual_editor_mode() {
             self.highlight_edit_hint.take()
         } else {

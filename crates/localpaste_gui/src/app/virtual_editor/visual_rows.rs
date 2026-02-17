@@ -169,6 +169,25 @@ impl VisualRowLayoutCache {
         true
     }
 
+    /// Rebuild from cached geometry if prior measurements are available.
+    pub(crate) fn rebuild_with_cached_geometry(&mut self, buffer: &RopeBuffer) -> bool {
+        if self.char_width_bits == 0 || self.line_height_bits == 0 {
+            return false;
+        }
+        let wrap_width = self.wrap_width as f32;
+        let line_height = f32::from_bits(self.line_height_bits);
+        let char_width = f32::from_bits(self.char_width_bits);
+        if !line_height.is_finite()
+            || line_height <= 0.0
+            || !char_width.is_finite()
+            || char_width <= 0.0
+        {
+            return false;
+        }
+        self.rebuild(buffer, wrap_width, line_height, char_width);
+        true
+    }
+
     /// Number of monospace wrap columns.
     pub(crate) fn wrap_columns(&self) -> usize {
         self.wrap_cols.max(1)
@@ -604,6 +623,19 @@ mod tests {
                 assert_eq!(cache.row_to_line(row), rebuilt.row_to_line(row));
             }
         }
+    }
+
+    #[test]
+    fn rebuild_with_cached_geometry_recovers_after_cache_corruption() {
+        let (buffer, mut cache) = rebuild_cache_for("one\ntwo\n", 50.0, 10.0, 5.0);
+        let expected_total_rows = cache.total_rows();
+        cache.prefix_rows.clear();
+        assert!(cache.rebuild_with_cached_geometry(&buffer));
+        assert_eq!(
+            cache.prefix_rows.len(),
+            buffer.line_count().saturating_add(1)
+        );
+        assert_eq!(cache.total_rows(), expected_total_rows);
     }
 
     #[test]

@@ -11,6 +11,7 @@ use eframe::egui::{
     Color32, FontId, Stroke,
 };
 use egui_extras::syntax_highlighting::CodeTheme;
+use ropey::Rope;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
@@ -860,12 +861,35 @@ impl HighlightRender {
 pub(super) struct HighlightRequest {
     pub(super) paste_id: String,
     pub(super) revision: u64,
-    pub(super) text: String,
+    pub(super) text: HighlightRequestText,
     pub(super) language_hint: String,
     pub(super) theme_key: String,
     pub(super) edit_hint: Option<VirtualEditHint>,
     pub(super) patch_base_revision: Option<u64>,
     pub(super) patch_base_text_len: Option<usize>,
+}
+
+/// Snapshot payload transported to the highlight worker.
+#[derive(Clone)]
+pub(super) enum HighlightRequestText {
+    Owned(String),
+    Rope(Rope),
+}
+
+impl HighlightRequestText {
+    pub(super) fn len_bytes(&self) -> usize {
+        match self {
+            Self::Owned(text) => text.len(),
+            Self::Rope(rope) => rope.len_bytes(),
+        }
+    }
+
+    pub(super) fn into_string(self) -> String {
+        match self {
+            Self::Owned(text) => text,
+            Self::Rope(rope) => rope.to_string(),
+        }
+    }
 }
 
 /// Lightweight edit metadata captured from virtual-editor operations.
