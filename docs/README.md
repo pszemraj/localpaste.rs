@@ -2,32 +2,29 @@
 
 Documentation index for LocalPaste.
 Use this page as the canonical map of where each concept is defined.
+When two docs overlap, defer to the "Primary Source" listed below.
 
-## Key Docs
+## Canonical Sources
 
-| Topic                                                     | Doc                                                                                                                                                  |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Product/project overview                                  | [../README.md](../README.md)                                                                           |
-| Validation workflow + mandatory quality gates             | [dev/devlog.md](dev/devlog.md)                                                       |
-| System architecture walkthrough                           | [architecture.md](architecture.md)                                                     |
-| Language detection + normalization + highlight resolution | [language-detection.md](language-detection.md)                                         |
-| Storage backend + compatibility contract                  | [storage.md](storage.md)                                                               |
-| Security posture + public exposure                        | [security.md](security.md)                                                             |
-| Service/background operation + lock recovery              | [deployment.md](deployment.md)                                                         |
-| Dev docs index                                            | [dev/README.md](dev/README.md)                                                         |
-| Development workflow (build/run/test/debug)               | [dev/devlog.md](dev/devlog.md)                                                       |
-| Locking behavior (DB owner lock + paste edit locks)       | [dev/locking-model.md](dev/locking-model.md)                                           |
-| API route behavior/response shape                         | [../crates/localpaste_server/src/handlers/paste.rs](../crates/localpaste_server/src/handlers/paste.rs) |
-| GUI runtime flags + behavior notes                        | [dev/gui-notes.md](dev/gui-notes.md)                                                   |
-| GUI perf validation protocol + thresholds                 | [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md)                                   |
-| Engineering backlog                                       | [dev/backlog.md](dev/backlog.md)                                                       |
-| UI visual tokens                                          | [dev/ui-palette.md](dev/ui-palette.md)                                                 |
+| Concept | Primary Source |
+| --- | --- |
+| Product overview + quick start | [README.md](https://github.com/pszemraj/localpaste.rs/blob/main/README.md) |
+| Build/run/validation workflow | [docs/dev/devlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/devlog.md) |
+| System/runtime architecture | [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md) |
+| Detection + normalization + highlighting | [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md) |
+| Storage compatibility contract | [docs/storage.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/storage.md) |
+| Security defaults + exposure policy | [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md) |
+| Service operations + recovery | [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md) |
+| Lock semantics (`db.owner.lock`, `423 Locked`) | [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md) |
+| GUI runtime behavior/flags | [docs/dev/gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md) |
+| GUI perf protocol + thresholds | [docs/dev/gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md) |
+| Engineering backlog | [docs/dev/backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md) |
+| UI design tokens | [docs/dev/ui-palette.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/ui-palette.md) |
+| API behavior contract (code) | [`crates/localpaste_server/src/handlers/paste.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/paste.rs) |
 
-## Notes
+## Supporting Indexes
 
-- Build/run/test command matrix: [dev/devlog.md](dev/devlog.md)
-- Runtime architecture: [architecture.md](architecture.md)
-- Detection/highlighting behavior: [language-detection.md](language-detection.md)
+- Dev docs index: [docs/dev/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/README.md)
 
 ## Historical Artifacts
 

@@ -1,9 +1,11 @@
 # Development Guide
 
 This guide covers the development workflow.
-Topic-specific references are listed in [../README.md](../README.md).
+Topic-specific ownership references are listed in
+[docs/README.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/README.md).
 This guide includes the binary/build/run command matrix used in day-to-day development.
-System architecture context lives in [../architecture.md](../architecture.md).
+System architecture context lives in
+[docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md).
 
 ## Workspace Layout
 
@@ -68,8 +70,10 @@ Topology note:
 - Use standalone `localpaste` for headless/server-only operation.
 - Embedded GUI API writes the active endpoint to `DB_PATH/.api-addr`; `lpaste` auto-uses it when `--server` and `LP_SERVER` are unset (unless `--no-discovery` is set).
 
-For editor-mode flags and tracing env vars, see [GUI notes](gui-notes.md).
-For repeatable GUI perf validation, see [GUI perf protocol](gui-perf-protocol.md).
+For editor-mode flags and tracing env vars, see
+[docs/dev/gui-notes.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md).
+For repeatable GUI perf validation, see
+[docs/dev/gui-perf-protocol.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-perf-protocol.md).
 
 ## Validation Loop
 
@@ -104,21 +108,22 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 rustdoc-checker crates --strict
 ```
 
-- Canonical smoke flow: [Validation Loop step 7](#validation-loop)
-- Canonical manual GUI checklist: [gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
+- Canonical manual GUI checklist:
+  [docs/dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive)
 
-Language detection/normalization/highlight behavior is tracked in [../language-detection.md](../language-detection.md).
+Language detection/normalization/highlight behavior is tracked in
+[docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md).
 
 ## Behavior Contracts
 
 This file is intentionally command/workflow-focused. For runtime behavior contracts, use:
 
-- System/runtime architecture: [../architecture.md](../architecture.md)
-- Security defaults and env policy: [../security.md](../security.md)
-- Service operation and lock recovery: [../deployment.md](../deployment.md)
-- Lock semantics and API `423 Locked` behavior: [locking-model.md](locking-model.md)
-- Detection/normalization/highlight behavior: [../language-detection.md](../language-detection.md)
+- System/runtime architecture: [docs/architecture.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/architecture.md)
+- Security defaults and env policy: [docs/security.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/security.md)
+- Service operation and lock recovery: [docs/deployment.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/deployment.md)
+- Lock semantics and API `423 Locked` behavior: [docs/dev/locking-model.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/locking-model.md)
+- Detection/normalization/highlight behavior: [docs/language-detection.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/language-detection.md)
 - API wiring + handler behavior in code:
-  - [`../../crates/localpaste_server/src/lib.rs`](../../crates/localpaste_server/src/lib.rs)
-  - [`../../crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs)
-- Engineering backlog: [backlog.md](backlog.md)
+  - [`../../crates/localpaste_server/src/lib.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/lib.rs)
+  - [`../../crates/localpaste_server/src/handlers/paste.rs`](https://github.com/pszemraj/localpaste.rs/blob/main/crates/localpaste_server/src/handlers/paste.rs)
+- Engineering backlog: [docs/dev/backlog.md](https://github.com/pszemraj/localpaste.rs/blob/main/docs/dev/backlog.md)
