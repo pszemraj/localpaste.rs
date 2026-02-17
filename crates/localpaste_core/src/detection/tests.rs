@@ -27,6 +27,7 @@ fn heuristic_detects_existing_language_matrix() {
         ("name: app", Some("yaml")),
         ("display name: app\nport: 8080", Some("yaml")),
         ("services: [web]\nversion: 3", Some("yaml")),
+        ("select id, name from users where active = 1", Some("sql")),
         ("[tool]\nname = \"demo\"\nversion = \"0.1.0\"", Some("toml")),
         ("just some plain text words", None),
     ];
@@ -78,6 +79,21 @@ fn heuristic_detects_expanded_fallback_languages() {
 }
 
 #[test]
+fn heuristic_handles_shebang_and_import_conflict_matrix() {
+    let cases = [
+        ("#!/bin/python\nprint('hi')", Some("python")),
+        ("#!/usr/bin/env python\nprint('hi')", Some("python")),
+        ("#!/bin/node\nconsole.log('hi')", Some("javascript")),
+        ("#!/usr/bin/env bash\necho hi", Some("shell")),
+        (
+            "import { x } from 'module';\nconsole.log(x);",
+            Some("javascript"),
+        ),
+    ];
+    assert_detection_cases(cases.as_slice());
+}
+
+#[test]
 fn heuristic_does_not_treat_param_call_alone_as_powershell() {
     let cases = [("param(foo)\nvalue = 1\n", None)];
     assert_detection_cases(cases.as_slice());
@@ -96,6 +112,8 @@ fn heuristic_avoids_common_single_token_false_positives() {
         ),
         ("status report:\ndone\n", None),
         ("status report: done", None),
+        ("please select one option from menu where possible", None),
+        ("if then end", None),
         ("note: use strict; while migrating config", None),
         ("- item", Some("markdown")),
     ];
