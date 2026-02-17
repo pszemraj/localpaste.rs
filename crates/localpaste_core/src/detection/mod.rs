@@ -46,23 +46,27 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
 }
 
 pub(crate) fn looks_like_yaml(content: &str) -> bool {
-    let trimmed = content.trim_start();
-    if trimmed.starts_with("---") {
-        return true;
-    }
-
     let mut yaml_pairs = 0usize;
-    let mut meaningful_lines = 0usize;
-    let mut first_meaningful_line: Option<&str> = None;
+    let mut content_lines = 0usize;
+    let mut first_content_line: Option<&str> = None;
+    let mut has_doc_start = false;
+    let mut first_meaningful_seen = false;
 
     for line in content.lines().take(512) {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        meaningful_lines = meaningful_lines.saturating_add(1);
-        if first_meaningful_line.is_none() {
-            first_meaningful_line = Some(trimmed);
+        if !first_meaningful_seen {
+            first_meaningful_seen = true;
+            if trimmed == "---" {
+                has_doc_start = true;
+                continue;
+            }
+        }
+        content_lines = content_lines.saturating_add(1);
+        if first_content_line.is_none() {
+            first_content_line = Some(trimmed);
         }
         if trimmed.starts_with("- ")
             || trimmed.contains(": ")
@@ -83,10 +87,14 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
         return true;
     }
 
-    if yaml_pairs == 1 && meaningful_lines == 1 {
-        return first_meaningful_line
+    if yaml_pairs == 1 && content_lines == 1 {
+        return first_content_line
             .map(|line| !line.starts_with("- ") && looks_like_single_line_yaml_mapping(line))
             .unwrap_or(false);
+    }
+
+    if has_doc_start {
+        return yaml_pairs >= 1;
     }
 
     false

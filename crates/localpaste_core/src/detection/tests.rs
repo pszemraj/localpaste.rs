@@ -40,6 +40,13 @@ fn yaml_shape_helper_handles_flow_values_and_single_list_guard() {
 }
 
 #[test]
+fn yaml_shape_helper_requires_yaml_body_after_doc_start() {
+    assert!(looks_like_yaml("---\nname: app\n"));
+    assert!(!looks_like_yaml("---\njust a separator\n"));
+    assert!(!looks_like_yaml("---\n- item\n"));
+}
+
+#[test]
 fn heuristic_detects_expanded_fallback_languages() {
     let cases = [
         ("fun main() { println(\"hi\") }", Some("kotlin")),
@@ -85,6 +92,14 @@ fn heuristic_avoids_common_single_token_false_positives() {
         ("- item", Some("markdown")),
     ];
     assert_detection_cases(cases.as_slice());
+}
+
+#[test]
+fn markdown_separator_content_is_not_mislabeled_as_yaml() {
+    assert_ne!(
+        detect_language("---\njust a separator\n").as_deref(),
+        Some("yaml")
+    );
 }
 
 #[test]
@@ -140,6 +155,11 @@ fn magika_detects_high_signal_code_snippets() {
 fn magika_refinement_rejects_weak_yaml_shape() {
     assert_eq!(refine_magika_label("yaml", "status report:\ndone\n"), None);
     assert_eq!(refine_magika_label("yaml", "- item\n"), None);
+    assert_eq!(refine_magika_label("yaml", "---\njust a separator\n"), None);
+    assert_eq!(
+        refine_magika_label("yaml", "---\nname: app\n"),
+        Some("yaml".to_string())
+    );
     assert_eq!(
         refine_magika_label("yaml", "name: app"),
         Some("yaml".to_string())
