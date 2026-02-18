@@ -286,7 +286,18 @@ jobs:
           $candidateBins | ForEach-Object { Write-Host "- $_" }
           throw "WiX Toolset bin directory with candle.exe and light.exe was not found"
         }
+        $wixRoot = Split-Path $wixPath -Parent
+        $env:Path = "$wixPath;$env:Path"
         Add-Content -Path $env:GITHUB_PATH -Value $wixPath
+        "WIX=$wixRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+        $candle = Get-Command candle.exe -ErrorAction SilentlyContinue
+        $light = Get-Command light.exe -ErrorAction SilentlyContinue
+        if (-not $candle -or -not $light) {
+          throw "WiX executables were not discoverable in PATH after installation"
+        }
+        & $candle.Source -? | Out-Null
+        & $light.Source -? | Out-Null
 
     - name: Install cargo-packager
       run: cargo install cargo-packager --version 0.11.8 --locked
@@ -324,7 +335,7 @@ jobs:
 
         iconutil -c icns "${ICONSET_DIR}" -o "${ICON_DST}"
 
-        if [[ ! -f "${ICON_DST}" ]]; then
+        if [[ ! -s "${ICON_DST}" ]]; then
           echo "failed to generate icns icon: ${ICON_DST}" >&2
           exit 1
         fi
@@ -354,14 +365,61 @@ jobs:
 
         "PACKAGER_CONFIG_PATH=$effectiveConfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+    - name: Validate effective packager config
+      shell: pwsh
+      run: |
+        $configPath = "${env:PACKAGER_CONFIG_PATH}"
+        if (-not $configPath -or -not (Test-Path $configPath)) {
+          throw "PACKAGER_CONFIG_PATH is missing or invalid: $configPath"
+        }
+
+        $configDir = Split-Path -Parent $configPath
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        $icons = @($config.icons)
+        if ($icons.Count -eq 0) {
+          throw "packager config must define at least one icon"
+        }
+
+        foreach ($icon in $icons) {
+          $iconPath = if ([System.IO.Path]::IsPathRooted($icon)) { $icon } else { Join-Path $configDir $icon }
+          $resolvedIconPath = [System.IO.Path]::GetFullPath($iconPath)
+          if (-not (Test-Path $resolvedIconPath)) {
+            throw "packager icon path does not exist: $resolvedIconPath"
+          }
+        }
+
+        if ($env:RUNNER_OS -eq "Windows") {
+          if (-not (@($config.formats) -contains "wix")) {
+            throw "windows packager config must include 'wix' format"
+          }
+        }
+        if ($env:RUNNER_OS -eq "macOS") {
+          $icnsIcons = $icons | Where-Object { $_ -match '\.icns$' }
+          if ($icnsIcons.Count -eq 0) {
+            throw "macOS packager config must include an .icns icon path"
+          }
+        }
+
     - name: Stage renamed runtime binary (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
         $stageDir = "dist\stage\${{ matrix.asset_suffix }}"
         New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
-        Copy-Item -Path "target\${{ matrix.target }}\release\localpaste-gui.exe" -Destination "$stageDir\localpaste.exe" -Force
-        Copy-Item -Path "LICENSE" -Destination "$stageDir\LICENSE" -Force
+        $stagedBinary = "$stageDir\localpaste.exe"
+        $stagedLicense = "$stageDir\LICENSE"
+        Copy-Item -Path "target\${{ matrix.target }}\release\localpaste-gui.exe" -Destination $stagedBinary -Force
+        Copy-Item -Path "LICENSE" -Destination $stagedLicense -Force
+
+        if (-not (Test-Path $stagedBinary)) {
+          throw "staged runtime binary missing at $stagedBinary"
+        }
+        if (-not (Test-Path $stagedLicense)) {
+          throw "staged LICENSE missing at $stagedLicense"
+        }
+        if ((Get-Item $stagedBinary).Length -le 0) {
+          throw "staged runtime binary is empty at $stagedBinary"
+        }
 
     - name: Stage renamed runtime binary (Linux/macOS)
       if: runner.os != 'Windows'
@@ -372,6 +430,45 @@ jobs:
         mkdir -p "${STAGE_DIR}"
         cp "target/${{ matrix.target }}/release/localpaste-gui" "${STAGE_DIR}/localpaste"
         cp "LICENSE" "${STAGE_DIR}/LICENSE"
+        chmod +x "${STAGE_DIR}/localpaste"
+        [[ -s "${STAGE_DIR}/localpaste" ]]
+        [[ -x "${STAGE_DIR}/localpaste" ]]
+        [[ -s "${STAGE_DIR}/LICENSE" ]]
+
+    - name: Verify Windows packaging prerequisites
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $stageBinary = "dist\stage\${{ matrix.asset_suffix }}\localpaste.exe"
+        $stageLicense = "dist\stage\${{ matrix.asset_suffix }}\LICENSE"
+        if (-not (Test-Path $stageBinary)) {
+          throw "missing staged binary: $stageBinary"
+        }
+        if (-not (Test-Path $stageLicense)) {
+          throw "missing staged license: $stageLicense"
+        }
+
+        $candle = Get-Command candle.exe -ErrorAction SilentlyContinue
+        $light = Get-Command light.exe -ErrorAction SilentlyContinue
+        if (-not $candle -or -not $light) {
+          throw "WiX executables were not found in PATH before packaging"
+        }
+
+    - name: Verify macOS packaging prerequisites
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v iconutil >/dev/null
+        command -v hdiutil >/dev/null
+
+        ICON_PATH="assets/icons/desktop_icon.icns"
+        VERIFY_ICONSET="dist/verify-icon.iconset"
+        [[ -s "${ICON_PATH}" ]]
+        rm -rf "${VERIFY_ICONSET}"
+        iconutil -c iconset "${ICON_PATH}" -o "${VERIFY_ICONSET}"
+        [[ -f "${VERIFY_ICONSET}/icon_512x512@2x.png" ]]
+        [[ -x "dist/stage/${{ matrix.asset_suffix }}/localpaste" ]]
 
     - name: Build installer packages
       run: cargo packager --config ${{ env.PACKAGER_CONFIG_PATH }}
@@ -461,6 +558,22 @@ jobs:
         path: dist/release/${{ matrix.asset_suffix }}/*
         if-no-files-found: error
         retention-days: 1
+
+    - name: Dump packaging diagnostics on failure
+      if: failure()
+      shell: pwsh
+      run: |
+        Write-Host "PACKAGER_CONFIG_PATH=$env:PACKAGER_CONFIG_PATH"
+        if ($env:PACKAGER_CONFIG_PATH -and (Test-Path $env:PACKAGER_CONFIG_PATH)) {
+          Write-Host "----- effective packager config -----"
+          Get-Content $env:PACKAGER_CONFIG_PATH
+        }
+        if (Test-Path "dist") {
+          Write-Host "----- dist tree -----"
+          Get-ChildItem -Path "dist" -Recurse -Force |
+            Select-Object FullName, Length |
+            Format-Table -AutoSize
+        }
 
   publish:
     needs:
