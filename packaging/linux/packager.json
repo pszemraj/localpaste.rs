@@ -1,5 +1,5 @@
 {
-  "name": "localpaste_gui",
+  "name": "localpaste",
   "version": "0.0.0",
   "productName": "LocalPaste",
   "identifier": "io.github.pszemraj.localpaste",
@@ -16,6 +16,9 @@
   "targetTriple": "x86_64-unknown-linux-gnu",
   "outDir": "../../dist/packager/linux-x86_64",
   "binariesDir": "../../dist/stage/linux-x86_64",
+  "linux": {
+    "generateDesktopEntry": true
+  },
   "binaries": [
     {
       "path": "localpaste",
