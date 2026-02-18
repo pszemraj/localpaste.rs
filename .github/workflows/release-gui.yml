@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   preflight:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     outputs:
       resolved_tag: ${{ steps.resolve_tag.outputs.resolved_tag }}
