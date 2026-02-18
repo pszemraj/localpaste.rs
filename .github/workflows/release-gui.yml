@@ -233,8 +233,13 @@ jobs:
             rust-toolchain.toml \
             crates \
             assets \
-            packaging \
             LICENSE
+
+          if git ls-tree -d --name-only "refs/tags/${RESOLVED_TAG}" packaging | grep -q '^packaging$'; then
+            git checkout "refs/tags/${RESOLVED_TAG}" -- packaging
+          else
+            echo "packaging/ not present in tag ${RESOLVED_TAG}; using workflow-ref packaging configs"
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
