@@ -71,36 +71,31 @@ jobs:
 
       - name: Validate workspace version matches tag
         shell: bash
-        env:
-          RESOLVED_TAG: ${{ steps.resolve.outputs.resolved_tag }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import pathlib
-          import tomllib
+          WORKSPACE_VERSION="$(
+            awk '
+              $0 == "[workspace.package]" { in_workspace = 1; next }
+              /^\[/ { if (in_workspace) exit }
+              in_workspace && $1 == "version" {
+                gsub(/"/, "", $3)
+                print $3
+                exit
+              }
+            ' Cargo.toml
+          )"
+          TAG_VERSION="${{ steps.resolve.outputs.resolved_tag }}"
+          TAG_VERSION="${TAG_VERSION#v}"
 
-          tag = os.environ["RESOLVED_TAG"]
-          if not tag.startswith("v"):
-            raise SystemExit(f"release tag must start with 'v' (got: {tag})")
+          if [[ -z "${WORKSPACE_VERSION}" ]]; then
+            echo "failed to read [workspace.package].version from Cargo.toml" >&2
+            exit 1
+          fi
 
-          expected_version = tag[1:]
-          cargo_toml = pathlib.Path("Cargo.toml")
-          data = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
-          workspace = data.get("workspace", {})
-          package = workspace.get("package", {})
-          version = package.get("version")
-
-          if not isinstance(version, str) or not version:
-            raise SystemExit("failed to read [workspace.package].version from Cargo.toml")
-
-          if version != expected_version:
-            raise SystemExit(
-              f"tag/version mismatch: tag={expected_version} workspace={version}"
-            )
-
-          print(f"validated workspace version {version} for tag {tag}")
-          PY
+          if [[ "${WORKSPACE_VERSION}" != "${TAG_VERSION}" ]]; then
+            echo "tag/version mismatch: tag=${TAG_VERSION} workspace=${WORKSPACE_VERSION}" >&2
+            exit 1
+          fi
 
   smoke:
     needs: resolve_tag
