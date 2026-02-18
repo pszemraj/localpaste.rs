@@ -28,6 +28,10 @@ PYTHON_C_RE = re.compile(r"""python3?\s+-c\s+(['"])(.*?)\1""", re.DOTALL)
 MATRIX_EXPR_RE = re.compile(
     r"^\$\{\{\s*matrix\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$"
 )
+POWERSHELL_TESTPATH_AND_RE = re.compile(
+    r"(?<!\()Test-Path\s+\([^)]*\)\s+-and\s+(?<!\()Test-Path\s+\(",
+    re.IGNORECASE,
+)
 BASH_READY: bool | None = None
 
 
@@ -267,6 +271,10 @@ def is_bash_shell(shell: str) -> bool:
     return normalize_shell_name(shell) == "bash"
 
 
+def is_pwsh_shell(shell: str) -> bool:
+    return normalize_shell_name(shell) == "pwsh"
+
+
 def sanitize_for_bash(script: str) -> str:
     return GHA_EXPR_RE.sub("GHA_EXPR", script)
 
@@ -297,6 +305,110 @@ def check_python_c_snippets(script: str, path: str) -> list[str]:
             errors.append(
                 f"{path}: invalid python -c snippet: {exc.msg} (line {exc.lineno}, col {exc.offset})"
             )
+    return errors
+
+
+def check_powershell_command_mode_traps(script: str, path: str) -> list[str]:
+    errors: list[str] = []
+    for index, line in enumerate(script.splitlines(), start=1):
+        if POWERSHELL_TESTPATH_AND_RE.search(line):
+            errors.append(
+                f"{path}:line {index}: suspicious PowerShell Test-Path expression; "
+                "wrap each Test-Path call in parentheses before using -and"
+            )
+    return errors
+
+
+def normalize_needs(needs: Any) -> set[str]:
+    if isinstance(needs, str):
+        return {needs}
+    if isinstance(needs, list):
+        return {entry for entry in needs if isinstance(entry, str)}
+    return set()
+
+
+def has_uses_step(job: dict[str, Any], action_prefix: str) -> bool:
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return False
+    lowered = action_prefix.lower()
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        uses = step.get("uses")
+        if isinstance(uses, str) and uses.lower().startswith(lowered):
+            return True
+    return False
+
+
+def validate_release_job_shape(path: Path, data: dict[str, Any]) -> list[str]:
+    if path.name != "release-gui.yml":
+        return []
+
+    errors: list[str] = []
+    jobs = data.get("jobs")
+    if not isinstance(jobs, dict):
+        return [f"{path}: expected jobs to be a mapping"]
+
+    required_jobs = {"resolve_tag", "smoke", "build_package", "publish"}
+    missing = sorted(required_jobs - set(jobs))
+    if missing:
+        errors.append(f"{path}: missing required release jobs: {', '.join(missing)}")
+        return errors
+
+    smoke_job = jobs.get("smoke")
+    build_job = jobs.get("build_package")
+    publish_job = jobs.get("publish")
+
+    if isinstance(smoke_job, dict):
+        smoke_needs = normalize_needs(smoke_job.get("needs"))
+        if "resolve_tag" not in smoke_needs:
+            errors.append(f"{path}: smoke job must need resolve_tag")
+    else:
+        errors.append(f"{path}: smoke job must be a mapping")
+
+    if isinstance(build_job, dict):
+        build_needs = normalize_needs(build_job.get("needs"))
+        required_build_needs = {"resolve_tag", "smoke"}
+        if not required_build_needs.issubset(build_needs):
+            errors.append(f"{path}: build_package job must need resolve_tag and smoke")
+        strategy = build_job.get("strategy")
+        matrix = strategy.get("matrix") if isinstance(strategy, dict) else None
+        include = matrix.get("include") if isinstance(matrix, dict) else None
+        expected_matrix = {
+            ("windows-latest", "x86_64-pc-windows-msvc"),
+            ("ubuntu-22.04", "x86_64-unknown-linux-gnu"),
+            ("macos-14", "aarch64-apple-darwin"),
+        }
+        actual_matrix: set[tuple[str, str]] = set()
+        if isinstance(include, list):
+            for entry in include:
+                if not isinstance(entry, dict):
+                    continue
+                os_name = entry.get("os")
+                target = entry.get("target")
+                if isinstance(os_name, str) and isinstance(target, str):
+                    actual_matrix.add((os_name, target))
+        missing_targets = sorted(expected_matrix - actual_matrix)
+        if missing_targets:
+            errors.append(
+                f"{path}: build_package matrix is missing expected targets: {missing_targets}"
+            )
+    else:
+        errors.append(f"{path}: build_package job must be a mapping")
+
+    if isinstance(publish_job, dict):
+        publish_needs = normalize_needs(publish_job.get("needs"))
+        required_publish_needs = {"resolve_tag", "build_package"}
+        if not required_publish_needs.issubset(publish_needs):
+            errors.append(f"{path}: publish job must need resolve_tag and build_package")
+        if not has_uses_step(publish_job, "softprops/action-gh-release"):
+            errors.append(
+                f"{path}: publish job must include softprops/action-gh-release upload step"
+            )
+    else:
+        errors.append(f"{path}: publish job must be a mapping")
+
     return errors
 
 
@@ -338,12 +450,17 @@ def validate_workflow_file(path: Path) -> list[str]:
         return errors
 
     errors.extend(validate_release_trigger_rules(path, data))
+    errors.extend(validate_release_job_shape(path, data))
 
     run_blocks = extract_job_run_blocks(data)
     for block_path, shell, script in run_blocks:
         if is_bash_shell(shell):
             errors.extend(check_bash_syntax(script, f"{path}:{block_path}"))
             errors.extend(check_python_c_snippets(script, f"{path}:{block_path}"))
+        if is_pwsh_shell(shell):
+            errors.extend(
+                check_powershell_command_mode_traps(script, f"{path}:{block_path}")
+            )
 
     return errors
 
