@@ -10,6 +10,9 @@ const FOLDER_DEPRECATION_WARNING: &str =
 const FOLDER_DEPRECATION_SUNSET: &str = "Fri, 31 Dec 2027 23:59:59 GMT";
 
 /// Attach deprecation headers to responses for legacy folder-based API pathways.
+///
+/// # Returns
+/// A response with `deprecation`, `sunset`, and `warning` headers set.
 pub(super) fn with_folder_deprecation_headers<R>(response: R) -> Response
 where
     R: IntoResponse,
@@ -29,6 +32,14 @@ where
 }
 
 /// Conditionally attach folder deprecation warning+headers to a response.
+///
+/// # Arguments
+/// - `response`: Base response to annotate.
+/// - `folder_pathway_used`: Whether the request used a deprecated folder path.
+/// - `pathway`: Structured pathway label for warning logs.
+///
+/// # Returns
+/// The original response, optionally augmented with deprecation headers.
 pub(super) fn maybe_with_folder_deprecation_headers<R>(
     response: R,
     folder_pathway_used: bool,
