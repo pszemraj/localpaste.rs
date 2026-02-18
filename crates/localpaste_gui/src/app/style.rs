@@ -7,19 +7,33 @@ use eframe::egui::{
 };
 use tracing::warn;
 
+/// Primary app background color.
 pub(super) const COLOR_BG_PRIMARY: Color32 = Color32::from_rgb(0x0d, 0x11, 0x17);
+/// Secondary panel background color.
 pub(super) const COLOR_BG_SECONDARY: Color32 = Color32::from_rgb(0x16, 0x1b, 0x22);
+/// Elevated widget background color.
 pub(super) const COLOR_BG_TERTIARY: Color32 = Color32::from_rgb(0x21, 0x26, 0x29);
+/// Primary foreground text color.
 pub(super) const COLOR_TEXT_PRIMARY: Color32 = Color32::from_rgb(0xc9, 0xd1, 0xd9);
+/// Secondary text color for supporting UI copy.
 pub(super) const COLOR_TEXT_SECONDARY: Color32 = Color32::from_rgb(0x8b, 0x94, 0x9e);
+/// Muted text color for low-priority labels.
 pub(super) const COLOR_TEXT_MUTED: Color32 = Color32::from_rgb(0x6e, 0x76, 0x81);
+/// Primary accent color for active controls.
 pub(super) const COLOR_ACCENT: Color32 = Color32::from_rgb(0xE5, 0x70, 0x00);
+/// Hover accent color for interactive controls.
 pub(super) const COLOR_ACCENT_HOVER: Color32 = Color32::from_rgb(0xCE, 0x42, 0x2B);
+/// Selection outline color.
 pub(super) const COLOR_SELECTION_STROKE: Color32 = Color32::from_rgb(0x3B, 0x82, 0xF6);
+/// Selection fill color as RGBA bytes.
 pub(super) const COLOR_SELECTION_FILL_RGBA: [u8; 4] = [0x3B, 0x82, 0xF6, 0x55];
+/// Border/stroke color for panels and widgets.
 pub(super) const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
+/// Font family key for bundled 0xProto typeface.
 pub(super) const FONT_0XPROTO: &str = "0xProto";
+/// Custom font family key used by the editor text style.
 pub(super) const EDITOR_FONT_FAMILY: &str = "Editor";
+/// Text style name used by editor rendering paths.
 pub(super) const EDITOR_TEXT_STYLE: &str = "Editor";
 const FONT_0XPROTO_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -36,6 +50,7 @@ fn selection_fill_color() -> Color32 {
 }
 
 impl LocalPasteApp {
+    /// Applies LocalPaste UI theme/fonts once per app lifetime.
     pub(super) fn ensure_style(&mut self, ctx: &egui::Context) {
         if self.style_applied {
             return;

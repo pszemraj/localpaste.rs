@@ -41,6 +41,13 @@ fn test_summary(id: &str, name: &str, language: Option<&str>, content_len: usize
     }
 }
 
+/// Builds a single-character shaped galley for geometry-sensitive UI tests.
+///
+/// # Returns
+/// Shared galley instance produced by egui's test context.
+///
+/// # Panics
+/// Panics if egui test context fails to produce a galley.
 pub(super) fn shaped_test_galley() -> Arc<egui::Galley> {
     let mut galley = None;
     egui::__run_test_ctx(|ctx| {

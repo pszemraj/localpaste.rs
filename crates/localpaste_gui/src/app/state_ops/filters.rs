@@ -79,6 +79,10 @@ const LINK_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
     tag_needles: &["url", "link", "links", "bookmark"],
 };
 
+/// Parses comma-separated tags, trimming whitespace and removing case-insensitive duplicates.
+///
+/// # Returns
+/// Ordered unique tag list preserving first-seen casing.
 pub(super) fn parse_tags_csv(input: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for tag in input.split(',') {
@@ -107,6 +111,10 @@ fn language_in_set(language: Option<&str>, values: &[&str]) -> bool {
         .any(|value| canonical.eq_ignore_ascii_case(value))
 }
 
+/// Normalizes an optional language filter into canonical storage form.
+///
+/// # Returns
+/// Canonical language filter string, or `None` when unset/blank.
 pub(super) fn normalize_language_filter_value(value: Option<&str>) -> Option<String> {
     localpaste_core::models::paste::normalize_language_filter(value)
 }
@@ -140,22 +148,42 @@ fn summary_matches_pattern(item: &PasteSummary, pattern: &SummaryPattern) -> boo
     )
 }
 
+/// Returns whether a summary appears to represent source code content.
+///
+/// # Returns
+/// `true` when language, name, or tags match code heuristics.
 pub(super) fn is_code_summary(item: &PasteSummary) -> bool {
     summary_matches_pattern(item, &CODE_SUMMARY_PATTERN)
 }
 
+/// Returns whether a summary appears to represent config/infrastructure content.
+///
+/// # Returns
+/// `true` when language, name, or tags match config heuristics.
 pub(super) fn is_config_summary(item: &PasteSummary) -> bool {
     summary_matches_pattern(item, &CONFIG_SUMMARY_PATTERN)
 }
 
+/// Returns whether a summary appears to represent logs or traces.
+///
+/// # Returns
+/// `true` when language, name, or tags match log heuristics.
 pub(super) fn is_log_summary(item: &PasteSummary) -> bool {
     summary_matches_pattern(item, &LOG_SUMMARY_PATTERN)
 }
 
+/// Returns whether a summary appears to represent URL/bookmark content.
+///
+/// # Returns
+/// `true` when name/tags indicate links.
 pub(super) fn is_link_summary(item: &PasteSummary) -> bool {
     summary_matches_pattern(item, &LINK_SUMMARY_PATTERN)
 }
 
+/// Maps canonical language labels to preferred export file extensions.
+///
+/// # Returns
+/// Extension without leading dot, defaulting to `"txt"`.
 pub(super) fn language_extension(language: Option<&str>) -> &'static str {
     let canonical =
         localpaste_core::detection::canonical::canonicalize(language.unwrap_or_default().trim());
@@ -199,6 +227,10 @@ pub(super) fn language_extension(language: Option<&str>) -> &'static str {
     }
 }
 
+/// Sanitizes a filename candidate for cross-platform export compatibility.
+///
+/// # Returns
+/// Safe filename with reserved characters replaced by `_`.
 pub(super) fn sanitize_filename(value: &str) -> String {
     let mut out: String = value
         .chars()

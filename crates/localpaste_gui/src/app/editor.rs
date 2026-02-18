@@ -42,6 +42,10 @@ pub(super) struct EditorBuffer {
 }
 
 impl EditorBuffer {
+    /// Creates a new editor buffer from owned text.
+    ///
+    /// # Returns
+    /// A buffer with rope mirror, zero revision, and cached char length.
     pub(super) fn new(text: String) -> Self {
         let char_len = text.chars().count();
         Self {
@@ -53,6 +57,7 @@ impl EditorBuffer {
         }
     }
 
+    /// Replaces buffer contents and resets revision/delta tracking.
     pub(super) fn reset(&mut self, text: String) {
         self.rope = Rope::from_str(text.as_str());
         self.text = text;
@@ -61,31 +66,62 @@ impl EditorBuffer {
         self.char_len = self.text.chars().count();
     }
 
+    /// Returns the current buffer size in bytes.
+    ///
+    /// # Returns
+    /// UTF-8 byte length of the underlying text.
     pub(super) fn len(&self) -> usize {
         self.text.len()
     }
 
+    /// Returns the current monotonic edit revision counter.
+    ///
+    /// # Returns
+    /// Revision value incremented on mutating text operations.
     pub(super) fn revision(&self) -> u64 {
         self.revision
     }
 
+    /// Returns the current buffer size in Unicode scalar values.
+    ///
+    /// # Returns
+    /// Character count cached alongside the text buffer.
     pub(super) fn chars_len(&self) -> usize {
         self.char_len
     }
 
     #[cfg(test)]
+    /// Returns the rope mirror used by editor-mode text operations.
+    ///
+    /// # Returns
+    /// Immutable reference to the internal [`Rope`] buffer.
     pub(super) fn rope(&self) -> &Rope {
         &self.rope
     }
 
+    /// Returns the current text buffer as `&str`.
+    ///
+    /// # Returns
+    /// Borrowed UTF-8 view of the editor text.
     pub(super) fn as_str(&self) -> &str {
         self.text.as_str()
     }
 
+    /// Takes and clears the most recent edit delta.
+    ///
+    /// # Returns
+    /// Last tracked [`EditDelta`] when one is pending.
     pub(super) fn take_edit_delta(&mut self) -> Option<EditDelta> {
         self.last_delta.take()
     }
 
+    /// Computes the line start/end char indices that contain `char_index`.
+    ///
+    /// # Arguments
+    /// - `char_index`: Global character index to map into a line range.
+    ///
+    /// # Returns
+    /// `(start, end)` char bounds for the containing line.
     pub(super) fn line_range_chars(&self, char_index: usize) -> (usize, usize) {
         let idx = char_index.min(self.char_len);
         let line = line_for_char(&self.rope, idx);
@@ -121,12 +157,18 @@ struct LineEntry {
 }
 
 impl EditorLineIndex {
+    /// Clears cached line offsets and revision metadata.
     pub(super) fn reset(&mut self) {
         self.revision = 0;
         self.text_len = 0;
         self.lines.clear();
     }
 
+    /// Rebuilds the line index when revision/length no longer match.
+    ///
+    /// # Arguments
+    /// - `revision`: Buffer revision for cache identity.
+    /// - `text`: Source text to index.
     pub(super) fn ensure_for(&mut self, revision: u64, text: &str) {
         if !self.lines.is_empty() && self.revision == revision && self.text_len == text.len() {
             return;
@@ -134,6 +176,14 @@ impl EditorLineIndex {
         self.rebuild(revision, text);
     }
 
+    /// Rebuilds cached byte/char offsets for each logical line.
+    ///
+    /// # Arguments
+    /// - `revision`: Buffer revision for cache identity.
+    /// - `text`: Source text to index.
+    ///
+    /// # Panics
+    /// Panics if computed byte spans are not valid UTF-8 boundaries.
     pub(super) fn rebuild(&mut self, revision: u64, text: &str) {
         self.lines.clear();
         let mut start = 0usize;
@@ -169,10 +219,25 @@ impl EditorLineIndex {
         self.text_len = text.len();
     }
 
+    /// Returns the number of indexed lines.
+    ///
+    /// # Returns
+    /// At least `1`, including an empty trailing line entry for empty buffers.
     pub(super) fn line_count(&self) -> usize {
         self.lines.len().max(1)
     }
 
+    /// Returns a raw line slice (including newline suffix when present).
+    ///
+    /// # Arguments
+    /// - `text`: Source text corresponding to this index.
+    /// - `index`: Logical line index.
+    ///
+    /// # Returns
+    /// Borrowed line slice or empty string when out of bounds.
+    ///
+    /// # Panics
+    /// Panics if stored line byte spans are not valid UTF-8 boundaries.
     pub(super) fn line_slice<'a>(&self, text: &'a str, index: usize) -> &'a str {
         let Some(line) = self.lines.get(index) else {
             return "";
@@ -181,10 +246,22 @@ impl EditorLineIndex {
         &text[line.start..end]
     }
 
+    /// Returns a line slice with trailing CR/LF removed.
+    ///
+    /// # Arguments
+    /// - `text`: Source text corresponding to this index.
+    /// - `index`: Logical line index.
+    ///
+    /// # Returns
+    /// Borrowed line text without newline terminators.
     pub(super) fn line_without_newline<'a>(&self, text: &'a str, index: usize) -> &'a str {
         trim_line_endings(self.line_slice(text, index))
     }
 
+    /// Returns cached character length for a line (without newline suffix).
+    ///
+    /// # Returns
+    /// Character length of indexed line, or `0` when out of bounds.
     pub(super) fn line_len_chars(&self, index: usize) -> usize {
         self.lines.get(index).map(|line| line.char_len).unwrap_or(0)
     }
@@ -324,6 +401,11 @@ impl EditorMode {
         }
     }
 
+    /// Resolves editor mode from environment feature flags.
+    ///
+    /// # Returns
+    /// `VirtualPreview` when forced, `TextEdit` when virtual mode is disabled,
+    /// otherwise `VirtualEditor`.
     pub(super) fn from_env() -> Self {
         // Preview is a force-on diagnostic mode only. Falsy preview values are
         // treated as "not forcing preview" so they cannot silently disable
