@@ -756,23 +756,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn progress_interval_rejects_zero() {
-        let parsed = Args::try_parse_from([
-            "generate-test-data",
-            "--count",
-            "1",
-            "--folders",
-            "0",
-            "--progress-interval",
-            "0",
-        ]);
-        assert!(
-            parsed.is_err(),
-            "progress interval of zero must be rejected"
-        );
-    }
-
-    #[test]
     fn clear_requires_yes_confirmation() {
         let args = Args::try_parse_from(["generate-test-data", "--clear", "--count", "1"])
             .expect("arg parse should succeed");
@@ -781,9 +764,21 @@ mod tests {
     }
 
     #[test]
-    fn yes_requires_clear_flag() {
-        let parsed = Args::try_parse_from(["generate-test-data", "--yes", "--count", "1"]);
-        assert!(parsed.is_err(), "--yes without --clear should be rejected");
+    fn parser_rejects_invalid_flag_combinations() {
+        let progress_zero = Args::try_parse_from([
+            "generate-test-data",
+            "--count",
+            "1",
+            "--folders",
+            "0",
+            "--progress-interval",
+            "0",
+        ]);
+        assert!(progress_zero.is_err());
+
+        let yes_without_clear =
+            Args::try_parse_from(["generate-test-data", "--yes", "--count", "1"]);
+        assert!(yes_without_clear.is_err());
     }
 
     #[test]
