@@ -7,6 +7,7 @@ use syn::visit::Visit;
 use syn::{Attribute, Expr, ExprCall, ExprMethodCall, Lit};
 
 #[derive(Default)]
+/// Visitor that normalizes AST nodes into stable, identifier-agnostic tokens.
 pub(super) struct AstNormalizer {
     pub(super) nodes: Vec<String>,
     ident_map: HashMap<String, usize>,
@@ -207,6 +208,13 @@ fn is_well_known_path_root(root: &str) -> bool {
     )
 }
 
+/// Collects function/method-style call references reachable within a block.
+///
+/// # Arguments
+/// - `block`: Parsed function body to scan.
+///
+/// # Returns
+/// A flat list of call references used for lightweight call-graph signals.
 pub(super) fn collect_call_refs(block: &syn::Block) -> Vec<CallRef> {
     let mut collector = CallRefCollector::default();
     collector.visit_block(block);
