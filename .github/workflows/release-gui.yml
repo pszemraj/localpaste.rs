@@ -61,6 +61,19 @@ jobs:
           git fetch --force --tags origin
           git rev-parse "refs/tags/${TAG}" >/dev/null
 
+      - name: Sync source tree to release tag for validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve_tag.outputs.resolved_tag }}"
+          git checkout "refs/tags/${TAG}" -- \
+            Cargo.toml \
+            Cargo.lock \
+            rust-toolchain.toml \
+            crates \
+            assets \
+            LICENSE
+
       - name: Validate workspace version matches tag
         shell: bash
         run: |
@@ -171,11 +184,23 @@ jobs:
     env:
       RESOLVED_TAG: ${{ needs.preflight.outputs.resolved_tag }}
     steps:
-      - name: Checkout tagged commit
+      - name: Checkout workflow commit
         uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ needs.preflight.outputs.resolved_tag }}
           fetch-depth: 0
+
+      - name: Sync source tree to release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          git checkout "refs/tags/${RESOLVED_TAG}" -- \
+            Cargo.toml \
+            Cargo.lock \
+            rust-toolchain.toml \
+            crates \
+            assets \
+            LICENSE
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
