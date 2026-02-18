@@ -121,14 +121,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PORT="$(
-            python - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-          )"
+          PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("'"'"'127.0.0.1'"'"', 0)); print(s.getsockname()[1]); s.close()')"
           export PORT
           export DB_PATH="${GITHUB_WORKSPACE}/.tmp/release-smoke-${GITHUB_RUN_ID}"
           export RUST_LOG=info
