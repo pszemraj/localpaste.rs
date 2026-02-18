@@ -104,6 +104,14 @@ impl BackendHandle {
     }
 
     #[cfg(test)]
+    /// Builds a backend handle from pre-wired test channels.
+    ///
+    /// # Arguments
+    /// - `cmd_tx`: Sender used by tests to inject backend commands.
+    /// - `evt_rx`: Receiver used by tests to observe backend events.
+    ///
+    /// # Returns
+    /// A handle with no worker thread join handle attached.
     pub(crate) fn from_test_channels(cmd_tx: Sender<CoreCmd>, evt_rx: Receiver<CoreEvent>) -> Self {
         Self {
             cmd_tx,

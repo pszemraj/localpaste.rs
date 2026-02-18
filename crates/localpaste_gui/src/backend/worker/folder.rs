@@ -7,6 +7,7 @@ use localpaste_core::folder_ops::{
 };
 use tracing::error;
 
+/// Loads all folders and emits a `FoldersLoaded` or error event.
 pub(super) fn handle_list_folders(state: &mut WorkerState) {
     match state.db.folders.list() {
         Ok(items) => {
@@ -23,6 +24,12 @@ pub(super) fn handle_list_folders(state: &mut WorkerState) {
     }
 }
 
+/// Creates a folder after validation and emits `FolderSaved` on success.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `name`: Requested folder display name.
+/// - `parent_id`: Optional parent folder id.
 pub(super) fn handle_create_folder(
     state: &mut WorkerState,
     name: String,
@@ -44,6 +51,13 @@ pub(super) fn handle_create_folder(
     }
 }
 
+/// Updates folder metadata and emits `FolderSaved` or error events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Target folder id.
+/// - `name`: New folder name.
+/// - `parent_id`: Optional replacement parent id.
 pub(super) fn handle_update_folder(
     state: &mut WorkerState,
     id: String,
@@ -73,6 +87,11 @@ pub(super) fn handle_update_folder(
     }
 }
 
+/// Deletes a folder subtree under lock and emits `FolderDeleted` on success.
+///
+/// # Arguments
+/// - `state`: Worker state containing db, locks, and event channel handles.
+/// - `id`: Folder id to delete.
 pub(super) fn handle_delete_folder(state: &mut WorkerState, id: String) {
     let delete_result =
         delete_folder_tree_and_migrate_guarded(&state.db, &id, |affected_paste_ids| {

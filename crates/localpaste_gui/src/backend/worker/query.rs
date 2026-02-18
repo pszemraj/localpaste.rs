@@ -20,6 +20,7 @@ struct SearchCacheKey {
 }
 
 #[derive(Debug, Default)]
+/// Short-lived cache for list/search metadata queries in the backend worker.
 pub(super) struct QueryCache {
     list_key: Option<ListCacheKey>,
     list_items: Option<Vec<PasteSummary>>,
@@ -35,6 +36,7 @@ pub(super) struct QueryCache {
 }
 
 impl QueryCache {
+    /// Clears cached list/search entries and increments invalidation metrics.
     pub(super) fn invalidate(&mut self) {
         if self.list_key.is_some()
             || self.list_items.is_some()
@@ -222,6 +224,7 @@ fn handle_search_variant<E>(
     );
 }
 
+/// Logical search pathways supported by backend query handlers.
 pub(super) enum SearchRoute {
     Standard {
         folder_id: Option<String>,
@@ -230,6 +233,12 @@ pub(super) enum SearchRoute {
     Palette,
 }
 
+/// Loads paste metadata list results, using cache when the key is still fresh.
+///
+/// # Arguments
+/// - `state`: Worker state containing db/cache/event handles.
+/// - `limit`: Maximum number of rows to return.
+/// - `folder_id`: Optional folder filter.
 pub(super) fn handle_list_pastes(state: &mut WorkerState, limit: usize, folder_id: Option<String>) {
     let started = Instant::now();
     let key = ListCacheKey {
@@ -285,6 +294,13 @@ pub(super) fn handle_list_pastes(state: &mut WorkerState, limit: usize, folder_i
     }
 }
 
+/// Runs a metadata search and emits standard or palette search result events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db/cache/event handles.
+/// - `route`: Search route selecting standard or command-palette behavior.
+/// - `query`: Raw search text.
+/// - `limit`: Maximum number of rows to return.
 pub(super) fn handle_search(
     state: &mut WorkerState,
     route: SearchRoute,
