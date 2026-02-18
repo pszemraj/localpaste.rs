@@ -111,7 +111,9 @@ def find_on_section(data: dict[str, Any]) -> Any:
     return None
 
 
-def extract_run_blocks(node: Any, path: str = "", inherited_shell: str = "bash") -> list[tuple[str, str, str]]:
+def extract_run_blocks(
+    node: Any, path: str = "", inherited_shell: str = "bash"
+) -> list[tuple[str, str, str]]:
     blocks: list[tuple[str, str, str]] = []
 
     if isinstance(node, dict):
@@ -135,7 +137,9 @@ def extract_run_blocks(node: Any, path: str = "", inherited_shell: str = "bash")
 
     elif isinstance(node, list):
         for index, value in enumerate(node):
-            blocks.extend(extract_run_blocks(value, f"{path}[{index}]", inherited_shell))
+            blocks.extend(
+                extract_run_blocks(value, f"{path}[{index}]", inherited_shell)
+            )
 
     return blocks
 
