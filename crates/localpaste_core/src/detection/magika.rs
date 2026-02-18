@@ -45,10 +45,18 @@ fn session() -> Option<&'static Mutex<magika::Session>> {
         .ok()
 }
 
+/// Eagerly initializes the shared Magika session so first detect call is warm.
 pub(crate) fn prewarm() {
     let _ = session();
 }
 
+/// Detects language using Magika inference when the runtime is available.
+///
+/// Returns `None` for non-text payloads, generic labels, or inference failures
+/// so higher-level callers can fall back to heuristic detection.
+///
+/// # Returns
+/// Detected non-generic text label when inference succeeds, otherwise `None`.
 pub(crate) fn detect(content: &str) -> Option<String> {
     let session = session()?;
     let mut guard = match session.lock() {
