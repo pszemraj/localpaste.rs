@@ -21,6 +21,9 @@ use syn::visit::Visit;
 use syn::{Attribute, File, ImplItem, ItemFn, ItemImpl, ItemMod, Visibility};
 use walkdir::WalkDir;
 
+#[path = "shared/run_or_exit.rs"]
+mod run_or_exit;
+
 #[path = "check_ast_dupes/normalize.rs"]
 mod normalize;
 use normalize::{collect_call_refs, AstNormalizer};
@@ -121,10 +124,7 @@ struct DeadFinding {
 
 fn main() {
     let args = Args::parse();
-    if let Err(message) = run(args) {
-        eprintln!("error: {}", message);
-        std::process::exit(1);
-    }
+    run_or_exit::run_or_exit(|| run(args));
 }
 
 fn run(args: Args) -> Result<(), String> {
