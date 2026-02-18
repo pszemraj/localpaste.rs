@@ -5,6 +5,10 @@ use crate::backend::CoreCmd;
 use eframe::egui::{self, RichText};
 
 impl LocalPasteApp {
+    /// Renders the command palette modal and handles quick-action input.
+    ///
+    /// # Panics
+    /// Panics if egui text layout internals fail while shaping palette rows.
     pub(crate) fn render_command_palette(&mut self, ctx: &egui::Context) {
         if !self.command_palette_open {
             return;
@@ -117,6 +121,11 @@ impl LocalPasteApp {
         }
     }
 
+    /// Queues a copy action for a palette result, loading selection if needed.
+    ///
+    /// # Arguments
+    /// - `id`: Paste id targeted by the copy action.
+    /// - `fenced`: When `true`, copy as fenced Markdown code block.
     pub(crate) fn queue_palette_copy(&mut self, id: String, fenced: bool) {
         let action = if fenced {
             PaletteCopyAction::Fenced(id.clone())
@@ -154,12 +163,14 @@ impl LocalPasteApp {
         self.palette_search_results.clone()
     }
 
+    /// Sends a delete command for a palette-selected paste and closes palette.
     pub(crate) fn send_palette_delete(&mut self, id: String) {
         if self.send_delete_paste(id) {
             self.command_palette_open = false;
         }
     }
 
+    /// Opens the selected palette result in the main editor view.
     pub(crate) fn open_palette_selection(&mut self, id: String) {
         if self.select_paste(id) {
             self.command_palette_open = false;

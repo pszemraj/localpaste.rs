@@ -4,6 +4,7 @@ use super::super::*;
 use eframe::egui;
 
 impl LocalPasteApp {
+    /// Renders the bottom status bar with save state and API metadata.
     pub(crate) fn render_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status")
             .resizable(false)

@@ -4,6 +4,7 @@ use super::super::*;
 use eframe::egui;
 
 impl LocalPasteApp {
+    /// Renders the keyboard shortcut help window.
     pub(crate) fn render_shortcut_help(&mut self, ctx: &egui::Context) {
         if !self.shortcut_help_open {
             return;

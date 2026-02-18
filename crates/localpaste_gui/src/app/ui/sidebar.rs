@@ -4,6 +4,7 @@ use super::super::*;
 use eframe::egui::{self, RichText};
 
 impl LocalPasteApp {
+    /// Renders the top title/status bar.
     pub(crate) fn render_top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top")
             .resizable(false)
@@ -25,6 +26,7 @@ impl LocalPasteApp {
             });
     }
 
+    /// Renders the left sidebar with search, filters, and paste list.
     pub(crate) fn render_sidebar(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("sidebar")
             .default_width(300.0)

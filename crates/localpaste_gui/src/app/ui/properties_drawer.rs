@@ -30,6 +30,7 @@ fn apply_language_choice(
 }
 
 impl LocalPasteApp {
+    /// Renders the side drawer used for less-frequent metadata edits.
     pub(crate) fn render_properties_drawer(&mut self, ctx: &egui::Context) {
         if !self.properties_drawer_open || self.selected_id.is_none() {
             return;

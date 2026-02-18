@@ -4,6 +4,7 @@ use super::super::*;
 use eframe::egui;
 
 impl LocalPasteApp {
+    /// Renders transient toast notifications in the top-right overlay area.
     pub(crate) fn render_toasts(&mut self, ctx: &egui::Context) {
         if self.toasts.is_empty() {
             return;
