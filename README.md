@@ -71,6 +71,35 @@ Runtime/provider note:
 Build/run/validation command matrices are maintained in:
 [`docs/dev/devlog.md`](docs/dev/devlog.md).
 
+## Precompiled Binaries
+
+GitHub Releases publish precompiled GUI assets for `LocalPaste` under
+`localpaste-*` filenames:
+
+- Windows x64: `.msi` installer and `.zip` portable archive
+- Linux x64: `.AppImage` and `.tar.gz` portable archive
+- macOS arm64: `.dmg` installer and `.app.tar.gz` portable archive
+
+Asset naming contract:
+
+- `localpaste-<tag>-windows-x86_64.msi`
+- `localpaste-<tag>-windows-x86_64.zip`
+- `localpaste-<tag>-linux-x86_64.AppImage`
+- `localpaste-<tag>-linux-x86_64.tar.gz`
+- `localpaste-<tag>-macos-aarch64.dmg`
+- `localpaste-<tag>-macos-aarch64.app.tar.gz`
+- `checksums.sha256`
+
+Checksum verification examples:
+
+```bash
+sha256sum -c checksums.sha256
+```
+
+```powershell
+Get-FileHash .\localpaste-v0.4.3-windows-x86_64.msi -Algorithm SHA256
+```
+
 ## Configuration and Ops
 
 - System architecture walkthrough: [`docs/architecture.md`](docs/architecture.md)

@@ -114,6 +114,46 @@ rustdoc-checker crates --strict
 Language detection/normalization/highlight behavior is tracked in
 [docs/language-detection.md](../language-detection.md).
 
+## GUI Release Pipeline
+
+GitHub Actions workflow:
+`.github/workflows/release-gui.yml`
+
+Packaging configs:
+
+- `packaging/windows/packager.json`
+- `packaging/linux/packager.json`
+- `packaging/macos/packager.json`
+
+Release behavior:
+
+- Tag push (`v*`) runs preflight checks, builds GUI installers/portable assets,
+  and attaches assets to that tag's release.
+- Manual run (`workflow_dispatch`) accepts an existing tag and uploads/replaces
+  assets for that release (same tag target).
+
+Preflight gates for release workflow:
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets --all-features`
+- `cargo check --workspace --all-targets --all-features`
+- server + CLI smoke test with restart persistence verification
+
+Release workflow intentionally excludes:
+
+- `check-loc`
+- `check-ast-dupes`
+
+Expected GUI release assets:
+
+- `localpaste-<tag>-windows-x86_64.msi`
+- `localpaste-<tag>-windows-x86_64.zip`
+- `localpaste-<tag>-linux-x86_64.AppImage`
+- `localpaste-<tag>-linux-x86_64.tar.gz`
+- `localpaste-<tag>-macos-aarch64.dmg`
+- `localpaste-<tag>-macos-aarch64.app.tar.gz`
+- `checksums.sha256`
+
 ## Behavior Contracts
 
 This file is intentionally command/workflow-focused. For runtime behavior contracts, use:
