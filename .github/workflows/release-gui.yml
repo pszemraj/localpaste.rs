@@ -121,7 +121,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export PORT=3055
+          PORT="$(
+            python - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+          )"
+          export PORT
           export DB_PATH="${GITHUB_WORKSPACE}/.tmp/release-smoke-${GITHUB_RUN_ID}"
           export RUST_LOG=info
           export LP_SERVER="http://127.0.0.1:${PORT}"
@@ -130,10 +138,11 @@ jobs:
           # Default builds prewarm Magika/ORT during startup; on cold runners
           # startup can exceed one second, so use an explicit readiness probe.
           wait_for_localpaste_ready() {
-            local max_attempts=60
+            local max_attempts=120
             local attempt=1
+            local health_url="${LP_SERVER}/api/pastes/meta?limit=1"
             while (( attempt <= max_attempts )); do
-              if ./target/debug/lpaste --server "${LP_SERVER}" list --limit 1 >/dev/null 2>&1; then
+              if curl -fsS --connect-timeout 1 --max-time 2 "${health_url}" >/dev/null 2>&1; then
                 return 0
               fi
               if [[ -n "${SERVER_PID:-}" ]] && ! kill -0 "${SERVER_PID}" 2>/dev/null; then
@@ -261,7 +270,7 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $wixPath
 
       - name: Install cargo-packager
-        run: cargo install cargo-packager --locked
+        run: cargo install cargo-packager --version 0.11.8 --locked
 
       - name: Build GUI release binary
         run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{ matrix.target }}
@@ -434,8 +443,17 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ needs.preflight.outputs.resolved_tag }}"
-          gh release upload "${TAG}" \
+          max_attempts=3
+          attempt=1
+          until gh release upload "${TAG}" \
             dist/release-assets/localpaste-* \
             dist/release-assets/checksums.sha256 \
             --repo "${GITHUB_REPOSITORY}" \
-            --clobber
+            --clobber; do
+            if (( attempt >= max_attempts )); then
+              echo "asset upload failed after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+            sleep $(( attempt * 5 ))
+            attempt=$(( attempt + 1 ))
+          done
