@@ -3,6 +3,9 @@
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 
 /// Normalizes user-facing language names into syntect-compatible hints.
+///
+/// # Returns
+/// Canonical language hint or `"text"` when input is empty/unknown.
 pub(crate) fn syntect_language_hint(language: &str) -> String {
     let canonical = localpaste_core::detection::canonical::canonicalize(language);
     if canonical.is_empty() {
@@ -80,6 +83,14 @@ fn syntax_fallback_candidates(hint_lower: &str) -> &'static [&'static str] {
     }
 }
 
+/// Resolves a syntect grammar using canonical hint + fallback candidates.
+///
+/// # Arguments
+/// - `ps`: Loaded syntect syntax set.
+/// - `hint`: Canonicalized language hint from app state.
+///
+/// # Returns
+/// Best matching syntax definition, falling back to plain text.
 pub(crate) fn resolve_syntax<'a>(ps: &'a SyntaxSet, hint: &str) -> &'a SyntaxReference {
     let hint_trimmed = hint.trim();
     if hint_trimmed.is_empty() {
