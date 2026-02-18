@@ -1,0 +1,25 @@
+{
+  "name": "localpaste_gui",
+  "version": "0.0.0",
+  "productName": "LocalPaste",
+  "identifier": "io.github.pszemraj.localpaste",
+  "description": "A fast, localhost-only pastebin with a modern editor, built in Rust.",
+  "publisher": "pszemraj",
+  "homepage": "https://github.com/pszemraj/localpaste.rs",
+  "licenseFile": "../../LICENSE",
+  "icons": [
+    "../../assets/icons/desktop_icon.png"
+  ],
+  "formats": [
+    "appimage"
+  ],
+  "targetTriple": "x86_64-unknown-linux-gnu",
+  "outDir": "../../dist/packager/linux-x86_64",
+  "binariesDir": "../../dist/stage/linux-x86_64",
+  "binaries": [
+    {
+      "path": "localpaste",
+      "main": true
+    }
+  ]
+}
