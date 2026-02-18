@@ -482,17 +482,16 @@ mod process_detection_tests {
     }
 
     #[test]
-    fn unix_probe_treats_missing_pgrep_as_unknown() {
-        let err = std::io::Error::new(ErrorKind::NotFound, "pgrep not found");
-        let probe = pgrep_error_probe_result(&err);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
-    }
-
-    #[test]
-    fn unix_probe_keeps_unknown_for_non_notfound_pgrep_errors() {
-        let err = std::io::Error::new(ErrorKind::PermissionDenied, "permission denied");
-        let probe = pgrep_error_probe_result(&err);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
+    fn unix_probe_error_matrix_maps_to_unknown() {
+        let cases = [
+            (ErrorKind::NotFound, "pgrep not found"),
+            (ErrorKind::PermissionDenied, "permission denied"),
+        ];
+        for (kind, message) in cases {
+            let err = std::io::Error::new(kind, message);
+            let probe = pgrep_error_probe_result(&err);
+            assert_eq!(probe, ProcessProbeResult::Unknown);
+        }
     }
 }
 
@@ -502,14 +501,11 @@ mod process_detection_windows_tests {
     use std::io::ErrorKind;
 
     #[test]
-    fn windows_probe_treats_missing_tasklist_as_unknown() {
-        let probe = tasklist_error_probe_result(ErrorKind::NotFound);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
-    }
-
-    #[test]
-    fn windows_probe_keeps_unknown_for_other_tasklist_errors() {
-        let probe = tasklist_error_probe_result(ErrorKind::PermissionDenied);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
+    fn windows_probe_error_matrix_maps_to_unknown() {
+        let cases = [ErrorKind::NotFound, ErrorKind::PermissionDenied];
+        for kind in cases {
+            let probe = tasklist_error_probe_result(kind);
+            assert_eq!(probe, ProcessProbeResult::Unknown);
+        }
     }
 }
