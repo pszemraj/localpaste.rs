@@ -23,6 +23,14 @@ use self::filters::{
 };
 
 impl LocalPasteApp {
+    fn send_backend_cmd_or_status(&mut self, command: CoreCmd, error_message: &str) -> bool {
+        if self.backend.cmd_tx.send(command).is_ok() {
+            return true;
+        }
+        self.set_status(error_message);
+        false
+    }
+
     fn send_update_paste_or_mark_failed(&mut self, command: CoreCmd, mode: &str) -> bool {
         if self.backend.cmd_tx.send(command).is_ok() {
             return true;
@@ -252,11 +260,11 @@ impl LocalPasteApp {
                 }
                 self.set_status(message);
             }
-            CoreEvent::FoldersLoaded { items: _ } => {}
+            CoreEvent::FoldersLoaded { items: _ }
+            | CoreEvent::ShutdownComplete { flush_result: _ } => {}
             CoreEvent::FolderSaved { folder: _ } | CoreEvent::FolderDeleted { id: _ } => {
                 self.request_refresh();
             }
-            CoreEvent::ShutdownComplete { flush_result: _ } => {}
             CoreEvent::Error { source, message } => {
                 warn!("backend error ({:?}): {}", source, message);
                 // Only mutate save-in-flight state for the matching request class.
@@ -635,14 +643,10 @@ impl LocalPasteApp {
 
     /// Creates a new paste pre-populated with `content`.
     pub(super) fn create_new_paste_with_content(&mut self, content: String) {
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::CreatePaste { content })
-            .is_err()
-        {
-            self.set_status("Create failed: backend unavailable.");
-        }
+        let _sent = self.send_backend_cmd_or_status(
+            CoreCmd::CreatePaste { content },
+            "Create failed: backend unavailable.",
+        );
     }
 
     /// Sends a delete command for `id` and reports whether dispatch succeeded.
@@ -650,16 +654,10 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when the backend command was queued, otherwise `false`.
     pub(super) fn send_delete_paste(&mut self, id: String) -> bool {
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::DeletePaste { id })
-            .is_err()
-        {
-            self.set_status("Delete failed: backend unavailable.");
-            return false;
-        }
-        true
+        self.send_backend_cmd_or_status(
+            CoreCmd::DeletePaste { id },
+            "Delete failed: backend unavailable.",
+        )
     }
 
     /// Deletes the currently selected paste, if any.

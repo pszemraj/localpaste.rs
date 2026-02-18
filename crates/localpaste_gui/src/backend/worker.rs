@@ -71,8 +71,7 @@ impl BackendHandle {
                     }
                     break;
                 }
-                Ok(_) => {}
-                Err(RecvTimeoutError::Timeout) => {}
+                Ok(_) | Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     return self.join_worker();
                 }
