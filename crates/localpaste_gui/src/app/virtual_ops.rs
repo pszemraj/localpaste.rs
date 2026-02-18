@@ -1,23 +1,13 @@
-//! Virtual editor operations: selection, cursor motion, editing, and command application.
+//! Virtual editor operations for selection and cursor/navigation behavior.
 
-use super::highlight::VirtualEditHint;
-use super::util::word_range_at;
 use super::virtual_editor::{
-    EditIntent, RecordedEdit, VirtualEditDelta, VirtualEditorHistory, VirtualEditorState,
-    VirtualGalleyCache, VirtualInputCommand, WrapBoundaryAffinity, WrapLayoutCache,
+    VirtualEditorHistory, VirtualEditorState, VirtualGalleyCache, WrapBoundaryAffinity,
+    WrapLayoutCache,
 };
-use super::{
-    is_editor_word_char, next_virtual_click_count, LocalPasteApp, VirtualApplyResult,
-    EDITOR_DOUBLE_CLICK_DISTANCE, EDITOR_DOUBLE_CLICK_WINDOW,
-};
-use eframe::egui::{
-    self,
-    text::{CCursor, CCursorRange},
-    text_edit::TextEditOutput,
-};
+use super::{is_editor_word_char, next_virtual_click_count, LocalPasteApp};
+use eframe::egui;
 use std::ops::Range;
 use std::time::Instant;
-use tracing::info;
 
 #[derive(Clone, Copy, Debug)]
 struct VirtualCursorWrapMetrics {
@@ -32,7 +22,11 @@ fn is_internal_wrap_boundary(display_col: usize, wrap_cols: usize, line_cols: us
 }
 
 impl LocalPasteApp {
-    fn clamp_virtual_cursor_state_for_render(&mut self) -> bool {
+    /// Clamps the active cursor after layout changes that shorten renderable line spans.
+    ///
+    /// # Returns
+    /// `true` when the cursor was adjusted.
+    pub(super) fn clamp_virtual_cursor_state_for_render(&mut self) -> bool {
         let cursor = self.virtual_editor_state.cursor();
         let clamped = self.clamp_virtual_cursor_for_render(cursor);
         if clamped == cursor {
@@ -43,7 +37,11 @@ impl LocalPasteApp {
         true
     }
 
-    fn virtual_line_render_chars(&self, line: usize) -> usize {
+    /// Returns the renderable char count for a line, honoring layout cache truncation.
+    ///
+    /// # Returns
+    /// Renderable character count for `line`.
+    pub(super) fn virtual_line_render_chars(&self, line: usize) -> usize {
         let full_chars = self.virtual_editor_buffer.line_len_chars(line);
         let cached_chars = self.virtual_layout.line_chars(line);
         if cached_chars == 0 {
@@ -65,6 +63,10 @@ impl LocalPasteApp {
         )
     }
 
+    /// Clamps a global cursor index to the currently renderable portion of its line.
+    ///
+    /// # Returns
+    /// A cursor index guaranteed to land within buffer bounds and rendered line extent.
     pub(super) fn clamp_virtual_cursor_for_render(&self, char_index: usize) -> usize {
         let clamped = char_index.min(self.virtual_editor_buffer.len_chars());
         let (line, column) = self.virtual_editor_buffer.char_to_line_col(clamped);
@@ -94,7 +96,14 @@ impl LocalPasteApp {
             wrap_cols,
         }
     }
-    fn virtual_preferred_column_for_cursor(&self, cursor: usize) -> usize {
+    /// Derives preferred wrapped-row column for subsequent vertical cursor moves.
+    ///
+    /// # Returns
+    /// Preferred column within the active wrap row.
+    ///
+    /// # Panics
+    /// Panics only if wrap metrics become inconsistent with cached layout state.
+    pub(super) fn virtual_preferred_column_for_cursor(&self, cursor: usize) -> usize {
         let metrics = self.virtual_cursor_wrap_metrics(cursor);
         if metrics.display_col == metrics.line_cols
             && metrics.display_col > 0
@@ -111,7 +120,16 @@ impl LocalPasteApp {
         is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols)
     }
 
-    fn vertical_boundary_affinity_for_target(
+    /// Resolves wrap-boundary affinity after a vertical cursor move.
+    ///
+    /// # Arguments
+    /// - `cursor`: New global cursor index.
+    /// - `desired_col_in_row`: Requested visual column within the wrapped row.
+    /// - `up`: Whether the movement direction was upward.
+    ///
+    /// # Returns
+    /// Boundary affinity to preserve expected row-end/start caret behavior.
+    pub(super) fn vertical_boundary_affinity_for_target(
         &self,
         cursor: usize,
         desired_col_in_row: usize,
@@ -126,61 +144,13 @@ impl LocalPasteApp {
         }
     }
 
-    pub(super) fn handle_large_editor_click(
-        &mut self,
-        output: &TextEditOutput,
-        text: &str,
-        is_large_buffer: bool,
-    ) {
-        if !is_large_buffer || !output.response.clicked() {
-            return;
-        }
-        let now = Instant::now();
-        let click_pos = output.response.interact_pointer_pos();
-        let continued = if let (Some(last_at), Some(last_pos), Some(pos)) = (
-            self.last_editor_click_at,
-            self.last_editor_click_pos,
-            click_pos,
-        ) {
-            now.duration_since(last_at) <= EDITOR_DOUBLE_CLICK_WINDOW
-                && last_pos.distance(pos) <= EDITOR_DOUBLE_CLICK_DISTANCE
-        } else {
-            false
-        };
-        if continued {
-            self.last_editor_click_count = self.last_editor_click_count.saturating_add(1).min(3);
-        } else {
-            self.last_editor_click_count = 1;
-        }
-        self.last_editor_click_at = Some(now);
-        self.last_editor_click_pos = click_pos;
-
-        let Some(range) = output.cursor_range else {
-            return;
-        };
-        let mut state = output.state.clone();
-        match self.last_editor_click_count {
-            2 => {
-                let Some((start, end)) = word_range_at(text, range.primary.index) else {
-                    return;
-                };
-                state.cursor.set_char_range(Some(CCursorRange::two(
-                    CCursor::new(start),
-                    CCursor::new(end),
-                )));
-            }
-            3 => {
-                let (start, end) = self.selected_content.line_range_chars(range.primary.index);
-                state.cursor.set_char_range(Some(CCursorRange::two(
-                    CCursor::new(start),
-                    CCursor::new(end),
-                )));
-            }
-            _ => return,
-        }
-        state.store(&output.response.ctx, output.response.id);
-    }
-
+    /// Returns the preview selection as text using line-aware slicing semantics.
+    ///
+    /// # Returns
+    /// Selected text joined with `\n`, or `None` when selection is empty.
+    ///
+    /// # Panics
+    /// Panics only if internal cursor/line indices become inconsistent with `selected_content`.
     pub(super) fn virtual_selection_text(&mut self) -> Option<String> {
         let (start, end) = self.virtual_selection.selection_bounds()?;
         let text = self.selected_content.as_str();
@@ -221,6 +191,7 @@ impl LocalPasteApp {
         }
     }
 
+    /// Resets virtual editor buffer/state/caches to match a fresh text snapshot.
     pub(super) fn reset_virtual_editor(&mut self, text: &str) {
         self.virtual_editor_buffer.reset(text);
         self.virtual_editor_state = VirtualEditorState::default();
@@ -234,10 +205,12 @@ impl LocalPasteApp {
         self.reset_virtual_click_streak();
     }
 
+    /// Restarts the caret blink timer from the current instant.
     pub(super) fn reset_virtual_caret_blink(&mut self) {
         self.virtual_caret_phase_start = Instant::now();
     }
 
+    /// Clears virtual preview click streak tracking.
     pub(super) fn reset_virtual_click_streak(&mut self) {
         self.last_virtual_click_at = None;
         self.last_virtual_click_pos = None;
@@ -245,6 +218,14 @@ impl LocalPasteApp {
         self.last_virtual_click_count = 0;
     }
 
+    /// Records a click in the virtual preview and returns the updated streak count.
+    ///
+    /// # Arguments
+    /// - `line_idx`: Line index of the click target.
+    /// - `pointer_pos`: Pointer position in viewport coordinates.
+    ///
+    /// # Returns
+    /// Click streak count in `[1, 3]` for single/double/triple click behavior.
     pub(super) fn register_virtual_click(
         &mut self,
         line_idx: usize,
@@ -267,11 +248,16 @@ impl LocalPasteApp {
         count
     }
 
+    /// Returns the currently selected virtual-editor range as a UTF-8 snapshot.
+    ///
+    /// # Returns
+    /// Selected text when a non-empty selection exists.
     pub(super) fn virtual_selected_text(&self) -> Option<String> {
         let range = self.virtual_editor_state.selection_range()?;
         Some(self.virtual_editor_buffer.slice_chars(range))
     }
 
+    /// Selects the full physical line, including newline when present.
     pub(super) fn virtual_select_line(&mut self, line_idx: usize) {
         let line_count = self.virtual_editor_buffer.line_count();
         if line_idx >= line_count {
@@ -298,6 +284,10 @@ impl LocalPasteApp {
         self.virtual_editor_state.clear_preferred_column();
     }
 
+    /// Finds the previous word boundary for word-left navigation.
+    ///
+    /// # Returns
+    /// Cursor target for a word-left action from `cursor`.
     pub(super) fn virtual_word_left(&self, cursor: usize) -> usize {
         let rope = self.virtual_editor_buffer.rope();
         let mut idx = self
@@ -337,6 +327,10 @@ impl LocalPasteApp {
         idx
     }
 
+    /// Finds the next word boundary for word-right navigation.
+    ///
+    /// # Returns
+    /// Cursor target for a word-right action from `cursor`.
     pub(super) fn virtual_word_right(&self, cursor: usize) -> usize {
         let rope = self.virtual_editor_buffer.rope();
         let len = self.virtual_editor_buffer.len_chars();
@@ -369,6 +363,19 @@ impl LocalPasteApp {
         idx
     }
 
+    /// Computes the cursor target for vertical movement across wrapped rows/lines.
+    ///
+    /// # Arguments
+    /// - `cursor`: Current global cursor index.
+    /// - `desired_col_in_row`: Preferred visual column within wrapped rows.
+    /// - `up`: `true` for upward navigation, `false` for downward.
+    /// - `boundary_affinity`: Wrap-boundary tie-breaker for exact boundary positions.
+    ///
+    /// # Returns
+    /// Global cursor index for the resolved vertical target.
+    ///
+    /// # Panics
+    /// Panics only if wrap-layout caches become internally inconsistent.
     pub(super) fn virtual_move_vertical_target(
         &self,
         cursor: usize,
@@ -436,6 +443,14 @@ impl LocalPasteApp {
             .line_col_to_char(target_line, target_line_char)
     }
 
+    /// Returns local selection bounds for a rendered line segment, if selected.
+    ///
+    /// # Arguments
+    /// - `line_start`: Global start char index of the rendered line segment.
+    /// - `line_chars`: Character length of the rendered line segment.
+    ///
+    /// # Returns
+    /// Local `[start, end)` selection bounds within the line segment.
     pub(super) fn virtual_selection_for_line(
         &self,
         line_start: usize,
@@ -452,567 +467,5 @@ impl LocalPasteApp {
             return None;
         }
         Some(local_start..local_end)
-    }
-
-    fn apply_virtual_layout_delta_with_recovery(
-        &mut self,
-        delta: VirtualEditDelta,
-        mut galley_apply_ms: Option<&mut f32>,
-    ) -> bool {
-        if self
-            .virtual_layout
-            .apply_delta(&self.virtual_editor_buffer, delta)
-        {
-            let galley_started = galley_apply_ms.as_ref().map(|_| Instant::now());
-            self.virtual_galley_cache
-                .apply_delta(delta, self.virtual_editor_buffer.line_count());
-            if let (Some(slot), Some(started)) = (galley_apply_ms.as_mut(), galley_started) {
-                **slot = started.elapsed().as_secs_f32() * 1000.0;
-            }
-            return true;
-        }
-        let rebuilt = self
-            .virtual_layout
-            .rebuild_with_cached_geometry(&self.virtual_editor_buffer);
-        if !rebuilt {
-            self.virtual_layout = WrapLayoutCache::default();
-        }
-        let galley_started = galley_apply_ms.as_ref().map(|_| Instant::now());
-        self.virtual_galley_cache.evict_all();
-        if let (Some(slot), Some(started)) = (galley_apply_ms.as_mut(), galley_started) {
-            **slot = started.elapsed().as_secs_f32() * 1000.0;
-        }
-        rebuilt
-    }
-
-    fn cancel_virtual_ime_preedit_if_active(&mut self, now: Instant) -> bool {
-        let had_preedit = self.virtual_editor_state.ime.preedit_range.is_some()
-            || !self.virtual_editor_state.ime.preedit_text.is_empty();
-        let changed = if let Some(range) = self.virtual_editor_state.ime.preedit_range.take() {
-            self.replace_virtual_range(range, "", EditIntent::Other, false, now)
-        } else {
-            false
-        };
-        if had_preedit {
-            self.virtual_editor_state.ime.preedit_text.clear();
-            self.virtual_editor_state.ime.enabled = false;
-        }
-        changed
-    }
-
-    pub(super) fn replace_virtual_range(
-        &mut self,
-        range: Range<usize>,
-        replacement: &str,
-        intent: EditIntent,
-        record_history: bool,
-        now: Instant,
-    ) -> bool {
-        let start = range.start.min(self.virtual_editor_buffer.len_chars());
-        let end = range.end.min(self.virtual_editor_buffer.len_chars());
-        if start == end && replacement.is_empty() {
-            return false;
-        }
-        let start_line = self.virtual_editor_buffer.char_to_line_col(start).0;
-        let deleted = self.virtual_editor_buffer.slice_chars(start..end);
-        let deleted_chars = end.saturating_sub(start);
-        let inserted_chars = replacement.chars().count();
-        let inserted_newlines = replacement.chars().filter(|ch| *ch == '\n').count();
-        let deleted_newlines = deleted.chars().filter(|ch| *ch == '\n').count();
-        let touched_lines = inserted_newlines.max(deleted_newlines).saturating_add(1);
-        let before_cursor =
-            self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
-        let perf_enabled = self.perf_log_enabled;
-        let rope_started = perf_enabled.then(Instant::now);
-        let delta = self
-            .virtual_editor_buffer
-            .replace_char_range(start..end, replacement);
-        let rope_apply_ms =
-            rope_started.map_or(0.0, |started| started.elapsed().as_secs_f32() * 1000.0);
-        if let Some(delta) = delta {
-            let mut galley_apply_ms = 0.0f32;
-            let layout_started = perf_enabled.then(Instant::now);
-            let layout_recovered = self.apply_virtual_layout_delta_with_recovery(
-                delta,
-                perf_enabled.then_some(&mut galley_apply_ms),
-            );
-            let layout_apply_ms =
-                layout_started.map_or(0.0, |started| started.elapsed().as_secs_f32() * 1000.0);
-            self.highlight_edit_hint = Some(VirtualEditHint {
-                start_line,
-                touched_lines,
-                inserted_chars,
-                deleted_chars,
-            });
-            if perf_enabled {
-                info!(
-                    target: "localpaste_gui::perf",
-                    event = "virtual_edit_apply",
-                    revision = self.virtual_editor_buffer.revision(),
-                    start_char = start,
-                    end_char = end,
-                    inserted_chars = inserted_chars,
-                    deleted_chars = deleted_chars,
-                    rope_apply_ms = rope_apply_ms,
-                    layout_apply_ms = layout_apply_ms,
-                    galley_apply_ms = galley_apply_ms,
-                    layout_recovered = layout_recovered,
-                    "virtual editor mutation + cache patch timings"
-                );
-            }
-        }
-        let after_cursor = start.saturating_add(inserted_chars);
-        let after_cursor = self.clamp_virtual_cursor_for_render(after_cursor);
-        self.virtual_editor_state
-            .set_cursor(after_cursor, self.virtual_editor_buffer.len_chars());
-        if record_history {
-            self.virtual_editor_history.record_edit(RecordedEdit {
-                start,
-                deleted,
-                inserted: replacement.to_string(),
-                intent,
-                before_cursor,
-                after_cursor,
-                at: now,
-            });
-        }
-        true
-    }
-
-    pub(super) fn apply_virtual_commands(
-        &mut self,
-        ctx: &egui::Context,
-        commands: &[VirtualInputCommand],
-    ) -> VirtualApplyResult {
-        if commands.is_empty() {
-            return VirtualApplyResult::default();
-        }
-        let mut result = VirtualApplyResult::default();
-        let now = Instant::now();
-        for command in commands {
-            let cursor_before = self.virtual_editor_state.cursor();
-            let changed_before = result.changed;
-            match command {
-                VirtualInputCommand::SelectAll => {
-                    self.virtual_editor_state
-                        .select_all(self.virtual_editor_buffer.len_chars());
-                }
-                VirtualInputCommand::Copy => {
-                    if let Some(selection) = self.virtual_selected_text() {
-                        ctx.send_cmd(egui::OutputCommand::CopyText(selection));
-                        result.copied = true;
-                    }
-                }
-                VirtualInputCommand::Cut => {
-                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    if let Some(range) = self.virtual_editor_state.selection_range() {
-                        if let Some(selection) = self.virtual_selected_text() {
-                            ctx.send_cmd(egui::OutputCommand::CopyText(selection));
-                            result.copied = true;
-                        }
-                        result.changed |=
-                            self.replace_virtual_range(range, "", EditIntent::Cut, true, now);
-                        if result.changed {
-                            result.cut = true;
-                        }
-                    }
-                }
-                VirtualInputCommand::Paste(text) => {
-                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    let cursor = self.virtual_editor_state.cursor();
-                    let range = self
-                        .virtual_editor_state
-                        .selection_range()
-                        .unwrap_or(cursor..cursor);
-                    result.changed |=
-                        self.replace_virtual_range(range, text, EditIntent::Paste, true, now);
-                    if !text.is_empty() {
-                        result.pasted = true;
-                    }
-                }
-                VirtualInputCommand::InsertText(text) => {
-                    if text.is_empty() {
-                        continue;
-                    }
-                    if self.virtual_editor_state.ime.preedit_range.is_some() {
-                        continue;
-                    }
-                    let cursor = self.virtual_editor_state.cursor();
-                    let range = self
-                        .virtual_editor_state
-                        .selection_range()
-                        .unwrap_or(cursor..cursor);
-                    result.changed |=
-                        self.replace_virtual_range(range, text, EditIntent::Insert, true, now);
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::InsertNewline => {
-                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    let cursor = self.virtual_editor_state.cursor();
-                    let range = self
-                        .virtual_editor_state
-                        .selection_range()
-                        .unwrap_or(cursor..cursor);
-                    result.changed |=
-                        self.replace_virtual_range(range, "\n", EditIntent::Insert, true, now);
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::InsertTab => {
-                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    let cursor = self.virtual_editor_state.cursor();
-                    let range = self
-                        .virtual_editor_state
-                        .selection_range()
-                        .unwrap_or(cursor..cursor);
-                    result.changed |=
-                        self.replace_virtual_range(range, "    ", EditIntent::Insert, true, now);
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::Backspace { word } => {
-                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    if let Some(range) = self.virtual_editor_state.selection_range() {
-                        result.changed |= self.replace_virtual_range(
-                            range,
-                            "",
-                            EditIntent::DeleteBackward,
-                            true,
-                            now,
-                        );
-                    } else {
-                        let cursor = self.virtual_editor_state.cursor();
-                        if cursor == 0 {
-                            continue;
-                        }
-                        let start = if *word {
-                            self.virtual_word_left(cursor)
-                        } else {
-                            cursor.saturating_sub(1)
-                        };
-                        result.changed |= self.replace_virtual_range(
-                            start..cursor,
-                            "",
-                            EditIntent::DeleteBackward,
-                            true,
-                            now,
-                        );
-                    }
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::DeleteForward { word } => {
-                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    if let Some(range) = self.virtual_editor_state.selection_range() {
-                        result.changed |= self.replace_virtual_range(
-                            range,
-                            "",
-                            EditIntent::DeleteForward,
-                            true,
-                            now,
-                        );
-                    } else {
-                        let cursor = self.virtual_editor_state.cursor();
-                        let end = if *word {
-                            self.virtual_word_right(cursor)
-                        } else {
-                            cursor
-                                .saturating_add(1)
-                                .min(self.virtual_editor_buffer.len_chars())
-                        };
-                        if end > cursor {
-                            result.changed |= self.replace_virtual_range(
-                                cursor..end,
-                                "",
-                                EditIntent::DeleteForward,
-                                true,
-                                now,
-                            );
-                        }
-                    }
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::MoveLeft { select, word } => {
-                    let cursor = self.virtual_editor_state.cursor();
-                    let target = if !select {
-                        if let Some(range) = self.virtual_editor_state.selection_range() {
-                            range.start
-                        } else if *word {
-                            self.virtual_word_left(cursor)
-                        } else {
-                            cursor.saturating_sub(1)
-                        }
-                    } else if *word {
-                        self.virtual_word_left(cursor)
-                    } else {
-                        cursor.saturating_sub(1)
-                    };
-                    let target = self.clamp_virtual_cursor_for_render(target);
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::MoveRight { select, word } => {
-                    let cursor = self.virtual_editor_state.cursor();
-                    let target = if !select {
-                        if let Some(range) = self.virtual_editor_state.selection_range() {
-                            range.end
-                        } else if *word {
-                            self.virtual_word_right(cursor)
-                        } else {
-                            cursor
-                                .saturating_add(1)
-                                .min(self.virtual_editor_buffer.len_chars())
-                        }
-                    } else if *word {
-                        self.virtual_word_right(cursor)
-                    } else {
-                        cursor
-                            .saturating_add(1)
-                            .min(self.virtual_editor_buffer.len_chars())
-                    };
-                    let target = self.clamp_virtual_cursor_for_render(target);
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::MoveHome { select } => {
-                    let (line, _) = self
-                        .virtual_editor_buffer
-                        .char_to_line_col(self.virtual_editor_state.cursor());
-                    let target = self.clamp_virtual_cursor_for_render(
-                        self.virtual_editor_buffer.line_col_to_char(line, 0),
-                    );
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::MoveEnd { select } => {
-                    let (line, _) = self
-                        .virtual_editor_buffer
-                        .char_to_line_col(self.virtual_editor_state.cursor());
-                    let target = self
-                        .virtual_editor_buffer
-                        .line_col_to_char(line, self.virtual_line_render_chars(line));
-                    let target = self.clamp_virtual_cursor_for_render(target);
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::MoveUp { select } => {
-                    let preferred =
-                        self.virtual_editor_state
-                            .preferred_column()
-                            .unwrap_or_else(|| {
-                                self.virtual_preferred_column_for_cursor(
-                                    self.virtual_editor_state.cursor(),
-                                )
-                            });
-                    self.virtual_editor_state.set_preferred_column(preferred);
-                    let affinity = self.virtual_editor_state.wrap_boundary_affinity();
-                    let target = self.virtual_move_vertical_target(
-                        self.virtual_editor_state.cursor(),
-                        preferred,
-                        true,
-                        affinity,
-                    );
-                    let target = self.clamp_virtual_cursor_for_render(target);
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state.set_wrap_boundary_affinity(
-                        self.vertical_boundary_affinity_for_target(target, preferred, true),
-                    );
-                }
-                VirtualInputCommand::MoveDown { select } => {
-                    let preferred =
-                        self.virtual_editor_state
-                            .preferred_column()
-                            .unwrap_or_else(|| {
-                                self.virtual_preferred_column_for_cursor(
-                                    self.virtual_editor_state.cursor(),
-                                )
-                            });
-                    self.virtual_editor_state.set_preferred_column(preferred);
-                    let affinity = self.virtual_editor_state.wrap_boundary_affinity();
-                    let target = self.virtual_move_vertical_target(
-                        self.virtual_editor_state.cursor(),
-                        preferred,
-                        false,
-                        affinity,
-                    );
-                    let target = self.clamp_virtual_cursor_for_render(target);
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state.set_wrap_boundary_affinity(
-                        self.vertical_boundary_affinity_for_target(target, preferred, false),
-                    );
-                }
-                VirtualInputCommand::PageUp { select } => {
-                    let rows = ((self.virtual_viewport_height / self.virtual_line_height.max(1.0))
-                        .floor() as usize)
-                        .max(1);
-                    let mut target = self.virtual_editor_state.cursor();
-                    let preferred = self
-                        .virtual_editor_state
-                        .preferred_column()
-                        .unwrap_or_else(|| self.virtual_preferred_column_for_cursor(target));
-                    self.virtual_editor_state.set_preferred_column(preferred);
-                    let mut affinity = self.virtual_editor_state.wrap_boundary_affinity();
-                    for _ in 0..rows {
-                        target =
-                            self.virtual_move_vertical_target(target, preferred, true, affinity);
-                        target = self.clamp_virtual_cursor_for_render(target);
-                        affinity =
-                            self.vertical_boundary_affinity_for_target(target, preferred, true);
-                        if target == 0 {
-                            break;
-                        }
-                    }
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state
-                        .set_wrap_boundary_affinity(affinity);
-                }
-                VirtualInputCommand::PageDown { select } => {
-                    let rows = ((self.virtual_viewport_height / self.virtual_line_height.max(1.0))
-                        .floor() as usize)
-                        .max(1);
-                    let mut target = self.virtual_editor_state.cursor();
-                    let preferred = self
-                        .virtual_editor_state
-                        .preferred_column()
-                        .unwrap_or_else(|| self.virtual_preferred_column_for_cursor(target));
-                    self.virtual_editor_state.set_preferred_column(preferred);
-                    let mut affinity = self.virtual_editor_state.wrap_boundary_affinity();
-                    for _ in 0..rows {
-                        let next =
-                            self.virtual_move_vertical_target(target, preferred, false, affinity);
-                        target = self.clamp_virtual_cursor_for_render(next);
-                        affinity =
-                            self.vertical_boundary_affinity_for_target(target, preferred, false);
-                        if target == self.virtual_editor_buffer.len_chars() {
-                            break;
-                        }
-                    }
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state
-                        .set_wrap_boundary_affinity(affinity);
-                }
-                VirtualInputCommand::Undo => {
-                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    let delta = self.virtual_editor_history.undo(
-                        &mut self.virtual_editor_buffer,
-                        &mut self.virtual_editor_state,
-                    );
-                    if let Some(delta) = delta {
-                        result.changed = true;
-                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta, None);
-                        let _cursor_clamped = self.clamp_virtual_cursor_state_for_render();
-                        self.highlight_edit_hint = None;
-                    }
-                }
-                VirtualInputCommand::Redo => {
-                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    let delta = self.virtual_editor_history.redo(
-                        &mut self.virtual_editor_buffer,
-                        &mut self.virtual_editor_state,
-                    );
-                    if let Some(delta) = delta {
-                        result.changed = true;
-                        let _layout_ok = self.apply_virtual_layout_delta_with_recovery(delta, None);
-                        let _cursor_clamped = self.clamp_virtual_cursor_state_for_render();
-                        self.highlight_edit_hint = None;
-                    }
-                }
-                VirtualInputCommand::ImeEnabled => {
-                    self.virtual_editor_state.ime.enabled = true;
-                }
-                VirtualInputCommand::ImePreedit(text) => {
-                    self.virtual_editor_state.ime.enabled = true;
-                    let existing_preedit_range =
-                        self.virtual_editor_state.ime.preedit_range.clone();
-                    if text.is_empty() && existing_preedit_range.is_none() {
-                        self.virtual_editor_state.ime.preedit_text.clear();
-                        continue;
-                    }
-                    let cursor = self.virtual_editor_state.cursor();
-                    let range = existing_preedit_range
-                        .clone()
-                        .or_else(|| self.virtual_editor_state.selection_range())
-                        .unwrap_or(cursor..cursor);
-                    if self.virtual_editor_state.ime.preedit_text == *text
-                        && existing_preedit_range.as_ref() == Some(&range)
-                    {
-                        continue;
-                    }
-                    result.changed |= self.replace_virtual_range(
-                        range.clone(),
-                        text,
-                        EditIntent::Other,
-                        false,
-                        now,
-                    );
-                    self.virtual_editor_state.clear_preferred_column();
-                    if text.is_empty() {
-                        self.virtual_editor_state.ime.preedit_range = None;
-                        self.virtual_editor_state.ime.preedit_text.clear();
-                        continue;
-                    }
-                    let end = range.start.saturating_add(text.chars().count());
-                    self.virtual_editor_state.ime.preedit_range = Some(range.start..end);
-                    self.virtual_editor_state.ime.preedit_text = text.clone();
-                }
-                VirtualInputCommand::ImeCommit(text) => {
-                    let cursor = self.virtual_editor_state.cursor();
-                    let range = self
-                        .virtual_editor_state
-                        .ime
-                        .preedit_range
-                        .clone()
-                        .or_else(|| self.virtual_editor_state.selection_range())
-                        .unwrap_or(cursor..cursor);
-                    result.changed |=
-                        self.replace_virtual_range(range, text, EditIntent::ImeCommit, true, now);
-                    self.virtual_editor_state.ime.preedit_range = None;
-                    self.virtual_editor_state.ime.preedit_text.clear();
-                    self.virtual_editor_state.ime.enabled = false;
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::ImeDisabled => {
-                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    self.virtual_editor_state.ime.enabled = false;
-                    self.virtual_editor_state.ime.preedit_text.clear();
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-            }
-            if self.virtual_editor_state.cursor() != cursor_before
-                || result.changed != changed_before
-            {
-                self.reset_virtual_caret_blink();
-            }
-        }
-        result
     }
 }

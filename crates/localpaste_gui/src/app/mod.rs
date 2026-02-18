@@ -7,6 +7,7 @@ mod interaction_helpers;
 mod perf_trace;
 mod shutdown;
 mod state_accessors;
+mod state_feedback;
 mod state_ops;
 mod style;
 mod text_coords;
@@ -14,6 +15,8 @@ mod ui;
 mod util;
 mod virtual_editor;
 mod virtual_ops;
+mod virtual_ops_apply;
+mod virtual_ops_click;
 mod virtual_view;
 
 use crate::backend::{spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary};
