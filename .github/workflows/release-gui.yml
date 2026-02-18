@@ -127,11 +127,42 @@ jobs:
           export LP_SERVER="http://127.0.0.1:${PORT}"
           mkdir -p "${DB_PATH}"
 
-          cleanup() {
+          # Default builds prewarm Magika/ORT during startup; on cold runners
+          # startup can exceed one second, so use an explicit readiness probe.
+          wait_for_localpaste_ready() {
+            local max_attempts=60
+            local attempt=1
+            while (( attempt <= max_attempts )); do
+              if ./target/debug/lpaste --server "${LP_SERVER}" list --limit 1 >/dev/null 2>&1; then
+                return 0
+              fi
+              if [[ -n "${SERVER_PID:-}" ]] && ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+                echo "localpaste exited before readiness probe succeeded" >&2
+                return 1
+              fi
+              sleep 1
+              attempt=$(( attempt + 1 ))
+            done
+            echo "localpaste did not become ready after ${max_attempts}s" >&2
+            return 1
+          }
+
+          start_server() {
+            ./target/debug/localpaste &
+            SERVER_PID=$!
+            wait_for_localpaste_ready
+          }
+
+          stop_server() {
             if [[ -n "${SERVER_PID:-}" ]]; then
               kill "${SERVER_PID}" 2>/dev/null || true
               wait "${SERVER_PID}" 2>/dev/null || true
+              unset SERVER_PID
             fi
+          }
+
+          cleanup() {
+            stop_server
             rm -rf "${DB_PATH}"
           }
           trap cleanup EXIT
@@ -139,9 +170,7 @@ jobs:
           cargo build -p localpaste_server --bin localpaste
           cargo build -p localpaste_cli --bin lpaste
 
-          ./target/debug/localpaste &
-          SERVER_PID=$!
-          sleep 1
+          start_server
 
           echo "hello from release smoke" | ./target/debug/lpaste --timing new --name "release-smoke"
           ./target/debug/lpaste --timing list --limit 5
@@ -153,13 +182,9 @@ jobs:
           echo "persist me" | ./target/debug/lpaste --timing new --name "release-persist"
           PERSIST_ID="$(./target/debug/lpaste list --limit 1 | awk '{print $1}')"
 
-          kill "${SERVER_PID}"
-          wait "${SERVER_PID}" || true
-          unset SERVER_PID
+          stop_server
 
-          ./target/debug/localpaste &
-          SERVER_PID=$!
-          sleep 1
+          start_server
           ./target/debug/lpaste --timing get "${PERSIST_ID}"
 
   build_and_package:
