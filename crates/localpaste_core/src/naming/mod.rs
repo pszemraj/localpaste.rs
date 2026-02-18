@@ -281,17 +281,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn derives_markdown_heading() {
-        let content = "# Hello World\nbody";
-        let derived = derive_name_from_content(content, Some("markdown"));
-        assert_eq!(derived.as_deref(), Some("Hello World"));
-    }
-
-    #[test]
-    fn derives_rust_function_name() {
-        let content = "fn handle_request(req: Request) -> Response {}";
-        let derived = derive_name_from_content(content, Some("rust"));
-        assert_eq!(derived.as_deref(), Some("fn handle_request"));
+    fn derives_language_specific_titles() {
+        let cases = [
+            ("# Hello World\nbody", Some("markdown"), Some("Hello World")),
+            (
+                "fn handle_request(req: Request) -> Response {}",
+                Some("rust"),
+                Some("fn handle_request"),
+            ),
+        ];
+        for (content, language, expected) in cases {
+            let derived = derive_name_from_content(content, language);
+            assert_eq!(derived.as_deref(), expected);
+        }
     }
 
     #[test]

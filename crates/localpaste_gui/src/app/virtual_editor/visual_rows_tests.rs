@@ -192,18 +192,16 @@ fn missing_metrics_fallback_uses_buffer_line_length_for_ascii_lines() {
 }
 
 #[test]
-fn row_char_range_for_wide_glyph_lines_does_not_drop_second_row_content() {
-    assert_row_segments("🦀🦀🦀🦀🦀🦀\n", 50.0, 10, &["🦀🦀🦀🦀🦀", "🦀"]);
-}
-
-#[test]
-fn row_char_range_does_not_emit_empty_first_row_for_single_wide_glyph() {
-    assert_row_segments("🦀\n", 5.0, 1, &["🦀"]);
-}
-
-#[test]
-fn row_char_range_wrap_cols_one_wide_plus_ascii_preserves_both_rows() {
-    assert_row_segments("🦀a\n", 5.0, 1, &["🦀", "a"]);
+fn row_char_range_matrix_keeps_wide_and_zero_width_content() {
+    let cases = [
+        ("🦀🦀🦀🦀🦀🦀\n", 50.0, 10, &["🦀🦀🦀🦀🦀", "🦀"][..]),
+        ("🦀\n", 5.0, 1, &["🦀"][..]),
+        ("🦀a\n", 5.0, 1, &["🦀", "a"][..]),
+        ("\u{0301}ab\n", 5.0, 1, &["\u{0301}a", "b"][..]),
+    ];
+    for (text, wrap_width, expected_wrap_cols, expected_segments) in cases {
+        assert_row_segments(text, wrap_width, expected_wrap_cols, expected_segments);
+    }
 }
 
 #[test]
@@ -234,11 +232,6 @@ fn line_display_column_to_char_preserves_leading_zero_width_prefix() {
     assert_eq!(cache.line_display_column_to_char(&buffer, 0, 0), 0);
     assert_eq!(cache.line_display_column_to_char(&buffer, 0, 1), 3);
     assert_eq!(cache.line_display_column_to_char(&buffer, 0, 2), 4);
-}
-
-#[test]
-fn row_char_range_keeps_leading_zero_width_codepoints_in_first_row() {
-    assert_row_segments("\u{0301}ab\n", 5.0, 1, &["\u{0301}a", "b"]);
 }
 
 #[test]

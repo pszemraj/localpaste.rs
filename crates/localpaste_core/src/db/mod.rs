@@ -450,27 +450,23 @@ mod process_detection_tests {
     use std::io::ErrorKind;
 
     #[test]
-    fn unix_pid_parser_ignores_current_pid_and_invalid_lines() {
+    fn unix_pid_parser_matrix() {
         let current_pid = 4242u32;
-        let stdout = b"garbage\n4242\n";
-        let probe = pgrep_output_probe_result(stdout, current_pid);
-        assert_eq!(probe, ProcessProbeResult::NotRunning);
-    }
-
-    #[test]
-    fn unix_pid_parser_detects_other_localpaste_pid() {
-        let current_pid = 4242u32;
-        let stdout = b"1111\n4242\n";
-        let probe = pgrep_output_probe_result(stdout, current_pid);
-        assert_eq!(probe, ProcessProbeResult::Running);
-    }
-
-    #[test]
-    fn unix_pid_parser_marks_unknown_when_output_is_unparseable() {
-        let current_pid = 4242u32;
-        let stdout = b"not-a-pid\nalso-bad\n";
-        let probe = pgrep_output_probe_result(stdout, current_pid);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
+        let cases = [
+            (
+                b"garbage\n4242\n".as_slice(),
+                ProcessProbeResult::NotRunning,
+            ),
+            (b"1111\n4242\n".as_slice(), ProcessProbeResult::Running),
+            (
+                b"not-a-pid\nalso-bad\n".as_slice(),
+                ProcessProbeResult::Unknown,
+            ),
+        ];
+        for (stdout, expected) in cases {
+            let probe = pgrep_output_probe_result(stdout, current_pid);
+            assert_eq!(probe, expected);
+        }
     }
 
     #[test]
