@@ -266,9 +266,25 @@ jobs:
       shell: pwsh
       run: |
         choco install wixtoolset -y --no-progress
-        $wixPath = "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin"
-        if (-not (Test-Path $wixPath)) {
-          throw "WiX Toolset path not found at $wixPath"
+        $candidateBins = @()
+        if ($env:WIX) {
+          $candidateBins += (Join-Path $env:WIX "bin")
+        }
+
+        if (Test-Path "${env:ProgramFiles(x86)}") {
+          $candidateBins += Get-ChildItem "${env:ProgramFiles(x86)}" -Directory |
+            Where-Object { $_.Name -like "WiX*" } |
+            ForEach-Object { Join-Path $_.FullName "bin" }
+        }
+
+        $wixPath = $candidateBins |
+          Where-Object { Test-Path (Join-Path $_ "candle.exe") -and Test-Path (Join-Path $_ "light.exe") } |
+          Select-Object -First 1
+
+        if (-not $wixPath) {
+          Write-Host "Candidate WiX bin directories:"
+          $candidateBins | ForEach-Object { Write-Host "- $_" }
+          throw "WiX Toolset bin directory with candle.exe and light.exe was not found"
         }
         Add-Content -Path $env:GITHUB_PATH -Value $wixPath
 
@@ -277,6 +293,41 @@ jobs:
 
     - name: Build GUI release binary
       run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{ matrix.target }}
+
+    - name: Generate macOS icns icon
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        ICON_SRC="assets/icons/desktop_icon.png"
+        ICONSET_DIR="dist/macos-icon.iconset"
+        ICON_DST="assets/icons/desktop_icon.icns"
+
+        if [[ ! -f "${ICON_SRC}" ]]; then
+          echo "missing icon source: ${ICON_SRC}" >&2
+          exit 1
+        fi
+
+        rm -rf "${ICONSET_DIR}"
+        mkdir -p "${ICONSET_DIR}"
+
+        sips -z 16 16 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_16x16.png" >/dev/null
+        sips -z 32 32 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_16x16@2x.png" >/dev/null
+        sips -z 32 32 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_32x32.png" >/dev/null
+        sips -z 64 64 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_32x32@2x.png" >/dev/null
+        sips -z 128 128 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_128x128.png" >/dev/null
+        sips -z 256 256 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_128x128@2x.png" >/dev/null
+        sips -z 256 256 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_256x256.png" >/dev/null
+        sips -z 512 512 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_256x256@2x.png" >/dev/null
+        sips -z 512 512 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_512x512.png" >/dev/null
+        sips -z 1024 1024 "${ICON_SRC}" --out "${ICONSET_DIR}/icon_512x512@2x.png" >/dev/null
+
+        iconutil -c icns "${ICONSET_DIR}" -o "${ICON_DST}"
+
+        if [[ ! -f "${ICON_DST}" ]]; then
+          echo "failed to generate icns icon: ${ICON_DST}" >&2
+          exit 1
+        fi
 
     - name: Prepare effective packager config
       shell: pwsh
@@ -292,6 +343,13 @@ jobs:
 
         $config = Get-Content $sourceConfig -Raw | ConvertFrom-Json
         $config.version = $version
+        if ($env:RUNNER_OS -eq "macOS") {
+          $icnsPath = "../../assets/icons/desktop_icon.icns"
+          if (-not (Test-Path "assets/icons/desktop_icon.icns")) {
+            throw "Expected generated macOS icon at assets/icons/desktop_icon.icns"
+          }
+          $config.icons = @($icnsPath)
+        }
         $config | ConvertTo-Json -Depth 20 | Set-Content $effectiveConfig
 
         "PACKAGER_CONFIG_PATH=$effectiveConfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
