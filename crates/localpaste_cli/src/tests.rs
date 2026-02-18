@@ -146,12 +146,6 @@ fn bind_localpaste_discovery(env: &DiscoveryTestEnv) -> (String, LocalpasteProbe
     (discovered, server)
 }
 
-#[derive(Clone, Copy)]
-enum DiscoveryKind {
-    Localpaste,
-    ReachableNonLocalpaste,
-}
-
 fn assert_resolve_server_falls_back_to_default(label: &str, discovery: &str) {
     with_discovery_env(label, None, |env| {
         env.write_discovery(discovery);
@@ -360,34 +354,18 @@ fn discovered_server_file_returns_none_when_reachability_check_fails() {
 
 #[test]
 fn resolve_server_discovery_matrix_handles_absent_blank_and_non_localpaste_endpoints() {
-    let cases = [
-        ("discovery", None, DiscoveryKind::Localpaste),
-        ("blank-explicit", Some("   "), DiscoveryKind::Localpaste),
-        (
-            "non-localpaste",
-            None,
-            DiscoveryKind::ReachableNonLocalpaste,
-        ),
-    ];
-
-    for (label, explicit, discovery_kind) in cases {
-        with_discovery_env(label, None, |env| match discovery_kind {
-            DiscoveryKind::Localpaste => {
-                let (discovered, _server) = bind_localpaste_discovery(env);
-                assert_eq!(
-                    resolve_server(explicit.map(|value| value.to_string())),
-                    discovered
-                );
-            }
-            DiscoveryKind::ReachableNonLocalpaste => {
-                let (_discovered, _listener) = bind_reachable_discovery(env);
-                assert_eq!(
-                    resolve_server(explicit.map(|value| value.to_string())),
-                    DEFAULT_CLI_SERVER_URL
-                );
-            }
-        });
-    }
+    with_discovery_env("discovery", None, |env| {
+        let (discovered, _server) = bind_localpaste_discovery(env);
+        assert_eq!(resolve_server(None), discovered);
+    });
+    with_discovery_env("blank-explicit", None, |env| {
+        let (discovered, _server) = bind_localpaste_discovery(env);
+        assert_eq!(resolve_server(Some("   ".to_string())), discovered);
+    });
+    with_discovery_env("non-localpaste", None, |env| {
+        let (_discovered, _listener) = bind_reachable_discovery(env);
+        assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
+    });
 }
 
 #[test]

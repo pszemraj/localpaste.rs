@@ -6,9 +6,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[path = "shared/run_or_exit.rs"]
-mod run_or_exit;
-
 #[derive(Debug, Parser)]
 #[command(
     name = "check-loc",
@@ -54,8 +51,10 @@ struct FileStat {
 }
 
 fn main() {
-    let args = Args::parse();
-    run_or_exit::run_or_exit(|| run(args));
+    run(Args::parse()).unwrap_or_else(|message| {
+        eprintln!("error: {}", message);
+        std::process::exit(1);
+    });
 }
 
 fn run(args: Args) -> Result<(), String> {

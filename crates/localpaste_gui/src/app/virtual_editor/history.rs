@@ -394,19 +394,14 @@ mod tests {
     }
 
     #[test]
-    fn coalesces_contiguous_backspace_deletes() {
-        assert_contiguous_delete_coalesces(
-            EditIntent::DeleteBackward,
-            [(4, "e", 5, 4), (3, "d", 4, 3)],
-        );
-    }
-
-    #[test]
-    fn coalesces_contiguous_forward_deletes() {
-        assert_contiguous_delete_coalesces(
-            EditIntent::DeleteForward,
-            [(2, "c", 2, 2), (2, "d", 2, 2)],
-        );
+    fn coalesces_contiguous_deletes() {
+        let cases = [
+            (EditIntent::DeleteBackward, [(4, "e", 5, 4), (3, "d", 4, 3)]),
+            (EditIntent::DeleteForward, [(2, "c", 2, 2), (2, "d", 2, 2)]),
+        ];
+        for (intent, edits) in cases {
+            assert_contiguous_delete_coalesces(intent, edits);
+        }
     }
 
     #[test]

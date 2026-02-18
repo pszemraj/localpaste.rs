@@ -256,17 +256,10 @@ fn mixed_width_equal_totals_do_not_trigger_unit_width_shortcuts() {
 }
 
 #[test]
-fn long_line_metrics_keep_full_char_count() {
-    let text = format!("{}\n", "a".repeat(10_250));
-    let (buffer, cache) = rebuild_cache_for(text.as_str(), 200.0, 10.0, 5.0);
-
-    assert_eq!(cache.line_chars(0), buffer.line_len_chars(0));
-}
-
-#[test]
-fn long_line_column_mappings_track_full_line() {
+fn long_ascii_line_metrics_and_column_mappings_track_full_line() {
     let text = format!("{}\n", "a".repeat(10_500));
     let (buffer, cache) = rebuild_cache_for(text.as_str(), 2000.0, 10.0, 1.0);
+    assert_eq!(cache.line_chars(0), buffer.line_len_chars(0));
 
     let target = 10_400usize;
     assert_eq!(
