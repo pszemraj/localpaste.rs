@@ -1,5 +1,5 @@
 {
-  "name": "localpaste_gui",
+  "name": "localpaste",
   "version": "0.0.0",
   "productName": "LocalPaste",
   "identifier": "io.github.pszemraj.localpaste",
@@ -16,6 +16,9 @@
   "targetTriple": "x86_64-pc-windows-msvc",
   "outDir": "../../dist/packager/windows-x86_64",
   "binariesDir": "../../dist/stage/windows-x86_64",
+  "windows": {
+    "allowDowngrades": false
+  },
   "binaries": [
     {
       "path": "localpaste",

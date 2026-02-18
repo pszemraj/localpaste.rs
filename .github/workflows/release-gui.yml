@@ -15,12 +15,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-gui-${{ github.event_name }}-${{ github.ref_name || github.event.inputs.tag
-    || github.run_id }}
+  group: release-gui-${{ github.event_name }}-${{ github.ref_name || github.event.inputs.tag || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   preflight:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     outputs:
       resolved_tag: ${{ steps.resolve_tag.outputs.resolved_tag }}
@@ -62,18 +62,11 @@ jobs:
         git fetch --force --tags origin
         git rev-parse "refs/tags/${TAG}" >/dev/null
 
-    - name: Sync source tree to release tag for validation
-      shell: bash
-      run: |
-        set -euo pipefail
-        TAG="${{ steps.resolve_tag.outputs.resolved_tag }}"
-        git checkout "refs/tags/${TAG}" -- \
-          Cargo.toml \
-          Cargo.lock \
-          rust-toolchain.toml \
-          crates \
-          assets \
-          LICENSE
+    - name: Checkout release tag source
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: refs/tags/${{ steps.resolve_tag.outputs.resolved_tag }}
 
     - name: Validate workspace version matches tag
       shell: bash
@@ -109,6 +102,19 @@ jobs:
         toolchain: 1.89.0
         components: rustfmt, clippy
 
+    - name: Install Linux build dependencies (preflight)
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y \
+          libgtk-3-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          libxcb-render0-dev \
+          libxcb-shape0-dev \
+          libxcb-xfixes0-dev
+
     - name: Format check
       run: cargo fmt --all -- --check
 
@@ -118,11 +124,14 @@ jobs:
     - name: Workspace check
       run: cargo check --workspace --all-targets --all-features
 
+    - name: Workspace tests
+      run: cargo test --workspace --all-targets --all-features
+
     - name: Smoke test (server + CLI CRUD + restart persistence)
       shell: bash
       run: |
         set -euo pipefail
-        PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("'"'"'127.0.0.1'"'"', 0)); print(s.getsockname()[1]); s.close()')"
+        PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
         export PORT
         export DB_PATH="${GITHUB_WORKSPACE}/.tmp/release-smoke-${GITHUB_RUN_ID}"
         export RUST_LOG=info
@@ -267,8 +276,7 @@ jobs:
       run: cargo install cargo-packager --version 0.11.8 --locked
 
     - name: Build GUI release binary
-      run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{
-        matrix.target }}
+      run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{ matrix.target }}
 
     - name: Prepare effective packager config
       shell: pwsh
@@ -394,6 +402,7 @@ jobs:
         name: release-assets-${{ matrix.asset_suffix }}
         path: dist/release/${{ matrix.asset_suffix }}/*
         if-no-files-found: error
+        retention-days: 1
 
   publish:
     needs:

@@ -1,5 +1,5 @@
 {
-  "name": "localpaste_gui",
+  "name": "localpaste",
   "version": "0.0.0",
   "productName": "LocalPaste",
   "identifier": "io.github.pszemraj.localpaste",
@@ -17,6 +17,9 @@
   "targetTriple": "aarch64-apple-darwin",
   "outDir": "../../dist/packager/macos-aarch64",
   "binariesDir": "../../dist/stage/macos-aarch64",
+  "macos": {
+    "minimumSystemVersion": "11.0"
+  },
   "binaries": [
     {
       "path": "localpaste",
