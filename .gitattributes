@@ -1,0 +1,3 @@
+# Keep workflow files in LF to avoid parser/linter drift across platforms.
+.github/workflows/*.yml text eol=lf
+.github/workflows/*.yaml text eol=lf
