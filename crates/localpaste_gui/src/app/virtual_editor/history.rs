@@ -195,6 +195,13 @@ impl VirtualEditorHistory {
     }
 
     /// Undo the most recent mutation.
+    ///
+    /// # Arguments
+    /// - `buffer`: Mutable text buffer to revert.
+    /// - `state`: Editor interaction state to restore cursor/selection position.
+    ///
+    /// # Returns
+    /// The applied edit delta, or `None` when undo history is empty.
     pub(crate) fn undo(
         &mut self,
         buffer: &mut RopeBuffer,
@@ -211,6 +218,13 @@ impl VirtualEditorHistory {
     }
 
     /// Redo the next mutation, if available.
+    ///
+    /// # Arguments
+    /// - `buffer`: Mutable text buffer to reapply into.
+    /// - `state`: Editor interaction state to move to the post-edit cursor.
+    ///
+    /// # Returns
+    /// The reapplied edit delta, or `None` when redo history is empty.
     pub(crate) fn redo(
         &mut self,
         buffer: &mut RopeBuffer,
@@ -232,6 +246,9 @@ impl VirtualEditorHistory {
     }
 
     /// Return a point-in-time snapshot of history counters.
+    ///
+    /// # Returns
+    /// Current queue lengths and counters used by perf logging.
     pub(crate) fn perf_stats(&self) -> HistoryPerfStats {
         HistoryPerfStats {
             undo_len: self.undo.len(),

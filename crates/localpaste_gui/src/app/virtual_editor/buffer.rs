@@ -29,6 +29,9 @@ pub(crate) struct RopeBuffer {
 
 impl RopeBuffer {
     /// Create a new buffer from UTF-8 text.
+    ///
+    /// # Returns
+    /// A buffer initialized with `text` and revision `0`.
     pub(crate) fn new(text: &str) -> Self {
         let rope = Rope::from_str(text);
         let char_len = rope.len_chars();
@@ -40,26 +43,41 @@ impl RopeBuffer {
     }
 
     /// Returns a borrowed rope handle.
+    ///
+    /// # Returns
+    /// The internal `ropey::Rope` used for storage.
     pub(crate) fn rope(&self) -> &Rope {
         &self.rope
     }
 
     /// Returns the current revision of the buffer.
+    ///
+    /// # Returns
+    /// The monotonically wrapping revision counter.
     pub(crate) fn revision(&self) -> u64 {
         self.revision
     }
 
     /// Returns the content length in characters.
+    ///
+    /// # Returns
+    /// Total Unicode scalar count in the buffer.
     pub(crate) fn len_chars(&self) -> usize {
         self.char_len
     }
 
     /// Returns the content length in bytes.
+    ///
+    /// # Returns
+    /// Total UTF-8 byte length of the buffer.
     pub(crate) fn len_bytes(&self) -> usize {
         self.rope.len_bytes()
     }
 
     /// Returns the number of physical lines in the rope.
+    ///
+    /// # Returns
+    /// The rope line count, clamped to at least `1`.
     pub(crate) fn line_count(&self) -> usize {
         self.rope.len_lines().max(1)
     }
@@ -72,6 +90,9 @@ impl RopeBuffer {
     }
 
     /// Convert a global char index into `(line, column)` coordinates.
+    ///
+    /// # Returns
+    /// A tuple of zero-based `(line, column)` with both values clamped to valid bounds.
     pub(crate) fn char_to_line_col(&self, char_index: usize) -> (usize, usize) {
         let clamped = char_index.min(self.char_len);
         let line = line_for_char(&self.rope, clamped);
@@ -83,6 +104,13 @@ impl RopeBuffer {
     }
 
     /// Convert `(line, column)` into a global char index.
+    ///
+    /// # Arguments
+    /// - `line`: Zero-based line index.
+    /// - `column`: Zero-based character offset within the line.
+    ///
+    /// # Returns
+    /// A clamped global char index into the buffer.
     pub(crate) fn line_col_to_char(&self, line: usize, column: usize) -> usize {
         if line >= self.line_count() {
             return self.char_len;
@@ -92,6 +120,9 @@ impl RopeBuffer {
     }
 
     /// Returns a line as UTF-8 without trailing `\\r?\\n`.
+    ///
+    /// # Returns
+    /// The requested line content without trailing newline markers.
     #[cfg(test)]
     pub(crate) fn line_without_newline(&self, line: usize) -> String {
         let mut out = String::new();
@@ -100,6 +131,10 @@ impl RopeBuffer {
     }
 
     /// Writes a line as UTF-8 without trailing `\\r?\\n` into `out`.
+    ///
+    /// # Arguments
+    /// - `line`: Zero-based line index to copy.
+    /// - `out`: Destination buffer that is cleared before writing.
     pub(crate) fn line_without_newline_into(&self, line: usize, out: &mut String) {
         out.clear();
         if line >= self.line_count() {
@@ -115,6 +150,9 @@ impl RopeBuffer {
     }
 
     /// Returns the character length of a line without trailing `\\r?\\n`.
+    ///
+    /// # Returns
+    /// Visible character count for `line`, excluding trailing newline markers.
     pub(crate) fn line_len_chars(&self, line: usize) -> usize {
         if line >= self.line_count() {
             return 0;
@@ -137,6 +175,9 @@ impl RopeBuffer {
     }
 
     /// Returns a UTF-8 snapshot for the given char range.
+    ///
+    /// # Returns
+    /// A newly allocated string containing the clamped `range`.
     pub(crate) fn slice_chars(&self, range: Range<usize>) -> String {
         let start = range.start.min(self.char_len);
         let end = range.end.min(self.char_len);
@@ -147,6 +188,10 @@ impl RopeBuffer {
     }
 
     /// Writes a UTF-8 snapshot for the given char range into `out`.
+    ///
+    /// # Arguments
+    /// - `range`: Global char range to read.
+    /// - `out`: Destination string that is cleared before writing.
     pub(crate) fn slice_chars_into(&self, range: Range<usize>, out: &mut String) {
         out.clear();
         let start = range.start.min(self.char_len);
@@ -162,6 +207,13 @@ impl RopeBuffer {
     }
 
     /// Replace a char range with new text.
+    ///
+    /// # Arguments
+    /// - `range`: Global char range to replace.
+    /// - `text`: Replacement UTF-8 text.
+    ///
+    /// # Returns
+    /// `Some(delta)` when a mutation was applied, or `None` when the edit was a no-op/invalid.
     pub(crate) fn replace_char_range(
         &mut self,
         range: Range<usize>,

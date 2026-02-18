@@ -39,6 +39,9 @@ pub(crate) enum VirtualCommandRoute {
 
 impl VirtualInputCommand {
     /// Returns the routing bucket used by app-level input gating.
+    ///
+    /// # Returns
+    /// Which execution path the command should take in the app loop.
     pub(crate) fn route(&self) -> VirtualCommandRoute {
         match self {
             Self::Copy => VirtualCommandRoute::CopyOnly,
@@ -47,6 +50,9 @@ impl VirtualInputCommand {
     }
 
     /// Returns true when the command should only run after post-UI focus is finalized.
+    ///
+    /// # Returns
+    /// `true` for commands that depend on finalized widget focus state.
     pub(crate) fn requires_post_focus(&self) -> bool {
         matches!(self, Self::Cut | Self::Paste(_))
     }
@@ -57,6 +63,13 @@ fn word_modifier(modifiers: egui::Modifiers) -> bool {
 }
 
 /// Convert egui input events into virtual-editor commands.
+///
+/// # Arguments
+/// - `events`: Raw egui events captured this frame.
+/// - `focused`: Whether the virtual editor currently owns keyboard focus.
+///
+/// # Returns
+/// Ordered command list derived from `events`, or empty when not focused.
 pub(crate) fn commands_from_events(
     events: &[egui::Event],
     focused: bool,
