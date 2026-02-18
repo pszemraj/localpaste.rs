@@ -151,6 +151,11 @@ impl LocalPasteApp {
             && staged_text_len == self.active_text_len_bytes()
     }
 
+    /// Emits an eager highlight trace event when tracing is enabled.
+    ///
+    /// # Arguments
+    /// - `event`: Short event label.
+    /// - `details`: Preformatted event detail string.
     pub(super) fn trace_highlight(&self, event: &str, details: &str) {
         if !self.highlight_trace_enabled {
             return;
@@ -163,6 +168,11 @@ impl LocalPasteApp {
         );
     }
 
+    /// Emits a lazily formatted highlight trace event.
+    ///
+    /// # Arguments
+    /// - `event`: Short event label.
+    /// - `details`: Lazy formatter invoked only when tracing is enabled.
     pub(super) fn trace_highlight_lazy<F>(&self, event: &str, details: F)
     where
         F: FnOnce() -> String,
@@ -179,6 +189,7 @@ impl LocalPasteApp {
         );
     }
 
+    /// Clears pending/staged/current highlight state and invalidates galley cache.
     pub(super) fn clear_highlight_state(&mut self) {
         self.highlight_pending = None;
         self.highlight_render = None;
@@ -254,10 +265,15 @@ impl LocalPasteApp {
         self.highlight_staged_invalidation = staged_invalidation;
     }
 
+    /// Queues a full render result from the highlight worker.
     pub(super) fn queue_highlight_render(&mut self, render: HighlightRender) {
         self.queue_highlight_render_with_invalidation(render, None);
     }
 
+    /// Queues and merges a highlight line-range patch from the worker.
+    ///
+    /// # Panics
+    /// Panics if staged-patch merge invariants fail after prior guard checks.
     pub(super) fn queue_highlight_patch(&mut self, patch: HighlightPatch) {
         let Some(selected_id) = self.selected_id.as_deref() else {
             self.trace_highlight("drop", "patch ignored: no selected paste");
@@ -446,6 +462,7 @@ impl LocalPasteApp {
         );
     }
 
+    /// Applies currently staged highlight render into active render state.
     pub(super) fn apply_staged_highlight(&mut self) {
         let Some(render) = self.highlight_staged.take() else {
             return;
@@ -467,6 +484,7 @@ impl LocalPasteApp {
         self.highlight_version = self.highlight_version.wrapping_add(1);
     }
 
+    /// Applies staged highlight when it still matches active text and app is idle.
     pub(super) fn maybe_apply_staged_highlight(&mut self, now: Instant) {
         let Some((
             staged_paste_id,
@@ -527,6 +545,16 @@ impl LocalPasteApp {
         }
     }
 
+    /// Returns whether a new highlight request should be dispatched.
+    ///
+    /// # Arguments
+    /// - `language_hint`: Canonical language hint for active content.
+    /// - `theme_key`: Syntect theme key.
+    /// - `debounce_active`: Whether debounce window is currently active.
+    /// - `paste_id`: Active paste id.
+    ///
+    /// # Returns
+    /// `true` when no equivalent pending/current/staged render already exists.
     pub(super) fn should_request_highlight(
         &self,
         language_hint: &str,
@@ -569,6 +597,14 @@ impl LocalPasteApp {
         true
     }
 
+    /// Computes highlight request debounce window for current buffer state.
+    ///
+    /// # Arguments
+    /// - `text_len`: Active text length in bytes.
+    /// - `async_mode`: Whether async highlighting is active.
+    ///
+    /// # Returns
+    /// Debounce duration to apply before dispatching worker requests.
     pub(super) fn highlight_debounce_window(&self, text_len: usize, async_mode: bool) -> Duration {
         if !async_mode {
             return Duration::ZERO;
@@ -595,6 +631,14 @@ impl LocalPasteApp {
         size_window
     }
 
+    /// Dispatches a highlight request to the worker and tracks pending metadata.
+    ///
+    /// # Arguments
+    /// - `revision`: Active text revision.
+    /// - `text`: Request text payload.
+    /// - `language_hint`: Canonical language hint.
+    /// - `theme_key`: Syntect theme key.
+    /// - `paste_id`: Active paste id.
     pub(super) fn dispatch_highlight_request(
         &mut self,
         revision: u64,

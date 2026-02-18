@@ -310,14 +310,6 @@ fn resolve_server_prefers_explicit_over_discovery() {
 }
 
 #[test]
-fn resolve_server_uses_discovery_when_explicit_missing() {
-    with_discovery_env("discovery", None, |env| {
-        let (discovered, _server) = bind_localpaste_discovery(env);
-        assert_eq!(resolve_server(None), discovered);
-    });
-}
-
-#[test]
 fn resolve_server_with_source_matrix_covers_precedence_and_no_discovery_mode() {
     with_discovery_env("source-matrix", None, |env| {
         let (discovered, _server) = bind_localpaste_discovery(env);
@@ -352,14 +344,6 @@ fn resolve_server_fallback_matrix_for_invalid_unreachable_and_non_loopback_disco
 }
 
 #[test]
-fn resolve_server_falls_back_to_default_when_discovery_is_non_localpaste_service() {
-    with_discovery_env("non-localpaste", None, |env| {
-        let (_discovered, _listener) = bind_reachable_discovery(env);
-        assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
-    });
-}
-
-#[test]
 fn discovered_server_file_returns_none_when_reachability_check_fails() {
     with_discovery_env("stub-unreachable", None, |env| {
         env.write_discovery("http://127.0.0.1:45555");
@@ -369,10 +353,18 @@ fn discovered_server_file_returns_none_when_reachability_check_fails() {
 }
 
 #[test]
-fn resolve_server_treats_blank_explicit_override_as_absent() {
+fn resolve_server_discovery_matrix_handles_absent_blank_and_non_localpaste_endpoints() {
+    with_discovery_env("discovery", None, |env| {
+        let (discovered, _server) = bind_localpaste_discovery(env);
+        assert_eq!(resolve_server(None), discovered);
+    });
     with_discovery_env("blank-explicit", None, |env| {
         let (discovered, _server) = bind_localpaste_discovery(env);
         assert_eq!(resolve_server(Some("   ".to_string())), discovered);
+    });
+    with_discovery_env("non-localpaste", None, |env| {
+        let (_discovered, _listener) = bind_reachable_discovery(env);
+        assert_eq!(resolve_server(None), DEFAULT_CLI_SERVER_URL);
     });
 }
 

@@ -4,6 +4,11 @@ use crate::models::paste::*;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Converts a timestamp into a reverse-sorted key for newest-first indexes.
+///
+/// # Returns
+/// A monotonic reverse key where newer timestamps produce smaller deltas from
+/// `u64::MAX`.
 pub(crate) fn reverse_timestamp_key(updated_at: DateTime<Utc>) -> u64 {
     // Pre-epoch timestamps are clamped to preserve total ordering semantics for
     // expected runtime data while avoiding negative->u64 underflow.
@@ -11,6 +16,14 @@ pub(crate) fn reverse_timestamp_key(updated_at: DateTime<Utc>) -> u64 {
     u64::MAX.saturating_sub(millis)
 }
 
+/// Applies an [`UpdatePasteRequest`] onto an existing [`Paste`] in place.
+///
+/// This helper centralizes update semantics so server and GUI write paths keep
+/// language/manual-mode behavior aligned.
+///
+/// # Arguments
+/// - `paste`: Mutable paste row to update.
+/// - `update`: Incoming patch payload.
 pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
     let mut content_changed = false;
 
@@ -52,6 +65,16 @@ pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
     paste.updated_at = Utc::now();
 }
 
+/// Returns `true` when a paste language satisfies the provided filter.
+///
+/// Both values are canonicalized first so aliases such as `cs`/`csharp` match.
+///
+/// # Arguments
+/// - `language`: Persisted language label on the row, if any.
+/// - `filter`: User-selected language filter, if any.
+///
+/// # Returns
+/// `true` when no filter is set or when canonicalized labels match.
 pub(super) fn language_matches_filter(language: Option<&str>, filter: Option<&str>) -> bool {
     let Some(filter) = filter else {
         return true;
@@ -64,6 +87,15 @@ pub(super) fn language_matches_filter(language: Option<&str>, filter: Option<&st
         .unwrap_or(false)
 }
 
+/// Returns `true` when metadata matches both folder and language filters.
+///
+/// # Arguments
+/// - `meta`: Metadata row under evaluation.
+/// - `folder_filter`: Optional folder id filter.
+/// - `language_filter`: Optional language filter.
+///
+/// # Returns
+/// `true` when all provided filters match.
 pub(super) fn meta_matches_filters(
     meta: &PasteMeta,
     folder_filter: Option<&str>,
@@ -77,6 +109,16 @@ pub(super) fn meta_matches_filters(
     language_matches_filter(meta.language.as_deref(), language_filter)
 }
 
+/// Scores a metadata row for search ranking.
+///
+/// Higher values indicate a stronger match against name, tags, and language.
+///
+/// # Arguments
+/// - `meta`: Metadata row to score.
+/// - `query_lower`: Lowercased search query.
+///
+/// # Returns
+/// A non-negative score used for top-k ordering.
 pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
     let mut score = 0;
     let canonical_query = crate::detection::canonical::canonicalize(query_lower);
@@ -108,6 +150,16 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
     score
 }
 
+/// Scores a full paste row for search ranking.
+///
+/// Name and tag matches are weighted above content matches.
+///
+/// # Arguments
+/// - `paste`: Paste row to score.
+/// - `query_lower`: Lowercased search query.
+///
+/// # Returns
+/// A non-negative score used for top-k ordering.
 pub(super) fn score_paste_match(paste: &Paste, query_lower: &str) -> i32 {
     let mut score = 0;
     if contains_case_insensitive(&paste.name, query_lower) {
@@ -126,6 +178,12 @@ pub(super) fn score_paste_match(paste: &Paste, query_lower: &str) -> i32 {
     score
 }
 
+/// Adds a metadata candidate into a bounded top-k ranking set.
+///
+/// # Arguments
+/// - `results`: Mutable top-k working set.
+/// - `candidate`: Candidate row with `(score, updated_at, meta)`.
+/// - `limit`: Maximum number of rows retained.
 pub(super) fn push_ranked_meta_top_k(
     results: &mut Vec<(i32, DateTime<Utc>, PasteMeta)>,
     candidate: (i32, DateTime<Utc>, PasteMeta),
@@ -163,6 +221,14 @@ fn push_ranked_top_k<T>(
     }
 }
 
+/// Sorts ranked metadata candidates and returns the highest scoring rows.
+///
+/// # Arguments
+/// - `ranked_results`: Unordered ranking tuples.
+/// - `limit`: Maximum number of metadata rows to return.
+///
+/// # Returns
+/// Metadata rows sorted by score then recency.
 pub(super) fn finalize_meta_search_results(
     mut ranked_results: Vec<(i32, DateTime<Utc>, PasteMeta)>,
     limit: usize,
@@ -199,6 +265,14 @@ fn contains_case_insensitive(haystack: &str, query_lower: &str) -> bool {
     haystack.to_lowercase().contains(query_lower)
 }
 
+/// Returns `true` when a paste's current folder assignment matches expectation.
+///
+/// # Arguments
+/// - `current_folder_id`: Current folder id on the paste.
+/// - `expected_folder_id`: Expected folder id for the operation.
+///
+/// # Returns
+/// `true` when both optional folder ids are equal.
 pub(super) fn folder_matches_expected(
     current_folder_id: Option<&str>,
     expected_folder_id: Option<&str>,
@@ -206,6 +280,14 @@ pub(super) fn folder_matches_expected(
     current_folder_id == expected_folder_id
 }
 
+/// Deserializes a [`Paste`] row, with compatibility for legacy serialized rows.
+///
+/// # Returns
+/// A decoded [`Paste`] value.
+///
+/// # Errors
+/// Returns the primary deserialization error when neither current nor legacy
+/// wire formats can be decoded.
 pub(crate) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
     bincode::deserialize::<Paste>(bytes).or_else(|err| {
         bincode::deserialize::<LegacyPaste>(bytes)
@@ -214,6 +296,13 @@ pub(crate) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
     })
 }
 
+/// Deserializes a [`PasteMeta`] row from storage bytes.
+///
+/// # Returns
+/// A decoded [`PasteMeta`] value.
+///
+/// # Errors
+/// Returns a bincode error when the row bytes are malformed or incompatible.
 pub(super) fn deserialize_meta(bytes: &[u8]) -> Result<PasteMeta, bincode::Error> {
     bincode::deserialize(bytes)
 }

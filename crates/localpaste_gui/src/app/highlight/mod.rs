@@ -1,5 +1,6 @@
 //! Syntax highlighting caches and worker support for the native GUI editor.
 
+mod reuse;
 mod syntax;
 #[cfg(test)]
 mod tests;
@@ -19,6 +20,9 @@ use syntect::highlighting::{HighlightState, Highlighter, Style, ThemeSet};
 use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
+pub(super) use reuse::{
+    align_old_lines_by_hash, hash_bytes, line_hash_matches, line_start_state_matches,
+};
 pub(super) use syntax::{resolve_syntax, syntect_language_hint};
 pub(super) use worker::{spawn_highlight_worker, HighlightWorker};
 
@@ -38,6 +42,7 @@ pub(super) struct EditorLayoutCache {
     pub(super) last_highlight_ms: Option<f32>,
 }
 
+/// Input bundle used to build a highlighted editor galley.
 pub(super) struct EditorLayoutRequest<'a> {
     pub(super) ui: &'a egui::Ui,
     pub(super) text: &'a dyn egui::TextBuffer,
@@ -97,10 +102,17 @@ impl HighlightCache {
 impl EditorLayoutCache {
     /// Returns the number of cached highlight lines for tests and profiling.
     #[cfg(test)]
+    ///
+    /// # Returns
+    /// Cached line count currently stored in the highlight cache.
     pub(super) fn highlight_line_count(&self) -> usize {
         self.highlight_cache.lines.len()
     }
 
+    /// Builds (or reuses) the editor galley for the requested render snapshot.
+    ///
+    /// # Returns
+    /// Shared galley ready for painting in the editor panel.
     pub(super) fn layout(&mut self, request: EditorLayoutRequest<'_>) -> Arc<egui::Galley> {
         let Some(revision) = request.text_revision else {
             return self.build_galley(BuildGalleyRequest {
@@ -262,8 +274,8 @@ impl EditorLayoutCache {
                 &old_lines,
                 &parse_state,
                 &highlight_state,
-                &default_state,
-                |line: &HighlightLineCache| &line.end_state,
+                (&default_state.parse, &default_state.highlight),
+                |line: &HighlightLineCache| (&line.end_state.parse, &line.end_state.highlight),
             ) && line_hash_matches(&old_lines, idx, line_hash, |line: &HighlightLineCache| {
                 line.hash
             }) {
@@ -388,6 +400,16 @@ impl EditorLayoutCache {
 }
 
 /// Builds a layout job for a single rendered line in the virtual preview.
+///
+/// # Arguments
+/// - `ui`: UI context used for default text styling.
+/// - `line`: Line text to shape.
+/// - `editor_font`: Font id used by editor rendering.
+/// - `render_line`: Optional highlight spans for this line.
+/// - `use_plain`: When `true`, bypass highlight spans.
+///
+/// # Returns
+/// Layout job representing one unwrapped virtual line.
 pub(super) fn build_virtual_line_job(
     ui: &egui::Ui,
     line: &str,
@@ -441,6 +463,20 @@ fn build_virtual_line_job_owned(
 ///
 /// `line_byte_range` is relative to the original physical line bytes and is used
 /// to intersect highlight spans onto this segment.
+///
+/// # Arguments
+/// - `ui`: UI context used for default text styling.
+/// - `segment`: Owned text segment for the target visual row.
+/// - `editor_font`: Font id used by editor rendering.
+/// - `render_line`: Optional highlight spans for the full physical line.
+/// - `use_plain`: When `true`, bypass highlight spans.
+/// - `line_byte_range`: Segment byte range within the physical line.
+///
+/// # Returns
+/// Layout job representing one unwrapped visual-row segment.
+///
+/// # Panics
+/// Panics if supplied highlight ranges violate expected segment invariants.
 pub(super) fn build_virtual_line_segment_job_owned(
     ui: &egui::Ui,
     segment: String,
@@ -507,6 +543,9 @@ impl Default for SyntectSettings {
 }
 
 /// Maps an egui code theme to a syntect theme key.
+///
+/// # Returns
+/// Syntect theme identifier matching the current light/dark mode.
 pub(super) fn syntect_theme_key(theme: &CodeTheme) -> &'static str {
     if theme.is_dark() {
         "base16-mocha.dark"
@@ -643,125 +682,6 @@ fn plain_layout_job_owned(
     )
 }
 
-fn line_start_state_matches<T, F>(
-    idx: usize,
-    prev_line_reused: bool,
-    old_lines: &[Option<T>],
-    parse_state: &ParseState,
-    highlight_state: &HighlightState,
-    default_state: &HighlightStateSnapshot,
-    end_state_for: F,
-) -> bool
-where
-    F: Fn(&T) -> &HighlightStateSnapshot,
-{
-    if idx == 0 {
-        return default_state.parse == *parse_state && default_state.highlight == *highlight_state;
-    }
-    if prev_line_reused {
-        return true;
-    }
-    old_lines
-        .get(idx - 1)
-        .and_then(|line| line.as_ref())
-        .map(|line| {
-            let end_state = end_state_for(line);
-            end_state.parse == *parse_state && end_state.highlight == *highlight_state
-        })
-        .unwrap_or(false)
-}
-
-fn line_hash_matches<T, F>(
-    old_lines: &[Option<T>],
-    idx: usize,
-    expected_hash: u64,
-    hash_for: F,
-) -> bool
-where
-    F: Fn(&T) -> u64,
-{
-    old_lines
-        .get(idx)
-        .and_then(|line| line.as_ref())
-        .map(|line| hash_for(line) == expected_hash)
-        .unwrap_or(false)
-}
-
-const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-const FNV_PRIME: u64 = 0x00000100000001B3;
-
-fn hash_bytes_step(mut hash: u64, bytes: &[u8]) -> u64 {
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
-}
-
-pub(super) fn hash_bytes(bytes: &[u8]) -> u64 {
-    hash_bytes_step(FNV_OFFSET, bytes)
-}
-
-pub(super) fn align_old_lines_by_hash<T, F>(
-    old_lines: Vec<T>,
-    new_hashes: &[u64],
-    hash_for: F,
-) -> Vec<Option<T>>
-where
-    F: Fn(&T) -> u64,
-{
-    let old_len = old_lines.len();
-    let new_len = new_hashes.len();
-    if new_len == 0 {
-        return Vec::new();
-    }
-    if old_len == 0 {
-        let mut out = Vec::with_capacity(new_len);
-        out.resize_with(new_len, || None);
-        return out;
-    }
-
-    let mut old: Vec<Option<T>> = old_lines.into_iter().map(Some).collect();
-
-    let mut prefix = 0usize;
-    while prefix < old_len && prefix < new_len {
-        let Some(ref line) = old[prefix] else {
-            break;
-        };
-        if hash_for(line) == new_hashes[prefix] {
-            prefix += 1;
-        } else {
-            break;
-        }
-    }
-
-    let mut suffix = 0usize;
-    while suffix < (old_len - prefix) && suffix < (new_len - prefix) {
-        let old_idx = old_len - 1 - suffix;
-        let new_idx = new_len - 1 - suffix;
-        let Some(ref line) = old[old_idx] else {
-            break;
-        };
-        if hash_for(line) == new_hashes[new_idx] {
-            suffix += 1;
-        } else {
-            break;
-        }
-    }
-
-    let mut aligned = Vec::with_capacity(new_len);
-    aligned.resize_with(new_len, || None);
-    for i in 0..prefix {
-        aligned[i] = old[i].take();
-    }
-    for j in 0..suffix {
-        let new_idx = new_len - suffix + j;
-        let old_idx = old_len - suffix + j;
-        aligned[new_idx] = old[old_idx].take();
-    }
-    aligned
-}
-
 #[derive(Clone, PartialEq, Eq)]
 struct HighlightSpan {
     range: Range<usize>,
@@ -784,6 +704,10 @@ pub(super) struct HighlightRenderLine {
 
 impl HighlightRenderLine {
     #[cfg(test)]
+    /// Creates a plain (unhighlighted) render line for tests.
+    ///
+    /// # Returns
+    /// Render line with no highlight spans and provided byte length.
     pub(super) fn plain(len: usize) -> Self {
         Self {
             len,
@@ -792,6 +716,10 @@ impl HighlightRenderLine {
     }
 
     #[cfg(test)]
+    /// Returns the stored byte length for this render line.
+    ///
+    /// # Returns
+    /// Line byte length used by highlighting/layout tests.
     pub(super) fn len_for_test(&self) -> usize {
         self.len
     }
@@ -837,6 +765,15 @@ pub(super) enum HighlightWorkerResult {
 }
 
 impl HighlightRender {
+    /// Checks whether render context matches paste/language/theme identifiers.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Target paste id.
+    /// - `language_hint`: Canonical language hint.
+    /// - `theme_key`: Syntect theme key.
+    ///
+    /// # Returns
+    /// `true` when context identifiers match.
     pub(super) fn matches_context(
         &self,
         paste_id: &str,
@@ -848,6 +785,17 @@ impl HighlightRender {
             && self.theme_key == theme_key
     }
 
+    /// Checks whether render snapshot exactly matches revision + context.
+    ///
+    /// # Arguments
+    /// - `revision`: Expected revision.
+    /// - `text_len`: Expected text byte length.
+    /// - `language_hint`: Canonical language hint.
+    /// - `theme_key`: Syntect theme key.
+    /// - `paste_id`: Target paste id.
+    ///
+    /// # Returns
+    /// `true` when revision, length, and context all match.
     pub(super) fn matches_exact(
         &self,
         revision: u64,
@@ -883,6 +831,10 @@ pub(super) enum HighlightRequestText {
 }
 
 impl HighlightRequestText {
+    /// Returns request text length in bytes.
+    ///
+    /// # Returns
+    /// UTF-8 byte length of owned string or rope payload.
     pub(super) fn len_bytes(&self) -> usize {
         match self {
             Self::Owned(text) => text.len(),
@@ -890,6 +842,10 @@ impl HighlightRequestText {
         }
     }
 
+    /// Converts request text payload into an owned [`String`].
+    ///
+    /// # Returns
+    /// Owned string representation of this request payload.
     pub(super) fn into_string(self) -> String {
         match self {
             Self::Owned(text) => text,
@@ -917,6 +873,17 @@ pub(super) struct HighlightRequestMeta {
 }
 
 impl HighlightRequestMeta {
+    /// Checks whether metadata matches a target revision/context tuple.
+    ///
+    /// # Arguments
+    /// - `revision`: Expected revision.
+    /// - `text_len`: Expected text byte length.
+    /// - `language_hint`: Expected language hint.
+    /// - `theme_key`: Expected theme key.
+    /// - `paste_id`: Expected paste id.
+    ///
+    /// # Returns
+    /// `true` when all metadata fields match.
     pub(super) fn matches(
         &self,
         revision: u64,
@@ -932,6 +899,10 @@ impl HighlightRequestMeta {
             && self.paste_id == paste_id
     }
 
+    /// Checks whether metadata matches a full render snapshot.
+    ///
+    /// # Returns
+    /// `true` when request metadata identifies the same render output.
     pub(super) fn matches_render(&self, render: &HighlightRender) -> bool {
         self.revision == render.revision
             && self.text_len == render.text_len

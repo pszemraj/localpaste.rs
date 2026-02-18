@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+/// Cursor position in `(line, column)` coordinates for preview selection state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct VirtualCursor {
     pub(super) line: usize,
@@ -15,6 +16,7 @@ struct VirtualSelection {
 }
 
 #[derive(Default)]
+/// Selection/drag state for the read-only virtual preview pane.
 pub(super) struct VirtualSelectionState {
     cursor: Option<VirtualCursor>,
     selection: Option<VirtualSelection>,
@@ -22,24 +24,32 @@ pub(super) struct VirtualSelectionState {
 }
 
 impl VirtualSelectionState {
+    /// Clears cursor, selection, and drag state.
     pub(super) fn clear(&mut self) {
         self.cursor = None;
         self.selection = None;
         self.drag_anchor = None;
     }
 
+    /// Sets a single cursor position and clears any active range selection.
     pub(super) fn set_cursor(&mut self, cursor: VirtualCursor) {
         self.cursor = Some(cursor);
         self.selection = None;
         self.drag_anchor = None;
     }
 
+    /// Sets an explicit selection range and tracks `end` as the active cursor.
+    ///
+    /// # Arguments
+    /// - `start`: Selection anchor cursor.
+    /// - `end`: Active cursor endpoint.
     pub(super) fn select_range(&mut self, start: VirtualCursor, end: VirtualCursor) {
         self.cursor = Some(end);
         self.selection = Some(VirtualSelection { start, end });
         self.drag_anchor = None;
     }
 
+    /// Starts drag-selection at `anchor`.
     pub(super) fn begin_drag(&mut self, anchor: VirtualCursor) {
         self.cursor = Some(anchor);
         self.drag_anchor = Some(anchor);
@@ -49,6 +59,7 @@ impl VirtualSelectionState {
         });
     }
 
+    /// Extends drag-selection to `cursor` when a drag is active.
     pub(super) fn update_drag(&mut self, cursor: VirtualCursor) {
         let Some(anchor) = self.drag_anchor else {
             return;
@@ -60,10 +71,19 @@ impl VirtualSelectionState {
         });
     }
 
+    /// Ends drag mode while preserving the current selection.
     pub(super) fn end_drag(&mut self) {
         self.drag_anchor = None;
     }
 
+    /// Returns the selected character range for a specific rendered line.
+    ///
+    /// # Arguments
+    /// - `line_idx`: Zero-based line index in the preview.
+    /// - `line_chars`: Visible character length of that line.
+    ///
+    /// # Returns
+    /// Local selected character range for the line, or `None` when unselected.
     pub(super) fn selection_for_line(
         &self,
         line_idx: usize,
@@ -90,6 +110,10 @@ impl VirtualSelectionState {
         Some(start_col..end_col)
     }
 
+    /// Returns normalized selection endpoints, if a selection is active.
+    ///
+    /// # Returns
+    /// Ordered `(start, end)` cursors when a selection exists.
     pub(super) fn selection_bounds(&self) -> Option<(VirtualCursor, VirtualCursor)> {
         self.selection.map(normalize_selection)
     }

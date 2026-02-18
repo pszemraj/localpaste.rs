@@ -7,6 +7,10 @@ use tracing::warn;
 const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl LocalPasteApp {
+    /// Drains pending content/metadata saves before backend shutdown.
+    ///
+    /// This best-effort flush keeps dispatching and consuming backend events
+    /// until timeout or steady state.
     pub(super) fn flush_pending_saves_for_shutdown(&mut self) {
         let mut warned_content_dispatch_failure = false;
         let mut warned_metadata_dispatch_failure = false;

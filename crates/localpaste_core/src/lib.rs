@@ -18,6 +18,7 @@ pub mod folder_ops;
 pub mod models;
 /// Paste naming helpers.
 pub mod naming;
+/// Shared helpers used by `localpaste_core` tests.
 #[cfg(test)]
 pub(crate) mod test_support;
 /// Shared string and host normalization helpers.

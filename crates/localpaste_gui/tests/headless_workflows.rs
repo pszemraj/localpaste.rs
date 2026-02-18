@@ -61,7 +61,7 @@ impl TestEnv {
     }
 
     fn spawn_backend(&self) -> BackendHandle {
-        spawn_backend(self.db.share().expect("share db"), TEST_MAX_PASTE_SIZE)
+        self.spawn_backend_with_locks(Arc::new(PasteLockManager::default()))
     }
 
     fn spawn_backend_with_locks(&self, locks: Arc<PasteLockManager>) -> BackendHandle {

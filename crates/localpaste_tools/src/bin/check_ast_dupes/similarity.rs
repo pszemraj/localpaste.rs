@@ -6,6 +6,7 @@ use std::cmp::Ordering;
 const LENGTH_RATIO_FLOOR: f64 = 0.65;
 
 #[derive(Debug)]
+/// A scored candidate pair produced by the AST similarity pass.
 pub(super) struct SimilarityFinding {
     pub(super) left_id: usize,
     pub(super) right_id: usize,
@@ -14,6 +15,18 @@ pub(super) struct SimilarityFinding {
     pub(super) union: usize,
 }
 
+/// Computes duplicate and near-miss similarity findings for candidate functions.
+///
+/// # Arguments
+/// - `functions`: Parsed function metadata and normalized token streams.
+/// - `args`: CLI thresholds and reporting limits.
+///
+/// # Returns
+/// `(duplicates, near_misses)` sorted by descending similarity.
+///
+/// # Panics
+/// Panics if `left_len / right_len` observes an unexpected zero-length right
+/// side after candidate filtering.
 pub(super) fn find_similarity_pairs(
     functions: &[FunctionInfo],
     args: &Args,
@@ -65,44 +78,43 @@ pub(super) fn find_similarity_pairs(
     (duplicates, near_misses)
 }
 
+/// Prints duplicate findings in CLI report format.
+///
+/// # Arguments
+/// - `functions`: Function metadata indexed by finding ids.
+/// - `findings`: Duplicate findings to render.
+/// - `args`: Reporting options used to format summary headers.
+///
+/// # Panics
+/// Panics if any finding id points outside `functions`.
 pub(super) fn print_duplicate_findings(
     functions: &[FunctionInfo],
     findings: &[SimilarityFinding],
     args: &Args,
 ) {
-    if findings.is_empty() {
-        println!(
-            "duplicate findings: none (threshold {:.2}, min_nodes {}, k {})",
-            args.threshold, args.min_nodes, args.k
-        );
-        return;
-    }
-
-    println!(
+    let header = format!(
         "duplicate findings (top {}, threshold {:.2}, min_nodes {}, k {}):",
         findings.len(),
         args.threshold,
         args.min_nodes,
         args.k
     );
-    for finding in findings {
-        let left = &functions[finding.left_id];
-        let right = &functions[finding.right_id];
-        println!(
-            "  score {:.3} [{} / {}] {}:{} `{}` <-> {}:{} `{}`",
-            finding.score,
-            finding.overlap,
-            finding.union,
-            normalize_path(left.file.as_path()),
-            left.line,
-            left.symbol,
-            normalize_path(right.file.as_path()),
-            right.line,
-            right.symbol
-        );
-    }
+    let empty = format!(
+        "duplicate findings: none (threshold {:.2}, min_nodes {}, k {})",
+        args.threshold, args.min_nodes, args.k
+    );
+    print_similarity_report(functions, findings, header.as_str(), empty.as_str());
 }
 
+/// Prints near-miss findings in CLI report format.
+///
+/// # Arguments
+/// - `functions`: Function metadata indexed by finding ids.
+/// - `findings`: Near-miss findings to render.
+/// - `args`: Reporting options used to format summary headers.
+///
+/// # Panics
+/// Panics if any finding id points outside `functions`.
 pub(super) fn print_near_miss_findings(
     functions: &[FunctionInfo],
     findings: &[SimilarityFinding],
@@ -112,20 +124,31 @@ pub(super) fn print_near_miss_findings(
         println!("near-miss findings: disabled");
         return;
     }
-    if findings.is_empty() {
-        println!(
-            "near-miss findings: none (range {:.2}..{:.2})",
-            args.near_miss_threshold, args.threshold
-        );
-        return;
-    }
-
-    println!(
+    let header = format!(
         "near-miss findings (top {}, range {:.2}..{:.2}, possible false negatives):",
         findings.len(),
         args.near_miss_threshold,
         args.threshold
     );
+    let empty = format!(
+        "near-miss findings: none (range {:.2}..{:.2})",
+        args.near_miss_threshold, args.threshold
+    );
+    print_similarity_report(functions, findings, header.as_str(), empty.as_str());
+}
+
+fn print_similarity_report(
+    functions: &[FunctionInfo],
+    findings: &[SimilarityFinding],
+    header: &str,
+    empty_line: &str,
+) {
+    if findings.is_empty() {
+        println!("{}", empty_line);
+        return;
+    }
+
+    println!("{}", header);
     for finding in findings {
         let left = &functions[finding.left_id];
         let right = &functions[finding.right_id];

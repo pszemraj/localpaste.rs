@@ -39,6 +39,12 @@ struct HighlightWorkerLine {
 }
 
 /// Spawns the syntect worker thread and returns its channel endpoints.
+///
+/// # Returns
+/// Worker handle containing request/response channels.
+///
+/// # Panics
+/// Panics if the highlight thread cannot be spawned.
 pub(crate) fn spawn_highlight_worker() -> HighlightWorker {
     let (tx, rx_cmd) = crossbeam_channel::unbounded();
     let (tx_evt, rx_evt) = crossbeam_channel::unbounded();
@@ -260,8 +266,8 @@ fn highlight_in_worker(
                     &old_lines,
                     &parse_state,
                     &highlight_state,
-                    &default_state,
-                    |line: &HighlightWorkerLine| &line.end_state,
+                    (&default_state.parse, &default_state.highlight),
+                    |line: &HighlightWorkerLine| (&line.end_state.parse, &line.end_state.highlight),
                 ) && line_hash_matches(&old_lines, idx, line_hash, |line: &HighlightWorkerLine| {
                     line.hash
                 });
@@ -325,8 +331,8 @@ fn highlight_in_worker(
                 &old_lines,
                 &parse_state,
                 &highlight_state,
-                &default_state,
-                |line: &HighlightWorkerLine| &line.end_state,
+                (&default_state.parse, &default_state.highlight),
+                |line: &HighlightWorkerLine| (&line.end_state.parse, &line.end_state.highlight),
             ) && line_hash_matches(&old_lines, idx, line_hash, |line: &HighlightWorkerLine| {
                 line.hash
             }) {

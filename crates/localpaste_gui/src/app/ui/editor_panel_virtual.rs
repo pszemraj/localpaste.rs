@@ -56,6 +56,15 @@ where
 }
 
 impl LocalPasteApp {
+    /// Renders the read-only virtual preview panel for large text payloads.
+    ///
+    /// # Arguments
+    /// - `ui`: Target UI region.
+    /// - `row_height`: Height per rendered row.
+    /// - `editor_height`: Available viewport height.
+    /// - `editor_font`: Font id used to shape line galleys.
+    /// - `highlight_render_match`: Optional precomputed highlight render payload.
+    /// - `use_plain`: When `true`, bypass syntax-highlighted rendering.
     pub(super) fn render_virtual_preview_panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -324,6 +333,18 @@ impl LocalPasteApp {
         }
     }
 
+    /// Renders the interactive rope-backed virtual editor surface.
+    ///
+    /// # Arguments
+    /// - `ui`: Target UI region.
+    /// - `row_height`: Height per rendered row.
+    /// - `editor_height`: Available viewport height.
+    /// - `editor_font`: Font id used to shape line galleys.
+    /// - `highlight_render_match`: Optional precomputed highlight render payload.
+    /// - `use_plain`: When `true`, bypass syntax-highlighted rendering.
+    ///
+    /// # Panics
+    /// Panics if shaped virtual row galleys unexpectedly wrap.
     pub(super) fn render_virtual_editor_panel(
         &mut self,
         ui: &mut egui::Ui,

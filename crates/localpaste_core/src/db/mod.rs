@@ -450,27 +450,23 @@ mod process_detection_tests {
     use std::io::ErrorKind;
 
     #[test]
-    fn unix_pid_parser_ignores_current_pid_and_invalid_lines() {
+    fn unix_pid_parser_matrix() {
         let current_pid = 4242u32;
-        let stdout = b"garbage\n4242\n";
-        let probe = pgrep_output_probe_result(stdout, current_pid);
-        assert_eq!(probe, ProcessProbeResult::NotRunning);
-    }
-
-    #[test]
-    fn unix_pid_parser_detects_other_localpaste_pid() {
-        let current_pid = 4242u32;
-        let stdout = b"1111\n4242\n";
-        let probe = pgrep_output_probe_result(stdout, current_pid);
-        assert_eq!(probe, ProcessProbeResult::Running);
-    }
-
-    #[test]
-    fn unix_pid_parser_marks_unknown_when_output_is_unparseable() {
-        let current_pid = 4242u32;
-        let stdout = b"not-a-pid\nalso-bad\n";
-        let probe = pgrep_output_probe_result(stdout, current_pid);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
+        let cases = [
+            (
+                b"garbage\n4242\n".as_slice(),
+                ProcessProbeResult::NotRunning,
+            ),
+            (b"1111\n4242\n".as_slice(), ProcessProbeResult::Running),
+            (
+                b"not-a-pid\nalso-bad\n".as_slice(),
+                ProcessProbeResult::Unknown,
+            ),
+        ];
+        for (stdout, expected) in cases {
+            let probe = pgrep_output_probe_result(stdout, current_pid);
+            assert_eq!(probe, expected);
+        }
     }
 
     #[test]
@@ -482,17 +478,16 @@ mod process_detection_tests {
     }
 
     #[test]
-    fn unix_probe_treats_missing_pgrep_as_unknown() {
-        let err = std::io::Error::new(ErrorKind::NotFound, "pgrep not found");
-        let probe = pgrep_error_probe_result(&err);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
-    }
-
-    #[test]
-    fn unix_probe_keeps_unknown_for_non_notfound_pgrep_errors() {
-        let err = std::io::Error::new(ErrorKind::PermissionDenied, "permission denied");
-        let probe = pgrep_error_probe_result(&err);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
+    fn unix_probe_error_matrix_maps_to_unknown() {
+        let cases = [
+            (ErrorKind::NotFound, "pgrep not found"),
+            (ErrorKind::PermissionDenied, "permission denied"),
+        ];
+        for (kind, message) in cases {
+            let err = std::io::Error::new(kind, message);
+            let probe = pgrep_error_probe_result(&err);
+            assert_eq!(probe, ProcessProbeResult::Unknown);
+        }
     }
 }
 
@@ -502,14 +497,11 @@ mod process_detection_windows_tests {
     use std::io::ErrorKind;
 
     #[test]
-    fn windows_probe_treats_missing_tasklist_as_unknown() {
-        let probe = tasklist_error_probe_result(ErrorKind::NotFound);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
-    }
-
-    #[test]
-    fn windows_probe_keeps_unknown_for_other_tasklist_errors() {
-        let probe = tasklist_error_probe_result(ErrorKind::PermissionDenied);
-        assert_eq!(probe, ProcessProbeResult::Unknown);
+    fn windows_probe_error_matrix_maps_to_unknown() {
+        let cases = [ErrorKind::NotFound, ErrorKind::PermissionDenied];
+        for kind in cases {
+            let probe = tasklist_error_probe_result(kind);
+            assert_eq!(probe, ProcessProbeResult::Unknown);
+        }
     }
 }

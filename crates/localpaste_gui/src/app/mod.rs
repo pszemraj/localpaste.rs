@@ -3,9 +3,11 @@
 mod editor;
 mod highlight;
 mod highlight_flow;
+mod interaction_helpers;
 mod perf_trace;
 mod shutdown;
 mod state_accessors;
+mod state_feedback;
 mod state_ops;
 mod style;
 mod text_coords;
@@ -13,17 +15,23 @@ mod ui;
 mod util;
 mod virtual_editor;
 mod virtual_ops;
+mod virtual_ops_apply;
+mod virtual_ops_click;
 mod virtual_view;
 
 use crate::backend::{spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary};
 use editor::{EditorBuffer, EditorLineIndex, EditorMode};
-use eframe::egui::{self, text::CCursor, Color32, RichText, Stroke, TextStyle};
+use eframe::egui::{self, text::CCursor, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
 use highlight::{
     build_virtual_line_job, build_virtual_line_segment_job_owned, spawn_highlight_worker,
     syntect_language_hint, syntect_theme_key, EditorLayoutCache, EditorLayoutRequest,
     HighlightRender, HighlightRequestMeta, HighlightRequestText, HighlightWorker,
     HighlightWorkerResult, SyntectSettings, VirtualEditHint,
+};
+pub(super) use interaction_helpers::{
+    classify_virtual_command, drag_autoscroll_delta, is_editor_word_char, next_virtual_click_count,
+    paint_virtual_selection_overlay, VirtualCommandBucket,
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
@@ -173,11 +181,14 @@ const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const STATUS_TTL: Duration = Duration::from_secs(5);
 const TOAST_TTL: Duration = Duration::from_secs(4);
 const TOAST_LIMIT: usize = 4;
+#[doc = "Default initial window size for native GUI startup."]
 pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 720.0];
+#[doc = "Minimum enforced window size to keep sidebar/editor controls usable."]
 pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
 const PALETTE_SEARCH_LIMIT: usize = 40;
+#[doc = "Per-line render cap used by preview/virtual editor galleys."]
 pub(crate) const MAX_RENDER_CHARS_PER_LINE: usize = 10_000;
 const HIGHLIGHT_DEBOUNCE_MEDIUM: Duration = Duration::from_millis(35);
 const HIGHLIGHT_DEBOUNCE_LARGE: Duration = Duration::from_millis(50);
@@ -256,122 +267,6 @@ struct InputTraceFrame<'a> {
     deferred_focus_commands: &'a [VirtualInputCommand],
     deferred_copy_commands: &'a [VirtualInputCommand],
     apply_result: VirtualApplyResult,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VirtualCommandBucket {
-    ImmediateFocus,
-    DeferredFocus,
-    DeferredCopy,
-}
-
-fn is_editor_word_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
-}
-
-fn next_virtual_click_count(
-    last_at: Option<Instant>,
-    last_pos: Option<egui::Pos2>,
-    _last_line: Option<usize>,
-    last_count: u8,
-    _line_idx: usize,
-    pointer_pos: egui::Pos2,
-    now: Instant,
-) -> u8 {
-    let is_continuation = if let (Some(last_at), Some(last_pos)) = (last_at, last_pos) {
-        now.duration_since(last_at) <= EDITOR_DOUBLE_CLICK_WINDOW
-            && last_pos.distance(pointer_pos) <= EDITOR_DOUBLE_CLICK_DISTANCE
-    } else {
-        false
-    };
-    if is_continuation {
-        last_count.saturating_add(1).min(3)
-    } else {
-        1
-    }
-}
-
-fn drag_autoscroll_delta(pointer_y: f32, top: f32, bottom: f32, line_height: f32) -> f32 {
-    if !pointer_y.is_finite()
-        || !top.is_finite()
-        || !bottom.is_finite()
-        || !line_height.is_finite()
-        || line_height <= 0.0
-        || bottom <= top
-    {
-        return 0.0;
-    }
-
-    let outside_distance = if pointer_y < top {
-        top - pointer_y
-    } else if pointer_y > bottom {
-        pointer_y - bottom
-    } else {
-        return 0.0;
-    };
-
-    // Scale autoscroll speed with distance beyond the viewport edge.
-    let edge_distance = (line_height * 2.0).max(DRAG_AUTOSCROLL_EDGE_DISTANCE);
-    let lines_per_frame = (outside_distance / edge_distance).clamp(
-        DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME,
-        DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME,
-    );
-    let delta = line_height * lines_per_frame;
-
-    if pointer_y < top {
-        delta
-    } else {
-        -delta
-    }
-}
-
-fn classify_virtual_command(
-    command: &VirtualInputCommand,
-    focus_active_pre: bool,
-) -> VirtualCommandBucket {
-    match command.route() {
-        VirtualCommandRoute::CopyOnly => VirtualCommandBucket::DeferredCopy,
-        VirtualCommandRoute::FocusRequired => {
-            if command.requires_post_focus() || !focus_active_pre {
-                VirtualCommandBucket::DeferredFocus
-            } else {
-                VirtualCommandBucket::ImmediateFocus
-            }
-        }
-    }
-}
-
-fn paint_virtual_selection_overlay(
-    painter: &egui::Painter,
-    row_rect: egui::Rect,
-    galley: &egui::Galley,
-    selection: Range<usize>,
-    selection_fill: Color32,
-) {
-    if selection.start >= selection.end {
-        return;
-    }
-    let mut consumed = 0usize;
-    for placed_row in &galley.rows {
-        let row_chars = placed_row.char_count_excluding_newline();
-        let local_start = selection.start.saturating_sub(consumed).min(row_chars);
-        let local_end = selection.end.saturating_sub(consumed).min(row_chars);
-        if local_end > local_start {
-            let left = row_rect.min.x + placed_row.pos.x + placed_row.x_offset(local_start);
-            let mut right = row_rect.min.x + placed_row.pos.x + placed_row.x_offset(local_end);
-            if right <= left {
-                right = left + 1.0;
-            }
-            let top = row_rect.min.y + placed_row.pos.y;
-            let bottom = top + placed_row.height();
-            let rect = egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom));
-            painter.rect_filled(rect, 2.0, selection_fill);
-        }
-        consumed = consumed.saturating_add(placed_row.char_count_including_newline());
-        if consumed >= selection.end {
-            break;
-        }
-    }
 }
 
 impl LocalPasteApp {

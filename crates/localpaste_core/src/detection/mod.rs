@@ -45,6 +45,10 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     Some(label.to_string())
 }
 
+/// Heuristically checks whether content resembles YAML mapping/sequence syntax.
+///
+/// # Returns
+/// `true` when line-level patterns strongly indicate YAML.
 pub(crate) fn looks_like_yaml(content: &str) -> bool {
     let mut yaml_pairs = 0usize;
     let mut content_lines = 0usize;

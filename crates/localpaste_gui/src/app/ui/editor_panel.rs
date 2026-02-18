@@ -4,6 +4,10 @@ use super::super::*;
 use eframe::egui;
 
 impl LocalPasteApp {
+    /// Renders the primary editor panel, including metadata toolbar and mode UI.
+    ///
+    /// # Panics
+    /// Panics if a virtual-editor highlight row fails internal consistency checks.
     pub(crate) fn render_editor_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let selected_meta = self.selected_paste.as_ref().map(|paste| paste.id.clone());

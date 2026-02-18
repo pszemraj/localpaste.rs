@@ -195,6 +195,13 @@ impl VirtualEditorHistory {
     }
 
     /// Undo the most recent mutation.
+    ///
+    /// # Arguments
+    /// - `buffer`: Mutable text buffer to revert.
+    /// - `state`: Editor interaction state to restore cursor/selection position.
+    ///
+    /// # Returns
+    /// The applied edit delta, or `None` when undo history is empty.
     pub(crate) fn undo(
         &mut self,
         buffer: &mut RopeBuffer,
@@ -211,6 +218,13 @@ impl VirtualEditorHistory {
     }
 
     /// Redo the next mutation, if available.
+    ///
+    /// # Arguments
+    /// - `buffer`: Mutable text buffer to reapply into.
+    /// - `state`: Editor interaction state to move to the post-edit cursor.
+    ///
+    /// # Returns
+    /// The reapplied edit delta, or `None` when redo history is empty.
     pub(crate) fn redo(
         &mut self,
         buffer: &mut RopeBuffer,
@@ -232,6 +246,9 @@ impl VirtualEditorHistory {
     }
 
     /// Return a point-in-time snapshot of history counters.
+    ///
+    /// # Returns
+    /// Current queue lengths and counters used by perf logging.
     pub(crate) fn perf_stats(&self) -> HistoryPerfStats {
         HistoryPerfStats {
             undo_len: self.undo.len(),
@@ -377,19 +394,14 @@ mod tests {
     }
 
     #[test]
-    fn coalesces_contiguous_backspace_deletes() {
-        assert_contiguous_delete_coalesces(
-            EditIntent::DeleteBackward,
-            [(4, "e", 5, 4), (3, "d", 4, 3)],
-        );
-    }
-
-    #[test]
-    fn coalesces_contiguous_forward_deletes() {
-        assert_contiguous_delete_coalesces(
-            EditIntent::DeleteForward,
-            [(2, "c", 2, 2), (2, "d", 2, 2)],
-        );
+    fn coalesces_contiguous_deletes() {
+        let cases = [
+            (EditIntent::DeleteBackward, [(4, "e", 5, 4), (3, "d", 4, 3)]),
+            (EditIntent::DeleteForward, [(2, "c", 2, 2), (2, "d", 2, 2)]),
+        ];
+        for (intent, edits) in cases {
+            assert_contiguous_delete_coalesces(intent, edits);
+        }
     }
 
     #[test]

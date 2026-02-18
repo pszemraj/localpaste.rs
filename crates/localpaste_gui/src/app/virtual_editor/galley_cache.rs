@@ -7,6 +7,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
+/// Frame-level render context used to validate galley reuse safety.
 pub(crate) struct VirtualGalleyContext {
     wrap_width_bits: u32,
     // Highlight invalidation is driven explicitly from highlight_flow
@@ -18,6 +19,17 @@ pub(crate) struct VirtualGalleyContext {
 }
 
 impl VirtualGalleyContext {
+    /// Builds a context key from geometry/style inputs that affect text shaping.
+    ///
+    /// # Arguments
+    /// - `wrap_width`: Effective wrap width in points.
+    /// - `use_plain`: Whether syntax highlighting is bypassed.
+    /// - `font_id`: Font used for shaping.
+    /// - `text_color`: Foreground text color.
+    /// - `pixels_per_point`: Current UI scale factor.
+    ///
+    /// # Returns
+    /// A normalized context key safe for cache-compatibility checks.
     pub(crate) fn new(
         wrap_width: f32,
         use_plain: bool,
@@ -41,12 +53,18 @@ struct LineGalleyCache {
 }
 
 #[derive(Default)]
+/// Cache of shaped galleys indexed by `(line, visual_row)`.
 pub(crate) struct VirtualGalleyCache {
     lines: Vec<LineGalleyCache>,
     context: Option<VirtualGalleyContext>,
 }
 
 impl VirtualGalleyCache {
+    /// Prepares cache storage for the current frame and invalidates on context changes.
+    ///
+    /// # Arguments
+    /// - `line_count`: Number of physical lines expected this frame.
+    /// - `context`: Render-context key used to validate cache reuse.
     pub(crate) fn prepare_frame(&mut self, line_count: usize, context: VirtualGalleyContext) {
         let context_changed = self
             .context
@@ -63,6 +81,11 @@ impl VirtualGalleyCache {
         self.context = Some(context);
     }
 
+    /// Applies a line-level splice after a text delta.
+    ///
+    /// # Arguments
+    /// - `delta`: Line-aligned edit delta describing modified line range.
+    /// - `line_count`: Expected post-edit line count.
     pub(crate) fn apply_delta(&mut self, delta: VirtualEditDelta, line_count: usize) {
         if self.lines.is_empty() {
             self.lines.resize_with(line_count, LineGalleyCache::default);
@@ -74,6 +97,11 @@ impl VirtualGalleyCache {
         }
     }
 
+    /// Resizes row slots for a line to match the latest wrap layout.
+    ///
+    /// # Arguments
+    /// - `line_idx`: Physical line index.
+    /// - `visual_rows`: Wrapped row count for that line.
     pub(crate) fn sync_line_rows(&mut self, line_idx: usize, visual_rows: usize) {
         let Some(line) = self.lines.get_mut(line_idx) else {
             return;
@@ -85,6 +113,14 @@ impl VirtualGalleyCache {
         }
     }
 
+    /// Returns a cached galley clone for a specific `(line, row)` pair.
+    ///
+    /// # Arguments
+    /// - `line_idx`: Physical line index.
+    /// - `row_in_line`: Wrapped-row index within the line.
+    ///
+    /// # Returns
+    /// A cloned cached galley when present.
     pub(crate) fn get(&self, line_idx: usize, row_in_line: usize) -> Option<Arc<Galley>> {
         self.lines
             .get(line_idx)
@@ -92,6 +128,12 @@ impl VirtualGalleyCache {
             .and_then(|entry| entry.clone())
     }
 
+    /// Inserts or replaces a cached galley for a specific `(line, row)` pair.
+    ///
+    /// # Arguments
+    /// - `line_idx`: Physical line index.
+    /// - `row_in_line`: Wrapped-row index within the line.
+    /// - `galley`: Shaped galley to cache.
     pub(crate) fn insert(&mut self, line_idx: usize, row_in_line: usize, galley: Arc<Galley>) {
         let Some(line) = self.lines.get_mut(line_idx) else {
             return;
@@ -101,6 +143,7 @@ impl VirtualGalleyCache {
         }
     }
 
+    /// Invalidates every cached galley entry while preserving cache shape.
     pub(crate) fn evict_all(&mut self) {
         for line in &mut self.lines {
             for row in &mut line.rows {
@@ -109,6 +152,7 @@ impl VirtualGalleyCache {
         }
     }
 
+    /// Invalidates all cached rows for lines in `range`.
     pub(crate) fn evict_line_range(&mut self, range: Range<usize>) {
         if range.is_empty() {
             return;

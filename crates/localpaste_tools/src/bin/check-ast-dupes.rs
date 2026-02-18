@@ -120,11 +120,10 @@ struct DeadFinding {
 }
 
 fn main() {
-    let args = Args::parse();
-    if let Err(message) = run(args) {
+    run(Args::parse()).unwrap_or_else(|message| {
         eprintln!("error: {}", message);
         std::process::exit(1);
-    }
+    });
 }
 
 fn run(args: Args) -> Result<(), String> {

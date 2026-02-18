@@ -27,6 +27,11 @@ fn begin_owner_mutation_guard<'a>(
         })
 }
 
+/// Fetches a paste by id and emits load/missing/error events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Paste id to load.
 pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
     match state.db.pastes.get(&id) {
         Ok(Some(paste)) => {
@@ -45,6 +50,11 @@ pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
     }
 }
 
+/// Creates a new paste from raw content and emits `PasteCreated` on success.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `content`: Paste body content.
 pub(super) fn handle_create_paste(state: &mut WorkerState, content: String) {
     if let Err(message) = validate_paste_size(content.as_str(), state.max_paste_size) {
         send_error(&state.evt_tx, CoreErrorSource::Other, message);
@@ -114,10 +124,22 @@ fn apply_content_update(state: &mut WorkerState, id: String, content: String, lo
     }
 }
 
+/// Saves updated paste content using the standard string update path.
+///
+/// # Arguments
+/// - `state`: Worker state containing db, locks, and event channel handles.
+/// - `id`: Target paste id.
+/// - `content`: Replacement content payload.
 pub(super) fn handle_update_paste(state: &mut WorkerState, id: String, content: String) {
     apply_content_update(state, id, content, "backend update failed");
 }
 
+/// Saves updated paste content from the virtual-editor rope buffer.
+///
+/// # Arguments
+/// - `state`: Worker state containing db, locks, and event channel handles.
+/// - `id`: Target paste id.
+/// - `content`: Replacement content stored as a rope buffer.
 pub(super) fn handle_update_paste_virtual(state: &mut WorkerState, id: String, content: Rope) {
     // Guard on rope byte length before materializing a String to avoid
     // allocation spikes when autosave tries to persist an oversized buffer.
@@ -134,6 +156,16 @@ pub(super) fn handle_update_paste_virtual(state: &mut WorkerState, id: String, c
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Updates mutable paste metadata fields and emits meta save/missing/error events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db, locks, and event channel handles.
+/// - `id`: Target paste id.
+/// - `name`: Optional replacement name.
+/// - `language`: Optional replacement language.
+/// - `language_is_manual`: Optional manual-language intent override.
+/// - `folder_id`: Optional replacement folder id (`Some("")` clears folder).
+/// - `tags`: Optional replacement tag set.
 pub(super) fn handle_update_paste_meta(
     state: &mut WorkerState,
     id: String,
@@ -260,6 +292,11 @@ pub(super) fn handle_update_paste_meta(
     }
 }
 
+/// Deletes a paste under folder-transaction and lock guards.
+///
+/// # Arguments
+/// - `state`: Worker state containing db, locks, and event channel handles.
+/// - `id`: Paste id to delete.
 pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
     let folder_guard = match TransactionOps::acquire_folder_txn_guard(&state.db) {
         Ok(guard) => guard,

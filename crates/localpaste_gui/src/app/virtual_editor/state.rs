@@ -33,21 +33,34 @@ pub(crate) struct VirtualEditorState {
 
 impl VirtualEditorState {
     /// Returns the current caret position in global char coordinates.
+    ///
+    /// # Returns
+    /// Zero-based global char index of the caret.
     pub(crate) fn cursor(&self) -> usize {
         self.cursor
     }
 
     /// Returns the preferred visual column for vertical movement.
+    ///
+    /// # Returns
+    /// Stored target column for up/down navigation, if one is active.
     pub(crate) fn preferred_column(&self) -> Option<usize> {
         self.preferred_column
     }
 
     /// Returns wrap-boundary affinity for the current cursor.
+    ///
+    /// # Returns
+    /// The active boundary affinity hint for wrapped-row navigation.
     pub(crate) fn wrap_boundary_affinity(&self) -> WrapBoundaryAffinity {
         self.wrap_boundary_affinity
     }
 
     /// Sets the cursor, clearing any active selection.
+    ///
+    /// # Arguments
+    /// - `char_index`: Desired global cursor index.
+    /// - `text_len`: Current buffer char length used for clamping.
     pub(crate) fn set_cursor(&mut self, char_index: usize, text_len: usize) {
         self.cursor = char_index.min(text_len);
         self.anchor = None;
@@ -56,6 +69,11 @@ impl VirtualEditorState {
     }
 
     /// Moves cursor to a new char index.
+    ///
+    /// # Arguments
+    /// - `new_index`: Desired global cursor index.
+    /// - `text_len`: Current buffer char length used for clamping.
+    /// - `select`: Whether movement should extend an active selection.
     pub(crate) fn move_cursor(&mut self, new_index: usize, text_len: usize, select: bool) {
         let clamped = new_index.min(text_len);
         if select {
@@ -76,6 +94,9 @@ impl VirtualEditorState {
     }
 
     /// Returns a normalized selected range, if any.
+    ///
+    /// # Returns
+    /// `Some(start..end)` when a non-empty selection exists, otherwise `None`.
     pub(crate) fn selection_range(&self) -> Option<Range<usize>> {
         let anchor = self.anchor?;
         if anchor == self.cursor {

@@ -4,6 +4,10 @@ use super::looks_like_yaml;
 use crate::models::paste::is_markdown_content;
 
 /// Best-effort language detection based on simple heuristics.
+///
+/// # Returns
+/// Canonical-friendly language label when a strong pattern is found, otherwise
+/// `None`.
 pub(crate) fn detect(content: &str) -> Option<String> {
     const SAMPLE_MAX_BYTES: usize = 64 * 1024;
     const SAMPLE_MAX_LINES: usize = 512;

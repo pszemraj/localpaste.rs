@@ -6,8 +6,7 @@ use super::highlight::EditorLayoutCache;
 use super::util::format_fenced_code_block;
 use super::{
     ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
-    SidebarCollection, StatusMessage, ToastMessage, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
-    STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
+    SidebarCollection, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Local, Utc};
@@ -24,6 +23,14 @@ use self::filters::{
 };
 
 impl LocalPasteApp {
+    fn send_backend_cmd_or_status(&mut self, command: CoreCmd, error_message: &str) -> bool {
+        if self.backend.cmd_tx.send(command).is_ok() {
+            return true;
+        }
+        self.set_status(error_message);
+        false
+    }
+
     fn send_update_paste_or_mark_failed(&mut self, command: CoreCmd, mode: &str) -> bool {
         if self.backend.cmd_tx.send(command).is_ok() {
             return true;
@@ -56,6 +63,7 @@ impl LocalPasteApp {
         self.send_update_paste_or_mark_failed(command, mode)
     }
 
+    /// Applies a backend event and synchronizes app state, selection, and save flags.
     pub(super) fn apply_event(&mut self, event: CoreEvent) {
         match event {
             CoreEvent::PasteList { items } => {
@@ -252,11 +260,11 @@ impl LocalPasteApp {
                 }
                 self.set_status(message);
             }
-            CoreEvent::FoldersLoaded { items: _ } => {}
+            CoreEvent::FoldersLoaded { items: _ }
+            | CoreEvent::ShutdownComplete { flush_result: _ } => {}
             CoreEvent::FolderSaved { folder: _ } | CoreEvent::FolderDeleted { id: _ } => {
                 self.request_refresh();
             }
-            CoreEvent::ShutdownComplete { flush_result: _ } => {}
             CoreEvent::Error { source, message } => {
                 warn!("backend error ({:?}): {}", source, message);
                 // Only mutate save-in-flight state for the matching request class.
@@ -293,6 +301,7 @@ impl LocalPasteApp {
         }
     }
 
+    /// Requests a fresh paste list from the backend and updates query perf counters.
     pub(super) fn request_refresh(&mut self) {
         let sent_at = Instant::now();
         if self
@@ -312,6 +321,7 @@ impl LocalPasteApp {
         self.last_refresh_at = sent_at;
     }
 
+    /// Updates the sidebar search query and starts debounce timing.
     pub(super) fn set_search_query(&mut self, query: String) {
         if self.search_query == query {
             return;
@@ -320,6 +330,7 @@ impl LocalPasteApp {
         self.search_last_input_at = Some(Instant::now());
     }
 
+    /// Updates command-palette query text and resets palette selection/search state.
     pub(super) fn set_command_palette_query(&mut self, query: String) {
         if self.command_palette_query == query {
             return;
@@ -343,6 +354,7 @@ impl LocalPasteApp {
         }
     }
 
+    /// Switches the active smart collection filter and triggers list/search refresh behavior.
     pub(super) fn set_active_collection(&mut self, collection: SidebarCollection) {
         if self.active_collection == collection {
             return;
@@ -351,6 +363,7 @@ impl LocalPasteApp {
         self.on_primary_filter_changed();
     }
 
+    /// Sets the active language filter after canonical normalization.
     pub(super) fn set_active_language_filter(&mut self, language: Option<String>) {
         let normalized = normalize_language_filter_value(language.as_deref());
         if self.active_language_filter == normalized {
@@ -360,6 +373,10 @@ impl LocalPasteApp {
         self.on_primary_filter_changed();
     }
 
+    /// Builds sorted language filter options from the currently known paste summaries.
+    ///
+    /// # Returns
+    /// Canonicalized language values in ascending sort order.
     pub(super) fn language_filter_options(&self) -> Vec<String> {
         let mut langs: BTreeSet<String> = BTreeSet::new();
         for paste in &self.all_pastes {
@@ -370,6 +387,7 @@ impl LocalPasteApp {
         langs.into_iter().collect()
     }
 
+    /// Dispatches a debounced sidebar search request when inputs and filters are ready.
     pub(super) fn maybe_dispatch_search(&mut self) {
         let query = self.search_query.trim().to_string();
         if query.is_empty() {
@@ -418,6 +436,7 @@ impl LocalPasteApp {
         self.query_perf.search_last_sent_at = Some(Instant::now());
     }
 
+    /// Dispatches a debounced command-palette search request when applicable.
     pub(super) fn maybe_dispatch_palette_search(&mut self) {
         if !self.command_palette_open {
             return;
@@ -458,6 +477,10 @@ impl LocalPasteApp {
         self.palette_search_last_sent = query;
     }
 
+    /// Selects a paste by id, deferring selection when unsaved edits must be flushed first.
+    ///
+    /// # Returns
+    /// `true` when selection was applied or successfully deferred, `false` on dispatch failure.
     pub(super) fn select_paste(&mut self, id: String) -> bool {
         if self.selected_id.as_deref() == Some(id.as_str()) {
             return true;
@@ -519,6 +542,7 @@ impl LocalPasteApp {
         }
     }
 
+    /// Applies a fully loaded paste into editor state and resets transient edit caches.
     pub(super) fn select_loaded_paste(&mut self, paste: Paste) {
         let id = paste.id.clone();
         if self.selected_id.as_deref() != Some(id.as_str()) {
@@ -601,6 +625,7 @@ impl LocalPasteApp {
         let _ = self.apply_selection_now(pending);
     }
 
+    /// Clears active/pending selection and releases any held paste lock.
     pub(super) fn clear_selection(&mut self) {
         if let Some(pending) = self.pending_selection_id.take() {
             self.clear_pending_copy_for(pending.as_str());
@@ -611,98 +636,38 @@ impl LocalPasteApp {
         self.reset_selection_editor_state();
     }
 
-    pub(super) fn set_status(&mut self, text: impl Into<String>) {
-        let text = text.into();
-        self.status = Some(StatusMessage {
-            text: text.clone(),
-            expires_at: Instant::now() + STATUS_TTL,
-        });
-        self.push_toast(text);
-    }
-
-    fn push_toast(&mut self, text: String) {
-        let now = Instant::now();
-        if let Some(last) = self.toasts.back_mut() {
-            if last.text == text {
-                last.expires_at = now + TOAST_TTL;
-                return;
-            }
-        }
-        self.toasts.push_back(ToastMessage {
-            text,
-            expires_at: now + TOAST_TTL,
-        });
-        while self.toasts.len() > TOAST_LIMIT {
-            self.toasts.pop_front();
-        }
-    }
-
-    pub(super) fn poll_export_result(&mut self) {
-        let completion = {
-            let Some(rx) = self.export_result_rx.as_ref() else {
-                return;
-            };
-            match rx.try_recv() {
-                Ok(completion) => Some(completion),
-                Err(std::sync::mpsc::TryRecvError::Empty) => None,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.export_result_rx = None;
-                    self.set_status("Export failed: worker disconnected.");
-                    return;
-                }
-            }
-        };
-        let Some(completion) = completion else {
-            return;
-        };
-        self.export_result_rx = None;
-        match completion.result {
-            Ok(()) => {
-                self.set_status(format!(
-                    "Exported {} to {}",
-                    completion.paste_id, completion.path
-                ));
-            }
-            Err(err) => {
-                self.set_status(format!("Export failed: {}", err));
-            }
-        }
-    }
-
+    /// Creates a new empty paste.
     pub(super) fn create_new_paste(&mut self) {
         self.create_new_paste_with_content(String::new());
     }
 
+    /// Creates a new paste pre-populated with `content`.
     pub(super) fn create_new_paste_with_content(&mut self, content: String) {
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::CreatePaste { content })
-            .is_err()
-        {
-            self.set_status("Create failed: backend unavailable.");
-        }
+        let _sent = self.send_backend_cmd_or_status(
+            CoreCmd::CreatePaste { content },
+            "Create failed: backend unavailable.",
+        );
     }
 
+    /// Sends a delete command for `id` and reports whether dispatch succeeded.
+    ///
+    /// # Returns
+    /// `true` when the backend command was queued, otherwise `false`.
     pub(super) fn send_delete_paste(&mut self, id: String) -> bool {
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::DeletePaste { id })
-            .is_err()
-        {
-            self.set_status("Delete failed: backend unavailable.");
-            return false;
-        }
-        true
+        self.send_backend_cmd_or_status(
+            CoreCmd::DeletePaste { id },
+            "Delete failed: backend unavailable.",
+        )
     }
 
+    /// Deletes the currently selected paste, if any.
     pub(super) fn delete_selected(&mut self) {
         if let Some(id) = self.selected_id.clone() {
             let _sent = self.send_delete_paste(id);
         }
     }
 
+    /// Marks current editor content dirty and arms autosave timing.
     pub(super) fn mark_dirty(&mut self) {
         if self.selected_id.is_some() {
             self.save_status = SaveStatus::Dirty;
@@ -713,6 +678,7 @@ impl LocalPasteApp {
         }
     }
 
+    /// Dispatches autosave once dirty content has been idle past the autosave delay.
     pub(super) fn maybe_autosave(&mut self) {
         if self.save_in_flight || self.save_status != SaveStatus::Dirty {
             return;
@@ -729,6 +695,7 @@ impl LocalPasteApp {
         let _sent = self.dispatch_content_save(id, "Autosave");
     }
 
+    /// Forces immediate content save dispatch when the current paste is dirty.
     pub(super) fn save_now(&mut self) {
         if self.save_in_flight || self.save_status != SaveStatus::Dirty {
             return;
@@ -739,6 +706,7 @@ impl LocalPasteApp {
         let _sent = self.dispatch_content_save(id, "Save");
     }
 
+    /// Dispatches metadata save for the current editor metadata draft when needed.
     pub(super) fn save_metadata_now(&mut self) {
         if !self.metadata_dirty || self.metadata_save_in_flight {
             return;
@@ -774,6 +742,7 @@ impl LocalPasteApp {
         self.metadata_save_request = Some(request);
     }
 
+    /// Starts asynchronous export of the selected paste to a user-chosen file path.
     pub(super) fn export_selected_paste(&mut self) {
         let Some(paste_id) = self.selected_paste.as_ref().map(|paste| paste.id.clone()) else {
             self.set_status("Nothing selected to export.");
@@ -810,6 +779,10 @@ impl LocalPasteApp {
         self.set_status("Export started...");
     }
 
+    /// Returns the visible-list index of the selected paste.
+    ///
+    /// # Returns
+    /// `Some(index)` when the selected paste is visible, otherwise `None`.
     pub(super) fn selected_index(&self) -> Option<usize> {
         let id = self.selected_id.as_ref()?;
         self.pastes.iter().position(|paste| paste.id == *id)
@@ -932,6 +905,7 @@ impl LocalPasteApp {
             .unwrap_or(!self.metadata_dirty)
     }
 
+    /// Copies persisted paste metadata into editable metadata fields.
     pub(super) fn sync_editor_metadata(&mut self, paste: &Paste) {
         self.edit_name = paste.name.clone();
         self.edit_language = paste.language.clone();
@@ -940,6 +914,7 @@ impl LocalPasteApp {
         self.metadata_dirty = false;
     }
 
+    /// Completes deferred command-palette copy actions once target content is available.
     pub(super) fn try_complete_pending_copy(&mut self) {
         let Some(action) = self.pending_copy_action.clone() else {
             return;

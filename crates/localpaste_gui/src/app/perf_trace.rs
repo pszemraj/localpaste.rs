@@ -4,6 +4,7 @@ use super::{EditorMode, InputTraceFrame, LocalPasteApp, VirtualApplyResult, Virt
 use tracing::info;
 
 #[derive(Debug, Clone, Copy)]
+/// Timing/counter snapshot for one virtual-editor input frame.
 pub(super) struct VirtualInputPerfStats {
     pub(super) input_route_ms: f32,
     pub(super) immediate_apply_ms: f32,
@@ -13,6 +14,7 @@ pub(super) struct VirtualInputPerfStats {
 }
 
 impl LocalPasteApp {
+    /// Emits detailed input-routing traces when editor input tracing is enabled.
     pub(super) fn trace_input(&self, frame: InputTraceFrame<'_>) {
         if !self.editor_input_trace_enabled {
             return;
@@ -41,6 +43,13 @@ impl LocalPasteApp {
         );
     }
 
+    /// Emits virtual-editor input performance metrics for observability logs.
+    ///
+    /// # Arguments
+    /// - `immediate_focus_commands`: Commands applied before general UI handling.
+    /// - `deferred_focus_commands`: Commands deferred until editor focus is confirmed.
+    /// - `deferred_copy_commands`: Copy/cut commands deferred until selection is available.
+    /// - `stats`: Timing snapshot and aggregate apply results.
     pub(super) fn trace_virtual_input_perf(
         &self,
         immediate_focus_commands: &[VirtualInputCommand],

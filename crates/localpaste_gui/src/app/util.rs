@@ -1,10 +1,22 @@
 //! Small UI helpers for labels and word selection.
 
+/// Reads a boolean environment feature flag using shared core parsing rules.
+///
+/// # Returns
+/// `true` when the named flag resolves to an enabled value.
 pub(super) fn env_flag_enabled(name: &str) -> bool {
     localpaste_core::config::env_flag_enabled(name)
 }
 
 /// Formats the language label shown in the UI, falling back to auto/plain.
+///
+/// # Arguments
+/// - `language`: Optional detected or manually selected language label.
+/// - `is_manual`: Whether language was manually pinned by the user.
+/// - `is_large`: Whether current content is above plain-render threshold.
+///
+/// # Returns
+/// User-facing language label for headers and list rows.
 pub(super) fn display_language_label(
     language: Option<&str>,
     is_manual: bool,
@@ -39,6 +51,13 @@ pub(super) fn display_language_label(
 ///
 /// Prefers the explicit filter value, then falls back to the selected paste
 /// language so the footer reflects known language context.
+///
+/// # Arguments
+/// - `active_filter`: Explicitly selected language filter.
+/// - `selected_language`: Language of the currently selected paste.
+///
+/// # Returns
+/// Status-bar label text for the language filter control.
 pub(super) fn status_language_filter_label(
     active_filter: Option<&str>,
     selected_language: Option<&str>,
@@ -67,6 +86,13 @@ pub(super) fn status_language_filter_label(
 }
 
 /// Formats clipboard/export content as a fenced code block.
+///
+/// # Arguments
+/// - `content`: Text body to wrap.
+/// - `language`: Optional code-fence language hint.
+///
+/// # Returns
+/// Markdown fenced-code representation.
 pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) -> String {
     let lang = language.unwrap_or("text");
     format!("```{}\n{}\n```", lang, content)
@@ -76,6 +102,13 @@ pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) ->
 ///
 /// Unspecified bind addresses (0.0.0.0 / ::) are rewritten to loopback so the
 /// copied link is locally routable in browsers and external apps.
+///
+/// # Arguments
+/// - `addr`: Runtime API socket address.
+/// - `id`: Paste id to include in the URL path.
+///
+/// # Returns
+/// Routable API URL string for clipboard copy.
 pub(super) fn api_paste_link_for_copy(addr: std::net::SocketAddr, id: &str) -> String {
     let routed = match addr.ip() {
         std::net::IpAddr::V4(ip) if ip.is_unspecified() => std::net::SocketAddr::new(
@@ -96,6 +129,16 @@ fn is_word_char(ch: char) -> bool {
 }
 
 /// Returns a word-selection range (in char indices) around the given char index.
+///
+/// # Arguments
+/// - `text`: Source text to scan.
+/// - `char_index`: Cursor character index within `text`.
+///
+/// # Returns
+/// `(start, end)` character range when a selection target exists.
+///
+/// # Panics
+/// Panics only if internal UTF-8 boundary assumptions are violated.
 pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usize)> {
     if text.is_empty() {
         return None;
