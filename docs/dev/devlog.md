@@ -127,20 +127,23 @@ Packaging configs:
 
 Release behavior:
 
-- Tag push (`v*`) runs preflight checks, builds GUI installers/portable assets,
-  and attaches assets to that tag's release.
-- Manual run (`workflow_dispatch`) accepts an existing tag and uploads/replaces
-  assets for that release (same tag target).
+- Tag push (`v*`) resolves the tag, enforces tag/version match, runs smoke
+  validation, builds GUI installers/portable assets, and publishes assets to
+  that tag's release.
+- Manual run (`workflow_dispatch`) accepts an existing tag and reruns the same
+  smoke/build/publish flow against that tag.
 
-Preflight gates for release workflow:
+Release gates for release workflow:
+
+- Tag sanity check (`v*`) and existence validation
+- `Cargo.toml` workspace version must match the release tag version
+- Server + CLI smoke test with restart persistence verification
+
+Release workflow intentionally excludes:
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets --all-features`
 - `cargo check --workspace --all-targets --all-features`
-- server + CLI smoke test with restart persistence verification
-
-Release workflow intentionally excludes:
-
 - `check-loc`
 - `check-ast-dupes`
 

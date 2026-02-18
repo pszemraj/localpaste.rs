@@ -38,7 +38,7 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install pyyaml yamllint
 
-    - name: Run workflow validation script
+    - name: Run workflow validation script (YAML, shell, release invariants)
       shell: bash
       run: |
         set -euo pipefail
