@@ -55,7 +55,7 @@ fn yaml_shape_helper_requires_yaml_body_after_doc_start() {
 }
 
 #[test]
-fn heuristic_detects_expanded_fallback_languages() {
+fn heuristic_detects_fallback_languages_and_conflict_matrix() {
     let cases = [
         ("fun main() { println(\"hi\") }", Some("kotlin")),
         (
@@ -74,13 +74,6 @@ fn heuristic_detects_expanded_fallback_languages() {
         ("use strict;\nuse warnings;\nmy $x = 1;", Some("perl")),
         ("defmodule Demo do\n  IO.puts(\"hi\")\nend", Some("elixir")),
         ("param($Name)\nWrite-Host $Name", Some("powershell")),
-    ];
-    assert_detection_cases(cases.as_slice());
-}
-
-#[test]
-fn heuristic_handles_shebang_and_import_conflict_matrix() {
-    let cases = [
         ("#!/bin/python\nprint('hi')", Some("python")),
         ("#!/usr/bin/env python\nprint('hi')", Some("python")),
         ("#!/bin/node\nconsole.log('hi')", Some("javascript")),
