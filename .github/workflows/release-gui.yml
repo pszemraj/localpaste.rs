@@ -1,0 +1,441 @@
+name: release-gui
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (for example v0.4.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-gui-${{ github.event_name }}-${{ github.ref_name || github.event.inputs.tag || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-22.04
+    outputs:
+      resolved_tag: ${{ steps.resolve_tag.outputs.resolved_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: resolve_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ -z "${TAG}" ]]; then
+            echo "release tag cannot be empty" >&2
+            exit 1
+          fi
+
+          if [[ "${TAG}" != v* ]]; then
+            echo "release tag must start with 'v' (got: ${TAG})" >&2
+            exit 1
+          fi
+
+          echo "resolved_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "resolved tag: ${TAG}"
+
+      - name: Validate tag exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve_tag.outputs.resolved_tag }}"
+          git fetch --force --tags origin
+          git rev-parse "refs/tags/${TAG}" >/dev/null
+
+      - name: Sync source tree to release tag for validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve_tag.outputs.resolved_tag }}"
+          git checkout "refs/tags/${TAG}" -- \
+            Cargo.toml \
+            Cargo.lock \
+            rust-toolchain.toml \
+            crates \
+            assets \
+            LICENSE
+
+      - name: Validate workspace version matches tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKSPACE_VERSION="$(
+            awk '
+              $0 == "[workspace.package]" { in_workspace = 1; next }
+              /^\[/ { if (in_workspace) exit }
+              in_workspace && $1 == "version" {
+                gsub(/"/, "", $3)
+                print $3
+                exit
+              }
+            ' Cargo.toml
+          )"
+          TAG_VERSION="${{ steps.resolve_tag.outputs.resolved_tag }}"
+          TAG_VERSION="${TAG_VERSION#v}"
+
+          if [[ -z "${WORKSPACE_VERSION}" ]]; then
+            echo "failed to read [workspace.package].version from Cargo.toml" >&2
+            exit 1
+          fi
+
+          if [[ "${WORKSPACE_VERSION}" != "${TAG_VERSION}" ]]; then
+            echo "tag/version mismatch: tag=${TAG_VERSION} workspace=${WORKSPACE_VERSION}" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.89.0
+          components: rustfmt, clippy
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features
+
+      - name: Workspace check
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: Smoke test (server + CLI CRUD + restart persistence)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PORT=3055
+          export DB_PATH="${GITHUB_WORKSPACE}/.tmp/release-smoke-${GITHUB_RUN_ID}"
+          export RUST_LOG=info
+          export LP_SERVER="http://127.0.0.1:${PORT}"
+          mkdir -p "${DB_PATH}"
+
+          # Default builds prewarm Magika/ORT during startup; on cold runners
+          # startup can exceed one second, so use an explicit readiness probe.
+          wait_for_localpaste_ready() {
+            local max_attempts=60
+            local attempt=1
+            while (( attempt <= max_attempts )); do
+              if ./target/debug/lpaste --server "${LP_SERVER}" list --limit 1 >/dev/null 2>&1; then
+                return 0
+              fi
+              if [[ -n "${SERVER_PID:-}" ]] && ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+                echo "localpaste exited before readiness probe succeeded" >&2
+                return 1
+              fi
+              sleep 1
+              attempt=$(( attempt + 1 ))
+            done
+            echo "localpaste did not become ready after ${max_attempts}s" >&2
+            return 1
+          }
+
+          start_server() {
+            ./target/debug/localpaste &
+            SERVER_PID=$!
+            wait_for_localpaste_ready
+          }
+
+          stop_server() {
+            if [[ -n "${SERVER_PID:-}" ]]; then
+              kill "${SERVER_PID}" 2>/dev/null || true
+              wait "${SERVER_PID}" 2>/dev/null || true
+              unset SERVER_PID
+            fi
+          }
+
+          cleanup() {
+            stop_server
+            rm -rf "${DB_PATH}"
+          }
+          trap cleanup EXIT
+
+          cargo build -p localpaste_server --bin localpaste
+          cargo build -p localpaste_cli --bin lpaste
+
+          start_server
+
+          echo "hello from release smoke" | ./target/debug/lpaste --timing new --name "release-smoke"
+          ./target/debug/lpaste --timing list --limit 5
+          ./target/debug/lpaste --timing search "release-smoke"
+          ID="$(./target/debug/lpaste list --limit 1 | awk '{print $1}')"
+          ./target/debug/lpaste --timing get "${ID}"
+          ./target/debug/lpaste --timing delete "${ID}"
+
+          echo "persist me" | ./target/debug/lpaste --timing new --name "release-persist"
+          PERSIST_ID="$(./target/debug/lpaste list --limit 1 | awk '{print $1}')"
+
+          stop_server
+
+          start_server
+          ./target/debug/lpaste --timing get "${PERSIST_ID}"
+
+  build_and_package:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_suffix: windows-x86_64
+            packager_config: packaging/windows/packager.json
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            asset_suffix: linux-x86_64
+            packager_config: packaging/linux/packager.json
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset_suffix: macos-aarch64
+            packager_config: packaging/macos/packager.json
+    runs-on: ${{ matrix.os }}
+    env:
+      RESOLVED_TAG: ${{ needs.preflight.outputs.resolved_tag }}
+    steps:
+      - name: Checkout workflow commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync source tree to release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          git checkout "refs/tags/${RESOLVED_TAG}" -- \
+            Cargo.toml \
+            Cargo.lock \
+            rust-toolchain.toml \
+            crates \
+            assets \
+            LICENSE
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.89.0
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            patchelf \
+            libfuse2
+
+      - name: Install WiX Toolset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install wixtoolset -y --no-progress
+          $wixPath = "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin"
+          if (-not (Test-Path $wixPath)) {
+            throw "WiX Toolset path not found at $wixPath"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $wixPath
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+
+      - name: Build GUI release binary
+        run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{ matrix.target }}
+
+      - name: Prepare effective packager config
+        shell: pwsh
+        run: |
+          $tag = "${env:RESOLVED_TAG}"
+          if (-not $tag) {
+            throw "RESOLVED_TAG is empty"
+          }
+          $version = $tag -replace '^v', ''
+          $sourceConfig = "${{ matrix.packager_config }}"
+          $sourceDir = Split-Path $sourceConfig -Parent
+          $effectiveConfig = Join-Path $sourceDir "packager.effective.json"
+
+          $config = Get-Content $sourceConfig -Raw | ConvertFrom-Json
+          $config.version = $version
+          $config | ConvertTo-Json -Depth 20 | Set-Content $effectiveConfig
+
+          "PACKAGER_CONFIG_PATH=$effectiveConfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Stage renamed runtime binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stageDir = "dist\stage\${{ matrix.asset_suffix }}"
+          New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+          Copy-Item -Path "target\${{ matrix.target }}\release\localpaste-gui.exe" -Destination "$stageDir\localpaste.exe" -Force
+          Copy-Item -Path "LICENSE" -Destination "$stageDir\LICENSE" -Force
+
+      - name: Stage renamed runtime binary (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE_DIR="dist/stage/${{ matrix.asset_suffix }}"
+          mkdir -p "${STAGE_DIR}"
+          cp "target/${{ matrix.target }}/release/localpaste-gui" "${STAGE_DIR}/localpaste"
+          cp "LICENSE" "${STAGE_DIR}/LICENSE"
+
+      - name: Build installer packages
+        run: cargo packager --config ${{ env.PACKAGER_CONFIG_PATH }}
+
+      - name: Collect Windows release assets
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packagerOutDir = "dist\packager\${{ matrix.asset_suffix }}"
+          $releaseDir = "dist\release\${{ matrix.asset_suffix }}"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+
+          $msi = Get-ChildItem -Path $packagerOutDir -Recurse -File -Filter *.msi | Select-Object -First 1
+          if (-not $msi) {
+            throw "Failed to find MSI output under $packagerOutDir"
+          }
+
+          $msiName = "localpaste-$env:RESOLVED_TAG-${{ matrix.asset_suffix }}.msi"
+          Copy-Item -Path $msi.FullName -Destination (Join-Path $releaseDir $msiName) -Force
+
+          $portableDir = Join-Path $env:RUNNER_TEMP "portable-${{ matrix.asset_suffix }}"
+          if (Test-Path $portableDir) {
+            Remove-Item -Recurse -Force $portableDir
+          }
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item -Path "dist\stage\${{ matrix.asset_suffix }}\localpaste.exe" -Destination (Join-Path $portableDir "localpaste.exe") -Force
+          Copy-Item -Path "dist\stage\${{ matrix.asset_suffix }}\LICENSE" -Destination (Join-Path $portableDir "LICENSE") -Force
+
+          $zipPath = Join-Path $releaseDir "localpaste-$env:RESOLVED_TAG-${{ matrix.asset_suffix }}.zip"
+          Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $zipPath -Force
+
+      - name: Collect Linux release assets
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGER_OUT_DIR="dist/packager/${{ matrix.asset_suffix }}"
+          RELEASE_DIR="dist/release/${{ matrix.asset_suffix }}"
+          STAGE_DIR="dist/stage/${{ matrix.asset_suffix }}"
+          mkdir -p "${RELEASE_DIR}"
+
+          APPIMAGE_PATH="$(find "${PACKAGER_OUT_DIR}" -type f -name '*.AppImage' | head -n1)"
+          if [[ -z "${APPIMAGE_PATH}" ]]; then
+            echo "Failed to find AppImage output under ${PACKAGER_OUT_DIR}" >&2
+            exit 1
+          fi
+
+          cp "${APPIMAGE_PATH}" "${RELEASE_DIR}/localpaste-${RESOLVED_TAG}-${{ matrix.asset_suffix }}.AppImage"
+
+          PORTABLE_ROOT="$(mktemp -d)"
+          cp "${STAGE_DIR}/localpaste" "${PORTABLE_ROOT}/localpaste"
+          cp "${STAGE_DIR}/LICENSE" "${PORTABLE_ROOT}/LICENSE"
+          tar -czf "${RELEASE_DIR}/localpaste-${RESOLVED_TAG}-${{ matrix.asset_suffix }}.tar.gz" \
+            -C "${PORTABLE_ROOT}" \
+            localpaste LICENSE
+
+      - name: Collect macOS release assets
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGER_OUT_DIR="dist/packager/${{ matrix.asset_suffix }}"
+          RELEASE_DIR="dist/release/${{ matrix.asset_suffix }}"
+          mkdir -p "${RELEASE_DIR}"
+
+          DMG_PATH="$(find "${PACKAGER_OUT_DIR}" -type f -name '*.dmg' | head -n1)"
+          APP_BUNDLE_PATH="$(find "${PACKAGER_OUT_DIR}" -type d -name '*.app' | head -n1)"
+
+          if [[ -z "${DMG_PATH}" ]]; then
+            echo "Failed to find DMG output under ${PACKAGER_OUT_DIR}" >&2
+            exit 1
+          fi
+          if [[ -z "${APP_BUNDLE_PATH}" ]]; then
+            echo "Failed to find .app bundle output under ${PACKAGER_OUT_DIR}" >&2
+            exit 1
+          fi
+
+          cp "${DMG_PATH}" "${RELEASE_DIR}/localpaste-${RESOLVED_TAG}-${{ matrix.asset_suffix }}.dmg"
+          tar -czf "${RELEASE_DIR}/localpaste-${RESOLVED_TAG}-${{ matrix.asset_suffix }}.app.tar.gz" \
+            -C "$(dirname "${APP_BUNDLE_PATH}")" \
+            "$(basename "${APP_BUNDLE_PATH}")"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.asset_suffix }}
+          path: dist/release/${{ matrix.asset_suffix }}/*
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - preflight
+      - build_and_package
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download packaged assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          path: dist/release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist/release-assets
+          sha256sum localpaste-* > checksums.sha256
+
+      - name: Ensure release exists for tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.preflight.outputs.resolved_tag }}"
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "release already exists for ${TAG}; assets will be replaced via --clobber"
+          else
+            gh release create "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "LocalPaste ${TAG}" \
+              --generate-notes
+          fi
+
+      - name: Upload assets to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.preflight.outputs.resolved_tag }}"
+          gh release upload "${TAG}" \
+            dist/release-assets/localpaste-* \
+            dist/release-assets/checksums.sha256 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
