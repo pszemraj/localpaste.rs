@@ -221,11 +221,23 @@ jobs:
     env:
       RESOLVED_TAG: ${{ needs.preflight.outputs.resolved_tag }}
     steps:
-    - name: Checkout release tag source
+    - name: Checkout workflow commit
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        ref: refs/tags/${{ needs.preflight.outputs.resolved_tag }}
+
+    - name: Sync source tree to release tag
+      shell: bash
+      run: |
+        set -euo pipefail
+        git fetch --force --tags origin
+        git checkout "refs/tags/${RESOLVED_TAG}" -- \
+          Cargo.toml \
+          Cargo.lock \
+          rust-toolchain.toml \
+          crates \
+          assets \
+          LICENSE
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@master
