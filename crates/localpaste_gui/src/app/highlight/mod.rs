@@ -416,54 +416,23 @@ impl EditorLayoutCache {
 /// Layout job representing one unwrapped virtual line.
 pub(super) fn build_virtual_line_job(
     ui: &egui::Ui,
-    line: &str,
+    line: impl Into<String>,
     editor_font: &FontId,
     render_line: Option<&HighlightRenderLine>,
     use_plain: bool,
 ) -> LayoutJob {
-    build_virtual_line_job_owned(ui, line.to_owned(), editor_font, render_line, use_plain)
-}
-
-/// Builds a layout job for a single rendered line in the virtual preview/editor
-/// when the caller already owns the line text buffer.
-fn build_virtual_line_job_owned(
-    ui: &egui::Ui,
-    line: String,
-    editor_font: &FontId,
-    render_line: Option<&HighlightRenderLine>,
-    use_plain: bool,
-) -> LayoutJob {
-    if use_plain || render_line.is_none() {
-        return plain_layout_job_owned(ui, line, editor_font, f32::INFINITY);
-    }
-    let render_line = render_line.expect("render line checked above");
-    let mut job = LayoutJob {
-        text: line,
-        ..Default::default()
-    };
-    let line_len = job.text.len();
-    let default_format = TextFormat {
-        font_id: editor_font.clone(),
-        color: ui.visuals().text_color(),
-        ..Default::default()
-    };
-
-    let mut styled_sections = Vec::with_capacity(render_line.spans.len());
-    for span in &render_line.spans {
-        let start = span.range.start.min(line_len);
-        let end = span.range.end.min(line_len);
-        if start >= end {
-            continue;
-        }
-        let Some(range) = clamp_byte_range_to_char_boundaries(job.text.as_str(), start..end) else {
-            continue;
-        };
-        styled_sections.push((range, render_span_to_format(span, editor_font)));
-    }
-    push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
-
-    job.wrap.max_width = f32::INFINITY;
-    job
+    build_virtual_line_job_with_mapper(
+        ui,
+        line.into(),
+        editor_font,
+        render_line,
+        use_plain,
+        |span_range, line_len| {
+            let start = span_range.start.min(line_len);
+            let end = span_range.end.min(line_len);
+            (start < end).then_some(start..end)
+        },
+    )
 }
 
 /// Builds a layout job for a wrapped visual-row segment from a physical line.
@@ -492,12 +461,42 @@ pub(super) fn build_virtual_line_segment_job_owned(
     use_plain: bool,
     line_byte_range: Range<usize>,
 ) -> LayoutJob {
+    build_virtual_line_job_with_mapper(
+        ui,
+        segment,
+        editor_font,
+        render_line,
+        use_plain,
+        |span_range, line_len| {
+            let start = span_range.start.max(line_byte_range.start);
+            let end = span_range.end.min(line_byte_range.end);
+            if start >= end {
+                return None;
+            }
+            let local_start = start.saturating_sub(line_byte_range.start).min(line_len);
+            let local_end = end.saturating_sub(line_byte_range.start).min(line_len);
+            (local_start < local_end).then_some(local_start..local_end)
+        },
+    )
+}
+
+fn build_virtual_line_job_with_mapper<M>(
+    ui: &egui::Ui,
+    text: String,
+    editor_font: &FontId,
+    render_line: Option<&HighlightRenderLine>,
+    use_plain: bool,
+    mut map_span_range: M,
+) -> LayoutJob
+where
+    M: FnMut(Range<usize>, usize) -> Option<Range<usize>>,
+{
     if use_plain || render_line.is_none() {
-        return plain_layout_job_owned(ui, segment, editor_font, f32::INFINITY);
+        return plain_layout_job_owned(ui, text, editor_font, f32::INFINITY);
     }
     let render_line = render_line.expect("render line checked above");
     let mut job = LayoutJob {
-        text: segment,
+        text,
         ..Default::default()
     };
     let line_len = job.text.len();
@@ -511,20 +510,13 @@ pub(super) fn build_virtual_line_segment_job_owned(
         job.wrap.max_width = f32::INFINITY;
         return job;
     }
+
     let mut styled_sections = Vec::with_capacity(render_line.spans.len());
     for span in &render_line.spans {
-        let start = span.range.start.max(line_byte_range.start);
-        let end = span.range.end.min(line_byte_range.end);
-        if start >= end {
+        let Some(mapped_range) = map_span_range(span.range.clone(), line_len) else {
             continue;
-        }
-        let local_start = start.saturating_sub(line_byte_range.start).min(line_len);
-        let local_end = end.saturating_sub(line_byte_range.start).min(line_len);
-        if local_start >= local_end {
-            continue;
-        }
-        let Some(range) =
-            clamp_byte_range_to_char_boundaries(job.text.as_str(), local_start..local_end)
+        };
+        let Some(range) = clamp_byte_range_to_char_boundaries(job.text.as_str(), mapped_range)
         else {
             continue;
         };
