@@ -25,7 +25,9 @@ impl LocalPasteApp {
                 shortcut_row(ui, "Ctrl/Cmd+S", "Save content and metadata");
                 shortcut_row(ui, "Ctrl/Cmd+Delete", "Delete selected paste");
                 shortcut_row(ui, "Ctrl/Cmd+F", "Focus sidebar search");
-                shortcut_row(ui, "Ctrl/Cmd+K", "Toggle command palette");
+                shortcut_row(ui, "Ctrl/Cmd+Shift+P", "Toggle command palette");
+                shortcut_row(ui, "Ctrl/Cmd+K", "Toggle command palette (legacy)");
+                shortcut_row(ui, "Ctrl/Cmd+I", "Toggle properties drawer");
                 shortcut_row(ui, "F1", "Toggle this help");
 
                 ui.add_space(6.0);

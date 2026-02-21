@@ -271,7 +271,7 @@ impl LocalPasteApp {
         });
         items.push(CommandPaletteItem {
             label: "Toggle properties".to_string(),
-            hint: "(Ctrl/Cmd+I / Ctrl/Cmd+P)".to_string(),
+            hint: "(Ctrl/Cmd+I)".to_string(),
             action: CommandPaletteAction::ToggleProperties,
         });
         items.push(CommandPaletteItem {

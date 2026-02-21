@@ -64,7 +64,7 @@ Use this checklist when touching detection/highlight/filter code.
 8. Validate large-buffer guardrail:
    - Paste content >= 256KB and verify display is plain regardless of language metadata.
 9. Re-run shortcut sanity checks after language UI edits:
-   - `Ctrl/Cmd+S`, `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+F`, `Ctrl/Cmd+K`.
+   - `Ctrl/Cmd+S`, `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+F`, `Ctrl/Cmd+Shift+P`.
 
 ## Manual GUI Human-Step Checklist (Comprehensive)
 
@@ -89,7 +89,9 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - `Ctrl/Cmd+S`: save transitions status from dirty -> saved.
    - `Ctrl/Cmd+Delete`: deletes selected paste and list updates.
    - `Ctrl/Cmd+F`: focuses sidebar search input.
-   - `Ctrl/Cmd+K`: opens command palette.
+   - `Ctrl/Cmd+Shift+P`: opens command palette.
+   - `Ctrl/Cmd+K`: toggles command palette (legacy alias).
+   - `Ctrl/Cmd+I`: toggles Properties drawer.
 5. Command palette actions:
    - Open selected paste from palette.
    - Delete from palette and confirm list removal.

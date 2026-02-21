@@ -52,6 +52,22 @@ pub(crate) fn should_route_sidebar_arrows(
         && !overlays_open
 }
 
+/// Returns whether modifiers represent a plain command chord (no Shift/Alt).
+///
+/// # Returns
+/// `true` when `Ctrl`/`Cmd` is active without Shift/Alt.
+pub(crate) fn is_plain_command_shortcut(modifiers: egui::Modifiers) -> bool {
+    modifiers.command && !modifiers.shift && !modifiers.alt
+}
+
+/// Returns whether modifiers represent a command+shift chord (no Alt).
+///
+/// # Returns
+/// `true` when `Ctrl`/`Cmd` and Shift are active without Alt.
+pub(crate) fn is_command_shift_shortcut(modifiers: egui::Modifiers) -> bool {
+    modifiers.command && modifiers.shift && !modifiers.alt
+}
+
 /// Returns whether a character should be treated as an editor word character.
 ///
 /// # Returns
@@ -214,7 +230,9 @@ pub(crate) fn paint_virtual_selection_overlay(
 
 #[cfg(test)]
 mod tests {
-    use super::should_route_sidebar_arrows;
+    use super::{
+        is_command_shift_shortcut, is_plain_command_shortcut, should_route_sidebar_arrows,
+    };
     use eframe::egui;
 
     #[test]
@@ -308,5 +326,40 @@ mod tests {
             );
             assert_eq!(actual, case.expected);
         }
+    }
+
+    #[test]
+    fn command_shortcut_modifier_matrix() {
+        let plain = egui::Modifiers {
+            command: true,
+            ..egui::Modifiers::NONE
+        };
+        assert!(is_plain_command_shortcut(plain));
+        assert!(!is_command_shift_shortcut(plain));
+
+        let command_shift = egui::Modifiers {
+            command: true,
+            shift: true,
+            ..egui::Modifiers::NONE
+        };
+        assert!(!is_plain_command_shortcut(command_shift));
+        assert!(is_command_shift_shortcut(command_shift));
+
+        let command_alt = egui::Modifiers {
+            command: true,
+            alt: true,
+            ..egui::Modifiers::NONE
+        };
+        assert!(!is_plain_command_shortcut(command_alt));
+        assert!(!is_command_shift_shortcut(command_alt));
+
+        let command_shift_alt = egui::Modifiers {
+            command: true,
+            shift: true,
+            alt: true,
+            ..egui::Modifiers::NONE
+        };
+        assert!(!is_plain_command_shortcut(command_shift_alt));
+        assert!(!is_command_shift_shortcut(command_shift_alt));
     }
 }

@@ -30,7 +30,8 @@ use highlight::{
     HighlightWorkerResult, SyntectSettings, VirtualEditHint,
 };
 pub(super) use interaction_helpers::{
-    classify_virtual_command, drag_autoscroll_delta, is_editor_word_char, next_virtual_click_count,
+    classify_virtual_command, drag_autoscroll_delta, is_command_shift_shortcut,
+    is_editor_word_char, is_plain_command_shortcut, next_virtual_click_count,
     paint_virtual_selection_overlay, should_route_sidebar_arrows, VirtualCommandBucket,
 };
 use localpaste_core::models::paste::Paste;
@@ -624,20 +625,25 @@ impl eframe::App for LocalPasteApp {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::N) {
+            let plain_command = is_plain_command_shortcut(input.modifiers);
+            let command_shift = is_command_shift_shortcut(input.modifiers);
+
+            if plain_command && input.key_pressed(egui::Key::N) {
                 self.create_new_paste();
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::Delete) {
+            if plain_command && input.key_pressed(egui::Key::Delete) {
                 self.delete_selected();
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::S) {
+            if plain_command && input.key_pressed(egui::Key::S) {
                 self.save_now();
                 self.save_metadata_now();
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::F) {
+            if plain_command && input.key_pressed(egui::Key::F) {
                 self.search_focus_requested = true;
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::K) {
+            if (plain_command && input.key_pressed(egui::Key::K))
+                || (command_shift && input.key_pressed(egui::Key::P))
+            {
                 self.command_palette_open = !self.command_palette_open;
                 self.command_palette_query.clear();
                 self.command_palette_selected = 0;
@@ -645,9 +651,7 @@ impl eframe::App for LocalPasteApp {
                 self.palette_search_last_sent.clear();
                 self.palette_search_last_input_at = None;
             }
-            if input.modifiers.command
-                && (input.key_pressed(egui::Key::I) || input.key_pressed(egui::Key::P))
-            {
+            if plain_command && input.key_pressed(egui::Key::I) {
                 self.properties_drawer_open = !self.properties_drawer_open;
             }
             if input.key_pressed(egui::Key::F1) {
