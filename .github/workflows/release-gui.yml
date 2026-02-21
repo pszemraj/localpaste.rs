@@ -2,7 +2,7 @@ name: release-gui
 on:
   push:
     tags:
-      - v*
+      - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
     inputs:
       source_mode:
@@ -77,21 +77,7 @@ jobs:
               SOURCE_REF="refs/tags/${TAG}"
               ;;
             current_ref)
-              WORKSPACE_VERSION="$(
-                awk '
-                  $0 == "[workspace.package]" { in_workspace = 1; next }
-                  /^\[/ { if (in_workspace) exit }
-                  in_workspace && $1 == "version" {
-                    gsub(/"/, "", $3)
-                    print $3
-                    exit
-                  }
-                ' Cargo.toml
-              )"
-              if [[ -z "${WORKSPACE_VERSION}" ]]; then
-                echo "failed to read [workspace.package].version from Cargo.toml" >&2
-                exit 1
-              fi
+              WORKSPACE_VERSION="$(bash .github/scripts/workspace_version.sh)"
               TAG="v${WORKSPACE_VERSION}"
               SOURCE_REF="${GITHUB_SHA}"
               {
@@ -121,17 +107,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          WORKSPACE_VERSION="$(
-            awk '
-              $0 == "[workspace.package]" { in_workspace = 1; next }
-              /^\[/ { if (in_workspace) exit }
-              in_workspace && $1 == "version" {
-                gsub(/"/, "", $3)
-                print $3
-                exit
-              }
-            ' Cargo.toml
-          )"
+          WORKSPACE_VERSION="$(bash .github/scripts/workspace_version.sh)"
           TAG_VERSION="${{ steps.resolve.outputs.resolved_tag }}"
           TAG_VERSION="${TAG_VERSION#v}"
 
@@ -533,8 +509,8 @@ jobs:
           fi
       - name: Publish release assets
         id: publish_release
-        # Keep v2+ here: `overwrite_files` is not supported by older pinned tags.
-        uses: softprops/action-gh-release@v2
+        # Keep v2+ here: `overwrite_files` is not supported by older major tags.
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
         with:
           tag_name: ${{ needs.resolve_tag.outputs.resolved_tag }}
           name: LocalPaste ${{ needs.resolve_tag.outputs.resolved_tag }}

@@ -34,21 +34,7 @@ jobs:
             VERIFY_TAG="${RAW_TAG}"
             SOURCE_LABEL="workflow input"
           else
-            WORKSPACE_VERSION="$(
-              awk '
-                $0 == "[workspace.package]" { in_workspace = 1; next }
-                /^\[/ { if (in_workspace) exit }
-                in_workspace && $1 == "version" {
-                  gsub(/"/, "", $3)
-                  print $3
-                  exit
-                }
-              ' Cargo.toml
-            )"
-            if [[ -z "${WORKSPACE_VERSION}" ]]; then
-              echo "failed to read [workspace.package].version from Cargo.toml" >&2
-              exit 1
-            fi
+            WORKSPACE_VERSION="$(bash .github/scripts/workspace_version.sh)"
             VERIFY_TAG="v${WORKSPACE_VERSION}"
             SOURCE_LABEL="workspace version"
           fi
