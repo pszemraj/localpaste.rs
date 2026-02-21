@@ -636,8 +636,8 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
     }
 }
 
+#[cfg(debug_assertions)]
 fn debug_assert_layout_sections_char_boundaries(job: &LayoutJob) {
-    #[cfg(debug_assertions)]
     for section in &job.sections {
         debug_assert!(
             job.text.is_char_boundary(section.byte_range.start),
@@ -649,6 +649,9 @@ fn debug_assert_layout_sections_char_boundaries(job: &LayoutJob) {
         );
     }
 }
+
+#[cfg(not(debug_assertions))]
+fn debug_assert_layout_sections_char_boundaries(_job: &LayoutJob) {}
 
 fn push_sections_with_default_gaps(
     job: &mut LayoutJob,
