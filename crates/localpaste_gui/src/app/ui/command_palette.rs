@@ -75,9 +75,7 @@ impl LocalPasteApp {
                     }
                     return;
                 }
-                if self.command_palette_selected >= total_items {
-                    self.command_palette_selected = total_items.saturating_sub(1);
-                }
+                self.clamp_command_palette_selection();
 
                 if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                     self.command_palette_selected =
@@ -209,6 +207,35 @@ impl LocalPasteApp {
                 self.queue_palette_copy(id, true);
             }
         }
+    }
+
+    /// Returns the current count of executable command rows visible in the palette.
+    ///
+    /// # Returns
+    /// Number of command rows after query filtering.
+    pub(crate) fn command_palette_action_count(&self) -> usize {
+        self.command_palette_actions().len()
+    }
+
+    /// Clamps the absolute palette selection index using command rows + result rows.
+    ///
+    /// # Arguments
+    /// - `results_len`: Number of paste-result rows currently available.
+    pub(crate) fn clamp_command_palette_selection_with_results_len(&mut self, results_len: usize) {
+        let total_items = self
+            .command_palette_action_count()
+            .saturating_add(results_len);
+        if total_items == 0 {
+            self.command_palette_selected = 0;
+            return;
+        }
+        if self.command_palette_selected >= total_items {
+            self.command_palette_selected = total_items.saturating_sub(1);
+        }
+    }
+
+    fn clamp_command_palette_selection(&mut self) {
+        self.clamp_command_palette_selection_with_results_len(self.palette_results().len());
     }
 
     fn command_palette_actions(&self) -> Vec<CommandPaletteItem> {

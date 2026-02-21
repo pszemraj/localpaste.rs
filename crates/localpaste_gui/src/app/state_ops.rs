@@ -224,10 +224,11 @@ impl LocalPasteApp {
                     return;
                 }
                 self.palette_search_results = items;
-                if self.command_palette_selected >= self.palette_search_results.len() {
-                    self.command_palette_selected =
-                        self.palette_search_results.len().saturating_sub(1);
-                }
+                // `command_palette_selected` is an absolute index across commands + results.
+                // Clamp in that same combined space so async result updates never remap into commands.
+                self.clamp_command_palette_selection_with_results_len(
+                    self.palette_search_results.len(),
+                );
             }
             CoreEvent::PasteDeleted { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);
