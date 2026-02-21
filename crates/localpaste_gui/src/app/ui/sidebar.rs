@@ -70,6 +70,7 @@ impl LocalPasteApp {
 
                 ui.add_space(10.0);
                 self.render_collection_filters(ui);
+                self.render_language_filters(ui);
 
                 ui.separator();
                 ui.add_space(4.0);
@@ -194,6 +195,38 @@ impl LocalPasteApp {
         });
         if let Some(collection) = pending_collection {
             self.set_active_collection(collection);
+        }
+    }
+
+    fn render_language_filters(&mut self, ui: &mut egui::Ui) {
+        let language_options = self.language_filter_options();
+        if language_options.is_empty() {
+            return;
+        }
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("Language filter")
+                .small()
+                .color(COLOR_TEXT_MUTED),
+        );
+
+        let mut selected_language = self.active_language_filter.clone();
+        let selected_text = selected_language
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("All languages")
+            .to_string();
+        egui::ComboBox::from_id_salt("sidebar_language_filter")
+            .selected_text(selected_text)
+            .width(180.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut selected_language, None, "All languages");
+                for lang in &language_options {
+                    ui.selectable_value(&mut selected_language, Some(lang.clone()), lang.as_str());
+                }
+            });
+        if selected_language != self.active_language_filter {
+            self.set_active_language_filter(selected_language);
         }
     }
 }

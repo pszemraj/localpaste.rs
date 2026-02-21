@@ -5,7 +5,7 @@ use eframe::egui;
 
 const AUTO_LANGUAGE: &str = "__auto__";
 
-fn apply_language_choice(
+pub(super) fn apply_language_choice(
     edit_language_is_manual: &mut bool,
     edit_language: &mut Option<String>,
     metadata_dirty: &mut bool,
@@ -27,6 +27,19 @@ fn apply_language_choice(
         *edit_language = Some(language_choice.to_string());
         *metadata_dirty = true;
     }
+}
+
+pub(super) fn selected_language_choice_text(language_choice: &str, auto_label: &str) -> String {
+    if language_choice == AUTO_LANGUAGE {
+        return auto_label.to_string();
+    }
+    localpaste_core::detection::canonical::manual_option_label(language_choice)
+        .unwrap_or(language_choice)
+        .to_string()
+}
+
+pub(super) fn auto_language_choice_key() -> &'static str {
+    AUTO_LANGUAGE
 }
 
 impl LocalPasteApp {
@@ -84,21 +97,14 @@ impl LocalPasteApp {
                 } else {
                     AUTO_LANGUAGE.to_string()
                 };
-                let selected_language_text = if language_choice == AUTO_LANGUAGE {
-                    "Auto".to_string()
-                } else {
-                    localpaste_core::detection::canonical::manual_option_label(
-                        language_choice.as_str(),
-                    )
-                    .unwrap_or(language_choice.as_str())
-                    .to_string()
-                };
+                let selected_language_text =
+                    selected_language_choice_text(language_choice.as_str(), "Auto");
                 egui::ComboBox::from_id_salt("drawer_language_select")
                     .selected_text(selected_language_text)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut language_choice,
-                            AUTO_LANGUAGE.to_string(),
+                            auto_language_choice_key().to_string(),
                             "Auto",
                         );
                         for option in localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
