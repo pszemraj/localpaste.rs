@@ -8,7 +8,7 @@
   "homepage": "https://github.com/pszemraj/localpaste.rs",
   "licenseFile": "../../LICENSE",
   "icons": [
-    "../../assets/icons/desktop_icon.png"
+    "localpaste.ico"
   ],
   "formats": [
     "wix"

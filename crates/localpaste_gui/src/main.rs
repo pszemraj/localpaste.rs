@@ -1,4 +1,5 @@
 //! Native rewrite binary entry point.
+#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 
 fn main() {
     let exit_code = run_and_report(localpaste_gui::run);
