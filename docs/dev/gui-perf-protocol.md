@@ -85,10 +85,11 @@ Perf gating in this protocol is based on the checks below:
 8. Long document paste (thousands of lines): rapid scroll and mid-document typing show no major hitching.
 9. Window resize reflow: no long plain-text gaps after resize.
 10. Trace sanity (when enabled):
-   - input trace: deterministic `virtual input frame` routing outcomes
-   - highlight trace: deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) with stale staged renders dropped.
-   - editor perf trace: `virtual_input_frame`, `virtual_edit_apply`, and `virtual_editor_render` events present with non-zero timing fields while typing in virtual editor mode.
-   - backend perf trace: list/search cache hit+miss counters and per-query latency logs (`localpaste_gui::backend_perf` target).
+
+- input trace: deterministic `virtual input frame` routing outcomes
+- highlight trace: deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) with stale staged renders dropped.
+- editor perf trace: `virtual_input_frame`, `virtual_edit_apply`, and `virtual_editor_render` events present with non-zero timing fields while typing in virtual editor mode.
+- backend perf trace: list/search cache hit+miss counters and per-query latency logs (`localpaste_gui::backend_perf` target).
 
 ## Related Docs
 
