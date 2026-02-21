@@ -43,7 +43,8 @@ impl LocalPasteApp {
                 shortcut_row(ui, "Enter", "Open selected command palette result");
                 shortcut_row(ui, "Esc", "Close command palette/window");
                 shortcut_row(ui, "Ctrl/Cmd+C", "Copy selected text");
-                shortcut_row(ui, "Ctrl/Cmd+V", "Paste; if editor unfocused, new paste");
+                shortcut_row(ui, "Ctrl/Cmd+V", "Paste in editor or fallback to new paste");
+                shortcut_row(ui, "Ctrl/Cmd+Shift+V", "Paste as new paste");
             });
         self.shortcut_help_open = open;
     }

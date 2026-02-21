@@ -118,6 +118,7 @@ pub(crate) struct LocalPasteApp {
     last_virtual_click_line: Option<usize>,
     last_virtual_click_count: u8,
     virtual_editor_active: bool,
+    paste_as_new_pending_frames: u8,
     syntect: SyntectSettings,
     db_path: String,
     locks: Arc<PasteLockManager>,
@@ -209,6 +210,7 @@ const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
+const PASTE_AS_NEW_PENDING_TTL_FRAMES: u8 = 3;
 
 struct StatusMessage {
     text: String,
@@ -395,11 +397,41 @@ impl LocalPasteApp {
             last_virtual_click_pos: None,
             last_virtual_click_line: None,
             last_virtual_click_count: 0,
+            paste_as_new_pending_frames: 0,
             editor_input_trace_enabled: env_flag_enabled("LOCALPASTE_EDITOR_INPUT_TRACE"),
             highlight_trace_enabled: env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE"),
         };
         app.request_refresh();
         Ok(app)
+    }
+
+    fn arm_paste_as_new_intent(&mut self) {
+        self.paste_as_new_pending_frames = PASTE_AS_NEW_PENDING_TTL_FRAMES;
+    }
+
+    fn request_paste_as_new(&mut self, ctx: &egui::Context) {
+        self.arm_paste_as_new_intent();
+        ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+    }
+
+    fn should_skip_virtual_command_for_paste_as_new(&self, command: &VirtualInputCommand) -> bool {
+        self.paste_as_new_pending_frames > 0 && matches!(command, VirtualInputCommand::Paste(_))
+    }
+
+    fn maybe_consume_explicit_paste_as_new(&mut self, pasted_text: &mut Option<String>) -> bool {
+        if self.paste_as_new_pending_frames == 0 {
+            return false;
+        }
+        if let Some(text) = pasted_text.take() {
+            self.paste_as_new_pending_frames = 0;
+            if !text.trim().is_empty() {
+                self.create_new_paste_with_content(text);
+                return true;
+            }
+            return false;
+        }
+        self.paste_as_new_pending_frames = self.paste_as_new_pending_frames.saturating_sub(1);
+        false
     }
 
     fn acquire_paste_lock(&mut self, id: &str) -> bool {
@@ -553,9 +585,7 @@ impl eframe::App for LocalPasteApp {
         let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
         let has_virtual_selection_pre = self.virtual_editor_state.selection_range().is_some();
         let focus_active_pre = self.is_virtual_editor_mode()
-            && (self.virtual_editor_active
-                || self.virtual_editor_state.has_focus
-                || egui_focus_pre);
+            && (self.virtual_editor_state.has_focus || egui_focus_pre);
         let copy_ready_pre = focus_active_pre || has_virtual_selection_pre;
         let mut saw_virtual_select_all = false;
         let mut saw_virtual_copy = false;
@@ -576,6 +606,9 @@ impl eframe::App for LocalPasteApp {
             let commands = ctx.input(|input| commands_from_events(&input.events, true));
             input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
             for command in commands {
+                if self.should_skip_virtual_command_for_paste_as_new(&command) {
+                    continue;
+                }
                 match classify_virtual_command(&command, focus_active_pre) {
                     VirtualCommandBucket::DeferredCopy => {
                         saw_virtual_copy = true;
@@ -618,6 +651,7 @@ impl eframe::App for LocalPasteApp {
         let mut fallback_virtual_undo = false;
         let mut fallback_virtual_redo = false;
         let mut request_virtual_paste = false;
+        let mut request_paste_as_new = false;
         let mut pasted_text: Option<String> = None;
         let mut sidebar_direction: i32 = 0;
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
@@ -654,6 +688,9 @@ impl eframe::App for LocalPasteApp {
             if plain_command && input.key_pressed(egui::Key::I) {
                 self.properties_drawer_open = !self.properties_drawer_open;
             }
+            if command_shift && input.key_pressed(egui::Key::V) {
+                request_paste_as_new = true;
+            }
             if input.key_pressed(egui::Key::F1) {
                 self.shortcut_help_open = !self.shortcut_help_open;
             }
@@ -687,7 +724,11 @@ impl eframe::App for LocalPasteApp {
                 if focus_active_pre && input.key_pressed(egui::Key::Y) && !saw_virtual_redo {
                     fallback_virtual_redo = true;
                 }
-                if focus_active_pre && input.key_pressed(egui::Key::V) && !saw_virtual_paste {
+                if focus_active_pre
+                    && input.key_pressed(egui::Key::V)
+                    && !input.modifiers.shift
+                    && !saw_virtual_paste
+                {
                     request_virtual_paste = true;
                 }
             }
@@ -753,6 +794,9 @@ impl eframe::App for LocalPasteApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
             }
         }
+        if request_paste_as_new {
+            self.request_paste_as_new(ctx);
+        }
 
         if self.highlight_staged.is_some() {
             self.maybe_apply_staged_highlight(Instant::now());
@@ -802,6 +846,7 @@ impl eframe::App for LocalPasteApp {
         let virtual_paste_consumed = immediate_apply_result.pasted
             || deferred_focus_apply_result.pasted
             || deferred_copy_apply_result.pasted;
+        let paste_as_new_consumed = self.maybe_consume_explicit_paste_as_new(&mut pasted_text);
         if !ctx.wants_keyboard_input() && !focus_active_post && !virtual_paste_consumed {
             if let Some(text) = pasted_text {
                 if !text.trim().is_empty() {
@@ -819,7 +864,7 @@ impl eframe::App for LocalPasteApp {
             cut: immediate_apply_result.cut
                 || deferred_focus_apply_result.cut
                 || deferred_copy_apply_result.cut,
-            pasted: virtual_paste_consumed,
+            pasted: virtual_paste_consumed || paste_as_new_consumed,
         };
         let selection_chars = self
             .virtual_editor_state

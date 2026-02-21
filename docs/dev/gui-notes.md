@@ -87,12 +87,15 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - Sidebar includes seeded pastes such as `perf-medium-python`, `perf-100kb-python`, `perf-300kb-rust`, `perf-scroll-5k-lines`.
 3. Focus behavior:
    - Click editor, type a character, caret remains visible and blinking.
+   - Focus stays in editor during in-editor interaction.
+   - Focus blurs only when clicking outside editor or when the app window loses focus.
 4. Core shortcuts:
    - `Ctrl/Cmd+N`: creates/selects a new paste.
    - `Ctrl/Cmd+S`: save transitions status from dirty -> saved.
    - `Ctrl/Cmd+Delete`: deletes selected paste and list updates.
    - `Ctrl/Cmd+F`: focuses sidebar search input.
    - `Ctrl/Cmd+Shift+P`: opens command palette.
+   - `Ctrl/Cmd+Shift+V`: requests paste as a new paste.
    - `Ctrl/Cmd+K`: toggles command palette (legacy alias).
    - `Ctrl/Cmd+I`: toggles Properties drawer.
 5. Command palette actions:
@@ -108,6 +111,7 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - Rename in the editor header applies on `Enter` and on blur (without requiring Apply click).
 8. Clipboard/editing baseline:
    - `Ctrl/Cmd+C`, `Ctrl/Cmd+X`, `Ctrl/Cmd+V`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Y` behave correctly in virtual editor mode.
+   - `Ctrl/Cmd+Shift+V` creates a new paste from clipboard regardless of editor focus.
    - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not switch sidebar filters.
 9. Virtual editor selection:
    - Double-click selects word.

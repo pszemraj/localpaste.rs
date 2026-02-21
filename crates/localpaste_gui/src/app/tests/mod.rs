@@ -169,6 +169,7 @@ fn make_app() -> TestHarness {
         last_virtual_click_pos: None,
         last_virtual_click_line: None,
         last_virtual_click_count: 0,
+        paste_as_new_pending_frames: 0,
         editor_input_trace_enabled: false,
         highlight_trace_enabled: false,
     };
@@ -195,6 +196,7 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 }
 
 mod collections_and_search;
+mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod save_and_metadata;
 mod shutdown_behavior;

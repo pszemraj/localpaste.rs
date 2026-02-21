@@ -19,8 +19,8 @@ fn run_virtual_editor_frame(
 ) -> bool {
     let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
     let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
-    let focus_active_pre = app.is_virtual_editor_mode()
-        && (app.virtual_editor_active || app.virtual_editor_state.has_focus || egui_focus_pre);
+    let focus_active_pre =
+        app.is_virtual_editor_mode() && (app.virtual_editor_state.has_focus || egui_focus_pre);
 
     let mut immediate_focus_commands = Vec::new();
     let mut deferred_focus_commands = Vec::new();
@@ -253,6 +253,7 @@ fn virtual_command_classification_respects_focus_policy() {
 #[test]
 fn virtual_editor_focus_transition_matrix() {
     struct FocusCase {
+        name: &'static str,
         focus_editor_next: bool,
         state_has_focus: bool,
         frames: Vec<Vec<egui::Event>>,
@@ -261,18 +262,21 @@ fn virtual_editor_focus_transition_matrix() {
 
     let cases = [
         FocusCase {
+            name: "focus-editor-next promotes focus",
             focus_editor_next: true,
             state_has_focus: false,
             frames: vec![Vec::new(), Vec::new()],
             expect_focus: true,
         },
         FocusCase {
+            name: "state focus heals idle frame",
             focus_editor_next: false,
             state_has_focus: true,
             frames: vec![Vec::new()],
-            expect_focus: false,
+            expect_focus: true,
         },
         FocusCase {
+            name: "state focus survives tab key frame",
             focus_editor_next: false,
             state_has_focus: true,
             frames: vec![vec![key_event(egui::Key::Tab, egui::Modifiers::default())]],
@@ -301,10 +305,16 @@ fn virtual_editor_focus_transition_matrix() {
         }
 
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-        assert_eq!(ctx.memory(|m| m.has_focus(editor_id)), case.expect_focus);
         assert_eq!(
-            harness.app.virtual_editor_state.has_focus,
-            case.expect_focus
+            ctx.memory(|m| m.has_focus(editor_id)),
+            case.expect_focus,
+            "focus mismatch for case: {}",
+            case.name
+        );
+        assert_eq!(
+            harness.app.virtual_editor_state.has_focus, case.expect_focus,
+            "state mismatch for case: {}",
+            case.name
         );
     }
 }
