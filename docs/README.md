@@ -10,6 +10,7 @@ When two docs overlap, defer to the "Primary Source" listed below.
 | --- | --- |
 | Product overview + quick start | [README.md](../README.md) |
 | Build/run/validation workflow | [docs/dev/devlog.md](dev/devlog.md) |
+| Tooling CLI contracts (`check-loc`, `check-ast-dupes`) | [docs/dev/devlog.md#tooling-cli-contracts](dev/devlog.md#tooling-cli-contracts) |
 | GUI release pipeline + artifact contract | [docs/release-gui.md](release-gui.md) |
 | System/runtime architecture | [docs/architecture.md](architecture.md) |
 | Detection + normalization + highlighting | [docs/language-detection.md](language-detection.md) |

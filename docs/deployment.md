@@ -224,17 +224,14 @@ curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "S
 
 ## Embedded API Address Discovery (.api-addr)
 
-This section is operational-only. Discovery/trust behavior is defined in:
+Operational use:
 
-- [architecture.md](architecture.md) (discovery + trust model)
-- [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs) (actual endpoint resolution logic)
+- GUI writes the active embedded API endpoint to `DB_PATH/.api-addr`.
+- `lpaste` consumes discovery only when `--server` and `LP_SERVER` are unset.
+- Use `lpaste --no-discovery ...` to disable discovery.
+- Prefer explicit `--server`/`LP_SERVER` for deterministic automation targeting.
 
-Operational summary:
+Canonical behavior contracts (trust checks, fallback rules, and header verification):
 
-- GUI sessions write the active embedded API endpoint to `.api-addr`.
-- `lpaste` checks `.api-addr` only when `--server` and `LP_SERVER` are unset.
-- Discovered endpoints must pass LocalPaste identity validation; stale/hijacked entries are ignored.
-- If discovery validation fails, `lpaste` falls back to the default local endpoint.
-- Use `lpaste --no-discovery ...` to disable discovery fallback.
-- Use explicit `--server` or `LP_SERVER` when you need deterministic endpoint targeting.
-- If `lpaste` cannot connect while resolved via `default`, treat mixed-version default endpoint mismatch as likely and set `--server`/`LP_SERVER` explicitly.
+- [architecture.md](architecture.md#10-discovery-and-trust)
+- [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)

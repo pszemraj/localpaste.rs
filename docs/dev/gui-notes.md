@@ -54,17 +54,18 @@ Use this checklist when touching detection/highlight/filter code.
    - JSON: `{\"key\":\"value\"}` -> `json`
 3. Open Properties drawer, set language to `Plain text`, save, and verify chip reads `plain` (not `auto`).
 4. With that same paste still manual plain, edit content into obvious Rust and verify language remains `plain`.
-5. Switch language back to `Auto`, save, and verify content re-detects to `rust`.
-6. Validate alias interoperability in UI filtering:
+5. Switch language back to `Auto`, save, and verify the language chip shows unresolved auto state.
+6. Make a content edit and verify auto-detection resolves and locks to `rust`.
+7. Validate alias interoperability in UI filtering:
    - Set active language filter to `cs`; verify both `csharp` and `cs` pastes remain visible.
    - Set active language filter to `shell`; verify `bash`/`sh` labeled content matches.
-7. Validate syntax resolver behavior against the canonical matrix in
+8. Validate syntax resolver behavior against the canonical matrix in
    [docs/language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.
-8. Validate large-buffer guardrail:
+9. Validate large-buffer guardrail:
    - Paste content >= 256KB and verify display is plain regardless of language metadata.
-9. Re-run shortcut sanity checks after language UI edits:
+10. Re-run shortcut sanity checks after language UI edits:
    - `Ctrl/Cmd+S`, `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+F`, `Ctrl/Cmd+Shift+P`.
 
 ## Manual GUI Human-Step Checklist (Comprehensive)
