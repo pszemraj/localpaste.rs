@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag-like version string used for packaging metadata (for example v0.4.4)
-        required: true
-        default: v0.4.4
+        description: Optional tag-like version string used for packaging metadata (for example vX.Y.Z). If empty, derives from workspace version.
+        required: false
         type: string
 
 permissions:
@@ -21,7 +20,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 90
     env:
-      VERIFY_TAG: ${{ github.event.inputs.tag }}
+      VERIFY_TAG_INPUT: ${{ github.event.inputs.tag }}
       TARGET: aarch64-apple-darwin
       ASSET_SUFFIX: macos-aarch64
       PACKAGER_CONFIG: packaging/macos/packager.json
@@ -31,18 +30,45 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate verify tag input
+      - name: Resolve verify tag
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${VERIFY_TAG}" ]]; then
-            echo "VERIFY_TAG cannot be empty" >&2
-            exit 1
+          RAW_TAG="$(printf '%s' "${VERIFY_TAG_INPUT:-}" | xargs)"
+          if [[ -n "${RAW_TAG}" ]]; then
+            VERIFY_TAG="${RAW_TAG}"
+            SOURCE_LABEL="workflow input"
+          else
+            WORKSPACE_VERSION="$(
+              awk '
+                $0 == "[workspace.package]" { in_workspace = 1; next }
+                /^\[/ { if (in_workspace) exit }
+                in_workspace && $1 == "version" {
+                  gsub(/"/, "", $3)
+                  print $3
+                  exit
+                }
+              ' Cargo.toml
+            )"
+            if [[ -z "${WORKSPACE_VERSION}" ]]; then
+              echo "failed to read [workspace.package].version from Cargo.toml" >&2
+              exit 1
+            fi
+            VERIFY_TAG="v${WORKSPACE_VERSION}"
+            SOURCE_LABEL="workspace version"
           fi
+
           if [[ "${VERIFY_TAG}" != v* ]]; then
             echo "VERIFY_TAG must start with 'v' (got: ${VERIFY_TAG})" >&2
             exit 1
           fi
+
+          echo "VERIFY_TAG=${VERIFY_TAG}" >> "$GITHUB_ENV"
+          {
+            echo "### Verify tag"
+            echo
+            echo "Using ${SOURCE_LABEL}: ${VERIFY_TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python
         uses: actions/setup-python@v5
