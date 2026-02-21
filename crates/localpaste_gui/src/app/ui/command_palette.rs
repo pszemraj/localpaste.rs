@@ -4,6 +4,28 @@ use super::super::*;
 use crate::backend::CoreCmd;
 use eframe::egui::{self, RichText};
 
+#[derive(Clone, Debug)]
+pub(crate) enum CommandPaletteAction {
+    NewPaste,
+    DeleteSelected,
+    SaveNow,
+    SaveMetadata,
+    FocusSearch,
+    ToggleProperties,
+    RefreshList,
+    OpenPaste(String),
+    DeletePaste(String),
+    CopyPasteRaw(String),
+    CopyPasteFenced(String),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CommandPaletteItem {
+    pub(crate) label: String,
+    pub(crate) hint: String,
+    pub(crate) action: CommandPaletteAction,
+}
+
 impl LocalPasteApp {
     /// Renders the command palette modal and handles quick-action input.
     ///
@@ -14,10 +36,7 @@ impl LocalPasteApp {
             return;
         }
 
-        let mut pending_open: Option<String> = None;
-        let mut pending_delete: Option<String> = None;
-        let mut pending_copy_raw: Option<String> = None;
-        let mut pending_copy_fenced: Option<String> = None;
+        let mut pending_action: Option<CommandPaletteAction> = None;
 
         egui::Window::new("Command Palette")
             .id(egui::Id::new("command_palette_modal"))
@@ -29,7 +48,7 @@ impl LocalPasteApp {
                 let mut query_buf = self.command_palette_query.clone();
                 let query_resp = ui.add(
                     egui::TextEdit::singleline(&mut query_buf)
-                        .hint_text("Type to search... (Enter=open, Esc=close)"),
+                        .hint_text("Run a command or search pastes..."),
                 );
                 query_resp.request_focus();
                 if query_resp.changed() {
@@ -41,43 +60,68 @@ impl LocalPasteApp {
                     return;
                 }
 
+                let actions = self.command_palette_actions();
                 let results = self.palette_results();
-                if results.is_empty() {
+                let total_items = actions.len().saturating_add(results.len());
+                if total_items == 0 {
                     ui.add_space(8.0);
                     let query = self.command_palette_query.trim();
                     if !query.is_empty() && self.palette_search_last_sent != query {
                         ui.label(RichText::new("Searching...").color(COLOR_TEXT_MUTED));
                     } else {
-                        ui.label(RichText::new("No results").color(COLOR_TEXT_MUTED));
+                        ui.label(RichText::new("No commands or results").color(COLOR_TEXT_MUTED));
                     }
                     return;
                 }
-                if self.command_palette_selected >= results.len() {
-                    self.command_palette_selected = results.len().saturating_sub(1);
+                if self.command_palette_selected >= total_items {
+                    self.command_palette_selected = total_items.saturating_sub(1);
                 }
 
                 if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                     self.command_palette_selected =
-                        (self.command_palette_selected + 1).min(results.len().saturating_sub(1));
+                        (self.command_palette_selected + 1).min(total_items.saturating_sub(1));
                 }
                 if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
                     self.command_palette_selected = self.command_palette_selected.saturating_sub(1);
                 }
-                if ui.input(|input| input.key_pressed(egui::Key::Enter))
-                    && self.command_palette_selected < results.len()
-                {
-                    pending_open = Some(results[self.command_palette_selected].id.clone());
+                if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                    if self.command_palette_selected < actions.len() {
+                        pending_action =
+                            Some(actions[self.command_palette_selected].action.clone());
+                    } else {
+                        let idx = self.command_palette_selected.saturating_sub(actions.len());
+                        if idx < results.len() {
+                            pending_action =
+                                Some(CommandPaletteAction::OpenPaste(results[idx].id.clone()));
+                        }
+                    }
                 }
 
                 ui.add_space(8.0);
+                ui.label(RichText::new("Commands").small().color(COLOR_TEXT_MUTED));
+                for (idx, item) in actions.iter().enumerate() {
+                    let selected = idx == self.command_palette_selected;
+                    let response = ui.selectable_label(
+                        selected,
+                        RichText::new(format!("{}  {}", item.label, item.hint)),
+                    );
+                    if response.clicked() {
+                        self.command_palette_selected = idx;
+                        pending_action = Some(item.action.clone());
+                    }
+                }
+
+                ui.add_space(6.0);
+                ui.label(RichText::new("Pastes").small().color(COLOR_TEXT_MUTED));
                 let row_height = ui.spacing().interact_size.y + 6.0;
                 egui::ScrollArea::vertical()
-                    .max_height(360.0)
+                    .max_height(320.0)
                     .auto_shrink([false; 2])
                     .show_rows(ui, row_height, results.len(), |ui, range| {
                         for idx in range {
                             if let Some(item) = results.get(idx) {
-                                let selected = idx == self.command_palette_selected;
+                                let absolute_idx = actions.len().saturating_add(idx);
+                                let selected = absolute_idx == self.command_palette_selected;
                                 ui.horizontal(|ui| {
                                     let lang = display_language_label(
                                         item.language.as_deref(),
@@ -89,17 +133,24 @@ impl LocalPasteApp {
                                         .selectable_label(selected, RichText::new(label))
                                         .clicked()
                                     {
-                                        self.command_palette_selected = idx;
-                                        pending_open = Some(item.id.clone());
+                                        self.command_palette_selected = absolute_idx;
+                                        pending_action =
+                                            Some(CommandPaletteAction::OpenPaste(item.id.clone()));
                                     }
                                     if ui.small_button("Delete").clicked() {
-                                        pending_delete = Some(item.id.clone());
+                                        pending_action = Some(CommandPaletteAction::DeletePaste(
+                                            item.id.clone(),
+                                        ));
                                     }
                                     if ui.small_button("Copy").clicked() {
-                                        pending_copy_raw = Some(item.id.clone());
+                                        pending_action = Some(CommandPaletteAction::CopyPasteRaw(
+                                            item.id.clone(),
+                                        ));
                                     }
                                     if ui.small_button("Copy Fenced").clicked() {
-                                        pending_copy_fenced = Some(item.id.clone());
+                                        pending_action = Some(
+                                            CommandPaletteAction::CopyPasteFenced(item.id.clone()),
+                                        );
                                     }
                                 });
                             }
@@ -107,18 +158,113 @@ impl LocalPasteApp {
                     });
             });
 
-        if let Some(id) = pending_open {
-            self.open_palette_selection(id);
+        if let Some(action) = pending_action {
+            self.execute_command_palette_action(action);
         }
-        if let Some(id) = pending_delete {
-            self.send_palette_delete(id);
+    }
+
+    fn execute_command_palette_action(&mut self, action: CommandPaletteAction) {
+        match action {
+            CommandPaletteAction::NewPaste => {
+                self.create_new_paste();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::DeleteSelected => {
+                self.delete_selected();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::SaveNow => {
+                self.save_now();
+                self.save_metadata_now();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::SaveMetadata => {
+                self.save_metadata_now();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::FocusSearch => {
+                self.search_focus_requested = true;
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::ToggleProperties => {
+                self.properties_drawer_open = !self.properties_drawer_open;
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::RefreshList => {
+                self.request_refresh();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::OpenPaste(id) => {
+                self.open_palette_selection(id);
+            }
+            CommandPaletteAction::DeletePaste(id) => {
+                self.send_palette_delete(id);
+            }
+            CommandPaletteAction::CopyPasteRaw(id) => {
+                self.queue_palette_copy(id, false);
+            }
+            CommandPaletteAction::CopyPasteFenced(id) => {
+                self.queue_palette_copy(id, true);
+            }
         }
-        if let Some(id) = pending_copy_raw {
-            self.queue_palette_copy(id, false);
+    }
+
+    fn command_palette_actions(&self) -> Vec<CommandPaletteItem> {
+        let query = self.command_palette_query.trim().to_ascii_lowercase();
+        let mut items = Vec::new();
+
+        items.push(CommandPaletteItem {
+            label: "New paste".to_string(),
+            hint: "(Ctrl/Cmd+N)".to_string(),
+            action: CommandPaletteAction::NewPaste,
+        });
+        if self.selected_id.is_some() {
+            items.push(CommandPaletteItem {
+                label: "Delete selected".to_string(),
+                hint: "(Ctrl/Cmd+Delete)".to_string(),
+                action: CommandPaletteAction::DeleteSelected,
+            });
+            items.push(CommandPaletteItem {
+                label: "Save now".to_string(),
+                hint: "(Ctrl/Cmd+S)".to_string(),
+                action: CommandPaletteAction::SaveNow,
+            });
+            items.push(CommandPaletteItem {
+                label: "Save metadata".to_string(),
+                hint: "persist title/type/tags".to_string(),
+                action: CommandPaletteAction::SaveMetadata,
+            });
         }
-        if let Some(id) = pending_copy_fenced {
-            self.queue_palette_copy(id, true);
+        items.push(CommandPaletteItem {
+            label: "Focus sidebar search".to_string(),
+            hint: "(Ctrl/Cmd+F)".to_string(),
+            action: CommandPaletteAction::FocusSearch,
+        });
+        items.push(CommandPaletteItem {
+            label: "Toggle properties".to_string(),
+            hint: "(Ctrl/Cmd+I / Ctrl/Cmd+P)".to_string(),
+            action: CommandPaletteAction::ToggleProperties,
+        });
+        items.push(CommandPaletteItem {
+            label: "Refresh list".to_string(),
+            hint: "reload from backend".to_string(),
+            action: CommandPaletteAction::RefreshList,
+        });
+
+        if query.is_empty() {
+            return items;
         }
+        items
+            .into_iter()
+            .filter(|item| {
+                let haystack = format!(
+                    "{} {}",
+                    item.label.to_ascii_lowercase(),
+                    item.hint.to_ascii_lowercase()
+                );
+                haystack.contains(query.as_str())
+            })
+            .collect()
     }
 
     /// Queues a copy action for a palette result, loading selection if needed.
