@@ -669,8 +669,7 @@ impl eframe::App for LocalPasteApp {
             if command_shift && input.key_pressed(egui::Key::V) {
                 request_paste_as_new = true;
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::V) && !input.modifiers.shift
-            {
+            if plain_command && input.key_pressed(egui::Key::V) {
                 plain_paste_shortcut_pressed = true;
             }
             if input.key_pressed(egui::Key::F1) {
