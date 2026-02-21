@@ -504,25 +504,12 @@ jobs:
           fi
 
           hdiutil verify "${DMG_PATH}"
-
-          DEVICE=""
-          cleanup() {
-            if [[ -n "${DEVICE}" ]]; then
-              hdiutil detach "${DEVICE}" -quiet || true
-            fi
-          }
-          trap cleanup EXIT
-
-          ATTACH_OUTPUT="$(hdiutil attach "${DMG_PATH}" -nobrowse -readonly -noautoopen)"
-          DEVICE="$(awk '/^\/dev\// { print $1; exit }' <<< "${ATTACH_OUTPUT}")"
-          if [[ -z "${DEVICE}" ]]; then
-            echo "failed to parse mounted device from hdiutil output" >&2
-            echo "${ATTACH_OUTPUT}" >&2
+          hdiutil imageinfo "${DMG_PATH}" > /tmp/localpaste-dmg-imageinfo.txt
+          if ! grep -Eq "Format:\s+UD" /tmp/localpaste-dmg-imageinfo.txt; then
+            echo "unexpected DMG format reported by hdiutil imageinfo" >&2
+            cat /tmp/localpaste-dmg-imageinfo.txt >&2
             exit 1
           fi
-
-          hdiutil detach "${DEVICE}" -quiet
-          DEVICE=""
 
       - name: Collect release assets
         shell: bash
