@@ -352,7 +352,11 @@ jobs:
               echo "### macOS signing/notarization skipped"
               echo
               echo "Missing required secrets: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
-              echo "Unsigned macOS packaging build will continue."
+              if [[ "${SOURCE_MODE}" == "release_tag" ]]; then
+                echo "Permissive release mode: macOS artifacts will be published unsigned/unnotarized."
+              else
+                echo "Verification mode: unsigned macOS packaging build will continue."
+              fi
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -563,6 +567,7 @@ jobs:
 
       - name: Publish release assets
         id: publish_release
+        # Keep v2+ here: `overwrite_files` is not supported by older pinned tags.
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve_tag.outputs.resolved_tag }}
@@ -582,10 +587,11 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
         run: |
           set -euo pipefail
-          NOTE='macOS note: if Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security or run `xattr -cr /Applications/LocalPaste.app`.'
+          NOTE_PREFIX='macOS note:'
+          NOTE='macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts. If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security or run `xattr -cr /Applications/LocalPaste.app`.'
           CURRENT_BODY="$(gh release view "${RELEASE_TAG}" --json body --jq .body)"
 
-          if grep -Fq "${NOTE}" <<< "${CURRENT_BODY}"; then
+          if grep -Fq "${NOTE_PREFIX}" <<< "${CURRENT_BODY}"; then
             echo "macOS Gatekeeper note already present in release body"
             exit 0
           fi

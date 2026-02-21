@@ -33,15 +33,20 @@ Windows and Linux artifacts are always expected for successful release runs.
 
 ## macOS Signing And Notarization
 
-`release_tag` mode requires Apple signing/notarization secrets (`APPLE_SIGNING_*`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) for macOS artifact publication.
+Signing/notarization runs only when Apple secrets are present
+(`APPLE_SIGNING_*`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
 
 Behavior when secrets are missing:
 
-- `release_tag`: macOS artifact build is skipped; release continues for other platforms.
+- `release_tag`: macOS artifacts are still built/published in permissive mode as unsigned/unnotarized.
 - `current_ref`: unsigned macOS packaging build is allowed for verification runs.
+
+Behavior when secrets are present:
+
+- `release_tag` and `current_ref`: workflow signs, notarizes, and staples macOS artifacts.
 
 ## Release Notes Gatekeeper Note
 
 When a `.dmg` is present in published assets, the workflow appends this one-line macOS note to the release body (idempotent):
 
-`macOS note: if Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security or run \`xattr -cr /Applications/LocalPaste.app\`.`
+`macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts. If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security or run \`xattr -cr /Applications/LocalPaste.app\`.`

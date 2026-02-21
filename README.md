@@ -79,9 +79,9 @@ Platform coverage:
 
 - Windows x64: `.msi` + `.zip`
 - Linux x64: `.AppImage` + `.tar.gz`
-- macOS arm64: `.dmg` + `.app.tar.gz` when signing/notarization secrets are available
+- macOS arm64: `.dmg` + `.app.tar.gz` (may be unsigned/unnotarized when Apple signing secrets are unavailable)
 
-Release workflow behavior, naming contract, and macOS skip rules are defined in
+Release workflow behavior, naming contract, and macOS signing policy are defined in
 [`docs/release-gui.md`](docs/release-gui.md).
 
 Checksum verification examples:
