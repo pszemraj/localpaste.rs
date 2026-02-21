@@ -66,19 +66,11 @@ pub(super) fn auto_language_choice_key() -> &'static str {
 
 /// Returns the compact label used for the auto language selector state.
 ///
-/// # Arguments
-/// - `language`: Current resolved language value, if any.
-/// - `is_large`: Whether content is above plain-render threshold.
-///
 /// # Returns
-/// `"Auto"` when unresolved, otherwise the resolved language label.
-pub(super) fn auto_language_status_label(language: Option<&str>, is_large: bool) -> String {
-    let status = display_language_label(language, false, is_large);
-    if status == "auto" {
-        "Auto".to_string()
-    } else {
-        selected_language_choice_text(status.as_str(), status.as_str())
-    }
+/// Static `Auto` label so combo-box selected text always matches the selected
+/// option value when auto mode is active.
+pub(super) fn auto_language_status_label() -> String {
+    "Auto".to_string()
 }
 
 impl LocalPasteApp {
@@ -137,7 +129,7 @@ impl LocalPasteApp {
                     AUTO_LANGUAGE.to_string()
                 };
                 let previous_language_choice = language_choice.clone();
-                let auto_label = auto_language_status_label(self.edit_language.as_deref(), false);
+                let auto_label = auto_language_status_label();
                 let selected_language_text =
                     selected_language_choice_text(language_choice.as_str(), auto_label.as_str());
                 egui::ComboBox::from_id_salt("drawer_language_select")
@@ -274,8 +266,6 @@ mod tests {
 
     #[test]
     fn auto_language_status_label_matrix() {
-        assert_eq!(auto_language_status_label(None, false), "Auto");
-        assert_eq!(auto_language_status_label(Some("sql"), false), "SQL");
-        assert_eq!(auto_language_status_label(Some("rust"), true), "Plain text");
+        assert_eq!(auto_language_status_label(), "Auto");
     }
 }

@@ -76,8 +76,7 @@ impl LocalPasteApp {
                             auto_language_choice_key().to_string()
                         };
                         let previous_language_choice = language_choice.clone();
-                        let auto_label =
-                            auto_language_status_label(self.edit_language.as_deref(), is_large);
+                        let auto_label = auto_language_status_label();
                         let selected_language_text = selected_language_choice_text(
                             language_choice.as_str(),
                             auto_label.as_str(),

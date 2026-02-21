@@ -47,6 +47,10 @@ pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
     }
     // Explicit manual->auto toggle clears previously locked classification so
     // auto state only reflects "unresolved/pending detection".
+    //
+    // When the row is already auto-managed (`language_is_manual == false`),
+    // metadata-only updates intentionally preserve an existing resolved
+    // language value (legacy compatibility and no-surprise saves).
     let switched_manual_to_auto =
         was_manual_before_update && update.language_is_manual == Some(false);
     if switched_manual_to_auto && update.language.is_none() && !content_changed {
