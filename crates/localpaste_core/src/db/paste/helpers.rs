@@ -44,8 +44,11 @@ pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
     if let Some(is_manual) = update.language_is_manual {
         paste.language_is_manual = is_manual;
     }
+    let manual_mode_after_update = update
+        .language_is_manual
+        .unwrap_or(paste.language_is_manual);
     let should_auto_detect = update.language.is_none()
-        && !paste.language_is_manual
+        && !manual_mode_after_update
         && (content_changed || update.language_is_manual == Some(false));
     if should_auto_detect {
         paste.language = detect_language(&paste.content);

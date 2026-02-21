@@ -232,6 +232,54 @@ fn update_language_transitions_between_manual_and_auto_modes() {
 }
 
 #[test]
+fn manual_language_is_not_overridden_by_content_updates() {
+    let (db, _temp) = setup_test_db();
+    let paste = Paste::new(
+        "name: alpha\nvalue: 1\n".to_string(),
+        "lang-lock".to_string(),
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let set_manual = UpdatePasteRequest {
+        content: None,
+        name: None,
+        language: Some("markdown".to_string()),
+        language_is_manual: Some(true),
+        folder_id: None,
+        tags: None,
+    };
+    let manual = db
+        .pastes
+        .update(&paste_id, set_manual)
+        .expect("set manual")
+        .expect("paste exists");
+    assert_eq!(manual.language.as_deref(), Some("markdown"));
+    assert!(manual.language_is_manual);
+
+    let content_update = UpdatePasteRequest {
+        content: Some("---\nkey: value\nnested:\n  - one\n".to_string()),
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: None,
+        tags: None,
+    };
+    let updated = db
+        .pastes
+        .update(&paste_id, content_update)
+        .expect("content update")
+        .expect("paste exists");
+
+    assert_eq!(
+        updated.language.as_deref(),
+        Some("markdown"),
+        "manual language should persist across content edits"
+    );
+    assert!(updated.language_is_manual);
+}
+
+#[test]
 fn corrupt_rows_surface_serialization_errors_without_removal() {
     let (db, _temp) = setup_test_db();
 
