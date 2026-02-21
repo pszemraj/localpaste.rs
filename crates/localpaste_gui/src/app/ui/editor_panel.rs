@@ -13,6 +13,7 @@ impl LocalPasteApp {
     /// # Panics
     /// Panics if a virtual-editor highlight row fails internal consistency checks.
     pub(crate) fn render_editor_panel(&mut self, ctx: &egui::Context) {
+        self.text_editor_has_focus = false;
         egui::CentralPanel::default().show(ctx, |ui| {
             let selected_meta = self.selected_paste.as_ref().map(|paste| paste.id.clone());
 
@@ -386,6 +387,7 @@ impl LocalPasteApp {
                             None
                         };
                         let output = edit.layouter(&mut layouter).show(ui);
+                        self.text_editor_has_focus = output.response.has_focus();
                         if let Some(previous) = previous_double_click {
                             ui.ctx().options_mut(|options| {
                                 options.input_options.max_double_click_delay = previous;

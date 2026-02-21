@@ -147,3 +147,69 @@ fn explicit_paste_as_new_skips_virtual_paste_commands() {
         &VirtualInputCommand::InsertText("x".to_string())
     ));
 }
+
+#[test]
+fn plain_paste_shortcut_routes_by_editor_focus_contract() {
+    struct Case {
+        mode: EditorMode,
+        editor_focus_pre: bool,
+        saw_virtual_paste: bool,
+        expect_virtual_request: bool,
+        expect_new_paste_request: bool,
+    }
+
+    let cases = [
+        Case {
+            mode: EditorMode::VirtualEditor,
+            editor_focus_pre: true,
+            saw_virtual_paste: false,
+            expect_virtual_request: true,
+            expect_new_paste_request: false,
+        },
+        Case {
+            mode: EditorMode::VirtualEditor,
+            editor_focus_pre: true,
+            saw_virtual_paste: true,
+            expect_virtual_request: false,
+            expect_new_paste_request: false,
+        },
+        Case {
+            mode: EditorMode::VirtualEditor,
+            editor_focus_pre: false,
+            saw_virtual_paste: false,
+            expect_virtual_request: false,
+            expect_new_paste_request: true,
+        },
+        Case {
+            mode: EditorMode::TextEdit,
+            editor_focus_pre: true,
+            saw_virtual_paste: false,
+            expect_virtual_request: false,
+            expect_new_paste_request: false,
+        },
+        Case {
+            mode: EditorMode::TextEdit,
+            editor_focus_pre: false,
+            saw_virtual_paste: false,
+            expect_virtual_request: false,
+            expect_new_paste_request: true,
+        },
+        Case {
+            mode: EditorMode::VirtualPreview,
+            editor_focus_pre: false,
+            saw_virtual_paste: false,
+            expect_virtual_request: false,
+            expect_new_paste_request: true,
+        },
+    ];
+
+    for case in cases {
+        let mut harness = make_app();
+        harness.app.editor_mode = case.mode;
+        let (request_virtual, request_new) = harness
+            .app
+            .route_plain_paste_shortcut(case.editor_focus_pre, case.saw_virtual_paste);
+        assert_eq!(request_virtual, case.expect_virtual_request);
+        assert_eq!(request_new, case.expect_new_paste_request);
+    }
+}

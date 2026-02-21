@@ -41,6 +41,8 @@ For perf validation steps/gates, use
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
 - Virtual preview triple-click selects the full logical line, including terminal long lines even when rendering is capped.
 - Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
+- `Ctrl/Cmd+V` is the primary paste contract: when editor is focused it inserts; when editor is not focused it creates a new paste from clipboard.
+- `Ctrl/Cmd+Shift+V` remains available as an explicit "force paste as new" fallback.
 
 ## Language/Highlight QA (Magika + Fallback)
 
@@ -95,7 +97,6 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - `Ctrl/Cmd+Delete`: deletes selected paste and list updates.
    - `Ctrl/Cmd+F`: focuses sidebar search input.
    - `Ctrl/Cmd+Shift+P`: opens command palette.
-   - `Ctrl/Cmd+Shift+V`: requests paste as a new paste.
    - `Ctrl/Cmd+K`: toggles command palette (legacy alias).
    - `Ctrl/Cmd+I`: toggles Properties drawer.
 5. Command palette actions:
@@ -111,7 +112,8 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - Rename in the editor header applies on `Enter` and on blur (without requiring Apply click).
 8. Clipboard/editing baseline:
    - `Ctrl/Cmd+C`, `Ctrl/Cmd+X`, `Ctrl/Cmd+V`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Y` behave correctly in virtual editor mode.
-   - `Ctrl/Cmd+Shift+V` creates a new paste from clipboard regardless of editor focus.
+   - `Ctrl/Cmd+V` outside editor focus creates a new paste from clipboard.
+   - `Ctrl/Cmd+Shift+V` can still be used as explicit force-new fallback.
    - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not switch sidebar filters.
 9. Virtual editor selection:
    - Double-click selects word.

@@ -89,6 +89,7 @@ pub(crate) struct LocalPasteApp {
     selected_content: EditorBuffer,
     editor_cache: EditorLayoutCache,
     editor_lines: EditorLineIndex,
+    text_editor_has_focus: bool,
     editor_mode: EditorMode,
     virtual_selection: VirtualSelectionState,
     virtual_editor_buffer: RopeBuffer,
@@ -343,6 +344,7 @@ impl LocalPasteApp {
             selected_content: EditorBuffer::new(String::new()),
             editor_cache: EditorLayoutCache::default(),
             editor_lines: EditorLineIndex::default(),
+            text_editor_has_focus: false,
             editor_mode: EditorMode::from_env(),
             virtual_selection: VirtualSelectionState::default(),
             virtual_editor_buffer: RopeBuffer::new(""),
@@ -432,6 +434,20 @@ impl LocalPasteApp {
         }
         self.paste_as_new_pending_frames = self.paste_as_new_pending_frames.saturating_sub(1);
         false
+    }
+
+    fn route_plain_paste_shortcut(
+        &self,
+        editor_focus_pre: bool,
+        saw_virtual_paste: bool,
+    ) -> (bool, bool) {
+        if self.editor_mode == EditorMode::VirtualEditor && editor_focus_pre {
+            (!saw_virtual_paste, false)
+        } else if !editor_focus_pre {
+            (false, true)
+        } else {
+            (false, false)
+        }
     }
 
     fn acquire_paste_lock(&mut self, id: &str) -> bool {
@@ -586,6 +602,13 @@ impl eframe::App for LocalPasteApp {
         let has_virtual_selection_pre = self.virtual_editor_state.selection_range().is_some();
         let focus_active_pre = self.is_virtual_editor_mode()
             && (self.virtual_editor_state.has_focus || egui_focus_pre);
+        let text_editor_focus_pre =
+            self.editor_mode == EditorMode::TextEdit && self.text_editor_has_focus;
+        let editor_focus_pre = if self.editor_mode == EditorMode::VirtualEditor {
+            focus_active_pre
+        } else {
+            text_editor_focus_pre
+        };
         let copy_ready_pre = focus_active_pre || has_virtual_selection_pre;
         let mut saw_virtual_select_all = false;
         let mut saw_virtual_copy = false;
@@ -691,6 +714,17 @@ impl eframe::App for LocalPasteApp {
             if command_shift && input.key_pressed(egui::Key::V) {
                 request_paste_as_new = true;
             }
+            if input.modifiers.command && input.key_pressed(egui::Key::V) && !input.modifiers.shift
+            {
+                let (request_virtual, request_new) =
+                    self.route_plain_paste_shortcut(editor_focus_pre, saw_virtual_paste);
+                if request_virtual {
+                    request_virtual_paste = true;
+                }
+                if request_new {
+                    request_paste_as_new = true;
+                }
+            }
             if input.key_pressed(egui::Key::F1) {
                 self.shortcut_help_open = !self.shortcut_help_open;
             }
@@ -723,13 +757,6 @@ impl eframe::App for LocalPasteApp {
                 }
                 if focus_active_pre && input.key_pressed(egui::Key::Y) && !saw_virtual_redo {
                     fallback_virtual_redo = true;
-                }
-                if focus_active_pre
-                    && input.key_pressed(egui::Key::V)
-                    && !input.modifiers.shift
-                    && !saw_virtual_paste
-                {
-                    request_virtual_paste = true;
                 }
             }
             for event in &input.events {
@@ -825,6 +852,13 @@ impl eframe::App for LocalPasteApp {
             && (self.virtual_editor_active
                 || self.virtual_editor_state.has_focus
                 || ctx.memory(|m| m.has_focus(focus_id)));
+        let text_editor_focus_post =
+            self.editor_mode == EditorMode::TextEdit && self.text_editor_has_focus;
+        let editor_focus_post = if self.editor_mode == EditorMode::VirtualEditor {
+            focus_active_post
+        } else {
+            text_editor_focus_post
+        };
         let copy_ready_post = focus_active_post || has_virtual_selection_post;
         if focus_active_post {
             let deferred_started = Instant::now();
@@ -847,7 +881,7 @@ impl eframe::App for LocalPasteApp {
             || deferred_focus_apply_result.pasted
             || deferred_copy_apply_result.pasted;
         let paste_as_new_consumed = self.maybe_consume_explicit_paste_as_new(&mut pasted_text);
-        if !ctx.wants_keyboard_input() && !focus_active_post && !virtual_paste_consumed {
+        if !editor_focus_post && !virtual_paste_consumed {
             if let Some(text) = pasted_text {
                 if !text.trim().is_empty() {
                     self.create_new_paste_with_content(text);

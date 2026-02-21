@@ -115,6 +115,7 @@ fn make_app() -> TestHarness {
         selected_content: EditorBuffer::new("content".to_string()),
         editor_cache: EditorLayoutCache::default(),
         editor_lines: EditorLineIndex::default(),
+        text_editor_has_focus: false,
         editor_mode: EditorMode::TextEdit,
         virtual_selection: VirtualSelectionState::default(),
         virtual_editor_buffer: RopeBuffer::new("content"),
