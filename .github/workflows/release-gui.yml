@@ -588,7 +588,10 @@ jobs:
         run: |
           set -euo pipefail
           NOTE_PREFIX='macOS note:'
-          NOTE='macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts. If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security or run `xattr -cr /Applications/LocalPaste.app`.'
+          NOTE_P1='macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts.'
+          NOTE_P2='If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security'
+          NOTE_P3='or run `xattr -cr /Applications/LocalPaste.app`.'
+          NOTE="${NOTE_P1} ${NOTE_P2} ${NOTE_P3}"
           CURRENT_BODY="$(gh release view "${RELEASE_TAG}" --json body --jq .body)"
 
           if grep -Fq "${NOTE_PREFIX}" <<< "${CURRENT_BODY}"; then
