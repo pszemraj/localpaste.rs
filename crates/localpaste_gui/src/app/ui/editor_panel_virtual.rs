@@ -8,6 +8,16 @@ use tracing::info;
 const VIRTUAL_EDITOR_TEXT_INSET: f32 = 6.0;
 const VIRTUAL_EDITOR_LINE_NUMBER_PADDING: f32 = 8.0;
 
+fn line_number_font_for_row_height(row_height: f32) -> egui::FontId {
+    egui::FontId::monospace((row_height * 0.72).clamp(10.0, 14.0))
+}
+
+fn line_number_gutter_width(line_count: usize, line_number_char_width: f32) -> f32 {
+    let line_number_digits = line_count.max(1).to_string().len();
+    (line_number_digits as f32 * line_number_char_width.max(1.0))
+        + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0
+}
+
 fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rect {
     let scrollbar_gutter = (wrap_width - inner_rect.width()).max(0.0);
     if scrollbar_gutter <= 0.0 {
@@ -379,7 +389,9 @@ impl LocalPasteApp {
         let mut galley_misses = 0usize;
         let mut galley_build_ms = 0.0f32;
         let mut paint_ms = 0.0f32;
-        let char_width = ui.fonts_mut(|f| {
+        self.virtual_line_height = row_height.max(1.0);
+        let line_number_font = line_number_font_for_row_height(self.virtual_line_height);
+        let editor_char_width = ui.fonts_mut(|f| {
             f.layout_no_wrap(
                 "W".to_owned(),
                 editor_font.clone(),
@@ -390,19 +402,26 @@ impl LocalPasteApp {
             .max(1.0)
         });
         let line_count = self.virtual_editor_buffer.line_count();
-        let line_number_digits = line_count.max(1).to_string().len();
-        let line_number_gutter =
-            (line_number_digits as f32 * char_width) + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
+        let line_number_char_width = ui.fonts_mut(|f| {
+            f.layout_no_wrap(
+                "W".to_owned(),
+                line_number_font.clone(),
+                ui.visuals().text_color(),
+            )
+            .size()
+            .x
+            .max(1.0)
+        });
+        let line_number_gutter = line_number_gutter_width(line_count, line_number_char_width);
         let content_wrap_width =
-            (wrap_width - line_number_gutter - VIRTUAL_EDITOR_TEXT_INSET).max(char_width);
-        self.virtual_line_height = row_height.max(1.0);
+            (wrap_width - line_number_gutter - VIRTUAL_EDITOR_TEXT_INSET).max(editor_char_width);
         self.virtual_wrap_width = wrap_width;
         self.virtual_viewport_height = editor_height;
         if self.virtual_layout.needs_rebuild(
             self.virtual_editor_buffer.revision(),
             content_wrap_width,
             self.virtual_line_height,
-            char_width,
+            editor_char_width,
             line_count,
         ) {
             let rebuild_started = perf_enabled.then(Instant::now);
@@ -410,7 +429,7 @@ impl LocalPasteApp {
                 &self.virtual_editor_buffer,
                 content_wrap_width,
                 self.virtual_line_height,
-                char_width,
+                editor_char_width,
             );
             if let Some(started) = rebuild_started {
                 layout_rebuild_ms = started.elapsed().as_secs_f32() * 1000.0;
@@ -762,9 +781,7 @@ impl LocalPasteApp {
                             ),
                             egui::Align2::RIGHT_CENTER,
                             (row.line_idx.saturating_add(1)).to_string(),
-                            egui::FontId::monospace(
-                                (self.virtual_line_height * 0.72).clamp(10.0, 14.0),
-                            ),
+                            line_number_font.clone(),
                             COLOR_TEXT_MUTED,
                         );
                     }
@@ -859,8 +876,8 @@ impl LocalPasteApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        editor_interaction_rect, preview_triple_click_selection_bounds,
-        virtual_editor_double_click_selection_bounds,
+        editor_interaction_rect, line_number_font_for_row_height, line_number_gutter_width,
+        preview_triple_click_selection_bounds, virtual_editor_double_click_selection_bounds,
     };
     use crate::app::MAX_RENDER_CHARS_PER_LINE;
     use eframe::egui;
@@ -915,5 +932,26 @@ mod tests {
             .expect("expected word bounds");
 
         assert_eq!(bounds, (line_start, clamp_end));
+    }
+
+    #[test]
+    fn line_number_font_size_is_clamped() {
+        assert_eq!(line_number_font_for_row_height(1.0).size, 10.0);
+        assert_eq!(line_number_font_for_row_height(100.0).size, 14.0);
+        let mid = line_number_font_for_row_height(16.0).size;
+        assert!(mid > 10.0 && mid < 14.0);
+    }
+
+    #[test]
+    fn line_number_gutter_width_scales_with_digits_and_char_width() {
+        let single_digit = line_number_gutter_width(9, 5.0);
+        let two_digits = line_number_gutter_width(10, 5.0);
+        let wider_chars = line_number_gutter_width(10, 7.0);
+        assert!(two_digits > single_digit);
+        assert!(wider_chars > two_digits);
+
+        let clamped = line_number_gutter_width(999, 0.0);
+        let expected = (3.0 * 1.0) + super::VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
+        assert!((clamped - expected).abs() < f32::EPSILON);
     }
 }
