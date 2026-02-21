@@ -4,6 +4,34 @@ use super::*;
 use crate::db::tables::{FOLDERS, PASTES};
 use redb::ReadableDatabase;
 
+fn update_request(
+    content: Option<&str>,
+    name: Option<&str>,
+    language: Option<&str>,
+    language_is_manual: Option<bool>,
+) -> UpdatePasteRequest {
+    UpdatePasteRequest {
+        content: content.map(ToString::to_string),
+        name: name.map(ToString::to_string),
+        language: language.map(ToString::to_string),
+        language_is_manual,
+        folder_id: None,
+        tags: None,
+    }
+}
+
+fn update_existing_paste(
+    db: &Database,
+    paste_id: &str,
+    request: UpdatePasteRequest,
+    context: &str,
+) -> Paste {
+    db.pastes
+        .update(paste_id, request)
+        .expect(context)
+        .expect("paste exists")
+}
+
 #[test]
 fn test_create_database_and_flush_noop() {
     let (db, _temp) = setup_test_db();
@@ -44,19 +72,8 @@ fn paste_create_get_update_delete_roundtrip() {
     assert_eq!(retrieved.content, "Test content");
     assert_eq!(retrieved.id, paste_id);
 
-    let update = UpdatePasteRequest {
-        content: Some("Updated".to_string()),
-        name: Some("updated-name".to_string()),
-        language: None,
-        language_is_manual: None,
-        folder_id: None,
-        tags: None,
-    };
-    let updated = db
-        .pastes
-        .update(&paste_id, update)
-        .expect("update")
-        .expect("updated");
+    let update = update_request(Some("Updated"), Some("updated-name"), None, None);
+    let updated = update_existing_paste(&db, &paste_id, update, "update");
     assert_eq!(updated.content, "Updated");
     assert_eq!(updated.name, "updated-name");
 
@@ -173,57 +190,34 @@ fn update_language_transitions_between_manual_and_auto_modes() {
     let paste_id = paste.id.clone();
     db.pastes.create(&paste).expect("create");
 
-    let set_manual = UpdatePasteRequest {
-        content: None,
-        name: None,
-        language: Some("python".to_string()),
-        language_is_manual: Some(true),
-        folder_id: None,
-        tags: None,
-    };
-    let manual = db
-        .pastes
-        .update(&paste_id, set_manual)
-        .expect("manual update")
-        .expect("paste exists");
+    let set_manual = update_request(None, None, Some("python"), Some(true));
+    let manual = update_existing_paste(&db, &paste_id, set_manual, "manual update");
     assert_eq!(manual.language.as_deref(), Some("python"));
     assert!(
         manual.language_is_manual,
         "language should be manual after override"
     );
 
-    let switch_back_to_auto = UpdatePasteRequest {
-        content: None,
-        name: None,
-        language: None,
-        language_is_manual: Some(false),
-        folder_id: None,
-        tags: None,
-    };
-    let auto = db
-        .pastes
-        .update(&paste_id, switch_back_to_auto)
-        .expect("switch to auto")
-        .expect("paste exists");
+    let switch_back_to_auto = update_request(None, None, None, Some(false));
+    let auto = update_existing_paste(&db, &paste_id, switch_back_to_auto, "switch to auto");
     assert_eq!(auto.language.as_deref(), Some("rust"));
     assert!(
         !auto.language_is_manual,
         "language should be auto-managed after switch"
     );
 
-    let auto_redetect_on_content_change = UpdatePasteRequest {
-        content: Some("def main():\n    import sys\n    print('hello')".to_string()),
-        name: None,
-        language: None,
-        language_is_manual: None,
-        folder_id: None,
-        tags: None,
-    };
-    let redetected = db
-        .pastes
-        .update(&paste_id, auto_redetect_on_content_change)
-        .expect("content update")
-        .expect("paste exists");
+    let auto_redetect_on_content_change = update_request(
+        Some("def main():\n    import sys\n    print('hello')"),
+        None,
+        None,
+        None,
+    );
+    let redetected = update_existing_paste(
+        &db,
+        &paste_id,
+        auto_redetect_on_content_change,
+        "content update",
+    );
     assert_eq!(redetected.language.as_deref(), Some("python"));
     assert!(
         !redetected.language_is_manual,
@@ -241,35 +235,18 @@ fn manual_language_is_not_overridden_by_content_updates() {
     let paste_id = paste.id.clone();
     db.pastes.create(&paste).expect("create");
 
-    let set_manual = UpdatePasteRequest {
-        content: None,
-        name: None,
-        language: Some("markdown".to_string()),
-        language_is_manual: Some(true),
-        folder_id: None,
-        tags: None,
-    };
-    let manual = db
-        .pastes
-        .update(&paste_id, set_manual)
-        .expect("set manual")
-        .expect("paste exists");
+    let set_manual = update_request(None, None, Some("markdown"), Some(true));
+    let manual = update_existing_paste(&db, &paste_id, set_manual, "set manual");
     assert_eq!(manual.language.as_deref(), Some("markdown"));
     assert!(manual.language_is_manual);
 
-    let content_update = UpdatePasteRequest {
-        content: Some("---\nkey: value\nnested:\n  - one\n".to_string()),
-        name: None,
-        language: None,
-        language_is_manual: None,
-        folder_id: None,
-        tags: None,
-    };
-    let updated = db
-        .pastes
-        .update(&paste_id, content_update)
-        .expect("content update")
-        .expect("paste exists");
+    let content_update = update_request(
+        Some("---\nkey: value\nnested:\n  - one\n"),
+        None,
+        None,
+        None,
+    );
+    let updated = update_existing_paste(&db, &paste_id, content_update, "content update");
 
     assert_eq!(
         updated.language.as_deref(),
@@ -302,17 +279,9 @@ fn corrupt_rows_surface_serialization_errors_without_removal() {
             .update("corrupt-folder", "renamed".to_string(), Some(String::new()));
     assert!(matches!(folder_update, Err(AppError::Serialization(_))));
 
-    let paste_update = db.pastes.update(
-        "corrupt-paste",
-        UpdatePasteRequest {
-            content: Some("x".to_string()),
-            name: None,
-            language: None,
-            language_is_manual: None,
-            folder_id: None,
-            tags: None,
-        },
-    );
+    let paste_update = db
+        .pastes
+        .update("corrupt-paste", update_request(Some("x"), None, None, None));
     assert!(matches!(paste_update, Err(AppError::Serialization(_))));
 
     let read_txn = db.db.begin_read().expect("begin read");
