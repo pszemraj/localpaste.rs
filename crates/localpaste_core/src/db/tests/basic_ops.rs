@@ -181,7 +181,7 @@ fn clear_delete_markers_resets_table_and_allows_reuse() {
 }
 
 #[test]
-fn update_language_transitions_between_manual_and_auto_modes() {
+fn language_mode_transitions_cover_auto_and_manual_lock_behaviors() {
     let (db, _temp) = setup_test_db();
     let paste = Paste::new(
         "fn main() {\n    let x = 5;\n    println!(\"hello\");\n}".to_string(),
@@ -223,20 +223,15 @@ fn update_language_transitions_between_manual_and_auto_modes() {
         !redetected.language_is_manual,
         "auto mode should keep manual flag disabled after content redetect"
     );
-}
-
-#[test]
-fn manual_language_is_not_overridden_by_content_updates() {
-    let (db, _temp) = setup_test_db();
-    let paste = Paste::new(
+    let lock_paste = Paste::new(
         "name: alpha\nvalue: 1\n".to_string(),
         "lang-lock".to_string(),
     );
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).expect("create");
+    let lock_paste_id = lock_paste.id.clone();
+    db.pastes.create(&lock_paste).expect("create");
 
     let set_manual = update_request(None, None, Some("markdown"), Some(true));
-    let manual = update_existing_paste(&db, &paste_id, set_manual, "set manual");
+    let manual = update_existing_paste(&db, &lock_paste_id, set_manual, "set manual");
     assert_eq!(manual.language.as_deref(), Some("markdown"));
     assert!(manual.language_is_manual);
 
@@ -246,7 +241,7 @@ fn manual_language_is_not_overridden_by_content_updates() {
         None,
         None,
     );
-    let updated = update_existing_paste(&db, &paste_id, content_update, "content update");
+    let updated = update_existing_paste(&db, &lock_paste_id, content_update, "content update");
 
     assert_eq!(
         updated.language.as_deref(),
