@@ -221,6 +221,34 @@ fn language_mode_transitions_cover_auto_and_manual_lock_behaviors() {
         redetected.language_is_manual,
         "auto detect should lock once a concrete language is resolved"
     );
+
+    let auto_with_resolved_language = Paste::new_with_language(
+        "fn main() {\n    println!(\"hello\");\n}".to_string(),
+        "auto-resolved".to_string(),
+        Some("rust".to_string()),
+        false,
+    );
+    let auto_with_resolved_language_id = auto_with_resolved_language.id.clone();
+    db.pastes
+        .create(&auto_with_resolved_language)
+        .expect("create auto resolved");
+    let metadata_update_while_auto = update_request(None, Some("auto-renamed"), None, Some(false));
+    let auto_after_metadata_update = update_existing_paste(
+        &db,
+        &auto_with_resolved_language_id,
+        metadata_update_while_auto,
+        "metadata update while already auto",
+    );
+    assert_eq!(
+        auto_after_metadata_update.language.as_deref(),
+        Some("rust"),
+        "auto metadata updates should not clear existing resolved language"
+    );
+    assert!(
+        !auto_after_metadata_update.language_is_manual,
+        "metadata update should keep auto mode when already auto"
+    );
+
     let lock_paste = Paste::new(
         "name: alpha\nvalue: 1\n".to_string(),
         "lang-lock".to_string(),

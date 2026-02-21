@@ -26,6 +26,7 @@ pub(crate) fn reverse_timestamp_key(updated_at: DateTime<Utc>) -> u64 {
 /// - `update`: Incoming patch payload.
 pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
     let mut content_changed = false;
+    let was_manual_before_update = paste.language_is_manual;
 
     if let Some(content) = &update.content {
         paste.content = content.clone();
@@ -44,9 +45,11 @@ pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
     if let Some(is_manual) = update.language_is_manual {
         paste.language_is_manual = is_manual;
     }
-    // Explicit auto toggle clears any previously locked classification so
+    // Explicit manual->auto toggle clears previously locked classification so
     // auto state only reflects "unresolved/pending detection".
-    if update.language_is_manual == Some(false) && update.language.is_none() && !content_changed {
+    let switched_manual_to_auto =
+        was_manual_before_update && update.language_is_manual == Some(false);
+    if switched_manual_to_auto && update.language.is_none() && !content_changed {
         paste.language = None;
     }
     let should_auto_detect =
