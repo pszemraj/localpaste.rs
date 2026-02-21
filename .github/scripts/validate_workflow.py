@@ -502,15 +502,25 @@ def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> li
                 f"{path}: mac signing step must be gated by steps.mac_signing.outputs.enabled == 'true'"
             )
 
+    verify_step = find_step(build_job, step_name="Verify macOS DMG usability")
+    if verify_step is None:
+        errors.append(f"{path}: build_package must include 'Verify macOS DMG usability' step")
+    else:
+        verify_if = verify_step.get("if")
+        if not isinstance(verify_if, str) or "runner.os == 'macOS'" not in verify_if:
+            errors.append(
+                f"{path}: 'Verify macOS DMG usability' step must run on macOS runners"
+            )
+
     for step_name in ("Collect release assets", "Upload release assets"):
         step = find_step(build_job, step_name=step_name)
         if step is None:
             errors.append(f"{path}: missing '{step_name}' step in build_package")
             continue
         condition = step.get("if")
-        if not isinstance(condition, str) or "steps.mac_signing.outputs.enabled == 'true'" not in condition:
+        if isinstance(condition, str) and "steps.mac_signing.outputs.enabled == 'true'" in condition:
             errors.append(
-                f"{path}: '{step_name}' must be gated by steps.mac_signing.outputs.enabled == 'true'"
+                f"{path}: '{step_name}' must not be gated by steps.mac_signing.outputs.enabled == 'true'"
             )
 
     return errors
