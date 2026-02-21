@@ -8,6 +8,7 @@ use eframe::egui::{self, RichText};
 #[derive(Clone, Debug)]
 pub(crate) enum CommandPaletteAction {
     NewPaste,
+    PasteAsNew,
     DeleteSelected,
     SaveNow,
     SaveMetadata,
@@ -159,14 +160,22 @@ impl LocalPasteApp {
             });
 
         if let Some(action) = pending_action {
-            self.execute_command_palette_action(action);
+            self.execute_command_palette_action(ctx, action);
         }
     }
 
-    fn execute_command_palette_action(&mut self, action: CommandPaletteAction) {
+    fn execute_command_palette_action(
+        &mut self,
+        ctx: &egui::Context,
+        action: CommandPaletteAction,
+    ) {
         match action {
             CommandPaletteAction::NewPaste => {
                 self.create_new_paste();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::PasteAsNew => {
+                self.request_paste_as_new(ctx);
                 self.command_palette_open = false;
             }
             CommandPaletteAction::DeleteSelected => {
@@ -246,6 +255,11 @@ impl LocalPasteApp {
             label: "New paste".to_string(),
             hint: "(Ctrl/Cmd+N)".to_string(),
             action: CommandPaletteAction::NewPaste,
+        });
+        items.push(CommandPaletteItem {
+            label: "Paste as new paste".to_string(),
+            hint: "(Ctrl/Cmd+Shift+V)".to_string(),
+            action: CommandPaletteAction::PasteAsNew,
         });
         if self.selected_id.is_some() {
             items.push(CommandPaletteItem {

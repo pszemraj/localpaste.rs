@@ -18,6 +18,12 @@ fn line_number_gutter_width(line_count: usize, line_number_char_width: f32) -> f
         + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0
 }
 
+fn virtual_row_hit_test_sense() -> egui::Sense {
+    let mut sense = egui::Sense::click_and_drag();
+    sense.remove(egui::Sense::focusable_noninteractive());
+    sense
+}
+
 fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rect {
     let scrollbar_gutter = (wrap_width - inner_rect.width()).max(0.0);
     if scrollbar_gutter <= 0.0 {
@@ -103,7 +109,7 @@ impl LocalPasteApp {
         let mut preview_render_capped_lines = 0usize;
         scroll.show_rows(ui, row_height, line_count, |ui, range| {
             ui.set_min_width(ui.available_width());
-            let sense = egui::Sense::click_and_drag();
+            let sense = virtual_row_hit_test_sense();
             struct RowRender {
                 line_idx: usize,
                 rect: egui::Rect,
@@ -555,7 +561,7 @@ impl LocalPasteApp {
                     let row_width = ui.available_width();
                     let (rect, response) = ui.allocate_exact_size(
                         egui::vec2(row_width, self.virtual_line_height),
-                        egui::Sense::click_and_drag(),
+                        virtual_row_hit_test_sense(),
                     );
                     let text_min_x = (rect.min.x + line_number_gutter + VIRTUAL_EDITOR_TEXT_INSET)
                         .min(rect.max.x);
@@ -846,6 +852,25 @@ impl LocalPasteApp {
             ui.memory_mut(|m| m.request_focus(editor_id));
             egui_focus = true;
         }
+        let clicked_outside_editor = ui.input(|input| {
+            input.pointer.button_pressed(egui::PointerButton::Primary)
+                && input
+                    .pointer
+                    .interact_pos()
+                    .or_else(|| input.pointer.latest_pos())
+                    .map(|pos| !interaction_rect.contains(pos))
+                    .unwrap_or(false)
+        });
+        let window_blurred =
+            ui.input(|input| !input.focused || input.viewport().focused == Some(false));
+        let explicit_blur = clicked_outside_editor || window_blurred;
+        if explicit_blur {
+            ui.memory_mut(|m| m.surrender_focus(editor_id));
+            egui_focus = false;
+        } else if had_focus && !egui_focus && !ui.ctx().wants_keyboard_input() {
+            ui.memory_mut(|m| m.request_focus(editor_id));
+            egui_focus = true;
+        }
         if focus_response.gained_focus() || (egui_focus && !had_focus) {
             self.reset_virtual_caret_blink();
         }
@@ -878,6 +903,7 @@ mod tests {
     use super::{
         editor_interaction_rect, line_number_font_for_row_height, line_number_gutter_width,
         preview_triple_click_selection_bounds, virtual_editor_double_click_selection_bounds,
+        virtual_row_hit_test_sense,
     };
     use crate::app::MAX_RENDER_CHARS_PER_LINE;
     use eframe::egui;
@@ -953,5 +979,13 @@ mod tests {
         let clamped = line_number_gutter_width(999, 0.0);
         let expected = (3.0 * 1.0) + super::VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
         assert!((clamped - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn virtual_row_hit_test_sense_is_non_focusable_click_and_drag() {
+        let sense = virtual_row_hit_test_sense();
+        assert!(sense.senses_click());
+        assert!(sense.senses_drag());
+        assert!(!sense.is_focusable());
     }
 }

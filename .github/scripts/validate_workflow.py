@@ -461,8 +461,13 @@ def validate_release_trigger_rules(path: Path, data: dict[str, Any]) -> list[str
         return errors
 
     tags = push_section.get("tags")
-    if not isinstance(tags, list) or "v*" not in tags:
-        errors.append(f"{path}: release workflow push.tags must include 'v*'")
+    accepted_tag_globs = {"v*", "v[0-9]*.[0-9]*.[0-9]*"}
+    if not isinstance(tags, list) or not any(
+        isinstance(tag, str) and tag in accepted_tag_globs for tag in tags
+    ):
+        errors.append(
+            f"{path}: release workflow push.tags must include one of {sorted(accepted_tag_globs)}"
+        )
 
     if "workflow_dispatch" not in on_section:
         errors.append(f"{path}: release workflow must define workflow_dispatch")

@@ -91,7 +91,7 @@ sha256sum -c checksums.sha256
 ```
 
 ```powershell
-Get-FileHash .\localpaste-v0.4.3-windows-x86_64.msi -Algorithm SHA256
+Get-FileHash .\localpaste-v0.4.4-windows-x86_64.msi -Algorithm SHA256
 ```
 
 ## Configuration and Ops

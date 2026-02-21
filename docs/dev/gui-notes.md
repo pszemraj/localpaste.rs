@@ -41,6 +41,8 @@ For perf validation steps/gates, use
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
 - Virtual preview triple-click selects the full logical line, including terminal long lines even when rendering is capped.
 - Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
+- `Ctrl/Cmd+V` is the primary paste contract: when editor is focused it inserts; when editor is not focused it creates a new paste from clipboard.
+- `Ctrl/Cmd+Shift+V` remains available as an explicit "force paste as new" fallback.
 
 ## Language/Highlight QA (Magika + Fallback)
 
@@ -54,18 +56,20 @@ Use this checklist when touching detection/highlight/filter code.
    - JSON: `{\"key\":\"value\"}` -> `json`
 3. Open Properties drawer, set language to `Plain text`, save, and verify chip reads `plain` (not `auto`).
 4. With that same paste still manual plain, edit content into obvious Rust and verify language remains `plain`.
-5. Switch language back to `Auto`, save, and verify content re-detects to `rust`.
-6. Validate alias interoperability in UI filtering:
+5. Switch language back to `Auto`, save, and verify the language chip shows unresolved auto state.
+6. Make a content edit and verify auto-detection resolves and locks to `rust`.
+7. Validate alias interoperability in UI filtering:
    - Set active language filter to `cs`; verify both `csharp` and `cs` pastes remain visible.
    - Set active language filter to `shell`; verify `bash`/`sh` labeled content matches.
-7. Validate syntax resolver behavior against the canonical matrix in
+8. Validate syntax resolver behavior against the canonical matrix in
    [docs/language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.
-8. Validate large-buffer guardrail:
+9. Validate large-buffer guardrail:
    - Paste content >= 256KB and verify display is plain regardless of language metadata.
-9. Re-run shortcut sanity checks after language UI edits:
-   - `Ctrl/Cmd+S`, `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+F`, `Ctrl/Cmd+Shift+P`.
+10. Re-run shortcut sanity checks after language UI edits:
+
+- `Ctrl/Cmd+S`, `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+F`, `Ctrl/Cmd+Shift+P`.
 
 ## Manual GUI Human-Step Checklist (Comprehensive)
 
@@ -85,6 +89,8 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - Sidebar includes seeded pastes such as `perf-medium-python`, `perf-100kb-python`, `perf-300kb-rust`, `perf-scroll-5k-lines`.
 3. Focus behavior:
    - Click editor, type a character, caret remains visible and blinking.
+   - Focus stays in editor during in-editor interaction.
+   - Focus blurs only when clicking outside editor or when the app window loses focus.
 4. Core shortcuts:
    - `Ctrl/Cmd+N`: creates/selects a new paste.
    - `Ctrl/Cmd+S`: save transitions status from dirty -> saved.
@@ -106,6 +112,8 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - Rename in the editor header applies on `Enter` and on blur (without requiring Apply click).
 8. Clipboard/editing baseline:
    - `Ctrl/Cmd+C`, `Ctrl/Cmd+X`, `Ctrl/Cmd+V`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Y` behave correctly in virtual editor mode.
+   - `Ctrl/Cmd+V` outside editor focus creates a new paste from clipboard.
+   - `Ctrl/Cmd+Shift+V` can still be used as explicit force-new fallback.
    - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not switch sidebar filters.
 9. Virtual editor selection:
    - Double-click selects word.

@@ -7,8 +7,8 @@ const AUTO_LANGUAGE: &str = "__auto__";
 
 /// Applies a language choice change to the metadata draft fields.
 ///
-/// `AUTO_LANGUAGE` disables manual mode without erasing the detected language
-/// value currently shown in the editor.
+/// `AUTO_LANGUAGE` disables manual mode and clears any resolved language so the
+/// next content edit can trigger a fresh auto-detect pass.
 ///
 /// # Arguments
 /// - `edit_language_is_manual`: Editable manual-language flag.
@@ -24,10 +24,9 @@ pub(super) fn apply_language_choice(
     current_manual_value: &str,
 ) {
     if language_choice == AUTO_LANGUAGE {
-        // Auto mode still carries a detected language value for highlighting/filter labels.
-        // Only mark dirty when transitioning from manual -> auto.
-        if *edit_language_is_manual {
+        if *edit_language_is_manual || edit_language.is_some() {
             *edit_language_is_manual = false;
+            *edit_language = None;
             *metadata_dirty = true;
         }
         return;
@@ -63,6 +62,15 @@ pub(super) fn selected_language_choice_text(language_choice: &str, auto_label: &
 /// Stable option-key string representing auto mode in language selectors.
 pub(super) fn auto_language_choice_key() -> &'static str {
     AUTO_LANGUAGE
+}
+
+/// Returns the compact label used for the auto language selector state.
+///
+/// # Returns
+/// Static `Auto` label so combo-box selected text always matches the selected
+/// option value when auto mode is active.
+pub(super) fn auto_language_status_label() -> String {
+    "Auto".to_string()
 }
 
 impl LocalPasteApp {
@@ -120,8 +128,10 @@ impl LocalPasteApp {
                 } else {
                     AUTO_LANGUAGE.to_string()
                 };
+                let previous_language_choice = language_choice.clone();
+                let auto_label = auto_language_status_label();
                 let selected_language_text =
-                    selected_language_choice_text(language_choice.as_str(), "Auto");
+                    selected_language_choice_text(language_choice.as_str(), auto_label.as_str());
                 egui::ComboBox::from_id_salt("drawer_language_select")
                     .selected_text(selected_language_text)
                     .show_ui(ui, |ui| {
@@ -139,13 +149,15 @@ impl LocalPasteApp {
                             );
                         }
                     });
-                apply_language_choice(
-                    &mut self.edit_language_is_manual,
-                    &mut self.edit_language,
-                    &mut self.metadata_dirty,
-                    language_choice.as_str(),
-                    current_manual_value.as_str(),
-                );
+                if language_choice != previous_language_choice {
+                    apply_language_choice(
+                        &mut self.edit_language_is_manual,
+                        &mut self.edit_language,
+                        &mut self.metadata_dirty,
+                        language_choice.as_str(),
+                        current_manual_value.as_str(),
+                    );
+                }
 
                 ui.add_space(6.0);
                 ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
@@ -185,7 +197,7 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_language_choice, AUTO_LANGUAGE};
+    use super::{apply_language_choice, auto_language_status_label, AUTO_LANGUAGE};
 
     #[test]
     fn apply_language_choice_transition_matrix() {
@@ -203,12 +215,12 @@ mod tests {
         let cases = [
             Case {
                 is_manual: false,
-                language: Some("rust"),
+                language: None,
                 metadata_dirty: false,
                 language_choice: AUTO_LANGUAGE,
-                current_manual_value: "rust",
+                current_manual_value: "text",
                 expected_manual: false,
-                expected_language: Some("rust"),
+                expected_language: None,
                 expected_dirty: false,
             },
             Case {
@@ -218,7 +230,7 @@ mod tests {
                 language_choice: AUTO_LANGUAGE,
                 current_manual_value: "python",
                 expected_manual: false,
-                expected_language: Some("python"),
+                expected_language: None,
                 expected_dirty: true,
             },
             Case {
@@ -250,5 +262,10 @@ mod tests {
             assert_eq!(language.as_deref(), case.expected_language);
             assert_eq!(metadata_dirty, case.expected_dirty);
         }
+    }
+
+    #[test]
+    fn auto_language_status_label_matrix() {
+        assert_eq!(auto_language_status_label(), "Auto");
     }
 }

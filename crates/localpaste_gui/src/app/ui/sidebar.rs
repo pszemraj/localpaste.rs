@@ -3,6 +3,8 @@
 use super::super::*;
 use eframe::egui::{self, RichText};
 
+const APP_VERSION_LABEL: &str = concat!("- v", env!("CARGO_PKG_VERSION"));
+
 impl LocalPasteApp {
     /// Renders the top title/status bar.
     pub(crate) fn render_top_bar(&mut self, ctx: &egui::Context) {
@@ -11,11 +13,10 @@ impl LocalPasteApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading(RichText::new("LocalPaste.rs").color(COLOR_ACCENT));
-                    ui.add_space(12.0);
                     ui.label(
-                        RichText::new(&self.db_path)
-                            .monospace()
-                            .color(COLOR_TEXT_SECONDARY),
+                        RichText::new(APP_VERSION_LABEL)
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Shortcuts (F1)").clicked() {
