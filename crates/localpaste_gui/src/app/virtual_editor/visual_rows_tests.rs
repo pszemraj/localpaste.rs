@@ -296,3 +296,18 @@ fn deep_ascii_wrapped_rows_map_directly_to_char_ranges() {
     assert_eq!(range.end.saturating_sub(range.start), 10);
     assert_eq!(buffer.slice_chars(range), "a".repeat(10));
 }
+
+#[test]
+fn word_wrap_prefers_whitespace_boundaries_before_mid_word_splits() {
+    assert_row_segments("alpha beta gamma\n", 35.0, 7, &["alpha ", "beta ", "gamma"]);
+}
+
+#[test]
+fn word_wrap_falls_back_to_mid_word_split_for_long_unbroken_tokens() {
+    assert_row_segments(
+        "supercalifragilistic\n",
+        25.0,
+        5,
+        &["super", "calif", "ragil", "istic"],
+    );
+}

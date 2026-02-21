@@ -391,10 +391,10 @@ impl LocalPasteApp {
         });
         let line_count = self.virtual_editor_buffer.line_count();
         let line_number_digits = line_count.max(1).to_string().len();
-        let line_number_gutter = (line_number_digits as f32 * char_width)
-            + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
-        let content_wrap_width = (wrap_width - line_number_gutter - VIRTUAL_EDITOR_TEXT_INSET)
-            .max(char_width);
+        let line_number_gutter =
+            (line_number_digits as f32 * char_width) + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
+        let content_wrap_width =
+            (wrap_width - line_number_gutter - VIRTUAL_EDITOR_TEXT_INSET).max(char_width);
         self.virtual_line_height = row_height.max(1.0);
         self.virtual_wrap_width = wrap_width;
         self.virtual_viewport_height = editor_height;
@@ -538,9 +538,8 @@ impl LocalPasteApp {
                         egui::vec2(row_width, self.virtual_line_height),
                         egui::Sense::click_and_drag(),
                     );
-                    let text_min_x =
-                        (rect.min.x + line_number_gutter + VIRTUAL_EDITOR_TEXT_INSET)
-                            .min(rect.max.x);
+                    let text_min_x = (rect.min.x + line_number_gutter + VIRTUAL_EDITOR_TEXT_INSET)
+                        .min(rect.max.x);
                     let text_origin = egui::pos2(text_min_x, rect.min.y);
                     let text_rect = egui::Rect::from_min_max(text_origin, rect.max);
                     if response.hovered() {
@@ -698,7 +697,9 @@ impl LocalPasteApp {
                             });
                         if let Some(row) = target_row {
                             let clamped_pos = egui::pos2(
-                                pointer_pos.x.clamp(row.text_rect.min.x, row.text_rect.max.x),
+                                pointer_pos
+                                    .x
+                                    .clamp(row.text_rect.min.x, row.text_rect.max.x),
                                 pointer_pos.y.clamp(row.rect.min.y, row.rect.max.y),
                             );
                             let local_pos = egui::vec2(
