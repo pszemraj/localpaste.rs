@@ -110,4 +110,31 @@ impl LocalPasteApp {
             (false, false)
         }
     }
+
+    /// Resolves plain paste shortcut requests from post-layout focus state.
+    ///
+    /// # Arguments
+    /// - `shortcut_pressed`: Whether plain command+V was pressed this frame.
+    /// - `editor_focus_post`: Whether the active editor owns focus after layout.
+    /// - `saw_virtual_paste`: Whether virtual command extraction already observed paste.
+    /// - `wants_keyboard_input_post`: Whether egui assigned keyboard input after layout.
+    ///
+    /// # Returns
+    /// Tuple of `(request_virtual_paste, request_new_paste)`.
+    pub(super) fn resolve_plain_paste_shortcut_request(
+        &self,
+        shortcut_pressed: bool,
+        editor_focus_post: bool,
+        saw_virtual_paste: bool,
+        wants_keyboard_input_post: bool,
+    ) -> (bool, bool) {
+        if !shortcut_pressed {
+            return (false, false);
+        }
+        self.route_plain_paste_shortcut(
+            editor_focus_post,
+            saw_virtual_paste,
+            wants_keyboard_input_post,
+        )
+    }
 }

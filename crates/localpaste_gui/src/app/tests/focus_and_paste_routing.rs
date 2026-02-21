@@ -287,3 +287,23 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
         );
     }
 }
+
+#[test]
+fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::TextEdit;
+
+    // Regression guard: when focus is acquired in the same frame as Ctrl/Cmd+V,
+    // plain paste should stay in the editor instead of creating a new paste.
+    let (request_virtual, request_new) = harness
+        .app
+        .resolve_plain_paste_shortcut_request(true, true, false, true);
+    assert!(!request_virtual);
+    assert!(!request_new);
+
+    let (request_virtual, request_new) = harness
+        .app
+        .resolve_plain_paste_shortcut_request(false, false, false, false);
+    assert!(!request_virtual);
+    assert!(!request_new);
+}

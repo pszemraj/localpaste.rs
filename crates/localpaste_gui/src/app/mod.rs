@@ -560,13 +560,6 @@ impl eframe::App for LocalPasteApp {
         let has_virtual_selection_pre = self.virtual_editor_state.selection_range().is_some();
         let focus_active_pre = self.is_virtual_editor_mode()
             && (self.virtual_editor_state.has_focus || egui_focus_pre);
-        let text_editor_focus_pre =
-            self.editor_mode == EditorMode::TextEdit && self.text_editor_has_focus;
-        let editor_focus_pre = if self.editor_mode == EditorMode::VirtualEditor {
-            focus_active_pre
-        } else {
-            text_editor_focus_pre
-        };
         let copy_ready_pre = focus_active_pre || has_virtual_selection_pre;
         let explicit_paste_as_new_shortcut_pressed =
             self.maybe_arm_paste_as_new_shortcut_intent(ctx);
@@ -635,6 +628,7 @@ impl eframe::App for LocalPasteApp {
         let mut fallback_virtual_redo = false;
         let mut request_virtual_paste = false;
         let mut request_paste_as_new = explicit_paste_as_new_shortcut_pressed;
+        let mut plain_paste_shortcut_pressed = false;
         let mut pasted_text: Option<String> = None;
         let mut sidebar_direction: i32 = 0;
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
@@ -676,17 +670,7 @@ impl eframe::App for LocalPasteApp {
             }
             if input.modifiers.command && input.key_pressed(egui::Key::V) && !input.modifiers.shift
             {
-                let (request_virtual, request_new) = self.route_plain_paste_shortcut(
-                    editor_focus_pre,
-                    saw_virtual_paste,
-                    wants_keyboard_input_before,
-                );
-                if request_virtual {
-                    request_virtual_paste = true;
-                }
-                if request_new {
-                    request_paste_as_new = true;
-                }
+                plain_paste_shortcut_pressed = true;
             }
             if input.key_pressed(egui::Key::F1) {
                 self.shortcut_help_open = !self.shortcut_help_open;
@@ -780,12 +764,6 @@ impl eframe::App for LocalPasteApp {
                     self.mark_dirty();
                 }
             }
-            if request_virtual_paste {
-                ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-            }
-        }
-        if request_paste_as_new {
-            self.request_paste_as_new(ctx);
         }
 
         if self.highlight_staged.is_some() {
@@ -817,11 +795,33 @@ impl eframe::App for LocalPasteApp {
                 || ctx.memory(|m| m.has_focus(focus_id)));
         let text_editor_focus_post =
             self.editor_mode == EditorMode::TextEdit && self.text_editor_has_focus;
+        let virtual_editor_focus_post = self.editor_mode == EditorMode::VirtualEditor
+            && (self.virtual_editor_state.has_focus || ctx.memory(|m| m.has_focus(focus_id)));
+        let editor_focus_for_plain_paste_post = if self.editor_mode == EditorMode::VirtualEditor {
+            virtual_editor_focus_post
+        } else {
+            text_editor_focus_post
+        };
         let editor_focus_post = if self.editor_mode == EditorMode::VirtualEditor {
             focus_active_post
         } else {
             text_editor_focus_post
         };
+        let wants_keyboard_input_after = ctx.wants_keyboard_input();
+        let (plain_request_virtual, plain_request_new) = self.resolve_plain_paste_shortcut_request(
+            plain_paste_shortcut_pressed,
+            editor_focus_for_plain_paste_post,
+            saw_virtual_paste,
+            wants_keyboard_input_after,
+        );
+        request_virtual_paste |= plain_request_virtual;
+        request_paste_as_new |= plain_request_new;
+        if self.editor_mode == EditorMode::VirtualEditor && request_virtual_paste {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+        }
+        if request_paste_as_new {
+            self.request_paste_as_new(ctx);
+        }
         let copy_ready_post = focus_active_post || has_virtual_selection_post;
         if focus_active_post {
             let deferred_started = Instant::now();
