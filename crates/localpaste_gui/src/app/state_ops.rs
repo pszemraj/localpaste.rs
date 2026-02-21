@@ -166,6 +166,9 @@ impl LocalPasteApp {
                 if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste.id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
+                if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
+                    *item = PasteSummary::from_paste(&paste);
+                }
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     if self.metadata_matches_request(requested_metadata.as_ref()) {
                         self.sync_editor_metadata(&paste);
