@@ -5,6 +5,9 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+#[path = "shared/cli_parsers.rs"]
+mod cli_parsers;
+use cli_parsers::parse_positive_usize;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -13,11 +16,11 @@ use std::path::{Path, PathBuf};
 )]
 struct Args {
     /// Maximum allowed lines per file when no exception is configured.
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 1000, value_parser = parse_positive_usize)]
     max_lines: usize,
 
     /// Watchlist threshold for early warning output.
-    #[arg(long, default_value_t = 900)]
+    #[arg(long, default_value_t = 900, value_parser = parse_positive_usize)]
     warn_lines: usize,
 
     /// Exception registry path.
@@ -64,12 +67,21 @@ fn run(args: Args) -> Result<(), String> {
     if args.max_lines == 0 {
         return Err("--max-lines must be greater than zero".to_string());
     }
+    if args.warn_lines > args.max_lines {
+        return Err("--warn-lines must be less than or equal to --max-lines".to_string());
+    }
 
     let current_dir = std::env::current_dir().map_err(|err| err.to_string())?;
     let root = current_dir.join(&args.root);
     if !root.exists() {
         return Err(format!(
             "scan root does not exist: {}",
+            normalize_path(&args.root)
+        ));
+    }
+    if !root.is_dir() {
+        return Err(format!(
+            "scan root must be a directory: {}",
             normalize_path(&args.root)
         ));
     }
@@ -271,4 +283,48 @@ fn normalize_path(path: &Path) -> String {
 
 fn normalize_slashes(path: &str) -> String {
     path.replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_file(path: &Path, content: &str) {
+        fs::write(path, content).expect("write fixture file");
+    }
+
+    fn empty_exceptions(path: &Path) {
+        write_file(path, "exceptions = []\n");
+    }
+
+    #[test]
+    fn rejects_warn_threshold_above_max() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("src");
+        fs::create_dir_all(&root).expect("create src dir");
+        write_file(root.join("lib.rs").as_path(), "pub fn a() {}\n");
+        let exceptions = temp.path().join("exceptions.toml");
+        empty_exceptions(exceptions.as_path());
+
+        let args = Args {
+            max_lines: 10,
+            warn_lines: 11,
+            exceptions_file: exceptions,
+            root,
+        };
+
+        let err = run(args).expect_err("warn threshold above max must fail");
+        assert!(
+            err.contains("--warn-lines must be less than or equal to --max-lines"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn parse_positive_usize_rejects_zero() {
+        assert!(parse_positive_usize("0").is_err());
+        assert!(parse_positive_usize("1").is_ok());
+    }
 }

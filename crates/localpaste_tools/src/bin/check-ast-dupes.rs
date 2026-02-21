@@ -27,6 +27,9 @@ use normalize::{collect_call_refs, AstNormalizer};
 #[path = "check_ast_dupes/similarity.rs"]
 mod similarity;
 use similarity::{find_similarity_pairs, print_duplicate_findings, print_near_miss_findings};
+#[path = "shared/cli_parsers.rs"]
+mod cli_parsers;
+use cli_parsers::parse_positive_usize;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -39,19 +42,19 @@ struct Args {
     root: PathBuf,
 
     /// Jaccard threshold (0.0 to 1.0) for duplicate pairs.
-    #[arg(long, default_value_t = 0.78)]
+    #[arg(long, default_value_t = 0.78, value_parser = parse_unit_interval)]
     threshold: f64,
 
     /// Lower bound (0.0 to 1.0) for near-miss similarity reporting.
-    #[arg(long, default_value_t = 0.70)]
+    #[arg(long, default_value_t = 0.70, value_parser = parse_unit_interval)]
     near_miss_threshold: f64,
 
     /// k for k-gram shingles.
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 5, value_parser = parse_positive_usize)]
     k: usize,
 
     /// Minimum normalized node-sequence length before duplicate comparison.
-    #[arg(long, default_value_t = 28)]
+    #[arg(long, default_value_t = 28, value_parser = parse_positive_usize)]
     min_nodes: usize,
 
     /// Maximum duplicate pairs to print.
@@ -73,6 +76,10 @@ struct Args {
     /// Include externally public (pub) symbols in dead-symbol checks.
     #[arg(long, default_value_t = false)]
     include_pub: bool,
+
+    /// Continue even when one or more Rust files fail to parse.
+    #[arg(long, default_value_t = false)]
+    allow_parse_errors: bool,
 
     /// Fail with non-zero exit code when findings are present.
     #[arg(long, default_value_t = false)]
@@ -127,6 +134,7 @@ fn main() {
 }
 
 fn run(args: Args) -> Result<(), String> {
+    // Keep internal validation so non-CLI callers cannot bypass invariants.
     if !(0.0..=1.0).contains(&args.threshold) {
         return Err("--threshold must be in [0.0, 1.0]".to_string());
     }
@@ -148,6 +156,12 @@ fn run(args: Args) -> Result<(), String> {
     if !scan_root.exists() {
         return Err(format!(
             "scan root does not exist: {}",
+            normalize_path(args.root.as_path())
+        ));
+    }
+    if !scan_root.is_dir() {
+        return Err(format!(
+            "scan root must be a directory: {}",
             normalize_path(args.root.as_path())
         ));
     }
@@ -195,6 +209,12 @@ fn run(args: Args) -> Result<(), String> {
         if parse_errors.len() > 20 {
             println!("  ... and {} more", parse_errors.len() - 20);
         }
+        if !args.allow_parse_errors {
+            return Err(format!(
+                "parse errors detected ({}); re-run with --allow-parse-errors to continue",
+                parse_errors.len()
+            ));
+        }
     }
 
     print_duplicate_findings(&functions, &duplicates, &args);
@@ -202,7 +222,10 @@ fn run(args: Args) -> Result<(), String> {
     print_dead_findings(&functions, &dead, &args);
     print_visibility_candidates(&functions, &visibility_tighten);
 
-    let has_findings = !duplicates.is_empty() || !dead.is_empty() || !visibility_tighten.is_empty();
+    let has_findings = !duplicates.is_empty()
+        || !near_misses.is_empty()
+        || !dead.is_empty()
+        || !visibility_tighten.is_empty();
     if args.fail_on_findings && has_findings {
         return Err("findings detected".to_string());
     }
@@ -878,26 +901,17 @@ fn path_has_tests_segment(path: &Path) -> bool {
         .any(|component| component.as_os_str() == "tests")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn jaccard_is_stable() {
-        let left = HashSet::from([1u64, 2u64, 3u64]);
-        let right = HashSet::from([2u64, 3u64, 4u64]);
-        let (score, overlap, union) = jaccard(&left, &right);
-        assert!((score - 0.5).abs() < f64::EPSILON);
-        assert_eq!(overlap, 2);
-        assert_eq!(union, 4);
-    }
-
-    #[test]
-    fn infer_base_module_handles_mod_file() {
-        let module = infer_base_module(Path::new("crates/localpaste_gui/src/app/mod.rs"));
-        assert_eq!(
-            module,
-            vec!["localpaste_gui".to_string(), "app".to_string()]
-        );
+fn parse_unit_interval(raw: &str) -> Result<f64, String> {
+    let parsed = raw
+        .parse::<f64>()
+        .map_err(|_| format!("invalid float value '{}'", raw))?;
+    if (0.0..=1.0).contains(&parsed) {
+        Ok(parsed)
+    } else {
+        Err(format!("value must be in [0.0, 1.0], got {}", parsed))
     }
 }
+
+#[cfg(test)]
+#[path = "check_ast_dupes/tests.rs"]
+mod tests;

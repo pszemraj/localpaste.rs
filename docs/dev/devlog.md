@@ -30,7 +30,7 @@ localpaste.rs/
 - `lpaste` - CLI client (`crates/localpaste_cli`)
 - `generate-test-data` - synthetic dataset tool (`crates/localpaste_tools`)
 - `check-loc` - line-count policy checker (`crates/localpaste_tools`)
-- `check-ast-dupes` - semantic duplicate/dead-symbol audit (`crates/localpaste_tools`)
+- `check-ast-dupes` - AST-normalized duplicate/dead-symbol audit (`crates/localpaste_tools`)
 
 ## Build Matrix
 
