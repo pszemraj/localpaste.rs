@@ -55,6 +55,15 @@ fn with_folder_metadata_response(response: Response, include_meta_shape_header: 
     }
 }
 
+/// Builds create-time language state from API payload semantics.
+///
+/// Contract:
+/// - `language: Some(..)` always uses the explicit value.
+/// - `language_is_manual: Some(false)` without `language` is an API opt-in to
+///   start unresolved auto mode (`language = None`), deferring detection until a
+///   later content edit.
+/// - omitted `language_is_manual` follows default create behavior: detect now
+///   and lock when detection resolves a concrete language.
 fn build_paste_for_create(
     content: String,
     name: String,
@@ -90,7 +99,7 @@ where
     }
 
     if language_is_manual == Some(false) {
-        // Explicit auto-mode create intentionally starts unresolved and defers
+        // API-only explicit auto mode intentionally starts unresolved and defers
         // detector work until a later content edit.
         return Paste::new_with_language(content, name, None, false);
     }

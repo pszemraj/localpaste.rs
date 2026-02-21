@@ -35,6 +35,7 @@ Auto mode is intentionally "pending detection":
 - switching to auto clears the resolved language label,
 - the next content edit re-runs detection,
 - if detection resolves a concrete language, that value is locked (`language_is_manual = true`) until explicitly switched back to auto.
+- API create requests that omit `language_is_manual` detect immediately and lock when detection resolves; pass `language_is_manual: false` to start unresolved auto mode and defer detection until a later edit.
 
 For manual language (`language_is_manual == true`), content edits do not re-run auto detection.
 

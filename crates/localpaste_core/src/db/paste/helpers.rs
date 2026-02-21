@@ -366,8 +366,10 @@ impl From<LegacyPaste> for Paste {
 
 #[cfg(test)]
 mod tests {
-    use super::{reverse_timestamp_key, score_meta_match, LegacyPaste, Paste};
-    use crate::models::paste::PasteMeta;
+    use super::{
+        apply_update_request, reverse_timestamp_key, score_meta_match, LegacyPaste, Paste,
+    };
+    use crate::models::paste::{PasteMeta, UpdatePasteRequest};
     use chrono::{TimeZone, Utc};
 
     #[test]
@@ -397,6 +399,37 @@ mod tests {
             let migrated: Paste = legacy.into();
             assert!(!migrated.language_is_manual);
         }
+    }
+
+    #[test]
+    fn legacy_migrated_language_reclassified_on_first_content_edit() {
+        let legacy = LegacyPaste {
+            id: "legacy-id".to_string(),
+            name: "legacy".to_string(),
+            content: "print('hello')\n".to_string(),
+            language: Some("python".to_string()),
+            folder_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            tags: Vec::new(),
+            is_markdown: false,
+        };
+        let mut migrated: Paste = legacy.into();
+        assert!(!migrated.language_is_manual);
+        assert_eq!(migrated.language.as_deref(), Some("python"));
+
+        let update = UpdatePasteRequest {
+            content: Some("fn main() { println!(\"hello\"); }\n".to_string()),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        };
+        apply_update_request(&mut migrated, &update);
+
+        assert_eq!(migrated.language.as_deref(), Some("rust"));
+        assert!(migrated.language_is_manual);
     }
 
     #[test]

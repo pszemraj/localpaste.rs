@@ -44,3 +44,43 @@ async fn test_create_paste_with_explicit_auto_mode_starts_unresolved() {
     assert!(paste["language"].is_null());
     assert_eq!(paste["language_is_manual"], false);
 }
+
+#[tokio::test]
+async fn test_default_create_then_auto_toggle_then_content_redetect_cycle() {
+    let (server, _temp, _locks) = setup_test_server();
+
+    let created = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "fn main() { println!(\"hello\"); }",
+            "name": "default-create"
+        }))
+        .await;
+    assert_eq!(created.status_code(), StatusCode::OK);
+    let created_json: serde_json::Value = created.json();
+    let paste_id = created_json["id"].as_str().expect("create response id");
+    assert_eq!(created_json["language"], "rust");
+    assert_eq!(created_json["language_is_manual"], true);
+
+    let switched_auto = server
+        .put(&format!("/api/paste/{}", paste_id))
+        .json(&json!({
+            "language_is_manual": false
+        }))
+        .await;
+    assert_eq!(switched_auto.status_code(), StatusCode::OK);
+    let switched_auto_json: serde_json::Value = switched_auto.json();
+    assert!(switched_auto_json["language"].is_null());
+    assert_eq!(switched_auto_json["language_is_manual"], false);
+
+    let redetected = server
+        .put(&format!("/api/paste/{}", paste_id))
+        .json(&json!({
+            "content": "def main():\n    import sys\n    print('hello')\n"
+        }))
+        .await;
+    assert_eq!(redetected.status_code(), StatusCode::OK);
+    let redetected_json: serde_json::Value = redetected.json();
+    assert_eq!(redetected_json["language"], "python");
+    assert_eq!(redetected_json["language_is_manual"], true);
+}

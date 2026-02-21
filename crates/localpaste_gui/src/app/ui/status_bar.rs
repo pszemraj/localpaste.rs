@@ -41,6 +41,8 @@ impl LocalPasteApp {
                         .truncate(),
                     );
                 });
+                // Keep API metadata on its own row so long DB paths and status text
+                // cannot starve/right-clip the endpoint label at narrow widths.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let api_label = if self.server_used_fallback {
                         format!("API: http://{} (auto)", self.server_addr)
