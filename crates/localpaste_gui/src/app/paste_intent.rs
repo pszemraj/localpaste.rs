@@ -89,6 +89,7 @@ impl LocalPasteApp {
     /// # Arguments
     /// - `editor_focus_pre`: Whether the active editor owned focus before routing.
     /// - `saw_virtual_paste`: Whether virtual command extraction already observed paste.
+    /// - `wants_keyboard_input_before`: Whether egui already assigned keyboard input to a focused widget.
     ///
     /// # Returns
     /// Tuple of `(request_virtual_paste, request_new_paste)`.
@@ -96,9 +97,13 @@ impl LocalPasteApp {
         &self,
         editor_focus_pre: bool,
         saw_virtual_paste: bool,
+        wants_keyboard_input_before: bool,
     ) -> (bool, bool) {
         if self.editor_mode == EditorMode::VirtualEditor && editor_focus_pre {
             (!saw_virtual_paste, false)
+        } else if wants_keyboard_input_before {
+            // Respect focused non-editor text inputs (search, palette query, metadata fields).
+            (false, false)
         } else if !editor_focus_pre {
             (false, true)
         } else {

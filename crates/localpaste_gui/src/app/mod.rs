@@ -676,8 +676,11 @@ impl eframe::App for LocalPasteApp {
             }
             if input.modifiers.command && input.key_pressed(egui::Key::V) && !input.modifiers.shift
             {
-                let (request_virtual, request_new) =
-                    self.route_plain_paste_shortcut(editor_focus_pre, saw_virtual_paste);
+                let (request_virtual, request_new) = self.route_plain_paste_shortcut(
+                    editor_focus_pre,
+                    saw_virtual_paste,
+                    wants_keyboard_input_before,
+                );
                 if request_virtual {
                     request_virtual_paste = true;
                 }

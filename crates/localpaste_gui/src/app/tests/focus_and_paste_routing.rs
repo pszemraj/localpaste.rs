@@ -183,65 +183,107 @@ fn command_shift_v_arms_paste_as_new_before_virtual_routing() {
 #[test]
 fn plain_paste_shortcut_routes_by_editor_focus_contract() {
     struct Case {
+        name: &'static str,
         mode: EditorMode,
         editor_focus_pre: bool,
         saw_virtual_paste: bool,
+        wants_keyboard_input_before: bool,
         expect_virtual_request: bool,
         expect_new_paste_request: bool,
     }
 
     let cases = [
         Case {
+            name: "virtual focused requests viewport paste",
             mode: EditorMode::VirtualEditor,
             editor_focus_pre: true,
             saw_virtual_paste: false,
+            wants_keyboard_input_before: true,
             expect_virtual_request: true,
             expect_new_paste_request: false,
         },
         Case {
+            name: "virtual focused suppresses duplicate viewport paste",
             mode: EditorMode::VirtualEditor,
             editor_focus_pre: true,
             saw_virtual_paste: true,
+            wants_keyboard_input_before: true,
             expect_virtual_request: false,
             expect_new_paste_request: false,
         },
         Case {
+            name: "virtual unfocused with free keyboard creates new paste",
             mode: EditorMode::VirtualEditor,
             editor_focus_pre: false,
             saw_virtual_paste: false,
+            wants_keyboard_input_before: false,
             expect_virtual_request: false,
             expect_new_paste_request: true,
         },
         Case {
+            name: "text edit focused defers to native text edit input",
             mode: EditorMode::TextEdit,
             editor_focus_pre: true,
             saw_virtual_paste: false,
+            wants_keyboard_input_before: true,
             expect_virtual_request: false,
             expect_new_paste_request: false,
         },
         Case {
+            name: "focused non-editor text input does not trigger paste-as-new",
             mode: EditorMode::TextEdit,
             editor_focus_pre: false,
             saw_virtual_paste: false,
+            wants_keyboard_input_before: true,
+            expect_virtual_request: false,
+            expect_new_paste_request: false,
+        },
+        Case {
+            name: "text edit unfocused with free keyboard creates new paste",
+            mode: EditorMode::TextEdit,
+            editor_focus_pre: false,
+            saw_virtual_paste: false,
+            wants_keyboard_input_before: false,
             expect_virtual_request: false,
             expect_new_paste_request: true,
         },
         Case {
+            name: "preview unfocused with free keyboard creates new paste",
             mode: EditorMode::VirtualPreview,
             editor_focus_pre: false,
             saw_virtual_paste: false,
+            wants_keyboard_input_before: false,
             expect_virtual_request: false,
             expect_new_paste_request: true,
+        },
+        Case {
+            name: "preview with focused non-editor input does not create new paste",
+            mode: EditorMode::VirtualPreview,
+            editor_focus_pre: false,
+            saw_virtual_paste: false,
+            wants_keyboard_input_before: true,
+            expect_virtual_request: false,
+            expect_new_paste_request: false,
         },
     ];
 
     for case in cases {
         let mut harness = make_app();
         harness.app.editor_mode = case.mode;
-        let (request_virtual, request_new) = harness
-            .app
-            .route_plain_paste_shortcut(case.editor_focus_pre, case.saw_virtual_paste);
-        assert_eq!(request_virtual, case.expect_virtual_request);
-        assert_eq!(request_new, case.expect_new_paste_request);
+        let (request_virtual, request_new) = harness.app.route_plain_paste_shortcut(
+            case.editor_focus_pre,
+            case.saw_virtual_paste,
+            case.wants_keyboard_input_before,
+        );
+        assert_eq!(
+            request_virtual, case.expect_virtual_request,
+            "virtual routing mismatch for case '{}'",
+            case.name
+        );
+        assert_eq!(
+            request_new, case.expect_new_paste_request,
+            "new-paste routing mismatch for case '{}'",
+            case.name
+        );
     }
 }
