@@ -1,0 +1,108 @@
+//! Paste-intent helpers for explicit "paste as new" routing.
+
+use super::*;
+
+impl LocalPasteApp {
+    /// Arms the short-lived "paste as new" intent window.
+    pub(super) fn arm_paste_as_new_intent(&mut self) {
+        self.paste_as_new_pending_frames = PASTE_AS_NEW_PENDING_TTL_FRAMES;
+    }
+
+    /// Requests system paste and marks the result to be routed as new paste content.
+    ///
+    /// # Arguments
+    /// - `ctx`: Egui context used to dispatch viewport paste requests.
+    pub(super) fn request_paste_as_new(&mut self, ctx: &egui::Context) {
+        self.arm_paste_as_new_intent();
+        ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+    }
+
+    /// Arms explicit "paste as new" intent when command+shift+V is observed this frame.
+    ///
+    /// # Arguments
+    /// - `ctx`: Egui context used to inspect current-frame input events.
+    ///
+    /// # Returns
+    /// `true` when the explicit shortcut was observed and intent was armed.
+    pub(super) fn maybe_arm_paste_as_new_shortcut_intent(&mut self, ctx: &egui::Context) -> bool {
+        let explicit_shortcut = ctx.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::V,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if is_command_shift_shortcut(*modifiers)
+                )
+            })
+        });
+        if explicit_shortcut {
+            self.arm_paste_as_new_intent();
+        }
+        explicit_shortcut
+    }
+
+    /// Returns whether a virtual paste command should be skipped due to explicit paste-as-new intent.
+    ///
+    /// # Arguments
+    /// - `command`: Candidate virtual editor command for this frame.
+    ///
+    /// # Returns
+    /// `true` when a pending explicit paste-as-new intent should consume the paste event instead.
+    pub(super) fn should_skip_virtual_command_for_paste_as_new(
+        &self,
+        command: &VirtualInputCommand,
+    ) -> bool {
+        self.paste_as_new_pending_frames > 0 && matches!(command, VirtualInputCommand::Paste(_))
+    }
+
+    /// Consumes a pending explicit paste-as-new intent and dispatches create when clipboard text exists.
+    ///
+    /// # Arguments
+    /// - `pasted_text`: Optional clipboard text captured from current-frame egui events.
+    ///
+    /// # Returns
+    /// `true` when clipboard text was consumed and routed into `CreatePaste`.
+    pub(super) fn maybe_consume_explicit_paste_as_new(
+        &mut self,
+        pasted_text: &mut Option<String>,
+    ) -> bool {
+        if self.paste_as_new_pending_frames == 0 {
+            return false;
+        }
+        if let Some(text) = pasted_text.take() {
+            self.paste_as_new_pending_frames = 0;
+            if !text.trim().is_empty() {
+                self.create_new_paste_with_content(text);
+                return true;
+            }
+            return false;
+        }
+        self.paste_as_new_pending_frames = self.paste_as_new_pending_frames.saturating_sub(1);
+        false
+    }
+
+    /// Routes plain paste shortcut behavior based on current editor mode/focus state.
+    ///
+    /// # Arguments
+    /// - `editor_focus_pre`: Whether the active editor owned focus before routing.
+    /// - `saw_virtual_paste`: Whether virtual command extraction already observed paste.
+    ///
+    /// # Returns
+    /// Tuple of `(request_virtual_paste, request_new_paste)`.
+    pub(super) fn route_plain_paste_shortcut(
+        &self,
+        editor_focus_pre: bool,
+        saw_virtual_paste: bool,
+    ) -> (bool, bool) {
+        if self.editor_mode == EditorMode::VirtualEditor && editor_focus_pre {
+            (!saw_virtual_paste, false)
+        } else if !editor_focus_pre {
+            (false, true)
+        } else {
+            (false, false)
+        }
+    }
+}

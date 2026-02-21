@@ -4,6 +4,7 @@ mod editor;
 mod highlight;
 mod highlight_flow;
 mod interaction_helpers;
+mod paste_intent;
 mod perf_trace;
 mod shutdown;
 mod state_accessors;
@@ -407,49 +408,6 @@ impl LocalPasteApp {
         Ok(app)
     }
 
-    fn arm_paste_as_new_intent(&mut self) {
-        self.paste_as_new_pending_frames = PASTE_AS_NEW_PENDING_TTL_FRAMES;
-    }
-
-    fn request_paste_as_new(&mut self, ctx: &egui::Context) {
-        self.arm_paste_as_new_intent();
-        ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-    }
-
-    fn should_skip_virtual_command_for_paste_as_new(&self, command: &VirtualInputCommand) -> bool {
-        self.paste_as_new_pending_frames > 0 && matches!(command, VirtualInputCommand::Paste(_))
-    }
-
-    fn maybe_consume_explicit_paste_as_new(&mut self, pasted_text: &mut Option<String>) -> bool {
-        if self.paste_as_new_pending_frames == 0 {
-            return false;
-        }
-        if let Some(text) = pasted_text.take() {
-            self.paste_as_new_pending_frames = 0;
-            if !text.trim().is_empty() {
-                self.create_new_paste_with_content(text);
-                return true;
-            }
-            return false;
-        }
-        self.paste_as_new_pending_frames = self.paste_as_new_pending_frames.saturating_sub(1);
-        false
-    }
-
-    fn route_plain_paste_shortcut(
-        &self,
-        editor_focus_pre: bool,
-        saw_virtual_paste: bool,
-    ) -> (bool, bool) {
-        if self.editor_mode == EditorMode::VirtualEditor && editor_focus_pre {
-            (!saw_virtual_paste, false)
-        } else if !editor_focus_pre {
-            (false, true)
-        } else {
-            (false, false)
-        }
-    }
-
     fn acquire_paste_lock(&mut self, id: &str) -> bool {
         match self.locks.acquire(id, &self.lock_owner_id) {
             Ok(()) => true,
@@ -610,6 +568,8 @@ impl eframe::App for LocalPasteApp {
             text_editor_focus_pre
         };
         let copy_ready_pre = focus_active_pre || has_virtual_selection_pre;
+        let explicit_paste_as_new_shortcut_pressed =
+            self.maybe_arm_paste_as_new_shortcut_intent(ctx);
         let mut saw_virtual_select_all = false;
         let mut saw_virtual_copy = false;
         let mut saw_virtual_cut = false;
@@ -674,7 +634,7 @@ impl eframe::App for LocalPasteApp {
         let mut fallback_virtual_undo = false;
         let mut fallback_virtual_redo = false;
         let mut request_virtual_paste = false;
-        let mut request_paste_as_new = false;
+        let mut request_paste_as_new = explicit_paste_as_new_shortcut_pressed;
         let mut pasted_text: Option<String> = None;
         let mut sidebar_direction: i32 = 0;
         let wants_keyboard_input_before = ctx.wants_keyboard_input();

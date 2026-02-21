@@ -133,6 +133,54 @@ fn explicit_paste_as_new_skips_virtual_paste_commands() {
 }
 
 #[test]
+fn command_shift_v_arms_paste_as_new_before_virtual_routing() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    let modifiers = egui::Modifiers {
+        command: true,
+        shift: true,
+        ..Default::default()
+    };
+
+    let _ = ctx.run(
+        egui::RawInput {
+            events: vec![
+                egui::Event::Key {
+                    key: egui::Key::V,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                },
+                egui::Event::Paste("from clipboard".to_string()),
+            ],
+            ..Default::default()
+        },
+        |ctx| {
+            assert!(harness.app.maybe_arm_paste_as_new_shortcut_intent(ctx));
+            let commands = ctx.input(|input| commands_from_events(&input.events, true));
+            assert!(
+                commands
+                    .iter()
+                    .any(|command| matches!(command, VirtualInputCommand::Paste(_))),
+                "expected virtual paste command from same-frame paste event"
+            );
+            for command in &commands {
+                if matches!(command, VirtualInputCommand::Paste(_)) {
+                    assert!(harness
+                        .app
+                        .should_skip_virtual_command_for_paste_as_new(command));
+                }
+            }
+        },
+    );
+    assert_eq!(
+        harness.app.paste_as_new_pending_frames,
+        PASTE_AS_NEW_PENDING_TTL_FRAMES
+    );
+}
+
+#[test]
 fn plain_paste_shortcut_routes_by_editor_focus_contract() {
     struct Case {
         mode: EditorMode,

@@ -62,6 +62,7 @@ pub(super) fn shaped_test_galley() -> Arc<egui::Galley> {
     galley.expect("test galley")
 }
 
+/// Configures deterministic font/style settings for virtual-editor test contexts.
 pub(super) fn configure_virtual_editor_test_ctx(ctx: &egui::Context) {
     ctx.set_fonts(egui::FontDefinitions::empty());
     let mut style = (*ctx.style()).clone();
