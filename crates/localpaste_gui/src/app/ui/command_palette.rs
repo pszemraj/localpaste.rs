@@ -4,6 +4,7 @@ use super::super::*;
 use crate::backend::CoreCmd;
 use eframe::egui::{self, RichText};
 
+/// Executable actions exposed by the command palette.
 #[derive(Clone, Debug)]
 pub(crate) enum CommandPaletteAction {
     NewPaste,
@@ -19,6 +20,7 @@ pub(crate) enum CommandPaletteAction {
     CopyPasteFenced(String),
 }
 
+/// Display row for command actions in the palette command section.
 #[derive(Clone, Debug)]
 pub(crate) struct CommandPaletteItem {
     pub(crate) label: String,

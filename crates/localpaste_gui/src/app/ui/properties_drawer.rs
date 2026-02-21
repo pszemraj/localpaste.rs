@@ -5,6 +5,17 @@ use eframe::egui;
 
 const AUTO_LANGUAGE: &str = "__auto__";
 
+/// Applies a language choice change to the metadata draft fields.
+///
+/// `AUTO_LANGUAGE` disables manual mode without erasing the detected language
+/// value currently shown in the editor.
+///
+/// # Arguments
+/// - `edit_language_is_manual`: Editable manual-language flag.
+/// - `edit_language`: Editable language label field.
+/// - `metadata_dirty`: Dirty marker toggled when the choice changes metadata.
+/// - `language_choice`: Newly selected combo-box value.
+/// - `current_manual_value`: Canonicalized current manual-language option.
 pub(super) fn apply_language_choice(
     edit_language_is_manual: &mut bool,
     edit_language: &mut Option<String>,
@@ -29,6 +40,14 @@ pub(super) fn apply_language_choice(
     }
 }
 
+/// Resolves the combo-box label for the selected language choice.
+///
+/// # Arguments
+/// - `language_choice`: Selected combo-box option value.
+/// - `auto_label`: Label text used for auto mode.
+///
+/// # Returns
+/// User-facing text for the current language choice.
 pub(super) fn selected_language_choice_text(language_choice: &str, auto_label: &str) -> String {
     if language_choice == AUTO_LANGUAGE {
         return auto_label.to_string();
@@ -38,6 +57,10 @@ pub(super) fn selected_language_choice_text(language_choice: &str, auto_label: &
         .to_string()
 }
 
+/// Returns the sentinel key used for auto language mode options.
+///
+/// # Returns
+/// Stable option-key string representing auto mode in language selectors.
 pub(super) fn auto_language_choice_key() -> &'static str {
     AUTO_LANGUAGE
 }
