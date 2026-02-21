@@ -1,5 +1,4 @@
 name: release-gui
-
 on:
   push:
     tags:
@@ -23,14 +22,11 @@ on:
         required: false
         default: false
         type: boolean
-
 permissions:
   contents: write
-
 concurrency:
   group: release-gui-${{ github.event_name }}-${{ github.ref_name || github.event.inputs.tag || github.run_id }}
   cancel-in-progress: false
-
 jobs:
   resolve_tag:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
@@ -45,7 +41,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Resolve source
         id: resolve
         shell: bash
@@ -116,13 +111,11 @@ jobs:
           echo "resolved_tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "source_ref=${SOURCE_REF}" >> "$GITHUB_OUTPUT"
           echo "resolved mode=${MODE} tag=${TAG} source_ref=${SOURCE_REF}"
-
       - name: Checkout resolved source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ steps.resolve.outputs.source_ref }}
-
       - name: Validate workspace version matches tag
         if: steps.resolve.outputs.source_mode == 'release_tag'
         shell: bash
@@ -151,7 +144,6 @@ jobs:
             echo "tag/version mismatch: tag=${TAG_VERSION} workspace=${WORKSPACE_VERSION}" >&2
             exit 1
           fi
-
   smoke:
     needs: resolve_tag
     runs-on: ubuntu-22.04
@@ -165,22 +157,18 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ env.SOURCE_REF }}
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.89.0
-
       - name: Cache Rust build artifacts
         uses: swatinem/rust-cache@v2
-
       - name: Build smoke binaries
         shell: bash
         run: |
           set -euo pipefail
           cargo build -p localpaste_server --bin localpaste
           cargo build -p localpaste_cli --bin lpaste
-
       - name: Smoke test (server + CLI CRUD + restart persistence)
         shell: bash
         run: |
@@ -247,7 +235,6 @@ jobs:
 
           start_server
           ./target/debug/lpaste --timing get "${PERSIST_ID}"
-
   build_package:
     needs:
       - resolve_tag
@@ -279,7 +266,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Sync source tree to release tag
         if: env.SOURCE_MODE == 'release_tag'
         shell: bash
@@ -299,7 +285,6 @@ jobs:
           else
             echo "packaging/ not present in tag ${RESOLVED_TAG}; using workflow-ref packaging configs"
           fi
-
       - name: Use workflow ref source tree
         if: env.SOURCE_MODE == 'current_ref'
         shell: bash
@@ -311,12 +296,10 @@ jobs:
             echo "Using source ref: ${SOURCE_REF}"
             echo "Resolved packaging tag/version: ${RESOLVED_TAG}"
           } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Determine macOS signing/notarization availability
         if: runner.os == 'macOS'
         id: mac_signing
@@ -362,18 +345,15 @@ jobs:
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "missing=" >> "$GITHUB_OUTPUT"
           fi
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.89.0
           targets: ${{ matrix.target }}
-
       - name: Cache Rust build artifacts
         uses: swatinem/rust-cache@v2
         with:
           key: release-gui-${{ matrix.target }}
-
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         shell: bash
@@ -389,18 +369,14 @@ jobs:
             libxcb-xfixes0-dev \
             patchelf \
             libfuse2
-
       - name: Install WiX Toolset
         if: runner.os == 'Windows'
         shell: pwsh
         run: choco install wixtoolset -y --no-progress
-
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.8 --locked
-
       - name: Build GUI release binary
         run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{ matrix.target }}
-
       - name: Generate macOS icns icon
         if: runner.os == 'macOS'
         shell: bash
@@ -435,7 +411,6 @@ jobs:
             echo "failed to generate icns icon: ${ICON_DST}" >&2
             exit 1
           fi
-
       - name: Prepare packager config and staged runtime
         shell: bash
         run: |
@@ -446,10 +421,8 @@ jobs:
             --asset-suffix "${{ matrix.asset_suffix }}" \
             --packager-config "${{ matrix.packager_config }}" \
             --runner-os "${{ runner.os }}"
-
       - name: Build installer packages
         run: python -c "import os, subprocess; subprocess.run(['cargo', 'packager', '--config', os.environ['PACKAGER_CONFIG_PATH']], check=True)"
-
       - name: Sign, notarize, and verify macOS artifacts
         if: runner.os == 'macOS' && steps.mac_signing.outputs.enabled == 'true'
         shell: bash
@@ -494,7 +467,6 @@ jobs:
           xcrun stapler staple "${APP_BUNDLE}"
           xcrun stapler staple "${DMG_PATH}"
           spctl --assess --type open --verbose=4 "${DMG_PATH}"
-
       - name: Verify macOS DMG usability
         if: runner.os == 'macOS'
         shell: bash
@@ -514,7 +486,6 @@ jobs:
             cat /tmp/localpaste-dmg-imageinfo.txt >&2
             exit 1
           fi
-
       - name: Collect release assets
         shell: bash
         run: |
@@ -523,7 +494,6 @@ jobs:
             --tag "${{ env.RESOLVED_TAG }}" \
             --asset-suffix "${{ matrix.asset_suffix }}" \
             --runner-os "${{ runner.os }}"
-
       - name: Upload release assets
         uses: actions/upload-artifact@v4
         with:
@@ -531,7 +501,6 @@ jobs:
           path: dist/release/${{ matrix.asset_suffix }}/*
           if-no-files-found: error
           retention-days: 1
-
   publish:
     if: needs.resolve_tag.outputs.source_mode != 'current_ref' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
     needs:
@@ -546,14 +515,12 @@ jobs:
           pattern: release-assets-*
           path: dist/release-assets
           merge-multiple: true
-
       - name: Generate checksums
         shell: bash
         run: |
           set -euo pipefail
           cd dist/release-assets
           sha256sum localpaste-* > checksums.sha256
-
       - name: Detect macOS DMG asset
         id: mac_dmg
         shell: bash
@@ -564,7 +531,6 @@ jobs:
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
-
       - name: Publish release assets
         id: publish_release
         # Keep v2+ here: `overwrite_files` is not supported by older pinned tags.
@@ -578,7 +544,6 @@ jobs:
           files: |
             dist/release-assets/localpaste-*
             dist/release-assets/checksums.sha256
-
       - name: Append macOS Gatekeeper note
         if: steps.mac_dmg.outputs.found == 'true'
         shell: bash

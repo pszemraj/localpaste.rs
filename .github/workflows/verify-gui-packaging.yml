@@ -1,5 +1,4 @@
 name: verify-gui-packaging
-
 on:
   workflow_dispatch:
     inputs:
@@ -7,14 +6,11 @@ on:
         description: Optional tag-like version string used for packaging metadata (for example vX.Y.Z). If empty, derives from workspace version.
         required: false
         type: string
-
 permissions:
   contents: read
-
 concurrency:
   group: verify-gui-packaging-${{ github.ref_name }}-${{ github.run_id }}
   cancel-in-progress: false
-
 jobs:
   macos-package-verify:
     runs-on: macos-14
@@ -29,7 +25,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Resolve verify tag
         shell: bash
         run: |
@@ -69,35 +64,29 @@ jobs:
             echo
             echo "Using ${SOURCE_LABEL}: ${VERIFY_TAG}"
           } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.89.0
           targets: ${{ env.TARGET }}
-
       - name: Cache Rust build artifacts
         uses: swatinem/rust-cache@v2
         with:
           key: verify-gui-packaging-${{ env.TARGET }}
-
       - name: Workspace check
         shell: bash
         run: |
           set -euo pipefail
           cargo check --workspace --all-targets --all-features
-
       - name: GUI test suite
         shell: bash
         run: |
           set -euo pipefail
           cargo test -p localpaste_gui
-
       - name: Determine macOS signing/notarization availability
         id: mac_signing
         shell: bash
@@ -137,13 +126,10 @@ jobs:
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "missing=" >> "$GITHUB_OUTPUT"
           fi
-
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.8 --locked
-
       - name: Build GUI release binary
         run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{ env.TARGET }}
-
       - name: Generate macOS icns icon
         shell: bash
         run: |
@@ -177,7 +163,6 @@ jobs:
             echo "failed to generate icns icon: ${ICON_DST}" >&2
             exit 1
           fi
-
       - name: Prepare packager config and staged runtime
         shell: bash
         run: |
@@ -188,10 +173,8 @@ jobs:
             --asset-suffix "${ASSET_SUFFIX}" \
             --packager-config "${PACKAGER_CONFIG}" \
             --runner-os "macOS"
-
       - name: Build installer packages
         run: python -c "import os, subprocess; subprocess.run(['cargo', 'packager', '--config', os.environ['PACKAGER_CONFIG_PATH']], check=True)"
-
       - name: Sign, notarize, and verify macOS artifacts
         if: steps.mac_signing.outputs.enabled == 'true'
         shell: bash
@@ -236,7 +219,6 @@ jobs:
           xcrun stapler staple "${APP_BUNDLE}"
           xcrun stapler staple "${DMG_PATH}"
           spctl --assess --type open --verbose=4 "${DMG_PATH}"
-
       - name: Collect release assets
         shell: bash
         run: |
@@ -245,7 +227,6 @@ jobs:
             --tag "${VERIFY_TAG}" \
             --asset-suffix "${ASSET_SUFFIX}" \
             --runner-os "macOS"
-
       - name: Upload macOS verify artifacts
         uses: actions/upload-artifact@v4
         with:
