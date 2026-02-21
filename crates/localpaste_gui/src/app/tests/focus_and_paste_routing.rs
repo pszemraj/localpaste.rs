@@ -136,11 +136,17 @@ fn explicit_paste_as_new_skips_consumption_when_text_editor_focused() {
 fn prepare_text_editor_for_paste_as_new_clears_focus() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::TextEdit;
-    harness.app.text_editor_has_focus = true;
 
     let ctx = egui::Context::default();
-    let editor_id = egui::Id::new(TEXT_EDITOR_ID);
+    configure_virtual_editor_test_ctx(&ctx);
+    run_editor_panel_once(&mut harness.app, &ctx, egui::RawInput::default());
+    let editor_id = harness
+        .app
+        .text_editor_focus_id
+        .expect("text editor should publish its runtime focus id");
     ctx.memory_mut(|m| m.request_focus(editor_id));
+    harness.app.text_editor_has_focus = true;
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
 
     harness.app.prepare_text_editor_for_paste_as_new(&ctx);
 

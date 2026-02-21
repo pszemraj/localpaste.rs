@@ -27,7 +27,11 @@ impl LocalPasteApp {
         if self.editor_mode != EditorMode::TextEdit {
             return;
         }
-        let editor_id = egui::Id::new(TEXT_EDITOR_ID);
+        // TextEdit focus IDs are UI-scoped; use the last response ID captured
+        // during rendering so explicit paste-as-new can reliably blur it.
+        let editor_id = self
+            .text_editor_focus_id
+            .unwrap_or_else(|| egui::Id::new(TEXT_EDITOR_ID));
         ctx.memory_mut(|m| m.surrender_focus(editor_id));
         self.text_editor_has_focus = false;
     }
