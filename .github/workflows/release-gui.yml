@@ -546,7 +546,19 @@ jobs:
           cd dist/release-assets
           sha256sum localpaste-* > checksums.sha256
 
+      - name: Detect macOS DMG asset
+        id: mac_dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          if compgen -G "dist/release-assets/localpaste-*.dmg" > /dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish release assets
+        id: publish_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve_tag.outputs.resolved_tag }}
@@ -557,3 +569,28 @@ jobs:
           files: |
             dist/release-assets/localpaste-*
             dist/release-assets/checksums.sha256
+
+      - name: Append macOS Gatekeeper note
+        if: steps.mac_dmg.outputs.found == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
+        run: |
+          set -euo pipefail
+          NOTE='macOS note: if Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security or run `xattr -cr /Applications/LocalPaste.app`.'
+          CURRENT_BODY="$(gh release view "${RELEASE_TAG}" --json body --jq .body)"
+
+          if grep -Fq "${NOTE}" <<< "${CURRENT_BODY}"; then
+            echo "macOS Gatekeeper note already present in release body"
+            exit 0
+          fi
+
+          BODY_PATH="$(mktemp)"
+          if [[ -n "${CURRENT_BODY}" ]]; then
+            printf "%s\n\n%s\n" "${CURRENT_BODY}" "${NOTE}" > "${BODY_PATH}"
+          else
+            printf "%s\n" "${NOTE}" > "${BODY_PATH}"
+          fi
+
+          gh release edit "${RELEASE_TAG}" --notes-file "${BODY_PATH}"
