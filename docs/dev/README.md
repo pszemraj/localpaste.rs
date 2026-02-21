@@ -8,6 +8,8 @@ For repository-wide source-of-truth ownership, see
 
 - Development workflow and command matrix:
   [docs/dev/devlog.md](devlog.md)
+- GUI release workflow and artifact contract:
+  [docs/release-gui.md](../release-gui.md)
 - GUI runtime flags and behavior notes:
   [docs/dev/gui-notes.md](gui-notes.md)
 - GUI perf protocol and thresholds:
