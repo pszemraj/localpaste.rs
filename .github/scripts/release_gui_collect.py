@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 import tarfile
@@ -40,7 +41,13 @@ def ensure_non_empty(path: Path) -> None:
         fail(f"expected file is empty: {path}")
 
 
-def collect_windows(tag: str, asset_suffix: str, packager_out: Path, release_dir: Path, stage_dir: Path) -> None:
+def collect_windows(
+    tag: str,
+    asset_suffix: str,
+    packager_out: Path,
+    release_dir: Path,
+    stage_dir: Path,
+) -> list[str]:
     msi_source = find_first(packager_out, "*.msi")
     msi_target = release_dir / f"localpaste-{tag}-{asset_suffix}.msi"
     shutil.copy2(msi_source, msi_target)
@@ -57,9 +64,16 @@ def collect_windows(tag: str, asset_suffix: str, packager_out: Path, release_dir
 
     ensure_non_empty(msi_target)
     ensure_non_empty(zip_path)
+    return [msi_target.name, zip_path.name]
 
 
-def collect_linux(tag: str, asset_suffix: str, packager_out: Path, release_dir: Path, stage_dir: Path) -> None:
+def collect_linux(
+    tag: str,
+    asset_suffix: str,
+    packager_out: Path,
+    release_dir: Path,
+    stage_dir: Path,
+) -> list[str]:
     appimage_source = find_first(packager_out, "*.AppImage")
     appimage_target = release_dir / f"localpaste-{tag}-{asset_suffix}.AppImage"
     shutil.copy2(appimage_source, appimage_target)
@@ -76,9 +90,10 @@ def collect_linux(tag: str, asset_suffix: str, packager_out: Path, release_dir: 
 
     ensure_non_empty(appimage_target)
     ensure_non_empty(tar_path)
+    return [appimage_target.name, tar_path.name]
 
 
-def collect_macos(tag: str, asset_suffix: str, packager_out: Path, release_dir: Path) -> None:
+def collect_macos(tag: str, asset_suffix: str, packager_out: Path, release_dir: Path) -> list[str]:
     dmg_source = find_first(packager_out, "*.dmg")
     app_bundle = find_first(packager_out, "*.app", directories=True)
 
@@ -91,6 +106,7 @@ def collect_macos(tag: str, asset_suffix: str, packager_out: Path, release_dir: 
 
     ensure_non_empty(dmg_target)
     ensure_non_empty(app_tar)
+    return [dmg_target.name, app_tar.name]
 
 
 def parse_args() -> argparse.Namespace:
@@ -117,14 +133,26 @@ def main() -> int:
     stage_dir = Path("dist") / "stage" / asset_suffix
     release_dir.mkdir(parents=True, exist_ok=True)
 
+    artifacts: list[str]
     if runner_os == "Windows":
-        collect_windows(tag, asset_suffix, packager_out, release_dir, stage_dir)
+        artifacts = collect_windows(tag, asset_suffix, packager_out, release_dir, stage_dir)
     elif runner_os == "Linux":
-        collect_linux(tag, asset_suffix, packager_out, release_dir, stage_dir)
+        artifacts = collect_linux(tag, asset_suffix, packager_out, release_dir, stage_dir)
     elif runner_os == "macOS":
-        collect_macos(tag, asset_suffix, packager_out, release_dir)
+        artifacts = collect_macos(tag, asset_suffix, packager_out, release_dir)
     else:
         fail(f"unsupported runner OS: {runner_os}")
+
+    manifest = {
+        "tag": tag,
+        "asset_suffix": asset_suffix,
+        "runner_os": runner_os,
+        "artifacts": artifacts,
+    }
+    (release_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     print(f"collected release assets under {release_dir}")
     return 0
