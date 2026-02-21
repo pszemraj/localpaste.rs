@@ -15,7 +15,7 @@ on:
           - release_tag
           - current_ref
       tag:
-        description: Existing tag to release in release_tag mode (for example v0.4.3)
+        description: Existing tag to release in release_tag mode (for example v0.4.4)
         required: false
         type: string
       dry_run:

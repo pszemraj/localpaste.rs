@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag-like version string used for packaging metadata (for example v0.4.3)
+        description: Tag-like version string used for packaging metadata (for example v0.4.4)
         required: true
-        default: v0.4.3
+        default: v0.4.4
         type: string
 
 permissions:
