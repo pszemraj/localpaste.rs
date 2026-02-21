@@ -2,16 +2,6 @@
 
 use super::*;
 
-fn configure_virtual_editor_test_ctx(ctx: &egui::Context) {
-    ctx.set_fonts(egui::FontDefinitions::empty());
-    let mut style = (*ctx.style()).clone();
-    style.text_styles.insert(
-        egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
-        egui::FontId::new(14.0, egui::FontFamily::Monospace),
-    );
-    ctx.set_style(style);
-}
-
 fn run_virtual_editor_frame(
     app: &mut LocalPasteApp,
     ctx: &egui::Context,
@@ -58,12 +48,6 @@ fn run_virtual_editor_frame(
     }
 
     focus_active_pre
-}
-
-fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
-    let _ = ctx.run(input, |ctx| {
-        app.render_editor_panel(ctx);
-    });
 }
 
 fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {

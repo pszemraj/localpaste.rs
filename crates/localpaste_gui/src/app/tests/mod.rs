@@ -62,6 +62,22 @@ pub(super) fn shaped_test_galley() -> Arc<egui::Galley> {
     galley.expect("test galley")
 }
 
+pub(super) fn configure_virtual_editor_test_ctx(ctx: &egui::Context) {
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let mut style = (*ctx.style()).clone();
+    style.text_styles.insert(
+        egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
+        egui::FontId::new(14.0, egui::FontFamily::Monospace),
+    );
+    ctx.set_style(style);
+}
+
+fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
+    let _ = ctx.run(input, |ctx| {
+        app.render_editor_panel(ctx);
+    });
+}
+
 fn make_app() -> TestHarness {
     let (cmd_tx, cmd_rx) = unbounded();
     let (_evt_tx, evt_rx) = unbounded();

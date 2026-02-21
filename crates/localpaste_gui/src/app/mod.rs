@@ -881,7 +881,7 @@ impl eframe::App for LocalPasteApp {
             || deferred_focus_apply_result.pasted
             || deferred_copy_apply_result.pasted;
         let paste_as_new_consumed = self.maybe_consume_explicit_paste_as_new(&mut pasted_text);
-        if !editor_focus_post && !virtual_paste_consumed {
+        if !editor_focus_post && !ctx.wants_keyboard_input() && !virtual_paste_consumed {
             if let Some(text) = pasted_text {
                 if !text.trim().is_empty() {
                     self.create_new_paste_with_content(text);
