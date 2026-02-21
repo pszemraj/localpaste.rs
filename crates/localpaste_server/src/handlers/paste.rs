@@ -47,19 +47,6 @@ fn normalize_search_filters_for_query(
     )
 }
 
-fn acquire_folder_scoped_mutation_guards<'a>(
-    state: &'a AppState,
-    paste_id: &str,
-    locked_message: &'static str,
-) -> Result<(crate::db::FolderTxnGuard<'a>, crate::PasteMutationGuard<'a>), HttpError> {
-    let folder_guard = crate::db::TransactionOps::acquire_folder_txn_guard(&state.db)?;
-    let mutation_guard = state
-        .locks
-        .begin_mutation(paste_id)
-        .map_err(|err| crate::locks::map_paste_mutation_lock_error(err, locked_message))?;
-    Ok((folder_guard, mutation_guard))
-}
-
 fn with_folder_metadata_response(response: Response, include_meta_shape_header: bool) -> Response {
     if include_meta_shape_header {
         with_meta_only_response_shape(response)
@@ -255,13 +242,12 @@ pub async fn update_paste(
     }
 
     let updated = if req.folder_id.is_some() {
-        // Explicit folder operations (including clear-to-unfiled) are serialized
-        // by the folder transaction guard and committed atomically via redb write
-        // transaction helpers in TransactionOps.
-        let (folder_guard, _mutation_guard) = acquire_folder_scoped_mutation_guards(
-            &state,
+        let (folder_guard, _mutation_guard) = crate::locks::acquire_folder_scoped_mutation_guards(
+            state.db.as_ref(),
+            state.locks.as_ref(),
             &id,
             "Paste is currently open for editing.",
+            None,
         )?;
         let new_folder_id =
             req.folder_id
@@ -280,10 +266,12 @@ pub async fn update_paste(
         })?
         .ok_or(AppError::NotFound)?
     } else {
-        let _mutation_guard = state.locks.begin_mutation(&id).map_err(|err| {
-            crate::locks::map_paste_mutation_lock_error(err, "Paste is currently open for editing.")
-        })?;
-        // folder_id not changing, just update the paste
+        let _mutation_guard = crate::locks::acquire_paste_mutation_guard(
+            state.locks.as_ref(),
+            &id,
+            "Paste is currently open for editing.",
+            None,
+        )?;
         state
             .db
             .pastes
@@ -313,10 +301,13 @@ pub async fn delete_paste(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let (folder_guard, _mutation_guard) =
-        acquire_folder_scoped_mutation_guards(&state, &id, "Paste is currently open for editing.")?;
-    // Use transaction-like operation for atomic folder count update.
-    // The helper derives folder ownership from the deleted record to avoid stale-folder races.
+    let (folder_guard, _mutation_guard) = crate::locks::acquire_folder_scoped_mutation_guards(
+        state.db.as_ref(),
+        state.locks.as_ref(),
+        &id,
+        "Paste is currently open for editing.",
+        None,
+    )?;
     let deleted =
         crate::db::TransactionOps::delete_paste_with_folder_locked(&state.db, &folder_guard, &id)?;
 
@@ -416,7 +407,6 @@ pub async fn search_pastes_meta(
 
 #[cfg(test)]
 mod tests {
-    use super::acquire_folder_scoped_mutation_guards;
     use crate::{db::TransactionOps, AppState, Config, Database};
     use localpaste_core::models::{folder::Folder, paste::Paste};
     use std::sync::mpsc;
@@ -462,10 +452,12 @@ mod tests {
         let (started_tx, started_rx) = mpsc::channel();
         let worker = thread::spawn(move || {
             started_tx.send(()).expect("started signal");
-            let guards = acquire_folder_scoped_mutation_guards(
-                &worker_state,
+            let guards = crate::locks::acquire_folder_scoped_mutation_guards(
+                worker_state.db.as_ref(),
+                worker_state.locks.as_ref(),
                 worker_paste_id.as_str(),
                 "Paste is currently open for editing.",
+                None,
             );
             guards.map(|_| ()).map_err(|err| format!("{:?}", err))
         });
