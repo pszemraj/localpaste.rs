@@ -30,6 +30,12 @@ For auto-detected language (`language_is_manual == false`):
 2. Otherwise (or if Magika is unavailable/fails/generic), run heuristic fallback.
 3. Normalize heuristic label and return unless empty/`text`.
 
+Auto mode is intentionally "pending detection":
+
+- switching to auto clears the resolved language label,
+- the next content edit re-runs detection,
+- if detection resolves a concrete language, that value is locked (`language_is_manual = true`) until explicitly switched back to auto.
+
 For manual language (`language_is_manual == true`), content edits do not re-run auto detection.
 
 > [!IMPORTANT]

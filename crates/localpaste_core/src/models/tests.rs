@@ -76,6 +76,11 @@ mod model_tests {
                 "language detection mismatch for case '{}'",
                 name
             );
+            assert!(
+                paste.language_is_manual,
+                "detected language should be locked for case '{}'",
+                name
+            );
         }
     }
 

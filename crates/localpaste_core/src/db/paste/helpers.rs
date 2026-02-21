@@ -44,14 +44,21 @@ pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
     if let Some(is_manual) = update.language_is_manual {
         paste.language_is_manual = is_manual;
     }
-    let manual_mode_after_update = update
-        .language_is_manual
-        .unwrap_or(paste.language_is_manual);
-    let should_auto_detect = update.language.is_none()
-        && !manual_mode_after_update
-        && (content_changed || update.language_is_manual == Some(false));
+    // Explicit auto toggle clears any previously locked classification so
+    // auto state only reflects "unresolved/pending detection".
+    if update.language_is_manual == Some(false) && update.language.is_none() && !content_changed {
+        paste.language = None;
+    }
+    let should_auto_detect =
+        update.language.is_none() && !paste.language_is_manual && content_changed;
     if should_auto_detect {
-        paste.language = detect_language(&paste.content);
+        let detected = detect_language(&paste.content);
+        paste.language = detected;
+        if paste.language.is_some() {
+            // Auto mode is one-shot: once we classify a concrete language, lock
+            // it until the user explicitly switches back to auto.
+            paste.language_is_manual = true;
+        }
     }
 
     if let Some(ref fid) = update.folder_id {

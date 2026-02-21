@@ -200,28 +200,26 @@ fn language_mode_transitions_cover_auto_and_manual_lock_behaviors() {
 
     let switch_back_to_auto = update_request(None, None, None, Some(false));
     let auto = update_existing_paste(&db, &paste_id, switch_back_to_auto, "switch to auto");
-    assert_eq!(auto.language.as_deref(), Some("rust"));
+    assert!(
+        auto.language.is_none(),
+        "auto toggle should clear resolved language"
+    );
     assert!(
         !auto.language_is_manual,
-        "language should be auto-managed after switch"
+        "language should be pending auto-detect after switch"
     );
 
-    let auto_redetect_on_content_change = update_request(
+    let auto_detect_and_lock = update_request(
         Some("def main():\n    import sys\n    print('hello')"),
         None,
         None,
         None,
     );
-    let redetected = update_existing_paste(
-        &db,
-        &paste_id,
-        auto_redetect_on_content_change,
-        "content update",
-    );
+    let redetected = update_existing_paste(&db, &paste_id, auto_detect_and_lock, "content update");
     assert_eq!(redetected.language.as_deref(), Some("python"));
     assert!(
-        !redetected.language_is_manual,
-        "auto mode should keep manual flag disabled after content redetect"
+        redetected.language_is_manual,
+        "auto detect should lock once a concrete language is resolved"
     );
     let lock_paste = Paste::new(
         "name: alpha\nvalue: 1\n".to_string(),

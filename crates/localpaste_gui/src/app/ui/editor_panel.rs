@@ -2,7 +2,8 @@
 
 use super::super::*;
 use super::properties_drawer::{
-    apply_language_choice, auto_language_choice_key, selected_language_choice_text,
+    apply_language_choice, auto_language_choice_key, auto_language_status_label,
+    selected_language_choice_text,
 };
 use eframe::egui;
 
@@ -18,11 +19,6 @@ impl LocalPasteApp {
             if let Some(id) = selected_meta {
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
-                let lang_label = display_language_label(
-                    language.as_deref(),
-                    self.edit_language_is_manual,
-                    is_large,
-                );
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
 
                 let mut pending_tag_search: Option<String> = None;
@@ -77,9 +73,12 @@ impl LocalPasteApp {
                         } else {
                             auto_language_choice_key().to_string()
                         };
+                        let previous_language_choice = language_choice.clone();
+                        let auto_label =
+                            auto_language_status_label(self.edit_language.as_deref(), is_large);
                         let selected_language_text = selected_language_choice_text(
                             language_choice.as_str(),
-                            format!("Auto ({})", lang_label).as_str(),
+                            auto_label.as_str(),
                         );
                         egui::ComboBox::from_id_salt("header_language_select")
                             .selected_text(selected_language_text)
@@ -100,13 +99,15 @@ impl LocalPasteApp {
                                     );
                                 }
                             });
-                        apply_language_choice(
-                            &mut self.edit_language_is_manual,
-                            &mut self.edit_language,
-                            &mut self.metadata_dirty,
-                            language_choice.as_str(),
-                            current_manual_value.as_str(),
-                        );
+                        if language_choice != previous_language_choice {
+                            apply_language_choice(
+                                &mut self.edit_language_is_manual,
+                                &mut self.edit_language,
+                                &mut self.metadata_dirty,
+                                language_choice.as_str(),
+                                current_manual_value.as_str(),
+                            );
+                        }
                         for tag in &visible_tags {
                             if ui.small_button(format!("#{}", tag)).clicked() {
                                 pending_tag_search = Some(tag.clone());

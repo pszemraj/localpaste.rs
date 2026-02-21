@@ -159,6 +159,9 @@ pub async fn create_paste(
         let mut inferred = Paste::new(content, name);
         if let Some(is_manual) = language_is_manual {
             inferred.language_is_manual = is_manual;
+            if !is_manual {
+                inferred.language = None;
+            }
         }
         inferred
     };
