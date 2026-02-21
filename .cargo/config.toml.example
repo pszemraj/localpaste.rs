@@ -3,6 +3,8 @@
 # Parallelism - update to your total cores for dev builds
 [build]
 jobs = 8
+# use sccache for caching compilation results (install sccache first)
+# rustc-wrapper = "sccache"
 
 # Fast linker configuration (optional - comment out if linkers not installed)
 # Install lld on Linux: sudo apt install lld clang
