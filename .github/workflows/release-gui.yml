@@ -6,9 +6,17 @@ on:
       - v*
   workflow_dispatch:
     inputs:
+      source_mode:
+        description: Source selection for this run
+        required: false
+        default: release_tag
+        type: choice
+        options:
+          - release_tag
+          - current_ref
       tag:
-        description: Existing tag to release (for example v0.4.3)
-        required: true
+        description: Existing tag to release in release_tag mode (for example v0.4.3)
+        required: false
         type: string
       dry_run:
         description: Build/test only (skip publish job)
@@ -30,46 +38,93 @@ jobs:
     timeout-minutes: 10
     outputs:
       resolved_tag: ${{ steps.resolve.outputs.resolved_tag }}
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      source_mode: ${{ steps.resolve.outputs.source_mode }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Resolve release tag
+      - name: Resolve source
         id: resolve
         shell: bash
         run: |
           set -euo pipefail
+          MODE="release_tag"
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
+            MODE="${{ github.event.inputs.source_mode }}"
+            if [[ -z "${MODE}" ]]; then
+              MODE="release_tag"
+            fi
           fi
 
-          if [[ -z "${TAG}" ]]; then
-            echo "release tag cannot be empty" >&2
-            exit 1
-          fi
+          case "${MODE}" in
+            release_tag)
+              if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+                TAG="${{ github.event.inputs.tag }}"
+              else
+                TAG="${GITHUB_REF_NAME}"
+              fi
 
-          if [[ "${TAG}" != v* ]]; then
-            echo "release tag must start with 'v' (got: ${TAG})" >&2
-            exit 1
-          fi
+              if [[ -z "${TAG}" ]]; then
+                echo "release tag cannot be empty in release_tag mode" >&2
+                exit 1
+              fi
 
-          git fetch --force --tags origin
-          git rev-parse "refs/tags/${TAG}" >/dev/null
+              if [[ "${TAG}" != v* ]]; then
+                echo "release tag must start with 'v' (got: ${TAG})" >&2
+                exit 1
+              fi
 
+              git fetch --force --tags origin
+              git rev-parse "refs/tags/${TAG}" >/dev/null
+              SOURCE_REF="refs/tags/${TAG}"
+              ;;
+            current_ref)
+              WORKSPACE_VERSION="$(
+                awk '
+                  $0 == "[workspace.package]" { in_workspace = 1; next }
+                  /^\[/ { if (in_workspace) exit }
+                  in_workspace && $1 == "version" {
+                    gsub(/"/, "", $3)
+                    print $3
+                    exit
+                  }
+                ' Cargo.toml
+              )"
+              if [[ -z "${WORKSPACE_VERSION}" ]]; then
+                echo "failed to read [workspace.package].version from Cargo.toml" >&2
+                exit 1
+              fi
+              TAG="v${WORKSPACE_VERSION}"
+              SOURCE_REF="${GITHUB_SHA}"
+              {
+                echo "### current_ref mode"
+                echo
+                echo "Using source ref: ${SOURCE_REF}"
+                echo "Derived packaging tag/version: ${TAG}"
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "unsupported source_mode: ${MODE}" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "source_mode=${MODE}" >> "$GITHUB_OUTPUT"
           echo "resolved_tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "resolved tag: ${TAG}"
+          echo "source_ref=${SOURCE_REF}" >> "$GITHUB_OUTPUT"
+          echo "resolved mode=${MODE} tag=${TAG} source_ref=${SOURCE_REF}"
 
-      - name: Checkout release tag source
+      - name: Checkout resolved source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: refs/tags/${{ steps.resolve.outputs.resolved_tag }}
+          ref: ${{ steps.resolve.outputs.source_ref }}
 
       - name: Validate workspace version matches tag
+        if: steps.resolve.outputs.source_mode == 'release_tag'
         shell: bash
         run: |
           set -euo pipefail
@@ -103,12 +158,13 @@ jobs:
     timeout-minutes: 30
     env:
       RESOLVED_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
+      SOURCE_REF: ${{ needs.resolve_tag.outputs.source_ref }}
     steps:
-      - name: Checkout release tag source
+      - name: Checkout resolved source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: refs/tags/${{ needs.resolve_tag.outputs.resolved_tag }}
+          ref: ${{ env.SOURCE_REF }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -216,6 +272,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RESOLVED_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
+      SOURCE_REF: ${{ needs.resolve_tag.outputs.source_ref }}
+      SOURCE_MODE: ${{ needs.resolve_tag.outputs.source_mode }}
     steps:
       - name: Checkout workflow commit
         uses: actions/checkout@v4
@@ -223,6 +281,7 @@ jobs:
           fetch-depth: 0
 
       - name: Sync source tree to release tag
+        if: env.SOURCE_MODE == 'release_tag'
         shell: bash
         run: |
           set -euo pipefail
@@ -240,6 +299,18 @@ jobs:
           else
             echo "packaging/ not present in tag ${RESOLVED_TAG}; using workflow-ref packaging configs"
           fi
+
+      - name: Use workflow ref source tree
+        if: env.SOURCE_MODE == 'current_ref'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### current_ref build source"
+            echo
+            echo "Using source ref: ${SOURCE_REF}"
+            echo "Resolved packaging tag/version: ${RESOLVED_TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -445,7 +516,7 @@ jobs:
           retention-days: 1
 
   publish:
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
+    if: needs.resolve_tag.outputs.source_mode != 'current_ref' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
     needs:
       - resolve_tag
       - build_package
