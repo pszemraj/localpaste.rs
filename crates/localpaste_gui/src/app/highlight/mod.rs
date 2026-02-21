@@ -302,6 +302,10 @@ impl EditorLayoutCache {
                         if range.is_empty() {
                             continue;
                         }
+                        let Some(range) = clamp_byte_range_to_char_boundaries(line, range.clone())
+                        else {
+                            continue;
+                        };
                         sections.push(LayoutSection {
                             leading_space: 0.0,
                             byte_range: range,
@@ -451,7 +455,10 @@ fn build_virtual_line_job_owned(
         if start >= end {
             continue;
         }
-        styled_sections.push((start..end, render_span_to_format(span, editor_font)));
+        let Some(range) = clamp_byte_range_to_char_boundaries(job.text.as_str(), start..end) else {
+            continue;
+        };
+        styled_sections.push((range, render_span_to_format(span, editor_font)));
     }
     push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
 
@@ -516,10 +523,12 @@ pub(super) fn build_virtual_line_segment_job_owned(
         if local_start >= local_end {
             continue;
         }
-        styled_sections.push((
-            local_start..local_end,
-            render_span_to_format(span, editor_font),
-        ));
+        let Some(range) =
+            clamp_byte_range_to_char_boundaries(job.text.as_str(), local_start..local_end)
+        else {
+            continue;
+        };
+        styled_sections.push((range, render_span_to_format(span, editor_font)));
     }
     push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
 
@@ -595,11 +604,40 @@ fn render_span_to_format(span: &HighlightSpan, editor_font: &FontId) -> TextForm
     }
 }
 
+fn floor_char_boundary(text: &str, idx: usize) -> usize {
+    let mut idx = idx.min(text.len());
+    while idx > 0 && !text.is_char_boundary(idx) {
+        idx = idx.saturating_sub(1);
+    }
+    idx
+}
+
+fn ceil_char_boundary(text: &str, idx: usize) -> usize {
+    let mut idx = idx.min(text.len());
+    while idx < text.len() && !text.is_char_boundary(idx) {
+        idx = idx.saturating_add(1);
+    }
+    idx.min(text.len())
+}
+
+fn clamp_byte_range_to_char_boundaries(text: &str, range: Range<usize>) -> Option<Range<usize>> {
+    let start = floor_char_boundary(text, range.start);
+    let end = ceil_char_boundary(text, range.end);
+    if start >= end {
+        return None;
+    }
+    Some(start..end)
+}
+
 fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usize) {
     for section in sections {
         let mut section = section.clone();
-        section.byte_range = (section.byte_range.start + offset)..(section.byte_range.end + offset);
-        job.sections.push(section);
+        let start = section.byte_range.start.saturating_add(offset);
+        let end = section.byte_range.end.saturating_add(offset);
+        if let Some(range) = clamp_byte_range_to_char_boundaries(job.text.as_str(), start..end) {
+            section.byte_range = range;
+            job.sections.push(section);
+        }
     }
 }
 
@@ -614,11 +652,16 @@ fn push_sections_with_default_gaps(
         return;
     }
     if styled_sections.is_empty() {
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: offset..(offset + line_len),
-            format: default_format.clone(),
-        });
+        if let Some(range) = clamp_byte_range_to_char_boundaries(
+            job.text.as_str(),
+            offset..(offset.saturating_add(line_len)),
+        ) {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: range,
+                format: default_format.clone(),
+            });
+        }
         return;
     }
 
@@ -637,30 +680,45 @@ fn push_sections_with_default_gaps(
         }
 
         if start > cursor {
-            job.sections.push(LayoutSection {
-                leading_space: 0.0,
-                byte_range: (offset + cursor)..(offset + start),
-                format: default_format.clone(),
-            });
+            if let Some(range) = clamp_byte_range_to_char_boundaries(
+                job.text.as_str(),
+                (offset.saturating_add(cursor))..(offset.saturating_add(start)),
+            ) {
+                job.sections.push(LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: range,
+                    format: default_format.clone(),
+                });
+            }
         }
 
         let styled_start = start.max(cursor);
         if styled_start < end {
-            job.sections.push(LayoutSection {
-                leading_space: 0.0,
-                byte_range: (offset + styled_start)..(offset + end),
-                format,
-            });
+            if let Some(range) = clamp_byte_range_to_char_boundaries(
+                job.text.as_str(),
+                (offset.saturating_add(styled_start))..(offset.saturating_add(end)),
+            ) {
+                job.sections.push(LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: range,
+                    format,
+                });
+            }
             cursor = end;
         }
     }
 
     if cursor < line_len {
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: (offset + cursor)..(offset + line_len),
-            format: default_format.clone(),
-        });
+        if let Some(range) = clamp_byte_range_to_char_boundaries(
+            job.text.as_str(),
+            (offset.saturating_add(cursor))..(offset.saturating_add(line_len)),
+        ) {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: range,
+                format: default_format.clone(),
+            });
+        }
     }
 }
 
