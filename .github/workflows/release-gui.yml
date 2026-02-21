@@ -348,25 +348,34 @@ jobs:
           if [[ "${#missing[@]}" -gt 0 ]]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "missing=$(printf '%s ' "${missing[@]}" | sed 's/[[:space:]]*$//')" >> "$GITHUB_OUTPUT"
-            {
-              echo "### macOS artifact skipped"
-              echo
-              echo "Missing required secrets: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
-            } >> "$GITHUB_STEP_SUMMARY"
+            if [[ "${SOURCE_MODE}" == "release_tag" ]]; then
+              {
+                echo "### macOS artifact skipped"
+                echo
+                echo "Missing required secrets: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              {
+                echo "### macOS signing/notarization skipped (current_ref mode)"
+                echo
+                echo "Missing required secrets: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
+                echo "Unsigned macOS packaging build will continue for verification."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "missing=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Rust toolchain
-        if: runner.os != 'macOS' || steps.mac_signing.outputs.enabled == 'true'
+        if: runner.os != 'macOS' || env.SOURCE_MODE == 'current_ref' || steps.mac_signing.outputs.enabled == 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.89.0
           targets: ${{ matrix.target }}
 
       - name: Cache Rust build artifacts
-        if: runner.os != 'macOS' || steps.mac_signing.outputs.enabled == 'true'
+        if: runner.os != 'macOS' || env.SOURCE_MODE == 'current_ref' || steps.mac_signing.outputs.enabled == 'true'
         uses: swatinem/rust-cache@v2
         with:
           key: release-gui-${{ matrix.target }}
@@ -393,15 +402,15 @@ jobs:
         run: choco install wixtoolset -y --no-progress
 
       - name: Install cargo-packager
-        if: runner.os != 'macOS' || steps.mac_signing.outputs.enabled == 'true'
+        if: runner.os != 'macOS' || env.SOURCE_MODE == 'current_ref' || steps.mac_signing.outputs.enabled == 'true'
         run: cargo install cargo-packager --version 0.11.8 --locked
 
       - name: Build GUI release binary
-        if: runner.os != 'macOS' || steps.mac_signing.outputs.enabled == 'true'
+        if: runner.os != 'macOS' || env.SOURCE_MODE == 'current_ref' || steps.mac_signing.outputs.enabled == 'true'
         run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{ matrix.target }}
 
       - name: Generate macOS icns icon
-        if: runner.os == 'macOS' && steps.mac_signing.outputs.enabled == 'true'
+        if: runner.os == 'macOS' && (env.SOURCE_MODE == 'current_ref' || steps.mac_signing.outputs.enabled == 'true')
         shell: bash
         run: |
           set -euo pipefail
@@ -436,7 +445,7 @@ jobs:
           fi
 
       - name: Prepare packager config and staged runtime
-        if: runner.os != 'macOS' || steps.mac_signing.outputs.enabled == 'true'
+        if: runner.os != 'macOS' || env.SOURCE_MODE == 'current_ref' || steps.mac_signing.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -448,7 +457,7 @@ jobs:
             --runner-os "${{ runner.os }}"
 
       - name: Build installer packages
-        if: runner.os != 'macOS' || steps.mac_signing.outputs.enabled == 'true'
+        if: runner.os != 'macOS' || env.SOURCE_MODE == 'current_ref' || steps.mac_signing.outputs.enabled == 'true'
         run: python -c "import os, subprocess; subprocess.run(['cargo', 'packager', '--config', os.environ['PACKAGER_CONFIG_PATH']], check=True)"
 
       - name: Sign, notarize, and verify macOS artifacts
@@ -497,7 +506,7 @@ jobs:
           spctl --assess --type open --verbose=4 "${DMG_PATH}"
 
       - name: Collect release assets
-        if: runner.os != 'macOS' || steps.mac_signing.outputs.enabled == 'true'
+        if: runner.os != 'macOS' || env.SOURCE_MODE == 'current_ref' || steps.mac_signing.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -507,7 +516,7 @@ jobs:
             --runner-os "${{ runner.os }}"
 
       - name: Upload release assets
-        if: runner.os != 'macOS' || steps.mac_signing.outputs.enabled == 'true'
+        if: runner.os != 'macOS' || env.SOURCE_MODE == 'current_ref' || steps.mac_signing.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-assets-${{ matrix.asset_suffix }}
