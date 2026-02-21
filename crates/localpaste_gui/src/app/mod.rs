@@ -209,6 +209,7 @@ const DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME: f32 = 2.5;
 const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
+const TEXT_EDITOR_ID: &str = "text_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
@@ -727,6 +728,9 @@ impl eframe::App for LocalPasteApp {
                 }
             }
         });
+        if request_paste_as_new {
+            self.prepare_text_editor_for_paste_as_new(ctx);
+        }
         if copy_virtual_preview
             && self.editor_mode == EditorMode::VirtualPreview
             && !ctx.wants_keyboard_input()
@@ -844,7 +848,8 @@ impl eframe::App for LocalPasteApp {
         let virtual_paste_consumed = immediate_apply_result.pasted
             || deferred_focus_apply_result.pasted
             || deferred_copy_apply_result.pasted;
-        let paste_as_new_consumed = self.maybe_consume_explicit_paste_as_new(&mut pasted_text);
+        let paste_as_new_consumed =
+            self.maybe_consume_explicit_paste_as_new(&mut pasted_text, text_editor_focus_post);
         if !editor_focus_post && !ctx.wants_keyboard_input() && !virtual_paste_consumed {
             if let Some(text) = pasted_text {
                 if !text.trim().is_empty() {

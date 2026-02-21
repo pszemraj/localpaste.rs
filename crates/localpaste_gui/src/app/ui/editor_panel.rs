@@ -352,6 +352,7 @@ impl LocalPasteApp {
                         let rows_that_fit = ((editor_height / row_height).ceil() as usize).max(1);
 
                         let edit = egui::TextEdit::multiline(&mut self.selected_content)
+                            .id_salt(TEXT_EDITOR_ID)
                             .font(editor_style)
                             .desired_width(f32::INFINITY)
                             .desired_rows(rows_that_fit)

@@ -13,8 +13,23 @@ impl LocalPasteApp {
     /// # Arguments
     /// - `ctx`: Egui context used to dispatch viewport paste requests.
     pub(super) fn request_paste_as_new(&mut self, ctx: &egui::Context) {
+        self.prepare_text_editor_for_paste_as_new(ctx);
         self.arm_paste_as_new_intent();
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+    }
+
+    /// Surrenders native text-editor focus so explicit paste-as-new can route clipboard
+    /// payload to create flow instead of mutating the active text buffer.
+    ///
+    /// # Arguments
+    /// - `ctx`: Egui context used to surrender the text editor focus id.
+    pub(super) fn prepare_text_editor_for_paste_as_new(&mut self, ctx: &egui::Context) {
+        if self.editor_mode != EditorMode::TextEdit {
+            return;
+        }
+        let editor_id = egui::Id::new(TEXT_EDITOR_ID);
+        ctx.memory_mut(|m| m.surrender_focus(editor_id));
+        self.text_editor_has_focus = false;
     }
 
     /// Arms explicit "paste as new" intent when command+shift+V is observed this frame.
@@ -62,14 +77,23 @@ impl LocalPasteApp {
     ///
     /// # Arguments
     /// - `pasted_text`: Optional clipboard text captured from current-frame egui events.
+    /// - `text_editor_focused`: Whether native `TextEdit` currently owns focus.
     ///
     /// # Returns
     /// `true` when clipboard text was consumed and routed into `CreatePaste`.
     pub(super) fn maybe_consume_explicit_paste_as_new(
         &mut self,
         pasted_text: &mut Option<String>,
+        text_editor_focused: bool,
     ) -> bool {
         if self.paste_as_new_pending_frames == 0 {
+            return false;
+        }
+        if text_editor_focused {
+            // Defensive guard: never create a second paste from a clipboard payload
+            // that a focused native TextEdit may have already consumed this frame.
+            self.paste_as_new_pending_frames = 0;
+            pasted_text.take();
             return false;
         }
         if let Some(text) = pasted_text.take() {

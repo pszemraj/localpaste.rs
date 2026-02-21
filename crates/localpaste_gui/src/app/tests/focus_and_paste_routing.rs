@@ -100,7 +100,7 @@ fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
     let mut missing_clipboard = None;
     assert!(!harness
         .app
-        .maybe_consume_explicit_paste_as_new(&mut missing_clipboard));
+        .maybe_consume_explicit_paste_as_new(&mut missing_clipboard, false));
     assert_eq!(
         harness.app.paste_as_new_pending_frames,
         PASTE_AS_NEW_PENDING_TTL_FRAMES.saturating_sub(1)
@@ -109,13 +109,43 @@ fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
     let mut clipboard = Some("from clipboard".to_string());
     assert!(harness
         .app
-        .maybe_consume_explicit_paste_as_new(&mut clipboard));
+        .maybe_consume_explicit_paste_as_new(&mut clipboard, false));
     assert!(clipboard.is_none());
     assert_eq!(harness.app.paste_as_new_pending_frames, 0);
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::CreatePaste { content } => assert_eq!(content, "from clipboard"),
         other => panic!("unexpected command: {:?}", other),
     }
+}
+
+#[test]
+fn explicit_paste_as_new_skips_consumption_when_text_editor_focused() {
+    let mut harness = make_app();
+    harness.app.arm_paste_as_new_intent();
+    let mut clipboard = Some("from clipboard".to_string());
+
+    assert!(!harness
+        .app
+        .maybe_consume_explicit_paste_as_new(&mut clipboard, true));
+    assert!(clipboard.is_none());
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    assert!(harness.cmd_rx.try_recv().is_err());
+}
+
+#[test]
+fn prepare_text_editor_for_paste_as_new_clears_focus() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::TextEdit;
+    harness.app.text_editor_has_focus = true;
+
+    let ctx = egui::Context::default();
+    let editor_id = egui::Id::new(TEXT_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
+
+    harness.app.prepare_text_editor_for_paste_as_new(&ctx);
+
+    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(!harness.app.text_editor_has_focus);
 }
 
 #[test]
