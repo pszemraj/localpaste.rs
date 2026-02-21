@@ -353,7 +353,6 @@ impl LocalPasteApp {
                             .font(editor_style)
                             .desired_width(f32::INFINITY)
                             .desired_rows(rows_that_fit)
-                            .lock_focus(true)
                             .hint_text("Start typing...");
 
                         let mut editor_cache = std::mem::take(&mut self.editor_cache);

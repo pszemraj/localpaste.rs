@@ -344,6 +344,7 @@ impl EditorLayoutCache {
         }
 
         self.highlight_cache.lines = new_lines;
+        debug_assert_layout_sections_char_boundaries(&job);
         job
     }
 
@@ -399,6 +400,7 @@ impl EditorLayoutCache {
             );
         }
 
+        debug_assert_layout_sections_char_boundaries(&job);
         job
     }
 }
@@ -525,6 +527,7 @@ where
     push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
 
     job.wrap.max_width = f32::INFINITY;
+    debug_assert_layout_sections_char_boundaries(&job);
     job
 }
 
@@ -630,6 +633,20 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
             section.byte_range = range;
             job.sections.push(section);
         }
+    }
+}
+
+fn debug_assert_layout_sections_char_boundaries(job: &LayoutJob) {
+    #[cfg(debug_assertions)]
+    for section in &job.sections {
+        debug_assert!(
+            job.text.is_char_boundary(section.byte_range.start),
+            "layout section start is not a char boundary"
+        );
+        debug_assert!(
+            job.text.is_char_boundary(section.byte_range.end),
+            "layout section end is not a char boundary"
+        );
     }
 }
 

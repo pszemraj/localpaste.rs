@@ -31,7 +31,7 @@ use highlight::{
 };
 pub(super) use interaction_helpers::{
     classify_virtual_command, drag_autoscroll_delta, is_editor_word_char, next_virtual_click_count,
-    paint_virtual_selection_overlay, VirtualCommandBucket,
+    paint_virtual_selection_overlay, should_route_sidebar_arrows, VirtualCommandBucket,
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
@@ -692,11 +692,15 @@ impl eframe::App for LocalPasteApp {
                     pasted_text = Some(text.clone());
                 }
             }
-            let has_nav_modifiers = input.modifiers.ctrl
-                || input.modifiers.alt
-                || input.modifiers.shift
-                || input.modifiers.command;
-            if !wants_keyboard_input_before && !has_nav_modifiers && !self.pastes.is_empty() {
+            if should_route_sidebar_arrows(
+                wants_keyboard_input_before,
+                input.modifiers,
+                !self.pastes.is_empty(),
+                focus_active_pre,
+                self.command_palette_open,
+                self.properties_drawer_open,
+                self.shortcut_help_open,
+            ) {
                 if input.key_pressed(egui::Key::ArrowDown) {
                     sidebar_direction = 1;
                 } else if input.key_pressed(egui::Key::ArrowUp) {

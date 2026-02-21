@@ -150,3 +150,39 @@ fn virtual_line_segment_job_clamps_non_boundary_spans() {
         });
     });
 }
+
+#[test]
+fn render_job_clamps_stale_line_offsets_with_emoji_boundaries() {
+    egui::__run_test_ctx(|ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let font = egui::FontId::monospace(14.0);
+            let text = "🔥Title\nok\n";
+            let render = HighlightRender {
+                paste_id: "alpha".to_string(),
+                revision: 1,
+                text_len: text.len().saturating_sub(3),
+                base_revision: Some(0),
+                base_text_len: Some(text.len().saturating_sub(4)),
+                language_hint: "markdown".to_string(),
+                theme_key: "base16-mocha.dark".to_string(),
+                changed_line_range: Some(0..2),
+                lines: vec![
+                    HighlightRenderLine {
+                        // Deliberately stale/non-boundary byte length.
+                        len: 1,
+                        spans: vec![test_span(0..3)],
+                    },
+                    HighlightRenderLine {
+                        len: text.len(),
+                        spans: vec![test_span(1..text.len())],
+                    },
+                ],
+            };
+            let cache = EditorLayoutCache::default();
+            let job = cache.build_render_job(ui, text, &render, &font);
+
+            assert_sections_use_char_boundaries(&job);
+            assert_sections_cover(&job, text.len());
+        });
+    });
+}
