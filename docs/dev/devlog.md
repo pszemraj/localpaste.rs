@@ -116,46 +116,20 @@ Language detection/normalization/highlight behavior is tracked in
 
 ## GUI Release Pipeline
 
-GitHub Actions workflow:
-`.github/workflows/release-gui.yml`
+Canonical release contract:
+[docs/release-gui.md](../release-gui.md).
 
-Packaging configs:
+This dev guide only tracks development-facing implications:
 
-- `packaging/windows/packager.json`
-- `packaging/linux/packager.json`
-- `packaging/macos/packager.json`
-
-Release behavior:
-
-- Tag push (`v*`) resolves the tag, enforces tag/version match, runs smoke
-  validation, builds GUI installers/portable assets, and publishes assets to
-  that tag's release.
-- Manual run (`workflow_dispatch`) accepts an existing tag and reruns the same
-  smoke/build/publish flow against that tag.
-
-Release gates for release workflow:
-
-- Tag sanity check (`v*`) and existence validation
-- `Cargo.toml` workspace version must match the release tag version
-- Server + CLI smoke test with restart persistence verification
-
-Release workflow intentionally excludes:
-
-- `cargo fmt --all -- --check`
-- `cargo clippy --workspace --all-targets --all-features`
-- `cargo check --workspace --all-targets --all-features`
-- `check-loc`
-- `check-ast-dupes`
-
-Expected GUI release assets:
-
-- `localpaste-<tag>-windows-x86_64.msi`
-- `localpaste-<tag>-windows-x86_64.zip`
-- `localpaste-<tag>-linux-x86_64.AppImage`
-- `localpaste-<tag>-linux-x86_64.tar.gz`
-- `localpaste-<tag>-macos-aarch64.dmg`
-- `localpaste-<tag>-macos-aarch64.app.tar.gz`
-- `checksums.sha256`
+- Workflow entrypoint: [`.github/workflows/release-gui.yml`](../../.github/workflows/release-gui.yml)
+- Packaging configs:
+  - [`../../packaging/windows/packager.json`](../../packaging/windows/packager.json)
+  - [`../../packaging/linux/packager.json`](../../packaging/linux/packager.json)
+  - [`../../packaging/macos/packager.json`](../../packaging/macos/packager.json)
+- Release workflow validation gates:
+  - tag sanity and tag/version match
+  - server+CLI smoke with restart persistence
+- Release workflow intentionally excludes workspace-wide lint/format policy checks (`fmt --check`, `clippy`, `check`, `check-loc`, `check-ast-dupes`) to keep runtime packaging runs scoped.
 
 ## Behavior Contracts
 

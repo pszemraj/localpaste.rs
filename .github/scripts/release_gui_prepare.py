@@ -196,10 +196,14 @@ def main() -> int:
         fail("packager config must define at least one icon")
 
     icons = [str(entry) for entry in icons_raw]
-    resolve_icon_paths(config_dir, icons)
+    resolved_icons = resolve_icon_paths(config_dir, icons)
 
     if runner_os == "macOS" and not any(icon.lower().endswith(".icns") for icon in icons):
         fail("macOS packager config must include an .icns icon path")
+    if runner_os == "Windows" and not any(
+        icon.suffix.lower() == ".ico" for icon in resolved_icons
+    ):
+        fail("windows packager config must include at least one .ico icon path")
 
     if runner_os == "Windows":
         wix_bin = discover_wix_bin()

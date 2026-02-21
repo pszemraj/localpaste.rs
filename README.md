@@ -73,22 +73,16 @@ Build/run/validation command matrices are maintained in:
 
 ## Precompiled Binaries
 
-GitHub Releases publish precompiled GUI assets for `LocalPaste` under
-`localpaste-*` filenames:
+GitHub Releases publish GUI assets under `localpaste-*` filenames.
 
-- Windows x64: `.msi` installer and `.zip` portable archive
-- Linux x64: `.AppImage` and `.tar.gz` portable archive
-- macOS arm64: `.dmg` installer and `.app.tar.gz` portable archive
+Platform coverage:
 
-Asset naming contract:
+- Windows x64: `.msi` + `.zip`
+- Linux x64: `.AppImage` + `.tar.gz`
+- macOS arm64: `.dmg` + `.app.tar.gz` (may be unsigned/unnotarized when Apple signing secrets are unavailable)
 
-- `localpaste-<tag>-windows-x86_64.msi`
-- `localpaste-<tag>-windows-x86_64.zip`
-- `localpaste-<tag>-linux-x86_64.AppImage`
-- `localpaste-<tag>-linux-x86_64.tar.gz`
-- `localpaste-<tag>-macos-aarch64.dmg`
-- `localpaste-<tag>-macos-aarch64.app.tar.gz`
-- `checksums.sha256`
+Release workflow behavior, naming contract, and macOS signing policy are defined in
+[`docs/release-gui.md`](docs/release-gui.md).
 
 Checksum verification examples:
 
@@ -108,6 +102,7 @@ Get-FileHash .\localpaste-v0.4.3-windows-x86_64.msi -Algorithm SHA256
 - Security and environment variables: [`docs/security.md`](docs/security.md)
 - Service/background operation: [`docs/deployment.md`](docs/deployment.md)
 - Locking semantics (_owner lock + paste edit locks_): [`docs/dev/locking-model.md`](docs/dev/locking-model.md)
+- GUI release pipeline and artifact contract: [`docs/release-gui.md`](docs/release-gui.md)
 - Documentation index: [`docs/README.md`](docs/README.md)
 
 ## License

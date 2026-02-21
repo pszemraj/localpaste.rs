@@ -17,6 +17,57 @@ pub(crate) enum VirtualCommandBucket {
     DeferredCopy,
 }
 
+/// Returns whether bare arrow keys should drive sidebar selection navigation.
+///
+/// Sidebar navigation is intentionally disabled whenever keyboard ownership is
+/// ambiguous (focused editor, open modal/drawer, or active modifiers).
+///
+/// # Arguments
+/// - `wants_keyboard_input_before`: Egui keyboard-input ownership snapshot.
+/// - `modifiers`: Active keyboard modifiers for this frame.
+/// - `has_pastes`: Whether sidebar list has at least one selectable paste.
+/// - `focus_active_pre`: Virtual-editor focus state before routing.
+/// - `command_palette_open`: Whether command palette modal is open.
+/// - `properties_drawer_open`: Whether properties drawer is open.
+/// - `shortcut_help_open`: Whether shortcut help modal is open.
+///
+/// # Returns
+/// `true` only when bare arrows should select previous/next paste in sidebar.
+pub(crate) fn should_route_sidebar_arrows(
+    wants_keyboard_input_before: bool,
+    modifiers: egui::Modifiers,
+    has_pastes: bool,
+    focus_active_pre: bool,
+    command_palette_open: bool,
+    properties_drawer_open: bool,
+    shortcut_help_open: bool,
+) -> bool {
+    let has_nav_modifiers = modifiers.ctrl || modifiers.alt || modifiers.shift || modifiers.command;
+    let overlays_open = command_palette_open || properties_drawer_open || shortcut_help_open;
+
+    has_pastes
+        && !wants_keyboard_input_before
+        && !has_nav_modifiers
+        && !focus_active_pre
+        && !overlays_open
+}
+
+/// Returns whether modifiers represent a plain command chord (no Shift/Alt).
+///
+/// # Returns
+/// `true` when `Ctrl`/`Cmd` is active without Shift/Alt.
+pub(crate) fn is_plain_command_shortcut(modifiers: egui::Modifiers) -> bool {
+    modifiers.command && !modifiers.shift && !modifiers.alt
+}
+
+/// Returns whether modifiers represent a command+shift chord (no Alt).
+///
+/// # Returns
+/// `true` when `Ctrl`/`Cmd` and Shift are active without Alt.
+pub(crate) fn is_command_shift_shortcut(modifiers: egui::Modifiers) -> bool {
+    modifiers.command && modifiers.shift && !modifiers.alt
+}
+
 /// Returns whether a character should be treated as an editor word character.
 ///
 /// # Returns
@@ -174,5 +225,141 @@ pub(crate) fn paint_virtual_selection_overlay(
         if consumed >= selection.end {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        is_command_shift_shortcut, is_plain_command_shortcut, should_route_sidebar_arrows,
+    };
+    use eframe::egui;
+
+    #[test]
+    fn sidebar_arrow_routing_guard_matrix() {
+        struct Case {
+            wants_keyboard_input_before: bool,
+            modifiers: egui::Modifiers,
+            has_pastes: bool,
+            focus_active_pre: bool,
+            command_palette_open: bool,
+            properties_drawer_open: bool,
+            shortcut_help_open: bool,
+            expected: bool,
+        }
+
+        let cases = [
+            Case {
+                wants_keyboard_input_before: false,
+                modifiers: egui::Modifiers::NONE,
+                has_pastes: true,
+                focus_active_pre: false,
+                command_palette_open: false,
+                properties_drawer_open: false,
+                shortcut_help_open: false,
+                expected: true,
+            },
+            Case {
+                wants_keyboard_input_before: true,
+                modifiers: egui::Modifiers::NONE,
+                has_pastes: true,
+                focus_active_pre: false,
+                command_palette_open: false,
+                properties_drawer_open: false,
+                shortcut_help_open: false,
+                expected: false,
+            },
+            Case {
+                wants_keyboard_input_before: false,
+                modifiers: egui::Modifiers {
+                    shift: true,
+                    ..egui::Modifiers::NONE
+                },
+                has_pastes: true,
+                focus_active_pre: false,
+                command_palette_open: false,
+                properties_drawer_open: false,
+                shortcut_help_open: false,
+                expected: false,
+            },
+            Case {
+                wants_keyboard_input_before: false,
+                modifiers: egui::Modifiers::NONE,
+                has_pastes: true,
+                focus_active_pre: true,
+                command_palette_open: false,
+                properties_drawer_open: false,
+                shortcut_help_open: false,
+                expected: false,
+            },
+            Case {
+                wants_keyboard_input_before: false,
+                modifiers: egui::Modifiers::NONE,
+                has_pastes: true,
+                focus_active_pre: false,
+                command_palette_open: true,
+                properties_drawer_open: false,
+                shortcut_help_open: false,
+                expected: false,
+            },
+            Case {
+                wants_keyboard_input_before: false,
+                modifiers: egui::Modifiers::NONE,
+                has_pastes: false,
+                focus_active_pre: false,
+                command_palette_open: false,
+                properties_drawer_open: false,
+                shortcut_help_open: false,
+                expected: false,
+            },
+        ];
+
+        for case in cases {
+            let actual = should_route_sidebar_arrows(
+                case.wants_keyboard_input_before,
+                case.modifiers,
+                case.has_pastes,
+                case.focus_active_pre,
+                case.command_palette_open,
+                case.properties_drawer_open,
+                case.shortcut_help_open,
+            );
+            assert_eq!(actual, case.expected);
+        }
+    }
+
+    #[test]
+    fn command_shortcut_modifier_matrix() {
+        let plain = egui::Modifiers {
+            command: true,
+            ..egui::Modifiers::NONE
+        };
+        assert!(is_plain_command_shortcut(plain));
+        assert!(!is_command_shift_shortcut(plain));
+
+        let command_shift = egui::Modifiers {
+            command: true,
+            shift: true,
+            ..egui::Modifiers::NONE
+        };
+        assert!(!is_plain_command_shortcut(command_shift));
+        assert!(is_command_shift_shortcut(command_shift));
+
+        let command_alt = egui::Modifiers {
+            command: true,
+            alt: true,
+            ..egui::Modifiers::NONE
+        };
+        assert!(!is_plain_command_shortcut(command_alt));
+        assert!(!is_command_shift_shortcut(command_alt));
+
+        let command_shift_alt = egui::Modifiers {
+            command: true,
+            shift: true,
+            alt: true,
+            ..egui::Modifiers::NONE
+        };
+        assert!(!is_plain_command_shortcut(command_shift_alt));
+        assert!(!is_command_shift_shortcut(command_shift_alt));
     }
 }

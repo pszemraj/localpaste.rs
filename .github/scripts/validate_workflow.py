@@ -341,6 +341,32 @@ def has_uses_step(job: dict[str, Any], action_prefix: str) -> bool:
     return False
 
 
+def has_named_step(job: dict[str, Any], step_name: str) -> bool:
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return False
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step.get("name") == step_name:
+            return True
+    return False
+
+
+def find_step(job: dict[str, Any], *, step_id: str | None = None, step_name: str | None = None) -> dict[str, Any] | None:
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return None
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step_id is not None and step.get("id") == step_id:
+            return step
+        if step_name is not None and step.get("name") == step_name:
+            return step
+    return None
+
+
 def validate_release_job_shape(path: Path, data: dict[str, Any]) -> list[str]:
     if path.name != "release-gui.yml":
         return []
@@ -444,6 +470,62 @@ def validate_release_trigger_rules(path: Path, data: dict[str, Any]) -> list[str
     return errors
 
 
+def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> list[str]:
+    if path.name != "release-gui.yml":
+        return []
+
+    errors: list[str] = []
+    jobs = data.get("jobs")
+    if not isinstance(jobs, dict):
+        return errors
+
+    build_job = jobs.get("build_package")
+    if not isinstance(build_job, dict):
+        return errors
+
+    mac_gate_step = find_step(build_job, step_id="mac_signing")
+    if mac_gate_step is None:
+        errors.append(
+            f"{path}: build_package must define a mac signing gate step with id 'mac_signing'"
+        )
+        return errors
+
+    sign_step = find_step(build_job, step_name="Sign, notarize, and verify macOS artifacts")
+    if sign_step is None:
+        errors.append(
+            f"{path}: build_package must include 'Sign, notarize, and verify macOS artifacts' step"
+        )
+    else:
+        sign_if = sign_step.get("if")
+        if not isinstance(sign_if, str) or "steps.mac_signing.outputs.enabled == 'true'" not in sign_if:
+            errors.append(
+                f"{path}: mac signing step must be gated by steps.mac_signing.outputs.enabled == 'true'"
+            )
+
+    verify_step = find_step(build_job, step_name="Verify macOS DMG usability")
+    if verify_step is None:
+        errors.append(f"{path}: build_package must include 'Verify macOS DMG usability' step")
+    else:
+        verify_if = verify_step.get("if")
+        if not isinstance(verify_if, str) or "runner.os == 'macOS'" not in verify_if:
+            errors.append(
+                f"{path}: 'Verify macOS DMG usability' step must run on macOS runners"
+            )
+
+    for step_name in ("Collect release assets", "Upload release assets"):
+        step = find_step(build_job, step_name=step_name)
+        if step is None:
+            errors.append(f"{path}: missing '{step_name}' step in build_package")
+            continue
+        condition = step.get("if")
+        if isinstance(condition, str) and "steps.mac_signing.outputs.enabled == 'true'" in condition:
+            errors.append(
+                f"{path}: '{step_name}' must not be gated by steps.mac_signing.outputs.enabled == 'true'"
+            )
+
+    return errors
+
+
 def validate_workflow_file(path: Path) -> list[str]:
     data, errors = load_yaml(path)
     if data is None:
@@ -451,6 +533,7 @@ def validate_workflow_file(path: Path) -> list[str]:
 
     errors.extend(validate_release_trigger_rules(path, data))
     errors.extend(validate_release_job_shape(path, data))
+    errors.extend(validate_release_macos_signing_rules(path, data))
 
     run_blocks = extract_job_run_blocks(data)
     for block_path, shell, script in run_blocks:

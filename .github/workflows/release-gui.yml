@@ -6,9 +6,17 @@ on:
       - v*
   workflow_dispatch:
     inputs:
+      source_mode:
+        description: Source selection for this run
+        required: false
+        default: release_tag
+        type: choice
+        options:
+          - release_tag
+          - current_ref
       tag:
-        description: Existing tag to release (for example v0.4.3)
-        required: true
+        description: Existing tag to release in release_tag mode (for example v0.4.3)
+        required: false
         type: string
       dry_run:
         description: Build/test only (skip publish job)
@@ -30,46 +38,93 @@ jobs:
     timeout-minutes: 10
     outputs:
       resolved_tag: ${{ steps.resolve.outputs.resolved_tag }}
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      source_mode: ${{ steps.resolve.outputs.source_mode }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Resolve release tag
+      - name: Resolve source
         id: resolve
         shell: bash
         run: |
           set -euo pipefail
+          MODE="release_tag"
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
+            MODE="${{ github.event.inputs.source_mode }}"
+            if [[ -z "${MODE}" ]]; then
+              MODE="release_tag"
+            fi
           fi
 
-          if [[ -z "${TAG}" ]]; then
-            echo "release tag cannot be empty" >&2
-            exit 1
-          fi
+          case "${MODE}" in
+            release_tag)
+              if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+                TAG="${{ github.event.inputs.tag }}"
+              else
+                TAG="${GITHUB_REF_NAME}"
+              fi
 
-          if [[ "${TAG}" != v* ]]; then
-            echo "release tag must start with 'v' (got: ${TAG})" >&2
-            exit 1
-          fi
+              if [[ -z "${TAG}" ]]; then
+                echo "release tag cannot be empty in release_tag mode" >&2
+                exit 1
+              fi
 
-          git fetch --force --tags origin
-          git rev-parse "refs/tags/${TAG}" >/dev/null
+              if [[ "${TAG}" != v* ]]; then
+                echo "release tag must start with 'v' (got: ${TAG})" >&2
+                exit 1
+              fi
 
+              git fetch --force --tags origin
+              git rev-parse "refs/tags/${TAG}" >/dev/null
+              SOURCE_REF="refs/tags/${TAG}"
+              ;;
+            current_ref)
+              WORKSPACE_VERSION="$(
+                awk '
+                  $0 == "[workspace.package]" { in_workspace = 1; next }
+                  /^\[/ { if (in_workspace) exit }
+                  in_workspace && $1 == "version" {
+                    gsub(/"/, "", $3)
+                    print $3
+                    exit
+                  }
+                ' Cargo.toml
+              )"
+              if [[ -z "${WORKSPACE_VERSION}" ]]; then
+                echo "failed to read [workspace.package].version from Cargo.toml" >&2
+                exit 1
+              fi
+              TAG="v${WORKSPACE_VERSION}"
+              SOURCE_REF="${GITHUB_SHA}"
+              {
+                echo "### current_ref mode"
+                echo
+                echo "Using source ref: ${SOURCE_REF}"
+                echo "Derived packaging tag/version: ${TAG}"
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "unsupported source_mode: ${MODE}" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "source_mode=${MODE}" >> "$GITHUB_OUTPUT"
           echo "resolved_tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "resolved tag: ${TAG}"
+          echo "source_ref=${SOURCE_REF}" >> "$GITHUB_OUTPUT"
+          echo "resolved mode=${MODE} tag=${TAG} source_ref=${SOURCE_REF}"
 
-      - name: Checkout release tag source
+      - name: Checkout resolved source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: refs/tags/${{ steps.resolve.outputs.resolved_tag }}
+          ref: ${{ steps.resolve.outputs.source_ref }}
 
       - name: Validate workspace version matches tag
+        if: steps.resolve.outputs.source_mode == 'release_tag'
         shell: bash
         run: |
           set -euo pipefail
@@ -103,12 +158,13 @@ jobs:
     timeout-minutes: 30
     env:
       RESOLVED_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
+      SOURCE_REF: ${{ needs.resolve_tag.outputs.source_ref }}
     steps:
-      - name: Checkout release tag source
+      - name: Checkout resolved source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: refs/tags/${{ needs.resolve_tag.outputs.resolved_tag }}
+          ref: ${{ env.SOURCE_REF }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -216,6 +272,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RESOLVED_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
+      SOURCE_REF: ${{ needs.resolve_tag.outputs.source_ref }}
+      SOURCE_MODE: ${{ needs.resolve_tag.outputs.source_mode }}
     steps:
       - name: Checkout workflow commit
         uses: actions/checkout@v4
@@ -223,6 +281,7 @@ jobs:
           fetch-depth: 0
 
       - name: Sync source tree to release tag
+        if: env.SOURCE_MODE == 'release_tag'
         shell: bash
         run: |
           set -euo pipefail
@@ -241,10 +300,68 @@ jobs:
             echo "packaging/ not present in tag ${RESOLVED_TAG}; using workflow-ref packaging configs"
           fi
 
+      - name: Use workflow ref source tree
+        if: env.SOURCE_MODE == 'current_ref'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### current_ref build source"
+            echo
+            echo "Using source ref: ${SOURCE_REF}"
+            echo "Resolved packaging tag/version: ${RESOLVED_TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Determine macOS signing/notarization availability
+        if: runner.os == 'macOS'
+        id: mac_signing
+        shell: bash
+        env:
+          APPLE_SIGNING_CERT_BASE64: ${{ secrets.APPLE_SIGNING_CERT_BASE64 }}
+          APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          required=(
+            APPLE_SIGNING_CERT_BASE64
+            APPLE_SIGNING_CERT_PASSWORD
+            APPLE_SIGNING_IDENTITY
+            APPLE_ID
+            APPLE_APP_SPECIFIC_PASSWORD
+            APPLE_TEAM_ID
+          )
+          for key in "${required[@]}"; do
+            if [[ -z "${!key:-}" ]]; then
+              missing+=("${key}")
+            fi
+          done
+
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "missing=$(printf '%s ' "${missing[@]}" | sed 's/[[:space:]]*$//')" >> "$GITHUB_OUTPUT"
+            {
+              echo "### macOS signing/notarization skipped"
+              echo
+              echo "Missing required secrets: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
+              if [[ "${SOURCE_MODE}" == "release_tag" ]]; then
+                echo "Permissive release mode: macOS artifacts will be published unsigned/unnotarized."
+              else
+                echo "Verification mode: unsigned macOS packaging build will continue."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "missing=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -333,6 +450,71 @@ jobs:
       - name: Build installer packages
         run: python -c "import os, subprocess; subprocess.run(['cargo', 'packager', '--config', os.environ['PACKAGER_CONFIG_PATH']], check=True)"
 
+      - name: Sign, notarize, and verify macOS artifacts
+        if: runner.os == 'macOS' && steps.mac_signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          APPLE_SIGNING_CERT_BASE64: ${{ secrets.APPLE_SIGNING_CERT_BASE64 }}
+          APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="${RUNNER_TEMP}/localpaste-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          CERT_PATH="${RUNNER_TEMP}/localpaste-signing.p12"
+          PACKAGER_DIR="dist/packager/${{ matrix.asset_suffix }}"
+
+          echo "${APPLE_SIGNING_CERT_BASE64}" | base64 --decode > "${CERT_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security list-keychains -d user -s "${KEYCHAIN_PATH}"
+          security import "${CERT_PATH}" -k "${KEYCHAIN_PATH}" -P "${APPLE_SIGNING_CERT_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+
+          APP_BUNDLE="$(find "${PACKAGER_DIR}" -maxdepth 4 -type d -name '*.app' | head -n 1)"
+          DMG_PATH="$(find "${PACKAGER_DIR}" -maxdepth 4 -type f -name '*.dmg' | head -n 1)"
+          if [[ -z "${APP_BUNDLE}" || -z "${DMG_PATH}" ]]; then
+            echo "failed to find .app and .dmg under ${PACKAGER_DIR}" >&2
+            exit 1
+          fi
+
+          codesign --force --deep --options runtime --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${APP_BUNDLE}"
+          codesign --force --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${DMG_PATH}"
+
+          xcrun notarytool submit "${DMG_PATH}" \
+            --apple-id "${APPLE_ID}" \
+            --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --wait
+
+          xcrun stapler staple "${APP_BUNDLE}"
+          xcrun stapler staple "${DMG_PATH}"
+          spctl --assess --type open --verbose=4 "${DMG_PATH}"
+
+      - name: Verify macOS DMG usability
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGER_DIR="dist/packager/${{ matrix.asset_suffix }}"
+          DMG_PATH="$(find "${PACKAGER_DIR}" -maxdepth 4 -type f -name '*.dmg' | head -n 1)"
+          if [[ -z "${DMG_PATH}" ]]; then
+            echo "failed to find .dmg under ${PACKAGER_DIR}" >&2
+            exit 1
+          fi
+
+          hdiutil verify "${DMG_PATH}"
+          hdiutil imageinfo "${DMG_PATH}" > /tmp/localpaste-dmg-imageinfo.txt
+          if ! grep -Eq "Format:\s+UD" /tmp/localpaste-dmg-imageinfo.txt; then
+            echo "unexpected DMG format reported by hdiutil imageinfo" >&2
+            cat /tmp/localpaste-dmg-imageinfo.txt >&2
+            exit 1
+          fi
+
       - name: Collect release assets
         shell: bash
         run: |
@@ -351,7 +533,7 @@ jobs:
           retention-days: 1
 
   publish:
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
+    if: needs.resolve_tag.outputs.source_mode != 'current_ref' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
     needs:
       - resolve_tag
       - build_package
@@ -372,7 +554,20 @@ jobs:
           cd dist/release-assets
           sha256sum localpaste-* > checksums.sha256
 
+      - name: Detect macOS DMG asset
+        id: mac_dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          if compgen -G "dist/release-assets/localpaste-*.dmg" > /dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish release assets
+        id: publish_release
+        # Keep v2+ here: `overwrite_files` is not supported by older pinned tags.
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve_tag.outputs.resolved_tag }}
@@ -383,3 +578,32 @@ jobs:
           files: |
             dist/release-assets/localpaste-*
             dist/release-assets/checksums.sha256
+
+      - name: Append macOS Gatekeeper note
+        if: steps.mac_dmg.outputs.found == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
+        run: |
+          set -euo pipefail
+          NOTE_PREFIX='macOS note:'
+          NOTE_P1='macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts.'
+          NOTE_P2='If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security'
+          NOTE_P3='or run `xattr -cr /Applications/LocalPaste.app`.'
+          NOTE="${NOTE_P1} ${NOTE_P2} ${NOTE_P3}"
+          CURRENT_BODY="$(gh release view "${RELEASE_TAG}" --json body --jq .body)"
+
+          if grep -Fq "${NOTE_PREFIX}" <<< "${CURRENT_BODY}"; then
+            echo "macOS Gatekeeper note already present in release body"
+            exit 0
+          fi
+
+          BODY_PATH="$(mktemp)"
+          if [[ -n "${CURRENT_BODY}" ]]; then
+            printf "%s\n\n%s\n" "${CURRENT_BODY}" "${NOTE}" > "${BODY_PATH}"
+          else
+            printf "%s\n" "${NOTE}" > "${BODY_PATH}"
+          fi
+
+          gh release edit "${RELEASE_TAG}" --notes-file "${BODY_PATH}"

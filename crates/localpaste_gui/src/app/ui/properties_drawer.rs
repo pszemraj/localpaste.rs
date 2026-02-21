@@ -5,7 +5,18 @@ use eframe::egui;
 
 const AUTO_LANGUAGE: &str = "__auto__";
 
-fn apply_language_choice(
+/// Applies a language choice change to the metadata draft fields.
+///
+/// `AUTO_LANGUAGE` disables manual mode without erasing the detected language
+/// value currently shown in the editor.
+///
+/// # Arguments
+/// - `edit_language_is_manual`: Editable manual-language flag.
+/// - `edit_language`: Editable language label field.
+/// - `metadata_dirty`: Dirty marker toggled when the choice changes metadata.
+/// - `language_choice`: Newly selected combo-box value.
+/// - `current_manual_value`: Canonicalized current manual-language option.
+pub(super) fn apply_language_choice(
     edit_language_is_manual: &mut bool,
     edit_language: &mut Option<String>,
     metadata_dirty: &mut bool,
@@ -27,6 +38,31 @@ fn apply_language_choice(
         *edit_language = Some(language_choice.to_string());
         *metadata_dirty = true;
     }
+}
+
+/// Resolves the combo-box label for the selected language choice.
+///
+/// # Arguments
+/// - `language_choice`: Selected combo-box option value.
+/// - `auto_label`: Label text used for auto mode.
+///
+/// # Returns
+/// User-facing text for the current language choice.
+pub(super) fn selected_language_choice_text(language_choice: &str, auto_label: &str) -> String {
+    if language_choice == AUTO_LANGUAGE {
+        return auto_label.to_string();
+    }
+    localpaste_core::detection::canonical::manual_option_label(language_choice)
+        .unwrap_or(language_choice)
+        .to_string()
+}
+
+/// Returns the sentinel key used for auto language mode options.
+///
+/// # Returns
+/// Stable option-key string representing auto mode in language selectors.
+pub(super) fn auto_language_choice_key() -> &'static str {
+    AUTO_LANGUAGE
 }
 
 impl LocalPasteApp {
@@ -84,21 +120,14 @@ impl LocalPasteApp {
                 } else {
                     AUTO_LANGUAGE.to_string()
                 };
-                let selected_language_text = if language_choice == AUTO_LANGUAGE {
-                    "Auto".to_string()
-                } else {
-                    localpaste_core::detection::canonical::manual_option_label(
-                        language_choice.as_str(),
-                    )
-                    .unwrap_or(language_choice.as_str())
-                    .to_string()
-                };
+                let selected_language_text =
+                    selected_language_choice_text(language_choice.as_str(), "Auto");
                 egui::ComboBox::from_id_salt("drawer_language_select")
                     .selected_text(selected_language_text)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut language_choice,
-                            AUTO_LANGUAGE.to_string(),
+                            auto_language_choice_key().to_string(),
                             "Auto",
                         );
                         for option in localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS

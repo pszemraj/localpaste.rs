@@ -302,6 +302,10 @@ impl EditorLayoutCache {
                         if range.is_empty() {
                             continue;
                         }
+                        let Some(range) = clamp_byte_range_to_char_boundaries(line, range.clone())
+                        else {
+                            continue;
+                        };
                         sections.push(LayoutSection {
                             leading_space: 0.0,
                             byte_range: range,
@@ -340,6 +344,7 @@ impl EditorLayoutCache {
         }
 
         self.highlight_cache.lines = new_lines;
+        debug_assert_layout_sections_char_boundaries(&job);
         job
     }
 
@@ -395,6 +400,7 @@ impl EditorLayoutCache {
             );
         }
 
+        debug_assert_layout_sections_char_boundaries(&job);
         job
     }
 }
@@ -412,51 +418,23 @@ impl EditorLayoutCache {
 /// Layout job representing one unwrapped virtual line.
 pub(super) fn build_virtual_line_job(
     ui: &egui::Ui,
-    line: &str,
+    line: impl Into<String>,
     editor_font: &FontId,
     render_line: Option<&HighlightRenderLine>,
     use_plain: bool,
 ) -> LayoutJob {
-    build_virtual_line_job_owned(ui, line.to_owned(), editor_font, render_line, use_plain)
-}
-
-/// Builds a layout job for a single rendered line in the virtual preview/editor
-/// when the caller already owns the line text buffer.
-fn build_virtual_line_job_owned(
-    ui: &egui::Ui,
-    line: String,
-    editor_font: &FontId,
-    render_line: Option<&HighlightRenderLine>,
-    use_plain: bool,
-) -> LayoutJob {
-    if use_plain || render_line.is_none() {
-        return plain_layout_job_owned(ui, line, editor_font, f32::INFINITY);
-    }
-    let render_line = render_line.expect("render line checked above");
-    let mut job = LayoutJob {
-        text: line,
-        ..Default::default()
-    };
-    let line_len = job.text.len();
-    let default_format = TextFormat {
-        font_id: editor_font.clone(),
-        color: ui.visuals().text_color(),
-        ..Default::default()
-    };
-
-    let mut styled_sections = Vec::with_capacity(render_line.spans.len());
-    for span in &render_line.spans {
-        let start = span.range.start.min(line_len);
-        let end = span.range.end.min(line_len);
-        if start >= end {
-            continue;
-        }
-        styled_sections.push((start..end, render_span_to_format(span, editor_font)));
-    }
-    push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
-
-    job.wrap.max_width = f32::INFINITY;
-    job
+    build_virtual_line_job_with_mapper(
+        ui,
+        line.into(),
+        editor_font,
+        render_line,
+        use_plain,
+        |span_range, line_len| {
+            let start = span_range.start.min(line_len);
+            let end = span_range.end.min(line_len);
+            (start < end).then_some(start..end)
+        },
+    )
 }
 
 /// Builds a layout job for a wrapped visual-row segment from a physical line.
@@ -485,12 +463,42 @@ pub(super) fn build_virtual_line_segment_job_owned(
     use_plain: bool,
     line_byte_range: Range<usize>,
 ) -> LayoutJob {
+    build_virtual_line_job_with_mapper(
+        ui,
+        segment,
+        editor_font,
+        render_line,
+        use_plain,
+        |span_range, line_len| {
+            let start = span_range.start.max(line_byte_range.start);
+            let end = span_range.end.min(line_byte_range.end);
+            if start >= end {
+                return None;
+            }
+            let local_start = start.saturating_sub(line_byte_range.start).min(line_len);
+            let local_end = end.saturating_sub(line_byte_range.start).min(line_len);
+            (local_start < local_end).then_some(local_start..local_end)
+        },
+    )
+}
+
+fn build_virtual_line_job_with_mapper<M>(
+    ui: &egui::Ui,
+    text: String,
+    editor_font: &FontId,
+    render_line: Option<&HighlightRenderLine>,
+    use_plain: bool,
+    mut map_span_range: M,
+) -> LayoutJob
+where
+    M: FnMut(Range<usize>, usize) -> Option<Range<usize>>,
+{
     if use_plain || render_line.is_none() {
-        return plain_layout_job_owned(ui, segment, editor_font, f32::INFINITY);
+        return plain_layout_job_owned(ui, text, editor_font, f32::INFINITY);
     }
     let render_line = render_line.expect("render line checked above");
     let mut job = LayoutJob {
-        text: segment,
+        text,
         ..Default::default()
     };
     let line_len = job.text.len();
@@ -504,26 +512,22 @@ pub(super) fn build_virtual_line_segment_job_owned(
         job.wrap.max_width = f32::INFINITY;
         return job;
     }
+
     let mut styled_sections = Vec::with_capacity(render_line.spans.len());
     for span in &render_line.spans {
-        let start = span.range.start.max(line_byte_range.start);
-        let end = span.range.end.min(line_byte_range.end);
-        if start >= end {
+        let Some(mapped_range) = map_span_range(span.range.clone(), line_len) else {
             continue;
-        }
-        let local_start = start.saturating_sub(line_byte_range.start).min(line_len);
-        let local_end = end.saturating_sub(line_byte_range.start).min(line_len);
-        if local_start >= local_end {
+        };
+        let Some(range) = clamp_byte_range_to_char_boundaries(job.text.as_str(), mapped_range)
+        else {
             continue;
-        }
-        styled_sections.push((
-            local_start..local_end,
-            render_span_to_format(span, editor_font),
-        ));
+        };
+        styled_sections.push((range, render_span_to_format(span, editor_font)));
     }
     push_sections_with_default_gaps(&mut job, 0, line_len, &default_format, styled_sections);
 
     job.wrap.max_width = f32::INFINITY;
+    debug_assert_layout_sections_char_boundaries(&job);
     job
 }
 
@@ -595,13 +599,59 @@ fn render_span_to_format(span: &HighlightSpan, editor_font: &FontId) -> TextForm
     }
 }
 
+fn floor_char_boundary(text: &str, idx: usize) -> usize {
+    let mut idx = idx.min(text.len());
+    while idx > 0 && !text.is_char_boundary(idx) {
+        idx = idx.saturating_sub(1);
+    }
+    idx
+}
+
+fn ceil_char_boundary(text: &str, idx: usize) -> usize {
+    let mut idx = idx.min(text.len());
+    while idx < text.len() && !text.is_char_boundary(idx) {
+        idx = idx.saturating_add(1);
+    }
+    idx.min(text.len())
+}
+
+fn clamp_byte_range_to_char_boundaries(text: &str, range: Range<usize>) -> Option<Range<usize>> {
+    let start = floor_char_boundary(text, range.start);
+    let end = ceil_char_boundary(text, range.end);
+    if start >= end {
+        return None;
+    }
+    Some(start..end)
+}
+
 fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usize) {
     for section in sections {
         let mut section = section.clone();
-        section.byte_range = (section.byte_range.start + offset)..(section.byte_range.end + offset);
-        job.sections.push(section);
+        let start = section.byte_range.start.saturating_add(offset);
+        let end = section.byte_range.end.saturating_add(offset);
+        if let Some(range) = clamp_byte_range_to_char_boundaries(job.text.as_str(), start..end) {
+            section.byte_range = range;
+            job.sections.push(section);
+        }
     }
 }
+
+#[cfg(debug_assertions)]
+fn debug_assert_layout_sections_char_boundaries(job: &LayoutJob) {
+    for section in &job.sections {
+        debug_assert!(
+            job.text.is_char_boundary(section.byte_range.start),
+            "layout section start is not a char boundary"
+        );
+        debug_assert!(
+            job.text.is_char_boundary(section.byte_range.end),
+            "layout section end is not a char boundary"
+        );
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_assert_layout_sections_char_boundaries(_job: &LayoutJob) {}
 
 fn push_sections_with_default_gaps(
     job: &mut LayoutJob,
@@ -614,11 +664,16 @@ fn push_sections_with_default_gaps(
         return;
     }
     if styled_sections.is_empty() {
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: offset..(offset + line_len),
-            format: default_format.clone(),
-        });
+        if let Some(range) = clamp_byte_range_to_char_boundaries(
+            job.text.as_str(),
+            offset..(offset.saturating_add(line_len)),
+        ) {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: range,
+                format: default_format.clone(),
+            });
+        }
         return;
     }
 
@@ -637,30 +692,45 @@ fn push_sections_with_default_gaps(
         }
 
         if start > cursor {
-            job.sections.push(LayoutSection {
-                leading_space: 0.0,
-                byte_range: (offset + cursor)..(offset + start),
-                format: default_format.clone(),
-            });
+            if let Some(range) = clamp_byte_range_to_char_boundaries(
+                job.text.as_str(),
+                (offset.saturating_add(cursor))..(offset.saturating_add(start)),
+            ) {
+                job.sections.push(LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: range,
+                    format: default_format.clone(),
+                });
+            }
         }
 
         let styled_start = start.max(cursor);
         if styled_start < end {
-            job.sections.push(LayoutSection {
-                leading_space: 0.0,
-                byte_range: (offset + styled_start)..(offset + end),
-                format,
-            });
+            if let Some(range) = clamp_byte_range_to_char_boundaries(
+                job.text.as_str(),
+                (offset.saturating_add(styled_start))..(offset.saturating_add(end)),
+            ) {
+                job.sections.push(LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: range,
+                    format,
+                });
+            }
             cursor = end;
         }
     }
 
     if cursor < line_len {
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: (offset + cursor)..(offset + line_len),
-            format: default_format.clone(),
-        });
+        if let Some(range) = clamp_byte_range_to_char_boundaries(
+            job.text.as_str(),
+            (offset.saturating_add(cursor))..(offset.saturating_add(line_len)),
+        ) {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: range,
+                format: default_format.clone(),
+            });
+        }
     }
 }
 

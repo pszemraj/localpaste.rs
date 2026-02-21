@@ -120,6 +120,46 @@ pub fn map_folder_delete_lock_error(err: PasteLockError) -> AppError {
     }
 }
 
+/// Acquire a mutation guard with optional owner-aware lock checks.
+/// # Arguments
+/// `locks`, `paste_id`, `locked_message`, and optional `owner_id`.
+/// # Returns
+/// Active mutation guard for `paste_id`.
+/// # Errors
+/// Returns a mapped [`AppError`] when guard acquisition fails.
+pub fn acquire_paste_mutation_guard<'a>(
+    locks: &'a PasteLockManager,
+    paste_id: &str,
+    locked_message: &'static str,
+    owner_id: Option<&LockOwnerId>,
+) -> Result<PasteMutationGuard<'a>, AppError> {
+    let guard = if let Some(owner_id) = owner_id {
+        locks.begin_mutation_ignoring_owner(paste_id, owner_id)
+    } else {
+        locks.begin_mutation(paste_id)
+    };
+    guard.map_err(|err| map_paste_mutation_lock_error(err, locked_message))
+}
+
+/// Acquire `(folder_guard, mutation_guard)` for folder-scoped paste mutations.
+/// # Arguments
+/// `db`, `locks`, `paste_id`, `locked_message`, and optional `owner_id`.
+/// # Returns
+/// Tuple containing folder and mutation guards for the same critical section.
+/// # Errors
+/// Returns an [`AppError`] when either guard cannot be acquired.
+pub fn acquire_folder_scoped_mutation_guards<'db, 'locks>(
+    db: &'db crate::Database,
+    locks: &'locks PasteLockManager,
+    paste_id: &str,
+    locked_message: &'static str,
+    owner_id: Option<&LockOwnerId>,
+) -> Result<(crate::db::FolderTxnGuard<'db>, PasteMutationGuard<'locks>), AppError> {
+    let folder_guard = crate::db::TransactionOps::acquire_folder_txn_guard(db)?;
+    let mutation_guard = acquire_paste_mutation_guard(locks, paste_id, locked_message, owner_id)?;
+    Ok((folder_guard, mutation_guard))
+}
+
 fn lock_conflict_message(err: &PasteLockError, locked_message: &'static str) -> String {
     match err {
         PasteLockError::Held { paste_id } => format!(

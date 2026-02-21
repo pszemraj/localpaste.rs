@@ -1,6 +1,9 @@
 //! Central editor panel rendering for TextEdit, virtual preview, and virtual editor modes.
 
 use super::super::*;
+use super::properties_drawer::{
+    apply_language_choice, auto_language_choice_key, selected_language_choice_text,
+};
 use eframe::egui;
 
 impl LocalPasteApp {
@@ -22,7 +25,6 @@ impl LocalPasteApp {
                 );
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
 
-                let mut pending_language_filter: Option<Option<String>> = None;
                 let mut pending_tag_search: Option<String> = None;
                 let mut apply_metadata = false;
                 let mut copy_requested = false;
@@ -44,18 +46,67 @@ impl LocalPasteApp {
                         if name_response.changed() {
                             self.metadata_dirty = true;
                         }
-
-                        if ui.small_button(format!("[{}]", lang_label)).clicked() {
-                            pending_language_filter =
-                                Some(self.edit_language.clone().and_then(|value| {
-                                    let trimmed = value.trim();
-                                    if trimmed.is_empty() {
-                                        None
-                                    } else {
-                                        Some(trimmed.to_string())
-                                    }
-                                }));
+                        if name_response.lost_focus() && self.metadata_dirty {
+                            apply_metadata = true;
                         }
+                        if name_response.has_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                        {
+                            apply_metadata = true;
+                        }
+                        if name_response.has_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Escape))
+                        {
+                            if let Some(paste) = self.selected_paste.as_ref() {
+                                self.edit_name = paste.name.clone();
+                                self.metadata_dirty = self.edit_name != paste.name
+                                    || self.edit_language != paste.language
+                                    || self.edit_language_is_manual != paste.language_is_manual
+                                    || self.edit_tags != paste.tags.join(", ");
+                            }
+                        }
+
+                        let current_manual_value = self
+                            .edit_language
+                            .as_deref()
+                            .map(localpaste_core::detection::canonical::canonicalize)
+                            .filter(|value| !value.is_empty())
+                            .unwrap_or_else(|| "text".to_string());
+                        let mut language_choice = if self.edit_language_is_manual {
+                            current_manual_value.clone()
+                        } else {
+                            auto_language_choice_key().to_string()
+                        };
+                        let selected_language_text = selected_language_choice_text(
+                            language_choice.as_str(),
+                            format!("Auto ({})", lang_label).as_str(),
+                        );
+                        egui::ComboBox::from_id_salt("header_language_select")
+                            .selected_text(selected_language_text)
+                            .width(160.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut language_choice,
+                                    auto_language_choice_key().to_string(),
+                                    "Auto",
+                                );
+                                for option in
+                                    localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
+                                {
+                                    ui.selectable_value(
+                                        &mut language_choice,
+                                        option.value.to_string(),
+                                        option.label,
+                                    );
+                                }
+                            });
+                        apply_language_choice(
+                            &mut self.edit_language_is_manual,
+                            &mut self.edit_language,
+                            &mut self.metadata_dirty,
+                            language_choice.as_str(),
+                            current_manual_value.as_str(),
+                        );
                         for tag in &visible_tags {
                             if ui.small_button(format!("#{}", tag)).clicked() {
                                 pending_tag_search = Some(tag.clone());
@@ -91,9 +142,6 @@ impl LocalPasteApp {
                         }
                     });
                 });
-                if let Some(language_filter) = pending_language_filter {
-                    self.set_active_language_filter(language_filter);
-                }
                 if let Some(tag) = pending_tag_search {
                     self.set_search_query(tag);
                 }
@@ -130,21 +178,6 @@ impl LocalPasteApp {
                         .color(COLOR_TEXT_MUTED),
                 );
                 ui.add_space(6.0);
-                if self.editor_mode == EditorMode::VirtualPreview {
-                    ui.label(
-                        RichText::new("Virtual preview (read-only)")
-                            .small()
-                            .color(COLOR_TEXT_MUTED),
-                    );
-                    ui.add_space(4.0);
-                } else if self.editor_mode == EditorMode::VirtualEditor {
-                    ui.label(
-                        RichText::new("Virtual editor (rope-backed)")
-                            .small()
-                            .color(COLOR_TEXT_MUTED),
-                    );
-                    ui.add_space(4.0);
-                }
                 let editor_height = ui.available_height();
                 let mut response = None;
                 let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
@@ -320,7 +353,6 @@ impl LocalPasteApp {
                             .font(editor_style)
                             .desired_width(f32::INFINITY)
                             .desired_rows(rows_that_fit)
-                            .lock_focus(true)
                             .hint_text("Start typing...");
 
                         let mut editor_cache = std::mem::take(&mut self.editor_cache);

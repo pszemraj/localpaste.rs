@@ -1,4 +1,10 @@
 //! Native rewrite binary entry point.
+// Release Windows builds use the `windows` subsystem (no console window); use
+// `LOCALPASTE_LOG_FILE` when you need runtime logs from end-user GUI sessions.
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 fn main() {
     let exit_code = run_and_report(localpaste_gui::run);

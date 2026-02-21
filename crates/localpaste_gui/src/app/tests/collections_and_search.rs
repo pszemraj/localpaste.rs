@@ -253,6 +253,34 @@ fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
 }
 
 #[test]
+fn palette_search_result_updates_keep_absolute_selection_space() {
+    let mut harness = make_app();
+    harness.app.command_palette_open = true;
+    harness.app.set_command_palette_query("new".to_string());
+    let action_count = harness.app.command_palette_action_count();
+    assert!(
+        action_count > 0,
+        "query should retain at least one command row"
+    );
+
+    harness.app.command_palette_selected = action_count + 1;
+    harness.app.apply_event(CoreEvent::PaletteSearchResults {
+        query: "new".to_string(),
+        items: vec![
+            test_summary("p1", "one", None, 4),
+            test_summary("p2", "two", None, 4),
+        ],
+    });
+    assert_eq!(harness.app.command_palette_selected, action_count + 1);
+
+    harness.app.apply_event(CoreEvent::PaletteSearchResults {
+        query: "new".to_string(),
+        items: vec![test_summary("p1", "one", None, 4)],
+    });
+    assert_eq!(harness.app.command_palette_selected, action_count);
+}
+
+#[test]
 fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
     enum DispatchKind {
         SidebarSearch,
