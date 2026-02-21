@@ -84,6 +84,22 @@ impl LocalPasteApp {
         false
     }
 
+    /// Decides whether paste-as-new should request clipboard text from the viewport.
+    ///
+    /// # Arguments
+    /// - `request_paste_as_new`: Whether paste-as-new routing is requested this frame.
+    /// - `pasted_text`: Clipboard payload already observed in this frame, if any.
+    ///
+    /// # Returns
+    /// `true` when a viewport paste request is still needed to fetch clipboard text.
+    pub(super) fn should_request_viewport_paste_for_new(
+        &self,
+        request_paste_as_new: bool,
+        pasted_text: Option<&str>,
+    ) -> bool {
+        request_paste_as_new && pasted_text.is_none()
+    }
+
     /// Routes plain paste shortcut behavior based on current editor mode/focus state.
     ///
     /// # Arguments

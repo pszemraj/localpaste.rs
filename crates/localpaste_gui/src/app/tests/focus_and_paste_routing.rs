@@ -133,6 +133,47 @@ fn explicit_paste_as_new_skips_virtual_paste_commands() {
 }
 
 #[test]
+fn paste_as_new_viewport_request_only_when_clipboard_payload_missing() {
+    struct Case {
+        request_paste_as_new: bool,
+        pasted_text: Option<&'static str>,
+        expect_viewport_request: bool,
+    }
+
+    let cases = [
+        Case {
+            request_paste_as_new: false,
+            pasted_text: None,
+            expect_viewport_request: false,
+        },
+        Case {
+            request_paste_as_new: true,
+            pasted_text: None,
+            expect_viewport_request: true,
+        },
+        Case {
+            request_paste_as_new: true,
+            pasted_text: Some("from clipboard"),
+            expect_viewport_request: false,
+        },
+    ];
+
+    for case in cases {
+        let harness = make_app();
+        let should_request = harness
+            .app
+            .should_request_viewport_paste_for_new(case.request_paste_as_new, case.pasted_text);
+        assert_eq!(
+            should_request,
+            case.expect_viewport_request,
+            "viewport request mismatch for case request={} pasted_text_present={}",
+            case.request_paste_as_new,
+            case.pasted_text.is_some()
+        );
+    }
+}
+
+#[test]
 fn command_shift_v_arms_paste_as_new_before_virtual_routing() {
     let mut harness = make_app();
     let ctx = egui::Context::default();

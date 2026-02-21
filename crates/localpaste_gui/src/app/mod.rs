@@ -819,7 +819,8 @@ impl eframe::App for LocalPasteApp {
         if self.editor_mode == EditorMode::VirtualEditor && request_virtual_paste {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
         }
-        if request_paste_as_new {
+        if self.should_request_viewport_paste_for_new(request_paste_as_new, pasted_text.as_deref())
+        {
             self.request_paste_as_new(ctx);
         }
         let copy_ready_post = focus_active_post || has_virtual_selection_post;
