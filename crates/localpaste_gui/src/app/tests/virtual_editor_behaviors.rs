@@ -270,7 +270,7 @@ fn virtual_editor_focus_transition_matrix() {
             focus_editor_next: false,
             state_has_focus: true,
             frames: vec![Vec::new()],
-            expect_focus: true,
+            expect_focus: false,
         },
         FocusCase {
             focus_editor_next: false,

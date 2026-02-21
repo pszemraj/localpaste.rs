@@ -5,6 +5,9 @@ use crate::app::text_coords::prefix_by_chars;
 use eframe::egui;
 use tracing::info;
 
+const VIRTUAL_EDITOR_TEXT_INSET: f32 = 6.0;
+const VIRTUAL_EDITOR_LINE_NUMBER_PADDING: f32 = 8.0;
+
 fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rect {
     let scrollbar_gutter = (wrap_width - inner_rect.width()).max(0.0);
     if scrollbar_gutter <= 0.0 {
@@ -386,13 +389,18 @@ impl LocalPasteApp {
             .x
             .max(1.0)
         });
+        let line_count = self.virtual_editor_buffer.line_count();
+        let line_number_digits = line_count.max(1).to_string().len();
+        let line_number_gutter = (line_number_digits as f32 * char_width)
+            + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
+        let content_wrap_width = (wrap_width - line_number_gutter - VIRTUAL_EDITOR_TEXT_INSET)
+            .max(char_width);
         self.virtual_line_height = row_height.max(1.0);
         self.virtual_wrap_width = wrap_width;
         self.virtual_viewport_height = editor_height;
-        let line_count = self.virtual_editor_buffer.line_count();
         if self.virtual_layout.needs_rebuild(
             self.virtual_editor_buffer.revision(),
-            wrap_width,
+            content_wrap_width,
             self.virtual_line_height,
             char_width,
             line_count,
@@ -400,7 +408,7 @@ impl LocalPasteApp {
             let rebuild_started = perf_enabled.then(Instant::now);
             self.virtual_layout.rebuild(
                 &self.virtual_editor_buffer,
-                wrap_width,
+                content_wrap_width,
                 self.virtual_line_height,
                 char_width,
             );
@@ -412,7 +420,7 @@ impl LocalPasteApp {
         self.virtual_galley_cache.prepare_frame(
             line_count,
             VirtualGalleyContext::new(
-                wrap_width,
+                content_wrap_width,
                 use_plain,
                 editor_font,
                 ui.visuals().text_color(),
@@ -427,11 +435,14 @@ impl LocalPasteApp {
                 ui.set_min_width(wrap_width);
                 visible_rows = range.len();
                 struct RowRender {
+                    line_idx: usize,
                     segment_start: usize,
                     segment_chars: usize,
                     starts_line: bool,
                     ends_line: bool,
                     rect: egui::Rect,
+                    text_rect: egui::Rect,
+                    text_origin: egui::Pos2,
                     galley: Arc<egui::Galley>,
                 }
                 enum RowAction {
@@ -527,12 +538,22 @@ impl LocalPasteApp {
                         egui::vec2(row_width, self.virtual_line_height),
                         egui::Sense::click_and_drag(),
                     );
+                    let text_min_x =
+                        (rect.min.x + line_number_gutter + VIRTUAL_EDITOR_TEXT_INSET)
+                            .min(rect.max.x);
+                    let text_origin = egui::pos2(text_min_x, rect.min.y);
+                    let text_rect = egui::Rect::from_min_max(text_origin, rect.max);
                     if response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                     }
                     if pending_action.is_none() && (response.drag_started() || response.clicked()) {
                         if let Some(pointer_pos) = response.interact_pointer_pos() {
-                            let local_pos = pointer_pos - rect.min;
+                            let clamped_x = pointer_pos.x.clamp(text_rect.min.x, text_rect.max.x);
+                            let clamped_y = pointer_pos.y.clamp(rect.min.y, rect.max.y);
+                            let local_pos = egui::vec2(
+                                (clamped_x - text_origin.x).max(0.0),
+                                (clamped_y - text_origin.y).max(0.0),
+                            );
                             let cursor = galley.cursor_from_pos(local_pos);
                             let local_col = cursor.index.min(segment_chars);
                             let global = segment_range.start.saturating_add(local_col);
@@ -568,11 +589,14 @@ impl LocalPasteApp {
                         }
                     }
                     rows.push(RowRender {
+                        line_idx,
                         segment_start: segment_range.start,
                         segment_chars,
                         starts_line,
                         ends_line,
                         rect,
+                        text_rect,
+                        text_origin,
                         galley,
                     });
                 }
@@ -674,10 +698,13 @@ impl LocalPasteApp {
                             });
                         if let Some(row) = target_row {
                             let clamped_pos = egui::pos2(
-                                pointer_pos.x.clamp(row.rect.min.x, row.rect.max.x),
+                                pointer_pos.x.clamp(row.text_rect.min.x, row.text_rect.max.x),
                                 pointer_pos.y.clamp(row.rect.min.y, row.rect.max.y),
                             );
-                            let local_pos = clamped_pos - row.rect.min;
+                            let local_pos = egui::vec2(
+                                (clamped_pos.x - row.text_origin.x).max(0.0),
+                                (clamped_pos.y - row.text_origin.y).max(0.0),
+                            );
                             let cursor = row.galley.cursor_from_pos(local_pos);
                             let global = row
                                 .segment_start
@@ -720,14 +747,28 @@ impl LocalPasteApp {
                     {
                         paint_virtual_selection_overlay(
                             ui.painter(),
-                            row.rect,
+                            row.text_rect,
                             galley.as_ref(),
                             selection,
                             selection_fill,
                         );
                     }
+                    if row.starts_line {
+                        ui.painter().text(
+                            egui::pos2(
+                                row.text_rect.min.x - VIRTUAL_EDITOR_LINE_NUMBER_PADDING,
+                                row.rect.center().y,
+                            ),
+                            egui::Align2::RIGHT_CENTER,
+                            (row.line_idx.saturating_add(1)).to_string(),
+                            egui::FontId::monospace(
+                                (self.virtual_line_height * 0.72).clamp(10.0, 14.0),
+                            ),
+                            COLOR_TEXT_MUTED,
+                        );
+                    }
                     ui.painter()
-                        .galley(row.rect.min, galley.clone(), ui.visuals().text_color());
+                        .galley(row.text_origin, galley.clone(), ui.visuals().text_color());
 
                     if focused && caret_visible {
                         let cursor = clamped_caret_cursor;
@@ -746,9 +787,9 @@ impl LocalPasteApp {
                         if cursor >= row.segment_start && shows_caret {
                             let local_col = cursor.saturating_sub(row.segment_start);
                             let caret_rect = galley.pos_from_cursor(CCursor::new(local_col));
-                            let x = row.rect.min.x + caret_rect.min.x;
-                            let y_min = row.rect.min.y + caret_rect.min.y;
-                            let y_max = row.rect.min.y + caret_rect.max.y;
+                            let x = (row.text_origin.x + caret_rect.min.x).max(row.text_origin.x);
+                            let y_min = row.text_origin.y + caret_rect.min.y;
+                            let y_max = row.text_origin.y + caret_rect.max.y;
                             ui.painter().line_segment(
                                 [egui::pos2(x, y_min), egui::pos2(x, y_max)],
                                 Stroke::new(1.0, ui.visuals().text_color()),
@@ -786,35 +827,6 @@ impl LocalPasteApp {
         if clicked_inside_editor {
             ui.memory_mut(|m| m.request_focus(editor_id));
             egui_focus = true;
-        }
-        // Keep editor focus stable when no explicit blur occurred. This avoids
-        // transient focus drops that can swallow Enter/Ctrl+A in virtual mode.
-        if had_focus && !egui_focus {
-            let tab_navigation_blur = ui.input(|input| {
-                input.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::Key {
-                            key: egui::Key::Tab,
-                            pressed: true,
-                            ..
-                        }
-                    )
-                })
-            });
-            let clicked_outside_editor = ui.input(|input| {
-                input.pointer.button_pressed(egui::PointerButton::Primary)
-                    && input
-                        .pointer
-                        .interact_pos()
-                        .or_else(|| input.pointer.latest_pos())
-                        .map(|pos| !interaction_rect.contains(pos))
-                        .unwrap_or(false)
-            });
-            if !clicked_outside_editor && !tab_navigation_blur && !ui.ctx().wants_keyboard_input() {
-                ui.memory_mut(|m| m.request_focus(editor_id));
-                egui_focus = true;
-            }
         }
         if focus_response.gained_focus() || (egui_focus && !had_focus) {
             self.reset_virtual_caret_blink();

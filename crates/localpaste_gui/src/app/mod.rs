@@ -44,7 +44,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use style::*;
 use tracing::{info, warn};
-use util::{display_language_label, env_flag_enabled, status_language_filter_label, word_range_at};
+use util::{display_language_label, env_flag_enabled, word_range_at};
 use virtual_editor::{
     commands_from_events, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
     VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext, VirtualInputCommand,
@@ -692,7 +692,11 @@ impl eframe::App for LocalPasteApp {
                     pasted_text = Some(text.clone());
                 }
             }
-            if !wants_keyboard_input_before && !self.pastes.is_empty() {
+            let has_nav_modifiers = input.modifiers.ctrl
+                || input.modifiers.alt
+                || input.modifiers.shift
+                || input.modifiers.command;
+            if !wants_keyboard_input_before && !has_nav_modifiers && !self.pastes.is_empty() {
                 if input.key_pressed(egui::Key::ArrowDown) {
                     sidebar_direction = 1;
                 } else if input.key_pressed(egui::Key::ArrowUp) {
