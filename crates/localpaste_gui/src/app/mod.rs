@@ -122,6 +122,7 @@ pub(crate) struct LocalPasteApp {
     last_virtual_click_count: u8,
     virtual_editor_active: bool,
     paste_as_new_pending_frames: u8,
+    paste_as_new_clipboard_requested_at: Option<Instant>,
     syntect: SyntectSettings,
     db_path: String,
     locks: Arc<PasteLockManager>,
@@ -215,6 +216,7 @@ const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
 const PASTE_AS_NEW_PENDING_TTL_FRAMES: u8 = 3;
+const PASTE_AS_NEW_CLIPBOARD_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct StatusMessage {
     text: String,
@@ -404,6 +406,7 @@ impl LocalPasteApp {
             last_virtual_click_line: None,
             last_virtual_click_count: 0,
             paste_as_new_pending_frames: 0,
+            paste_as_new_clipboard_requested_at: None,
             editor_input_trace_enabled: env_flag_enabled("LOCALPASTE_EDITOR_INPUT_TRACE"),
             highlight_trace_enabled: env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE"),
         };

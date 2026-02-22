@@ -6,6 +6,7 @@ impl LocalPasteApp {
     /// Arms the short-lived "paste as new" intent window.
     pub(super) fn arm_paste_as_new_intent(&mut self) {
         self.paste_as_new_pending_frames = PASTE_AS_NEW_PENDING_TTL_FRAMES;
+        self.paste_as_new_clipboard_requested_at = None;
     }
 
     /// Requests system paste and marks the result to be routed as new paste content.
@@ -15,6 +16,7 @@ impl LocalPasteApp {
     pub(super) fn request_paste_as_new(&mut self, ctx: &egui::Context) {
         self.prepare_text_editor_for_paste_as_new(ctx);
         self.arm_paste_as_new_intent();
+        self.paste_as_new_clipboard_requested_at = Some(Instant::now());
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
     }
 
@@ -91,21 +93,34 @@ impl LocalPasteApp {
         text_editor_focused: bool,
     ) -> bool {
         if self.paste_as_new_pending_frames == 0 {
+            self.paste_as_new_clipboard_requested_at = None;
             return false;
         }
         if text_editor_focused {
             // Defensive guard: never create a second paste from a clipboard payload
             // that a focused native TextEdit may have already consumed this frame.
             self.paste_as_new_pending_frames = 0;
+            self.paste_as_new_clipboard_requested_at = None;
             pasted_text.take();
             return false;
         }
         if let Some(text) = pasted_text.take() {
             self.paste_as_new_pending_frames = 0;
+            self.paste_as_new_clipboard_requested_at = None;
             if !text.trim().is_empty() {
                 self.create_new_paste_with_content(text);
                 return true;
             }
+            return false;
+        }
+        if let Some(request_started_at) = self.paste_as_new_clipboard_requested_at {
+            // Keep explicit intent armed while RequestPaste is in flight; otherwise a slow
+            // clipboard backend can expire intent before the payload arrives.
+            if request_started_at.elapsed() < PASTE_AS_NEW_CLIPBOARD_WAIT_TIMEOUT {
+                return false;
+            }
+            self.paste_as_new_pending_frames = 0;
+            self.paste_as_new_clipboard_requested_at = None;
             return false;
         }
         self.paste_as_new_pending_frames = self.paste_as_new_pending_frames.saturating_sub(1);

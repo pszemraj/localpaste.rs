@@ -119,6 +119,37 @@ fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
 }
 
 #[test]
+fn explicit_paste_as_new_waits_for_delayed_clipboard_payload() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.request_paste_as_new(&ctx);
+
+    let mut missing_clipboard = None;
+    for _ in 0..(PASTE_AS_NEW_PENDING_TTL_FRAMES + 2) {
+        assert!(!harness
+            .app
+            .maybe_consume_explicit_paste_as_new(&mut missing_clipboard, false));
+        assert_eq!(
+            harness.app.paste_as_new_pending_frames,
+            PASTE_AS_NEW_PENDING_TTL_FRAMES
+        );
+        assert!(harness.app.paste_as_new_clipboard_requested_at.is_some());
+    }
+
+    let mut clipboard = Some("from delayed clipboard".to_string());
+    assert!(harness
+        .app
+        .maybe_consume_explicit_paste_as_new(&mut clipboard, false));
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+    assert!(clipboard.is_none());
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::CreatePaste { content } => assert_eq!(content, "from delayed clipboard"),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
 fn explicit_paste_as_new_skips_consumption_when_text_editor_focused() {
     let mut harness = make_app();
     harness.app.arm_paste_as_new_intent();

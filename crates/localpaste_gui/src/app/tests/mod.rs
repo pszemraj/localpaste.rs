@@ -189,6 +189,7 @@ fn make_app() -> TestHarness {
         last_virtual_click_line: None,
         last_virtual_click_count: 0,
         paste_as_new_pending_frames: 0,
+        paste_as_new_clipboard_requested_at: None,
         editor_input_trace_enabled: false,
         highlight_trace_enabled: false,
     };
