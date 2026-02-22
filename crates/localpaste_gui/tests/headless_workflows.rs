@@ -5,7 +5,7 @@ use localpaste_core::{
     db::TransactionOps, models::folder::Folder, models::paste::Paste, Config, Database,
 };
 use localpaste_gui::backend::{
-    spawn_backend, spawn_backend_with_locks, BackendHandle, CoreCmd, CoreEvent,
+    spawn_backend, spawn_backend_with_locks, BackendHandle, CoreCmd, CoreErrorSource, CoreEvent,
 };
 use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
 use ropey::Rope;
@@ -552,6 +552,18 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
 
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteSaved { .. } | CoreEvent::PasteMissing { .. } => {}
+        CoreEvent::Error { source, message } => {
+            assert_eq!(
+                source,
+                CoreErrorSource::SaveContent,
+                "race lock rejection should report SaveContent source"
+            );
+            assert!(
+                message.contains("open for editing"),
+                "race lock rejection should explain lock conflict, got: {}",
+                message
+            );
+        }
         other => panic!("unexpected backend race result: {:?}", other),
     }
 
