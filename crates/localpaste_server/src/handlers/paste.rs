@@ -55,6 +55,64 @@ fn with_folder_metadata_response(response: Response, include_meta_shape_header: 
     }
 }
 
+/// Builds create-time language state from API payload semantics.
+///
+/// Contract:
+/// - `language: Some(..)` always uses the explicit value.
+/// - `language_is_manual: Some(false)` without `language` is an API opt-in to
+///   start unresolved auto mode (`language = None`), deferring detection until a
+///   later content edit.
+/// - omitted `language_is_manual` follows default create behavior: detect now
+///   and lock when detection resolves a concrete language.
+fn build_paste_for_create(
+    content: String,
+    name: String,
+    language: Option<String>,
+    language_is_manual: Option<bool>,
+) -> Paste {
+    build_paste_for_create_with_detector(
+        content,
+        name,
+        language,
+        language_is_manual,
+        localpaste_core::models::paste::detect_language,
+    )
+}
+
+fn build_paste_for_create_with_detector<F>(
+    content: String,
+    name: String,
+    language: Option<String>,
+    language_is_manual: Option<bool>,
+    detect: F,
+) -> Paste
+where
+    F: FnOnce(&str) -> Option<String>,
+{
+    if let Some(language) = language {
+        return Paste::new_with_language(
+            content,
+            name,
+            Some(language),
+            language_is_manual.unwrap_or(true),
+        );
+    }
+
+    if language_is_manual == Some(false) {
+        // API-only explicit auto mode intentionally starts unresolved and defers
+        // detector work until a later content edit.
+        return Paste::new_with_language(content, name, None, false);
+    }
+
+    let detected = detect(content.as_str());
+    let mut inferred =
+        Paste::new_with_language(content, name, detected.clone(), detected.is_some());
+    if let Some(is_manual) = language_is_manual {
+        inferred.language_is_manual = is_manual;
+    }
+    inferred
+}
+
 fn list_meta_response(
     state: &AppState,
     query: ListQuery,
@@ -148,20 +206,7 @@ pub async fn create_paste(
     }
 
     let name = name.unwrap_or_else(naming::generate_name);
-    let mut paste = if let Some(language) = language {
-        Paste::new_with_language(
-            content,
-            name,
-            Some(language),
-            language_is_manual.unwrap_or(true),
-        )
-    } else {
-        let mut inferred = Paste::new(content, name);
-        if let Some(is_manual) = language_is_manual {
-            inferred.language_is_manual = is_manual;
-        }
-        inferred
-    };
+    let mut paste = build_paste_for_create(content, name, language, language_is_manual);
 
     if let Some(ref folder_id) = normalized_folder_id {
         paste.folder_id = Some(folder_id.clone());
@@ -407,6 +452,7 @@ pub async fn search_pastes_meta(
 
 #[cfg(test)]
 mod tests {
+    use super::build_paste_for_create_with_detector;
     use crate::{db::TransactionOps, AppState, Config, Database};
     use localpaste_core::models::{folder::Folder, paste::Paste};
     use std::sync::mpsc;
@@ -486,5 +532,19 @@ mod tests {
             "folder-scoped mutation guard acquisition should eventually succeed: {:?}",
             worker_result
         );
+    }
+
+    #[test]
+    fn explicit_auto_mode_create_skips_initial_detection() {
+        let paste = build_paste_for_create_with_detector(
+            "fn main() { println!(\"hello\"); }".to_string(),
+            "auto".to_string(),
+            None,
+            Some(false),
+            |_content| panic!("detector must not run for explicit auto-mode create"),
+        );
+
+        assert!(paste.language.is_none());
+        assert!(!paste.language_is_manual);
     }
 }

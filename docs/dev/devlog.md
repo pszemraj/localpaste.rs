@@ -30,7 +30,7 @@ localpaste.rs/
 - `lpaste` - CLI client (`crates/localpaste_cli`)
 - `generate-test-data` - synthetic dataset tool (`crates/localpaste_tools`)
 - `check-loc` - line-count policy checker (`crates/localpaste_tools`)
-- `check-ast-dupes` - semantic duplicate/dead-symbol audit (`crates/localpaste_tools`)
+- `check-ast-dupes` - AST-normalized duplicate/dead-symbol audit (`crates/localpaste_tools`)
 
 ## Build Matrix
 
@@ -113,6 +113,39 @@ rustdoc-checker crates --strict
 
 Language detection/normalization/highlight behavior is tracked in
 [docs/language-detection.md](../language-detection.md).
+
+## Tooling CLI Contracts
+
+Use this section as the source of truth for `localpaste_tools` CLI behavior
+that affects automation/CI contracts.
+
+### `check-loc`
+
+- Parse-time validation:
+  - `--max-lines > 0`
+  - `--warn-lines > 0`
+- Runtime validation:
+  - `--warn-lines <= --max-lines` (reject contradictory thresholds)
+  - `--root` must exist and be a directory
+- Exit behavior:
+  - exits non-zero on line-count policy violations
+  - exits non-zero on malformed exception registries or stale exception paths
+
+### `check-ast-dupes`
+
+- Parse-time validation:
+  - `--threshold` in `[0.0, 1.0]`
+  - `--near-miss-threshold` in `[0.0, 1.0]`
+  - `--k > 0`
+  - `--min-nodes > 0`
+- Runtime validation:
+  - `--near-miss-threshold <= --threshold`
+  - `--root` must exist and be a directory
+- Parse-error policy:
+  - default: parse errors fail the run
+  - override: `--allow-parse-errors` allows continued reporting with partial coverage
+- `--fail-on-findings` policy:
+  - fails on any reported finding category (duplicates, near-misses, likely-dead, visibility-tighten candidates)
 
 ## GUI Release Pipeline
 

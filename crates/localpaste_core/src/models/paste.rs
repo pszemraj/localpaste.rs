@@ -13,6 +13,11 @@ pub struct Paste {
     pub name: String,
     pub content: String,
     pub language: Option<String>,
+    /// Language lock flag.
+    ///
+    /// `true` means the stored language is locked against automatic
+    /// re-detection. This can come from explicit user choice or from
+    /// create-time detection resolving a concrete language.
     #[serde(default)]
     pub language_is_manual: bool,
     pub folder_id: Option<String>,
@@ -119,7 +124,10 @@ impl Paste {
     /// A new [`Paste`] instance.
     pub fn new(content: String, name: String) -> Self {
         let language = detect_language(&content);
-        Self::new_with_language(content, name, language, false)
+        // When creation-time detection resolves a concrete language, persist it
+        // as a locked choice to avoid repeated re-detect churn on subsequent edits.
+        let language_is_manual = language.is_some();
+        Self::new_with_language(content, name, language, language_is_manual)
     }
 }
 

@@ -154,6 +154,36 @@ fn save_events_during_active_search_force_fresh_backend_search() {
 }
 
 #[test]
+fn metadata_save_ack_updates_visible_search_row_before_backend_redispatch() {
+    let mut harness = make_app();
+    harness.app.search_query = "alpha".to_string();
+    harness.app.search_last_sent = "alpha".to_string();
+    harness.app.pastes = vec![PasteSummary {
+        id: "alpha".to_string(),
+        name: "Alpha".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 7,
+        updated_at: Utc::now(),
+        folder_id: None,
+        tags: Vec::new(),
+    }];
+    harness.app.all_pastes = harness.app.pastes.clone();
+
+    let mut saved = Paste::new("updated body".to_string(), "Alpha-renamed".to_string());
+    saved.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteMetaSaved { paste: saved });
+
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].name, "Alpha-renamed");
+    assert!(
+        harness.app.search_last_sent.is_empty(),
+        "metadata save should still force backend search redispatch"
+    );
+}
+
+#[test]
 fn metadata_save_error_preserves_dirty_state_and_clears_in_flight() {
     let mut harness = make_app();
     harness.app.metadata_dirty = true;

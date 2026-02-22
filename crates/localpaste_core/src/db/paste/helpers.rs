@@ -26,6 +26,7 @@ pub(crate) fn reverse_timestamp_key(updated_at: DateTime<Utc>) -> u64 {
 /// - `update`: Incoming patch payload.
 pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteRequest) {
     let mut content_changed = false;
+    let was_manual_before_update = paste.language_is_manual;
 
     if let Some(content) = &update.content {
         paste.content = content.clone();
@@ -44,14 +45,27 @@ pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
     if let Some(is_manual) = update.language_is_manual {
         paste.language_is_manual = is_manual;
     }
-    let manual_mode_after_update = update
-        .language_is_manual
-        .unwrap_or(paste.language_is_manual);
-    let should_auto_detect = update.language.is_none()
-        && !manual_mode_after_update
-        && (content_changed || update.language_is_manual == Some(false));
+    // Explicit manual->auto toggle clears previously locked classification so
+    // auto state only reflects "unresolved/pending detection".
+    //
+    // When the row is already auto-managed (`language_is_manual == false`),
+    // metadata-only updates intentionally preserve an existing resolved
+    // language value (legacy compatibility and no-surprise saves).
+    let switched_manual_to_auto =
+        was_manual_before_update && update.language_is_manual == Some(false);
+    if switched_manual_to_auto && update.language.is_none() && !content_changed {
+        paste.language = None;
+    }
+    let should_auto_detect =
+        update.language.is_none() && !paste.language_is_manual && content_changed;
     if should_auto_detect {
-        paste.language = detect_language(&paste.content);
+        let detected = detect_language(&paste.content);
+        paste.language = detected;
+        if paste.language.is_some() {
+            // Auto mode is one-shot: once we classify a concrete language, lock
+            // it until the user explicitly switches back to auto.
+            paste.language_is_manual = true;
+        }
     }
 
     if let Some(ref fid) = update.folder_id {
@@ -356,8 +370,10 @@ impl From<LegacyPaste> for Paste {
 
 #[cfg(test)]
 mod tests {
-    use super::{reverse_timestamp_key, score_meta_match, LegacyPaste, Paste};
-    use crate::models::paste::PasteMeta;
+    use super::{
+        apply_update_request, reverse_timestamp_key, score_meta_match, LegacyPaste, Paste,
+    };
+    use crate::models::paste::{PasteMeta, UpdatePasteRequest};
     use chrono::{TimeZone, Utc};
 
     #[test]
@@ -387,6 +403,37 @@ mod tests {
             let migrated: Paste = legacy.into();
             assert!(!migrated.language_is_manual);
         }
+    }
+
+    #[test]
+    fn legacy_migrated_language_reclassified_on_first_content_edit() {
+        let legacy = LegacyPaste {
+            id: "legacy-id".to_string(),
+            name: "legacy".to_string(),
+            content: "print('hello')\n".to_string(),
+            language: Some("python".to_string()),
+            folder_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            tags: Vec::new(),
+            is_markdown: false,
+        };
+        let mut migrated: Paste = legacy.into();
+        assert!(!migrated.language_is_manual);
+        assert_eq!(migrated.language.as_deref(), Some("python"));
+
+        let update = UpdatePasteRequest {
+            content: Some("fn main() { println!(\"hello\"); }\n".to_string()),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: None,
+            tags: None,
+        };
+        apply_update_request(&mut migrated, &update);
+
+        assert_eq!(migrated.language.as_deref(), Some("rust"));
+        assert!(migrated.language_is_manual);
     }
 
     #[test]

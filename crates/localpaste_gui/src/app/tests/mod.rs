@@ -62,6 +62,23 @@ pub(super) fn shaped_test_galley() -> Arc<egui::Galley> {
     galley.expect("test galley")
 }
 
+/// Configures deterministic font/style settings for virtual-editor test contexts.
+pub(super) fn configure_virtual_editor_test_ctx(ctx: &egui::Context) {
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let mut style = (*ctx.style()).clone();
+    style.text_styles.insert(
+        egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
+        egui::FontId::new(14.0, egui::FontFamily::Monospace),
+    );
+    ctx.set_style(style);
+}
+
+fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
+    let _ = ctx.run(input, |ctx| {
+        app.render_editor_panel(ctx);
+    });
+}
+
 fn make_app() -> TestHarness {
     let (cmd_tx, cmd_rx) = unbounded();
     let (_evt_tx, evt_rx) = unbounded();
@@ -115,6 +132,8 @@ fn make_app() -> TestHarness {
         selected_content: EditorBuffer::new("content".to_string()),
         editor_cache: EditorLayoutCache::default(),
         editor_lines: EditorLineIndex::default(),
+        text_editor_has_focus: false,
+        text_editor_focus_id: None,
         editor_mode: EditorMode::TextEdit,
         virtual_selection: VirtualSelectionState::default(),
         virtual_editor_buffer: RopeBuffer::new("content"),
@@ -169,6 +188,8 @@ fn make_app() -> TestHarness {
         last_virtual_click_pos: None,
         last_virtual_click_line: None,
         last_virtual_click_count: 0,
+        paste_as_new_pending_frames: 0,
+        paste_as_new_clipboard_requested_at: None,
         editor_input_trace_enabled: false,
         highlight_trace_enabled: false,
     };
@@ -195,6 +216,7 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 }
 
 mod collections_and_search;
+mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod save_and_metadata;
 mod shutdown_behavior;

@@ -1,45 +1,40 @@
 name: workflow-lint
-
 on:
   pull_request:
     paths:
-    - ".github/workflows/*.yml"
-    - ".github/workflows/*.yaml"
-    - ".github/scripts/*.py"
+      - ".github/workflows/*.yml"
+      - ".github/workflows/*.yaml"
+      - ".github/scripts/*.py"
+      - ".github/scripts/*.sh"
   push:
     branches:
-    - main
+      - main
     paths:
-    - ".github/workflows/*.yml"
-    - ".github/workflows/*.yaml"
-    - ".github/scripts/*.py"
+      - ".github/workflows/*.yml"
+      - ".github/workflows/*.yaml"
+      - ".github/scripts/*.py"
+      - ".github/scripts/*.sh"
   workflow_dispatch:
-
-
 permissions:
   contents: read
-
 jobs:
   lint-workflows:
     runs-on: ubuntu-22.04
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-
-    - name: Install workflow lint dependencies
-      shell: bash
-      run: |
-        set -euo pipefail
-        python -m pip install --upgrade pip
-        python -m pip install pyyaml yamllint
-
-    - name: Run workflow validation script (YAML, shell, release invariants)
-      shell: bash
-      run: |
-        set -euo pipefail
-        python .github/scripts/validate_workflow.py .github/workflows
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install workflow lint dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml yamllint
+      - name: Run workflow validation script (YAML, shell, release invariants)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/validate_workflow.py .github/workflows

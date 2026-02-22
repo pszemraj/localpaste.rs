@@ -5,7 +5,7 @@ use localpaste_core::{
     db::TransactionOps, models::folder::Folder, models::paste::Paste, Config, Database,
 };
 use localpaste_gui::backend::{
-    spawn_backend, spawn_backend_with_locks, BackendHandle, CoreCmd, CoreEvent,
+    spawn_backend, spawn_backend_with_locks, BackendHandle, CoreCmd, CoreErrorSource, CoreEvent,
 };
 use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
 use ropey::Rope;
@@ -486,7 +486,7 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteMetaSaved { paste } => {
             assert!(!paste.language_is_manual);
-            assert!(paste.language.is_some());
+            assert!(paste.language.is_none());
             assert_eq!(paste.tags, vec!["tooling".to_string()]);
         }
         other => panic!("unexpected event: {:?}", other),
@@ -552,6 +552,18 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
 
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteSaved { .. } | CoreEvent::PasteMissing { .. } => {}
+        CoreEvent::Error { source, message } => {
+            assert_eq!(
+                source,
+                CoreErrorSource::SaveContent,
+                "race lock rejection should report SaveContent source"
+            );
+            assert!(
+                message.contains("open for editing"),
+                "race lock rejection should explain lock conflict, got: {}",
+                message
+            );
+        }
         other => panic!("unexpected backend race result: {:?}", other),
     }
 
