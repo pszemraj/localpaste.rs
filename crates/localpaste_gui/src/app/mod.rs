@@ -675,6 +675,9 @@ impl eframe::App for LocalPasteApp {
                 request_paste_as_new = true;
             }
             if plain_command && input.key_pressed(egui::Key::V) {
+                // A newer plain paste intent should take precedence over any older
+                // explicit paste-as-new intent still waiting on clipboard payload.
+                self.cancel_paste_as_new_intent();
                 plain_paste_shortcut_pressed = true;
             }
             if input.key_pressed(egui::Key::F1) {

@@ -150,6 +150,56 @@ fn explicit_paste_as_new_waits_for_delayed_clipboard_payload() {
 }
 
 #[test]
+fn plain_paste_shortcut_clears_stale_explicit_paste_as_new_intent() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.request_paste_as_new(&ctx);
+    assert_eq!(
+        harness.app.paste_as_new_pending_frames,
+        PASTE_AS_NEW_PENDING_TTL_FRAMES
+    );
+    assert!(harness.app.paste_as_new_clipboard_requested_at.is_some());
+
+    harness.app.cancel_paste_as_new_intent();
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+
+    let mut delayed_clipboard = Some("from stale explicit request".to_string());
+    assert!(!harness
+        .app
+        .maybe_consume_explicit_paste_as_new(&mut delayed_clipboard, false));
+    assert_eq!(
+        delayed_clipboard.as_deref(),
+        Some("from stale explicit request")
+    );
+    assert!(harness.cmd_rx.try_recv().is_err());
+}
+
+#[test]
+fn explicit_paste_as_new_timeout_sets_status_and_clears_intent() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.request_paste_as_new(&ctx);
+    harness.app.paste_as_new_clipboard_requested_at =
+        Some(Instant::now() - PASTE_AS_NEW_CLIPBOARD_WAIT_TIMEOUT - Duration::from_millis(1));
+
+    let mut missing_clipboard = None;
+    assert!(!harness
+        .app
+        .maybe_consume_explicit_paste_as_new(&mut missing_clipboard, false));
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Paste-as-new clipboard request timed out; try again.")
+    );
+}
+
+#[test]
 fn explicit_paste_as_new_skips_consumption_when_text_editor_focused() {
     let mut harness = make_app();
     harness.app.arm_paste_as_new_intent();

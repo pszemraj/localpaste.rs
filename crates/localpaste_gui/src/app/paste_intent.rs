@@ -3,6 +3,12 @@
 use super::*;
 
 impl LocalPasteApp {
+    /// Clears any pending explicit "paste as new" intent state.
+    pub(super) fn cancel_paste_as_new_intent(&mut self) {
+        self.paste_as_new_pending_frames = 0;
+        self.paste_as_new_clipboard_requested_at = None;
+    }
+
     /// Arms the short-lived "paste as new" intent window.
     pub(super) fn arm_paste_as_new_intent(&mut self) {
         self.paste_as_new_pending_frames = PASTE_AS_NEW_PENDING_TTL_FRAMES;
@@ -99,14 +105,12 @@ impl LocalPasteApp {
         if text_editor_focused {
             // Defensive guard: never create a second paste from a clipboard payload
             // that a focused native TextEdit may have already consumed this frame.
-            self.paste_as_new_pending_frames = 0;
-            self.paste_as_new_clipboard_requested_at = None;
+            self.cancel_paste_as_new_intent();
             pasted_text.take();
             return false;
         }
         if let Some(text) = pasted_text.take() {
-            self.paste_as_new_pending_frames = 0;
-            self.paste_as_new_clipboard_requested_at = None;
+            self.cancel_paste_as_new_intent();
             if !text.trim().is_empty() {
                 self.create_new_paste_with_content(text);
                 return true;
@@ -119,8 +123,8 @@ impl LocalPasteApp {
             if request_started_at.elapsed() < PASTE_AS_NEW_CLIPBOARD_WAIT_TIMEOUT {
                 return false;
             }
-            self.paste_as_new_pending_frames = 0;
-            self.paste_as_new_clipboard_requested_at = None;
+            self.cancel_paste_as_new_intent();
+            self.set_status("Paste-as-new clipboard request timed out; try again.");
             return false;
         }
         self.paste_as_new_pending_frames = self.paste_as_new_pending_frames.saturating_sub(1);
