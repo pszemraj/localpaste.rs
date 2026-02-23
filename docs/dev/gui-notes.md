@@ -9,8 +9,6 @@ For perf validation steps/gates, use
 
 ## Runtime Flags
 
-- `LOCALPASTE_VIRTUAL_PREVIEW=1`: force read-only virtual preview mode.
-- `LOCALPASTE_VIRTUAL_PREVIEW=0` (or empty): does not force preview and does not disable virtual editor by itself.
 - `LOCALPASTE_EDITOR_PERF_LOG=1`: periodic local frame snapshots (`avg/p50/p95/p99/worst`) plus list/search and redo-cache counters.
 - `LOCALPASTE_BACKEND_PERF_LOG=1`: local backend list/search cache hit/miss and latency logs.
 - `LOCALPASTE_EDITOR_INPUT_TRACE=1`: virtual input routing trace.
@@ -37,7 +35,6 @@ For perf validation steps/gates, use
 - Global sidebar navigation via `Up`/`Down` is bare-arrow only; modified arrows (`Ctrl`/`Alt`/`Shift`/`Cmd`) stay in editor-selection semantics.
 - Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
-- Virtual preview triple-click selects the full logical line, including terminal long lines even when rendering is capped.
 - Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
 - `Ctrl/Cmd+V` is the primary paste contract: when editor is focused it inserts; when editor is not focused it creates a new paste from clipboard.
 - `Ctrl/Cmd+Shift+V` remains available as an explicit "force paste as new" fallback.
@@ -92,7 +89,7 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
 4. Core shortcuts:
    - `Ctrl/Cmd+N`: creates/selects a new paste.
    - `Ctrl/Cmd+S`: save transitions status from dirty -> saved.
-   - `Ctrl/Cmd+Delete`: deletes selected paste and list updates.
+   - `Ctrl/Cmd+Delete`: deletes selected paste only when no text-input context owns keyboard focus.
    - `Ctrl/Cmd+F`: focuses sidebar search input.
    - `Ctrl/Cmd+Shift+P`: opens command palette.
    - `Ctrl/Cmd+K`: toggles command palette (legacy alias).

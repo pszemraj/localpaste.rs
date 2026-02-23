@@ -337,7 +337,6 @@ fn command_shift_v_arms_paste_as_new_before_virtual_routing() {
 fn plain_paste_shortcut_routes_by_editor_focus_contract() {
     struct Case {
         name: &'static str,
-        mode: EditorMode,
         editor_focus_pre: bool,
         saw_virtual_paste: bool,
         wants_keyboard_input_before: bool,
@@ -348,7 +347,6 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
     let cases = [
         Case {
             name: "virtual focused requests viewport paste",
-            mode: EditorMode::VirtualEditor,
             editor_focus_pre: true,
             saw_virtual_paste: false,
             wants_keyboard_input_before: true,
@@ -357,7 +355,6 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
         },
         Case {
             name: "virtual focused suppresses duplicate viewport paste",
-            mode: EditorMode::VirtualEditor,
             editor_focus_pre: true,
             saw_virtual_paste: true,
             wants_keyboard_input_before: true,
@@ -366,7 +363,6 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
         },
         Case {
             name: "virtual unfocused with free keyboard creates new paste",
-            mode: EditorMode::VirtualEditor,
             editor_focus_pre: false,
             saw_virtual_paste: false,
             wants_keyboard_input_before: false,
@@ -374,17 +370,7 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
             expect_new_paste_request: true,
         },
         Case {
-            name: "preview unfocused with free keyboard creates new paste",
-            mode: EditorMode::VirtualPreview,
-            editor_focus_pre: false,
-            saw_virtual_paste: false,
-            wants_keyboard_input_before: false,
-            expect_virtual_request: false,
-            expect_new_paste_request: true,
-        },
-        Case {
-            name: "preview with focused non-editor input does not create new paste",
-            mode: EditorMode::VirtualPreview,
+            name: "unfocused with focused non-editor input does not create new paste",
             editor_focus_pre: false,
             saw_virtual_paste: false,
             wants_keyboard_input_before: true,
@@ -394,8 +380,7 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
     ];
 
     for case in cases {
-        let mut harness = make_app();
-        harness.app.editor_mode = case.mode;
+        let harness = make_app();
         let (request_virtual, request_new) = harness.app.route_plain_paste_shortcut(
             case.editor_focus_pre,
             case.saw_virtual_paste,
@@ -438,7 +423,6 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
 fn delete_shortcut_guard_blocks_when_text_input_or_virtual_focus_active() {
     struct Case {
         name: &'static str,
-        mode: EditorMode,
         wants_keyboard_input: bool,
         virtual_editor_focus_active: bool,
         expected: bool,
@@ -447,28 +431,18 @@ fn delete_shortcut_guard_blocks_when_text_input_or_virtual_focus_active() {
     let cases = [
         Case {
             name: "text input owns keyboard",
-            mode: EditorMode::VirtualPreview,
             wants_keyboard_input: true,
             virtual_editor_focus_active: false,
             expected: false,
         },
         Case {
             name: "virtual editor focused",
-            mode: EditorMode::VirtualEditor,
             wants_keyboard_input: false,
             virtual_editor_focus_active: true,
             expected: false,
         },
         Case {
-            name: "virtual editor mode but inactive",
-            mode: EditorMode::VirtualEditor,
-            wants_keyboard_input: false,
-            virtual_editor_focus_active: false,
-            expected: true,
-        },
-        Case {
             name: "non editor context",
-            mode: EditorMode::VirtualPreview,
             wants_keyboard_input: false,
             virtual_editor_focus_active: false,
             expected: true,
@@ -476,8 +450,7 @@ fn delete_shortcut_guard_blocks_when_text_input_or_virtual_focus_active() {
     ];
 
     for case in cases {
-        let mut harness = make_app();
-        harness.app.editor_mode = case.mode;
+        let harness = make_app();
         let actual = harness.app.should_route_delete_selected_shortcut(
             case.wants_keyboard_input,
             case.virtual_editor_focus_active,

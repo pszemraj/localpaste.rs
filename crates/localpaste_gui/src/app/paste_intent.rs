@@ -165,7 +165,7 @@ impl LocalPasteApp {
         request_paste_as_new && pasted_text.is_none()
     }
 
-    /// Routes plain paste shortcut behavior based on current editor mode/focus state.
+    /// Routes plain paste shortcut behavior based on editor-focus state.
     ///
     /// # Arguments
     /// - `editor_focus_pre`: Whether the active editor owned focus before routing.
@@ -180,7 +180,7 @@ impl LocalPasteApp {
         saw_virtual_paste: bool,
         wants_keyboard_input_before: bool,
     ) -> (bool, bool) {
-        if self.editor_mode == EditorMode::VirtualEditor && editor_focus_pre {
+        if editor_focus_pre {
             (!saw_virtual_paste, false)
         } else if wants_keyboard_input_before {
             // Respect focused non-editor text inputs (search, palette query, metadata fields).
@@ -235,6 +235,6 @@ impl LocalPasteApp {
         if wants_keyboard_input {
             return false;
         }
-        !(self.editor_mode == EditorMode::VirtualEditor && virtual_editor_focus_active)
+        !virtual_editor_focus_active
     }
 }
