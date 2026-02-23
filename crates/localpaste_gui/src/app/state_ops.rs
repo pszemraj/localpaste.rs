@@ -2,7 +2,6 @@
 
 mod filters;
 
-use super::highlight::EditorLayoutCache;
 use super::util::format_fenced_code_block;
 use super::{
     ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
@@ -560,7 +559,6 @@ impl LocalPasteApp {
         self.sync_editor_metadata(&paste);
         self.selected_content.reset(paste.content.clone());
         self.reset_virtual_editor(paste.content.as_str());
-        self.editor_cache = EditorLayoutCache::default();
         self.editor_lines.reset();
         self.virtual_selection.clear();
         self.clear_highlight_state();
@@ -585,7 +583,6 @@ impl LocalPasteApp {
         self.metadata_save_request = None;
         self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
-        self.editor_cache = EditorLayoutCache::default();
         self.editor_lines.reset();
         self.virtual_selection.clear();
         self.clear_highlight_state();

@@ -11,8 +11,6 @@ For perf validation steps/gates, use
 
 - `LOCALPASTE_VIRTUAL_PREVIEW=1`: force read-only virtual preview mode.
 - `LOCALPASTE_VIRTUAL_PREVIEW=0` (or empty): does not force preview and does not disable virtual editor by itself.
-- `LOCALPASTE_VIRTUAL_EDITOR=1`: force editable virtual mode (default behavior).
-- `LOCALPASTE_VIRTUAL_EDITOR=0`: force `TextEdit` fallback kill-switch.
 - `LOCALPASTE_EDITOR_PERF_LOG=1`: periodic local frame snapshots (`avg/p50/p95/p99/worst`) plus list/search and redo-cache counters.
 - `LOCALPASTE_BACKEND_PERF_LOG=1`: local backend list/search cache hit/miss and latency logs.
 - `LOCALPASTE_EDITOR_INPUT_TRACE=1`: virtual input routing trace.
@@ -79,7 +77,7 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
 
 - Build/run commands: [docs/dev/devlog.md](devlog.md).
 - Perf-oriented dataset + trace runbook: [docs/dev/gui-perf-protocol.md#runbook](gui-perf-protocol.md#runbook).
-- Use virtual editor mode (`LOCALPASTE_VIRTUAL_EDITOR=1`) when executing this checklist.
+- Virtual editor mode is the default editable path; no separate kill-switch flag is supported.
 
 ### Manual Checklist
 

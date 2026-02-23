@@ -45,7 +45,6 @@ Flag behavior/meanings are documented in [gui-notes.md](gui-notes.md); this runb
 $env:DB_PATH = Join-Path $env:TEMP "lpaste-perf-$([guid]::NewGuid().ToString('N'))"
 $env:PORT = "38973"
 $env:LP_SERVER = "http://127.0.0.1:$env:PORT"
-$env:LOCALPASTE_VIRTUAL_EDITOR = "1"
 $env:LOCALPASTE_EDITOR_PERF_LOG = "1"
 $env:LOCALPASTE_BACKEND_PERF_LOG = "1"
 $env:LOCALPASTE_EDITOR_INPUT_TRACE = "1"

@@ -1,8 +1,8 @@
 //! Highlight cache/render alignment tests for editor and staged-highlight flows.
 
 use super::super::highlight::{
-    HighlightPatch, HighlightRenderLine, HighlightRequestMeta, HighlightRequestText,
-    VirtualEditHint,
+    EditorLayoutCache, EditorLayoutRequest, HighlightPatch, HighlightRenderLine,
+    HighlightRequestMeta, HighlightRequestText, SyntectSettings, VirtualEditHint,
 };
 use super::*;
 

@@ -100,7 +100,7 @@ fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
     let mut missing_clipboard = None;
     assert!(!harness
         .app
-        .maybe_consume_explicit_paste_as_new(&mut missing_clipboard, false));
+        .maybe_consume_explicit_paste_as_new(&mut missing_clipboard));
     assert_eq!(
         harness.app.paste_as_new_pending_frames,
         PASTE_AS_NEW_PENDING_TTL_FRAMES.saturating_sub(1)
@@ -109,7 +109,7 @@ fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
     let mut clipboard = Some("from clipboard".to_string());
     assert!(harness
         .app
-        .maybe_consume_explicit_paste_as_new(&mut clipboard, false));
+        .maybe_consume_explicit_paste_as_new(&mut clipboard));
     assert!(clipboard.is_none());
     assert_eq!(harness.app.paste_as_new_pending_frames, 0);
     match recv_cmd(&harness.cmd_rx) {
@@ -127,7 +127,7 @@ fn explicit_paste_as_new_preserves_tabbed_trailing_line_exactly() {
 
     assert!(harness
         .app
-        .maybe_consume_explicit_paste_as_new(&mut clipboard, false));
+        .maybe_consume_explicit_paste_as_new(&mut clipboard));
     assert!(clipboard.is_none());
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::CreatePaste { content } => assert_eq!(content, payload),
@@ -159,7 +159,7 @@ fn explicit_paste_as_new_waits_for_delayed_clipboard_payload() {
     for _ in 0..(PASTE_AS_NEW_PENDING_TTL_FRAMES + 2) {
         assert!(!harness
             .app
-            .maybe_consume_explicit_paste_as_new(&mut missing_clipboard, false));
+            .maybe_consume_explicit_paste_as_new(&mut missing_clipboard));
         assert_eq!(
             harness.app.paste_as_new_pending_frames,
             PASTE_AS_NEW_PENDING_TTL_FRAMES
@@ -170,7 +170,7 @@ fn explicit_paste_as_new_waits_for_delayed_clipboard_payload() {
     let mut clipboard = Some("from delayed clipboard".to_string());
     assert!(harness
         .app
-        .maybe_consume_explicit_paste_as_new(&mut clipboard, false));
+        .maybe_consume_explicit_paste_as_new(&mut clipboard));
     assert_eq!(harness.app.paste_as_new_pending_frames, 0);
     assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
     assert!(clipboard.is_none());
@@ -198,7 +198,7 @@ fn plain_paste_shortcut_clears_stale_explicit_paste_as_new_intent() {
     let mut delayed_clipboard = Some("from stale explicit request".to_string());
     assert!(!harness
         .app
-        .maybe_consume_explicit_paste_as_new(&mut delayed_clipboard, false));
+        .maybe_consume_explicit_paste_as_new(&mut delayed_clipboard));
     assert_eq!(
         delayed_clipboard.as_deref(),
         Some("from stale explicit request")
@@ -217,7 +217,7 @@ fn explicit_paste_as_new_timeout_sets_status_and_clears_intent() {
     let mut missing_clipboard = None;
     assert!(!harness
         .app
-        .maybe_consume_explicit_paste_as_new(&mut missing_clipboard, false));
+        .maybe_consume_explicit_paste_as_new(&mut missing_clipboard));
     assert_eq!(harness.app.paste_as_new_pending_frames, 0);
     assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
     assert_eq!(
@@ -228,42 +228,6 @@ fn explicit_paste_as_new_timeout_sets_status_and_clears_intent() {
             .map(|status| status.text.as_str()),
         Some("Paste-as-new clipboard request timed out; try again.")
     );
-}
-
-#[test]
-fn explicit_paste_as_new_skips_consumption_when_text_editor_focused() {
-    let mut harness = make_app();
-    harness.app.arm_paste_as_new_intent();
-    let mut clipboard = Some("from clipboard".to_string());
-
-    assert!(!harness
-        .app
-        .maybe_consume_explicit_paste_as_new(&mut clipboard, true));
-    assert!(clipboard.is_none());
-    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
-    assert!(harness.cmd_rx.try_recv().is_err());
-}
-
-#[test]
-fn prepare_text_editor_for_paste_as_new_clears_focus() {
-    let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::TextEdit;
-
-    let ctx = egui::Context::default();
-    configure_virtual_editor_test_ctx(&ctx);
-    run_editor_panel_once(&mut harness.app, &ctx, egui::RawInput::default());
-    let editor_id = harness
-        .app
-        .text_editor_focus_id
-        .expect("text editor should publish its runtime focus id");
-    ctx.memory_mut(|m| m.request_focus(editor_id));
-    harness.app.text_editor_has_focus = true;
-    assert!(ctx.memory(|m| m.has_focus(editor_id)));
-
-    harness.app.prepare_text_editor_for_paste_as_new(&ctx);
-
-    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(!harness.app.text_editor_has_focus);
 }
 
 #[test]
@@ -410,33 +374,6 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
             expect_new_paste_request: true,
         },
         Case {
-            name: "text edit focused defers to native text edit input",
-            mode: EditorMode::TextEdit,
-            editor_focus_pre: true,
-            saw_virtual_paste: false,
-            wants_keyboard_input_before: true,
-            expect_virtual_request: false,
-            expect_new_paste_request: false,
-        },
-        Case {
-            name: "focused non-editor text input does not trigger paste-as-new",
-            mode: EditorMode::TextEdit,
-            editor_focus_pre: false,
-            saw_virtual_paste: false,
-            wants_keyboard_input_before: true,
-            expect_virtual_request: false,
-            expect_new_paste_request: false,
-        },
-        Case {
-            name: "text edit unfocused with free keyboard creates new paste",
-            mode: EditorMode::TextEdit,
-            editor_focus_pre: false,
-            saw_virtual_paste: false,
-            wants_keyboard_input_before: false,
-            expect_virtual_request: false,
-            expect_new_paste_request: true,
-        },
-        Case {
             name: "preview unfocused with free keyboard creates new paste",
             mode: EditorMode::VirtualPreview,
             editor_focus_pre: false,
@@ -480,14 +417,14 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
 #[test]
 fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::TextEdit;
+    harness.app.editor_mode = EditorMode::VirtualEditor;
 
     // Regression guard: when focus is acquired in the same frame as Ctrl/Cmd+V,
     // plain paste should stay in the editor instead of creating a new paste.
     let (request_virtual, request_new) = harness
         .app
         .resolve_plain_paste_shortcut_request(true, true, false, true);
-    assert!(!request_virtual);
+    assert!(request_virtual);
     assert!(!request_new);
 
     let (request_virtual, request_new) = harness
@@ -510,7 +447,7 @@ fn delete_shortcut_guard_blocks_when_text_input_or_virtual_focus_active() {
     let cases = [
         Case {
             name: "text input owns keyboard",
-            mode: EditorMode::TextEdit,
+            mode: EditorMode::VirtualPreview,
             wants_keyboard_input: true,
             virtual_editor_focus_active: false,
             expected: false,

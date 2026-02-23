@@ -19,7 +19,7 @@ impl LocalPasteApp {
     pub(super) fn active_text_len_bytes(&self) -> usize {
         match self.editor_mode {
             EditorMode::VirtualEditor => self.virtual_editor_buffer.len_bytes(),
-            _ => self.selected_content.len(),
+            EditorMode::VirtualPreview => self.selected_content.len(),
         }
     }
 
@@ -30,7 +30,7 @@ impl LocalPasteApp {
     pub(super) fn active_text_chars(&self) -> usize {
         match self.editor_mode {
             EditorMode::VirtualEditor => self.virtual_editor_buffer.len_chars(),
-            _ => self.selected_content.chars_len(),
+            EditorMode::VirtualPreview => self.selected_content.chars_len(),
         }
     }
 
@@ -41,7 +41,7 @@ impl LocalPasteApp {
     pub(super) fn active_revision(&self) -> u64 {
         match self.editor_mode {
             EditorMode::VirtualEditor => self.virtual_editor_buffer.revision(),
-            _ => self.selected_content.revision(),
+            EditorMode::VirtualPreview => self.selected_content.revision(),
         }
     }
 
@@ -52,7 +52,7 @@ impl LocalPasteApp {
     pub(super) fn active_snapshot(&self) -> String {
         match self.editor_mode {
             EditorMode::VirtualEditor => self.virtual_editor_buffer.to_string(),
-            _ => self.selected_content.to_string(),
+            EditorMode::VirtualPreview => self.selected_content.to_string(),
         }
     }
 }

@@ -14,10 +14,18 @@ use eframe::egui::{
 use egui_extras::syntax_highlighting::CodeTheme;
 use ropey::Rope;
 use std::ops::Range;
+#[cfg(test)]
 use std::sync::Arc;
+#[cfg(test)]
 use std::time::Instant;
-use syntect::highlighting::{HighlightState, Highlighter, Style, ThemeSet};
-use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
+use syntect::highlighting::{HighlightState, ThemeSet};
+#[cfg(test)]
+use syntect::highlighting::{Highlighter, Style};
+use syntect::parsing::ParseState;
+#[cfg(test)]
+use syntect::parsing::ScopeStack;
+use syntect::parsing::SyntaxSet;
+#[cfg(test)]
 use syntect::util::LinesWithEndings;
 
 pub(super) use reuse::{
@@ -28,6 +36,7 @@ pub(super) use worker::{spawn_highlight_worker, HighlightWorker};
 
 /// Cached layout state for highlighted editor content.
 #[derive(Default)]
+#[cfg(test)]
 pub(super) struct EditorLayoutCache {
     revision: u64,
     language_hint: String,
@@ -43,6 +52,7 @@ pub(super) struct EditorLayoutCache {
 }
 
 /// Input bundle used to build a highlighted editor galley.
+#[cfg(test)]
 pub(super) struct EditorLayoutRequest<'a> {
     pub(super) ui: &'a egui::Ui,
     pub(super) text: &'a dyn egui::TextBuffer,
@@ -57,6 +67,7 @@ pub(super) struct EditorLayoutRequest<'a> {
     pub(super) syntect: &'a SyntectSettings,
 }
 
+#[cfg(test)]
 struct BuildGalleyRequest<'a> {
     ui: &'a egui::Ui,
     text: &'a str,
@@ -76,6 +87,7 @@ struct HighlightStateSnapshot {
 }
 
 #[derive(Clone)]
+#[cfg(test)]
 struct HighlightLineCache {
     hash: u64,
     sections: Vec<LayoutSection>,
@@ -83,12 +95,14 @@ struct HighlightLineCache {
 }
 
 #[derive(Default)]
+#[cfg(test)]
 struct HighlightCache {
     language_hint: String,
     theme_key: String,
     lines: Vec<HighlightLineCache>,
 }
 
+#[cfg(test)]
 impl HighlightCache {
     fn clear_if_mismatch(&mut self, language_hint: &str, theme_key: &str) {
         if self.language_hint != language_hint || self.theme_key != theme_key {
@@ -99,10 +113,9 @@ impl HighlightCache {
     }
 }
 
+#[cfg(test)]
 impl EditorLayoutCache {
     /// Returns the number of cached highlight lines for tests and profiling.
-    #[cfg(test)]
-    ///
     /// # Returns
     /// Cached line count currently stored in the highlight cache.
     pub(super) fn highlight_line_count(&self) -> usize {
@@ -558,6 +571,7 @@ pub(super) fn syntect_theme_key(theme: &CodeTheme) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn syntect_style_to_format(style: Style, editor_font: &FontId) -> TextFormat {
     let color = Color32::from_rgb(style.foreground.r, style.foreground.g, style.foreground.b);
     let italics = style
@@ -624,6 +638,7 @@ fn clamp_byte_range_to_char_boundaries(text: &str, range: Range<usize>) -> Optio
     Some(start..end)
 }
 
+#[cfg(test)]
 fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usize) {
     for section in sections {
         let mut section = section.clone();
@@ -734,6 +749,7 @@ fn push_sections_with_default_gaps(
     }
 }
 
+#[cfg(test)]
 fn plain_layout_job(ui: &egui::Ui, text: &str, editor_font: &FontId, wrap_width: f32) -> LayoutJob {
     plain_layout_job_owned(ui, text.to_owned(), editor_font, wrap_width)
 }
@@ -969,10 +985,10 @@ impl HighlightRequestMeta {
             && self.paste_id == paste_id
     }
 
-    /// Checks whether metadata matches a full render snapshot.
+    /// Returns `true` when request metadata identifies the same render output.
     ///
     /// # Returns
-    /// `true` when request metadata identifies the same render output.
+    /// `true` when `self` and `render` metadata identify the same render snapshot.
     pub(super) fn matches_render(&self, render: &HighlightRender) -> bool {
         self.revision == render.revision
             && self.text_len == render.text_len

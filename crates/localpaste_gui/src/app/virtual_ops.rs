@@ -564,6 +564,9 @@ impl LocalPasteApp {
     ///
     /// # Returns
     /// Tuple of `(row_start_char_index, row_end_char_index)` in global char offsets.
+    ///
+    /// # Panics
+    /// Panics only if wrapped-row layout caches become internally inconsistent.
     pub(super) fn virtual_visual_row_bounds(&self, cursor: usize) -> (usize, usize) {
         let cursor = self.clamp_virtual_cursor_for_render(cursor);
         let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
