@@ -86,11 +86,29 @@ pub(super) fn api_paste_link_for_copy(addr: std::net::SocketAddr, id: &str) -> S
     format!("http://{}/api/paste/{}", routed, id)
 }
 
-fn is_word_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WordSelectionClass {
+    Word,
+    Punctuation,
+}
+
+fn classify_for_word_selection(ch: char) -> Option<WordSelectionClass> {
+    if ch.is_whitespace() {
+        None
+    } else if super::is_editor_word_char(ch) {
+        Some(WordSelectionClass::Word)
+    } else {
+        Some(WordSelectionClass::Punctuation)
+    }
 }
 
 /// Returns a word-selection range (in char indices) around the given char index.
+///
+/// This is used for double-click selection in both the standard editor and the virtual editor.
+/// Behavior is intentionally code-editor oriented:
+/// - Word characters are `is_editor_word_char` (Unicode alnum + `_` + `$`)
+/// - Punctuation/operators select as a contiguous run (e.g. `::`, `->`, `...`)
+/// - Whitespace returns `None` (double-clicking whitespace does not select)
 ///
 /// # Arguments
 /// - `text`: Source text to scan.
@@ -105,32 +123,30 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
     if text.is_empty() {
         return None;
     }
+
     let total_chars = text.chars().count();
-    let target_char_index = if char_index >= total_chars {
-        total_chars.saturating_sub(1)
-    } else {
-        char_index
-    };
-    let byte_index = text
-        .char_indices()
-        .nth(target_char_index)
-        .map(|(idx, _)| idx)?;
-    let mut iter = text[byte_index..].chars();
-    let current = iter.next()?;
-    let current_is_word = is_word_char(current);
+    if total_chars == 0 {
+        return None;
+    }
+
+    let target_char_index = char_index.min(total_chars.saturating_sub(1));
+    let (byte_index, current) = text.char_indices().nth(target_char_index)?;
+    let class = classify_for_word_selection(current)?;
+
+    // Expand left (without crossing whitespace boundaries).
     let mut start_byte = byte_index;
-    let mut head = text[..byte_index].chars().rev();
-    for ch in &mut head {
-        if is_word_char(ch) == current_is_word {
+    for ch in text[..byte_index].chars().rev() {
+        if classify_for_word_selection(ch) == Some(class) {
             start_byte = start_byte.saturating_sub(ch.len_utf8());
         } else {
             break;
         }
     }
+
+    // Expand right.
     let mut end_byte = byte_index + current.len_utf8();
-    let mut tail = text[end_byte..].chars();
-    for ch in &mut tail {
-        if is_word_char(ch) == current_is_word {
+    for ch in text[end_byte..].chars() {
+        if classify_for_word_selection(ch) == Some(class) {
             end_byte = end_byte.saturating_add(ch.len_utf8());
         } else {
             break;
@@ -144,7 +160,9 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
 
 #[cfg(test)]
 mod tests {
-    use super::{api_paste_link_for_copy, display_language_label, format_fenced_code_block};
+    use super::{
+        api_paste_link_for_copy, display_language_label, format_fenced_code_block, word_range_at,
+    };
 
     #[test]
     fn format_fenced_code_block_uses_language_or_text_default() {
@@ -180,5 +198,42 @@ mod tests {
         assert_eq!(display_language_label(Some("txt"), false, false), "plain");
         assert_eq!(display_language_label(Some("rust"), false, false), "rust");
         assert_eq!(display_language_label(Some("rust"), false, true), "plain");
+    }
+
+    fn selected(text: &str, range: (usize, usize)) -> String {
+        text.chars()
+            .skip(range.0)
+            .take(range.1.saturating_sub(range.0))
+            .collect()
+    }
+
+    #[test]
+    fn word_range_at_selects_identifier_tokens() {
+        let text = "foo_bar$9 baz";
+        let range = word_range_at(text, 4).expect("identifier range");
+        assert_eq!(selected(text, range), "foo_bar$9");
+    }
+
+    #[test]
+    fn word_range_at_selects_punctuation_runs() {
+        let text = "foo::bar -> baz";
+        let range = word_range_at(text, 4).expect("punctuation range");
+        assert_eq!(selected(text, range), "::");
+    }
+
+    #[test]
+    fn word_range_at_ignores_whitespace() {
+        let text = "foo  bar";
+        assert!(word_range_at(text, 3).is_none());
+        assert!(word_range_at(text, 4).is_none());
+    }
+
+    #[test]
+    fn word_range_at_supports_unicode_word_chars() {
+        let text = "naive café 世界";
+        let cafe_range = word_range_at(text, 8).expect("cafe range");
+        assert_eq!(selected(text, cafe_range), "café");
+        let world_range = word_range_at(text, 11).expect("world range");
+        assert_eq!(selected(text, world_range), "世界");
     }
 }
