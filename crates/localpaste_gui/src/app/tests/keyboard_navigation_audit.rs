@@ -306,7 +306,7 @@ fn vertical_column_affinity_restores_target_after_short_line_and_resets_after_ho
 }
 
 #[test]
-fn wrapped_lines_move_by_visual_rows_and_home_end_use_physical_line_bounds() {
+fn wrapped_lines_move_by_visual_rows_and_home_end_use_visual_row_bounds() {
     let mut harness = make_app();
     configure_virtual_editor_with_wrap(&mut harness.app, "abcdefghijkl\nz\n", 4.0);
     let ctx = egui::Context::default();
@@ -347,7 +347,7 @@ fn wrapped_lines_move_by_visual_rows_and_home_end_use_physical_line_bounds() {
         .app
         .virtual_editor_buffer
         .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 0));
+    assert_eq!((line, col), (0, 4));
 
     set_cursor(&mut harness.app, 0, 6);
     let _ = harness
@@ -357,7 +357,7 @@ fn wrapped_lines_move_by_visual_rows_and_home_end_use_physical_line_bounds() {
         .app
         .virtual_editor_buffer
         .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 12));
+    assert_eq!((line, col), (0, 8));
 }
 
 #[test]

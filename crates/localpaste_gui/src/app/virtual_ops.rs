@@ -556,4 +556,51 @@ impl LocalPasteApp {
         }
         Some(local_start..local_end)
     }
+
+    /// Returns the start/end cursor bounds of the wrapped visual row containing `cursor`.
+    ///
+    /// # Arguments
+    /// - `cursor`: Global cursor index.
+    ///
+    /// # Returns
+    /// Tuple of `(row_start_char_index, row_end_char_index)` in global char offsets.
+    pub(super) fn virtual_visual_row_bounds(&self, cursor: usize) -> (usize, usize) {
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
+        let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
+        let wrap_cols = self.virtual_layout.wrap_columns().max(1);
+        let line_cols = self
+            .virtual_layout
+            .line_columns(&self.virtual_editor_buffer, line);
+        let rows = self.virtual_layout.line_visual_rows(line).max(1);
+        let display_col =
+            self.virtual_layout
+                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
+
+        let mut row = (display_col / wrap_cols).min(rows.saturating_sub(1));
+        if is_internal_wrap_boundary(display_col, wrap_cols, line_cols)
+            && self.virtual_editor_state.wrap_boundary_affinity() == WrapBoundaryAffinity::Upstream
+        {
+            row = row.saturating_sub(1);
+        }
+
+        let row_start_display = row.saturating_mul(wrap_cols);
+        let row_end_display = row_start_display.saturating_add(wrap_cols).min(line_cols);
+        let row_start_col = self.virtual_layout.line_display_column_to_char(
+            &self.virtual_editor_buffer,
+            line,
+            row_start_display,
+        );
+        let row_end_col = self.virtual_layout.line_display_column_to_char(
+            &self.virtual_editor_buffer,
+            line,
+            row_end_display,
+        );
+        let row_start = self
+            .virtual_editor_buffer
+            .line_col_to_char(line, row_start_col);
+        let row_end = self
+            .virtual_editor_buffer
+            .line_col_to_char(line, row_end_col.max(row_start_col));
+        (row_start, row_end.max(row_start))
+    }
 }
