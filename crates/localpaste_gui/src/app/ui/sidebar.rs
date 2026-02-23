@@ -119,13 +119,25 @@ impl LocalPasteApp {
                                                         },
                                                     )
                                                     .inner;
+                                                // Keep button visuals for row selection, but paint
+                                                // title text separately so it stays left-aligned.
                                                 let mut title_response = ui.add_sized(
                                                     [ui.available_width().max(1.0), row_height],
-                                                    egui::Button::new(RichText::new(
-                                                        paste.name.as_str(),
-                                                    ))
-                                                    .truncate()
-                                                    .selected(selected),
+                                                    egui::Button::new("").selected(selected),
+                                                );
+                                                let title_visuals = ui
+                                                    .style()
+                                                    .interact_selectable(&title_response, selected);
+                                                let text_rect = title_response.rect.shrink2(
+                                                    egui::vec2(ui.spacing().button_padding.x, 0.0),
+                                                );
+                                                let _ = ui.put(
+                                                    text_rect,
+                                                    egui::Label::new(
+                                                        RichText::new(paste.name.as_str())
+                                                            .color(title_visuals.text_color()),
+                                                    )
+                                                    .truncate(),
                                                 );
                                                 title_response = title_response
                                                     .on_hover_text(paste.name.as_str());

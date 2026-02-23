@@ -495,10 +495,6 @@ jobs:
           pattern: release-assets-*
           path: dist/release-assets
           merge-multiple: true
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Generate checksums
         shell: bash
         run: |
