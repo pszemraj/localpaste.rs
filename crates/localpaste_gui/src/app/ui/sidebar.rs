@@ -127,8 +127,8 @@ impl LocalPasteApp {
                                                     .truncate()
                                                     .selected(selected),
                                                 );
-                                                title_response =
-                                                    title_response.on_hover_text(paste.name.as_str());
+                                                title_response = title_response
+                                                    .on_hover_text(paste.name.as_str());
                                                 title_response.clicked() || lang_response.clicked()
                                             },
                                         )

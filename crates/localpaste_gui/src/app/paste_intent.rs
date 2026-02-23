@@ -7,6 +7,10 @@ impl LocalPasteApp {
     ///
     /// Keeps the most complete payload deterministically so shorter/partial
     /// duplicates cannot replace fuller clipboard text.
+    ///
+    /// # Arguments
+    /// - `observed`: In/out frame-local paste payload accumulator.
+    /// - `candidate`: Newly observed clipboard text candidate.
     pub(super) fn merge_pasted_text(observed: &mut Option<String>, candidate: &str) {
         let Some(current) = observed.as_mut() else {
             *observed = Some(candidate.to_string());
@@ -36,6 +40,12 @@ impl LocalPasteApp {
     }
 
     /// Returns whether clipboard text should create a new paste.
+    ///
+    /// # Arguments
+    /// - `text`: Clipboard payload text to evaluate.
+    ///
+    /// # Returns
+    /// `true` when the payload contains at least one non-whitespace character.
     pub(super) fn should_create_paste_from_clipboard(text: &str) -> bool {
         !text.trim().is_empty()
     }
