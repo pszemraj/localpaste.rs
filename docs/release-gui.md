@@ -15,7 +15,8 @@ Primary implementation: [`.github/workflows/release-gui.yml`](../.github/workflo
 
 - tag format/existence validation,
 - workspace version == tag version,
-- server+CLI smoke test including restart persistence.
+- server+CLI smoke test including restart persistence,
+- packaging/build jobs check out the resolved source ref directly (full-tree tag fidelity in `release_tag` mode).
 
 ## Artifact Contract
 
@@ -30,6 +31,12 @@ Published release assets (when produced) follow:
 - `checksums.sha256`
 
 Windows and Linux artifacts are always expected for successful release runs.
+
+Packaging verification checks include:
+
+- Windows: MSI presence + non-empty payload + administrative extraction contains `localpaste.exe`.
+- Linux: AppImage presence + non-empty payload + runtime metadata check via `--appimage-version`.
+- macOS: DMG integrity/format validation, plus signed-bundle verification inside mounted DMG when notarization secrets are present.
 
 ## macOS Signing And Notarization
 
