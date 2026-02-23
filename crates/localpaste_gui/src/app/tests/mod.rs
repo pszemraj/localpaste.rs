@@ -218,6 +218,7 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 mod collections_and_search;
 mod focus_and_paste_routing;
 mod highlight_behaviors;
+mod keyboard_navigation_audit;
 mod save_and_metadata;
 mod shutdown_behavior;
 mod state_basics;
