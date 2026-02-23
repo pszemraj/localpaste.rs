@@ -11,4 +11,7 @@
 # max_lines = 1200
 # reason = "Temporary during editor state extraction work"
 
-# No active exceptions.
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/tests/virtual_editor_behaviors.rs"
+max_lines = 1100
+reason = "Temporary overage while keyboard parity regression matrix lands; split planned after stabilization."

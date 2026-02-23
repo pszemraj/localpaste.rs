@@ -292,6 +292,9 @@ impl LocalPasteApp {
     ///
     /// This avoids the common "two-step over punctuation" bug where `foo.|bar`
     /// requires an extra keypress to cross `.`.
+    ///
+    /// # Returns
+    /// Cursor index positioned at the previous token start boundary.
     pub(super) fn virtual_word_left(&self, cursor: usize) -> usize {
         let rope = self.virtual_editor_buffer.rope();
         let mut idx = self
@@ -369,6 +372,9 @@ impl LocalPasteApp {
     ///
     /// We follow those conventions while keeping the underlying definition of
     /// "word character" consistent (`is_editor_word_char`).
+    ///
+    /// # Returns
+    /// Cursor index positioned at the next platform-appropriate word boundary.
     pub(super) fn virtual_word_right(&self, cursor: usize) -> usize {
         if cfg!(target_os = "macos") {
             self.virtual_word_right_end(cursor)
@@ -377,7 +383,12 @@ impl LocalPasteApp {
         }
     }
 
-    /// Returns the end-of-next-word boundary (used for word-delete-forward and macOS word-right).
+    /// Returns the end-of-next-word boundary.
+    ///
+    /// Used by word-delete-forward and by macOS word-right movement semantics.
+    ///
+    /// # Returns
+    /// Cursor index positioned at the end of the next identifier-like token.
     pub(super) fn virtual_word_right_end(&self, cursor: usize) -> usize {
         let rope = self.virtual_editor_buffer.rope();
         let len = self.virtual_editor_buffer.len_chars();
