@@ -637,6 +637,8 @@ impl eframe::App for LocalPasteApp {
         let mut plain_paste_shortcut_pressed = false;
         let mut pasted_text: Option<String> = None;
         let mut sidebar_direction: i32 = 0;
+        let focus_promotion_requested =
+            self.editor_mode == EditorMode::VirtualEditor && self.focus_editor_next;
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
         ctx.input(|input| {
             if !input.events.is_empty() || input.pointer.any_down() {
@@ -716,7 +718,7 @@ impl eframe::App for LocalPasteApp {
             }
             for event in &input.events {
                 if let egui::Event::Paste(text) = event {
-                    pasted_text = Some(text.clone());
+                    Self::merge_pasted_text(&mut pasted_text, text.as_str());
                 }
             }
             if should_route_sidebar_arrows(
@@ -835,7 +837,7 @@ impl eframe::App for LocalPasteApp {
             self.request_paste_as_new(ctx);
         }
         let copy_ready_post = focus_active_post || has_virtual_selection_post;
-        if focus_active_post {
+        if focus_active_post || focus_promotion_requested {
             let deferred_started = Instant::now();
             deferred_focus_apply_result =
                 self.apply_virtual_commands(ctx, &deferred_focus_commands);
@@ -859,7 +861,7 @@ impl eframe::App for LocalPasteApp {
             self.maybe_consume_explicit_paste_as_new(&mut pasted_text, text_editor_focus_post);
         if !editor_focus_post && !ctx.wants_keyboard_input() && !virtual_paste_consumed {
             if let Some(text) = pasted_text {
-                if !text.trim().is_empty() {
+                if Self::should_create_paste_from_clipboard(text.as_str()) {
                     self.create_new_paste_with_content(text);
                 }
             }

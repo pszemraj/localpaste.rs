@@ -119,6 +119,37 @@ fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
 }
 
 #[test]
+fn explicit_paste_as_new_preserves_tabbed_trailing_line_exactly() {
+    let mut harness = make_app();
+    harness.app.arm_paste_as_new_intent();
+    let payload = "def sample():\n\treturn foobar";
+    let mut clipboard = Some(payload.to_string());
+
+    assert!(harness
+        .app
+        .maybe_consume_explicit_paste_as_new(&mut clipboard, false));
+    assert!(clipboard.is_none());
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::CreatePaste { content } => assert_eq!(content, payload),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn merge_pasted_text_prefers_fuller_duplicate_payload() {
+    let full_payload = "def sample():\n\treturn foobar";
+    let short_payload = "def sample():\n\treturn";
+
+    let mut observed = Some(short_payload.to_string());
+    LocalPasteApp::merge_pasted_text(&mut observed, full_payload);
+    assert_eq!(observed.as_deref(), Some(full_payload));
+
+    let mut observed = Some(full_payload.to_string());
+    LocalPasteApp::merge_pasted_text(&mut observed, short_payload);
+    assert_eq!(observed.as_deref(), Some(full_payload));
+}
+
+#[test]
 fn explicit_paste_as_new_waits_for_delayed_clipboard_payload() {
     let mut harness = make_app();
     let ctx = egui::Context::default();

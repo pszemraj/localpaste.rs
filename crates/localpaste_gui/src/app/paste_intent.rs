@@ -3,6 +3,43 @@
 use super::*;
 
 impl LocalPasteApp {
+    /// Merges a newly observed paste payload into the current frame snapshot.
+    ///
+    /// Keeps the most complete payload deterministically so shorter/partial
+    /// duplicates cannot replace fuller clipboard text.
+    pub(super) fn merge_pasted_text(observed: &mut Option<String>, candidate: &str) {
+        let Some(current) = observed.as_mut() else {
+            *observed = Some(candidate.to_string());
+            return;
+        };
+        if current == candidate {
+            return;
+        }
+
+        let candidate_contains_current = candidate.contains(current.as_str());
+        let current_contains_candidate = current.contains(candidate);
+        if candidate_contains_current && !current_contains_candidate {
+            *current = candidate.to_string();
+            return;
+        }
+        if current_contains_candidate && !candidate_contains_current {
+            return;
+        }
+
+        let candidate_chars = candidate.chars().count();
+        let current_chars = current.chars().count();
+        if candidate_chars > current_chars
+            || (candidate_chars == current_chars && candidate.len() > current.len())
+        {
+            *current = candidate.to_string();
+        }
+    }
+
+    /// Returns whether clipboard text should create a new paste.
+    pub(super) fn should_create_paste_from_clipboard(text: &str) -> bool {
+        !text.trim().is_empty()
+    }
+
     /// Clears any pending explicit "paste as new" intent state.
     pub(super) fn cancel_paste_as_new_intent(&mut self) {
         self.paste_as_new_pending_frames = 0;
@@ -111,7 +148,7 @@ impl LocalPasteApp {
         }
         if let Some(text) = pasted_text.take() {
             self.cancel_paste_as_new_intent();
-            if !text.trim().is_empty() {
+            if Self::should_create_paste_from_clipboard(text.as_str()) {
                 self.create_new_paste_with_content(text);
                 return true;
             }

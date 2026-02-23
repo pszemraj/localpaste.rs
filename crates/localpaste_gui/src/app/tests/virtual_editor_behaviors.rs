@@ -15,13 +15,15 @@ fn run_virtual_editor_frame(
     let mut immediate_focus_commands = Vec::new();
     let mut deferred_focus_commands = Vec::new();
     let mut deferred_copy_commands = Vec::new();
-    for command in commands_from_events(events.as_slice(), focus_active_pre) {
+    for command in commands_from_events(events.as_slice(), true) {
         match classify_virtual_command(&command, focus_active_pre) {
             VirtualCommandBucket::ImmediateFocus => immediate_focus_commands.push(command),
             VirtualCommandBucket::DeferredFocus => deferred_focus_commands.push(command),
             VirtualCommandBucket::DeferredCopy => deferred_copy_commands.push(command),
         }
     }
+    let focus_promotion_requested =
+        app.editor_mode == EditorMode::VirtualEditor && app.focus_editor_next;
 
     let _ = app.apply_virtual_commands(ctx, &immediate_focus_commands);
 
@@ -40,7 +42,7 @@ fn run_virtual_editor_frame(
             || ctx.memory(|m| m.has_focus(focus_id)));
     let copy_ready_post = focus_active_post || has_virtual_selection_post;
 
-    if focus_active_post {
+    if focus_active_post || focus_promotion_requested {
         let _ = app.apply_virtual_commands(ctx, &deferred_focus_commands);
     }
     if copy_ready_post {
@@ -401,6 +403,26 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
         harness.app.virtual_editor_state.selection_range(),
         Some(0..full_len)
     );
+}
+
+#[test]
+fn virtual_editor_enter_in_first_focus_handoff_frame_inserts_top_newline() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha\nbeta\n");
+    harness.app.focus_editor_next = true;
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let enter_event = key_event(egui::Key::Enter, egui::Modifiers::default());
+    let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![enter_event]);
+
+    assert!(!focus_active_pre);
+    assert_eq!(
+        harness.app.virtual_editor_buffer.to_string(),
+        "\nalpha\nbeta\n"
+    );
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 1);
 }
 
 #[test]
