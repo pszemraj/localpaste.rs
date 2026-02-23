@@ -640,6 +640,8 @@ impl eframe::App for LocalPasteApp {
         let focus_promotion_requested =
             self.editor_mode == EditorMode::VirtualEditor && self.focus_editor_next;
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
+        let virtual_editor_focus_active_pre = focus_active_pre
+            || (self.editor_mode == EditorMode::VirtualEditor && self.virtual_editor_active);
         ctx.input(|input| {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());
@@ -650,7 +652,13 @@ impl eframe::App for LocalPasteApp {
             if plain_command && input.key_pressed(egui::Key::N) {
                 self.create_new_paste();
             }
-            if plain_command && input.key_pressed(egui::Key::Delete) {
+            if plain_command
+                && input.key_pressed(egui::Key::Delete)
+                && self.should_route_delete_selected_shortcut(
+                    wants_keyboard_input_before,
+                    virtual_editor_focus_active_pre,
+                )
+            {
                 self.delete_selected();
             }
             if plain_command && input.key_pressed(egui::Key::S) {

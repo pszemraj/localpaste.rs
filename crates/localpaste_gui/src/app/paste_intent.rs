@@ -247,4 +247,23 @@ impl LocalPasteApp {
             wants_keyboard_input_post,
         )
     }
+
+    /// Returns whether the global delete-selected shortcut should run this frame.
+    ///
+    /// # Arguments
+    /// - `wants_keyboard_input`: Whether an input widget currently owns keyboard capture.
+    /// - `virtual_editor_focus_active`: Whether virtual editor focus is active for text input.
+    ///
+    /// # Returns
+    /// `true` only when no text-input context owns keyboard input.
+    pub(super) fn should_route_delete_selected_shortcut(
+        &self,
+        wants_keyboard_input: bool,
+        virtual_editor_focus_active: bool,
+    ) -> bool {
+        if wants_keyboard_input {
+            return false;
+        }
+        !(self.editor_mode == EditorMode::VirtualEditor && virtual_editor_focus_active)
+    }
 }
