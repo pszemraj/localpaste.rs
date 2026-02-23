@@ -649,9 +649,55 @@ fn word_navigation_crosses_line_boundaries() {
             word: true,
         }],
     );
+
+    #[cfg(target_os = "macos")]
+    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 4); // end of "beta"
+    #[cfg(not(target_os = "macos"))]
+    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 0); // start of "beta"
+
     assert_eq!(
         harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(1, 4)
+        expected_after_right
+    );
+
+    let _ = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveLeft {
+            select: false,
+            word: true,
+        }],
+    );
+
+    #[cfg(target_os = "macos")]
+    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(1, 0); // start of "beta"
+    #[cfg(not(target_os = "macos"))]
+    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(0, 0); // start of "alpha"
+
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        expected_after_left
+    );
+}
+
+#[test]
+fn word_left_skips_punctuation_separators() {
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "foo.bar", 200.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(len, len);
+    let ctx = egui::Context::default();
+
+    let _ = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveLeft {
+            select: false,
+            word: true,
+        }],
+    );
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        harness.app.virtual_editor_buffer.line_col_to_char(0, 4)
     );
 
     let _ = harness.app.apply_virtual_commands(
@@ -663,7 +709,30 @@ fn word_navigation_crosses_line_boundaries() {
     );
     assert_eq!(
         harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(1, 0)
+        harness.app.virtual_editor_buffer.line_col_to_char(0, 0)
+    );
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn word_right_skips_punctuation_separators_on_windows_linux() {
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "foo.bar", 200.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(0, len);
+    let ctx = egui::Context::default();
+
+    let _ = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveRight {
+            select: false,
+            word: true,
+        }],
+    );
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        harness.app.virtual_editor_buffer.line_col_to_char(0, 4)
     );
 }
 

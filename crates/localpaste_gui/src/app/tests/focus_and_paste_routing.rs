@@ -496,3 +496,55 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
     assert!(!request_virtual);
     assert!(!request_new);
 }
+
+#[test]
+fn delete_shortcut_guard_blocks_when_text_input_or_virtual_focus_active() {
+    struct Case {
+        name: &'static str,
+        mode: EditorMode,
+        wants_keyboard_input: bool,
+        virtual_editor_focus_active: bool,
+        expected: bool,
+    }
+
+    let cases = [
+        Case {
+            name: "text input owns keyboard",
+            mode: EditorMode::TextEdit,
+            wants_keyboard_input: true,
+            virtual_editor_focus_active: false,
+            expected: false,
+        },
+        Case {
+            name: "virtual editor focused",
+            mode: EditorMode::VirtualEditor,
+            wants_keyboard_input: false,
+            virtual_editor_focus_active: true,
+            expected: false,
+        },
+        Case {
+            name: "virtual editor mode but inactive",
+            mode: EditorMode::VirtualEditor,
+            wants_keyboard_input: false,
+            virtual_editor_focus_active: false,
+            expected: true,
+        },
+        Case {
+            name: "non editor context",
+            mode: EditorMode::VirtualPreview,
+            wants_keyboard_input: false,
+            virtual_editor_focus_active: false,
+            expected: true,
+        },
+    ];
+
+    for case in cases {
+        let mut harness = make_app();
+        harness.app.editor_mode = case.mode;
+        let actual = harness.app.should_route_delete_selected_shortcut(
+            case.wants_keyboard_input,
+            case.virtual_editor_focus_active,
+        );
+        assert_eq!(actual, case.expected, "case '{}'", case.name);
+    }
+}
