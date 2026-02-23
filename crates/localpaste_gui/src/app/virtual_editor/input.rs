@@ -385,9 +385,7 @@ fn commands_from_events_for_platform(
                 }
 
                 if let Some(cmd) = map_navigation_key(platform, *key, *modifiers) {
-                    if focused {
-                        out.push(cmd);
-                    } else if should_emit_when_unfocused(&cmd) {
+                    if focused || should_emit_when_unfocused(&cmd) {
                         out.push(cmd);
                     }
                 }
