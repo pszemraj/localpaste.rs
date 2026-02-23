@@ -279,7 +279,7 @@ fn should_emit_when_unfocused(command: &VirtualInputCommand) -> bool {
 ///
 /// # Arguments
 /// - `events`: Raw egui events captured this frame.
-/// - `focused`: Whether the virtual editor currently owns keyboard focus.
+/// - `focused`: Whether the virtual editor may claim this frame's shortcut/input commands.
 ///
 /// # Returns
 /// Ordered command list derived from `events`.
@@ -317,7 +317,7 @@ fn commands_from_events_for_platform(
             }
 
             egui::Event::Copy => {
-                if !emitted_copy {
+                if focused && !emitted_copy {
                     out.push(VirtualInputCommand::Copy);
                     emitted_copy = true;
                 }
@@ -359,7 +359,7 @@ fn commands_from_events_for_platform(
                 if modifiers.command {
                     match key {
                         egui::Key::A if focused => out.push(VirtualInputCommand::SelectAll),
-                        egui::Key::C if !emitted_copy => {
+                        egui::Key::C if focused && !emitted_copy => {
                             out.push(VirtualInputCommand::Copy);
                             emitted_copy = true;
                         }
@@ -763,9 +763,24 @@ mod tests {
     }
 
     #[test]
-    fn copy_is_emitted_even_without_focus() {
-        let events = vec![egui::Event::Copy];
-        let commands = commands_from_events_for_platform(&events, false, PlatformFlavor::Other);
+    fn copy_is_emitted_only_with_focus() {
+        let events = vec![
+            egui::Event::Key {
+                key: egui::Key::C,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+            },
+            egui::Event::Copy,
+        ];
+        assert!(
+            commands_from_events_for_platform(&events, false, PlatformFlavor::Other).is_empty()
+        );
+        let commands = commands_from_events_for_platform(&events, true, PlatformFlavor::Other);
         assert_eq!(commands, vec![VirtualInputCommand::Copy]);
     }
 

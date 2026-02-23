@@ -566,9 +566,18 @@ impl eframe::App for LocalPasteApp {
         let mut immediate_apply_ms = 0.0f32;
         let mut deferred_focus_apply_ms = 0.0f32;
         let mut deferred_copy_apply_ms = 0.0f32;
+        let focus_promotion_requested =
+            self.editor_mode == EditorMode::VirtualEditor && self.focus_editor_next;
+        let wants_keyboard_input_before = ctx.wants_keyboard_input();
+        let virtual_editor_focus_active_pre = focus_active_pre
+            || (self.editor_mode == EditorMode::VirtualEditor && self.virtual_editor_active);
+        let virtual_editor_events_allowed = virtual_editor_focus_active_pre
+            || (self.editor_mode == EditorMode::VirtualEditor && !wants_keyboard_input_before);
         if self.is_virtual_editor_mode() {
             let route_started = Instant::now();
-            let commands = ctx.input(|input| commands_from_events(&input.events, true));
+            let commands = ctx.input(|input| {
+                commands_from_events(&input.events, virtual_editor_events_allowed)
+            });
             input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
             for command in commands {
                 if self.should_skip_virtual_command_for_paste_as_new(&command) {
@@ -620,11 +629,6 @@ impl eframe::App for LocalPasteApp {
         let mut plain_paste_shortcut_pressed = false;
         let mut pasted_text: Option<String> = None;
         let mut sidebar_direction: i32 = 0;
-        let focus_promotion_requested =
-            self.editor_mode == EditorMode::VirtualEditor && self.focus_editor_next;
-        let wants_keyboard_input_before = ctx.wants_keyboard_input();
-        let virtual_editor_focus_active_pre = focus_active_pre
-            || (self.editor_mode == EditorMode::VirtualEditor && self.virtual_editor_active);
         ctx.input(|input| {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());
@@ -680,7 +684,7 @@ impl eframe::App for LocalPasteApp {
                 match self.editor_mode {
                     EditorMode::VirtualPreview => copy_virtual_preview = true,
                     EditorMode::VirtualEditor => {
-                        if copy_ready_pre && !saw_virtual_copy {
+                        if virtual_editor_events_allowed && copy_ready_pre && !saw_virtual_copy {
                             fallback_virtual_copy = true;
                         }
                     }
