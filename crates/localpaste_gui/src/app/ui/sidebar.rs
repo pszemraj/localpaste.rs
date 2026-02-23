@@ -4,6 +4,7 @@ use super::super::*;
 use eframe::egui::{self, RichText};
 
 const APP_VERSION_LABEL: &str = concat!("- v", env!("CARGO_PKG_VERSION"));
+const SIDEBAR_LANGUAGE_COLUMN_WIDTH: f32 = 84.0;
 
 impl LocalPasteApp {
     /// Renders the top title/status bar.
@@ -89,9 +90,52 @@ impl LocalPasteApp {
                                     false,
                                     paste.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
                                 );
-                                let label = format!("{}  ({})", paste.name, lang_label);
-                                let response = ui.selectable_label(selected, RichText::new(label));
-                                if response.clicked() {
+                                let row_clicked = ui
+                                    .horizontal(|ui| {
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                let lang_response = ui
+                                                    .allocate_ui_with_layout(
+                                                        egui::vec2(
+                                                            SIDEBAR_LANGUAGE_COLUMN_WIDTH,
+                                                            row_height,
+                                                        ),
+                                                        egui::Layout::right_to_left(
+                                                            egui::Align::Center,
+                                                        ),
+                                                        |ui| {
+                                                            ui.add(
+                                                                egui::Label::new(
+                                                                    RichText::new(
+                                                                        lang_label.as_str(),
+                                                                    )
+                                                                    .small()
+                                                                    .color(COLOR_TEXT_MUTED),
+                                                                )
+                                                                .truncate()
+                                                                .sense(egui::Sense::click()),
+                                                            )
+                                                        },
+                                                    )
+                                                    .inner;
+                                                let mut title_response = ui.add_sized(
+                                                    [ui.available_width().max(1.0), row_height],
+                                                    egui::Button::new(RichText::new(
+                                                        paste.name.as_str(),
+                                                    ))
+                                                    .truncate()
+                                                    .selected(selected),
+                                                );
+                                                title_response =
+                                                    title_response.on_hover_text(paste.name.as_str());
+                                                title_response.clicked() || lang_response.clicked()
+                                            },
+                                        )
+                                        .inner
+                                    })
+                                    .inner;
+                                if row_clicked {
                                     pending_select = Some(paste.id.clone());
                                 }
                             }

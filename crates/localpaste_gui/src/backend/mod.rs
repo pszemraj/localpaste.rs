@@ -218,6 +218,30 @@ mod tests {
     }
 
     #[test]
+    fn backend_create_uses_random_name_instead_of_content_first_line() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
+        let content = "this line should not become title\nprint('hello')";
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::CreatePaste {
+                content: content.to_string(),
+            })
+            .expect("send create");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteCreated { paste } => {
+                assert_eq!(paste.content, content);
+                assert_ne!(paste.name, "this line should not become title");
+                assert!(paste.name.contains('-'));
+                assert!(!paste.name.contains(' '));
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
     fn backend_virtual_update_persists_content() {
         let TestDb { _dir: _guard, db } = setup_db();
         let backend = spawn_backend(db, 10 * 1024 * 1024);
