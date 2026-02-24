@@ -92,59 +92,56 @@ impl LocalPasteApp {
                                 );
                                 let row_clicked = ui
                                     .horizontal(|ui| {
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                let lang_response = ui
-                                                    .allocate_ui_with_layout(
-                                                        egui::vec2(
-                                                            SIDEBAR_LANGUAGE_COLUMN_WIDTH,
-                                                            row_height,
-                                                        ),
-                                                        egui::Layout::right_to_left(
-                                                            egui::Align::Center,
-                                                        ),
-                                                        |ui| {
-                                                            ui.add(
-                                                                egui::Label::new(
-                                                                    RichText::new(
-                                                                        lang_label.as_str(),
-                                                                    )
-                                                                    .small()
-                                                                    .color(COLOR_TEXT_MUTED),
-                                                                )
-                                                                .truncate()
-                                                                .sense(egui::Sense::click()),
-                                                            )
-                                                        },
+                                        let spacing = ui.spacing().item_spacing.x;
+                                        let title_width = (ui.available_width()
+                                            - SIDEBAR_LANGUAGE_COLUMN_WIDTH
+                                            - spacing)
+                                            .max(1.0);
+                                        // Keep button visuals for row selection, then render
+                                        // non-interactive text on top so the full row remains clickable.
+                                        let mut title_response = ui.add_sized(
+                                            [title_width, row_height],
+                                            egui::Button::new("").selected(selected),
+                                        );
+                                        let title_visuals = ui
+                                            .style()
+                                            .interact_selectable(&title_response, selected);
+                                        let text_rect = title_response.rect.shrink2(egui::vec2(
+                                            ui.spacing().button_padding.x,
+                                            0.0,
+                                        ));
+                                        let _ = ui.put(
+                                            text_rect,
+                                            egui::Label::new(
+                                                RichText::new(paste.name.as_str())
+                                                    .color(title_visuals.text_color()),
+                                            )
+                                            .truncate()
+                                            .sense(egui::Sense::empty()),
+                                        );
+                                        title_response =
+                                            title_response.on_hover_text(paste.name.as_str());
+                                        let lang_response = ui
+                                            .allocate_ui_with_layout(
+                                                egui::vec2(
+                                                    SIDEBAR_LANGUAGE_COLUMN_WIDTH,
+                                                    row_height,
+                                                ),
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    ui.add(
+                                                        egui::Label::new(
+                                                            RichText::new(lang_label.as_str())
+                                                                .small()
+                                                                .color(COLOR_TEXT_MUTED),
+                                                        )
+                                                        .truncate()
+                                                        .sense(egui::Sense::click()),
                                                     )
-                                                    .inner;
-                                                // Keep button visuals for row selection, but paint
-                                                // title text separately so it stays left-aligned.
-                                                let mut title_response = ui.add_sized(
-                                                    [ui.available_width().max(1.0), row_height],
-                                                    egui::Button::new("").selected(selected),
-                                                );
-                                                let title_visuals = ui
-                                                    .style()
-                                                    .interact_selectable(&title_response, selected);
-                                                let text_rect = title_response.rect.shrink2(
-                                                    egui::vec2(ui.spacing().button_padding.x, 0.0),
-                                                );
-                                                let _ = ui.put(
-                                                    text_rect,
-                                                    egui::Label::new(
-                                                        RichText::new(paste.name.as_str())
-                                                            .color(title_visuals.text_color()),
-                                                    )
-                                                    .truncate(),
-                                                );
-                                                title_response = title_response
-                                                    .on_hover_text(paste.name.as_str());
-                                                title_response.clicked() || lang_response.clicked()
-                                            },
-                                        )
-                                        .inner
+                                                },
+                                            )
+                                            .inner;
+                                        title_response.clicked() || lang_response.clicked()
                                     })
                                     .inner;
                                 if row_clicked {
