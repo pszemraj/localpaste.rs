@@ -640,11 +640,11 @@ impl eframe::App for LocalPasteApp {
             }
             if plain_command
                 && input.key_pressed(egui::Key::Delete)
-                && self.should_route_delete_selected_shortcut(
+                && self.should_route_delete_selected_shortcut(Self::delete_shortcut_focus_state(
                     wants_keyboard_input_before,
                     virtual_editor_focus_active_pre,
                     focus_promotion_requested,
-                )
+                ))
             {
                 self.delete_selected();
             }
@@ -810,11 +810,14 @@ impl eframe::App for LocalPasteApp {
             false
         };
         let wants_keyboard_input_after = ctx.wants_keyboard_input();
+        let plain_paste_focus_state = Self::plain_paste_focus_state(
+            editor_focus_for_plain_paste_post,
+            wants_keyboard_input_after,
+        );
         let (plain_request_virtual, plain_request_new) = self.resolve_plain_paste_shortcut_request(
             plain_paste_shortcut_pressed,
-            editor_focus_for_plain_paste_post,
+            plain_paste_focus_state,
             saw_virtual_paste,
-            wants_keyboard_input_after,
         );
         request_virtual_paste |= plain_request_virtual;
         request_paste_as_new |= plain_request_new;
@@ -849,7 +852,10 @@ impl eframe::App for LocalPasteApp {
         let paste_as_new_consumed = self.maybe_consume_explicit_paste_as_new(&mut pasted_text);
         if !editor_focus_post && !ctx.wants_keyboard_input() && !virtual_paste_consumed {
             if let Some(text) = pasted_text {
-                if Self::should_create_paste_from_clipboard(text.as_str()) {
+                if Self::should_create_paste_from_clipboard(
+                    text.as_str(),
+                    paste_intent::ClipboardCreatePolicy::ImplicitGlobalShortcut,
+                ) {
                     self.create_new_paste_with_content(text);
                 }
             }

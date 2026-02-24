@@ -136,6 +136,37 @@ fn explicit_paste_as_new_preserves_tabbed_trailing_line_exactly() {
 }
 
 #[test]
+fn explicit_paste_as_new_accepts_whitespace_only_payload() {
+    let mut harness = make_app();
+    harness.app.arm_paste_as_new_intent();
+    let payload = " \t\n  ";
+    let mut clipboard = Some(payload.to_string());
+
+    assert!(harness
+        .app
+        .maybe_consume_explicit_paste_as_new(&mut clipboard));
+    assert!(clipboard.is_none());
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::CreatePaste { content } => assert_eq!(content, payload),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn clipboard_create_policy_distinguishes_explicit_and_global_shortcuts() {
+    let whitespace_only = " \t\n ";
+
+    assert!(LocalPasteApp::should_create_paste_from_clipboard(
+        whitespace_only,
+        paste_intent::ClipboardCreatePolicy::ExplicitPasteAsNew,
+    ));
+    assert!(!LocalPasteApp::should_create_paste_from_clipboard(
+        whitespace_only,
+        paste_intent::ClipboardCreatePolicy::ImplicitGlobalShortcut,
+    ));
+}
+
+#[test]
 fn merge_pasted_text_prefers_fuller_duplicate_payload() {
     let full_payload = "def sample():\n\treturn foobar";
     let short_payload = "def sample():\n\treturn";
@@ -381,11 +412,13 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
 
     for case in cases {
         let harness = make_app();
-        let (request_virtual, request_new) = harness.app.route_plain_paste_shortcut(
+        let focus_state = LocalPasteApp::plain_paste_focus_state(
             case.editor_focus_pre,
-            case.saw_virtual_paste,
             case.wants_keyboard_input_before,
         );
+        let (request_virtual, request_new) = harness
+            .app
+            .route_plain_paste_shortcut(focus_state, case.saw_virtual_paste);
         assert_eq!(
             request_virtual, case.expect_virtual_request,
             "virtual routing mismatch for case '{}'",
@@ -406,15 +439,19 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
 
     // Regression guard: when focus is acquired in the same frame as Ctrl/Cmd+V,
     // plain paste should stay in the editor instead of creating a new paste.
-    let (request_virtual, request_new) = harness
-        .app
-        .resolve_plain_paste_shortcut_request(true, true, false, true);
+    let (request_virtual, request_new) = harness.app.resolve_plain_paste_shortcut_request(
+        true,
+        LocalPasteApp::plain_paste_focus_state(true, true),
+        false,
+    );
     assert!(request_virtual);
     assert!(!request_new);
 
-    let (request_virtual, request_new) = harness
-        .app
-        .resolve_plain_paste_shortcut_request(false, false, false, false);
+    let (request_virtual, request_new) = harness.app.resolve_plain_paste_shortcut_request(
+        false,
+        LocalPasteApp::plain_paste_focus_state(false, false),
+        false,
+    );
     assert!(!request_virtual);
     assert!(!request_new);
 }
@@ -462,11 +499,14 @@ fn delete_shortcut_guard_blocks_when_text_input_virtual_focus_or_focus_promotion
 
     for case in cases {
         let harness = make_app();
-        let actual = harness.app.should_route_delete_selected_shortcut(
+        let focus_state = LocalPasteApp::delete_shortcut_focus_state(
             case.wants_keyboard_input,
             case.virtual_editor_focus_active,
             case.focus_promotion_requested,
         );
+        let actual = harness
+            .app
+            .should_route_delete_selected_shortcut(focus_state);
         assert_eq!(actual, case.expected, "case '{}'", case.name);
     }
 }
