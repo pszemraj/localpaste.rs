@@ -153,13 +153,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python .github/scripts/release_gui_prepare.py \
-            --tag "${VERIFY_TAG}" \
-            --target "${TARGET}" \
-            --asset-suffix "${ASSET_SUFFIX}" \
-            --packager-config "${PACKAGER_CONFIG}" \
-            --runner-os "macOS" \
-            --expected-wix-major 3
+          prepare_args=(
+            --tag "${VERIFY_TAG}"
+            --target "${TARGET}"
+            --asset-suffix "${ASSET_SUFFIX}"
+            --packager-config "${PACKAGER_CONFIG}"
+            --runner-os "macOS"
+          )
+          if python .github/scripts/release_gui_prepare.py --help 2>&1 | grep -q -- "--expected-wix-major"; then
+            prepare_args+=(--expected-wix-major 3)
+          else
+            echo "release_gui_prepare.py does not support --expected-wix-major; skipping explicit WiX major assertion"
+          fi
+          python .github/scripts/release_gui_prepare.py "${prepare_args[@]}"
       - name: Build installer packages
         run: python -c "import os, subprocess; subprocess.run(['cargo', 'packager', '--config', os.environ['PACKAGER_CONFIG_PATH']], check=True)"
       - name: Sign, notarize, and verify macOS artifacts
