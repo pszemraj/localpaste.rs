@@ -7,7 +7,8 @@ Use this protocol for release-gate evidence and regression checks.
 
 - English-first editor workflows only.
 - Runtime topology for this protocol: the GUI owns the DB lock and runs the embedded API endpoint in-process.
-- Do not run standalone `localpaste` concurrently against the same `DB_PATH` while running GUI perf checks.
+- Keep exactly one writer process per `DB_PATH` during perf runs
+  (storage contract: [docs/storage.md](../storage.md)).
 - Detection/highlight behavior definitions (including virtual-editor async debounce/staging policy) are maintained in [docs/language-detection.md](../language-detection.md).
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
@@ -55,7 +56,8 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
 While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks.
-For standalone server-only smoke/perf validation, use the server+CLI CRUD smoke flow in [devlog.md](devlog.md) with `localpaste` + `lpaste`.
+For standalone server-only smoke/perf validation, use
+[devlog.md#runtime-smoke-test-server-cli](devlog.md#runtime-smoke-test-server-cli).
 
 ## Dataset Expectations
 

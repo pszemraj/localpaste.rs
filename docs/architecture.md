@@ -266,19 +266,12 @@ Relevant code:
 
 ## 11) Validation Strategy
 
-Repository-level quality gates are defined in:
+Validation source of truth is maintained in:
 
-- [dev/devlog.md](dev/devlog.md)
-- [dev/gui-notes.md](dev/gui-notes.md)
+- [dev/devlog.md#validation-loop](dev/devlog.md#validation-loop)
+- [dev/devlog.md#runtime-smoke-test-server-cli](dev/devlog.md#runtime-smoke-test-server-cli)
+- [dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive](dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive)
 - [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md)
-
-Core themes:
-
-- full workspace fmt/lint/check/build loop,
-- explicit smoke tests for API/core changes,
-- rustdoc checks,
-- line-count policy checks,
-- targeted regression tests for lock/invariant/shutdown edge cases.
 
 ## 12) Active Follow-Ups
 

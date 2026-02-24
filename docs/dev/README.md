@@ -6,11 +6,11 @@ For repository-wide source-of-truth ownership, see
 
 ## Active Dev Docs
 
-- Development workflow and command matrix:
+- Development workflow, validation loop, and canonical smoke runbook:
   [docs/dev/devlog.md](devlog.md)
 - GUI release workflow and artifact contract:
   [docs/release-gui.md](../release-gui.md)
-- GUI runtime flags and behavior notes:
+- GUI runtime flags and keyboard/navigation behavior contract:
   [docs/dev/gui-notes.md](gui-notes.md)
 - GUI perf protocol and thresholds:
   [docs/dev/gui-perf-protocol.md](gui-perf-protocol.md)

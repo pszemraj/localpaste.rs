@@ -6,7 +6,6 @@ These instructions apply to the headless `localpaste` server. The desktop GUI (`
 
 - [Related Docs](#related-docs)
 - [Quick Start](#quick-start)
-- [Storage Backend Note](#storage-backend-note)
 - [Process Management](#process-management)
 - [Linux (systemd)](#linux-systemd)
 - [macOS (launchd)](#macos-launchd)
@@ -33,20 +32,8 @@ nohup "$HOME/.cargo/bin/localpaste" > ~/.cache/localpaste/server.log 2>&1 &
 echo $! > ~/.cache/localpaste/localpaste.pid
 ```
 
-Important runtime rule:
-
-- Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` at the same time.
-
-> [!IMPORTANT]
-> Use separate `DB_PATH` values when testing GUI and standalone server concurrently.
-
-## Storage Backend Note
-
-Storage/backend compatibility policy is defined in
-[storage.md](storage.md) and is the source of truth.
-Use that document for backend/file-layout and compatibility details.
-
-For stop/restart/cleanup procedures, use [Stopping LocalPaste Safely](#stopping-localpaste-safely).
+Writer/lock contract and `DB_PATH` safety rules are canonical in:
+[storage.md](storage.md) and [dev/locking-model.md](dev/locking-model.md).
 
 ## Process Management
 
@@ -79,16 +66,10 @@ Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
 
 ### Lock Safety
 
-Operational guidance:
-
-- Use one writer process per `DB_PATH`.
-- If lock acquisition fails, stop the owning process and retry (there is no `--force-unlock` path).
-- Prefer unique `DB_PATH` values for concurrent local experiments instead of sharing one DB directory.
-
-Canonical lock semantics and error contracts:
-
-- [dev/locking-model.md](dev/locking-model.md)
-- [storage.md](storage.md)
+When lock acquisition fails, stop the owning process and retry.
+There is no `--force-unlock` path.
+For semantics and error contracts, use:
+[dev/locking-model.md](dev/locking-model.md) and [storage.md](storage.md).
 
 ## Linux (systemd)
 
@@ -226,14 +207,12 @@ curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "S
 
 ## Embedded API Address Discovery (.api-addr)
 
-Operational use:
+Operator guidance:
 
-- GUI writes the active embedded API endpoint to `DB_PATH/.api-addr`.
-- `lpaste` consumes discovery only when `--server` and `LP_SERVER` are unset.
-- Use `lpaste --no-discovery ...` to disable discovery.
-- Prefer explicit `--server`/`LP_SERVER` for deterministic automation targeting.
+- Prefer explicit `--server`/`LP_SERVER` for deterministic automation.
+- Use `lpaste --no-discovery ...` to disable `.api-addr` discovery.
 
-Canonical behavior contracts (trust checks, fallback rules, and header verification):
+Canonical behavior contract (trust checks, fallback rules, and header verification):
 
 - [architecture.md](architecture.md#10-discovery-and-trust)
 - [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)

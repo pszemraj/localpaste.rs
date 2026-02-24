@@ -63,12 +63,19 @@ cargo run -p localpaste_server --bin localpaste --release
 ./target/release/lpaste --help
 ```
 
-Topology note:
+Runtime contract references:
 
-- `localpaste-gui` owns the DB lock for its `DB_PATH` and hosts an embedded API endpoint for compatibility.
-- Do not run `localpaste` concurrently on the same `DB_PATH` as the GUI.
-- Use standalone `localpaste` for headless/server-only operation.
-- Embedded GUI API writes the active endpoint to `DB_PATH/.api-addr`; `lpaste` auto-uses it when `--server` and `LP_SERVER` are unset (unless `--no-discovery` is set).
+- Runtime topologies + endpoint discovery/trust checks:
+  [docs/architecture.md#2-runtime-topologies](../architecture.md#2-runtime-topologies)
+  and
+  [docs/architecture.md#10-discovery-and-trust](../architecture.md#10-discovery-and-trust)
+- Single-writer `DB_PATH` + on-disk contract: [docs/storage.md](../storage.md)
+- Lock semantics and API `423 Locked` behavior:
+  [docs/dev/locking-model.md](locking-model.md)
+
+Day-to-day rule:
+
+- Keep exactly one writer process per `DB_PATH` during local development and validation.
 
 For editor-mode flags and tracing env vars, see
 [docs/dev/gui-notes.md](gui-notes.md).
@@ -100,9 +107,9 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 # 6) targeted tests for touched areas
 # cargo test -p <crate>
 
-# 7) runtime smoke (server + CLI CRUD)
-# run isolated server+CLI CRUD flow with localpaste + lpaste
-# (new -> list -> search -> get -> delete), then verify persistence across restart
+# 7) runtime smoke (server + CLI + restart persistence)
+# run the canonical smoke runbook:
+# docs/dev/devlog.md#runtime-smoke-test-server-cli
 
 # 8) docs contract check
 rustdoc-checker crates --strict
@@ -113,6 +120,69 @@ rustdoc-checker crates --strict
 
 Language detection/normalization/highlight behavior is tracked in
 [docs/language-detection.md](../language-detection.md).
+
+## Runtime Smoke Test (Server CLI)
+
+Use this as the canonical API/core smoke runbook.
+It validates CRUD behavior and persistence across process restart.
+
+### Bash
+
+```bash
+export PORT=3055
+export DB_PATH="$(mktemp -d)/lpaste-smoke"
+export LP_SERVER="http://127.0.0.1:$PORT"
+
+cargo build -p localpaste_server --bin localpaste
+cargo build -p localpaste_cli --bin lpaste
+
+./target/debug/localpaste &
+SERVER_PID=$!
+sleep 1
+
+echo "smoke hello" | ./target/debug/lpaste new --name "smoke-test"
+ID="$(./target/debug/lpaste list --limit 1 | awk '{print $1}')"
+./target/debug/lpaste get "$ID"
+
+# Restart persistence check
+kill "$SERVER_PID"
+./target/debug/localpaste &
+SERVER_PID=$!
+sleep 1
+./target/debug/lpaste get "$ID"
+./target/debug/lpaste delete "$ID"
+
+kill "$SERVER_PID"
+rm -rf "$DB_PATH"
+```
+
+### PowerShell
+
+```powershell
+$env:PORT = "3055"
+$env:DB_PATH = Join-Path $env:TEMP "lpaste-smoke-$([guid]::NewGuid().ToString('N'))"
+$env:LP_SERVER = "http://127.0.0.1:$env:PORT"
+
+cargo build -p localpaste_server --bin localpaste
+cargo build -p localpaste_cli --bin lpaste
+
+$proc = Start-Process -FilePath .\target\debug\localpaste.exe -NoNewWindow -PassThru
+Start-Sleep -Seconds 1
+
+"smoke hello" | .\target\debug\lpaste.exe new --name "smoke-test"
+$id = (.\target\debug\lpaste.exe list --limit 1) -split ' ' | Select-Object -First 1
+.\target\debug\lpaste.exe get $id
+
+# Restart persistence check
+Stop-Process -Id $proc.Id
+$proc = Start-Process -FilePath .\target\debug\localpaste.exe -NoNewWindow -PassThru
+Start-Sleep -Seconds 1
+.\target\debug\lpaste.exe get $id
+.\target\debug\lpaste.exe delete $id
+
+Stop-Process -Id $proc.Id
+Remove-Item -Recurse -Force $env:DB_PATH
+```
 
 ## Tooling CLI Contracts
 
