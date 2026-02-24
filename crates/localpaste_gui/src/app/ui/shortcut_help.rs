@@ -23,7 +23,11 @@ impl LocalPasteApp {
                 );
                 shortcut_row(ui, "Ctrl/Cmd+N", "Create new paste");
                 shortcut_row(ui, "Ctrl/Cmd+S", "Save content and metadata");
-                shortcut_row(ui, "Ctrl/Cmd+Delete", "Delete selected paste");
+                shortcut_row(
+                    ui,
+                    "Ctrl/Cmd+Delete",
+                    "Delete selected paste (when text inputs are unfocused)",
+                );
                 shortcut_row(ui, "Ctrl/Cmd+F", "Focus sidebar search");
                 shortcut_row(ui, "Ctrl/Cmd+Shift+P", "Toggle command palette");
                 shortcut_row(ui, "Ctrl/Cmd+K", "Toggle command palette (legacy)");
@@ -40,6 +44,12 @@ impl LocalPasteApp {
                         .color(COLOR_TEXT_MUTED),
                 );
                 shortcut_row(ui, "Arrow Up/Down", "Navigate paste list and palette");
+                shortcut_row(ui, "Home/End", "Move caret to line start/end");
+                shortcut_row(
+                    ui,
+                    "Ctrl+Home/End (Win/Linux) or Cmd+Up/Down (macOS)",
+                    "Move caret to document start/end",
+                );
                 shortcut_row(ui, "Enter", "Open selected command palette result");
                 shortcut_row(ui, "Esc", "Close command palette/window");
                 shortcut_row(ui, "Ctrl/Cmd+C", "Copy selected text");

@@ -15,13 +15,15 @@ fn run_virtual_editor_frame(
     let mut immediate_focus_commands = Vec::new();
     let mut deferred_focus_commands = Vec::new();
     let mut deferred_copy_commands = Vec::new();
-    for command in commands_from_events(events.as_slice(), focus_active_pre) {
+    for command in commands_from_events(events.as_slice(), true) {
         match classify_virtual_command(&command, focus_active_pre) {
             VirtualCommandBucket::ImmediateFocus => immediate_focus_commands.push(command),
             VirtualCommandBucket::DeferredFocus => deferred_focus_commands.push(command),
             VirtualCommandBucket::DeferredCopy => deferred_copy_commands.push(command),
         }
     }
+    let focus_promotion_requested =
+        app.editor_mode == EditorMode::VirtualEditor && app.focus_editor_next;
 
     let _ = app.apply_virtual_commands(ctx, &immediate_focus_commands);
 
@@ -40,7 +42,7 @@ fn run_virtual_editor_frame(
             || ctx.memory(|m| m.has_focus(focus_id)));
     let copy_ready_post = focus_active_post || has_virtual_selection_post;
 
-    if focus_active_post {
+    if focus_active_post || focus_promotion_requested {
         let _ = app.apply_virtual_commands(ctx, &deferred_focus_commands);
     }
     if copy_ready_post {
@@ -404,6 +406,26 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
 }
 
 #[test]
+fn virtual_editor_enter_in_first_focus_handoff_frame_inserts_top_newline() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha\nbeta\n");
+    harness.app.focus_editor_next = true;
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let enter_event = key_event(egui::Key::Enter, egui::Modifiers::default());
+    let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![enter_event]);
+
+    assert!(!focus_active_pre);
+    assert_eq!(
+        harness.app.virtual_editor_buffer.to_string(),
+        "\nalpha\nbeta\n"
+    );
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 1);
+}
+
+#[test]
 fn virtual_vertical_move_target_matrix() {
     struct Case {
         text: &'static str,
@@ -627,9 +649,55 @@ fn word_navigation_crosses_line_boundaries() {
             word: true,
         }],
     );
+
+    #[cfg(target_os = "macos")]
+    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 4); // end of "beta"
+    #[cfg(not(target_os = "macos"))]
+    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 0); // start of "beta"
+
     assert_eq!(
         harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(1, 4)
+        expected_after_right
+    );
+
+    let _ = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveLeft {
+            select: false,
+            word: true,
+        }],
+    );
+
+    #[cfg(target_os = "macos")]
+    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(1, 0); // start of "beta"
+    #[cfg(not(target_os = "macos"))]
+    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(0, 0); // start of "alpha"
+
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        expected_after_left
+    );
+}
+
+#[test]
+fn word_left_skips_punctuation_separators() {
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "foo.bar", 200.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(len, len);
+    let ctx = egui::Context::default();
+
+    let _ = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveLeft {
+            select: false,
+            word: true,
+        }],
+    );
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        harness.app.virtual_editor_buffer.line_col_to_char(0, 4)
     );
 
     let _ = harness.app.apply_virtual_commands(
@@ -641,7 +709,30 @@ fn word_navigation_crosses_line_boundaries() {
     );
     assert_eq!(
         harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(1, 0)
+        harness.app.virtual_editor_buffer.line_col_to_char(0, 0)
+    );
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn word_right_skips_punctuation_separators_on_windows_linux() {
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "foo.bar", 200.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(0, len);
+    let ctx = egui::Context::default();
+
+    let _ = harness.app.apply_virtual_commands(
+        &ctx,
+        &[VirtualInputCommand::MoveRight {
+            select: false,
+            word: true,
+        }],
+    );
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        harness.app.virtual_editor_buffer.line_col_to_char(0, 4)
     );
 }
 

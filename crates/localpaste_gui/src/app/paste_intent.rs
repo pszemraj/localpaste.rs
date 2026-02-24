@@ -2,7 +2,82 @@
 
 use super::*;
 
+/// Keyboard ownership state used to route plain paste shortcuts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PlainPasteFocusState {
+    EditorFocused,
+    OtherInputFocused,
+    Unfocused,
+}
+
+/// Focus context used to decide whether the global delete shortcut is safe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DeleteShortcutFocusState {
+    OtherInputFocused,
+    EditorFocused,
+    EditorFocusPromotionPending,
+    Unfocused,
+}
+
+/// Clipboard acceptance policy for creating new paste entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClipboardCreatePolicy {
+    // Explicit Ctrl/Cmd+Shift+V intent should preserve whitespace-only payloads.
+    ExplicitPasteAsNew,
+    // Implicit global Ctrl/Cmd+V-to-new-paste keeps existing non-whitespace gate.
+    ImplicitGlobalShortcut,
+}
+
 impl LocalPasteApp {
+    /// Merges a newly observed paste payload into the current frame snapshot.
+    ///
+    /// Keeps the most complete payload deterministically so shorter/partial
+    /// duplicates cannot replace fuller clipboard text.
+    ///
+    /// # Arguments
+    /// - `observed`: In/out frame-local paste payload accumulator.
+    /// - `candidate`: Newly observed clipboard text candidate.
+    pub(super) fn merge_pasted_text(observed: &mut Option<String>, candidate: &str) {
+        let Some(current) = observed.as_mut() else {
+            *observed = Some(candidate.to_string());
+            return;
+        };
+        if current == candidate {
+            return;
+        }
+
+        // Prefer cheap length checks before expensive substring scans on large payloads.
+        match candidate.len().cmp(&current.len()) {
+            std::cmp::Ordering::Greater => *current = candidate.to_string(),
+            std::cmp::Ordering::Less => {}
+            std::cmp::Ordering::Equal => {
+                // Equal byte lengths but different strings: prefer more scalar values
+                // (rare UTF-8 tie-breaker), otherwise keep the existing payload.
+                if candidate.chars().count() > current.chars().count() {
+                    *current = candidate.to_string();
+                }
+            }
+        }
+    }
+
+    /// Returns whether clipboard text should create a new paste.
+    ///
+    /// # Arguments
+    /// - `text`: Clipboard payload text to evaluate.
+    /// - `policy`: Routing intent that determines whitespace handling.
+    ///
+    /// # Returns
+    /// `true` when the payload qualifies under the selected policy.
+    pub(super) fn should_create_paste_from_clipboard(
+        text: &str,
+        policy: ClipboardCreatePolicy,
+    ) -> bool {
+        match policy {
+            ClipboardCreatePolicy::ExplicitPasteAsNew => !text.is_empty(),
+            ClipboardCreatePolicy::ImplicitGlobalShortcut => !text.trim().is_empty(),
+        }
+    }
+
     /// Clears any pending explicit "paste as new" intent state.
     pub(super) fn cancel_paste_as_new_intent(&mut self) {
         self.paste_as_new_pending_frames = 0;
@@ -20,28 +95,9 @@ impl LocalPasteApp {
     /// # Arguments
     /// - `ctx`: Egui context used to dispatch viewport paste requests.
     pub(super) fn request_paste_as_new(&mut self, ctx: &egui::Context) {
-        self.prepare_text_editor_for_paste_as_new(ctx);
         self.arm_paste_as_new_intent();
         self.paste_as_new_clipboard_requested_at = Some(Instant::now());
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-    }
-
-    /// Surrenders native text-editor focus so explicit paste-as-new can route clipboard
-    /// payload to create flow instead of mutating the active text buffer.
-    ///
-    /// # Arguments
-    /// - `ctx`: Egui context used to surrender the text editor focus id.
-    pub(super) fn prepare_text_editor_for_paste_as_new(&mut self, ctx: &egui::Context) {
-        if self.editor_mode != EditorMode::TextEdit {
-            return;
-        }
-        // TextEdit focus IDs are UI-scoped; use the last response ID captured
-        // during rendering so explicit paste-as-new can reliably blur it.
-        let editor_id = self
-            .text_editor_focus_id
-            .unwrap_or_else(|| egui::Id::new(TEXT_EDITOR_ID));
-        ctx.memory_mut(|m| m.surrender_focus(editor_id));
-        self.text_editor_has_focus = false;
     }
 
     /// Arms explicit "paste as new" intent when command+shift+V is observed this frame.
@@ -89,32 +145,26 @@ impl LocalPasteApp {
     ///
     /// # Arguments
     /// - `pasted_text`: Optional clipboard text captured from current-frame egui events.
-    /// - `text_editor_focused`: Whether native `TextEdit` currently owns focus.
-    ///
     /// # Returns
     /// `true` when clipboard text was consumed and routed into `CreatePaste`.
     pub(super) fn maybe_consume_explicit_paste_as_new(
         &mut self,
         pasted_text: &mut Option<String>,
-        text_editor_focused: bool,
     ) -> bool {
         if self.paste_as_new_pending_frames == 0 {
             self.paste_as_new_clipboard_requested_at = None;
             return false;
         }
-        if text_editor_focused {
-            // Defensive guard: never create a second paste from a clipboard payload
-            // that a focused native TextEdit may have already consumed this frame.
-            self.cancel_paste_as_new_intent();
-            pasted_text.take();
-            return false;
-        }
         if let Some(text) = pasted_text.take() {
             self.cancel_paste_as_new_intent();
-            if !text.trim().is_empty() {
+            if Self::should_create_paste_from_clipboard(
+                text.as_str(),
+                ClipboardCreatePolicy::ExplicitPasteAsNew,
+            ) {
                 self.create_new_paste_with_content(text);
                 return true;
             }
+            self.set_status("Clipboard was empty.");
             return false;
         }
         if let Some(request_started_at) = self.paste_as_new_clipboard_requested_at {
@@ -147,30 +197,24 @@ impl LocalPasteApp {
         request_paste_as_new && pasted_text.is_none()
     }
 
-    /// Routes plain paste shortcut behavior based on current editor mode/focus state.
+    /// Routes plain paste shortcut behavior based on editor-focus state.
     ///
     /// # Arguments
-    /// - `editor_focus_pre`: Whether the active editor owned focus before routing.
+    /// - `focus_state`: Keyboard ownership state for this frame.
     /// - `saw_virtual_paste`: Whether virtual command extraction already observed paste.
-    /// - `wants_keyboard_input_before`: Whether egui already assigned keyboard input to a focused widget.
     ///
     /// # Returns
     /// Tuple of `(request_virtual_paste, request_new_paste)`.
     pub(super) fn route_plain_paste_shortcut(
         &self,
-        editor_focus_pre: bool,
+        focus_state: PlainPasteFocusState,
         saw_virtual_paste: bool,
-        wants_keyboard_input_before: bool,
     ) -> (bool, bool) {
-        if self.editor_mode == EditorMode::VirtualEditor && editor_focus_pre {
-            (!saw_virtual_paste, false)
-        } else if wants_keyboard_input_before {
+        match focus_state {
+            PlainPasteFocusState::EditorFocused => (!saw_virtual_paste, false),
             // Respect focused non-editor text inputs (search, palette query, metadata fields).
-            (false, false)
-        } else if !editor_focus_pre {
-            (false, true)
-        } else {
-            (false, false)
+            PlainPasteFocusState::OtherInputFocused => (false, false),
+            PlainPasteFocusState::Unfocused => (false, true),
         }
     }
 
@@ -178,26 +222,80 @@ impl LocalPasteApp {
     ///
     /// # Arguments
     /// - `shortcut_pressed`: Whether plain command+V was pressed this frame.
-    /// - `editor_focus_post`: Whether the active editor owns focus after layout.
+    /// - `focus_state`: Keyboard ownership state after layout.
     /// - `saw_virtual_paste`: Whether virtual command extraction already observed paste.
-    /// - `wants_keyboard_input_post`: Whether egui assigned keyboard input after layout.
     ///
     /// # Returns
     /// Tuple of `(request_virtual_paste, request_new_paste)`.
     pub(super) fn resolve_plain_paste_shortcut_request(
         &self,
         shortcut_pressed: bool,
-        editor_focus_post: bool,
+        focus_state: PlainPasteFocusState,
         saw_virtual_paste: bool,
-        wants_keyboard_input_post: bool,
     ) -> (bool, bool) {
         if !shortcut_pressed {
             return (false, false);
         }
-        self.route_plain_paste_shortcut(
-            editor_focus_post,
-            saw_virtual_paste,
-            wants_keyboard_input_post,
-        )
+        self.route_plain_paste_shortcut(focus_state, saw_virtual_paste)
+    }
+
+    /// Derives plain-paste keyboard ownership state from editor and egui focus snapshots.
+    ///
+    /// # Arguments
+    /// - `editor_focus_active`: Whether the virtual editor currently owns focus.
+    /// - `wants_keyboard_input`: Whether egui reports focused keyboard input elsewhere.
+    ///
+    /// # Returns
+    /// A [`PlainPasteFocusState`] used by plain shortcut routing.
+    pub(super) fn plain_paste_focus_state(
+        editor_focus_active: bool,
+        wants_keyboard_input: bool,
+    ) -> PlainPasteFocusState {
+        if editor_focus_active {
+            PlainPasteFocusState::EditorFocused
+        } else if wants_keyboard_input {
+            PlainPasteFocusState::OtherInputFocused
+        } else {
+            PlainPasteFocusState::Unfocused
+        }
+    }
+
+    /// Returns whether the global delete-selected shortcut should run this frame.
+    ///
+    /// # Arguments
+    /// - `focus_state`: Focus/ownership context for the current shortcut frame.
+    ///
+    /// # Returns
+    /// `true` only when no text-input context owns keyboard input.
+    pub(super) fn should_route_delete_selected_shortcut(
+        &self,
+        focus_state: DeleteShortcutFocusState,
+    ) -> bool {
+        matches!(focus_state, DeleteShortcutFocusState::Unfocused)
+    }
+
+    /// Derives delete-shortcut focus context from input/focus state snapshots.
+    ///
+    /// # Arguments
+    /// - `wants_keyboard_input`: Whether any text-input widget currently owns keyboard capture.
+    /// - `virtual_editor_focus_active`: Whether virtual editor text focus is active.
+    /// - `focus_promotion_requested`: Whether editor focus is scheduled to promote this frame.
+    ///
+    /// # Returns
+    /// A [`DeleteShortcutFocusState`] used to guard global delete behavior.
+    pub(super) fn delete_shortcut_focus_state(
+        wants_keyboard_input: bool,
+        virtual_editor_focus_active: bool,
+        focus_promotion_requested: bool,
+    ) -> DeleteShortcutFocusState {
+        if wants_keyboard_input {
+            DeleteShortcutFocusState::OtherInputFocused
+        } else if virtual_editor_focus_active {
+            DeleteShortcutFocusState::EditorFocused
+        } else if focus_promotion_requested {
+            DeleteShortcutFocusState::EditorFocusPromotionPending
+        } else {
+            DeleteShortcutFocusState::Unfocused
+        }
     }
 }

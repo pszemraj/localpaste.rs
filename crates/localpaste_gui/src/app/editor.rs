@@ -4,7 +4,6 @@ use eframe::egui;
 use ropey::Rope;
 use std::any::TypeId;
 use std::fmt;
-use tracing::warn;
 
 use super::text_coords::line_for_char;
 
@@ -105,33 +104,6 @@ impl EditorBuffer {
     /// Borrowed UTF-8 view of the editor text.
     pub(super) fn as_str(&self) -> &str {
         self.text.as_str()
-    }
-
-    /// Takes and clears the most recent edit delta.
-    ///
-    /// # Returns
-    /// Last tracked [`EditDelta`] when one is pending.
-    pub(super) fn take_edit_delta(&mut self) -> Option<EditDelta> {
-        self.last_delta.take()
-    }
-
-    /// Computes the line start/end char indices that contain `char_index`.
-    ///
-    /// # Arguments
-    /// - `char_index`: Global character index to map into a line range.
-    ///
-    /// # Returns
-    /// `(start, end)` char bounds for the containing line.
-    pub(super) fn line_range_chars(&self, char_index: usize) -> (usize, usize) {
-        let idx = char_index.min(self.char_len);
-        let line = line_for_char(&self.rope, idx);
-        let start = self.rope.line_to_char(line);
-        let end = if line + 1 < self.rope.len_lines() {
-            self.rope.line_to_char(line + 1)
-        } else {
-            self.rope.len_chars()
-        };
-        (start, end)
     }
 }
 
@@ -381,43 +353,18 @@ impl egui::TextBuffer for EditorBuffer {
 /// Selects the editor rendering mode based on environment configuration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum EditorMode {
-    TextEdit,
     VirtualPreview,
     VirtualEditor,
 }
 
 impl EditorMode {
-    fn parse_flag(name: &str) -> Option<bool> {
-        let value = std::env::var(name).ok()?;
-        match localpaste_core::config::parse_env_flag(&value) {
-            Some(enabled) => Some(enabled),
-            None => {
-                warn!(
-                    "Unrecognized value for {}='{}'; expected 1/0/true/false/yes/no/on/off. Using defaults.",
-                    name, value
-                );
-                None
-            }
-        }
-    }
-
-    /// Resolves editor mode from environment feature flags.
+    /// Resolves editor mode.
     ///
     /// # Returns
-    /// `VirtualPreview` when forced, `TextEdit` when virtual mode is disabled,
-    /// otherwise `VirtualEditor`.
+    /// Always [`EditorMode::VirtualEditor`] in runtime builds.
     pub(super) fn from_env() -> Self {
-        // Preview is a force-on diagnostic mode only. Falsy preview values are
-        // treated as "not forcing preview" so they cannot silently disable
-        // the default virtual editor path.
-        if Self::parse_flag("LOCALPASTE_VIRTUAL_PREVIEW").unwrap_or(false) {
-            return Self::VirtualPreview;
-        }
-
-        match Self::parse_flag("LOCALPASTE_VIRTUAL_EDITOR") {
-            Some(false) => Self::TextEdit,
-            Some(true) | None => Self::VirtualEditor,
-        }
+        // LocalPaste is now virtual-editor-first with no runtime mode switch.
+        Self::VirtualEditor
     }
 }
 
@@ -425,7 +372,7 @@ impl EditorMode {
 mod tests {
     use super::*;
     use eframe::egui::TextBuffer;
-    use localpaste_core::env::{env_lock, remove_env_var, set_env_var, EnvGuard};
+    use localpaste_core::env::{env_lock, set_env_var, EnvGuard};
 
     #[test]
     fn editor_buffer_maintains_rope_after_edits() {
@@ -439,62 +386,17 @@ mod tests {
     }
 
     #[test]
-    fn editor_mode_env_matrix() {
+    fn editor_mode_defaults_to_virtual_editor() {
+        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
+    }
+
+    #[test]
+    fn editor_mode_ignores_legacy_preview_env_flag() {
         let _lock = env_lock().lock().expect("env lock");
         let preview_key = "LOCALPASTE_VIRTUAL_PREVIEW";
-        let editor_key = "LOCALPASTE_VIRTUAL_EDITOR";
         let _preview_restore = EnvGuard::remove(preview_key);
-        let _editor_restore = EnvGuard::remove(editor_key);
-
-        // Default mode is the editable virtual editor.
-        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
-
-        // Read-only preview can be forced for diagnostics.
         set_env_var(preview_key, "1");
-        assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
-
-        // Preview force-mode takes precedence over editor mode flag.
-        set_env_var(editor_key, "1");
-        assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
-
-        // Preview=true keeps preview regardless of editor kill-switch.
-        set_env_var(editor_key, "0");
-        assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
-
-        // Invalid editor flag does not disable preview=true force mode.
-        set_env_var(preview_key, "1");
-        set_env_var(editor_key, "enabled");
-        assert_eq!(EditorMode::from_env(), EditorMode::VirtualPreview);
-
-        // Falsy preview does not force TextEdit; defaults stay virtual editor.
-        set_env_var(editor_key, "enabled");
-        set_env_var(preview_key, "0");
         assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
-
-        // Explicit kill-switch still works when preview is not truthy.
-        set_env_var(editor_key, "0");
-        set_env_var(preview_key, "0");
-        assert_eq!(EditorMode::from_env(), EditorMode::TextEdit);
-
-        // Empty preview value is falsy and should not change default mode.
-        remove_env_var(editor_key);
-        set_env_var(preview_key, "");
-        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
-
-        // With preview unset and editor unset, default remains virtual editor.
-        remove_env_var(preview_key);
-        remove_env_var(editor_key);
-        assert_eq!(EditorMode::from_env(), EditorMode::VirtualEditor);
-    }
-
-    #[test]
-    fn line_range_chars_includes_newline_for_non_terminal_lines() {
-        assert_line_range_chars_selection("one\ntwo\nthree", 5, "two\n");
-    }
-
-    #[test]
-    fn line_range_chars_excludes_missing_newline_for_last_line() {
-        assert_line_range_chars_selection("one\ntwo", 5, "two");
     }
 
     #[test]
@@ -508,17 +410,5 @@ mod tests {
         assert_eq!(index.line_len_chars(1), 2);
         assert_eq!(index.line_len_chars(2), 1);
         assert_eq!(index.line_without_newline(text, 1), "éç");
-    }
-
-    fn assert_line_range_chars_selection(text: &str, char_index: usize, expected: &str) {
-        let buffer = EditorBuffer::new(text.to_string());
-        let (start, end) = buffer.line_range_chars(char_index);
-        let selected: String = buffer
-            .as_str()
-            .chars()
-            .skip(start)
-            .take(end - start)
-            .collect();
-        assert_eq!(selected, expected);
     }
 }

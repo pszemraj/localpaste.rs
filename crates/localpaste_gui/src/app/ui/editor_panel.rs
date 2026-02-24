@@ -1,4 +1,4 @@
-//! Central editor panel rendering for TextEdit, virtual preview, and virtual editor modes.
+//! Central editor panel rendering for virtual preview and virtual editor modes.
 
 use super::super::*;
 use super::properties_drawer::{
@@ -13,8 +13,6 @@ impl LocalPasteApp {
     /// # Panics
     /// Panics if a virtual-editor highlight row fails internal consistency checks.
     pub(crate) fn render_editor_panel(&mut self, ctx: &egui::Context) {
-        self.text_editor_has_focus = false;
-        self.text_editor_focus_id = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             let selected_meta = self.selected_paste.as_ref().map(|paste| paste.id.clone());
 
@@ -181,7 +179,6 @@ impl LocalPasteApp {
                 );
                 ui.add_space(6.0);
                 let editor_height = ui.available_height();
-                let mut response = None;
                 let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
                 let editor_font = ui
                     .style()
@@ -346,72 +343,11 @@ impl LocalPasteApp {
                         use_plain,
                     );
                 } else {
+                    // Defensive fallback for impossible mode values.
                     self.virtual_editor_active = false;
-                    scroll.show(ui, |ui| {
-                        ui.set_min_size(egui::vec2(ui.available_width(), editor_height));
-                        let rows_that_fit = ((editor_height / row_height).ceil() as usize).max(1);
-
-                        let edit = egui::TextEdit::multiline(&mut self.selected_content)
-                            .id_salt(TEXT_EDITOR_ID)
-                            .font(editor_style)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(rows_that_fit)
-                            .hint_text("Start typing...");
-
-                        let mut editor_cache = std::mem::take(&mut self.editor_cache);
-                        let syntect = &self.syntect;
-                        let highlight_version = self.highlight_version;
-                        let mut layouter =
-                            |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-                                editor_cache.layout(EditorLayoutRequest {
-                                    ui,
-                                    text,
-                                    text_revision: Some(revision),
-                                    wrap_width,
-                                    language_hint: language_hint.as_str(),
-                                    use_plain,
-                                    theme: theme.as_ref(),
-                                    highlight_render: highlight_render_match,
-                                    highlight_version,
-                                    editor_font: &editor_font,
-                                    syntect,
-                                })
-                            };
-                        let disable_builtin_double_click = async_mode;
-                        let previous_double_click = if disable_builtin_double_click {
-                            Some(ui.ctx().options_mut(|options| {
-                                let previous = options.input_options.max_double_click_delay;
-                                options.input_options.max_double_click_delay = 0.0;
-                                previous
-                            }))
-                        } else {
-                            None
-                        };
-                        let output = edit.layouter(&mut layouter).show(ui);
-                        self.text_editor_has_focus = output.response.has_focus();
-                        self.text_editor_focus_id = Some(output.response.id);
-                        if let Some(previous) = previous_double_click {
-                            ui.ctx().options_mut(|options| {
-                                options.input_options.max_double_click_delay = previous;
-                            });
-                        }
-                        self.editor_cache = editor_cache;
-                        if disable_builtin_double_click && output.response.clicked() {
-                            let text_snapshot = self.selected_content.to_string();
-                            self.handle_large_editor_click(&output, &text_snapshot, true);
-                        }
-                        if self.focus_editor_next || output.response.clicked() {
-                            output.response.request_focus();
-                            self.focus_editor_next = false;
-                        }
-                        response = Some(output.response);
-                    });
+                    scroll.show(ui, |_| {});
                 }
                 self.highlight_render = highlight_render;
-                if response.map(|r| r.changed()).unwrap_or(false) {
-                    self.mark_dirty();
-                    let _ = self.selected_content.take_edit_delta();
-                }
             } else if self.selected_id.is_some() {
                 self.virtual_editor_active = false;
                 ui.label(RichText::new("Loading paste...").color(COLOR_TEXT_MUTED));

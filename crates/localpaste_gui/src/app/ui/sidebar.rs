@@ -4,6 +4,24 @@ use super::super::*;
 use eframe::egui::{self, RichText};
 
 const APP_VERSION_LABEL: &str = concat!("- v", env!("CARGO_PKG_VERSION"));
+const SIDEBAR_LANGUAGE_COLUMN_WIDTH: f32 = 84.0;
+
+fn sidebar_row_text_rects(
+    row_rect: egui::Rect,
+    padding_x: f32,
+    spacing_x: f32,
+) -> (egui::Rect, egui::Rect) {
+    let content_rect = row_rect.shrink2(egui::vec2(padding_x, 0.0));
+    let lang_left = (content_rect.right() - SIDEBAR_LANGUAGE_COLUMN_WIDTH).max(content_rect.left());
+    let title_right = (lang_left - spacing_x).max(content_rect.left());
+    let title_rect = egui::Rect::from_min_max(
+        content_rect.min,
+        egui::pos2(title_right, content_rect.max.y),
+    );
+    let lang_rect =
+        egui::Rect::from_min_max(egui::pos2(lang_left, content_rect.min.y), content_rect.max);
+    (title_rect, lang_rect)
+}
 
 impl LocalPasteApp {
     /// Renders the top title/status bar.
@@ -89,9 +107,42 @@ impl LocalPasteApp {
                                     false,
                                     paste.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
                                 );
-                                let label = format!("{}  ({})", paste.name, lang_label);
-                                let response = ui.selectable_label(selected, RichText::new(label));
-                                if response.clicked() {
+                                let row_width = ui.available_width().max(1.0);
+                                let (row_rect, row_response) = ui.allocate_exact_size(
+                                    egui::vec2(row_width, row_height),
+                                    egui::Sense::click(),
+                                );
+                                let row_visuals =
+                                    ui.style().interact_selectable(&row_response, selected);
+                                ui.painter().rect(
+                                    row_rect.expand(row_visuals.expansion),
+                                    row_visuals.corner_radius,
+                                    row_visuals.bg_fill,
+                                    row_visuals.bg_stroke,
+                                    egui::StrokeKind::Middle,
+                                );
+
+                                let (title_rect, lang_rect) = sidebar_row_text_rects(
+                                    row_rect,
+                                    ui.spacing().button_padding.x,
+                                    ui.spacing().item_spacing.x,
+                                );
+                                ui.painter().with_clip_rect(title_rect).text(
+                                    egui::pos2(title_rect.left(), title_rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    paste.name.as_str(),
+                                    egui::TextStyle::Button.resolve(ui.style()),
+                                    row_visuals.text_color(),
+                                );
+                                ui.painter().with_clip_rect(lang_rect).text(
+                                    egui::pos2(lang_rect.right(), lang_rect.center().y),
+                                    egui::Align2::RIGHT_CENTER,
+                                    lang_label.as_str(),
+                                    egui::TextStyle::Small.resolve(ui.style()),
+                                    COLOR_TEXT_MUTED,
+                                );
+
+                                if row_response.on_hover_text(paste.name.as_str()).clicked() {
                                     pending_select = Some(paste.id.clone());
                                 }
                             }
@@ -229,5 +280,34 @@ impl LocalPasteApp {
         if selected_language != self.active_language_filter {
             self.set_active_language_filter(selected_language);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sidebar_row_text_rects;
+    use eframe::egui;
+
+    #[test]
+    fn sidebar_row_text_layout_preserves_left_title_and_right_language_columns() {
+        let row_rect = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(300.0, 28.0));
+        let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0);
+
+        assert!((title_rect.left() - 18.0).abs() < f32::EPSILON);
+        assert!((lang_rect.right() - 302.0).abs() < f32::EPSILON);
+        assert!(title_rect.right() <= lang_rect.left());
+        assert!(title_rect.width() > 0.0);
+        assert!(lang_rect.width() > 0.0);
+    }
+
+    #[test]
+    fn sidebar_row_text_layout_clamps_when_sidebar_is_very_narrow() {
+        let row_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(80.0, 28.0));
+        let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0);
+
+        assert!((title_rect.left() - 8.0).abs() < f32::EPSILON);
+        assert!(title_rect.width() >= 0.0);
+        assert!(lang_rect.left() >= title_rect.left());
+        assert!(lang_rect.right() <= 72.0);
     }
 }

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -86,12 +87,38 @@ def discover_wix_bin() -> Path:
     fail("failed to locate WiX installation candidates")
 
 
-def validate_wix_tools(wix_bin: Path) -> None:
+def validate_wix_tools(wix_bin: Path) -> str:
+    detected_version: str | None = None
+    version_pattern = re.compile(r"version\s+([0-9]+(?:\.[0-9]+){1,3})", re.IGNORECASE)
+
     for executable in ("candle.exe", "light.exe"):
         command = str(wix_bin / executable)
         result = subprocess.run([command, "-?"], capture_output=True, text=True, check=False)
         if result.returncode != 0:
             fail(f"{command} failed self-check with exit code {result.returncode}")
+        if detected_version is None:
+            output = f"{result.stdout}\n{result.stderr}"
+            match = version_pattern.search(output)
+            if match:
+                detected_version = match.group(1)
+
+    if detected_version is None:
+        fail("failed to parse WiX version from candle/light self-check output")
+
+    return detected_version
+
+
+def validate_wix_major_version(version: str, expected_major: int) -> None:
+    major_raw = version.split(".", 1)[0]
+    try:
+        major = int(major_raw)
+    except ValueError as exc:
+        fail(f"failed to parse WiX major version from '{version}': {exc}")
+
+    if major != expected_major:
+        fail(
+            f"unexpected WiX major version: detected={version} expected_major={expected_major}"
+        )
 
 
 def resolve_icon_paths(config_dir: Path, icons: list[str]) -> list[Path]:
@@ -146,6 +173,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--asset-suffix", required=True)
     parser.add_argument("--packager-config", required=True)
     parser.add_argument("--runner-os", required=True)
+    parser.add_argument("--expected-wix-major", type=int, default=3)
     return parser.parse_args()
 
 
@@ -207,10 +235,12 @@ def main() -> int:
 
     if runner_os == "Windows":
         wix_bin = discover_wix_bin()
-        validate_wix_tools(wix_bin)
+        wix_version = validate_wix_tools(wix_bin)
+        validate_wix_major_version(wix_version, args.expected_wix_major)
         wix_root = wix_bin.parent
         append_github_path(wix_bin)
         append_github_env("WIX", str(wix_root))
+        append_github_env("WIX_VERSION_DETECTED", wix_version)
 
     stage_runtime_binary(runner_os=runner_os, target=args.target, asset_suffix=args.asset_suffix)
 

@@ -2,7 +2,6 @@
 
 mod filters;
 
-use super::highlight::EditorLayoutCache;
 use super::util::format_fenced_code_block;
 use super::{
     ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
@@ -342,10 +341,9 @@ impl LocalPasteApp {
         self.command_palette_query = query;
         self.command_palette_selected = 0;
         self.palette_search_last_input_at = Some(Instant::now());
-        if self.command_palette_query.trim().is_empty() {
-            self.palette_search_last_sent.clear();
-            self.palette_search_results.clear();
-        }
+        // Never leave previous-query results visible/actionable after input changes.
+        self.palette_search_last_sent.clear();
+        self.palette_search_results.clear();
     }
 
     fn on_primary_filter_changed(&mut self) {
@@ -431,7 +429,13 @@ impl LocalPasteApp {
             })
             .is_err()
         {
-            self.set_status("Search failed: backend unavailable.");
+            // Avoid per-frame retry storms/toast spam while backend is unavailable.
+            // Re-arm debounce so we retry on a bounded cadence.
+            self.search_last_input_at = Some(Instant::now());
+            const SEARCH_UNAVAILABLE: &str = "Search failed: backend unavailable.";
+            if self.status.as_ref().map(|status| status.text.as_str()) != Some(SEARCH_UNAVAILABLE) {
+                self.set_status(SEARCH_UNAVAILABLE);
+            }
             return;
         }
         self.search_last_sent = query;
@@ -475,7 +479,15 @@ impl LocalPasteApp {
             })
             .is_err()
         {
-            self.set_status("Command palette search failed: backend unavailable.");
+            // Mirror sidebar-search behavior: bounded retry cadence and deduped status.
+            self.palette_search_last_input_at = Some(Instant::now());
+            const PALETTE_SEARCH_UNAVAILABLE: &str =
+                "Command palette search failed: backend unavailable.";
+            if self.status.as_ref().map(|status| status.text.as_str())
+                != Some(PALETTE_SEARCH_UNAVAILABLE)
+            {
+                self.set_status(PALETTE_SEARCH_UNAVAILABLE);
+            }
             return;
         }
         self.palette_search_last_sent = query;
@@ -560,7 +572,6 @@ impl LocalPasteApp {
         self.sync_editor_metadata(&paste);
         self.selected_content.reset(paste.content.clone());
         self.reset_virtual_editor(paste.content.as_str());
-        self.editor_cache = EditorLayoutCache::default();
         self.editor_lines.reset();
         self.virtual_selection.clear();
         self.clear_highlight_state();
@@ -585,7 +596,6 @@ impl LocalPasteApp {
         self.metadata_save_request = None;
         self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
-        self.editor_cache = EditorLayoutCache::default();
         self.editor_lines.reset();
         self.virtual_selection.clear();
         self.clear_highlight_state();

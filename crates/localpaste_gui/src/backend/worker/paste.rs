@@ -46,7 +46,7 @@ pub(super) fn handle_create_paste(state: &mut WorkerState, content: String) {
     }
     let inferred = paste::detect_language(&content);
     let inferred_is_locked = inferred.is_some();
-    let name = naming::generate_name_for_content(&content, inferred.as_deref());
+    let name = naming::generate_name();
     let paste = paste::Paste::new_with_language(content, name, inferred, inferred_is_locked);
     match state.db.pastes.create(&paste) {
         Ok(()) => {

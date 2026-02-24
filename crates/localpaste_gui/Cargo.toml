@@ -29,6 +29,9 @@ rfd = "0.14"
 default = ["magika"]
 magika = ["localpaste_core/magika", "localpaste_server/magika"]
 
+[build-dependencies]
+winresource = "0.1"
+
 [dev-dependencies]
 tempfile.workspace = true
 reqwest = { workspace = true, features = ["json", "blocking"] }

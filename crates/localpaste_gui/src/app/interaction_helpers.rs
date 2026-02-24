@@ -68,12 +68,18 @@ pub(crate) fn is_command_shift_shortcut(modifiers: egui::Modifiers) -> bool {
     modifiers.command && modifiers.shift && !modifiers.alt
 }
 
-/// Returns whether a character should be treated as an editor word character.
+/// Returns whether a character should be treated as an editor "word" character.
+///
+/// This is **code-editor oriented**:
+/// - Unicode alphanumerics count as word characters (`is_alphanumeric`)
+/// - `_` and `$` are included (common identifier characters across languages)
+///
+/// Anything else (whitespace, punctuation, operators) is treated as a boundary.
 ///
 /// # Returns
-/// `true` for ASCII alphanumeric characters and underscores.
+/// `true` when `ch` should be considered part of an identifier-like token.
 pub(crate) fn is_editor_word_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
+    ch.is_alphanumeric() || matches!(ch, '_' | '$')
 }
 
 /// Calculates click streak count for virtual-editor single/double/triple click handling.

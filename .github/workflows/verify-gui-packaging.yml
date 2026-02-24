@@ -22,7 +22,7 @@ jobs:
       PACKAGER_CONFIG: packaging/macos/packager.json
     steps:
       - name: Checkout workflow ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
       - name: Resolve verify tag
@@ -51,16 +51,16 @@ jobs:
             echo "Using ${SOURCE_LABEL}: ${VERIFY_TAG}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: "3.11"
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9  # master @ 2026-02-23
         with:
           toolchain: 1.89.0
           targets: ${{ env.TARGET }}
       - name: Cache Rust build artifacts
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330  # v2.7.8
         with:
           key: verify-gui-packaging-${{ env.TARGET }}
       - name: Workspace check
@@ -153,12 +153,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python .github/scripts/release_gui_prepare.py \
-            --tag "${VERIFY_TAG}" \
-            --target "${TARGET}" \
-            --asset-suffix "${ASSET_SUFFIX}" \
-            --packager-config "${PACKAGER_CONFIG}" \
+          prepare_args=(
+            --tag "${VERIFY_TAG}"
+            --target "${TARGET}"
+            --asset-suffix "${ASSET_SUFFIX}"
+            --packager-config "${PACKAGER_CONFIG}"
             --runner-os "macOS"
+          )
+          if python .github/scripts/release_gui_prepare.py --help 2>&1 | grep -q -- "--expected-wix-major"; then
+            prepare_args+=(--expected-wix-major 3)
+          else
+            echo "release_gui_prepare.py does not support --expected-wix-major; skipping explicit WiX major assertion"
+          fi
+          python .github/scripts/release_gui_prepare.py "${prepare_args[@]}"
       - name: Build installer packages
         run: python -c "import os, subprocess; subprocess.run(['cargo', 'packager', '--config', os.environ['PACKAGER_CONFIG_PATH']], check=True)"
       - name: Sign, notarize, and verify macOS artifacts
@@ -205,6 +212,52 @@ jobs:
           xcrun stapler staple "${APP_BUNDLE}"
           xcrun stapler staple "${DMG_PATH}"
           spctl --assess --type open --verbose=4 "${DMG_PATH}"
+      - name: Verify signed app bundle inside DMG
+        if: steps.mac_signing.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGER_DIR="dist/packager/${ASSET_SUFFIX}"
+          DMG_PATH="$(find "${PACKAGER_DIR}" -maxdepth 4 -type f -name '*.dmg' | head -n 1)"
+          if [[ -z "${DMG_PATH}" ]]; then
+            echo "failed to find .dmg under ${PACKAGER_DIR}" >&2
+            exit 1
+          fi
+
+          MOUNT_POINT="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "${MOUNT_POINT}" >/dev/null 2>&1 || true
+            rm -rf "${MOUNT_POINT}"
+          }
+          trap cleanup EXIT
+
+          hdiutil attach "${DMG_PATH}" -mountpoint "${MOUNT_POINT}" -nobrowse -quiet
+          MOUNTED_APP="$(find "${MOUNT_POINT}" -maxdepth 3 -type d -name '*.app' | head -n 1)"
+          if [[ -z "${MOUNTED_APP}" ]]; then
+            echo "failed to find .app inside mounted DMG ${DMG_PATH}" >&2
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "${MOUNTED_APP}"
+          spctl --assess --type execute --verbose=4 "${MOUNTED_APP}"
+      - name: Verify macOS DMG usability
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGER_DIR="dist/packager/${ASSET_SUFFIX}"
+          DMG_PATH="$(find "${PACKAGER_DIR}" -maxdepth 4 -type f -name '*.dmg' | head -n 1)"
+          if [[ -z "${DMG_PATH}" ]]; then
+            echo "failed to find .dmg under ${PACKAGER_DIR}" >&2
+            exit 1
+          fi
+
+          hdiutil verify "${DMG_PATH}"
+          hdiutil imageinfo "${DMG_PATH}" > /tmp/localpaste-dmg-imageinfo.txt
+          if ! grep -Eq "Format:\s+UD" /tmp/localpaste-dmg-imageinfo.txt; then
+            echo "unexpected DMG format reported by hdiutil imageinfo" >&2
+            cat /tmp/localpaste-dmg-imageinfo.txt >&2
+            exit 1
+          fi
       - name: Collect release assets
         shell: bash
         run: |
@@ -214,7 +267,7 @@ jobs:
             --asset-suffix "${ASSET_SUFFIX}" \
             --runner-os "macOS"
       - name: Upload macOS verify artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1  # v4.6.1
         with:
           name: verify-gui-packaging-${{ env.ASSET_SUFFIX }}-${{ github.run_id }}
           path: dist/release/${{ env.ASSET_SUFFIX }}/*

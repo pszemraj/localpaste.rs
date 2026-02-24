@@ -293,7 +293,7 @@ impl LocalPasteApp {
                     } else {
                         let cursor = self.virtual_editor_state.cursor();
                         let end = if *word {
-                            self.virtual_word_right(cursor)
+                            self.virtual_word_right_end(cursor)
                         } else {
                             cursor
                                 .saturating_add(1)
@@ -311,6 +311,61 @@ impl LocalPasteApp {
                     }
                     self.virtual_editor_state.clear_preferred_column();
                 }
+                VirtualInputCommand::DeleteToLineStart => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
+                    if let Some(range) = self.virtual_editor_state.selection_range() {
+                        result.changed |= self.replace_virtual_range(
+                            range,
+                            "",
+                            EditIntent::DeleteBackward,
+                            true,
+                            now,
+                        );
+                    } else {
+                        let cursor = self.virtual_editor_state.cursor();
+                        let (line, _) = self.virtual_editor_buffer.char_to_line_col(cursor);
+                        let start = self.virtual_editor_buffer.line_col_to_char(line, 0);
+                        if start < cursor {
+                            result.changed |= self.replace_virtual_range(
+                                start..cursor,
+                                "",
+                                EditIntent::DeleteBackward,
+                                true,
+                                now,
+                            );
+                        }
+                    }
+                    self.virtual_editor_state.clear_preferred_column();
+                }
+                VirtualInputCommand::DeleteToLineEnd => {
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
+                    if let Some(range) = self.virtual_editor_state.selection_range() {
+                        result.changed |= self.replace_virtual_range(
+                            range,
+                            "",
+                            EditIntent::DeleteForward,
+                            true,
+                            now,
+                        );
+                    } else {
+                        let cursor = self.virtual_editor_state.cursor();
+                        let (line, _) = self.virtual_editor_buffer.char_to_line_col(cursor);
+                        let end = self
+                            .virtual_editor_buffer
+                            .line_col_to_char(line, self.virtual_line_render_chars(line));
+                        if end > cursor {
+                            result.changed |= self.replace_virtual_range(
+                                cursor..end,
+                                "",
+                                EditIntent::DeleteForward,
+                                true,
+                                now,
+                            );
+                        }
+                    }
+                    self.virtual_editor_state.clear_preferred_column();
+                }
+
                 VirtualInputCommand::MoveLeft { select, word } => {
                     let cursor = self.virtual_editor_state.cursor();
                     let target = if !select {
@@ -362,6 +417,28 @@ impl LocalPasteApp {
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::MoveHome { select } => {
+                    let (target, _) =
+                        self.virtual_visual_row_bounds(self.virtual_editor_state.cursor());
+                    let target = self.clamp_virtual_cursor_for_render(target);
+                    self.virtual_editor_state.move_cursor(
+                        target,
+                        self.virtual_editor_buffer.len_chars(),
+                        *select,
+                    );
+                    self.virtual_editor_state.clear_preferred_column();
+                }
+                VirtualInputCommand::MoveEnd { select } => {
+                    let (_, target) =
+                        self.virtual_visual_row_bounds(self.virtual_editor_state.cursor());
+                    let target = self.clamp_virtual_cursor_for_render(target);
+                    self.virtual_editor_state.move_cursor(
+                        target,
+                        self.virtual_editor_buffer.len_chars(),
+                        *select,
+                    );
+                    self.virtual_editor_state.clear_preferred_column();
+                }
+                VirtualInputCommand::MoveLineHome { select } => {
                     let (line, _) = self
                         .virtual_editor_buffer
                         .char_to_line_col(self.virtual_editor_state.cursor());
@@ -375,14 +452,16 @@ impl LocalPasteApp {
                     );
                     self.virtual_editor_state.clear_preferred_column();
                 }
-                VirtualInputCommand::MoveEnd { select } => {
+                VirtualInputCommand::MoveLineEnd { select } => {
                     let (line, _) = self
                         .virtual_editor_buffer
                         .char_to_line_col(self.virtual_editor_state.cursor());
-                    let target = self
-                        .virtual_editor_buffer
-                        .line_col_to_char(line, self.virtual_line_render_chars(line));
-                    let target = self.clamp_virtual_cursor_for_render(target);
+                    let target = self.clamp_virtual_cursor_for_render(
+                        self.virtual_editor_buffer.line_col_to_char(
+                            line,
+                            self.virtual_editor_buffer.line_len_chars(line),
+                        ),
+                    );
                     self.virtual_editor_state.move_cursor(
                         target,
                         self.virtual_editor_buffer.len_chars(),
@@ -390,6 +469,26 @@ impl LocalPasteApp {
                     );
                     self.virtual_editor_state.clear_preferred_column();
                 }
+                VirtualInputCommand::MoveDocHome { select } => {
+                    let target = self.clamp_virtual_cursor_for_render(0);
+                    self.virtual_editor_state.move_cursor(
+                        target,
+                        self.virtual_editor_buffer.len_chars(),
+                        *select,
+                    );
+                    self.virtual_editor_state.clear_preferred_column();
+                }
+                VirtualInputCommand::MoveDocEnd { select } => {
+                    let target = self
+                        .clamp_virtual_cursor_for_render(self.virtual_editor_buffer.len_chars());
+                    self.virtual_editor_state.move_cursor(
+                        target,
+                        self.virtual_editor_buffer.len_chars(),
+                        *select,
+                    );
+                    self.virtual_editor_state.clear_preferred_column();
+                }
+
                 VirtualInputCommand::MoveUp { select } => {
                     let preferred =
                         self.virtual_editor_state
