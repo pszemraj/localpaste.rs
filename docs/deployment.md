@@ -32,7 +32,7 @@ nohup "$HOME/.cargo/bin/localpaste" > ~/.cache/localpaste/server.log 2>&1 &
 echo $! > ~/.cache/localpaste/localpaste.pid
 ```
 
-Writer/lock contract and `DB_PATH` safety rules are canonical in:
+Writer/lock contract and `DB_PATH` safety rules are documented in:
 [storage.md](storage.md) and [dev/locking-model.md](dev/locking-model.md).
 
 ## Process Management
@@ -212,7 +212,7 @@ Operator guidance:
 - Prefer explicit `--server`/`LP_SERVER` for deterministic automation.
 - Use `lpaste --no-discovery ...` to disable `.api-addr` discovery.
 
-Canonical behavior contract (trust checks, fallback rules, and header verification):
+Discovery behavior details (trust checks, fallback rules, and header verification):
 
 - [architecture.md](architecture.md#10-discovery-and-trust)
 - [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)

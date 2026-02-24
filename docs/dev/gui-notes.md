@@ -3,7 +3,7 @@
 Use this document for rewrite GUI runtime flags and interaction contracts.
 Detection/normalization/highlight semantics are defined in
 [docs/language-detection.md](../language-detection.md)
-and should be treated as canonical.
+and own those behavior details.
 For perf validation steps/gates, use
 [docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
 
@@ -71,7 +71,7 @@ Use this checklist when touching detection/highlight/filter code.
 7. Validate alias interoperability in UI filtering:
    - Set active language filter to `cs`; verify both `csharp` and `cs` pastes remain visible.
    - Set active language filter to `shell`; verify `bash`/`sh` labeled content matches.
-8. Validate syntax resolver behavior against the canonical matrix in
+8. Validate syntax resolver behavior against the matrix in
    [docs/language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.

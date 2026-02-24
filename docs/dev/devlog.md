@@ -84,7 +84,7 @@ For repeatable GUI perf validation, see
 
 ## Validation Loop
 
-Policy source of truth:
+Policy reference:
 This document and linked `docs/dev/*` references define mandatory validation gates and when smoke/manual GUI checks are required.
 This section is the quick command reference used during active development.
 
@@ -108,14 +108,14 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 # cargo test -p <crate>
 
 # 7) runtime smoke (server + CLI + restart persistence)
-# run the canonical smoke runbook:
+# run the smoke runbook:
 # docs/dev/devlog.md#runtime-smoke-test-server-cli
 
 # 8) docs contract check
 rustdoc-checker crates --strict
 ```
 
-- Canonical manual GUI checklist:
+- Manual GUI checklist:
   [docs/dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
 
 Language detection/normalization/highlight behavior is tracked in
@@ -123,7 +123,7 @@ Language detection/normalization/highlight behavior is tracked in
 
 ## Runtime Smoke Test (Server CLI)
 
-Use this as the canonical API/core smoke runbook.
+Use this API/core smoke runbook.
 It validates CRUD behavior and persistence across process restart.
 
 ### Bash
@@ -186,8 +186,8 @@ Remove-Item -Recurse -Force $env:DB_PATH
 
 ## Tooling CLI Contracts
 
-Use this section as the source of truth for `localpaste_tools` CLI behavior
-that affects automation/CI contracts.
+This section documents `localpaste_tools` CLI behavior
+used in automation/CI contracts.
 
 ### `check-loc`
 
@@ -219,7 +219,7 @@ that affects automation/CI contracts.
 
 ## GUI Release Pipeline
 
-Canonical release contract:
+Release contract details:
 [docs/release-gui.md](../release-gui.md).
 
 Dev-facing quick links:

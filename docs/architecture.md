@@ -266,7 +266,7 @@ Relevant code:
 
 ## 11) Validation Strategy
 
-Validation source of truth is maintained in:
+Validation references:
 
 - [dev/devlog.md#validation-loop](dev/devlog.md#validation-loop)
 - [dev/devlog.md#runtime-smoke-test-server-cli](dev/devlog.md#runtime-smoke-test-server-cli)

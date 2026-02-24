@@ -1,6 +1,6 @@
 # GUI Release Pipeline
 
-This document is the canonical release contract for GUI packaging and publication.
+This document defines release pipeline behavior for GUI packaging and publication.
 
 Primary implementation:
 

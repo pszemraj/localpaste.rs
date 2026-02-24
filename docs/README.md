@@ -1,12 +1,12 @@
 # Docs
 
 Documentation index for LocalPaste.
-Use this page as the canonical map of where each concept is defined.
-When two docs overlap, defer to the "Primary Source" listed below.
+Use this page to locate where each concept is defined.
+When two docs overlap, follow the reference listed below.
 
-## Canonical Sources
+## Reference Map
 
-| Concept                                                | Primary Source                                                                                        |
+| Concept                                                | Reference                                                                                             |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | Product overview + quick start                         | [README.md](../README.md)                                                                             |
 | Runtime topology + endpoint discovery/trust            | [docs/architecture.md#2-runtime-topologies](architecture.md#2-runtime-topologies)                     |
