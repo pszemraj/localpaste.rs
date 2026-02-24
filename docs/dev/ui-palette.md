@@ -19,7 +19,9 @@ These palette values are defined in the rewrite theme module:
 
 ## Editor Font
 
-The native editor uses [the 0xProto font](https://github.com/0xType/0xProto) (Regular NL) under the SIL Open Font License ([release 2.502](https://github.com/0xType/0xProto/releases/tag/2.502))
+The native editor uses the bundled `0xProto-Regular-NL.ttf`.
 
-Font files and license live at
-[`../../assets/fonts/0xProto`](../../assets/fonts/0xProto).
+Local source-of-truth files:
+
+- Font file: [`../../assets/fonts/0xProto/0xProto-Regular-NL.ttf`](../../assets/fonts/0xProto/0xProto-Regular-NL.ttf)
+- Font license: [`../../assets/fonts/0xProto/LICENSE`](../../assets/fonts/0xProto/LICENSE)

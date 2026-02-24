@@ -62,9 +62,7 @@ Use this checklist when touching detection/highlight/filter code.
    - unsupported labels should remain metadata-visible while rendering plain text.
 9. Validate large-buffer guardrail:
    - Paste content >= 256KB and verify display is plain regardless of language metadata.
-10. Re-run shortcut sanity checks after language UI edits:
-
-- `Ctrl/Cmd+S`, `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+F`, `Ctrl/Cmd+Shift+P`.
+10. Re-run shortcut sanity checks after language UI edits (`Ctrl/Cmd+S`, `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+F`, `Ctrl/Cmd+Shift+P`).
 
 ## Manual GUI Human-Step Checklist (Comprehensive)
 

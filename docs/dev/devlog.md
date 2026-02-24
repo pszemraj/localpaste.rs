@@ -152,17 +152,16 @@ that affects automation/CI contracts.
 Canonical release contract:
 [docs/release-gui.md](../release-gui.md).
 
-This dev guide only tracks development-facing implications:
+Dev-facing quick links:
 
-- Workflow entrypoint: [`.github/workflows/release-gui.yml`](../../.github/workflows/release-gui.yml)
-- Packaging configs:
+- Release workflow: [`.github/workflows/release-gui.yml`](../../.github/workflows/release-gui.yml)
+- Packaging verification workflow: [`.github/workflows/verify-gui-packaging.yml`](../../.github/workflows/verify-gui-packaging.yml)
+- Packaging config roots:
   - [`../../packaging/windows/packager.json`](../../packaging/windows/packager.json)
   - [`../../packaging/linux/packager.json`](../../packaging/linux/packager.json)
   - [`../../packaging/macos/packager.json`](../../packaging/macos/packager.json)
-- Release workflow validation gates:
-  - tag sanity and tag/version match
-  - server+CLI smoke with restart persistence
-- Release workflow intentionally excludes workspace-wide lint/format policy checks (`fmt --check`, `clippy`, `check`, `check-loc`, `check-ast-dupes`) to keep runtime packaging runs scoped.
+
+Release workflows intentionally keep validation scoped to packaging/runtime gates rather than running the full local development loop.
 
 ## Behavior Contracts
 

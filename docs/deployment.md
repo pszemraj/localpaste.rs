@@ -79,14 +79,16 @@ Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
 
 ### Lock Safety
 
-This section contains operational guidance for writer coordination.
-Security policy context remains in [security.md](security.md).
-Lock behavior semantics are documented in [dev/locking-model.md](dev/locking-model.md).
+Operational guidance:
 
-- LocalPaste uses a process-lifetime owner lock file (`db.owner.lock`) in the DB directory.
-- Startup acquires that owner lock before opening redb; a second writer on the same `DB_PATH` is rejected.
-- There is no `--force-unlock` mode. Stop the owning process and retry.
-- Prefer changing `DB_PATH` for isolated tests over sharing one working directory.
+- Use one writer process per `DB_PATH`.
+- If lock acquisition fails, stop the owning process and retry (there is no `--force-unlock` path).
+- Prefer unique `DB_PATH` values for concurrent local experiments instead of sharing one DB directory.
+
+Canonical lock semantics and error contracts:
+
+- [dev/locking-model.md](dev/locking-model.md)
+- [storage.md](storage.md)
 
 ## Linux (systemd)
 

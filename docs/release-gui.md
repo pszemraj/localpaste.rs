@@ -2,7 +2,12 @@
 
 This document is the canonical release contract for GUI packaging and publication.
 
-Primary implementation: [`.github/workflows/release-gui.yml`](../.github/workflows/release-gui.yml), [`.github/scripts/release_gui_prepare.py`](../.github/scripts/release_gui_prepare.py), [`.github/scripts/release_gui_collect.py`](../.github/scripts/release_gui_collect.py).
+Primary implementation:
+
+- [`.github/workflows/release-gui.yml`](../.github/workflows/release-gui.yml)
+- [`.github/workflows/verify-gui-packaging.yml`](../.github/workflows/verify-gui-packaging.yml)
+- [`.github/scripts/release_gui_prepare.py`](../.github/scripts/release_gui_prepare.py)
+- [`.github/scripts/release_gui_collect.py`](../.github/scripts/release_gui_collect.py)
 
 ## Modes
 
@@ -37,6 +42,17 @@ Packaging verification checks include:
 - Windows: MSI presence + non-empty payload + administrative extraction contains `localpaste.exe`.
 - Linux: AppImage presence + non-empty payload + runtime metadata check via `--appimage-version`.
 - macOS: DMG integrity/format validation, plus signed-bundle verification inside mounted DMG when notarization secrets are present.
+
+## CI Integrity Controls
+
+Release/packaging workflows enforce these baseline controls:
+
+- Least privilege by default: workflow-level `permissions: contents: read`, with publish-only elevation to `contents: write`.
+- Immutable action pinning (`uses:` entries pinned to commit SHAs) for release-critical jobs.
+- Deterministic source checkout for packaging jobs via resolved `SOURCE_REF` (no selective tree overlay from a different ref).
+- Windows WiX toolchain pinning (`3.14.1`) plus major-version assertion in `release_gui_prepare.py`.
+
+These controls are part of the release contract and should be preserved when editing release workflows.
 
 ## macOS Signing And Notarization
 
