@@ -689,6 +689,13 @@ impl LocalPasteApp {
             language_hint: language_hint.to_string(),
             theme_key: theme_key.to_string(),
         });
-        let _ = self.highlight_worker.tx.send(request);
+        if let Err(err) = self.highlight_worker.tx.send(request) {
+            // Worker channel is unavailable; do not leave a phantom pending request
+            // that would suppress future highlight dispatch attempts.
+            self.highlight_pending = None;
+            self.trace_highlight_lazy("send_fail", || {
+                format!("highlight request dispatch failed: {}", err)
+            });
+        }
     }
 }

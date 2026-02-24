@@ -281,6 +281,93 @@ fn palette_search_result_updates_keep_absolute_selection_space() {
 }
 
 #[test]
+fn palette_query_change_clears_stale_results_immediately() {
+    let mut harness = make_app();
+    harness.app.command_palette_open = true;
+    harness.app.command_palette_query = "legacy".to_string();
+    harness.app.palette_search_last_sent = "legacy".to_string();
+    harness.app.palette_search_results = vec![test_summary("old-id", "legacy row", None, 8)];
+
+    harness.app.set_command_palette_query("new".to_string());
+
+    assert_eq!(harness.app.command_palette_selected, 0);
+    assert!(harness.app.palette_search_last_sent.is_empty());
+    assert!(
+        harness.app.palette_search_results.is_empty(),
+        "results from previous query must never stay actionable"
+    );
+}
+
+#[test]
+fn failed_sidebar_search_dispatch_is_debounced_and_status_deduped() {
+    let mut harness = make_app();
+    let (dead_cmd_tx, dead_cmd_rx) = unbounded::<CoreCmd>();
+    drop(dead_cmd_rx);
+    let (_evt_tx, evt_rx) = unbounded();
+    harness.app.backend = BackendHandle::from_test_channels(dead_cmd_tx, evt_rx);
+
+    harness.app.set_search_query("rust".to_string());
+    harness.app.search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_search();
+
+    let expected = "Search failed: backend unavailable.";
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some(expected)
+    );
+    let toast_len = harness.app.toasts.len();
+
+    // Immediate retry should be throttled by debounce timestamp re-arming.
+    harness.app.maybe_dispatch_search();
+    assert_eq!(harness.app.toasts.len(), toast_len);
+
+    // Even when retry window is manually advanced, duplicate status should not spam toasts.
+    harness.app.search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_search();
+    assert_eq!(harness.app.toasts.len(), toast_len);
+}
+
+#[test]
+fn failed_palette_search_dispatch_is_debounced_and_status_deduped() {
+    let mut harness = make_app();
+    harness.app.command_palette_open = true;
+    harness.app.set_command_palette_query("alpha".to_string());
+    let (dead_cmd_tx, dead_cmd_rx) = unbounded::<CoreCmd>();
+    drop(dead_cmd_rx);
+    let (_evt_tx, evt_rx) = unbounded();
+    harness.app.backend = BackendHandle::from_test_channels(dead_cmd_tx, evt_rx);
+
+    harness.app.palette_search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_palette_search();
+
+    let expected = "Command palette search failed: backend unavailable.";
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some(expected)
+    );
+    let toast_len = harness.app.toasts.len();
+
+    harness.app.maybe_dispatch_palette_search();
+    assert_eq!(harness.app.toasts.len(), toast_len);
+
+    harness.app.palette_search_last_input_at =
+        Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
+    harness.app.maybe_dispatch_palette_search();
+    assert_eq!(harness.app.toasts.len(), toast_len);
+}
+
+#[test]
 fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
     enum DispatchKind {
         SidebarSearch,

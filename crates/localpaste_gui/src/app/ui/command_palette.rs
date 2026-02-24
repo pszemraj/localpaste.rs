@@ -76,7 +76,7 @@ impl LocalPasteApp {
                     }
                     return;
                 }
-                self.clamp_command_palette_selection();
+                self.clamp_command_palette_selection_with_results_len(results.len());
 
                 if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                     self.command_palette_selected =
@@ -241,10 +241,6 @@ impl LocalPasteApp {
         if self.command_palette_selected >= total_items {
             self.command_palette_selected = total_items.saturating_sub(1);
         }
-    }
-
-    fn clamp_command_palette_selection(&mut self) {
-        self.clamp_command_palette_selection_with_results_len(self.palette_results().len());
     }
 
     fn command_palette_actions(&self) -> Vec<CommandPaletteItem> {

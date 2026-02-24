@@ -2,7 +2,7 @@
 
 use super::super::highlight::{
     EditorLayoutCache, EditorLayoutRequest, HighlightPatch, HighlightRenderLine,
-    HighlightRequestMeta, HighlightRequestText, SyntectSettings, VirtualEditHint,
+    HighlightRequestMeta, HighlightRequestText, HighlightWorker, SyntectSettings, VirtualEditHint,
 };
 use super::*;
 
@@ -873,5 +873,27 @@ fn highlight_debounce_window_adapts_to_edit_size_and_buffer() {
             .app
             .highlight_debounce_window(HIGHLIGHT_DEBOUNCE_LARGE_BYTES, true),
         HIGHLIGHT_DEBOUNCE_LARGE
+    );
+}
+
+#[test]
+fn dispatch_highlight_request_clears_pending_when_worker_channel_is_closed() {
+    let mut harness = make_app();
+    let (tx, rx_cmd) = unbounded();
+    drop(rx_cmd);
+    let (_tx_evt, rx_evt) = unbounded();
+    harness.app.highlight_worker = HighlightWorker { tx, rx: rx_evt };
+
+    harness.app.dispatch_highlight_request(
+        harness.app.active_revision(),
+        HighlightRequestText::Owned("fn main() {}\n".to_string()),
+        "rust",
+        "base16-mocha.dark",
+        "alpha",
+    );
+
+    assert!(
+        harness.app.highlight_pending.is_none(),
+        "failed dispatch must not leave phantom pending request state"
     );
 }
