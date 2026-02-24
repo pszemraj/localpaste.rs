@@ -212,7 +212,7 @@ fn map_navigation_key(
                 if modifiers.ctrl {
                     Some(VirtualInputCommand::MoveDocHome { select })
                 } else {
-                    Some(VirtualInputCommand::MoveHome { select })
+                    Some(VirtualInputCommand::MoveLineHome { select })
                 }
             }
         },
@@ -228,7 +228,7 @@ fn map_navigation_key(
                 if modifiers.ctrl {
                     Some(VirtualInputCommand::MoveDocEnd { select })
                 } else {
-                    Some(VirtualInputCommand::MoveEnd { select })
+                    Some(VirtualInputCommand::MoveLineEnd { select })
                 }
             }
         },
@@ -691,8 +691,36 @@ mod tests {
         assert_eq!(
             non_mac_commands,
             vec![
-                VirtualInputCommand::MoveHome { select: false },
-                VirtualInputCommand::MoveEnd { select: false },
+                VirtualInputCommand::MoveLineHome { select: false },
+                VirtualInputCommand::MoveLineEnd { select: false },
+            ]
+        );
+    }
+
+    #[test]
+    fn maps_shift_home_end_to_line_selection_on_non_mac() {
+        let events = vec![
+            key_event(
+                egui::Key::Home,
+                egui::Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
+            key_event(
+                egui::Key::End,
+                egui::Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
+        ];
+        let commands = commands_from_events_for_platform(&events, true, PlatformFlavor::Other);
+        assert_eq!(
+            commands,
+            vec![
+                VirtualInputCommand::MoveLineHome { select: true },
+                VirtualInputCommand::MoveLineEnd { select: true },
             ]
         );
     }

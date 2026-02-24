@@ -44,6 +44,12 @@ impl LocalPasteApp {
                         .color(COLOR_TEXT_MUTED),
                 );
                 shortcut_row(ui, "Arrow Up/Down", "Navigate paste list and palette");
+                shortcut_row(ui, "Home/End", "Move caret to line start/end");
+                shortcut_row(
+                    ui,
+                    "Ctrl+Home/End (Win/Linux) or Cmd+Up/Down (macOS)",
+                    "Move caret to document start/end",
+                );
                 shortcut_row(ui, "Enter", "Open selected command palette result");
                 shortcut_row(ui, "Esc", "Close command palette/window");
                 shortcut_row(ui, "Ctrl/Cmd+C", "Copy selected text");
