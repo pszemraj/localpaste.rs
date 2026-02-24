@@ -94,11 +94,11 @@ Policy:
 - Keep explicit fallback mapping narrow and intentional.
 - Preserve unsupported-language visibility by keeping their metadata labels even when rendering falls back to plain text.
 
-The canonical fallback candidate mapping is defined in:
+Fallback candidate mapping lives in:
 
 - [`../crates/localpaste_gui/src/app/highlight/syntax.rs`](../crates/localpaste_gui/src/app/highlight/syntax.rs) (`syntax_fallback_candidates`)
 
-The canonical fallback coverage matrix is tested in:
+Fallback coverage tests live in:
 
 - [`../crates/localpaste_gui/src/app/highlight/worker.rs`](../crates/localpaste_gui/src/app/highlight/worker.rs) (`resolver_tests`)
 
@@ -108,7 +108,7 @@ Examples covered by the resolver tests include:
 - metadata-only/plain-render labels (for example: `zig`, `kotlin`, `dart`)
 
 > [!NOTE]
-> Keep code/tests as the authoritative mapping and coverage list to avoid doc drift.
+> Keep docs aligned with code/tests to avoid drift.
 > Metadata-only labels remain useful for search/filtering even when rendering is plain text.
 
 ## Virtual Editor Async Highlight Flow

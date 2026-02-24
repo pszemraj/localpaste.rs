@@ -12,13 +12,13 @@ LocalPaste provides:
 - Headless API server (`localpaste`) for automation/integration
 - CLI client (`lpaste`) for terminal workflows
 
-Runtime note:
+Runtime contract references:
 
-- `localpaste-gui` opens and owns the DB path, and runs an embedded API endpoint for compatibility while GUI is open.
-- `localpaste` is the headless alternative and should not be run concurrently on the same `DB_PATH` as the GUI.
+- GUI-owned runtime topology + endpoint discovery: [`docs/architecture.md`](docs/architecture.md)
+- Single-writer `DB_PATH` and lock-file contract: [`docs/storage.md`](docs/storage.md)
 
 > [!WARNING]
-> Do not run `localpaste-gui` and standalone `localpaste` against the same `DB_PATH` at the same time.
+> Keep exactly one writer process per `DB_PATH` (`localpaste-gui` or standalone `localpaste`).
 
 ## Quick Start
 
@@ -91,7 +91,7 @@ sha256sum -c checksums.sha256
 ```
 
 ```powershell
-Get-FileHash .\localpaste-v0.4.4-windows-x86_64.msi -Algorithm SHA256
+Get-FileHash .\localpaste-v<tag>-windows-x86_64.msi -Algorithm SHA256
 ```
 
 ## Configuration and Ops
@@ -102,6 +102,7 @@ Get-FileHash .\localpaste-v0.4.4-windows-x86_64.msi -Algorithm SHA256
 - Security and environment variables: [`docs/security.md`](docs/security.md)
 - Service/background operation: [`docs/deployment.md`](docs/deployment.md)
 - Locking semantics (_owner lock + paste edit locks_): [`docs/dev/locking-model.md`](docs/dev/locking-model.md)
+- GUI keyboard/navigation contract: [`docs/dev/gui-notes.md#keyboard-and-navigation-contract`](docs/dev/gui-notes.md#keyboard-and-navigation-contract)
 - GUI release pipeline and artifact contract: [`docs/release-gui.md`](docs/release-gui.md)
 - Documentation index: [`docs/README.md`](docs/README.md)
 

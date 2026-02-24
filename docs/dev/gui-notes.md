@@ -1,9 +1,9 @@
 # GUI Notes
 
-Use this document for rewrite GUI behavior notes and env flags.
+Use this document for rewrite GUI runtime flags and interaction contracts.
 Detection/normalization/highlight semantics are defined in
 [docs/language-detection.md](../language-detection.md)
-and should be treated as canonical.
+and own those behavior details.
 For perf validation steps/gates, use
 [docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
 
@@ -16,6 +16,27 @@ For perf validation steps/gates, use
 - `LOCALPASTE_LOG_FILE=<path>`: append GUI tracing logs to a file (useful on Windows release builds where no console is shown).
 - Boolean flags accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
 - Unrecognized flag values emit a warning and are treated as unset/false (shared parser behavior across core/server/gui env flags).
+
+## Keyboard And Navigation Contract
+
+Shortcut contract:
+
+- `Ctrl/Cmd+N`: create/select new paste.
+- `Ctrl/Cmd+S`: save content + metadata.
+- `Ctrl/Cmd+Delete`: delete selected paste when text input does not own focus.
+- `Ctrl/Cmd+F`: focus sidebar search.
+- `Ctrl/Cmd+Shift+P`: toggle command palette.
+- `Ctrl/Cmd+K`: toggle command palette (legacy alias).
+- `Ctrl/Cmd+I`: toggle Properties drawer.
+- `Ctrl/Cmd+V`: insert when editor is focused; create new paste from clipboard when editor is not focused.
+- `Ctrl/Cmd+Shift+V`: explicit "force paste as new" fallback.
+
+Navigation/selection contract:
+
+- Global sidebar navigation via `Up`/`Down` is bare-arrow only; modified arrows (`Ctrl`/`Alt`/`Shift`/`Cmd`) stay in editor-selection semantics.
+- Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).
+- Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
+- Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
 
 ## Stable Behavior Notes
 
@@ -32,12 +53,6 @@ For perf validation steps/gates, use
 - Rename/title edits commit on `Enter` and on title-field blur.
 - Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
 - Folder create/edit/move controls are intentionally removed from the rewrite GUI; organization is smart-filter + search based.
-- Global sidebar navigation via `Up`/`Down` is bare-arrow only; modified arrows (`Ctrl`/`Alt`/`Shift`/`Cmd`) stay in editor-selection semantics.
-- Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).
-- Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
-- Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
-- `Ctrl/Cmd+V` is the primary paste contract: when editor is focused it inserts; when editor is not focused it creates a new paste from clipboard.
-- `Ctrl/Cmd+Shift+V` remains available as an explicit "force paste as new" fallback.
 
 ## Language/Highlight QA (Magika + Fallback)
 
@@ -56,13 +71,15 @@ Use this checklist when touching detection/highlight/filter code.
 7. Validate alias interoperability in UI filtering:
    - Set active language filter to `cs`; verify both `csharp` and `cs` pastes remain visible.
    - Set active language filter to `shell`; verify `bash`/`sh` labeled content matches.
-8. Validate syntax resolver behavior against the canonical matrix in
+8. Validate syntax resolver behavior against the matrix in
    [docs/language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.
 9. Validate large-buffer guardrail:
    - Paste content >= 256KB and verify display is plain regardless of language metadata.
-10. Re-run shortcut sanity checks after language UI edits (`Ctrl/Cmd+S`, `Ctrl/Cmd+N`, `Ctrl/Cmd+Delete`, `Ctrl/Cmd+F`, `Ctrl/Cmd+Shift+P`).
+10. Re-run keyboard/navigation sanity checks listed in
+    [Keyboard And Navigation Contract](#keyboard-and-navigation-contract)
+    after language UI edits.
 
 ## Manual GUI Human-Step Checklist (Comprehensive)
 
@@ -84,14 +101,10 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - Click editor, type a character, caret remains visible and blinking.
    - Focus stays in editor during in-editor interaction.
    - Focus blurs only when clicking outside editor or when the app window loses focus.
-4. Core shortcuts:
-   - `Ctrl/Cmd+N`: creates/selects a new paste.
-   - `Ctrl/Cmd+S`: save transitions status from dirty -> saved.
-   - `Ctrl/Cmd+Delete`: deletes selected paste only when no text-input context owns keyboard focus.
-   - `Ctrl/Cmd+F`: focuses sidebar search input.
-   - `Ctrl/Cmd+Shift+P`: opens command palette.
-   - `Ctrl/Cmd+K`: toggles command palette (legacy alias).
-   - `Ctrl/Cmd+I`: toggles Properties drawer.
+4. Core shortcuts and navigation:
+   - Verify all contracts in
+     [Keyboard And Navigation Contract](#keyboard-and-navigation-contract).
+   - Confirm save transitions dirty -> saved after `Ctrl/Cmd+S`.
 5. Command palette actions:
    - Open selected paste from palette.
    - Delete from palette and confirm list removal.
@@ -144,7 +157,7 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
     - Highlight trace logs show queue/worker/apply flow with stale drops when applicable.
     - Perf logs emit frame percentiles (`avg/p50/p95/p99/worst`) periodically.
 20. Persistence check:
-    - Close GUI and relaunch with same `DB_PATH` (kept by `-KeepDb`), verify seeded/edited content persists.
+    - Close GUI and relaunch with the same `DB_PATH`; verify seeded/edited content persists.
 
 ## Edit Locks
 

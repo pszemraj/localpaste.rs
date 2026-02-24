@@ -21,7 +21,7 @@ These palette values are defined in the rewrite theme module:
 
 The native editor uses the bundled `0xProto-Regular-NL.ttf`.
 
-Local source-of-truth files:
+Related files:
 
 - Font file: [`../../assets/fonts/0xProto/0xProto-Regular-NL.ttf`](../../assets/fonts/0xProto/0xProto-Regular-NL.ttf)
 - Font license: [`../../assets/fonts/0xProto/LICENSE`](../../assets/fonts/0xProto/LICENSE)

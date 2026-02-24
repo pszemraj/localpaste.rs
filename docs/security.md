@@ -44,6 +44,7 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 | `AUTO_BACKUP`         | disabled          | Create DB backup on startup when existing DB is present               |
 
 `localpaste` startup now fails fast on malformed `BIND`/`PORT`/size/boolean env values so invalid deployment configuration is explicit.
+Reference defaults/examples: [`.env.example`](../.env.example).
 
 ### Security Headers
 
@@ -57,12 +58,10 @@ To add a referrer policy, configure your reverse proxy or extend the Axum middle
 
 ### Lock Management Policy
 
-Operational lock-recovery procedures are documented in [deployment.md](deployment.md).
-Lock behavior semantics are documented in [dev/locking-model.md](dev/locking-model.md).
-Security expectation:
-
-- Treat uncertain lock ownership as unsafe.
-- Do not run multiple writers against the same `DB_PATH`.
+Operational recovery is documented in [deployment.md](deployment.md).
+Lock semantics are documented in [dev/locking-model.md](dev/locking-model.md).
+`DB_PATH` single-writer contract is documented in [storage.md](storage.md#operational-expectations).
+Treat uncertain lock ownership as unsafe.
 
 ## Public Exposure (Not Recommended)
 
