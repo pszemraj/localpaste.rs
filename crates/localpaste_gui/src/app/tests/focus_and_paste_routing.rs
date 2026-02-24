@@ -420,11 +420,12 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
 }
 
 #[test]
-fn delete_shortcut_guard_blocks_when_text_input_or_virtual_focus_active() {
+fn delete_shortcut_guard_blocks_when_text_input_virtual_focus_or_focus_promotion_active() {
     struct Case {
         name: &'static str,
         wants_keyboard_input: bool,
         virtual_editor_focus_active: bool,
+        focus_promotion_requested: bool,
         expected: bool,
     }
 
@@ -433,18 +434,28 @@ fn delete_shortcut_guard_blocks_when_text_input_or_virtual_focus_active() {
             name: "text input owns keyboard",
             wants_keyboard_input: true,
             virtual_editor_focus_active: false,
+            focus_promotion_requested: false,
             expected: false,
         },
         Case {
             name: "virtual editor focused",
             wants_keyboard_input: false,
             virtual_editor_focus_active: true,
+            focus_promotion_requested: false,
+            expected: false,
+        },
+        Case {
+            name: "virtual editor focus promotion pending",
+            wants_keyboard_input: false,
+            virtual_editor_focus_active: false,
+            focus_promotion_requested: true,
             expected: false,
         },
         Case {
             name: "non editor context",
             wants_keyboard_input: false,
             virtual_editor_focus_active: false,
+            focus_promotion_requested: false,
             expected: true,
         },
     ];
@@ -454,6 +465,7 @@ fn delete_shortcut_guard_blocks_when_text_input_or_virtual_focus_active() {
         let actual = harness.app.should_route_delete_selected_shortcut(
             case.wants_keyboard_input,
             case.virtual_editor_focus_active,
+            case.focus_promotion_requested,
         );
         assert_eq!(actual, case.expected, "case '{}'", case.name);
     }

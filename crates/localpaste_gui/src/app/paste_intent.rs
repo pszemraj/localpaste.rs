@@ -224,6 +224,7 @@ impl LocalPasteApp {
     /// # Arguments
     /// - `wants_keyboard_input`: Whether an input widget currently owns keyboard capture.
     /// - `virtual_editor_focus_active`: Whether virtual editor focus is active for text input.
+    /// - `focus_promotion_requested`: Whether editor focus was explicitly requested this frame.
     ///
     /// # Returns
     /// `true` only when no text-input context owns keyboard input.
@@ -231,10 +232,11 @@ impl LocalPasteApp {
         &self,
         wants_keyboard_input: bool,
         virtual_editor_focus_active: bool,
+        focus_promotion_requested: bool,
     ) -> bool {
         if wants_keyboard_input {
             return false;
         }
-        !virtual_editor_focus_active
+        !virtual_editor_focus_active && !focus_promotion_requested
     }
 }

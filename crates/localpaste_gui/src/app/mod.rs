@@ -643,6 +643,7 @@ impl eframe::App for LocalPasteApp {
                 && self.should_route_delete_selected_shortcut(
                     wants_keyboard_input_before,
                     virtual_editor_focus_active_pre,
+                    focus_promotion_requested,
                 )
             {
                 self.delete_selected();
