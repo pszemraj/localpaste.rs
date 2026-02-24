@@ -438,6 +438,37 @@ impl LocalPasteApp {
                     );
                     self.virtual_editor_state.clear_preferred_column();
                 }
+                VirtualInputCommand::MoveLineHome { select } => {
+                    let (line, _) = self
+                        .virtual_editor_buffer
+                        .char_to_line_col(self.virtual_editor_state.cursor());
+                    let target = self.clamp_virtual_cursor_for_render(
+                        self.virtual_editor_buffer.line_col_to_char(line, 0),
+                    );
+                    self.virtual_editor_state.move_cursor(
+                        target,
+                        self.virtual_editor_buffer.len_chars(),
+                        *select,
+                    );
+                    self.virtual_editor_state.clear_preferred_column();
+                }
+                VirtualInputCommand::MoveLineEnd { select } => {
+                    let (line, _) = self
+                        .virtual_editor_buffer
+                        .char_to_line_col(self.virtual_editor_state.cursor());
+                    let target = self.clamp_virtual_cursor_for_render(
+                        self.virtual_editor_buffer.line_col_to_char(
+                            line,
+                            self.virtual_editor_buffer.line_len_chars(line),
+                        ),
+                    );
+                    self.virtual_editor_state.move_cursor(
+                        target,
+                        self.virtual_editor_buffer.len_chars(),
+                        *select,
+                    );
+                    self.virtual_editor_state.clear_preferred_column();
+                }
                 VirtualInputCommand::MoveDocHome { select } => {
                     let target = self.clamp_virtual_cursor_for_render(0);
                     self.virtual_editor_state.move_cursor(

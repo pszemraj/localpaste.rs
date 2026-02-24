@@ -358,6 +358,27 @@ fn wrapped_lines_move_by_visual_rows_and_home_end_use_visual_row_bounds() {
         .virtual_editor_buffer
         .char_to_line_col(harness.app.virtual_editor_state.cursor());
     assert_eq!((line, col), (0, 8));
+
+    // Logical-line boundary commands should ignore soft-wrap row boundaries.
+    set_cursor(&mut harness.app, 0, 6);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
+    let (line, col) = harness
+        .app
+        .virtual_editor_buffer
+        .char_to_line_col(harness.app.virtual_editor_state.cursor());
+    assert_eq!((line, col), (0, 0));
+
+    set_cursor(&mut harness.app, 0, 6);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
+    let (line, col) = harness
+        .app
+        .virtual_editor_buffer
+        .char_to_line_col(harness.app.virtual_editor_state.cursor());
+    assert_eq!((line, col), (0, 12));
 }
 
 #[test]

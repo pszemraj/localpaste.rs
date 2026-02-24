@@ -15,8 +15,12 @@ pub(crate) enum VirtualInputCommand {
     MoveRight { select: bool, word: bool },
     MoveUp { select: bool },
     MoveDown { select: bool },
+    // Visual-row boundaries (respecting soft wrap).
     MoveHome { select: bool },
     MoveEnd { select: bool },
+    // Logical-line boundaries (ignoring soft wrap).
+    MoveLineHome { select: bool },
+    MoveLineEnd { select: bool },
     MoveDocHome { select: bool },
     MoveDocEnd { select: bool },
     PageUp { select: bool },
@@ -114,8 +118,8 @@ fn map_mac_ctrl_editing(key: egui::Key, modifiers: egui::Modifiers) -> Option<Vi
     let select = modifiers.shift;
 
     match key {
-        egui::Key::A => Some(VirtualInputCommand::MoveHome { select }),
-        egui::Key::E => Some(VirtualInputCommand::MoveEnd { select }),
+        egui::Key::A => Some(VirtualInputCommand::MoveLineHome { select }),
+        egui::Key::E => Some(VirtualInputCommand::MoveLineEnd { select }),
         egui::Key::B => Some(VirtualInputCommand::MoveLeft {
             select,
             word: false,
@@ -143,7 +147,7 @@ fn map_navigation_key(
         egui::Key::ArrowLeft => match platform {
             PlatformFlavor::Mac => {
                 if modifiers.command {
-                    Some(VirtualInputCommand::MoveHome { select })
+                    Some(VirtualInputCommand::MoveLineHome { select })
                 } else {
                     Some(VirtualInputCommand::MoveLeft {
                         select,
@@ -159,7 +163,7 @@ fn map_navigation_key(
         egui::Key::ArrowRight => match platform {
             PlatformFlavor::Mac => {
                 if modifiers.command {
-                    Some(VirtualInputCommand::MoveEnd { select })
+                    Some(VirtualInputCommand::MoveLineEnd { select })
                 } else {
                     Some(VirtualInputCommand::MoveRight {
                         select,
@@ -487,7 +491,7 @@ mod tests {
         assert_eq!(
             commands,
             vec![
-                VirtualInputCommand::MoveHome { select: false },
+                VirtualInputCommand::MoveLineHome { select: false },
                 VirtualInputCommand::MoveDocHome { select: false },
             ]
         );
@@ -604,7 +608,7 @@ mod tests {
                     select: true,
                     word: true,
                 },
-                VirtualInputCommand::MoveHome { select: true },
+                VirtualInputCommand::MoveLineHome { select: true },
                 VirtualInputCommand::MoveDocEnd { select: true },
             ]
         );
@@ -801,6 +805,7 @@ mod tests {
                 select: false,
                 word: false,
             },
+            VirtualInputCommand::MoveLineHome { select: false },
             VirtualInputCommand::MoveDocHome { select: false },
             VirtualInputCommand::DeleteToLineStart,
             VirtualInputCommand::Cut,

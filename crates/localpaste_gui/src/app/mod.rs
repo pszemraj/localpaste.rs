@@ -575,9 +575,8 @@ impl eframe::App for LocalPasteApp {
             || (self.editor_mode == EditorMode::VirtualEditor && !wants_keyboard_input_before);
         if self.is_virtual_editor_mode() {
             let route_started = Instant::now();
-            let commands = ctx.input(|input| {
-                commands_from_events(&input.events, virtual_editor_events_allowed)
-            });
+            let commands = ctx
+                .input(|input| commands_from_events(&input.events, virtual_editor_events_allowed));
             input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
             for command in commands {
                 if self.should_skip_virtual_command_for_paste_as_new(&command) {
