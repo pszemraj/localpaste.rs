@@ -350,7 +350,9 @@ jobs:
               $candidates.Add((Join-Path $env:WIX 'bin'))
             }
 
-            foreach ($root in @($env:'ProgramFiles(x86)', $env:ProgramFiles) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique) {
+            $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+            $programFiles = $env:ProgramFiles
+            foreach ($root in @($programFilesX86, $programFiles) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique) {
               Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name.ToLower().StartsWith('wix') } |
                 ForEach-Object { $candidates.Add((Join-Path $_.FullName 'bin')) }
