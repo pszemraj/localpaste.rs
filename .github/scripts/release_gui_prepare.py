@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Prepare release GUI packager config, staging, and Windows WiX environment."""
+"""Prepare release GUI packager config, staging, and Windows WiX environment.
+
+Design goals:
+- Deterministic versioning: derive packager version from the release tag.
+- Strict inputs: fail fast with actionable errors.
+- Windows resilience: prefer a WiX installation that matches the expected major
+  version when multiple WiX installs exist on the runner.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +19,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 
 def fail(message: str) -> None:
@@ -48,7 +55,7 @@ def unique_paths(paths: Iterable[Path]) -> list[Path]:
     return unique
 
 
-def discover_wix_bin() -> Path:
+def wix_candidate_dirs() -> list[Path]:
     candidates: list[Path] = []
 
     wix_root = os.environ.get("WIX")
@@ -71,54 +78,85 @@ def discover_wix_bin() -> Path:
         if discovered:
             candidates.append(Path(discovered).parent)
 
-    checked: list[Path] = []
-    for candidate in unique_paths(candidates):
-        checked.append(candidate)
-        if (candidate / "candle.exe").is_file() and (candidate / "light.exe").is_file():
-            return candidate
-
-    if checked:
-        joined = "\n".join(f"- {entry}" for entry in checked)
-        fail(
-            "failed to locate WiX bin directory containing candle.exe and light.exe\n"
-            f"checked candidate directories:\n{joined}"
-        )
-
-    fail("failed to locate WiX installation candidates")
+    return unique_paths(candidates)
 
 
-def validate_wix_tools(wix_bin: Path) -> str:
-    detected_version: str | None = None
+def probe_wix_version(wix_bin: Path) -> str | None:
+    """Return WiX version string if candle/light can be executed, else None."""
+
     version_pattern = re.compile(r"version\s+([0-9]+(?:\.[0-9]+){1,3})", re.IGNORECASE)
 
+    detected_version: str | None = None
     for executable in ("candle.exe", "light.exe"):
-        command = str(wix_bin / executable)
-        result = subprocess.run([command, "-?"], capture_output=True, text=True, check=False)
+        command = wix_bin / executable
+        if not command.is_file():
+            return None
+        result = subprocess.run(
+            [str(command), "-?"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if result.returncode != 0:
-            fail(f"{command} failed self-check with exit code {result.returncode}")
+            return None
         if detected_version is None:
             output = f"{result.stdout}\n{result.stderr}"
             match = version_pattern.search(output)
             if match:
                 detected_version = match.group(1)
 
-    if detected_version is None:
-        fail("failed to parse WiX version from candle/light self-check output")
-
     return detected_version
 
 
-def validate_wix_major_version(version: str, expected_major: int) -> None:
+def wix_major(version: str) -> int | None:
     major_raw = version.split(".", 1)[0]
     try:
-        major = int(major_raw)
-    except ValueError as exc:
-        fail(f"failed to parse WiX major version from '{version}': {exc}")
+        return int(major_raw)
+    except ValueError:
+        return None
 
-    if major != expected_major:
-        fail(
-            f"unexpected WiX major version: detected={version} expected_major={expected_major}"
+
+def discover_wix_bin(expected_major: int) -> tuple[Path, str]:
+    """Locate a WiX bin directory that matches expected_major.
+
+    Runners can end up with multiple WiX installs (preinstalled + Chocolatey,
+    or WiX 3 + WiX 4). We should select the one that matches the expected major
+    version instead of taking the first match.
+    """
+
+    candidates = wix_candidate_dirs()
+
+    valid: list[tuple[Path, str]] = []
+    checked: list[Path] = []
+
+    for candidate in candidates:
+        checked.append(candidate)
+        version = probe_wix_version(candidate)
+        if not version:
+            continue
+        valid.append((candidate, version))
+        major = wix_major(version)
+        if major == expected_major:
+            return candidate, version
+
+    if valid:
+        joined = "\n".join(
+            f"- {path} (version {version})" for path, version in valid
         )
+        fail(
+            "found WiX installations, but none match the expected major version\n"
+            f"expected_major={expected_major}\n"
+            f"detected:\n{joined}"
+        )
+
+    if checked:
+        joined = "\n".join(f"- {entry}" for entry in checked)
+        fail(
+            "failed to locate a usable WiX bin directory containing candle.exe and light.exe\n"
+            f"checked candidate directories:\n{joined}"
+        )
+
+    fail("failed to locate WiX installation candidates")
 
 
 def resolve_icon_paths(config_dir: Path, icons: list[str]) -> list[Path]:
@@ -228,19 +266,17 @@ def main() -> int:
 
     if runner_os == "macOS" and not any(icon.lower().endswith(".icns") for icon in icons):
         fail("macOS packager config must include an .icns icon path")
-    if runner_os == "Windows" and not any(
-        icon.suffix.lower() == ".ico" for icon in resolved_icons
-    ):
+
+    if runner_os == "Windows" and not any(icon.suffix.lower() == ".ico" for icon in resolved_icons):
         fail("windows packager config must include at least one .ico icon path")
 
     if runner_os == "Windows":
-        wix_bin = discover_wix_bin()
-        wix_version = validate_wix_tools(wix_bin)
-        validate_wix_major_version(wix_version, args.expected_wix_major)
+        wix_bin, wix_version = discover_wix_bin(args.expected_wix_major)
         wix_root = wix_bin.parent
         append_github_path(wix_bin)
         append_github_env("WIX", str(wix_root))
         append_github_env("WIX_VERSION_DETECTED", wix_version)
+        print(f"using WiX: {wix_bin} (version {wix_version})")
 
     stage_runtime_binary(runner_os=runner_os, target=args.target, asset_suffix=args.asset_suffix)
 
