@@ -21,7 +21,7 @@ const DESKTOP_ICON_PNG: &[u8] = include_bytes!(concat!(
 ));
 #[cfg(target_os = "linux")]
 const LINUX_APP_ID: &str = "io.github.pszemraj.localpaste";
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 const LINUX_MANAGED_MARKER: &str = "X-LocalPaste-Managed=true";
 
 fn suppress_vulkan_loader_debug() {
@@ -125,14 +125,14 @@ fn desktop_exec_value(exe_path: &Path) -> String {
     format!("\"{}\"", escaped)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn desktop_entry_is_managed(contents: &str) -> bool {
     contents
         .lines()
         .any(|line| line.trim() == LINUX_MANAGED_MARKER)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn has_target_build_segment(path: &Path) -> bool {
     let components: Vec<_> = path.components().collect();
     components.windows(2).any(|window| {
@@ -141,8 +141,8 @@ fn has_target_build_segment(path: &Path) -> bool {
     })
 }
 
-#[cfg(target_os = "linux")]
-fn linux_exe_path_looks_stable(exe_path: &Path) -> bool {
+#[cfg(any(target_os = "linux", test))]
+fn linux_exe_path_looks_stable_with_home(exe_path: &Path, home: Option<&Path>) -> bool {
     if has_target_build_segment(exe_path) {
         return false;
     }
@@ -154,11 +154,48 @@ fn linux_exe_path_looks_stable(exe_path: &Path) -> bool {
         return true;
     }
 
-    std::env::var_os("HOME").is_some_and(|home| {
-        let home = PathBuf::from(home);
+    home.is_some_and(|home| {
         exe_path.starts_with(home.join(".cargo/bin"))
             || exe_path.starts_with(home.join(".local/bin"))
     })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_exe_path_looks_stable(exe_path: &Path) -> bool {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    linux_exe_path_looks_stable_with_home(exe_path, home.as_deref())
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxDesktopEntryDecision {
+    WriteManagedEntry,
+    SkipTransientExecutable,
+    SkipSystemDesktopOverride,
+    SkipUnmanagedUserEntry,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn decide_linux_desktop_entry_write(
+    exe_path_is_stable: bool,
+    user_desktop_entry_contents: Option<&str>,
+    system_desktop_entry_exists: bool,
+) -> LinuxDesktopEntryDecision {
+    if !exe_path_is_stable {
+        return LinuxDesktopEntryDecision::SkipTransientExecutable;
+    }
+
+    if user_desktop_entry_contents.is_none() && system_desktop_entry_exists {
+        return LinuxDesktopEntryDecision::SkipSystemDesktopOverride;
+    }
+
+    if let Some(contents) = user_desktop_entry_contents {
+        if !desktop_entry_is_managed(contents) {
+            return LinuxDesktopEntryDecision::SkipUnmanagedUserEntry;
+        }
+    }
+
+    LinuxDesktopEntryDecision::WriteManagedEntry
 }
 
 #[cfg(target_os = "linux")]
@@ -195,26 +232,33 @@ fn ensure_linux_desktop_integration() -> std::io::Result<()> {
     let app_dir = data_home.join("applications");
     std::fs::create_dir_all(&app_dir)?;
     let desktop_path = app_dir.join(format!("{LINUX_APP_ID}.desktop"));
+    let user_desktop_entry_contents = if desktop_path.exists() {
+        Some(std::fs::read_to_string(desktop_path.as_path())?)
+    } else {
+        None
+    };
 
-    if !linux_exe_path_looks_stable(exe_path.as_path()) {
-        tracing::debug!(
-            "skipping desktop entry write for transient executable path: {}",
-            exe_path.display()
-        );
-        return Ok(());
-    }
-
-    if !desktop_path.exists() && linux_system_desktop_entry_exists() {
-        tracing::debug!(
-            "system desktop entry already exists; avoiding user-level override at {}",
-            desktop_path.display()
-        );
-        return Ok(());
-    }
-
-    if desktop_path.exists() {
-        let existing = std::fs::read_to_string(desktop_path.as_path())?;
-        if !desktop_entry_is_managed(existing.as_str()) {
+    match decide_linux_desktop_entry_write(
+        linux_exe_path_looks_stable(exe_path.as_path()),
+        user_desktop_entry_contents.as_deref(),
+        linux_system_desktop_entry_exists(),
+    ) {
+        LinuxDesktopEntryDecision::WriteManagedEntry => {}
+        LinuxDesktopEntryDecision::SkipTransientExecutable => {
+            tracing::debug!(
+                "skipping desktop entry write for transient executable path: {}",
+                exe_path.display()
+            );
+            return Ok(());
+        }
+        LinuxDesktopEntryDecision::SkipSystemDesktopOverride => {
+            tracing::debug!(
+                "system desktop entry already exists; avoiding user-level override at {}",
+                desktop_path.display()
+            );
+            return Ok(());
+        }
+        LinuxDesktopEntryDecision::SkipUnmanagedUserEntry => {
             tracing::debug!(
                 "existing desktop entry is unmanaged; leaving it untouched: {}",
                 desktop_path.display()
@@ -282,12 +326,13 @@ pub fn run() -> eframe::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "linux")]
-    use super::{desktop_entry_is_managed, linux_exe_path_looks_stable};
+    use super::{
+        decide_linux_desktop_entry_write, desktop_entry_is_managed,
+        linux_exe_path_looks_stable_with_home, LinuxDesktopEntryDecision,
+    };
     use super::{load_desktop_icon, open_log_file, resolve_log_file_path};
     use localpaste_core::env::{env_lock, EnvGuard};
     use std::io::Write;
-    #[cfg(target_os = "linux")]
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -336,7 +381,6 @@ mod tests {
         assert!(body.contains("second line"));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn desktop_entry_marker_detection_matrix() {
         assert!(desktop_entry_is_managed(
@@ -347,26 +391,65 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn linux_stable_exe_path_heuristic_matrix() {
-        let _lock = env_lock().lock().expect("env lock");
-        let _home = EnvGuard::set("HOME", "/tmp/localpaste-home");
+        let home = Path::new("/tmp/localpaste-home");
 
-        assert!(!linux_exe_path_looks_stable(Path::new(
-            "/work/localpaste/target/debug/localpaste-gui"
-        )));
-        assert!(!linux_exe_path_looks_stable(Path::new(
-            "/work/localpaste/target/release/localpaste-gui"
-        )));
-        assert!(linux_exe_path_looks_stable(Path::new(
-            "/tmp/localpaste-home/.cargo/bin/localpaste-gui"
-        )));
-        assert!(linux_exe_path_looks_stable(Path::new(
-            "/tmp/localpaste-home/.local/bin/localpaste-gui"
-        )));
-        assert!(linux_exe_path_looks_stable(Path::new(
-            "/usr/bin/localpaste-gui"
-        )));
+        assert!(!linux_exe_path_looks_stable_with_home(
+            Path::new("/work/localpaste/target/debug/localpaste-gui"),
+            Some(home)
+        ));
+        assert!(!linux_exe_path_looks_stable_with_home(
+            Path::new("/work/localpaste/target/release/localpaste-gui"),
+            Some(home)
+        ));
+        assert!(linux_exe_path_looks_stable_with_home(
+            Path::new("/tmp/localpaste-home/.cargo/bin/localpaste-gui"),
+            Some(home)
+        ));
+        assert!(linux_exe_path_looks_stable_with_home(
+            Path::new("/tmp/localpaste-home/.local/bin/localpaste-gui"),
+            Some(home)
+        ));
+        assert!(linux_exe_path_looks_stable_with_home(
+            Path::new("/usr/bin/localpaste-gui"),
+            Some(home)
+        ));
+    }
+
+    #[test]
+    fn linux_desktop_entry_write_decision_matrix() {
+        assert_eq!(
+            decide_linux_desktop_entry_write(false, None, false),
+            LinuxDesktopEntryDecision::SkipTransientExecutable
+        );
+
+        assert_eq!(
+            decide_linux_desktop_entry_write(true, None, true),
+            LinuxDesktopEntryDecision::SkipSystemDesktopOverride
+        );
+
+        assert_eq!(
+            decide_linux_desktop_entry_write(
+                true,
+                Some("[Desktop Entry]\nName=LocalPaste\nStartupNotify=true\n"),
+                false,
+            ),
+            LinuxDesktopEntryDecision::SkipUnmanagedUserEntry
+        );
+
+        assert_eq!(
+            decide_linux_desktop_entry_write(
+                true,
+                Some("[Desktop Entry]\nX-LocalPaste-Managed=true\n"),
+                true,
+            ),
+            LinuxDesktopEntryDecision::WriteManagedEntry
+        );
+
+        assert_eq!(
+            decide_linux_desktop_entry_write(true, None, false),
+            LinuxDesktopEntryDecision::WriteManagedEntry
+        );
     }
 }
