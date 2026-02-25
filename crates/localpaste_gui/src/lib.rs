@@ -21,6 +21,8 @@ const DESKTOP_ICON_PNG: &[u8] = include_bytes!(concat!(
 ));
 #[cfg(target_os = "linux")]
 const LINUX_APP_ID: &str = "io.github.pszemraj.localpaste";
+#[cfg(target_os = "linux")]
+const LINUX_MANAGED_MARKER: &str = "X-LocalPaste-Managed=true";
 
 fn suppress_vulkan_loader_debug() {
     if env_flag_enabled("LOCALPASTE_KEEP_VK_DEBUG") {
@@ -124,6 +126,53 @@ fn desktop_exec_value(exe_path: &Path) -> String {
 }
 
 #[cfg(target_os = "linux")]
+fn desktop_entry_is_managed(contents: &str) -> bool {
+    contents
+        .lines()
+        .any(|line| line.trim() == LINUX_MANAGED_MARKER)
+}
+
+#[cfg(target_os = "linux")]
+fn has_target_build_segment(path: &Path) -> bool {
+    let components: Vec<_> = path.components().collect();
+    components.windows(2).any(|window| {
+        window[0].as_os_str() == "target"
+            && (window[1].as_os_str() == "debug" || window[1].as_os_str() == "release")
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_exe_path_looks_stable(exe_path: &Path) -> bool {
+    if has_target_build_segment(exe_path) {
+        return false;
+    }
+
+    if ["/usr/bin", "/usr/local/bin", "/opt", "/nix/store"]
+        .iter()
+        .any(|prefix| exe_path.starts_with(prefix))
+    {
+        return true;
+    }
+
+    std::env::var_os("HOME").is_some_and(|home| {
+        let home = PathBuf::from(home);
+        exe_path.starts_with(home.join(".cargo/bin"))
+            || exe_path.starts_with(home.join(".local/bin"))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_system_desktop_entry_exists() -> bool {
+    ["/usr/share/applications", "/usr/local/share/applications"]
+        .iter()
+        .any(|root| {
+            Path::new(root)
+                .join(format!("{LINUX_APP_ID}.desktop"))
+                .is_file()
+        })
+}
+
+#[cfg(target_os = "linux")]
 fn ensure_linux_desktop_integration() -> std::io::Result<()> {
     // AppImage/packaged launches already carry desktop integration.
     if std::env::var_os("APPIMAGE").is_some() {
@@ -146,6 +195,34 @@ fn ensure_linux_desktop_integration() -> std::io::Result<()> {
     let app_dir = data_home.join("applications");
     std::fs::create_dir_all(&app_dir)?;
     let desktop_path = app_dir.join(format!("{LINUX_APP_ID}.desktop"));
+
+    if !linux_exe_path_looks_stable(exe_path.as_path()) {
+        tracing::debug!(
+            "skipping desktop entry write for transient executable path: {}",
+            exe_path.display()
+        );
+        return Ok(());
+    }
+
+    if !desktop_path.exists() && linux_system_desktop_entry_exists() {
+        tracing::debug!(
+            "system desktop entry already exists; avoiding user-level override at {}",
+            desktop_path.display()
+        );
+        return Ok(());
+    }
+
+    if desktop_path.exists() {
+        let existing = std::fs::read_to_string(desktop_path.as_path())?;
+        if !desktop_entry_is_managed(existing.as_str()) {
+            tracing::debug!(
+                "existing desktop entry is unmanaged; leaving it untouched: {}",
+                desktop_path.display()
+            );
+            return Ok(());
+        }
+    }
+
     let desktop_entry = format!(
         "[Desktop Entry]\n\
 Type=Application\n\
@@ -155,9 +232,11 @@ Exec={}\n\
 Icon={}\n\
 Terminal=false\n\
 Categories=Utility;Development;TextEditor;\n\
-StartupNotify=true\n",
+StartupNotify=true\n\
+{}\n",
         desktop_exec_value(exe_path.as_path()),
-        LINUX_APP_ID
+        LINUX_APP_ID,
+        LINUX_MANAGED_MARKER
     );
     write_if_different(desktop_path.as_path(), desktop_entry.as_bytes())
 }
@@ -203,9 +282,13 @@ pub fn run() -> eframe::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use super::{desktop_entry_is_managed, linux_exe_path_looks_stable};
     use super::{load_desktop_icon, open_log_file, resolve_log_file_path};
     use localpaste_core::env::{env_lock, EnvGuard};
     use std::io::Write;
+    #[cfg(target_os = "linux")]
+    use std::path::Path;
     use std::path::PathBuf;
 
     #[test]
@@ -251,5 +334,39 @@ mod tests {
         let body = std::fs::read_to_string(path.as_path()).expect("read");
         assert!(body.contains("first line"));
         assert!(body.contains("second line"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn desktop_entry_marker_detection_matrix() {
+        assert!(desktop_entry_is_managed(
+            "[Desktop Entry]\nName=LocalPaste\nX-LocalPaste-Managed=true\n"
+        ));
+        assert!(!desktop_entry_is_managed(
+            "[Desktop Entry]\nName=LocalPaste\nStartupNotify=true\n"
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_stable_exe_path_heuristic_matrix() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _home = EnvGuard::set("HOME", "/tmp/localpaste-home");
+
+        assert!(!linux_exe_path_looks_stable(Path::new(
+            "/work/localpaste/target/debug/localpaste-gui"
+        )));
+        assert!(!linux_exe_path_looks_stable(Path::new(
+            "/work/localpaste/target/release/localpaste-gui"
+        )));
+        assert!(linux_exe_path_looks_stable(Path::new(
+            "/tmp/localpaste-home/.cargo/bin/localpaste-gui"
+        )));
+        assert!(linux_exe_path_looks_stable(Path::new(
+            "/tmp/localpaste-home/.local/bin/localpaste-gui"
+        )));
+        assert!(linux_exe_path_looks_stable(Path::new(
+            "/usr/bin/localpaste-gui"
+        )));
     }
 }
