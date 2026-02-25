@@ -402,7 +402,7 @@ def validate_release_job_shape(path: Path, data: dict[str, Any]) -> list[str]:
         matrix = strategy.get("matrix") if isinstance(strategy, dict) else None
         include = matrix.get("include") if isinstance(matrix, dict) else None
         expected_matrix = {
-            ("windows-latest", "x86_64-pc-windows-msvc"),
+            ("windows-2022", "x86_64-pc-windows-msvc"),
             ("ubuntu-22.04", "x86_64-unknown-linux-gnu"),
             ("macos-14", "aarch64-apple-darwin"),
         }

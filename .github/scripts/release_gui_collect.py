@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Collect and rename GUI release assets from cargo-packager outputs."""
+"""Collect and rename GUI release assets from cargo-packager outputs.
+
+This script intentionally does a small amount of normalization to avoid
+platform-specific and tool-specific churn (filename casing, extension
+variants, etc.).
+"""
 
 from __future__ import annotations
 
@@ -18,6 +23,8 @@ def fail(message: str) -> None:
 
 
 def find_first(root: Path, pattern: str, *, directories: bool = False) -> Path:
+    """Return the first match (sorted) for a glob pattern under root."""
+
     if not root.exists():
         fail(f"packager output directory does not exist: {root}")
 
@@ -31,7 +38,34 @@ def find_first(root: Path, pattern: str, *, directories: bool = False) -> Path:
     if not matches:
         entry_type = "directory" if directories else "file"
         fail(f"failed to find {entry_type} matching '{pattern}' under {root}")
+
     return matches[0]
+
+
+def find_first_any(
+    root: Path,
+    patterns: list[str],
+    *,
+    directories: bool = False,
+) -> Path:
+    """Return the first match among multiple patterns (in provided order)."""
+
+    if not patterns:
+        fail("find_first_any requires at least one pattern")
+
+    errors: list[str] = []
+    for pattern in patterns:
+        try:
+            return find_first(root, pattern, directories=directories)
+        except SystemExit as exc:
+            errors.append(str(exc))
+
+    joined = "\n".join(f"- {pattern}" for pattern in patterns)
+    fail(
+        "failed to find a matching artifact for any of the expected patterns\n"
+        f"root: {root}\n"
+        f"patterns:\n{joined}"
+    )
 
 
 def ensure_non_empty(path: Path) -> None:
@@ -48,7 +82,8 @@ def collect_windows(
     release_dir: Path,
     stage_dir: Path,
 ) -> list[str]:
-    msi_source = find_first(packager_out, "*.msi")
+    # Be tolerant to filename casing changes.
+    msi_source = find_first_any(packager_out, ["*.msi", "*.MSI"])
     msi_target = release_dir / f"localpaste-{tag}-{asset_suffix}.msi"
     shutil.copy2(msi_source, msi_target)
 
@@ -74,7 +109,9 @@ def collect_linux(
     release_dir: Path,
     stage_dir: Path,
 ) -> list[str]:
-    appimage_source = find_first(packager_out, "*.AppImage")
+    # cargo-packager historically produced ".AppImage" (capital A/I) but this has
+    # changed in other tooling ecosystems. Be resilient.
+    appimage_source = find_first_any(packager_out, ["*.AppImage", "*.appimage"])
     appimage_target = release_dir / f"localpaste-{tag}-{asset_suffix}.AppImage"
     shutil.copy2(appimage_source, appimage_target)
 
@@ -94,7 +131,7 @@ def collect_linux(
 
 
 def collect_macos(tag: str, asset_suffix: str, packager_out: Path, release_dir: Path) -> list[str]:
-    dmg_source = find_first(packager_out, "*.dmg")
+    dmg_source = find_first_any(packager_out, ["*.dmg", "*.DMG"])
     app_bundle = find_first(packager_out, "*.app", directories=True)
 
     dmg_target = release_dir / f"localpaste-{tag}-{asset_suffix}.dmg"
