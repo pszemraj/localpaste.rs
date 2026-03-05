@@ -140,6 +140,12 @@ fn markdown_yaml_fence_prefers_markdown_over_yaml_body() {
 }
 
 #[test]
+fn shell_heredoc_with_fenced_example_stays_shell() {
+    let content = "if [ -n \"$DEMO\" ]; then\ncat <<'EOF'\n```bash\necho hi\n```\nEOF\nfi\n";
+    assert_eq!(detect_language(content).as_deref(), Some("shell"));
+}
+
+#[test]
 fn yaml_block_scalar_with_indented_fences_stays_yaml() {
     let content = "script: |\n  ```bash\n  echo hi\n  ```\ntimeout: 30\n";
     assert_eq!(detect_language(content).as_deref(), Some("yaml"));

@@ -535,3 +535,42 @@ fn reset_to_version_invalidates_active_search_dispatch_state() {
         "search dispatch timestamp should be rewound so maybe_dispatch_search sends immediately"
     );
 }
+
+#[test]
+fn reset_to_version_reprojects_sidebar_filters_without_search_query() {
+    let mut harness = make_app();
+    harness.app.all_pastes = vec![
+        test_summary("alpha", "Alpha", Some("rust"), 7),
+        test_summary("beta", "Beta", Some("rust"), 5),
+    ];
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness
+        .app
+        .set_active_language_filter(Some("rust".to_string()));
+    harness.app.selected_id = Some("alpha".to_string());
+
+    let mut reset_paste = Paste::new("reset content".to_string(), "Alpha".to_string());
+    reset_paste.id = "alpha".to_string();
+    reset_paste.language = Some("python".to_string());
+    reset_paste.language_is_manual = true;
+
+    harness
+        .app
+        .apply_event(CoreEvent::PasteResetToVersion { paste: reset_paste });
+
+    assert_eq!(
+        harness
+            .app
+            .pastes
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["beta"],
+        "reset should immediately reproject active language-filter results"
+    );
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        other => panic!("expected GetPaste command, got {:?}", other),
+    }
+}

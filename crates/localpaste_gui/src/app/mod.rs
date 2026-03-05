@@ -33,8 +33,8 @@ use highlight::{
 pub(super) use interaction_helpers::{
     classify_virtual_command, consume_virtual_editor_focus_keys, drag_autoscroll_delta,
     is_command_shift_shortcut, is_editor_word_char, is_plain_command_shortcut,
-    next_virtual_click_count, paint_virtual_selection_overlay, should_route_sidebar_arrows,
-    VirtualCommandBucket,
+    next_virtual_click_count, paint_virtual_selection_overlay,
+    should_consume_virtual_editor_focus_keys, should_route_sidebar_arrows, VirtualCommandBucket,
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
@@ -624,7 +624,15 @@ impl eframe::App for LocalPasteApp {
                 self.mark_dirty();
             }
         }
-        consume_virtual_editor_focus_keys(ctx, virtual_editor_keyboard_claim_pre);
+        consume_virtual_editor_focus_keys(
+            ctx,
+            should_consume_virtual_editor_focus_keys(
+                virtual_editor_keyboard_claim_pre,
+                self.command_palette_open,
+                self.properties_drawer_open,
+                self.shortcut_help_open,
+            ),
+        );
 
         let mut copy_virtual_preview = false;
         let mut fallback_virtual_select_all = false;

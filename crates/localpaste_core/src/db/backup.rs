@@ -1,7 +1,8 @@
 //! Backup and restore helpers for redb databases.
 
 use super::tables::{
-    FOLDERS, FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META, REDB_FILE_NAME,
+    FOLDERS, FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META, PASTE_VERSIONS_CONTENT,
+    PASTE_VERSIONS_META, REDB_FILE_NAME,
 };
 use super::time_util::unix_timestamp_seconds;
 use crate::error::AppError;
@@ -54,6 +55,8 @@ impl BackupManager {
         let backup_write = backup_db.begin_write()?;
         Self::copy_bytes_table(&source_read, &backup_write, PASTES)?;
         Self::copy_bytes_table(&source_read, &backup_write, PASTES_META)?;
+        Self::copy_bytes_table(&source_read, &backup_write, PASTE_VERSIONS_META)?;
+        Self::copy_version_content_table(&source_read, &backup_write)?;
         Self::copy_bytes_table(&source_read, &backup_write, FOLDERS)?;
         Self::copy_unit_table(&source_read, &backup_write, FOLDERS_DELETING)?;
         Self::copy_updated_index_table(&source_read, &backup_write)?;
@@ -140,14 +143,39 @@ impl BackupManager {
 
         Ok(())
     }
+
+    fn copy_version_content_table(
+        source: &redb::ReadTransaction,
+        destination: &redb::WriteTransaction,
+    ) -> Result<(), AppError> {
+        let source_table = match source.open_table(PASTE_VERSIONS_CONTENT) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
+            Err(err) => return Err(err.into()),
+        };
+        let mut destination_table = destination.open_table(PASTE_VERSIONS_CONTENT)?;
+
+        for row in source_table.iter()? {
+            let (key, value) = row?;
+            let (paste_id, version_id) = key.value();
+            let paste_id_owned = paste_id.to_string();
+            let value_owned = value.value().to_vec();
+            destination_table.insert(
+                (paste_id_owned.as_str(), version_id),
+                value_owned.as_slice(),
+            )?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{unix_timestamp_seconds, BackupManager};
-    use crate::db::tables::{PASTES, PASTES_META};
+    use crate::db::tables::{PASTES, PASTES_META, PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META};
     use crate::error::AppError;
-    use crate::models::paste::Paste;
+    use crate::models::paste::{Paste, UpdatePasteRequest};
     use crate::test_support::open_test_database;
     use redb::ReadableDatabase;
     use std::time::{Duration, UNIX_EPOCH};
@@ -178,6 +206,27 @@ mod tests {
         let db = open_test_database(db_path_str);
         let paste = Paste::new("backup-body".to_string(), "backup-name".to_string());
         db.pastes.create(&paste).expect("create paste");
+        db.pastes
+            .update(
+                paste.id.as_str(),
+                UpdatePasteRequest {
+                    content: Some("backup-body-updated".to_string()),
+                    name: None,
+                    language: None,
+                    language_is_manual: None,
+                    folder_id: None,
+                    tags: None,
+                },
+            )
+            .expect("update paste");
+        let version_id = db
+            .pastes
+            .list_versions(paste.id.as_str(), Some(1))
+            .expect("list versions")
+            .expect("paste should exist")
+            .first()
+            .expect("stored version")
+            .version_id_ms;
 
         let manager = BackupManager::new(db_path_str);
         let backup_path = manager
@@ -193,6 +242,12 @@ mod tests {
         let read_txn = backup_db.begin_read().expect("begin read");
         let pastes = read_txn.open_table(PASTES).expect("open pastes");
         let metas = read_txn.open_table(PASTES_META).expect("open metas");
+        let versions_meta = read_txn
+            .open_table(PASTE_VERSIONS_META)
+            .expect("open versions meta");
+        let versions_content = read_txn
+            .open_table(PASTE_VERSIONS_CONTENT)
+            .expect("open versions content");
         assert!(
             pastes
                 .get(paste.id.as_str())
@@ -203,6 +258,20 @@ mod tests {
         assert!(
             metas.get(paste.id.as_str()).expect("meta lookup").is_some(),
             "backup must include metadata rows"
+        );
+        assert!(
+            versions_meta
+                .get(paste.id.as_str())
+                .expect("version meta lookup")
+                .is_some(),
+            "backup must include historical version metadata"
+        );
+        assert!(
+            versions_content
+                .get((paste.id.as_str(), version_id))
+                .expect("version content lookup")
+                .is_some(),
+            "backup must include historical version content"
         );
     }
 }

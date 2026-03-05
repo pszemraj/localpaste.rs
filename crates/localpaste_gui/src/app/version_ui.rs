@@ -313,11 +313,19 @@ impl LocalPasteApp {
                     // so force a fresh backend search even when query text is unchanged.
                     self.search_last_sent.clear();
                     self.search_last_input_at = Some(Instant::now() - super::SEARCH_DEBOUNCE);
+                } else {
+                    // Reset mutates metadata that drives smart collections and language
+                    // filters, so the visible sidebar projection must be recomputed
+                    // immediately even when no text search is active.
+                    self.recompute_visible_pastes();
                 }
                 if self.selected_id.as_deref() == Some(paste_id.as_str()) {
                     // Reset is authoritative: replace any local unsaved/editor state
                     // with the canonical backend row that reset produced.
                     self.select_loaded_paste(paste.clone());
+                    if self.search_query.trim().is_empty() {
+                        self.ensure_selection_after_list_update();
+                    }
                     self.version_ui.history_modal_open = false;
                     self.version_ui.history_selected_index = 0;
                     self.version_ui.clear_history_snapshot_state();

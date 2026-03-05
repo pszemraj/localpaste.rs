@@ -899,11 +899,16 @@ impl LocalPasteApp {
         });
     }
 
-    fn recompute_visible_pastes(&mut self) {
+    /// Recomputes the visible sidebar projection from the canonical paste cache.
+    pub(super) fn recompute_visible_pastes(&mut self) {
         self.pastes = self.filter_by_collection(&self.all_pastes);
     }
 
-    fn ensure_selection_after_list_update(&mut self) {
+    /// Ensures the current selection still exists in the visible sidebar list.
+    ///
+    /// When the active item no longer matches the current filters, this selects
+    /// the first remaining visible paste or clears selection if none remain.
+    pub(super) fn ensure_selection_after_list_update(&mut self) {
         let selection_valid = self
             .selected_id
             .as_ref()

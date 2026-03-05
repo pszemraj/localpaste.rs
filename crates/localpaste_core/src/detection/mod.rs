@@ -32,13 +32,73 @@ pub fn detect_language(content: &str) -> Option<String> {
         .filter(|label| !label.is_empty() && label != "text")
 }
 
+#[derive(Clone, Copy)]
+struct MarkdownFence {
+    marker: char,
+    len: usize,
+}
+
 fn markdown_fence_override_applies(content: &str) -> bool {
     if !crate::models::paste::is_markdown_content(content) {
         return false;
     }
-    content
-        .lines()
-        .any(|line| line.starts_with("```") || line.starts_with("~~~"))
+    is_standalone_fenced_markdown_block(content)
+}
+
+fn is_standalone_fenced_markdown_block(content: &str) -> bool {
+    let lines: Vec<&str> = content.lines().collect();
+    let Some((start_idx, fence)) = lines.iter().enumerate().find_map(|(idx, line)| {
+        (!line.trim().is_empty())
+            .then(|| parse_markdown_fence_opener(line).map(|fence| (idx, fence)))
+            .flatten()
+    }) else {
+        return false;
+    };
+
+    let Some(end_idx) = lines
+        .iter()
+        .enumerate()
+        .skip(start_idx.saturating_add(1))
+        .find_map(|(idx, line)| line_closes_markdown_fence(line, fence).then_some(idx))
+    else {
+        return false;
+    };
+
+    lines
+        .iter()
+        .skip(end_idx.saturating_add(1))
+        .all(|line| line.trim().is_empty())
+}
+
+fn parse_markdown_fence_opener(line: &str) -> Option<MarkdownFence> {
+    let trimmed_trailing = line.trim_end();
+    let indent = trimmed_trailing.chars().take_while(|ch| *ch == ' ').count();
+    if indent > 3 {
+        return None;
+    }
+    let remainder = &trimmed_trailing[indent..];
+    let marker = remainder.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+    let len = remainder.chars().take_while(|ch| *ch == marker).count();
+    (len >= 3).then_some(MarkdownFence { marker, len })
+}
+
+fn line_closes_markdown_fence(line: &str, fence: MarkdownFence) -> bool {
+    let trimmed_trailing = line.trim_end();
+    let indent = trimmed_trailing.chars().take_while(|ch| *ch == ' ').count();
+    if indent > 3 {
+        return false;
+    }
+    let remainder = &trimmed_trailing[indent..];
+    let marker_run = remainder
+        .chars()
+        .take_while(|ch| *ch == fence.marker)
+        .count();
+    marker_run >= fence.len
+        && marker_run == remainder.chars().count()
+        && remainder.chars().all(|ch| ch == fence.marker)
 }
 
 #[cfg(any(feature = "magika", test))]

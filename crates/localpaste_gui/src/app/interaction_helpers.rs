@@ -124,6 +124,31 @@ pub(crate) fn consume_virtual_editor_focus_keys(ctx: &egui::Context, editor_clai
     });
 }
 
+/// Returns whether virtual-editor key consumption should run this frame.
+///
+/// Overlay surfaces that intentionally own keyboard input must win over the
+/// background editor's focus-leak prevention.
+///
+/// # Arguments
+/// - `editor_claims_keyboard`: Whether the virtual editor would otherwise
+///   consume navigation/editing keys this frame.
+/// - `command_palette_open`: Whether the command palette currently owns input.
+/// - `properties_drawer_open`: Whether the properties drawer is open.
+/// - `shortcut_help_open`: Whether shortcut help is open.
+///
+/// # Returns
+/// `true` when focus-leak prevention should consume editor-owned keys, `false`
+/// when an overlay should receive them instead.
+pub(crate) fn should_consume_virtual_editor_focus_keys(
+    editor_claims_keyboard: bool,
+    command_palette_open: bool,
+    properties_drawer_open: bool,
+    shortcut_help_open: bool,
+) -> bool {
+    editor_claims_keyboard
+        && !(command_palette_open || properties_drawer_open || shortcut_help_open)
+}
+
 /// Returns whether a character should be treated as an editor "word" character.
 ///
 /// This is **code-editor oriented**:
@@ -295,7 +320,7 @@ pub(crate) fn paint_virtual_selection_overlay(
 mod tests {
     use super::{
         consume_virtual_editor_focus_keys, is_command_shift_shortcut, is_plain_command_shortcut,
-        should_route_sidebar_arrows,
+        should_consume_virtual_editor_focus_keys, should_route_sidebar_arrows,
     };
     use eframe::egui;
 
@@ -329,6 +354,25 @@ mod tests {
                 assert!(!ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)));
             },
         );
+    }
+
+    #[test]
+    fn virtual_editor_focus_key_consumption_yields_to_keyboard_overlays() {
+        assert!(should_consume_virtual_editor_focus_keys(
+            true, false, false, false
+        ));
+        assert!(!should_consume_virtual_editor_focus_keys(
+            true, true, false, false
+        ));
+        assert!(!should_consume_virtual_editor_focus_keys(
+            true, false, true, false
+        ));
+        assert!(!should_consume_virtual_editor_focus_keys(
+            true, false, false, true
+        ));
+        assert!(!should_consume_virtual_editor_focus_keys(
+            false, false, false, false
+        ));
     }
 
     #[test]
