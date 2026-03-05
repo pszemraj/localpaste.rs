@@ -253,23 +253,33 @@ impl LocalPasteApp {
                 let selected_version_id =
                     self.selected_history_meta().map(|meta| meta.version_id_ms);
                 self.version_ui.history_versions = items.clone();
-                if let Some(version_id_ms) = selected_version_id {
-                    if let Some(index) = self
-                        .version_ui
-                        .history_versions
-                        .iter()
-                        .position(|meta| meta.version_id_ms == version_id_ms)
-                    {
-                        self.version_ui.history_selected_index = index.saturating_add(1);
-                    } else {
+                match selected_version_id {
+                    Some(version_id_ms) => {
+                        if let Some(index) = self
+                            .version_ui
+                            .history_versions
+                            .iter()
+                            .position(|meta| meta.version_id_ms == version_id_ms)
+                        {
+                            self.version_ui.history_selected_index = index.saturating_add(1);
+                            // A refresh should restore the selected historical snapshot after a
+                            // prior load failure, not leave the modal on a dead row.
+                            if self.version_ui.history_snapshot.is_none()
+                                && self.version_ui.history_loading_snapshot_id.is_none()
+                            {
+                                self.request_version_snapshot(version_id_ms);
+                            }
+                        } else {
+                            self.version_ui.history_selected_index = 0;
+                            self.version_ui.history_snapshot = None;
+                            self.version_ui.history_loading_snapshot_id = None;
+                        }
+                    }
+                    None => {
                         self.version_ui.history_selected_index = 0;
                         self.version_ui.history_snapshot = None;
                         self.version_ui.history_loading_snapshot_id = None;
                     }
-                } else {
-                    self.version_ui.history_selected_index = 0;
-                    self.version_ui.history_snapshot = None;
-                    self.version_ui.history_loading_snapshot_id = None;
                 }
             }
             CoreEvent::PasteVersionLoaded { snapshot } => {

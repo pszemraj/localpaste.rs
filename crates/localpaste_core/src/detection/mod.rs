@@ -38,7 +38,7 @@ fn markdown_fence_override_applies(content: &str) -> bool {
     }
     content
         .lines()
-        .any(|line| line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~"))
+        .any(|line| line.starts_with("```") || line.starts_with("~~~"))
 }
 
 #[cfg(feature = "magika")]
@@ -47,9 +47,7 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return None;
     }
 
-    if markdown_fence_override_applies(content)
-        || (crate::models::paste::is_markdown_content(content) && !looks_like_yaml(content))
-    {
+    if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
     }
 

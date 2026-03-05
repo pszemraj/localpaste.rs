@@ -141,6 +141,12 @@ fn markdown_yaml_fence_prefers_markdown_over_yaml_body() {
 }
 
 #[test]
+fn yaml_block_scalar_with_indented_fences_stays_yaml() {
+    let content = "script: |\n  ```bash\n  echo hi\n  ```\ntimeout: 30\n";
+    assert_eq!(detect_language(content).as_deref(), Some("yaml"));
+}
+
+#[test]
 fn markdown_bullet_list_prefers_markdown_over_yaml_sequence() {
     let content = "- alpha\n- beta\n";
     assert_eq!(detect_language(content).as_deref(), Some("markdown"));
@@ -232,6 +238,24 @@ fn magika_refinement_rejects_weak_yaml_shape() {
     assert_eq!(
         refine_magika_label("yaml", "```json\n{\"k\":1}\n```\n"),
         Some("markdown".to_string())
+    );
+}
+
+#[cfg(feature = "magika")]
+#[test]
+fn magika_refinement_does_not_override_shell_to_markdown_on_comment_heading() {
+    assert_eq!(
+        refine_magika_label("shell", "# install script\necho hi\n"),
+        Some("shell".to_string())
+    );
+}
+
+#[cfg(feature = "magika")]
+#[test]
+fn magika_refinement_does_not_override_json_with_fenced_string_content() {
+    assert_eq!(
+        refine_magika_label("json", r#"{"note":"```bash\nls\n```"}"#),
+        Some("json".to_string())
     );
 }
 

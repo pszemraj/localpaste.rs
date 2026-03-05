@@ -467,6 +467,44 @@ fn version_modal_failure_events_clear_stuck_loading_and_reset_flags() {
 }
 
 #[test]
+fn version_refresh_reloads_selected_snapshot_after_prior_load_failure() {
+    let mut harness = make_app();
+    harness.app.selected_id = Some("alpha".to_string());
+    harness.app.version_ui.history_selected_index = 1;
+    harness.app.version_ui.history_versions = vec![localpaste_core::models::paste::VersionMeta {
+        version_id_ms: 42,
+        created_at: chrono::Utc::now(),
+        content_hash: "hash".to_string(),
+        len: 4,
+        language: None,
+        language_is_manual: false,
+    }];
+    harness.app.version_ui.history_snapshot = None;
+    harness.app.version_ui.history_loading_snapshot_id = None;
+
+    let refreshed_items = vec![localpaste_core::models::paste::VersionMeta {
+        version_id_ms: 42,
+        created_at: chrono::Utc::now(),
+        content_hash: "hash".to_string(),
+        len: 4,
+        language: None,
+        language_is_manual: false,
+    }];
+    harness.app.apply_event(CoreEvent::PasteVersionsLoaded {
+        id: "alpha".to_string(),
+        items: refreshed_items,
+    });
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPasteVersion { id, version_id_ms } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(version_id_ms, 42);
+        }
+        other => panic!("expected GetPasteVersion command, got {:?}", other),
+    }
+}
+
+#[test]
 fn reset_to_version_invalidates_active_search_dispatch_state() {
     let mut harness = make_app();
     harness.app.search_query = "alpha".to_string();
