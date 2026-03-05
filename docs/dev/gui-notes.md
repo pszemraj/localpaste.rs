@@ -54,6 +54,19 @@ Navigation/selection contract:
 - Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
 - Folder create/edit/move controls are intentionally removed from the rewrite GUI; organization is smart-filter + search based.
 
+## Diff And History Workflows
+
+- Editor toolbar exposes `Diff` and `History` for the selected paste.
+- Command palette exposes `Open diff modal` and `Open history modal` when a paste is selected.
+- Diff is detached from main editor state:
+  - left side uses the active snapshot (`active_snapshot`) so unsaved edits are included,
+  - loading a comparison target does not change current selection or paste locks.
+- History is detached and read-only:
+  - `Current working copy` is index `0`,
+  - stored snapshots are older-only entries,
+  - reset restores the selected snapshot and then prunes that snapshot and newer entries from stored history.
+- Reset and snapshot loading clear their in-flight UI state on backend errors so modal actions cannot get stuck.
+
 ## Language/Highlight QA (Magika + Fallback)
 
 Use this checklist when touching detection/highlight/filter code.
@@ -109,6 +122,7 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - Open selected paste from palette.
    - Delete from palette and confirm list removal.
    - Copy raw/copy fenced commands complete and close/open behavior is correct.
+   - Open history and diff modals from palette queries (`history`, `diff`) when a paste is selected.
 6. Search and filters:
    - Sidebar query narrows results and clearing query restores list.
    - Smart collections (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) re-scope results.
@@ -152,11 +166,15 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
     - Resize window repeatedly; expected: no persistent plain-text gap artifacts and caret remains aligned.
 18. Lock behavior sanity:
     - While GUI is open on a paste, verify external API mutation attempts against same paste are lock-gated (423 behavior per lock model).
-19. Trace sanity (if enabled):
+19. Version workflow sanity:
+    - Open `Diff`, select another paste, and verify current unsaved edits appear on the left side.
+    - Open `History`, navigate with `Older/Newer`, duplicate a historical snapshot, and verify a new paste is created.
+    - Trigger reset-to-version and verify current paste updates to the selected snapshot.
+20. Trace sanity (if enabled):
     - Input trace logs show deterministic virtual input routing.
     - Highlight trace logs show queue/worker/apply flow with stale drops when applicable.
     - Perf logs emit frame percentiles (`avg/p50/p95/p99/worst`) periodically.
-20. Persistence check:
+21. Persistence check:
     - Close GUI and relaunch with the same `DB_PATH`; verify seeded/edited content persists.
 
 ## Edit Locks
