@@ -74,6 +74,31 @@ where
     ))
 }
 
+fn follow_cursor_scroll_offset_y(
+    follow_requested: bool,
+    cursor_row: usize,
+    visible_row_range: std::ops::Range<usize>,
+    viewport_rows: usize,
+    line_height: f32,
+) -> Option<f32> {
+    if !follow_requested || viewport_rows == 0 {
+        return None;
+    }
+    let scrolloff_rows = 2usize.min(viewport_rows.saturating_sub(1));
+    if cursor_row.saturating_add(scrolloff_rows) >= visible_row_range.end {
+        let desired_top = cursor_row
+            .saturating_add(1)
+            .saturating_add(scrolloff_rows)
+            .saturating_sub(viewport_rows);
+        return Some(desired_top as f32 * line_height);
+    }
+    if cursor_row < visible_row_range.start.saturating_add(scrolloff_rows) {
+        let desired_top = cursor_row.saturating_sub(scrolloff_rows);
+        return Some(desired_top as f32 * line_height);
+    }
+    None
+}
+
 impl LocalPasteApp {
     /// Renders the read-only virtual preview panel for large text payloads.
     ///
@@ -842,24 +867,22 @@ impl LocalPasteApp {
                     paint_ms = started.elapsed().as_secs_f32() * 1000.0;
                 }
 
-                if self.virtual_editor_state.has_focus && !self.virtual_drag_active {
+                let follow_requested = self.virtual_follow_cursor_next_frame;
+                if follow_requested {
+                    self.virtual_follow_cursor_next_frame = false;
+                }
+                if had_focus && !self.virtual_drag_active {
                     let cursor_row =
                         self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
                     let viewport_rows =
                         ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
-                    let scrolloff_rows = 2usize.min(viewport_rows.saturating_sub(1));
-                    if cursor_row.saturating_add(scrolloff_rows) >= range.end {
-                        let desired_top = cursor_row
-                            .saturating_add(1)
-                            .saturating_add(scrolloff_rows)
-                            .saturating_sub(viewport_rows);
-                        pending_follow_scroll_offset_y =
-                            Some(desired_top as f32 * self.virtual_line_height);
-                    } else if cursor_row < range.start.saturating_add(scrolloff_rows) {
-                        let desired_top = cursor_row.saturating_sub(scrolloff_rows);
-                        pending_follow_scroll_offset_y =
-                            Some(desired_top as f32 * self.virtual_line_height);
-                    }
+                    pending_follow_scroll_offset_y = follow_cursor_scroll_offset_y(
+                        follow_requested,
+                        cursor_row,
+                        range,
+                        viewport_rows,
+                        self.virtual_line_height,
+                    );
                 }
             });
         if let Some(offset) = pending_follow_scroll_offset_y {
@@ -941,9 +964,9 @@ impl LocalPasteApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        editor_interaction_rect, line_number_font_for_row_height, line_number_gutter_width,
-        preview_triple_click_selection_bounds, virtual_editor_double_click_selection_bounds,
-        virtual_row_hit_test_sense,
+        editor_interaction_rect, follow_cursor_scroll_offset_y, line_number_font_for_row_height,
+        line_number_gutter_width, preview_triple_click_selection_bounds,
+        virtual_editor_double_click_selection_bounds, virtual_row_hit_test_sense,
     };
     use crate::app::MAX_RENDER_CHARS_PER_LINE;
     use eframe::egui;
@@ -973,6 +996,18 @@ mod tests {
             assert_eq!(rect.max.y, inner.max.y);
             assert_eq!(rect.max.x, inner.max.x + case.expected_extra_right);
         }
+    }
+
+    #[test]
+    fn follow_cursor_scroll_offset_only_applies_when_requested() {
+        let hidden_cursor_offset = follow_cursor_scroll_offset_y(false, 100, 0..20, 20, 12.0);
+        assert_eq!(hidden_cursor_offset, None);
+
+        let requested_offset = follow_cursor_scroll_offset_y(true, 100, 0..20, 20, 12.0);
+        assert!(
+            requested_offset.is_some(),
+            "requested follow should produce a scroll offset when caret is out of view"
+        );
     }
 
     #[test]

@@ -465,3 +465,28 @@ fn version_modal_failure_events_clear_stuck_loading_and_reset_flags() {
     assert!(harness.app.version_ui.history_snapshot.is_none());
     assert!(!harness.app.version_ui.history_reset_in_flight);
 }
+
+#[test]
+fn reset_to_version_invalidates_active_search_dispatch_state() {
+    let mut harness = make_app();
+    harness.app.search_query = "alpha".to_string();
+    harness.app.search_last_sent = "alpha".to_string();
+    harness.app.search_last_input_at = None;
+    harness.app.selected_id = Some("alpha".to_string());
+
+    let mut reset_paste = Paste::new("reset content".to_string(), "Alpha".to_string());
+    reset_paste.id = "alpha".to_string();
+
+    harness
+        .app
+        .apply_event(CoreEvent::PasteResetToVersion { paste: reset_paste });
+
+    assert!(
+        harness.app.search_last_sent.is_empty(),
+        "reset should force a new backend search when query text is unchanged"
+    );
+    assert!(
+        harness.app.search_last_input_at.is_some(),
+        "search dispatch timestamp should be rewound so maybe_dispatch_search sends immediately"
+    );
+}

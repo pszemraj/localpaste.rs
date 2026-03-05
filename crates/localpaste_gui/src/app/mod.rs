@@ -106,6 +106,7 @@ pub(crate) struct LocalPasteApp {
     virtual_line_height: f32,
     virtual_wrap_width: f32,
     virtual_pending_scroll_offset_y: Option<f32>,
+    virtual_follow_cursor_next_frame: bool,
     version_ui: VersionUiState,
     highlight_worker: HighlightWorker,
     highlight_pending: Option<HighlightRequestMeta>,
@@ -245,6 +246,7 @@ struct VirtualApplyResult {
     copied: bool,
     cut: bool,
     pasted: bool,
+    cursor_moved: bool,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -360,6 +362,7 @@ impl LocalPasteApp {
             virtual_line_height: 1.0,
             virtual_wrap_width: 0.0,
             virtual_pending_scroll_offset_y: None,
+            virtual_follow_cursor_next_frame: false,
             version_ui: VersionUiState::default(),
             highlight_worker,
             highlight_pending: None,
@@ -767,10 +770,14 @@ impl eframe::App for LocalPasteApp {
                 immediate_apply_result.copied |= fallback_result.copied;
                 immediate_apply_result.cut |= fallback_result.cut;
                 immediate_apply_result.pasted |= fallback_result.pasted;
+                immediate_apply_result.cursor_moved |= fallback_result.cursor_moved;
                 if fallback_result.changed {
                     self.mark_dirty();
                 }
             }
+        }
+        if immediate_apply_result.cursor_moved {
+            self.virtual_follow_cursor_next_frame = true;
         }
 
         if self.highlight_staged.is_some() {
@@ -840,6 +847,9 @@ impl eframe::App for LocalPasteApp {
             if deferred_focus_apply_result.changed {
                 self.mark_dirty();
             }
+            if deferred_focus_apply_result.cursor_moved {
+                self.virtual_follow_cursor_next_frame = true;
+            }
         }
         if copy_ready_post {
             let deferred_started = Instant::now();
@@ -847,6 +857,9 @@ impl eframe::App for LocalPasteApp {
             deferred_copy_apply_ms = deferred_started.elapsed().as_secs_f32() * 1000.0;
             if deferred_copy_apply_result.changed {
                 self.mark_dirty();
+            }
+            if deferred_copy_apply_result.cursor_moved {
+                self.virtual_follow_cursor_next_frame = true;
             }
         }
         let virtual_paste_consumed = immediate_apply_result.pasted
@@ -874,6 +887,9 @@ impl eframe::App for LocalPasteApp {
                 || deferred_focus_apply_result.cut
                 || deferred_copy_apply_result.cut,
             pasted: virtual_paste_consumed || paste_as_new_consumed,
+            cursor_moved: immediate_apply_result.cursor_moved
+                || deferred_focus_apply_result.cursor_moved
+                || deferred_copy_apply_result.cursor_moved,
         };
         let selection_chars = self
             .virtual_editor_state

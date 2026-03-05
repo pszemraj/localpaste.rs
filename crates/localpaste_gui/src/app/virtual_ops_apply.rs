@@ -671,6 +671,9 @@ impl LocalPasteApp {
             {
                 self.reset_virtual_caret_blink();
             }
+            if self.virtual_editor_state.cursor() != cursor_before {
+                result.cursor_moved = true;
+            }
         }
         result
     }

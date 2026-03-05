@@ -850,6 +850,7 @@ fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
         target.copied |= src.copied;
         target.cut |= src.cut;
         target.pasted |= src.pasted;
+        target.cursor_moved |= src.cursor_moved;
     }
 
     fn route_and_apply(

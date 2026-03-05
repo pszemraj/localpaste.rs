@@ -146,6 +146,7 @@ fn make_app() -> TestHarness {
         virtual_line_height: 1.0,
         virtual_wrap_width: 0.0,
         virtual_pending_scroll_offset_y: None,
+        virtual_follow_cursor_next_frame: false,
         version_ui: super::version_ui::VersionUiState::default(),
         highlight_worker: spawn_highlight_worker(),
         highlight_pending: None,

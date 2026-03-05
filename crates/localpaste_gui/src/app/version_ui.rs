@@ -4,6 +4,7 @@ use super::LocalPasteApp;
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use eframe::egui;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
+use std::time::Instant;
 
 const VERSION_UI_LIST_LIMIT: usize = 200;
 const MAX_DIFF_CANDIDATES: usize = 40;
@@ -292,6 +293,12 @@ impl LocalPasteApp {
                 }
                 if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste_id) {
                     *item = PasteSummary::from_paste(paste);
+                }
+                if !self.search_query.trim().is_empty() {
+                    // Reset can change search inclusion/ranking (content/language/updated_at),
+                    // so force a fresh backend search even when query text is unchanged.
+                    self.search_last_sent.clear();
+                    self.search_last_input_at = Some(Instant::now() - super::SEARCH_DEBOUNCE);
                 }
                 if self.selected_id.as_deref() == Some(paste_id.as_str()) {
                     // Reset is authoritative: replace any local unsaved/editor state
