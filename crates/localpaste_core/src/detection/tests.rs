@@ -3,7 +3,6 @@
 use super::canonical::canonicalize;
 use super::detect_language;
 use super::looks_like_yaml;
-#[cfg(feature = "magika")]
 use super::refine_magika_label;
 
 fn assert_detection_cases(cases: &[(&str, Option<&str>)]) {
@@ -200,7 +199,6 @@ fn magika_detects_high_signal_code_snippets() {
     }
 }
 
-#[cfg(feature = "magika")]
 #[test]
 fn magika_refinement_rejects_weak_yaml_shape() {
     assert_eq!(refine_magika_label("yaml", "status report:\ndone\n"), None);
@@ -241,7 +239,6 @@ fn magika_refinement_rejects_weak_yaml_shape() {
     );
 }
 
-#[cfg(feature = "magika")]
 #[test]
 fn magika_refinement_does_not_override_shell_to_markdown_on_comment_heading() {
     assert_eq!(
@@ -250,7 +247,6 @@ fn magika_refinement_does_not_override_shell_to_markdown_on_comment_heading() {
     );
 }
 
-#[cfg(feature = "magika")]
 #[test]
 fn magika_refinement_does_not_override_json_with_fenced_string_content() {
     assert_eq!(
@@ -259,7 +255,6 @@ fn magika_refinement_does_not_override_json_with_fenced_string_content() {
     );
 }
 
-#[cfg(feature = "magika")]
 #[test]
 fn magika_refinement_converts_plain_css_mislabeled_as_scss() {
     assert_eq!(

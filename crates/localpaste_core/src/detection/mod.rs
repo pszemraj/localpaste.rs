@@ -41,7 +41,7 @@ fn markdown_fence_override_applies(content: &str) -> bool {
         .any(|line| line.starts_with("```") || line.starts_with("~~~"))
 }
 
-#[cfg(feature = "magika")]
+#[cfg(any(feature = "magika", test))]
 fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     if label.is_empty() || label == "text" {
         return None;
@@ -211,7 +211,7 @@ fn looks_like_yaml_flow_sequence(value: &str) -> bool {
     true
 }
 
-#[cfg(feature = "magika")]
+#[cfg(any(feature = "magika", test))]
 fn looks_like_plain_css(content: &str) -> bool {
     let lower = content.to_ascii_lowercase();
     let has_css_block = lower.contains('{')
@@ -231,7 +231,7 @@ fn looks_like_plain_css(content: &str) -> bool {
     has_css_block && !(has_scss_specific_tokens || has_nested_scss_selector)
 }
 
-#[cfg(feature = "magika")]
+#[cfg(any(feature = "magika", test))]
 fn content_has_scss_placeholder_selector(content: &str) -> bool {
     for line in content.lines() {
         let Some((selectors, _rest)) = line.split_once('{') else {
@@ -246,7 +246,7 @@ fn content_has_scss_placeholder_selector(content: &str) -> bool {
     false
 }
 
-#[cfg(feature = "magika")]
+#[cfg(any(feature = "magika", test))]
 fn content_has_nested_scss_selector(content: &str) -> bool {
     let mut block_depth = 0usize;
     for line in content.lines() {
@@ -269,7 +269,7 @@ fn content_has_nested_scss_selector(content: &str) -> bool {
     false
 }
 
-#[cfg(feature = "magika")]
+#[cfg(any(feature = "magika", test))]
 fn appears_nested_scss_selector(selector: &str) -> bool {
     let selector = selector.trim().trim_end_matches(',');
     if selector.is_empty() || selector.ends_with(';') {
