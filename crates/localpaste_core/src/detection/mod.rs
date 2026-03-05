@@ -13,6 +13,10 @@ mod tests;
 /// # Returns
 /// Canonicalized language label when detection succeeds, otherwise `None`.
 pub fn detect_language(content: &str) -> Option<String> {
+    if markdown_fence_override_applies(content) {
+        return Some("markdown".to_string());
+    }
+
     #[cfg(feature = "magika")]
     {
         if let Some(label) = magika::detect(content) {
@@ -28,13 +32,24 @@ pub fn detect_language(content: &str) -> Option<String> {
         .filter(|label| !label.is_empty() && label != "text")
 }
 
+fn markdown_fence_override_applies(content: &str) -> bool {
+    if !crate::models::paste::is_markdown_content(content) {
+        return false;
+    }
+    content
+        .lines()
+        .any(|line| line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~"))
+}
+
 #[cfg(feature = "magika")]
 fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     if label.is_empty() || label == "text" {
         return None;
     }
 
-    if crate::models::paste::is_markdown_content(content) && !looks_like_yaml(content) {
+    if markdown_fence_override_applies(content)
+        || (crate::models::paste::is_markdown_content(content) && !looks_like_yaml(content))
+    {
         return Some("markdown".to_string());
     }
 
@@ -55,6 +70,7 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
 /// `true` when line-level patterns strongly indicate YAML.
 pub(crate) fn looks_like_yaml(content: &str) -> bool {
     let mut yaml_pairs = 0usize;
+    let mut bare_sequence_items = 0usize;
     let mut content_lines = 0usize;
     let mut first_content_line: Option<&str> = None;
     let mut has_doc_start = false;
@@ -76,9 +92,15 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
         if first_content_line.is_none() {
             first_content_line = Some(trimmed);
         }
-        if (trimmed.starts_with("- ") || trimmed.contains(':'))
-            && looks_like_single_line_yaml_mapping(trimmed, true)
-        {
+        if let Some(sequence_item) = trimmed.strip_prefix("- ") {
+            if looks_like_yaml_sequence_item(sequence_item) {
+                yaml_pairs = yaml_pairs.saturating_add(1);
+            } else {
+                bare_sequence_items = bare_sequence_items.saturating_add(1);
+            }
+            continue;
+        }
+        if trimmed.contains(':') && looks_like_single_line_yaml_mapping(trimmed, true) {
             yaml_pairs = yaml_pairs.saturating_add(1);
         }
     }
@@ -94,9 +116,26 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
     }
 
     if has_doc_start {
-        return yaml_pairs >= 1;
+        return yaml_pairs >= 1 || bare_sequence_items >= 2;
     }
 
+    false
+}
+
+fn looks_like_yaml_sequence_item(item: &str) -> bool {
+    let trimmed = item.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if looks_like_single_line_yaml_mapping(trimmed, true) {
+        return true;
+    }
+    if trimmed.starts_with('{') || trimmed.ends_with('}') {
+        return looks_like_yaml_flow_mapping(trimmed);
+    }
+    if trimmed.starts_with('[') || trimmed.ends_with(']') {
+        return looks_like_yaml_flow_sequence(trimmed);
+    }
     false
 }
 
@@ -104,9 +143,6 @@ fn looks_like_single_line_yaml_mapping(line: &str, allow_unquoted_space_keys: bo
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return false;
-    }
-    if trimmed.starts_with("- ") {
-        return true;
     }
 
     let Some((raw_key, raw_value)) = trimmed.split_once(':') else {

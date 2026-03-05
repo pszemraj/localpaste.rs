@@ -86,10 +86,10 @@ impl LocalPasteApp {
 
     /// Opens the history modal for the currently selected paste.
     pub(super) fn open_history_modal(&mut self) {
-        let Some(_) = self.selected_id else {
+        if self.selected_id.is_none() {
             self.set_status("Nothing selected.");
             return;
-        };
+        }
         self.version_ui.history_modal_open = true;
         self.version_ui.clear_history_selection();
         self.request_versions_for_selected();
@@ -97,10 +97,10 @@ impl LocalPasteApp {
 
     /// Opens the diff modal for the currently selected paste.
     pub(super) fn open_diff_modal(&mut self) {
-        let Some(_) = self.selected_id else {
+        if self.selected_id.is_none() {
             self.set_status("Nothing selected.");
             return;
-        };
+        }
         self.version_ui.diff_modal_open = true;
         self.version_ui.clear_diff_selection();
     }

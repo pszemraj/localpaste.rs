@@ -52,6 +52,7 @@ fn yaml_shape_helper_requires_yaml_body_after_doc_start() {
     assert!(looks_like_yaml("---\nname: app\n"));
     assert!(!looks_like_yaml("---\njust a separator\n"));
     assert!(!looks_like_yaml("---\n- item\n"));
+    assert!(looks_like_yaml("---\n- alpha\n- beta\n"));
 }
 
 #[test]
@@ -130,6 +131,18 @@ fn markdown_heading_with_colon_prefers_markdown_over_yaml() {
 #[test]
 fn markdown_fence_prefers_markdown_over_structured_yaml() {
     let content = "```json\n{\"a\":1}\n```\n";
+    assert_eq!(detect_language(content).as_deref(), Some("markdown"));
+}
+
+#[test]
+fn markdown_yaml_fence_prefers_markdown_over_yaml_body() {
+    let content = "```yaml\nname: app\nport: 8080\n```\n";
+    assert_eq!(detect_language(content).as_deref(), Some("markdown"));
+}
+
+#[test]
+fn markdown_bullet_list_prefers_markdown_over_yaml_sequence() {
+    let content = "- alpha\n- beta\n";
     assert_eq!(detect_language(content).as_deref(), Some("markdown"));
 }
 
