@@ -40,7 +40,7 @@ jobs:
       source_mode: ${{ steps.resolve.outputs.source_mode }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
       - name: Resolve source
@@ -106,7 +106,7 @@ jobs:
           echo "source_ref=${SOURCE_REF}" >> "$GITHUB_OUTPUT"
           echo "resolved mode=${MODE} tag=${TAG} source_ref=${SOURCE_REF}"
       - name: Checkout resolved source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           ref: ${{ steps.resolve.outputs.source_ref }}
@@ -137,16 +137,16 @@ jobs:
       SOURCE_REF: ${{ needs.resolve_tag.outputs.source_ref }}
     steps:
       - name: Checkout resolved source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           ref: ${{ env.SOURCE_REF }}
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9  # master @ 2026-02-23
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master @ 2026-02-23
         with:
           toolchain: 1.89.0
       - name: Cache Rust build artifacts
-        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330  # v2.7.8
+        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
       - name: Build smoke binaries
         shell: bash
         run: |
@@ -249,7 +249,7 @@ jobs:
       RUST_BACKTRACE: "1"
     steps:
       - name: Checkout build source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           ref: ${{ env.SOURCE_REF }}
@@ -265,7 +265,7 @@ jobs:
             echo "resolved_tag=${RESOLVED_TAG}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
       - name: Determine macOS signing/notarization availability
@@ -314,12 +314,12 @@ jobs:
             echo "missing=" >> "$GITHUB_OUTPUT"
           fi
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9  # master @ 2026-02-23
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master @ 2026-02-23
         with:
           toolchain: 1.89.0
           targets: ${{ matrix.target }}
       - name: Cache Rust build artifacts
-        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330  # v2.7.8
+        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           key: release-gui-${{ matrix.target }}
       - name: Install Linux build dependencies
@@ -656,7 +656,7 @@ jobs:
             --asset-suffix "${{ matrix.asset_suffix }}" \
             --runner-os "${{ runner.os }}"
       - name: Upload release assets
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1  # v4.6.1
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: release-assets-${{ matrix.asset_suffix }}
           path: dist/release/${{ matrix.asset_suffix }}/*
@@ -673,7 +673,7 @@ jobs:
       contents: write
     steps:
       - name: Download packaged assets
-        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806  # v4.1.9
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           pattern: release-assets-*
           path: dist/release-assets
@@ -697,7 +697,7 @@ jobs:
       - name: Publish release assets
         id: publish_release
         # Keep v2+ here: `overwrite_files` is not supported by older major tags.
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: ${{ needs.resolve_tag.outputs.resolved_tag }}
           overwrite_files: true
@@ -710,6 +710,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
         run: |
           set -euo pipefail
@@ -718,7 +719,7 @@ jobs:
           NOTE_P2='If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security'
           NOTE_P3='or run `xattr -cr /Applications/LocalPaste.app`.'
           NOTE="${NOTE_P1} ${NOTE_P2} ${NOTE_P3}"
-          CURRENT_BODY="$(gh release view "${RELEASE_TAG}" --json body --jq .body)"
+          CURRENT_BODY="$(gh release view "${RELEASE_TAG}" --repo "${GH_REPO}" --json body --jq .body)"
 
           if grep -Fq "${NOTE_PREFIX}" <<< "${CURRENT_BODY}"; then
             echo "macOS Gatekeeper note already present in release body"
@@ -732,4 +733,4 @@ jobs:
             printf "%s\n" "${NOTE}" > "${BODY_PATH}"
           fi
 
-          gh release edit "${RELEASE_TAG}" --notes-file "${BODY_PATH}"
+          gh release edit "${RELEASE_TAG}" --repo "${GH_REPO}" --notes-file "${BODY_PATH}"
