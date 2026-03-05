@@ -34,4 +34,5 @@ Status uses the same checklist markers as other dev docs:
 - [ ] De-duplicate overlapping heuristic detection matrix tests in `crates/localpaste_core/src/detection/tests.rs` (`heuristic_detects_expanded_fallback_languages` vs `heuristic_handles_shebang_and_import_conflict_matrix`) without reducing scenario coverage.
 - [ ] Evaluate a shared test bootstrap utility for temporary DB + backend event receive flows across GUI/server/core tests while keeping unit-vs-integration boundaries explicit (avoid forcing production API exposure only for tests).
 - [ ] Re-evaluate whether `LocalPasteApp::{active_text_len_bytes, active_text_chars, active_revision, active_snapshot}` should remain separate explicit helpers or move behind a single active-buffer abstraction; keep separate until a clear readability/perf win is demonstrated.
+- [ ] Auto-refresh History modal version rows on `PasteSaved` when the modal is open for the active paste (currently requires manual refresh/reopen after ordinary saves).
 - [x] Add explicit `Paste as new paste` UX (`Ctrl/Cmd+Shift+V` + command palette action) so new-paste clipboard flow does not depend on editor blur/focus heuristics.
