@@ -113,19 +113,42 @@ pub fn api_addr_file_path_from_env_or_default() -> PathBuf {
     api_addr_file_path_for_db_path(db_path_from_env_or_default().as_str())
 }
 
+fn parse_nonzero_interval_seconds_strict(name: &str, default: u64) -> Result<u64, String> {
+    let value = parse_env_number_strict(name, default)?;
+    if value == 0 {
+        return Err(format!(
+            "Invalid value for {}='0': expected integer >= 1",
+            name
+        ));
+    }
+    Ok(value)
+}
+
 /// Resolve the minimum interval between persisted paste-version snapshots.
 ///
 /// # Returns
 /// Interval in seconds (minimum `1`), sourced from
-/// `LOCALPASTE_VERSION_INTERVAL_SECS` when valid, with
+/// `LOCALPASTE_VERSION_INTERVAL_SECS` when set, with
 /// `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` as a legacy fallback.
-pub fn paste_version_interval_secs_from_env() -> u64 {
+///
+/// # Errors
+/// Returns an error when an explicitly provided interval is malformed or less than `1`.
+pub fn paste_version_interval_secs_from_env() -> Result<u64, String> {
     const PRIMARY_KEY: &str = "LOCALPASTE_VERSION_INTERVAL_SECS";
     const LEGACY_KEY: &str = "LOCALPASTE_PASTE_VERSION_INTERVAL_SECS";
     if env::var(PRIMARY_KEY).is_ok() {
-        return parse_env_number(PRIMARY_KEY, DEFAULT_PASTE_VERSION_INTERVAL_SECS).max(1);
+        return parse_nonzero_interval_seconds_strict(
+            PRIMARY_KEY,
+            DEFAULT_PASTE_VERSION_INTERVAL_SECS,
+        );
     }
-    parse_env_number(LEGACY_KEY, DEFAULT_PASTE_VERSION_INTERVAL_SECS).max(1)
+    if env::var(LEGACY_KEY).is_ok() {
+        return parse_nonzero_interval_seconds_strict(
+            LEGACY_KEY,
+            DEFAULT_PASTE_VERSION_INTERVAL_SECS,
+        );
+    }
+    Ok(DEFAULT_PASTE_VERSION_INTERVAL_SECS)
 }
 
 /// Parse a boolean-like environment flag value.
@@ -297,6 +320,10 @@ impl Config {
             Err(_) => default_db_path(),
         };
 
+        // Validate snapshot interval envs during strict startup so malformed values
+        // fail fast instead of surfacing later during write operations.
+        let _ = paste_version_interval_secs_from_env()?;
+
         Ok(Self {
             db_path,
             port: parse_env_number_strict("PORT", DEFAULT_PORT)?,
@@ -314,10 +341,11 @@ impl Config {
 mod tests {
     use super::{
         api_addr_file_path_for_db_path, env_flag_enabled, parse_bool_env, parse_bool_env_strict,
-        parse_env_flag, Config,
+        parse_env_flag, paste_version_interval_secs_from_env, Config,
     };
     use crate::constants::{
-        API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
+        API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE,
+        DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PORT,
     };
     use crate::env::{env_lock, EnvGuard};
     use std::path::PathBuf;
@@ -438,6 +466,42 @@ mod tests {
             let config = Config::from_env();
             assert_eq!(config.auto_backup, expected, "value: {value}");
         }
+    }
+
+    #[test]
+    fn paste_version_interval_secs_strict_matrix() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _primary = EnvGuard::remove("LOCALPASTE_VERSION_INTERVAL_SECS");
+        let _legacy = EnvGuard::remove("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS");
+        assert_eq!(
+            paste_version_interval_secs_from_env().expect("default interval"),
+            DEFAULT_PASTE_VERSION_INTERVAL_SECS
+        );
+
+        let _legacy = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "7");
+        assert_eq!(
+            paste_version_interval_secs_from_env().expect("legacy interval"),
+            7
+        );
+        drop(_legacy);
+
+        let _primary = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "9");
+        let _legacy = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "7");
+        assert_eq!(
+            paste_version_interval_secs_from_env().expect("primary interval"),
+            9
+        );
+        drop(_primary);
+        drop(_legacy);
+
+        let _primary = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "0");
+        let err = paste_version_interval_secs_from_env().expect_err("zero should fail");
+        assert!(err.contains("LOCALPASTE_VERSION_INTERVAL_SECS"));
+        drop(_primary);
+
+        let _legacy = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "not-a-number");
+        let err = paste_version_interval_secs_from_env().expect_err("invalid legacy should fail");
+        assert!(err.contains("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS"));
     }
 
     #[test]

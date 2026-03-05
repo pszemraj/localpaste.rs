@@ -59,6 +59,24 @@ fn from_shared_reuses_folder_transaction_lock_for_same_shared_db() {
 }
 
 #[test]
+fn database_new_rejects_invalid_version_interval_env() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "invalid");
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let result = Database::new(db_path.to_str().expect("db path"));
+    let err = match result {
+        Ok(_) => panic!("db init should fail"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(err, AppError::StorageMessage(ref message) if message.contains("LOCALPASTE_VERSION_INTERVAL_SECS")),
+        "unexpected error for invalid interval env: {}",
+        err
+    );
+}
+
+#[test]
 fn paste_create_get_update_delete_roundtrip() {
     let (db, _temp) = setup_test_db();
 

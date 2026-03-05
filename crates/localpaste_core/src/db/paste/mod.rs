@@ -31,6 +31,7 @@ pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_
 /// Accessor for paste-related redb tables.
 pub struct PasteDb {
     db: Arc<redb::Database>,
+    version_interval_secs: u64,
 }
 
 const DEFAULT_VERSION_LIST_LIMIT: usize = 50;
@@ -55,6 +56,12 @@ impl PasteDb {
     /// # Errors
     /// Returns an error when redb transaction/table initialization fails.
     pub fn new(db: Arc<redb::Database>) -> Result<Self, AppError> {
+        let version_interval_secs = paste_version_interval_secs_from_env().map_err(|err| {
+            AppError::StorageMessage(format!(
+                "Invalid paste version interval configuration: {}",
+                err
+            ))
+        })?;
         let write_txn = db.begin_write()?;
         write_txn.open_table(PASTES)?;
         write_txn.open_table(PASTES_META)?;
@@ -62,7 +69,18 @@ impl PasteDb {
         write_txn.open_table(PASTE_VERSIONS_META)?;
         write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
         write_txn.commit()?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            version_interval_secs,
+        })
+    }
+
+    /// Effective minimum interval between recorded version snapshots.
+    ///
+    /// # Returns
+    /// Minimum elapsed seconds required between persisted snapshots.
+    pub(crate) fn version_interval_secs(&self) -> u64 {
+        self.version_interval_secs
     }
 
     /// Insert a new paste row and derived metadata/index rows atomically.
@@ -174,7 +192,7 @@ impl PasteDb {
             update.folder_id.is_some(),
             "Direct folder updates via PasteDb::update are not allowed; use TransactionOps::move_paste_between_folders",
         )?;
-        let version_interval_secs = paste_version_interval_secs_from_env();
+        let version_interval_secs = self.version_interval_secs();
         let write_txn = self.db.begin_write()?;
         let updated_paste = {
             let mut pastes = write_txn.open_table(PASTES)?;

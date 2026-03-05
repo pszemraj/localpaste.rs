@@ -100,7 +100,7 @@ enum Commands {
     ResetHard {
         id: String,
         version_id_ms: u64,
-        #[arg(long, default_value_t = false)]
+        #[arg(long, action = clap::ArgAction::SetTrue, required = true)]
         yes: bool,
     },
     DuplicateVersion {
@@ -154,7 +154,6 @@ enum ApiCommand {
     ResetHard {
         id: String,
         version_id_ms: u64,
-        yes: bool,
     },
     DuplicateVersion {
         id: String,
@@ -199,14 +198,8 @@ fn classify_command(command: Commands) -> Result<ApiCommand, Shell> {
             right_version,
         }),
         Commands::ResetHard {
-            id,
-            version_id_ms,
-            yes,
-        } => Ok(ApiCommand::ResetHard {
-            id,
-            version_id_ms,
-            yes,
-        }),
+            id, version_id_ms, ..
+        } => Ok(ApiCommand::ResetHard { id, version_id_ms }),
         Commands::DuplicateVersion {
             id,
             version_id_ms,
@@ -1021,15 +1014,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             std::process::exit(if diff.equal { 0 } else { 1 });
         }
-        ApiCommand::ResetHard {
-            id,
-            version_id_ms,
-            yes,
-        } => {
-            if !yes {
-                eprintln!("Reset hard requires --yes.");
-                std::process::exit(1);
-            }
+        ApiCommand::ResetHard { id, version_id_ms } => {
             let version_segment = version_id_ms.to_string();
             let endpoint = api_url_or_exit(
                 &server,

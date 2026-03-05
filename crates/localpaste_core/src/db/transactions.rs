@@ -5,7 +5,6 @@ use super::tables::{
     PASTE_VERSIONS_META,
 };
 use super::Database;
-use crate::config::paste_version_interval_secs_from_env;
 use crate::db::paste::{apply_update_request, deserialize_paste, reverse_timestamp_key};
 use crate::db::versioning::{
     decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
@@ -309,7 +308,7 @@ impl TransactionOps {
         new_folder_id: Option<&str>,
         update_req: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
-        let version_interval_secs = paste_version_interval_secs_from_env();
+        let version_interval_secs = db.pastes.version_interval_secs();
         let write_txn = db.db.begin_write()?;
         let updated_paste = {
             let mut pastes = write_txn.open_table(PASTES)?;

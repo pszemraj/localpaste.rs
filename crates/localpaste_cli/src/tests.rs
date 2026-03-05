@@ -376,6 +376,15 @@ fn cli_parses_diff_equal_and_reset_commands() {
 }
 
 #[test]
+fn cli_rejects_reset_hard_without_yes_flag() {
+    let err = match Cli::try_parse_from(["lpaste", "reset-hard", "abc", "123"]) {
+        Ok(_) => panic!("reset-hard must require --yes"),
+        Err(err) => err,
+    };
+    assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+}
+
+#[test]
 fn cli_parses_duplicate_version_subcommand() {
     let duplicate = Cli::try_parse_from([
         "lpaste",
