@@ -9,7 +9,7 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when the active editor mode is [`EditorMode::VirtualEditor`].
     pub(super) fn is_virtual_editor_mode(&self) -> bool {
-        self.editor_mode == EditorMode::VirtualEditor && !self.is_viewing_historical_version()
+        self.editor_mode == EditorMode::VirtualEditor
     }
 
     /// Returns active buffer length in bytes for the current editor mode.

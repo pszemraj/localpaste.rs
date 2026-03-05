@@ -616,7 +616,6 @@ impl LocalPasteApp {
         self.last_edit_at = None;
         self.save_in_flight = false;
         self.save_request_revision = None;
-        self.version_ui.versions.clear();
         self.clear_version_view_state();
     }
 
@@ -698,9 +697,6 @@ impl LocalPasteApp {
 
     /// Marks current editor content dirty and arms autosave timing.
     pub(super) fn mark_dirty(&mut self) {
-        if self.block_if_historical_read_only() {
-            return;
-        }
         if self.selected_id.is_some() {
             self.save_status = SaveStatus::Dirty;
             self.last_edit_at = Some(Instant::now());
@@ -740,10 +736,6 @@ impl LocalPasteApp {
 
     /// Dispatches metadata save for the current editor metadata draft when needed.
     pub(super) fn save_metadata_now(&mut self) {
-        if self.block_if_historical_read_only() {
-            self.metadata_dirty = false;
-            return;
-        }
         if !self.metadata_dirty || self.metadata_save_in_flight {
             return;
         }
