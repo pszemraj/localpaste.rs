@@ -88,17 +88,11 @@ impl PasteDb {
         let meta = PasteMeta::from(paste);
         let encoded_meta = bincode::serialize(&meta)?;
         let recency_key = reverse_timestamp_key(paste.updated_at);
-        let initial_version = next_version_meta_for_content(&paste.content, paste.updated_at, None);
-        let encoded_versions = encode_version_meta_list(std::slice::from_ref(&initial_version))?;
-        let encoded_version_content = bincode::serialize(&paste.content)?;
-
         let write_txn = self.db.begin_write()?;
         {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
-            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
-            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
 
             if pastes.get(paste.id.as_str())?.is_some() {
                 return Err(AppError::StorageMessage(format!(
@@ -110,11 +104,6 @@ impl PasteDb {
             pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
             metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
             updated.insert((recency_key, paste.id.as_str()), ())?;
-            versions_meta.insert(paste.id.as_str(), encoded_versions.as_slice())?;
-            versions_content.insert(
-                (paste.id.as_str(), initial_version.version_id_ms),
-                encoded_version_content.as_slice(),
-            )?;
         }
         write_txn.commit()?;
         Ok(())
@@ -209,6 +198,8 @@ impl PasteDb {
             }
 
             let old_content = paste.content.clone();
+            let old_language = paste.language.clone();
+            let old_language_is_manual = paste.language_is_manual;
             let mut version_items = decode_version_meta_list(
                 versions_meta.get(id)?.as_ref().map(|value| value.value()),
             )?;
@@ -217,9 +208,15 @@ impl PasteDb {
 
             if content_changed {
                 let latest = version_items.first();
-                let next = next_version_meta_for_content(&paste.content, paste.updated_at, latest);
+                let next = next_version_meta_for_content(
+                    old_content.as_str(),
+                    old_language.as_deref(),
+                    old_language_is_manual,
+                    paste.updated_at,
+                    latest,
+                );
                 if should_record_version(latest, &next, version_interval_secs) {
-                    let encoded_content = bincode::serialize(&paste.content)?;
+                    let encoded_content = bincode::serialize(&old_content)?;
                     versions_content
                         .insert((id, next.version_id_ms), encoded_content.as_slice())?;
                     version_items.insert(0, next);
@@ -396,6 +393,8 @@ impl PasteDb {
             created_at: meta.created_at,
             content_hash: meta.content_hash,
             len: meta.len,
+            language: meta.language,
+            language_is_manual: meta.language_is_manual,
             content,
         }))
     }
@@ -481,12 +480,13 @@ impl PasteDb {
                     .as_ref()
                     .map(|value| value.value()),
             )?;
-            if !version_items
+            let Some(target_meta) = version_items
                 .iter()
-                .any(|item| item.version_id_ms == version_id_ms)
-            {
+                .find(|item| item.version_id_ms == version_id_ms)
+                .cloned()
+            else {
                 return Ok(None);
-            }
+            };
 
             let Some(content_guard) = versions_content.get((paste_id, version_id_ms))? else {
                 return Ok(None);
@@ -496,8 +496,8 @@ impl PasteDb {
             let reset_update = UpdatePasteRequest {
                 content: Some(target_content),
                 name: None,
-                language: None,
-                language_is_manual: None,
+                language: target_meta.language,
+                language_is_manual: Some(target_meta.language_is_manual),
                 folder_id: None,
                 tags: None,
             };
@@ -559,7 +559,12 @@ impl PasteDb {
             .filter(|value| !value.is_empty())
             .map(ToString::to_string)
             .unwrap_or_else(naming::generate_name);
-        let duplicate = Paste::new(snapshot.content, duplicate_name);
+        let duplicate = Paste::new_with_language(
+            snapshot.content,
+            duplicate_name,
+            snapshot.language,
+            snapshot.language_is_manual,
+        );
         self.create(&duplicate)?;
         Ok(Some(duplicate))
     }

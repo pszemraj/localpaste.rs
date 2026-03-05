@@ -84,7 +84,7 @@ fn paste_create_get_update_delete_roundtrip() {
 }
 
 #[test]
-fn create_records_initial_version_snapshot() {
+fn create_starts_without_stored_version_snapshots() {
     let (db, _temp) = setup_test_db();
     let paste = Paste::new("hello".to_string(), "initial-version".to_string());
     let paste_id = paste.id.clone();
@@ -95,15 +95,10 @@ fn create_records_initial_version_snapshot() {
         .list_versions(&paste_id, None)
         .expect("list versions")
         .expect("paste should exist");
-    assert_eq!(versions.len(), 1);
-
-    let version = &versions[0];
-    let snapshot = db
-        .pastes
-        .get_version(&paste_id, version.version_id_ms)
-        .expect("get version")
-        .expect("version should exist");
-    assert_eq!(snapshot.content, "hello");
+    assert!(
+        versions.is_empty(),
+        "new paste should have no historical snapshots until first content change"
+    );
 }
 
 #[test]
@@ -132,7 +127,7 @@ fn content_update_respects_version_interval_and_hash_dedupe() {
     assert_eq!(
         versions_after_fast_update.len(),
         1,
-        "fast update under interval gate should not persist snapshot"
+        "first content update should persist exactly one pre-update snapshot"
     );
 
     let _same_content = update_existing_paste(
@@ -184,8 +179,8 @@ fn reset_hard_prunes_newer_versions() {
         .expect("list versions")
         .expect("paste exists");
     assert!(
-        versions_before_reset.len() >= 3,
-        "expected at least three snapshots before reset"
+        versions_before_reset.len() >= 2,
+        "expected at least two snapshots before reset"
     );
     let oldest_version_id = versions_before_reset.last().expect("oldest").version_id_ms;
 
@@ -218,6 +213,12 @@ fn delete_removes_version_rows() {
     let paste = Paste::new("delete-me".to_string(), "delete-versions".to_string());
     let paste_id = paste.id.clone();
     db.pastes.create(&paste).expect("create");
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("delete-me-updated"), None, None, None),
+        "create snapshot before delete",
+    );
 
     let versions = db
         .pastes
@@ -258,6 +259,18 @@ fn duplicate_from_version_creates_new_paste_with_snapshot_content() {
     let source = Paste::new("alpha".to_string(), "source".to_string());
     let source_id = source.id.clone();
     db.pastes.create(&source).expect("create source");
+    update_existing_paste(
+        &db,
+        &source_id,
+        update_request(None, None, Some("python"), Some(true)),
+        "set manual language",
+    );
+    update_existing_paste(
+        &db,
+        &source_id,
+        update_request(Some("beta"), None, None, None),
+        "create historical snapshot",
+    );
 
     let version_id = db
         .pastes
@@ -273,7 +286,52 @@ fn duplicate_from_version_creates_new_paste_with_snapshot_content() {
         .expect("duplicate should be created");
     assert_eq!(duplicate.name, "copy");
     assert_eq!(duplicate.content, "alpha");
+    assert_eq!(duplicate.language.as_deref(), Some("python"));
+    assert!(duplicate.language_is_manual);
     assert_ne!(duplicate.id, source_id);
+}
+
+#[test]
+fn reset_hard_restores_snapshot_language_state() {
+    let (db, _temp) = setup_test_db();
+    let source = Paste::new("one".to_string(), "reset-language".to_string());
+    let source_id = source.id.clone();
+    db.pastes.create(&source).expect("create source");
+
+    update_existing_paste(
+        &db,
+        &source_id,
+        update_request(None, None, Some("python"), Some(true)),
+        "set manual language",
+    );
+    update_existing_paste(
+        &db,
+        &source_id,
+        update_request(Some("two"), None, None, None),
+        "create historical snapshot",
+    );
+    update_existing_paste(
+        &db,
+        &source_id,
+        update_request(None, None, Some("rust"), Some(true)),
+        "mutate language after snapshot",
+    );
+
+    let version_id = db
+        .pastes
+        .list_versions(&source_id, Some(1))
+        .expect("list versions")
+        .expect("source exists")[0]
+        .version_id_ms;
+
+    let reset = db
+        .pastes
+        .reset_hard_to_version(&source_id, version_id)
+        .expect("reset")
+        .expect("source exists");
+    assert_eq!(reset.content, "one");
+    assert_eq!(reset.language.as_deref(), Some("python"));
+    assert!(reset.language_is_manual);
 }
 
 #[test]

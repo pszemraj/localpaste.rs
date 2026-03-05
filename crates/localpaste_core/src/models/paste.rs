@@ -85,6 +85,9 @@ pub struct VersionMeta {
     pub created_at: DateTime<Utc>,
     pub content_hash: String,
     pub len: usize,
+    pub language: Option<String>,
+    #[serde(default)]
+    pub language_is_manual: bool,
 }
 
 /// Full snapshot payload for a historical version of a paste.
@@ -95,6 +98,9 @@ pub struct VersionSnapshot {
     pub created_at: DateTime<Utc>,
     pub content_hash: String,
     pub len: usize,
+    pub language: Option<String>,
+    #[serde(default)]
+    pub language_is_manual: bool,
     pub content: String,
 }
 

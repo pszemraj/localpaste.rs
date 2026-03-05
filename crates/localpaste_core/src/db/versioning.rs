@@ -3,6 +3,7 @@
 use crate::error::AppError;
 use crate::models::paste::VersionMeta;
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 
 fn version_id_from_millis(ms: i64) -> u64 {
     ms.max(0) as u64
@@ -27,12 +28,19 @@ pub(crate) fn content_hash_hex(content: &str) -> String {
 ///
 /// # Returns
 /// A [`VersionMeta`] row for `content`.
-pub(crate) fn version_meta_for_content(content: &str, now: DateTime<Utc>) -> VersionMeta {
+pub(crate) fn version_meta_for_content(
+    content: &str,
+    language: Option<&str>,
+    language_is_manual: bool,
+    now: DateTime<Utc>,
+) -> VersionMeta {
     VersionMeta {
         version_id_ms: version_id_from_millis(now.timestamp_millis()),
         created_at: now,
         content_hash: content_hash_hex(content),
         len: content.len(),
+        language: language.map(ToString::to_string),
+        language_is_manual,
     }
 }
 
@@ -50,10 +58,12 @@ pub(crate) fn version_meta_for_content(content: &str, now: DateTime<Utc>) -> Ver
 /// A monotonic [`VersionMeta`] suitable for persistence.
 pub(crate) fn next_version_meta_for_content(
     content: &str,
+    language: Option<&str>,
+    language_is_manual: bool,
     now: DateTime<Utc>,
     latest: Option<&VersionMeta>,
 ) -> VersionMeta {
-    let mut next = version_meta_for_content(content, now);
+    let mut next = version_meta_for_content(content, language, language_is_manual, now);
     if let Some(latest) = latest {
         if next.version_id_ms <= latest.version_id_ms {
             next.version_id_ms = latest.version_id_ms.saturating_add(1);
@@ -76,7 +86,11 @@ pub(crate) fn decode_version_meta_list(bytes: Option<&[u8]>) -> Result<Vec<Versi
     let Some(bytes) = bytes else {
         return Ok(Vec::new());
     };
-    Ok(bincode::deserialize(bytes)?)
+    if let Ok(items) = bincode::deserialize::<Vec<VersionMeta>>(bytes) {
+        return Ok(items);
+    }
+    let legacy_items = bincode::deserialize::<Vec<LegacyVersionMeta>>(bytes)?;
+    Ok(legacy_items.into_iter().map(VersionMeta::from).collect())
 }
 
 /// Encode a version metadata list for persistence.
@@ -119,4 +133,25 @@ pub(crate) fn should_record_version(
         .signed_duration_since(latest.created_at)
         .num_seconds();
     elapsed_secs >= min_interval_secs as i64
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyVersionMeta {
+    version_id_ms: u64,
+    created_at: DateTime<Utc>,
+    content_hash: String,
+    len: usize,
+}
+
+impl From<LegacyVersionMeta> for VersionMeta {
+    fn from(value: LegacyVersionMeta) -> Self {
+        Self {
+            version_id_ms: value.version_id_ms,
+            created_at: value.created_at,
+            content_hash: value.content_hash,
+            len: value.len,
+            language: None,
+            language_is_manual: false,
+        }
+    }
 }

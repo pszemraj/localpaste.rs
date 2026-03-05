@@ -117,13 +117,15 @@ pub fn api_addr_file_path_from_env_or_default() -> PathBuf {
 ///
 /// # Returns
 /// Interval in seconds (minimum `1`), sourced from
-/// `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` when valid.
+/// `LOCALPASTE_VERSION_INTERVAL_SECS` when valid, with
+/// `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` as a legacy fallback.
 pub fn paste_version_interval_secs_from_env() -> u64 {
-    parse_env_number(
-        "LOCALPASTE_PASTE_VERSION_INTERVAL_SECS",
-        DEFAULT_PASTE_VERSION_INTERVAL_SECS,
-    )
-    .max(1)
+    const PRIMARY_KEY: &str = "LOCALPASTE_VERSION_INTERVAL_SECS";
+    const LEGACY_KEY: &str = "LOCALPASTE_PASTE_VERSION_INTERVAL_SECS";
+    if env::var(PRIMARY_KEY).is_ok() {
+        return parse_env_number(PRIMARY_KEY, DEFAULT_PASTE_VERSION_INTERVAL_SECS).max(1);
+    }
+    parse_env_number(LEGACY_KEY, DEFAULT_PASTE_VERSION_INTERVAL_SECS).max(1)
 }
 
 /// Parse a boolean-like environment flag value.

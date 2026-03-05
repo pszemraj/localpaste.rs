@@ -164,17 +164,11 @@ impl TransactionOps {
         let encoded_paste = bincode::serialize(&paste)?;
         let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
         let recency_key = reverse_timestamp_key(paste.updated_at);
-        let initial_version = next_version_meta_for_content(&paste.content, paste.updated_at, None);
-        let encoded_versions = encode_version_meta_list(std::slice::from_ref(&initial_version))?;
-        let encoded_version_content = bincode::serialize(&paste.content)?;
-
         let write_txn = db.db.begin_write()?;
         {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
-            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
-            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
             let mut folders = write_txn.open_table(FOLDERS)?;
             let deleting = write_txn.open_table(FOLDERS_DELETING)?;
 
@@ -189,11 +183,6 @@ impl TransactionOps {
             pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
             metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
             updated.insert((recency_key, paste.id.as_str()), ())?;
-            versions_meta.insert(paste.id.as_str(), encoded_versions.as_slice())?;
-            versions_content.insert(
-                (paste.id.as_str(), initial_version.version_id_ms),
-                encoded_version_content.as_slice(),
-            )?;
             apply_folder_count_transition(&mut folders, None, Some(folder_id))?;
         }
         write_txn.commit()?;
@@ -347,6 +336,8 @@ impl TransactionOps {
             }
 
             let old_content = paste.content.clone();
+            let old_language = paste.language.clone();
+            let old_language_is_manual = paste.language_is_manual;
             let mut version_items = decode_version_meta_list(
                 versions_meta
                     .get(paste_id)?
@@ -359,9 +350,15 @@ impl TransactionOps {
 
             if content_changed {
                 let latest = version_items.first();
-                let next = next_version_meta_for_content(&paste.content, paste.updated_at, latest);
+                let next = next_version_meta_for_content(
+                    old_content.as_str(),
+                    old_language.as_deref(),
+                    old_language_is_manual,
+                    paste.updated_at,
+                    latest,
+                );
                 if should_record_version(latest, &next, version_interval_secs) {
-                    let encoded_content = bincode::serialize(&paste.content)?;
+                    let encoded_content = bincode::serialize(&old_content)?;
                     versions_content
                         .insert((paste_id, next.version_id_ms), encoded_content.as_slice())?;
                     version_items.insert(0, next);
