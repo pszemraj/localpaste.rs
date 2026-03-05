@@ -351,6 +351,25 @@ fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
 }
 
 #[test]
+fn virtual_editor_frame_consumes_pending_follow_scroll_offset() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness
+        .app
+        .reset_virtual_editor("line one\nline two\nline three\n");
+    harness.app.virtual_pending_scroll_offset_y = Some(240.0);
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    run_editor_panel_once(&mut harness.app, &ctx, egui::RawInput::default());
+
+    assert!(
+        harness.app.virtual_pending_scroll_offset_y.is_none(),
+        "virtual editor frame should consume queued scroll-follow offset"
+    );
+}
+
+#[test]
 fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;

@@ -401,10 +401,13 @@ impl LocalPasteApp {
         highlight_render_match: Option<&HighlightRender>,
         use_plain: bool,
     ) {
-        let scroll = egui::ScrollArea::vertical()
+        let mut scroll = egui::ScrollArea::vertical()
             .id_salt("editor_scroll")
             .max_height(editor_height)
             .auto_shrink([false; 2]);
+        if let Some(offset) = self.virtual_pending_scroll_offset_y.take() {
+            scroll = scroll.vertical_scroll_offset(offset.max(0.0));
+        }
 
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         if self.focus_editor_next {
