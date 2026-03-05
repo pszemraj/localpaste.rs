@@ -93,6 +93,31 @@ fn virtual_editor_window_blur_clears_focus_state() {
 }
 
 #[test]
+fn focus_promotion_consumes_bare_arrows_before_sidebar_routing() {
+    let ctx = egui::Context::default();
+    let _ = ctx.run(
+        egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::ArrowDown,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            ..Default::default()
+        },
+        |ctx| {
+            consume_virtual_editor_focus_keys(ctx, true);
+            let sidebar_routed = ctx.input(|input| {
+                should_route_sidebar_arrows(false, input.modifiers, true, true, false, false, false)
+                    && input.key_pressed(egui::Key::ArrowDown)
+            });
+            assert!(!sidebar_routed);
+        },
+    );
+}
+
+#[test]
 fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
     let mut harness = make_app();
 

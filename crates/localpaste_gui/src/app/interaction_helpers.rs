@@ -26,7 +26,8 @@ pub(crate) enum VirtualCommandBucket {
 /// - `wants_keyboard_input_before`: Egui keyboard-input ownership snapshot.
 /// - `modifiers`: Active keyboard modifiers for this frame.
 /// - `has_pastes`: Whether sidebar list has at least one selectable paste.
-/// - `focus_active_pre`: Virtual-editor focus state before routing.
+/// - `editor_claims_navigation_pre`: Whether the virtual editor already owns,
+///   or is in the middle of explicitly claiming, navigation keys this frame.
 /// - `command_palette_open`: Whether command palette modal is open.
 /// - `properties_drawer_open`: Whether properties drawer is open.
 /// - `shortcut_help_open`: Whether shortcut help modal is open.
@@ -37,7 +38,7 @@ pub(crate) fn should_route_sidebar_arrows(
     wants_keyboard_input_before: bool,
     modifiers: egui::Modifiers,
     has_pastes: bool,
-    focus_active_pre: bool,
+    editor_claims_navigation_pre: bool,
     command_palette_open: bool,
     properties_drawer_open: bool,
     shortcut_help_open: bool,
@@ -48,7 +49,7 @@ pub(crate) fn should_route_sidebar_arrows(
     has_pastes
         && !wants_keyboard_input_before
         && !has_nav_modifiers
-        && !focus_active_pre
+        && !editor_claims_navigation_pre
         && !overlays_open
 }
 
@@ -72,9 +73,10 @@ pub(crate) fn is_command_shift_shortcut(modifiers: egui::Modifiers) -> bool {
 ///
 /// # Arguments
 /// - `ctx`: Egui context for mutable input access.
-/// - `editor_focused`: Whether the virtual editor currently owns keyboard focus.
-pub(crate) fn consume_virtual_editor_focus_keys(ctx: &egui::Context, editor_focused: bool) {
-    if !editor_focused {
+/// - `editor_claims_keyboard`: Whether the virtual editor should own
+///   navigation/editing keys for this frame, including same-frame focus promotion.
+pub(crate) fn consume_virtual_editor_focus_keys(ctx: &egui::Context, editor_claims_keyboard: bool) {
+    if !editor_claims_keyboard {
         return;
     }
 
@@ -292,9 +294,42 @@ pub(crate) fn paint_virtual_selection_overlay(
 #[cfg(test)]
 mod tests {
     use super::{
-        is_command_shift_shortcut, is_plain_command_shortcut, should_route_sidebar_arrows,
+        consume_virtual_editor_focus_keys, is_command_shift_shortcut, is_plain_command_shortcut,
+        should_route_sidebar_arrows,
     };
     use eframe::egui;
+
+    fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn consume_virtual_editor_focus_keys_eats_modified_navigation_when_editor_claims_keyboard() {
+        let ctx = egui::Context::default();
+        let modifiers = egui::Modifiers {
+            command: true,
+            shift: true,
+            ..Default::default()
+        };
+
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![key_event(egui::Key::ArrowRight, modifiers)],
+                ..Default::default()
+            },
+            |ctx| {
+                assert!(ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)));
+                consume_virtual_editor_focus_keys(ctx, true);
+                assert!(!ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)));
+            },
+        );
+    }
 
     #[test]
     fn sidebar_arrow_routing_guard_matrix() {
@@ -302,7 +337,7 @@ mod tests {
             wants_keyboard_input_before: bool,
             modifiers: egui::Modifiers,
             has_pastes: bool,
-            focus_active_pre: bool,
+            editor_claims_navigation_pre: bool,
             command_palette_open: bool,
             properties_drawer_open: bool,
             shortcut_help_open: bool,
@@ -314,7 +349,7 @@ mod tests {
                 wants_keyboard_input_before: false,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: true,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: false,
                 properties_drawer_open: false,
                 shortcut_help_open: false,
@@ -324,7 +359,7 @@ mod tests {
                 wants_keyboard_input_before: true,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: true,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: false,
                 properties_drawer_open: false,
                 shortcut_help_open: false,
@@ -337,7 +372,7 @@ mod tests {
                     ..egui::Modifiers::NONE
                 },
                 has_pastes: true,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: false,
                 properties_drawer_open: false,
                 shortcut_help_open: false,
@@ -347,7 +382,7 @@ mod tests {
                 wants_keyboard_input_before: false,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: true,
-                focus_active_pre: true,
+                editor_claims_navigation_pre: true,
                 command_palette_open: false,
                 properties_drawer_open: false,
                 shortcut_help_open: false,
@@ -357,7 +392,7 @@ mod tests {
                 wants_keyboard_input_before: false,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: true,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: true,
                 properties_drawer_open: false,
                 shortcut_help_open: false,
@@ -367,7 +402,7 @@ mod tests {
                 wants_keyboard_input_before: false,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: false,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: false,
                 properties_drawer_open: false,
                 shortcut_help_open: false,
@@ -380,7 +415,7 @@ mod tests {
                 case.wants_keyboard_input_before,
                 case.modifiers,
                 case.has_pastes,
-                case.focus_active_pre,
+                case.editor_claims_navigation_pre,
                 case.command_palette_open,
                 case.properties_drawer_open,
                 case.shortcut_help_open,

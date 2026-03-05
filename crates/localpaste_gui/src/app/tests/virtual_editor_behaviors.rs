@@ -445,6 +445,32 @@ fn virtual_editor_enter_in_first_focus_handoff_frame_inserts_top_newline() {
 }
 
 #[test]
+fn virtual_editor_shift_arrow_in_first_focus_handoff_frame_extends_selection() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha\n");
+    harness.app.focus_editor_next = true;
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let shift_right = key_event(
+        egui::Key::ArrowRight,
+        egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![shift_right]);
+
+    assert!(!focus_active_pre);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 1);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..1)
+    );
+}
+
+#[test]
 fn virtual_vertical_move_target_matrix() {
     struct Case {
         text: &'static str,

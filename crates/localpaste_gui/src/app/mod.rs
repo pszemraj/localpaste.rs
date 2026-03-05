@@ -571,7 +571,12 @@ impl eframe::App for LocalPasteApp {
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
         let virtual_editor_focus_active_pre = focus_active_pre
             || (self.editor_mode == EditorMode::VirtualEditor && self.virtual_editor_active);
-        let virtual_editor_events_allowed = virtual_editor_focus_active_pre
+        // Treat same-frame focus promotion as editor-owned keyboard navigation so
+        // arrows/home/end/etc. cannot leak to sidebar/default widget traversal
+        // before the hidden focus widget is finalized during panel render.
+        let virtual_editor_keyboard_claim_pre =
+            virtual_editor_focus_active_pre || focus_promotion_requested;
+        let virtual_editor_events_allowed = virtual_editor_keyboard_claim_pre
             || (self.editor_mode == EditorMode::VirtualEditor && !wants_keyboard_input_before);
         if self.is_virtual_editor_mode() {
             let route_started = Instant::now();
@@ -582,6 +587,9 @@ impl eframe::App for LocalPasteApp {
                 if self.should_skip_virtual_command_for_paste_as_new(&command) {
                     continue;
                 }
+                // Same-frame focus promotion should stop keys leaking elsewhere, but
+                // command application still defers until the hidden focus widget has
+                // been rendered and egui focus is finalized.
                 match classify_virtual_command(&command, focus_active_pre) {
                     VirtualCommandBucket::DeferredCopy => {
                         saw_virtual_copy = true;
@@ -616,7 +624,7 @@ impl eframe::App for LocalPasteApp {
                 self.mark_dirty();
             }
         }
-        consume_virtual_editor_focus_keys(ctx, virtual_editor_focus_active_pre);
+        consume_virtual_editor_focus_keys(ctx, virtual_editor_keyboard_claim_pre);
 
         let mut copy_virtual_preview = false;
         let mut fallback_virtual_select_all = false;
@@ -725,7 +733,7 @@ impl eframe::App for LocalPasteApp {
                 wants_keyboard_input_before,
                 input.modifiers,
                 !self.pastes.is_empty(),
-                focus_active_pre,
+                virtual_editor_keyboard_claim_pre,
                 self.command_palette_open,
                 self.properties_drawer_open,
                 self.shortcut_help_open,
