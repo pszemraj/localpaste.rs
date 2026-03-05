@@ -420,7 +420,7 @@ pub(super) fn handle_reset_paste_hard_to_version(
     match reset_result {
         Ok(Some(paste)) => {
             state.query_cache.invalidate();
-            let _ = state.evt_tx.send(CoreEvent::PasteSaved { paste });
+            let _ = state.evt_tx.send(CoreEvent::PasteResetToVersion { paste });
             handle_list_paste_versions(state, id, 50);
         }
         Ok(None) => match state.db.pastes.get(id.as_str()) {

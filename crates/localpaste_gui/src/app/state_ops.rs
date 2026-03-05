@@ -274,6 +274,7 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteVersionsLoaded { .. }
             | CoreEvent::PasteVersionLoaded { .. }
+            | CoreEvent::PasteResetToVersion { .. }
             | CoreEvent::PasteDiffComputed { .. }
             | CoreEvent::FoldersLoaded { items: _ }
             | CoreEvent::ShutdownComplete { flush_result: _ } => {}

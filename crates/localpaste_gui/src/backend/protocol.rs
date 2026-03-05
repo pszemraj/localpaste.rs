@@ -115,6 +115,8 @@ pub enum CoreEvent {
     PasteCreated { paste: Paste },
     /// Response confirming a paste was updated.
     PasteSaved { paste: Paste },
+    /// Response confirming a paste was reset to a historical version.
+    PasteResetToVersion { paste: Paste },
     /// Response confirming a paste's metadata was updated.
     PasteMetaSaved { paste: Paste },
     /// Response confirming a paste was deleted.
