@@ -38,6 +38,19 @@ const DEFAULT_VERSION_LIST_LIMIT: usize = 50;
 const MAX_VERSION_LIST_LIMIT: usize = 1_000;
 
 impl PasteDb {
+    fn ensure_content_within_size_limit(
+        content: &str,
+        max_paste_size: usize,
+    ) -> Result<(), AppError> {
+        if content.len() > max_paste_size {
+            return Err(AppError::BadRequest(format!(
+                "Paste size exceeds maximum of {} bytes",
+                max_paste_size
+            )));
+        }
+        Ok(())
+    }
+
     fn reject_direct_folder_operation(
         violates: bool,
         message: &'static str,
@@ -466,6 +479,7 @@ impl PasteDb {
     /// # Arguments
     /// - `paste_id`: Canonical paste id.
     /// - `version_id_ms`: Target historical version id.
+    /// - `max_paste_size`: Maximum allowed content size for the restored head row.
     ///
     /// # Returns
     /// `Ok(Some(updated))` when reset succeeds, `Ok(None)` when paste/version is missing.
@@ -476,6 +490,7 @@ impl PasteDb {
         &self,
         paste_id: &str,
         version_id_ms: u64,
+        max_paste_size: usize,
     ) -> Result<Option<Paste>, AppError> {
         let write_txn = self.db.begin_write()?;
         let updated_paste = {
@@ -511,6 +526,7 @@ impl PasteDb {
             };
             let target_content: String = bincode::deserialize(content_guard.value())?;
             drop(content_guard);
+            Self::ensure_content_within_size_limit(&target_content, max_paste_size)?;
 
             // Reset must restore the exact stored snapshot semantics. Reusing
             // `apply_update_request` here is incorrect because it can re-run
@@ -559,6 +575,7 @@ impl PasteDb {
     /// # Arguments
     /// - `paste_id`: Source paste id.
     /// - `version_id_ms`: Source historical version id.
+    /// - `max_paste_size`: Maximum allowed content size for the new duplicate row.
     /// - `name`: Optional explicit name for the duplicate.
     ///
     /// # Returns
@@ -570,11 +587,13 @@ impl PasteDb {
         &self,
         paste_id: &str,
         version_id_ms: u64,
+        max_paste_size: usize,
         name: Option<String>,
     ) -> Result<Option<Paste>, AppError> {
         let Some(snapshot) = self.get_version(paste_id, version_id_ms)? else {
             return Ok(None);
         };
+        Self::ensure_content_within_size_limit(&snapshot.content, max_paste_size)?;
         let duplicate_name = name
             .as_deref()
             .map(str::trim)

@@ -330,7 +330,7 @@ pub async fn reset_hard_paste_version(
     let paste = state
         .db
         .pastes
-        .reset_hard_to_version(id.as_str(), version_id_ms)?
+        .reset_hard_to_version(id.as_str(), version_id_ms, state.config.max_paste_size)?
         .ok_or(AppError::NotFound)?;
     Ok(Json(paste))
 }
@@ -351,12 +351,20 @@ pub async fn reset_hard_paste_version(
 pub async fn duplicate_paste_version(
     State(state): State<AppState>,
     Path((id, version_id_ms)): Path<(String, u64)>,
-    Json(req): Json<DuplicateVersionRequest>,
+    payload: Option<Json<DuplicateVersionRequest>>,
 ) -> Result<Json<Paste>, HttpError> {
+    let req = payload
+        .map(|Json(req)| req)
+        .unwrap_or(DuplicateVersionRequest { name: None });
     let paste = state
         .db
         .pastes
-        .duplicate_from_version(id.as_str(), version_id_ms, req.name)?
+        .duplicate_from_version(
+            id.as_str(),
+            version_id_ms,
+            state.config.max_paste_size,
+            req.name,
+        )?
         .ok_or(AppError::NotFound)?;
     Ok(Json(paste))
 }

@@ -61,10 +61,12 @@ fn from_shared_reuses_folder_transaction_lock_for_same_shared_db() {
 #[test]
 fn database_new_rejects_invalid_version_interval_env() {
     let _lock = env_lock().lock().expect("env lock");
-    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "invalid");
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let db_path = temp_dir.path().join("db");
-    let result = Database::new(db_path.to_str().expect("db path"));
+    let result = with_db_init_test_lock(|| {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "invalid");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        Database::new(db_path.to_str().expect("db path"))
+    });
     let err = match result {
         Ok(_) => panic!("db init should fail"),
         Err(err) => err,
@@ -122,8 +124,13 @@ fn create_starts_without_stored_version_snapshots() {
 #[test]
 fn content_update_respects_version_interval_and_hash_dedupe() {
     let _lock = env_lock().lock().expect("env lock");
-    let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "3600");
-    let (db, _temp) = setup_test_db();
+    let (db, _temp) = with_db_init_test_lock(|| {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "3600");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+        (db, temp_dir)
+    });
 
     let paste = Paste::new("v1".to_string(), "interval-gate".to_string());
     let paste_id = paste.id.clone();
@@ -169,8 +176,13 @@ fn content_update_respects_version_interval_and_hash_dedupe() {
 #[test]
 fn reset_hard_prunes_newer_versions() {
     let _lock = env_lock().lock().expect("env lock");
-    let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
-    let (db, _temp) = setup_test_db();
+    let (db, _temp) = with_db_init_test_lock(|| {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+        (db, temp_dir)
+    });
 
     let paste = Paste::new("v1".to_string(), "reset-hard".to_string());
     let paste_id = paste.id.clone();
@@ -204,7 +216,7 @@ fn reset_hard_prunes_newer_versions() {
 
     let reset = db
         .pastes
-        .reset_hard_to_version(&paste_id, oldest_version_id)
+        .reset_hard_to_version(&paste_id, oldest_version_id, usize::MAX)
         .expect("reset hard")
         .expect("paste should exist");
     assert_eq!(reset.content, "v1");
@@ -301,7 +313,7 @@ fn duplicate_from_version_creates_new_paste_with_snapshot_content() {
 
     let duplicate = db
         .pastes
-        .duplicate_from_version(&source_id, version_id, Some("copy".to_string()))
+        .duplicate_from_version(&source_id, version_id, usize::MAX, Some("copy".to_string()))
         .expect("duplicate")
         .expect("duplicate should be created");
     assert_eq!(duplicate.name, "copy");
@@ -346,7 +358,7 @@ fn reset_hard_restores_snapshot_language_state() {
 
     let reset = db
         .pastes
-        .reset_hard_to_version(&source_id, version_id)
+        .reset_hard_to_version(&source_id, version_id, usize::MAX)
         .expect("reset")
         .expect("source exists");
     assert_eq!(reset.content, "one");
@@ -386,12 +398,104 @@ fn reset_hard_restores_auto_language_state_without_redetecting() {
 
     let reset = db
         .pastes
-        .reset_hard_to_version(&source_id, version_id)
+        .reset_hard_to_version(&source_id, version_id, usize::MAX)
         .expect("reset")
         .expect("source exists");
     assert_eq!(reset.content, "just plain text");
     assert_eq!(reset.language, None);
     assert!(!reset.language_is_manual);
+}
+
+#[test]
+fn duplicate_from_version_rejects_snapshot_exceeding_size_limit_without_creating_row() {
+    let (db, _temp) = setup_test_db();
+    let source = Paste::new("12345".to_string(), "source".to_string());
+    let source_id = source.id.clone();
+    db.pastes.create(&source).expect("create source");
+    update_existing_paste(
+        &db,
+        &source_id,
+        update_request(Some("x"), None, None, None),
+        "create historical snapshot",
+    );
+
+    let version_id = db
+        .pastes
+        .list_versions(&source_id, Some(1))
+        .expect("list versions")
+        .expect("source exists")[0]
+        .version_id_ms;
+
+    let err = db
+        .pastes
+        .duplicate_from_version(&source_id, version_id, 4, Some("copy".to_string()))
+        .expect_err("oversized historical snapshot should be rejected");
+    assert!(
+        matches!(err, AppError::BadRequest(ref message) if message.contains("maximum of 4 bytes")),
+        "unexpected duplicate size-limit error: {}",
+        err
+    );
+
+    let stored = db.pastes.list(10, None).expect("list pastes");
+    assert_eq!(
+        stored.len(),
+        1,
+        "failed duplicate must not create a new paste"
+    );
+    assert_eq!(stored[0].id, source_id);
+}
+
+#[test]
+fn reset_hard_rejects_snapshot_exceeding_size_limit_without_mutating_head() {
+    let (db, _temp) = setup_test_db();
+    let source = Paste::new("12345".to_string(), "source".to_string());
+    let source_id = source.id.clone();
+    db.pastes.create(&source).expect("create source");
+    update_existing_paste(
+        &db,
+        &source_id,
+        update_request(Some("x"), None, None, None),
+        "create historical snapshot",
+    );
+
+    let versions_before_reset = db
+        .pastes
+        .list_versions(&source_id, Some(1))
+        .expect("list versions")
+        .expect("source exists");
+    let version_id = versions_before_reset[0].version_id_ms;
+
+    let err = db
+        .pastes
+        .reset_hard_to_version(&source_id, version_id, 4)
+        .expect_err("oversized historical snapshot should be rejected");
+    assert!(
+        matches!(err, AppError::BadRequest(ref message) if message.contains("maximum of 4 bytes")),
+        "unexpected reset size-limit error: {}",
+        err
+    );
+
+    let current = db
+        .pastes
+        .get(&source_id)
+        .expect("get current")
+        .expect("source exists");
+    assert_eq!(
+        current.content, "x",
+        "failed reset must leave current head intact"
+    );
+
+    let versions_after_reset = db
+        .pastes
+        .list_versions(&source_id, Some(1))
+        .expect("list versions after failed reset")
+        .expect("source exists");
+    assert_eq!(
+        versions_after_reset.len(),
+        versions_before_reset.len(),
+        "failed reset must preserve historical snapshots"
+    );
+    assert_eq!(versions_after_reset[0].version_id_ms, version_id);
 }
 
 #[test]

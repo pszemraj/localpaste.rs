@@ -414,7 +414,7 @@ pub(super) fn handle_reset_paste_hard_to_version(
         state
             .db
             .pastes
-            .reset_hard_to_version(id.as_str(), version_id_ms)
+            .reset_hard_to_version(id.as_str(), version_id_ms, state.max_paste_size)
     };
 
     match reset_result {
@@ -462,11 +462,12 @@ pub(super) fn handle_duplicate_paste_version(
     version_id_ms: u64,
     name: Option<String>,
 ) {
-    match state
-        .db
-        .pastes
-        .duplicate_from_version(id.as_str(), version_id_ms, name)
-    {
+    match state.db.pastes.duplicate_from_version(
+        id.as_str(),
+        version_id_ms,
+        state.max_paste_size,
+        name,
+    ) {
         Ok(Some(paste)) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::PasteCreated { paste });

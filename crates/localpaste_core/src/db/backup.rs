@@ -148,7 +148,7 @@ mod tests {
     use crate::db::tables::{PASTES, PASTES_META};
     use crate::error::AppError;
     use crate::models::paste::Paste;
-    use crate::Database;
+    use crate::test_support::open_test_database;
     use redb::ReadableDatabase;
     use std::time::{Duration, UNIX_EPOCH};
     use tempfile::TempDir;
@@ -175,7 +175,7 @@ mod tests {
         let db_path = temp_dir.path().join("db");
         let db_path_str = db_path.to_str().expect("db path");
 
-        let db = Database::new(db_path_str).expect("open db");
+        let db = open_test_database(db_path_str);
         let paste = Paste::new("backup-body".to_string(), "backup-name".to_string());
         db.pastes.create(&paste).expect("create paste");
 
