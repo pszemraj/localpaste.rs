@@ -27,22 +27,30 @@ pub(crate) struct VersionUiState {
 }
 
 impl VersionUiState {
+    fn clear_history_snapshot_state(&mut self) {
+        self.history_snapshot = None;
+        self.history_loading_snapshot_id = None;
+    }
+
     /// Clears history-list and snapshot selection state.
     pub(super) fn clear_history_selection(&mut self) {
         self.history_versions.clear();
         self.history_selected_index = 0;
-        self.history_snapshot = None;
-        self.history_loading_snapshot_id = None;
+        self.clear_history_snapshot_state();
         self.history_reset_confirm_open = false;
         self.history_reset_in_flight = false;
+    }
+
+    fn clear_diff_target_state(&mut self) {
+        self.diff_target_id = None;
+        self.diff_target_paste = None;
+        self.diff_loading_target = false;
     }
 
     /// Clears diff-target selection state.
     pub(super) fn clear_diff_selection(&mut self) {
         self.diff_query.clear();
-        self.diff_target_id = None;
-        self.diff_target_paste = None;
-        self.diff_loading_target = false;
+        self.clear_diff_target_state();
     }
 
     fn clear_all(&mut self) {
@@ -78,8 +86,7 @@ impl LocalPasteApp {
         let max_index = self.version_ui.history_versions.len();
         let next_index = index.min(max_index);
         self.version_ui.history_selected_index = next_index;
-        self.version_ui.history_snapshot = None;
-        self.version_ui.history_loading_snapshot_id = None;
+        self.version_ui.clear_history_snapshot_state();
         if let Some(meta) = self.selected_history_meta() {
             self.request_version_snapshot(meta.version_id_ms);
         }
@@ -136,7 +143,7 @@ impl LocalPasteApp {
             .send(CoreCmd::GetPasteVersion { id, version_id_ms })
             .is_err()
         {
-            self.version_ui.history_loading_snapshot_id = None;
+            self.version_ui.clear_history_snapshot_state();
             self.set_status("Load version failed: backend unavailable.");
         }
     }
@@ -196,8 +203,7 @@ impl LocalPasteApp {
         self.version_ui.diff_target_paste = None;
         self.version_ui.diff_loading_target = true;
         if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
-            self.version_ui.diff_target_id = None;
-            self.version_ui.diff_loading_target = false;
+            self.version_ui.clear_diff_target_state();
             self.set_status("Diff load failed: backend unavailable.");
         }
     }
@@ -271,14 +277,12 @@ impl LocalPasteApp {
                             }
                         } else {
                             self.version_ui.history_selected_index = 0;
-                            self.version_ui.history_snapshot = None;
-                            self.version_ui.history_loading_snapshot_id = None;
+                            self.version_ui.clear_history_snapshot_state();
                         }
                     }
                     None => {
                         self.version_ui.history_selected_index = 0;
-                        self.version_ui.history_snapshot = None;
-                        self.version_ui.history_loading_snapshot_id = None;
+                        self.version_ui.clear_history_snapshot_state();
                     }
                 }
             }
@@ -316,31 +320,25 @@ impl LocalPasteApp {
                     self.select_loaded_paste(paste.clone());
                     self.version_ui.history_modal_open = false;
                     self.version_ui.history_selected_index = 0;
-                    self.version_ui.history_snapshot = None;
-                    self.version_ui.history_loading_snapshot_id = None;
+                    self.version_ui.clear_history_snapshot_state();
                     self.set_status("Reset current paste to selected historical snapshot.");
                 }
             }
             CoreEvent::PasteLoadFailed { id, .. } => {
                 if self.version_ui.diff_target_id.as_deref() == Some(id.as_str()) {
-                    self.version_ui.diff_target_paste = None;
-                    self.version_ui.diff_target_id = None;
-                    self.version_ui.diff_loading_target = false;
+                    self.version_ui.clear_diff_target_state();
                 }
             }
             CoreEvent::PasteMissing { id } => {
                 if self.version_ui.diff_target_id.as_deref() == Some(id.as_str()) {
-                    self.version_ui.diff_target_paste = None;
-                    self.version_ui.diff_target_id = None;
-                    self.version_ui.diff_loading_target = false;
+                    self.version_ui.clear_diff_target_state();
                 }
             }
             CoreEvent::Error { source, .. } => {
                 // Detached history/diff modals must never leave spinners or disabled
                 // actions stuck after backend failures.
                 if self.version_ui.history_loading_snapshot_id.is_some() {
-                    self.version_ui.history_loading_snapshot_id = None;
-                    self.version_ui.history_snapshot = None;
+                    self.version_ui.clear_history_snapshot_state();
                 }
                 if matches!(source, CoreErrorSource::SaveContent)
                     && self.version_ui.history_reset_in_flight

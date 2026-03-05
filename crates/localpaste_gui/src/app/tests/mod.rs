@@ -73,6 +73,34 @@ pub(super) fn configure_virtual_editor_test_ctx(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// Reset the virtual editor and rebuild wrapping metrics for a test buffer.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `text`: Replacement buffer text.
+/// - `wrap_width`: Wrap width used for layout reconstruction.
+pub(super) fn configure_virtual_editor_with_wrap(
+    app: &mut LocalPasteApp,
+    text: &str,
+    wrap_width: f32,
+) {
+    app.reset_virtual_editor(text);
+    app.virtual_layout
+        .rebuild(&app.virtual_editor_buffer, wrap_width, 1.0, 1.0);
+}
+
+/// Position the virtual editor cursor at a logical line/column pair for tests.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `line`: Zero-based logical line index.
+/// - `col`: Zero-based logical column within `line`.
+pub(super) fn set_virtual_cursor_at(app: &mut LocalPasteApp, line: usize, col: usize) {
+    let len = app.virtual_editor_buffer.len_chars();
+    let pos = app.virtual_editor_buffer.line_col_to_char(line, col);
+    app.virtual_editor_state.set_cursor(pos, len);
+}
+
 fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
     let _ = ctx.run(input, |ctx| {
         app.render_editor_panel(ctx);

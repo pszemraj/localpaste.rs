@@ -144,36 +144,22 @@ fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
 }
 
 #[test]
-fn explicit_paste_as_new_preserves_tabbed_trailing_line_exactly() {
-    let mut harness = make_app();
-    harness.app.arm_paste_as_new_intent();
-    let payload = "def sample():\n\treturn foobar";
-    let mut clipboard = Some(payload.to_string());
+fn explicit_paste_as_new_payload_matrix_preserves_exact_content() {
+    let payloads = ["def sample():\n\treturn foobar", " \t\n  "];
 
-    assert!(harness
-        .app
-        .maybe_consume_explicit_paste_as_new(&mut clipboard));
-    assert!(clipboard.is_none());
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::CreatePaste { content } => assert_eq!(content, payload),
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
+    for payload in payloads {
+        let mut harness = make_app();
+        harness.app.arm_paste_as_new_intent();
+        let mut clipboard = Some(payload.to_string());
 
-#[test]
-fn explicit_paste_as_new_accepts_whitespace_only_payload() {
-    let mut harness = make_app();
-    harness.app.arm_paste_as_new_intent();
-    let payload = " \t\n  ";
-    let mut clipboard = Some(payload.to_string());
-
-    assert!(harness
-        .app
-        .maybe_consume_explicit_paste_as_new(&mut clipboard));
-    assert!(clipboard.is_none());
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::CreatePaste { content } => assert_eq!(content, payload),
-        other => panic!("unexpected command: {:?}", other),
+        assert!(harness
+            .app
+            .maybe_consume_explicit_paste_as_new(&mut clipboard));
+        assert!(clipboard.is_none());
+        match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::CreatePaste { content } => assert_eq!(content, payload),
+            other => panic!("unexpected command: {:?}", other),
+        }
     }
 }
 

@@ -2,18 +2,6 @@
 
 use super::*;
 
-fn configure_virtual_editor_with_wrap(app: &mut LocalPasteApp, text: &str, wrap_width: f32) {
-    app.reset_virtual_editor(text);
-    app.virtual_layout
-        .rebuild(&app.virtual_editor_buffer, wrap_width, 1.0, 1.0);
-}
-
-fn set_cursor(app: &mut LocalPasteApp, line: usize, col: usize) {
-    let len = app.virtual_editor_buffer.len_chars();
-    let pos = app.virtual_editor_buffer.line_col_to_char(line, col);
-    app.virtual_editor_state.set_cursor(pos, len);
-}
-
 #[test]
 fn shift_word_selection_extends_and_contracts_without_resetting_anchor() {
     let mut harness = make_app();
@@ -124,7 +112,7 @@ fn word_navigation_crosses_lines_and_clamps_doc_boundaries() {
     configure_virtual_editor_with_wrap(&mut harness.app, "alpha\nbeta gamma\n", 400.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 1, 0);
+    set_virtual_cursor_at(&mut harness.app, 1, 0);
     let _ = harness.app.apply_virtual_commands(
         &ctx,
         &[VirtualInputCommand::MoveLeft {
@@ -266,7 +254,7 @@ fn vertical_column_affinity_restores_target_after_short_line_and_resets_after_ho
     configure_virtual_editor_with_wrap(&mut harness.app, "1234567890\nx\nabcdefghij\n", 400.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 0, 8);
+    set_virtual_cursor_at(&mut harness.app, 0, 8);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
@@ -311,7 +299,7 @@ fn wrapped_lines_move_by_visual_rows_and_line_home_end_ignore_wrap_bounds() {
     configure_virtual_editor_with_wrap(&mut harness.app, "abcdefghijkl\nz\n", 4.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 0, 2);
+    set_virtual_cursor_at(&mut harness.app, 0, 2);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
@@ -340,7 +328,7 @@ fn wrapped_lines_move_by_visual_rows_and_line_home_end_ignore_wrap_bounds() {
     assert_eq!((line, col), (1, 1));
 
     // Logical-line boundary commands should ignore soft-wrap row boundaries.
-    set_cursor(&mut harness.app, 0, 6);
+    set_virtual_cursor_at(&mut harness.app, 0, 6);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
@@ -350,7 +338,7 @@ fn wrapped_lines_move_by_visual_rows_and_line_home_end_ignore_wrap_bounds() {
         .char_to_line_col(harness.app.virtual_editor_state.cursor());
     assert_eq!((line, col), (0, 0));
 
-    set_cursor(&mut harness.app, 0, 6);
+    set_virtual_cursor_at(&mut harness.app, 0, 6);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
@@ -586,7 +574,7 @@ fn shift_vertical_selection_preserves_anchor_when_reversing_direction() {
     configure_virtual_editor_with_wrap(&mut harness.app, "0123456789\nshort\nabcdefghij\n", 400.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 0, 6);
+    set_virtual_cursor_at(&mut harness.app, 0, 6);
     let anchor = harness.app.virtual_editor_state.cursor();
 
     let _ = harness
@@ -623,7 +611,7 @@ fn wrapped_line_shift_selection_tracks_visual_rows() {
     configure_virtual_editor_with_wrap(&mut harness.app, "abcdefghijkl\n", 4.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 0, 2);
+    set_virtual_cursor_at(&mut harness.app, 0, 2);
     let anchor = harness.app.virtual_editor_state.cursor();
 
     let _ = harness
@@ -661,7 +649,7 @@ fn delete_to_line_boundaries_obey_selection_and_cursor_cases() {
 
     let mut line_start_case = make_app();
     configure_virtual_editor_with_wrap(&mut line_start_case.app, "abc def", 400.0);
-    set_cursor(&mut line_start_case.app, 0, 4);
+    set_virtual_cursor_at(&mut line_start_case.app, 0, 4);
     let _ = line_start_case
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteToLineStart]);
@@ -670,7 +658,7 @@ fn delete_to_line_boundaries_obey_selection_and_cursor_cases() {
 
     let mut line_end_case = make_app();
     configure_virtual_editor_with_wrap(&mut line_end_case.app, "abc def", 400.0);
-    set_cursor(&mut line_end_case.app, 0, 3);
+    set_virtual_cursor_at(&mut line_end_case.app, 0, 3);
     let _ = line_end_case
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteToLineEnd]);

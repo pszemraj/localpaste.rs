@@ -62,18 +62,6 @@ fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
     }
 }
 
-fn configure_virtual_editor_with_wrap(app: &mut LocalPasteApp, text: &str, wrap_width: f32) {
-    app.reset_virtual_editor(text);
-    app.virtual_layout
-        .rebuild(&app.virtual_editor_buffer, wrap_width, 1.0, 1.0);
-}
-
-fn set_virtual_cursor_at(app: &mut LocalPasteApp, line: usize, col: usize) {
-    let len = app.virtual_editor_buffer.len_chars();
-    let pos = app.virtual_editor_buffer.line_col_to_char(line, col);
-    app.virtual_editor_state.set_cursor(pos, len);
-}
-
 #[test]
 fn virtual_copy_and_cut_report_expected_mutation_state() {
     struct ClipboardCase {

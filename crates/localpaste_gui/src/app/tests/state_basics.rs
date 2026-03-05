@@ -230,36 +230,43 @@ fn paste_deleted_clears_pending_copy_action_for_deleted_id() {
 }
 
 #[test]
-fn paste_deleted_selects_adjacent_item_in_visible_order() {
-    let mut harness = make_app();
-    harness.app.all_pastes = vec![
-        test_summary("a", "A", None, 1),
-        test_summary("b", "B", None, 1),
-        test_summary("c", "C", None, 1),
+fn paste_deleted_selects_visible_neighbor_matrix() {
+    struct Case {
+        visible_ids: &'static [&'static str],
+        expected_selected_id: &'static str,
+    }
+
+    let cases = [
+        Case {
+            visible_ids: &["a", "b", "c"],
+            expected_selected_id: "c",
+        },
+        Case {
+            visible_ids: &["a", "b"],
+            expected_selected_id: "a",
+        },
     ];
-    harness.app.pastes = harness.app.all_pastes.clone();
-    harness.app.selected_id = Some("b".to_string());
 
-    harness.app.apply_event(CoreEvent::PasteDeleted {
-        id: "b".to_string(),
-    });
-    assert_eq!(harness.app.selected_id.as_deref(), Some("c"));
-}
+    for case in cases {
+        let mut harness = make_app();
+        harness.app.all_pastes = case
+            .visible_ids
+            .iter()
+            .map(|id| test_summary(id, &id.to_ascii_uppercase(), None, 1))
+            .collect();
+        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.selected_id = Some("b".to_string());
 
-#[test]
-fn paste_deleted_selects_previous_when_last_visible_item_removed() {
-    let mut harness = make_app();
-    harness.app.all_pastes = vec![
-        test_summary("a", "A", None, 1),
-        test_summary("b", "B", None, 1),
-    ];
-    harness.app.pastes = harness.app.all_pastes.clone();
-    harness.app.selected_id = Some("b".to_string());
-
-    harness.app.apply_event(CoreEvent::PasteDeleted {
-        id: "b".to_string(),
-    });
-    assert_eq!(harness.app.selected_id.as_deref(), Some("a"));
+        harness.app.apply_event(CoreEvent::PasteDeleted {
+            id: "b".to_string(),
+        });
+        assert_eq!(
+            harness.app.selected_id.as_deref(),
+            Some(case.expected_selected_id),
+            "visible ids: {:?}",
+            case.visible_ids
+        );
+    }
 }
 
 #[test]
