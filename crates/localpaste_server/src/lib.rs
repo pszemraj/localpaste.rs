@@ -233,10 +233,27 @@ fn create_app_with_cors(state: AppState, allow_public_access: bool, listener_por
         .route("/api/paste/:id", get(handlers::paste::get_paste))
         .route("/api/paste/:id", put(handlers::paste::update_paste))
         .route("/api/paste/:id", delete(handlers::paste::delete_paste))
+        .route(
+            "/api/paste/:id/versions",
+            get(handlers::paste::list_paste_versions),
+        )
+        .route(
+            "/api/paste/:id/versions/:version_id_ms",
+            get(handlers::paste::get_paste_version),
+        )
+        .route(
+            "/api/paste/:id/versions/:version_id_ms/reset-hard",
+            post(handlers::paste::reset_hard_paste_version),
+        )
+        .route(
+            "/api/paste/:id/versions/:version_id_ms/duplicate",
+            post(handlers::paste::duplicate_paste_version),
+        )
         .route("/api/pastes", get(handlers::paste::list_pastes))
         .route("/api/pastes/meta", get(handlers::paste::list_pastes_meta))
         .route("/api/search", get(handlers::paste::search_pastes))
         .route("/api/search/meta", get(handlers::paste::search_pastes_meta))
+        .route("/api/diff", post(handlers::paste::diff_pastes))
         .route("/api/folder", post(handlers::folder::create_folder))
         .route("/api/folder/:id", put(handlers::folder::update_folder))
         .route("/api/folder/:id", delete(handlers::folder::delete_folder))

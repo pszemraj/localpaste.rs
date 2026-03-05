@@ -12,6 +12,7 @@ pub mod paste;
 pub mod tables;
 mod time_util;
 mod transactions;
+mod versioning;
 
 use crate::db::tables::REDB_FILE_NAME;
 use crate::error::AppError;

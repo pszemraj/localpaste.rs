@@ -78,6 +78,38 @@ pub struct ListQuery {
     pub folder_id: Option<String>,
 }
 
+/// Metadata row for a persisted historical version of a paste.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VersionMeta {
+    pub version_id_ms: u64,
+    pub created_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub len: usize,
+}
+
+/// Full snapshot payload for a historical version of a paste.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VersionSnapshot {
+    pub paste_id: String,
+    pub version_id_ms: u64,
+    pub created_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub len: usize,
+    pub content: String,
+}
+
+/// Query parameters for listing paste versions.
+#[derive(Debug, Deserialize)]
+pub struct VersionListQuery {
+    pub limit: Option<usize>,
+}
+
+/// Request payload for duplicating a paste from a historical version.
+#[derive(Debug, Deserialize)]
+pub struct DuplicateVersionRequest {
+    pub name: Option<String>,
+}
+
 impl Paste {
     /// Create a new paste with explicit language/manual-state values.
     ///

@@ -14,10 +14,12 @@ mod style;
 mod text_coords;
 mod ui;
 mod util;
+mod version_ui;
 mod virtual_editor;
 mod virtual_ops;
 mod virtual_ops_apply;
 mod virtual_view;
+mod window_bounds;
 
 use crate::backend::{spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary};
 use editor::{EditorBuffer, EditorLineIndex, EditorMode};
@@ -29,9 +31,10 @@ use highlight::{
     HighlightRequestText, HighlightWorker, HighlightWorkerResult, VirtualEditHint,
 };
 pub(super) use interaction_helpers::{
-    classify_virtual_command, drag_autoscroll_delta, is_command_shift_shortcut,
-    is_editor_word_char, is_plain_command_shortcut, next_virtual_click_count,
-    paint_virtual_selection_overlay, should_route_sidebar_arrows, VirtualCommandBucket,
+    classify_virtual_command, consume_virtual_editor_focus_keys, drag_autoscroll_delta,
+    is_command_shift_shortcut, is_editor_word_char, is_plain_command_shortcut,
+    next_virtual_click_count, paint_virtual_selection_overlay, should_route_sidebar_arrows,
+    VirtualCommandBucket,
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
@@ -45,12 +48,14 @@ use std::time::{Duration, Instant};
 use style::*;
 use tracing::{info, warn};
 use util::{display_language_label, env_flag_enabled, word_range_at};
+use version_ui::VersionUiState;
 use virtual_editor::{
     commands_from_events, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
     VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext, VirtualInputCommand,
     WrapBoundaryAffinity, WrapLayoutCache,
 };
 use virtual_view::{VirtualCursor, VirtualSelectionState};
+use window_bounds::enforce_window_bounds;
 
 /// Native egui application shell for the rewrite.
 ///
@@ -100,6 +105,8 @@ pub(crate) struct LocalPasteApp {
     virtual_viewport_height: f32,
     virtual_line_height: f32,
     virtual_wrap_width: f32,
+    virtual_pending_scroll_offset_y: Option<f32>,
+    version_ui: VersionUiState,
     highlight_worker: HighlightWorker,
     highlight_pending: Option<HighlightRequestMeta>,
     highlight_render: Option<HighlightRender>,
@@ -352,6 +359,8 @@ impl LocalPasteApp {
             virtual_viewport_height: 0.0,
             virtual_line_height: 1.0,
             virtual_wrap_width: 0.0,
+            virtual_pending_scroll_offset_y: None,
+            version_ui: VersionUiState::default(),
             highlight_worker,
             highlight_pending: None,
             highlight_render: None,
@@ -494,20 +503,8 @@ impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ensure_style(ctx);
         self.track_frame_metrics();
-        if !self.window_checked {
-            let min_size = egui::vec2(MIN_WINDOW_SIZE[0], MIN_WINDOW_SIZE[1]);
-            let current_size = ctx.input(|input| {
-                input
-                    .viewport()
-                    .inner_rect
-                    .map(|rect| rect.size())
-                    .unwrap_or(min_size)
-            });
-            if current_size.x < min_size.x || current_size.y < min_size.y {
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(min_size));
-            }
-            self.window_checked = true;
-        }
+        let min_size = egui::vec2(MIN_WINDOW_SIZE[0], MIN_WINDOW_SIZE[1]);
+        enforce_window_bounds(ctx, _frame, &mut self.window_checked, min_size);
 
         let now = Instant::now();
         if let Some(status) = &self.status {
@@ -616,6 +613,7 @@ impl eframe::App for LocalPasteApp {
                 self.mark_dirty();
             }
         }
+        consume_virtual_editor_focus_keys(ctx, virtual_editor_focus_active_pre);
 
         let mut copy_virtual_preview = false;
         let mut fallback_virtual_select_all = false;

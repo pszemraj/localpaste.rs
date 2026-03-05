@@ -4,6 +4,7 @@ use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerSt
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
     db::TransactionOps,
+    diff::{DiffRef, DiffRequest},
     folder_ops::map_missing_folder_for_optional_request,
     models::paste::{self, UpdatePasteRequest},
     naming,
@@ -311,6 +312,242 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
                 &state.evt_tx,
                 CoreErrorSource::Other,
                 format!("Delete failed: {}", err),
+            );
+        }
+    }
+}
+
+/// Lists historical versions for a paste and emits version events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Paste id to inspect.
+/// - `limit`: Maximum version rows to return.
+pub(super) fn handle_list_paste_versions(state: &mut WorkerState, id: String, limit: usize) {
+    match state.db.pastes.list_versions(id.as_str(), Some(limit)) {
+        Ok(Some(items)) => {
+            let _ = state
+                .evt_tx
+                .send(CoreEvent::PasteVersionsLoaded { id, items });
+        }
+        Ok(None) => {
+            let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+        }
+        Err(err) => {
+            error!("backend list versions failed: {}", err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("List versions failed: {}", err),
+            );
+        }
+    }
+}
+
+/// Loads one historical version snapshot and emits version load/missing events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Paste id to inspect.
+/// - `version_id_ms`: Historical version id to load.
+pub(super) fn handle_get_paste_version(state: &mut WorkerState, id: String, version_id_ms: u64) {
+    match state.db.pastes.get_version(id.as_str(), version_id_ms) {
+        Ok(Some(snapshot)) => {
+            let _ = state
+                .evt_tx
+                .send(CoreEvent::PasteVersionLoaded { snapshot });
+        }
+        Ok(None) => match state.db.pastes.get(id.as_str()) {
+            Ok(Some(_)) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Version {} not found for paste {}.", version_id_ms, id),
+            ),
+            Ok(None) => {
+                let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+            }
+            Err(err) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Get version failed: {}", err),
+            ),
+        },
+        Err(err) => {
+            error!("backend get version failed: {}", err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Get version failed: {}", err),
+            );
+        }
+    }
+}
+
+/// Resets current paste content to a historical version.
+///
+/// # Arguments
+/// - `state`: Worker state containing db, locks, and event channel handles.
+/// - `id`: Target paste id.
+/// - `version_id_ms`: Historical version id used as reset target.
+pub(super) fn handle_reset_paste_hard_to_version(
+    state: &mut WorkerState,
+    id: String,
+    version_id_ms: u64,
+) {
+    let reset_result = {
+        let _mutation_guard = match localpaste_server::locks::acquire_paste_mutation_guard(
+            state.locks.as_ref(),
+            id.as_str(),
+            "Paste is currently open for editing.",
+            Some(&state.lock_owner_id),
+        ) {
+            Ok(guard) => guard,
+            Err(err) => {
+                send_error(
+                    &state.evt_tx,
+                    CoreErrorSource::SaveContent,
+                    format!("Reset hard failed: {}", err),
+                );
+                return;
+            }
+        };
+        state
+            .db
+            .pastes
+            .reset_hard_to_version(id.as_str(), version_id_ms)
+    };
+
+    match reset_result {
+        Ok(Some(paste)) => {
+            state.query_cache.invalidate();
+            let _ = state.evt_tx.send(CoreEvent::PasteSaved { paste });
+            handle_list_paste_versions(state, id, 50);
+        }
+        Ok(None) => match state.db.pastes.get(id.as_str()) {
+            Ok(Some(_)) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::SaveContent,
+                format!("Reset hard failed: version {} not found.", version_id_ms),
+            ),
+            Ok(None) => {
+                let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+            }
+            Err(err) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::SaveContent,
+                format!("Reset hard failed: {}", err),
+            ),
+        },
+        Err(err) => {
+            error!("backend reset hard failed: {}", err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::SaveContent,
+                format!("Reset hard failed: {}", err),
+            );
+        }
+    }
+}
+
+/// Duplicates a historical version into a new paste.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Source paste id.
+/// - `version_id_ms`: Source historical version id.
+/// - `name`: Optional explicit name for the duplicate.
+pub(super) fn handle_duplicate_paste_version(
+    state: &mut WorkerState,
+    id: String,
+    version_id_ms: u64,
+    name: Option<String>,
+) {
+    match state
+        .db
+        .pastes
+        .duplicate_from_version(id.as_str(), version_id_ms, name)
+    {
+        Ok(Some(paste)) => {
+            state.query_cache.invalidate();
+            let _ = state.evt_tx.send(CoreEvent::PasteCreated { paste });
+        }
+        Ok(None) => match state.db.pastes.get(id.as_str()) {
+            Ok(Some(_)) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!(
+                    "Duplicate version failed: version {} not found.",
+                    version_id_ms
+                ),
+            ),
+            Ok(None) => {
+                let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+            }
+            Err(err) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Duplicate version failed: {}", err),
+            ),
+        },
+        Err(err) => {
+            error!("backend duplicate version failed: {}", err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Duplicate version failed: {}", err),
+            );
+        }
+    }
+}
+
+/// Computes a line-based diff between two paste references.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `left_id`: Left paste id.
+/// - `right_id`: Right paste id.
+/// - `left_version_id_ms`: Optional left historical version id.
+/// - `right_version_id_ms`: Optional right historical version id.
+pub(super) fn handle_diff_pastes(
+    state: &mut WorkerState,
+    left_id: String,
+    right_id: String,
+    left_version_id_ms: Option<u64>,
+    right_version_id_ms: Option<u64>,
+) {
+    let request = DiffRequest {
+        left: DiffRef {
+            paste_id: left_id.clone(),
+            version_id_ms: left_version_id_ms,
+        },
+        right: DiffRef {
+            paste_id: right_id.clone(),
+            version_id_ms: right_version_id_ms,
+        },
+    };
+    match state.db.pastes.diff(&request) {
+        Ok(Some(diff)) => {
+            let _ = state.evt_tx.send(CoreEvent::PasteDiffComputed {
+                left_id,
+                right_id,
+                left_version_id_ms,
+                right_version_id_ms,
+                diff,
+            });
+        }
+        Ok(None) => {
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                "Diff failed: one or both references are missing.".to_string(),
+            );
+        }
+        Err(err) => {
+            error!("backend diff failed: {}", err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Diff failed: {}", err),
             );
         }
     }

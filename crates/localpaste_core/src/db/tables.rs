@@ -11,6 +11,12 @@ pub const PASTES: TableDefinition<&str, &[u8]> = TableDefinition::new("pastes");
 pub const PASTES_META: TableDefinition<&str, &[u8]> = TableDefinition::new("pastes_meta");
 /// Canonical folder rows (`Folder`, bincode-encoded).
 pub const FOLDERS: TableDefinition<&str, &[u8]> = TableDefinition::new("folders");
+/// Per-paste version metadata (`Vec<VersionMeta>`, bincode-encoded).
+pub const PASTE_VERSIONS_META: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("paste_versions_meta");
+/// Per-version snapshot content (`String`, bincode-encoded).
+pub const PASTE_VERSIONS_CONTENT: TableDefinition<(&str, u64), &[u8]> =
+    TableDefinition::new("paste_versions_content");
 
 /// Recency index ordered by reverse-millis then id.
 pub const PASTES_BY_UPDATED: TableDefinition<(u64, &str), ()> =

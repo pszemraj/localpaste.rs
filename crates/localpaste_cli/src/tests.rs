@@ -292,6 +292,115 @@ fn cli_parses_search_meta_subcommand() {
 }
 
 #[test]
+fn cli_parses_versions_and_get_version_subcommands() {
+    let versions = Cli::try_parse_from(["lpaste", "versions", "abc", "--limit", "25"])
+        .expect("cli should parse versions");
+    match versions.command {
+        Commands::Versions { id, limit } => {
+            assert_eq!(id, "abc");
+            assert_eq!(limit, 25);
+        }
+        _ => panic!("expected versions command"),
+    }
+
+    let get_version = Cli::try_parse_from(["lpaste", "get-version", "abc", "123"])
+        .expect("cli should parse get-version");
+    match get_version.command {
+        Commands::GetVersion { id, version_id_ms } => {
+            assert_eq!(id, "abc");
+            assert_eq!(version_id_ms, 123);
+        }
+        _ => panic!("expected get-version command"),
+    }
+}
+
+#[test]
+fn cli_parses_diff_equal_and_reset_commands() {
+    let diff = Cli::try_parse_from([
+        "lpaste",
+        "diff",
+        "left",
+        "right",
+        "--left-version",
+        "10",
+        "--right-version",
+        "20",
+    ])
+    .expect("cli should parse diff");
+    match diff.command {
+        Commands::Diff {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        } => {
+            assert_eq!(left_id, "left");
+            assert_eq!(right_id, "right");
+            assert_eq!(left_version, Some(10));
+            assert_eq!(right_version, Some(20));
+        }
+        _ => panic!("expected diff command"),
+    }
+
+    let equal =
+        Cli::try_parse_from(["lpaste", "equal", "left", "right"]).expect("cli should parse equal");
+    match equal.command {
+        Commands::Equal {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        } => {
+            assert_eq!(left_id, "left");
+            assert_eq!(right_id, "right");
+            assert_eq!(left_version, None);
+            assert_eq!(right_version, None);
+        }
+        _ => panic!("expected equal command"),
+    }
+
+    let reset = Cli::try_parse_from(["lpaste", "reset-hard", "abc", "123", "--yes"])
+        .expect("cli should parse reset-hard");
+    match reset.command {
+        Commands::ResetHard {
+            id,
+            version_id_ms,
+            yes,
+        } => {
+            assert_eq!(id, "abc");
+            assert_eq!(version_id_ms, 123);
+            assert!(yes);
+        }
+        _ => panic!("expected reset-hard command"),
+    }
+}
+
+#[test]
+fn cli_parses_duplicate_version_subcommand() {
+    let duplicate = Cli::try_parse_from([
+        "lpaste",
+        "duplicate-version",
+        "abc",
+        "99",
+        "--name",
+        "from-version",
+    ])
+    .expect("cli should parse duplicate-version");
+    match duplicate.command {
+        Commands::DuplicateVersion {
+            id,
+            version_id_ms,
+            name,
+        } => {
+            assert_eq!(id, "abc");
+            assert_eq!(version_id_ms, 99);
+            assert_eq!(name.as_deref(), Some("from-version"));
+        }
+        _ => panic!("expected duplicate-version command"),
+    }
+}
+
+#[test]
 fn cli_parses_no_discovery_flag() {
     let cli = Cli::try_parse_from(["lpaste", "--no-discovery", "list"])
         .expect("cli should parse no-discovery flag");

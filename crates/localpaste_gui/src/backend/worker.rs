@@ -215,6 +215,41 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             paste::handle_delete_paste(state, id);
             true
         }
+        CoreCmd::ListPasteVersions { id, limit } => {
+            paste::handle_list_paste_versions(state, id, limit);
+            true
+        }
+        CoreCmd::GetPasteVersion { id, version_id_ms } => {
+            paste::handle_get_paste_version(state, id, version_id_ms);
+            true
+        }
+        CoreCmd::ResetPasteHardToVersion { id, version_id_ms } => {
+            paste::handle_reset_paste_hard_to_version(state, id, version_id_ms);
+            true
+        }
+        CoreCmd::DuplicatePasteVersion {
+            id,
+            version_id_ms,
+            name,
+        } => {
+            paste::handle_duplicate_paste_version(state, id, version_id_ms, name);
+            true
+        }
+        CoreCmd::DiffPastes {
+            left_id,
+            right_id,
+            left_version_id_ms,
+            right_version_id_ms,
+        } => {
+            paste::handle_diff_pastes(
+                state,
+                left_id,
+                right_id,
+                left_version_id_ms,
+                right_version_id_ms,
+            );
+            true
+        }
         CoreCmd::ListFolders => {
             folder::handle_list_folders(state);
             true

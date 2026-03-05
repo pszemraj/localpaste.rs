@@ -93,10 +93,13 @@ impl LocalPasteApp {
         highlight_render_match: Option<&HighlightRender>,
         use_plain: bool,
     ) {
-        let scroll = egui::ScrollArea::vertical()
+        let mut scroll = egui::ScrollArea::vertical()
             .id_salt("editor_scroll")
             .max_height(editor_height)
             .auto_shrink([false; 2]);
+        if let Some(offset) = self.virtual_pending_scroll_offset_y.take() {
+            scroll = scroll.vertical_scroll_offset(offset.max(0.0));
+        }
 
         let text = self.selected_content.as_str();
         self.editor_lines
@@ -441,7 +444,9 @@ impl LocalPasteApp {
                 layout_rebuild_ms = started.elapsed().as_secs_f32() * 1000.0;
             }
         }
-        let total_rows = self.virtual_layout.total_rows().max(1);
+        const EOF_PADDING_ROWS: usize = 3;
+        let content_rows = self.virtual_layout.total_rows().max(1);
+        let total_rows = content_rows.saturating_add(EOF_PADDING_ROWS);
         self.virtual_galley_cache.prepare_frame(
             line_count,
             VirtualGalleyContext::new(
@@ -455,6 +460,7 @@ impl LocalPasteApp {
         let mut focused = ui.memory(|m| m.has_focus(editor_id));
         let had_focus = focused || self.virtual_editor_state.has_focus;
         let mut editor_interacted = false;
+        let mut pending_follow_scroll_offset_y: Option<f32> = None;
         let scroll_output =
             scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
                 ui.set_min_width(wrap_width);
@@ -489,7 +495,18 @@ impl LocalPasteApp {
                 let mut rows = Vec::with_capacity(range.len());
                 let mut pending_action: Option<RowAction> = None;
                 let mut last_synced_line: Option<usize> = None;
-                for row_idx in range {
+                for row_idx in range.clone() {
+                    if row_idx >= content_rows {
+                        let row_width = ui.available_width();
+                        let (_, response) = ui.allocate_exact_size(
+                            egui::vec2(row_width, self.virtual_line_height),
+                            virtual_row_hit_test_sense(),
+                        );
+                        if response.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                        }
+                        continue;
+                    }
                     let (line_idx, row_in_line) = self.virtual_layout.row_to_line(row_idx);
                     let line_start = self.virtual_editor_buffer.line_col_to_char(line_idx, 0);
                     let line_chars = self.virtual_layout.line_chars(line_idx);
@@ -824,7 +841,30 @@ impl LocalPasteApp {
                 if let Some(started) = paint_started {
                     paint_ms = started.elapsed().as_secs_f32() * 1000.0;
                 }
+
+                if self.virtual_editor_state.has_focus && !self.virtual_drag_active {
+                    let cursor_row =
+                        self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
+                    let viewport_rows =
+                        ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
+                    let scrolloff_rows = 2usize.min(viewport_rows.saturating_sub(1));
+                    if cursor_row.saturating_add(scrolloff_rows) >= range.end {
+                        let desired_top = cursor_row
+                            .saturating_add(1)
+                            .saturating_add(scrolloff_rows)
+                            .saturating_sub(viewport_rows);
+                        pending_follow_scroll_offset_y =
+                            Some(desired_top as f32 * self.virtual_line_height);
+                    } else if cursor_row < range.start.saturating_add(scrolloff_rows) {
+                        let desired_top = cursor_row.saturating_sub(scrolloff_rows);
+                        pending_follow_scroll_offset_y =
+                            Some(desired_top as f32 * self.virtual_line_height);
+                    }
+                }
             });
+        if let Some(offset) = pending_follow_scroll_offset_y {
+            self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
+        }
         // Include scrollbar gutter when classifying inside/outside editor clicks.
         // Scrollbar interaction should not be treated as an external blur.
         let interaction_rect = editor_interaction_rect(scroll_output.inner_rect, wrap_width);

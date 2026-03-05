@@ -1,9 +1,10 @@
 //! Protocol types for the native GUI backend worker.
 
 use chrono::{DateTime, Utc};
+use localpaste_core::diff::DiffResponse;
 use localpaste_core::models::{
     folder::Folder,
-    paste::{Paste, PasteMeta},
+    paste::{Paste, PasteMeta, VersionMeta, VersionSnapshot},
 };
 use ropey::Rope;
 
@@ -45,6 +46,25 @@ pub enum CoreCmd {
     },
     /// Delete a paste by id.
     DeletePaste { id: String },
+    /// List historical versions for a paste.
+    ListPasteVersions { id: String, limit: usize },
+    /// Load one historical version snapshot.
+    GetPasteVersion { id: String, version_id_ms: u64 },
+    /// Reset current paste content to a historical version.
+    ResetPasteHardToVersion { id: String, version_id_ms: u64 },
+    /// Duplicate a paste from a historical version snapshot.
+    DuplicatePasteVersion {
+        id: String,
+        version_id_ms: u64,
+        name: Option<String>,
+    },
+    /// Compute a line-based diff between two paste references.
+    DiffPastes {
+        left_id: String,
+        right_id: String,
+        left_version_id_ms: Option<u64>,
+        right_version_id_ms: Option<u64>,
+    },
     /// Gracefully stop the backend worker.
     ///
     /// When `flush` is true, the worker flushes pending database writes before
@@ -99,6 +119,18 @@ pub enum CoreEvent {
     PasteMetaSaved { paste: Paste },
     /// Response confirming a paste was deleted.
     PasteDeleted { id: String },
+    /// Response containing historical version metadata rows for a paste.
+    PasteVersionsLoaded { id: String, items: Vec<VersionMeta> },
+    /// Response containing a historical version snapshot.
+    PasteVersionLoaded { snapshot: VersionSnapshot },
+    /// Response containing a computed diff between two paste references.
+    PasteDiffComputed {
+        left_id: String,
+        right_id: String,
+        left_version_id_ms: Option<u64>,
+        right_version_id_ms: Option<u64>,
+        diff: DiffResponse,
+    },
     /// The requested paste id no longer exists in the database.
     PasteMissing { id: String },
     /// Response containing current folder list.

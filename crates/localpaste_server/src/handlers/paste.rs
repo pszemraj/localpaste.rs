@@ -9,6 +9,7 @@ use axum::{
     response::Response,
     Json,
 };
+use localpaste_core::diff::{DiffRequest, DiffResponse};
 use localpaste_core::folder_ops::map_missing_folder_for_optional_request;
 
 const RESPONSE_SHAPE_HEADER: &str = "x-localpaste-response-shape";
@@ -253,6 +254,130 @@ pub async fn get_paste(
         .get(&id)?
         .map(Json)
         .ok_or_else(|| AppError::NotFound.into())
+}
+
+/// List historical versions for a paste.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `id`: Paste identifier from the path.
+/// - `query`: Optional limit query parameter.
+///
+/// # Returns
+/// Version metadata rows (newest first) as JSON.
+///
+/// # Errors
+/// Returns an error if the paste does not exist or lookup fails.
+pub async fn list_paste_versions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<VersionListQuery>,
+) -> Result<Json<Vec<VersionMeta>>, HttpError> {
+    let items = state
+        .db
+        .pastes
+        .list_versions(id.as_str(), query.limit)?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(items))
+}
+
+/// Fetch a single historical version snapshot for a paste.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `id`: Paste identifier from the path.
+/// - `version_id_ms`: Version id from the path.
+///
+/// # Returns
+/// Version snapshot as JSON.
+///
+/// # Errors
+/// Returns an error if paste/version does not exist or lookup fails.
+pub async fn get_paste_version(
+    State(state): State<AppState>,
+    Path((id, version_id_ms)): Path<(String, u64)>,
+) -> Result<Json<VersionSnapshot>, HttpError> {
+    let snapshot = state
+        .db
+        .pastes
+        .get_version(id.as_str(), version_id_ms)?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(snapshot))
+}
+
+/// Reset current paste content to a historical version and prune newer versions.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `id`: Paste identifier from the path.
+/// - `version_id_ms`: Target version id from the path.
+///
+/// # Returns
+/// Updated canonical paste row as JSON.
+///
+/// # Errors
+/// Returns an error if paste/version does not exist, is locked, or reset fails.
+pub async fn reset_hard_paste_version(
+    State(state): State<AppState>,
+    Path((id, version_id_ms)): Path<(String, u64)>,
+) -> Result<Json<Paste>, HttpError> {
+    let _mutation_guard = crate::locks::acquire_paste_mutation_guard(
+        state.locks.as_ref(),
+        id.as_str(),
+        "Paste is currently open for editing.",
+        None,
+    )?;
+    let paste = state
+        .db
+        .pastes
+        .reset_hard_to_version(id.as_str(), version_id_ms)?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(paste))
+}
+
+/// Duplicate a historical version into a new paste.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `id`: Source paste identifier.
+/// - `version_id_ms`: Source version id.
+/// - `req`: Optional naming override for the duplicate.
+///
+/// # Returns
+/// Newly created paste as JSON.
+///
+/// # Errors
+/// Returns an error if paste/version does not exist or creation fails.
+pub async fn duplicate_paste_version(
+    State(state): State<AppState>,
+    Path((id, version_id_ms)): Path<(String, u64)>,
+    Json(req): Json<DuplicateVersionRequest>,
+) -> Result<Json<Paste>, HttpError> {
+    let paste = state
+        .db
+        .pastes
+        .duplicate_from_version(id.as_str(), version_id_ms, req.name)?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(paste))
+}
+
+/// Compute a line-based diff between two paste references.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `req`: Diff request payload containing left/right refs.
+///
+/// # Returns
+/// Diff response as JSON.
+///
+/// # Errors
+/// Returns an error when either reference cannot be resolved or diffing fails.
+pub async fn diff_pastes(
+    State(state): State<AppState>,
+    Json(req): Json<DiffRequest>,
+) -> Result<Json<DiffResponse>, HttpError> {
+    let diff = state.db.pastes.diff(&req)?.ok_or(AppError::NotFound)?;
+    Ok(Json(diff))
 }
 
 /// Update an existing paste.

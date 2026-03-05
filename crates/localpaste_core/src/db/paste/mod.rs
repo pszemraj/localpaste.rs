@@ -2,7 +2,20 @@
 
 mod helpers;
 
-use crate::{db::tables::*, error::AppError, models::paste::*};
+use crate::{
+    config::paste_version_interval_secs_from_env,
+    db::{
+        tables::*,
+        versioning::{
+            decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
+            should_record_version,
+        },
+    },
+    diff::{unified_diff_lines, DiffRef, DiffRequest, DiffResponse},
+    error::AppError,
+    models::paste::*,
+    naming,
+};
 use chrono::{DateTime, Utc};
 use redb::{ReadableDatabase, ReadableTable};
 use std::sync::Arc;
@@ -19,6 +32,9 @@ pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_
 pub struct PasteDb {
     db: Arc<redb::Database>,
 }
+
+const DEFAULT_VERSION_LIST_LIMIT: usize = 50;
+const MAX_VERSION_LIST_LIMIT: usize = 1_000;
 
 impl PasteDb {
     fn reject_direct_folder_operation(
@@ -43,6 +59,8 @@ impl PasteDb {
         write_txn.open_table(PASTES)?;
         write_txn.open_table(PASTES_META)?;
         write_txn.open_table(PASTES_BY_UPDATED)?;
+        write_txn.open_table(PASTE_VERSIONS_META)?;
+        write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
         write_txn.commit()?;
         Ok(Self { db })
     }
@@ -70,12 +88,17 @@ impl PasteDb {
         let meta = PasteMeta::from(paste);
         let encoded_meta = bincode::serialize(&meta)?;
         let recency_key = reverse_timestamp_key(paste.updated_at);
+        let initial_version = next_version_meta_for_content(&paste.content, paste.updated_at, None);
+        let encoded_versions = encode_version_meta_list(std::slice::from_ref(&initial_version))?;
+        let encoded_version_content = bincode::serialize(&paste.content)?;
 
         let write_txn = self.db.begin_write()?;
         {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
 
             if pastes.get(paste.id.as_str())?.is_some() {
                 return Err(AppError::StorageMessage(format!(
@@ -87,6 +110,11 @@ impl PasteDb {
             pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
             metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
             updated.insert((recency_key, paste.id.as_str()), ())?;
+            versions_meta.insert(paste.id.as_str(), encoded_versions.as_slice())?;
+            versions_content.insert(
+                (paste.id.as_str(), initial_version.version_id_ms),
+                encoded_version_content.as_slice(),
+            )?;
         }
         write_txn.commit()?;
         Ok(())
@@ -157,11 +185,14 @@ impl PasteDb {
             update.folder_id.is_some(),
             "Direct folder updates via PasteDb::update are not allowed; use TransactionOps::move_paste_between_folders",
         )?;
+        let version_interval_secs = paste_version_interval_secs_from_env();
         let write_txn = self.db.begin_write()?;
         let updated_paste = {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
 
             let Some(old_guard) = pastes.get(id)? else {
                 return Ok(None);
@@ -177,7 +208,25 @@ impl PasteDb {
                 }
             }
 
+            let old_content = paste.content.clone();
+            let mut version_items = decode_version_meta_list(
+                versions_meta.get(id)?.as_ref().map(|value| value.value()),
+            )?;
             apply_update_request(&mut paste, &update);
+            let content_changed = paste.content != old_content;
+
+            if content_changed {
+                let latest = version_items.first();
+                let next = next_version_meta_for_content(&paste.content, paste.updated_at, latest);
+                if should_record_version(latest, &next, version_interval_secs) {
+                    let encoded_content = bincode::serialize(&paste.content)?;
+                    versions_content
+                        .insert((id, next.version_id_ms), encoded_content.as_slice())?;
+                    version_items.insert(0, next);
+                    let encoded_versions = encode_version_meta_list(&version_items)?;
+                    versions_meta.insert(id, encoded_versions.as_slice())?;
+                }
+            }
 
             let encoded_paste = bincode::serialize(&paste)?;
             let meta = PasteMeta::from(&paste);
@@ -214,6 +263,8 @@ impl PasteDb {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
 
             let Some(old_guard) = pastes.get(id)? else {
                 return Ok(None);
@@ -229,6 +280,13 @@ impl PasteDb {
             let _ = updated.remove((recency_key, id))?;
             let _ = pastes.remove(id)?;
             let _ = metas.remove(id)?;
+            let version_items = decode_version_meta_list(
+                versions_meta.get(id)?.as_ref().map(|value| value.value()),
+            )?;
+            for version in version_items {
+                let _ = versions_content.remove((id, version.version_id_ms))?;
+            }
+            let _ = versions_meta.remove(id)?;
             Some(paste)
         };
 
@@ -245,6 +303,265 @@ impl PasteDb {
     /// Returns an error when storage or deserialization fails.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
         Ok(self.delete_and_return(id)?.is_some())
+    }
+
+    fn normalized_version_limit(limit: Option<usize>) -> usize {
+        match limit {
+            Some(0) => 0,
+            Some(value) => value.min(MAX_VERSION_LIST_LIMIT),
+            None => DEFAULT_VERSION_LIST_LIMIT,
+        }
+    }
+
+    /// List persisted historical versions for a paste, newest first.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Canonical paste id.
+    /// - `limit`: Optional row limit (clamped to internal max).
+    ///
+    /// # Returns
+    /// `Ok(Some(items))` for an existing paste, `Ok(None)` when the paste does not exist.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn list_versions(
+        &self,
+        paste_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Option<Vec<VersionMeta>>, AppError> {
+        let limit = Self::normalized_version_limit(limit);
+
+        let read_txn = self.db.begin_read()?;
+        let pastes = read_txn.open_table(PASTES)?;
+        if pastes.get(paste_id)?.is_none() {
+            return Ok(None);
+        }
+        if limit == 0 {
+            return Ok(Some(Vec::new()));
+        }
+        let versions_meta = read_txn.open_table(PASTE_VERSIONS_META)?;
+        let items = decode_version_meta_list(
+            versions_meta
+                .get(paste_id)?
+                .as_ref()
+                .map(|value| value.value()),
+        )?;
+        Ok(Some(items.into_iter().take(limit).collect()))
+    }
+
+    /// Load a single persisted historical version snapshot for a paste.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Canonical paste id.
+    /// - `version_id_ms`: Historical version id.
+    ///
+    /// # Returns
+    /// `Ok(Some(snapshot))` when found, `Ok(None)` when paste/version is missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn get_version(
+        &self,
+        paste_id: &str,
+        version_id_ms: u64,
+    ) -> Result<Option<VersionSnapshot>, AppError> {
+        let read_txn = self.db.begin_read()?;
+        let pastes = read_txn.open_table(PASTES)?;
+        if pastes.get(paste_id)?.is_none() {
+            return Ok(None);
+        }
+
+        let versions_meta = read_txn.open_table(PASTE_VERSIONS_META)?;
+        let version_items = decode_version_meta_list(
+            versions_meta
+                .get(paste_id)?
+                .as_ref()
+                .map(|value| value.value()),
+        )?;
+        let Some(meta) = version_items
+            .into_iter()
+            .find(|item| item.version_id_ms == version_id_ms)
+        else {
+            return Ok(None);
+        };
+
+        let versions_content = read_txn.open_table(PASTE_VERSIONS_CONTENT)?;
+        let Some(content_guard) = versions_content.get((paste_id, version_id_ms))? else {
+            return Ok(None);
+        };
+        let content: String = bincode::deserialize(content_guard.value())?;
+        Ok(Some(VersionSnapshot {
+            paste_id: paste_id.to_string(),
+            version_id_ms: meta.version_id_ms,
+            created_at: meta.created_at,
+            content_hash: meta.content_hash,
+            len: meta.len,
+            content,
+        }))
+    }
+
+    /// Resolve a [`DiffRef`] to raw content from head or a historical version.
+    ///
+    /// # Returns
+    /// `Ok(Some(content))` when the reference resolves, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access fails.
+    pub fn resolve_diff_ref_content(
+        &self,
+        reference: &DiffRef,
+    ) -> Result<Option<String>, AppError> {
+        if let Some(version_id_ms) = reference.version_id_ms {
+            return Ok(self
+                .get_version(reference.paste_id.as_str(), version_id_ms)?
+                .map(|snapshot| snapshot.content));
+        }
+        Ok(self
+            .get(reference.paste_id.as_str())?
+            .map(|paste| paste.content))
+    }
+
+    /// Compute a line-based diff between two paste references.
+    ///
+    /// # Returns
+    /// `Ok(Some(diff))` when both references resolve, `Ok(None)` when either is missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access fails.
+    pub fn diff(&self, request: &DiffRequest) -> Result<Option<DiffResponse>, AppError> {
+        let Some(left) = self.resolve_diff_ref_content(&request.left)? else {
+            return Ok(None);
+        };
+        let Some(right) = self.resolve_diff_ref_content(&request.right)? else {
+            return Ok(None);
+        };
+        let equal = left == right;
+        let unified = if equal {
+            Vec::new()
+        } else {
+            unified_diff_lines(left.as_str(), right.as_str())
+        };
+        Ok(Some(DiffResponse { equal, unified }))
+    }
+
+    /// Reset current paste content to a historical version and prune newer snapshots.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Canonical paste id.
+    /// - `version_id_ms`: Target historical version id.
+    ///
+    /// # Returns
+    /// `Ok(Some(updated))` when reset succeeds, `Ok(None)` when paste/version is missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or serialization fails.
+    pub fn reset_hard_to_version(
+        &self,
+        paste_id: &str,
+        version_id_ms: u64,
+    ) -> Result<Option<Paste>, AppError> {
+        let write_txn = self.db.begin_write()?;
+        let updated_paste = {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
+
+            let Some(paste_guard) = pastes.get(paste_id)? else {
+                return Ok(None);
+            };
+            let mut paste = deserialize_paste(paste_guard.value())?;
+            let old_recency_key = reverse_timestamp_key(paste.updated_at);
+            drop(paste_guard);
+
+            let mut version_items = decode_version_meta_list(
+                versions_meta
+                    .get(paste_id)?
+                    .as_ref()
+                    .map(|value| value.value()),
+            )?;
+            if !version_items
+                .iter()
+                .any(|item| item.version_id_ms == version_id_ms)
+            {
+                return Ok(None);
+            }
+
+            let Some(content_guard) = versions_content.get((paste_id, version_id_ms))? else {
+                return Ok(None);
+            };
+            let target_content: String = bincode::deserialize(content_guard.value())?;
+            drop(content_guard);
+            let reset_update = UpdatePasteRequest {
+                content: Some(target_content),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: None,
+                tags: None,
+            };
+            apply_update_request(&mut paste, &reset_update);
+
+            let encoded_paste = bincode::serialize(&paste)?;
+            let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
+            let new_recency_key = reverse_timestamp_key(paste.updated_at);
+            pastes.insert(paste_id, encoded_paste.as_slice())?;
+            metas.insert(paste_id, encoded_meta.as_slice())?;
+            let _ = updated.remove((old_recency_key, paste_id))?;
+            updated.insert((new_recency_key, paste_id), ())?;
+
+            let mut removed_versions = Vec::new();
+            version_items.retain(|item| {
+                let keep = item.version_id_ms <= version_id_ms;
+                if !keep {
+                    removed_versions.push(item.version_id_ms);
+                }
+                keep
+            });
+            for removed in removed_versions {
+                let _ = versions_content.remove((paste_id, removed))?;
+            }
+            let encoded_versions = encode_version_meta_list(&version_items)?;
+            versions_meta.insert(paste_id, encoded_versions.as_slice())?;
+
+            Some(paste)
+        };
+
+        write_txn.commit()?;
+        Ok(updated_paste)
+    }
+
+    /// Create a new paste from a historical version snapshot.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Source paste id.
+    /// - `version_id_ms`: Source historical version id.
+    /// - `name`: Optional explicit name for the duplicate.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when source version exists, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or insert fails.
+    pub fn duplicate_from_version(
+        &self,
+        paste_id: &str,
+        version_id_ms: u64,
+        name: Option<String>,
+    ) -> Result<Option<Paste>, AppError> {
+        let Some(snapshot) = self.get_version(paste_id, version_id_ms)? else {
+            return Ok(None);
+        };
+        let duplicate_name = name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(naming::generate_name);
+        let duplicate = Paste::new(snapshot.content, duplicate_name);
+        self.create(&duplicate)?;
+        Ok(Some(duplicate))
     }
 
     /// List canonical paste rows sorted by `updated_at` descending.

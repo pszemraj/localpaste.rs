@@ -34,6 +34,10 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return None;
     }
 
+    if crate::models::paste::is_markdown_content(content) && !looks_like_yaml(content) {
+        return Some("markdown".to_string());
+    }
+
     if label == "yaml" && !looks_like_yaml(content) {
         return None;
     }
@@ -72,18 +76,10 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
         if first_content_line.is_none() {
             first_content_line = Some(trimmed);
         }
-        if trimmed.starts_with("- ")
-            || trimmed.contains(": ")
-            || (trimmed.ends_with(':') && trimmed.len() > 1)
+        if (trimmed.starts_with("- ") || trimmed.contains(':'))
+            && looks_like_single_line_yaml_mapping(trimmed, true)
         {
-            let yaml_like = if trimmed.ends_with(':') && trimmed.len() > 1 {
-                true
-            } else {
-                looks_like_single_line_yaml_mapping(trimmed, true)
-            };
-            if yaml_like {
-                yaml_pairs = yaml_pairs.saturating_add(1);
-            }
+            yaml_pairs = yaml_pairs.saturating_add(1);
         }
     }
 
@@ -122,6 +118,9 @@ fn looks_like_single_line_yaml_mapping(line: &str, allow_unquoted_space_keys: bo
     }
     let quoted_key = (key.starts_with('"') && key.ends_with('"'))
         || (key.starts_with('\'') && key.ends_with('\''));
+    if !quoted_key && key.split_whitespace().count() > 3 {
+        return false;
+    }
     if key.contains(char::is_whitespace) && !allow_unquoted_space_keys && !quoted_key {
         return false;
     }

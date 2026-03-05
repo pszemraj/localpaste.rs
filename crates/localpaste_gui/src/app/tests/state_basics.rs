@@ -230,6 +230,39 @@ fn paste_deleted_clears_pending_copy_action_for_deleted_id() {
 }
 
 #[test]
+fn paste_deleted_selects_adjacent_item_in_visible_order() {
+    let mut harness = make_app();
+    harness.app.all_pastes = vec![
+        test_summary("a", "A", None, 1),
+        test_summary("b", "B", None, 1),
+        test_summary("c", "C", None, 1),
+    ];
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.selected_id = Some("b".to_string());
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "b".to_string(),
+    });
+    assert_eq!(harness.app.selected_id.as_deref(), Some("c"));
+}
+
+#[test]
+fn paste_deleted_selects_previous_when_last_visible_item_removed() {
+    let mut harness = make_app();
+    harness.app.all_pastes = vec![
+        test_summary("a", "A", None, 1),
+        test_summary("b", "B", None, 1),
+    ];
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.selected_id = Some("b".to_string());
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "b".to_string(),
+    });
+    assert_eq!(harness.app.selected_id.as_deref(), Some("a"));
+}
+
+#[test]
 fn create_new_paste_send_failure_shows_error_status() {
     let TestHarness {
         _dir: _guard,

@@ -1,8 +1,16 @@
 //! Atomic cross-table transaction helpers for folder-affecting mutations.
 
-use super::tables::{FOLDERS, FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META};
+use super::tables::{
+    FOLDERS, FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META, PASTE_VERSIONS_CONTENT,
+    PASTE_VERSIONS_META,
+};
 use super::Database;
+use crate::config::paste_version_interval_secs_from_env;
 use crate::db::paste::{apply_update_request, deserialize_paste, reverse_timestamp_key};
+use crate::db::versioning::{
+    decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
+    should_record_version,
+};
 use crate::error::AppError;
 use crate::models::folder::Folder;
 use crate::models::paste::{Paste, PasteMeta, UpdatePasteRequest};
@@ -156,12 +164,17 @@ impl TransactionOps {
         let encoded_paste = bincode::serialize(&paste)?;
         let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
         let recency_key = reverse_timestamp_key(paste.updated_at);
+        let initial_version = next_version_meta_for_content(&paste.content, paste.updated_at, None);
+        let encoded_versions = encode_version_meta_list(std::slice::from_ref(&initial_version))?;
+        let encoded_version_content = bincode::serialize(&paste.content)?;
 
         let write_txn = db.db.begin_write()?;
         {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
             let mut folders = write_txn.open_table(FOLDERS)?;
             let deleting = write_txn.open_table(FOLDERS_DELETING)?;
 
@@ -176,6 +189,11 @@ impl TransactionOps {
             pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
             metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
             updated.insert((recency_key, paste.id.as_str()), ())?;
+            versions_meta.insert(paste.id.as_str(), encoded_versions.as_slice())?;
+            versions_content.insert(
+                (paste.id.as_str(), initial_version.version_id_ms),
+                encoded_version_content.as_slice(),
+            )?;
             apply_folder_count_transition(&mut folders, None, Some(folder_id))?;
         }
         write_txn.commit()?;
@@ -221,6 +239,8 @@ impl TransactionOps {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
             let mut folders = write_txn.open_table(FOLDERS)?;
 
             let Some(old_guard) = pastes.get(paste_id)? else {
@@ -234,6 +254,16 @@ impl TransactionOps {
             let _ = updated.remove((old_recency_key, paste_id))?;
             let _ = pastes.remove(paste_id)?;
             let _ = metas.remove(paste_id)?;
+            let version_items = decode_version_meta_list(
+                versions_meta
+                    .get(paste_id)?
+                    .as_ref()
+                    .map(|value| value.value()),
+            )?;
+            for version in version_items {
+                let _ = versions_content.remove((paste_id, version.version_id_ms))?;
+            }
+            let _ = versions_meta.remove(paste_id)?;
 
             apply_folder_count_transition(&mut folders, old_folder_id.as_deref(), None)?;
             true
@@ -290,11 +320,14 @@ impl TransactionOps {
         new_folder_id: Option<&str>,
         update_req: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
+        let version_interval_secs = paste_version_interval_secs_from_env();
         let write_txn = db.db.begin_write()?;
         let updated_paste = {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
             let mut folders = write_txn.open_table(FOLDERS)?;
             let deleting = write_txn.open_table(FOLDERS_DELETING)?;
 
@@ -313,8 +346,29 @@ impl TransactionOps {
                 }
             }
 
+            let old_content = paste.content.clone();
+            let mut version_items = decode_version_meta_list(
+                versions_meta
+                    .get(paste_id)?
+                    .as_ref()
+                    .map(|value| value.value()),
+            )?;
             apply_update_request(&mut paste, &update_req);
             paste.folder_id = new_folder_id.map(ToString::to_string);
+            let content_changed = paste.content != old_content;
+
+            if content_changed {
+                let latest = version_items.first();
+                let next = next_version_meta_for_content(&paste.content, paste.updated_at, latest);
+                if should_record_version(latest, &next, version_interval_secs) {
+                    let encoded_content = bincode::serialize(&paste.content)?;
+                    versions_content
+                        .insert((paste_id, next.version_id_ms), encoded_content.as_slice())?;
+                    version_items.insert(0, next);
+                    let encoded_versions = encode_version_meta_list(&version_items)?;
+                    versions_meta.insert(paste_id, encoded_versions.as_slice())?;
+                }
+            }
 
             let encoded_paste = bincode::serialize(&paste)?;
             let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;

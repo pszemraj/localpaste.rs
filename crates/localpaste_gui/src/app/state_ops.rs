@@ -64,6 +64,7 @@ impl LocalPasteApp {
 
     /// Applies a backend event and synchronizes app state, selection, and save flags.
     pub(super) fn apply_event(&mut self, event: CoreEvent) {
+        self.on_version_event(&event);
         match event {
             CoreEvent::PasteList { items } => {
                 self.query_perf.list_results_applied =
@@ -109,11 +110,12 @@ impl LocalPasteApp {
                 self.set_status("Created new paste.");
             }
             CoreEvent::PasteSaved { paste } => {
+                let paste_id = paste.id.clone();
                 let requested_revision = self.save_request_revision.take();
-                if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste.id) {
+                if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste_id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
-                if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
+                if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste_id) {
                     *item = PasteSummary::from_paste(&paste);
                 }
                 if !self.search_query.trim().is_empty() {
@@ -122,7 +124,7 @@ impl LocalPasteApp {
                     self.search_last_sent.clear();
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
-                if self.selected_id.as_deref() == Some(paste.id.as_str()) {
+                if self.selected_id.as_deref() == Some(paste_id.as_str()) {
                     let has_newer_local_edits = if self.is_virtual_editor_mode() {
                         // `save_request_revision` can be cleared after a partial deferred-switch
                         // failure even when a content-save command was already dispatched.
@@ -150,8 +152,6 @@ impl LocalPasteApp {
                     }
                 }
                 if self.search_query.trim().is_empty() {
-                    // Keep smart collections/language filtering in sync with save-driven
-                    // summary changes (language auto-detect, updated_at ordering).
                     self.recompute_visible_pastes();
                 }
                 self.try_apply_pending_selection();
@@ -180,8 +180,6 @@ impl LocalPasteApp {
                     self.recompute_visible_pastes();
                 } else {
                     self.retain_search_results_for_active_filters();
-                    // Metadata edits can change search inclusion/ranking; force a fresh
-                    // backend search even when the query text itself is unchanged.
                     self.search_last_sent.clear();
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
@@ -233,11 +231,22 @@ impl LocalPasteApp {
                 );
             }
             CoreEvent::PasteDeleted { id } => {
+                let deleted_index = self.pastes.iter().position(|paste| paste.id == id);
+                let was_selected = self.selected_id.as_deref() == Some(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_pending_copy_for(id.as_str());
-                if self.selected_id.as_deref() == Some(id.as_str()) {
+                if was_selected {
+                    let adjacent_id = deleted_index.and_then(|index| {
+                        self.pastes
+                            .get(index)
+                            .or_else(|| index.checked_sub(1).and_then(|prev| self.pastes.get(prev)))
+                            .map(|paste| paste.id.clone())
+                    });
                     self.clear_selection();
+                    if let Some(adjacent_id) = adjacent_id {
+                        let _ = self.select_paste(adjacent_id);
+                    }
                     self.set_status("Paste deleted.");
                 } else {
                     self.set_status("Paste deleted; list refreshed.");
@@ -263,7 +272,10 @@ impl LocalPasteApp {
                 }
                 self.set_status(message);
             }
-            CoreEvent::FoldersLoaded { items: _ }
+            CoreEvent::PasteVersionsLoaded { .. }
+            | CoreEvent::PasteVersionLoaded { .. }
+            | CoreEvent::PasteDiffComputed { .. }
+            | CoreEvent::FoldersLoaded { items: _ }
             | CoreEvent::ShutdownComplete { flush_result: _ } => {}
             CoreEvent::FolderSaved { folder: _ } | CoreEvent::FolderDeleted { id: _ } => {
                 self.request_refresh();
@@ -583,6 +595,7 @@ impl LocalPasteApp {
         self.save_request_revision = None;
         self.metadata_save_in_flight = false;
         self.metadata_save_request = None;
+        self.clear_version_view_state();
     }
 
     fn reset_selection_editor_state(&mut self) {
@@ -603,6 +616,8 @@ impl LocalPasteApp {
         self.last_edit_at = None;
         self.save_in_flight = false;
         self.save_request_revision = None;
+        self.version_ui.versions.clear();
+        self.clear_version_view_state();
     }
 
     fn apply_selection_now(&mut self, id: String) -> bool {
@@ -683,6 +698,9 @@ impl LocalPasteApp {
 
     /// Marks current editor content dirty and arms autosave timing.
     pub(super) fn mark_dirty(&mut self) {
+        if self.block_if_historical_read_only() {
+            return;
+        }
         if self.selected_id.is_some() {
             self.save_status = SaveStatus::Dirty;
             self.last_edit_at = Some(Instant::now());
@@ -722,6 +740,10 @@ impl LocalPasteApp {
 
     /// Dispatches metadata save for the current editor metadata draft when needed.
     pub(super) fn save_metadata_now(&mut self) {
+        if self.block_if_historical_read_only() {
+            self.metadata_dirty = false;
+            return;
+        }
         if !self.metadata_dirty || self.metadata_save_in_flight {
             return;
         }

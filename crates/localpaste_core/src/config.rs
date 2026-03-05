@@ -7,7 +7,8 @@ use std::str::FromStr;
 use tracing::warn;
 
 use crate::constants::{
-    API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
+    API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE,
+    DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PORT,
 };
 
 /// Runtime configuration for LocalPaste.
@@ -110,6 +111,19 @@ pub fn api_addr_file_path_for_db_path(db_path: &str) -> PathBuf {
 /// Path to the `.api-addr` discovery file.
 pub fn api_addr_file_path_from_env_or_default() -> PathBuf {
     api_addr_file_path_for_db_path(db_path_from_env_or_default().as_str())
+}
+
+/// Resolve the minimum interval between persisted paste-version snapshots.
+///
+/// # Returns
+/// Interval in seconds (minimum `1`), sourced from
+/// `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` when valid.
+pub fn paste_version_interval_secs_from_env() -> u64 {
+    parse_env_number(
+        "LOCALPASTE_PASTE_VERSION_INTERVAL_SECS",
+        DEFAULT_PASTE_VERSION_INTERVAL_SECS,
+    )
+    .max(1)
 }
 
 /// Parse a boolean-like environment flag value.

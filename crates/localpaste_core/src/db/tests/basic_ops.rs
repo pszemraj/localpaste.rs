@@ -1,8 +1,10 @@
 //! Basic database CRUD tests.
 
 use super::*;
-use crate::db::tables::{FOLDERS, PASTES};
+use crate::db::tables::{FOLDERS, PASTES, PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META};
+use crate::env::{env_lock, EnvGuard};
 use redb::ReadableDatabase;
+use std::time::Duration;
 
 fn update_request(
     content: Option<&str>,
@@ -79,6 +81,244 @@ fn paste_create_get_update_delete_roundtrip() {
 
     assert!(db.pastes.delete(&paste_id).expect("delete"));
     assert!(db.pastes.get(&paste_id).expect("get").is_none());
+}
+
+#[test]
+fn create_records_initial_version_snapshot() {
+    let (db, _temp) = setup_test_db();
+    let paste = Paste::new("hello".to_string(), "initial-version".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let versions = db
+        .pastes
+        .list_versions(&paste_id, None)
+        .expect("list versions")
+        .expect("paste should exist");
+    assert_eq!(versions.len(), 1);
+
+    let version = &versions[0];
+    let snapshot = db
+        .pastes
+        .get_version(&paste_id, version.version_id_ms)
+        .expect("get version")
+        .expect("version should exist");
+    assert_eq!(snapshot.content, "hello");
+}
+
+#[test]
+fn content_update_respects_version_interval_and_hash_dedupe() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "3600");
+    let (db, _temp) = setup_test_db();
+
+    let paste = Paste::new("v1".to_string(), "interval-gate".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let updated = update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v2"), None, None, None),
+        "content update",
+    );
+    assert_eq!(updated.content, "v2");
+
+    let versions_after_fast_update = db
+        .pastes
+        .list_versions(&paste_id, None)
+        .expect("list versions")
+        .expect("paste exists");
+    assert_eq!(
+        versions_after_fast_update.len(),
+        1,
+        "fast update under interval gate should not persist snapshot"
+    );
+
+    let _same_content = update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v2"), None, None, None),
+        "same-content update",
+    );
+    let versions_after_same_content = db
+        .pastes
+        .list_versions(&paste_id, None)
+        .expect("list versions")
+        .expect("paste exists");
+    assert_eq!(
+        versions_after_same_content.len(),
+        1,
+        "hash-equal updates must not create snapshots"
+    );
+}
+
+#[test]
+fn reset_hard_prunes_newer_versions() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+    let (db, _temp) = setup_test_db();
+
+    let paste = Paste::new("v1".to_string(), "reset-hard".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    std::thread::sleep(Duration::from_millis(1100));
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v2"), None, None, None),
+        "update to v2",
+    );
+    std::thread::sleep(Duration::from_millis(1100));
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v3"), None, None, None),
+        "update to v3",
+    );
+
+    let versions_before_reset = db
+        .pastes
+        .list_versions(&paste_id, None)
+        .expect("list versions")
+        .expect("paste exists");
+    assert!(
+        versions_before_reset.len() >= 3,
+        "expected at least three snapshots before reset"
+    );
+    let oldest_version_id = versions_before_reset.last().expect("oldest").version_id_ms;
+
+    let reset = db
+        .pastes
+        .reset_hard_to_version(&paste_id, oldest_version_id)
+        .expect("reset hard")
+        .expect("paste should exist");
+    assert_eq!(reset.content, "v1");
+
+    let versions_after_reset = db
+        .pastes
+        .list_versions(&paste_id, None)
+        .expect("list versions")
+        .expect("paste exists");
+    assert_eq!(versions_after_reset.len(), 1);
+    assert_eq!(versions_after_reset[0].version_id_ms, oldest_version_id);
+
+    let current = db
+        .pastes
+        .get(&paste_id)
+        .expect("get current")
+        .expect("paste exists");
+    assert_eq!(current.content, "v1");
+}
+
+#[test]
+fn delete_removes_version_rows() {
+    let (db, _temp) = setup_test_db();
+    let paste = Paste::new("delete-me".to_string(), "delete-versions".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let versions = db
+        .pastes
+        .list_versions(&paste_id, None)
+        .expect("list versions")
+        .expect("paste exists");
+    let version_id = versions[0].version_id_ms;
+
+    assert!(db.pastes.delete(&paste_id).expect("delete"));
+    assert!(
+        db.pastes
+            .list_versions(&paste_id, None)
+            .expect("list versions after delete")
+            .is_none(),
+        "deleted paste should have no version listing"
+    );
+
+    let read_txn = db.db.begin_read().expect("begin read");
+    let versions_meta = read_txn
+        .open_table(PASTE_VERSIONS_META)
+        .expect("open versions meta");
+    let versions_content = read_txn
+        .open_table(PASTE_VERSIONS_CONTENT)
+        .expect("open versions content");
+    assert!(versions_meta
+        .get(paste_id.as_str())
+        .expect("get versions meta")
+        .is_none());
+    assert!(versions_content
+        .get((paste_id.as_str(), version_id))
+        .expect("get versions content")
+        .is_none());
+}
+
+#[test]
+fn duplicate_from_version_creates_new_paste_with_snapshot_content() {
+    let (db, _temp) = setup_test_db();
+    let source = Paste::new("alpha".to_string(), "source".to_string());
+    let source_id = source.id.clone();
+    db.pastes.create(&source).expect("create source");
+
+    let version_id = db
+        .pastes
+        .list_versions(&source_id, Some(1))
+        .expect("list versions")
+        .expect("source exists")[0]
+        .version_id_ms;
+
+    let duplicate = db
+        .pastes
+        .duplicate_from_version(&source_id, version_id, Some("copy".to_string()))
+        .expect("duplicate")
+        .expect("duplicate should be created");
+    assert_eq!(duplicate.name, "copy");
+    assert_eq!(duplicate.content, "alpha");
+    assert_ne!(duplicate.id, source_id);
+}
+
+#[test]
+fn diff_reports_equal_and_changed_content() {
+    let (db, _temp) = setup_test_db();
+    let left = Paste::new("same\n".to_string(), "left".to_string());
+    let right = Paste::new("different\n".to_string(), "right".to_string());
+    let left_id = left.id.clone();
+    let right_id = right.id.clone();
+    db.pastes.create(&left).expect("create left");
+    db.pastes.create(&right).expect("create right");
+
+    let equal = db
+        .pastes
+        .diff(&crate::diff::DiffRequest {
+            left: crate::diff::DiffRef {
+                paste_id: left_id.clone(),
+                version_id_ms: None,
+            },
+            right: crate::diff::DiffRef {
+                paste_id: left_id.clone(),
+                version_id_ms: None,
+            },
+        })
+        .expect("diff equal")
+        .expect("resolved");
+    assert!(equal.equal);
+    assert!(equal.unified.is_empty());
+
+    let changed = db
+        .pastes
+        .diff(&crate::diff::DiffRequest {
+            left: crate::diff::DiffRef {
+                paste_id: left_id,
+                version_id_ms: None,
+            },
+            right: crate::diff::DiffRef {
+                paste_id: right_id,
+                version_id_ms: None,
+            },
+        })
+        .expect("diff changed")
+        .expect("resolved");
+    assert!(!changed.equal);
+    assert!(!changed.unified.is_empty());
 }
 
 #[test]

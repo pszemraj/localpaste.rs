@@ -8,6 +8,8 @@ pub const DEFAULT_MAX_PASTE_SIZE: usize = 10 * 1024 * 1024;
 
 /// Default autosave interval in milliseconds.
 pub const DEFAULT_AUTO_SAVE_INTERVAL_MS: u64 = 2_000;
+/// Default minimum interval between persisted paste versions.
+pub const DEFAULT_PASTE_VERSION_INTERVAL_SECS: u64 = 300;
 
 /// Default list and search limits used by GUI list pagination.
 pub const DEFAULT_LIST_PASTES_LIMIT: usize = 512;

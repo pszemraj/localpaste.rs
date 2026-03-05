@@ -122,6 +122,18 @@ fn markdown_separator_content_is_not_mislabeled_as_yaml() {
 }
 
 #[test]
+fn markdown_heading_with_colon_prefers_markdown_over_yaml() {
+    let content = "Consolidate this nonsense:\n\n# test duplication review:\n";
+    assert_eq!(detect_language(content).as_deref(), Some("markdown"));
+}
+
+#[test]
+fn markdown_fence_prefers_markdown_over_structured_yaml() {
+    let content = "```json\n{\"a\":1}\n```\n";
+    assert_eq!(detect_language(content).as_deref(), Some("markdown"));
+}
+
+#[test]
 fn canonicalization_matrix_handles_aliases() {
     let cases = [
         ("csharp", "cs"),
@@ -204,6 +216,10 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         Some("yaml".to_string())
     );
     assert_eq!(refine_magika_label("yaml", "status report: done\n"), None);
+    assert_eq!(
+        refine_magika_label("yaml", "```json\n{\"k\":1}\n```\n"),
+        Some("markdown".to_string())
+    );
 }
 
 #[cfg(feature = "magika")]

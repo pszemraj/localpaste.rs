@@ -15,3 +15,18 @@
 path = "crates/localpaste_gui/src/app/tests/virtual_editor_behaviors.rs"
 max_lines = 1100
 reason = "Temporary overage while keyboard parity regression matrix lands; split planned after stabilization."
+
+[[exceptions]]
+path = "crates/localpaste_cli/src/main.rs"
+max_lines = 1200
+reason = "CLI currently centralizes endpoint resolution and command execution; split into subcommand modules is pending follow-up cleanup."
+
+[[exceptions]]
+path = "crates/localpaste_server/tests/api_integration.rs"
+max_lines = 1200
+reason = "Integration coverage remains centralized while version/diff endpoint contracts land; follow-up will split into focused test files."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/ui/editor_panel_virtual.rs"
+max_lines = 1100
+reason = "Virtual editor rendering and interaction logic is still in one module pending extraction into row rendering/scroll coordination submodules."

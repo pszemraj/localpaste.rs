@@ -96,6 +96,39 @@ impl LocalPasteApp {
             wrap_cols,
         }
     }
+
+    /// Returns the global visual-row index containing `cursor`.
+    ///
+    /// # Returns
+    /// Zero-based visual-row index in the current wrapped layout.
+    ///
+    /// # Panics
+    /// This helper does not intentionally panic.
+    pub(super) fn virtual_cursor_row_index(&self, cursor: usize) -> usize {
+        let metrics = self.virtual_cursor_wrap_metrics(cursor);
+        if metrics.wrap_cols == 0 {
+            return 0;
+        }
+
+        let mut row_in_line = metrics.display_col / metrics.wrap_cols;
+        if is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols)
+            && self.virtual_editor_state.wrap_boundary_affinity() == WrapBoundaryAffinity::Upstream
+        {
+            row_in_line = row_in_line.saturating_sub(1);
+        }
+
+        let at_eol_wrap_boundary = metrics.display_col == metrics.line_cols
+            && metrics.display_col > 0
+            && metrics.display_col % metrics.wrap_cols == 0;
+        if at_eol_wrap_boundary {
+            row_in_line = row_in_line.saturating_sub(1);
+        }
+
+        let line_rows = self.virtual_layout.line_visual_rows(metrics.line).max(1);
+        row_in_line = row_in_line.min(line_rows.saturating_sub(1));
+        self.virtual_layout.line_start_row(metrics.line) + row_in_line
+    }
+
     /// Derives preferred wrapped-row column for subsequent vertical cursor moves.
     ///
     /// # Returns
@@ -202,6 +235,7 @@ impl LocalPasteApp {
         self.reset_virtual_caret_blink();
         self.highlight_edit_hint = None;
         self.virtual_drag_active = false;
+        self.virtual_pending_scroll_offset_y = None;
         self.reset_virtual_click_streak();
     }
 

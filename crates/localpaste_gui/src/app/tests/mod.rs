@@ -145,6 +145,8 @@ fn make_app() -> TestHarness {
         virtual_viewport_height: 0.0,
         virtual_line_height: 1.0,
         virtual_wrap_width: 0.0,
+        virtual_pending_scroll_offset_y: None,
+        version_ui: super::version_ui::VersionUiState::default(),
         highlight_worker: spawn_highlight_worker(),
         highlight_pending: None,
         highlight_render: None,
@@ -204,8 +206,15 @@ fn make_app_with_event_tx() -> (TestHarness, Sender<CoreEvent>) {
 }
 
 fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
-    rx.recv_timeout(Duration::from_millis(200))
-        .expect("expected outbound command")
+    loop {
+        let cmd = rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("expected outbound command");
+        if matches!(cmd, CoreCmd::ListPasteVersions { .. }) {
+            continue;
+        }
+        return cmd;
+    }
 }
 
 mod collections_and_search;

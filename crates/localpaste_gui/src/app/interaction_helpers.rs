@@ -68,6 +68,60 @@ pub(crate) fn is_command_shift_shortcut(modifiers: egui::Modifiers) -> bool {
     modifiers.command && modifiers.shift && !modifiers.alt
 }
 
+/// Consume editor-owned navigation/editing keys so focus does not leak to sibling widgets.
+///
+/// # Arguments
+/// - `ctx`: Egui context for mutable input access.
+/// - `editor_focused`: Whether the virtual editor currently owns keyboard focus.
+pub(crate) fn consume_virtual_editor_focus_keys(ctx: &egui::Context, editor_focused: bool) {
+    if !editor_focused {
+        return;
+    }
+
+    let events = ctx.input(|input| input.events.clone());
+    let mut keys_to_consume: Vec<(egui::Modifiers, egui::Key)> = Vec::new();
+    for event in events {
+        let egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            continue;
+        };
+
+        let should_consume = matches!(
+            key,
+            egui::Key::Tab
+                | egui::Key::Enter
+                | egui::Key::Backspace
+                | egui::Key::Delete
+                | egui::Key::ArrowLeft
+                | egui::Key::ArrowRight
+                | egui::Key::ArrowUp
+                | egui::Key::ArrowDown
+                | egui::Key::Home
+                | egui::Key::End
+                | egui::Key::PageUp
+                | egui::Key::PageDown
+        );
+        if should_consume {
+            keys_to_consume.push((modifiers, key));
+        }
+    }
+
+    if keys_to_consume.is_empty() {
+        return;
+    }
+
+    ctx.input_mut(|input| {
+        for (modifiers, key) in keys_to_consume.drain(..) {
+            input.consume_key(modifiers, key);
+        }
+    });
+}
+
 /// Returns whether a character should be treated as an editor "word" character.
 ///
 /// This is **code-editor oriented**:

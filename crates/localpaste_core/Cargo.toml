@@ -20,6 +20,8 @@ rand.workspace = true
 thiserror = "1.0"
 tracing.workspace = true
 fs2 = "0.4"
+blake3 = "1.5"
+similar = "2.6"
 magika = { workspace = true, optional = true }
 ort = { workspace = true, optional = true }
 

@@ -20,6 +20,7 @@ impl LocalPasteApp {
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
+                let historical_active = self.is_viewing_historical_version();
 
                 let mut pending_tag_search: Option<String> = None;
                 let mut apply_metadata = false;
@@ -33,7 +34,8 @@ impl LocalPasteApp {
                     apply_compact_meta_row_style(ui);
                     ui.horizontal_wrapped(|ui| {
                         let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
-                        let name_response = ui.add(
+                        let name_response = ui.add_enabled(
+                            !historical_active,
                             egui::TextEdit::singleline(&mut self.edit_name)
                                 .font(egui::TextStyle::Button)
                                 .desired_width(title_width)
@@ -79,26 +81,28 @@ impl LocalPasteApp {
                             language_choice.as_str(),
                             auto_label.as_str(),
                         );
-                        egui::ComboBox::from_id_salt("header_language_select")
-                            .selected_text(selected_language_text)
-                            .width(160.0)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut language_choice,
-                                    auto_language_choice_key().to_string(),
-                                    "Auto",
-                                );
-                                for option in
-                                    localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
-                                {
+                        ui.add_enabled_ui(!historical_active, |ui| {
+                            egui::ComboBox::from_id_salt("header_language_select")
+                                .selected_text(selected_language_text)
+                                .width(160.0)
+                                .show_ui(ui, |ui| {
                                     ui.selectable_value(
                                         &mut language_choice,
-                                        option.value.to_string(),
-                                        option.label,
+                                        auto_language_choice_key().to_string(),
+                                        "Auto",
                                     );
-                                }
-                            });
-                        if language_choice != previous_language_choice {
+                                    for option in
+                                        localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
+                                    {
+                                        ui.selectable_value(
+                                            &mut language_choice,
+                                            option.value.to_string(),
+                                            option.label,
+                                        );
+                                    }
+                                });
+                        });
+                        if !historical_active && language_choice != previous_language_choice {
                             apply_language_choice(
                                 &mut self.edit_language_is_manual,
                                 &mut self.edit_language,
@@ -115,7 +119,9 @@ impl LocalPasteApp {
                         ui.separator();
                         if ui
                             .add_enabled(
-                                self.metadata_dirty && !self.metadata_save_in_flight,
+                                !historical_active
+                                    && self.metadata_dirty
+                                    && !self.metadata_save_in_flight,
                                 egui::Button::new("Apply"),
                             )
                             .clicked()
@@ -140,6 +146,7 @@ impl LocalPasteApp {
                         if ui.small_button("Delete").clicked() {
                             delete_requested = true;
                         }
+                        self.render_version_toolbar(ui);
                     });
                 });
                 if let Some(tag) = pending_tag_search {
@@ -203,8 +210,19 @@ impl LocalPasteApp {
                     // staged/current highlight state so large buffers stay plain.
                     self.clear_highlight_state();
                 }
-                let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
-                let use_virtual_editor = self.editor_mode == EditorMode::VirtualEditor;
+                let viewing_historical = self.is_viewing_historical_version();
+                let use_virtual_preview =
+                    self.editor_mode == EditorMode::VirtualPreview || viewing_historical;
+                let use_virtual_editor =
+                    self.editor_mode == EditorMode::VirtualEditor && !viewing_historical;
+                if viewing_historical {
+                    ui.label(
+                        RichText::new("Historical version mode (read-only)")
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
+                    );
+                    ui.add_space(4.0);
+                }
                 let needs_worker_render = use_virtual_preview || use_virtual_editor;
                 let async_mode =
                     !is_large && (text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES || needs_worker_render);
@@ -348,6 +366,7 @@ impl LocalPasteApp {
                     scroll.show(ui, |_| {});
                 }
                 self.highlight_render = highlight_render;
+                self.render_version_dialogs(ctx);
             } else if self.selected_id.is_some() {
                 self.virtual_editor_active = false;
                 ui.label(RichText::new("Loading paste...").color(COLOR_TEXT_MUTED));
