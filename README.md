@@ -12,11 +12,6 @@ LocalPaste provides:
 - Headless API server (`localpaste`) for automation/integration
 - CLI client (`lpaste`) for terminal workflows
 
-Runtime contract references:
-
-- GUI-owned runtime topology + endpoint discovery: [`docs/architecture.md`](docs/architecture.md)
-- Single-writer `DB_PATH` and lock-file contract: [`docs/storage.md`](docs/storage.md)
-
 > [!WARNING]
 > Keep exactly one writer process per `DB_PATH` (`localpaste-gui` or standalone `localpaste`).
 
@@ -65,11 +60,7 @@ cargo run -p localpaste_server --bin localpaste --no-default-features
 ```
 
 Runtime/provider note:
-
 - `MAGIKA_FORCE_CPU=true` is the default (see `.env.example`), so Magika uses CPU execution provider even when GPU is available.
-
-Build/run/validation command matrices are maintained in:
-[`docs/dev/devlog.md`](docs/dev/devlog.md).
 
 ## Precompiled Binaries
 
@@ -96,15 +87,9 @@ Get-FileHash .\localpaste-v<tag>-windows-x86_64.msi -Algorithm SHA256
 
 ## Configuration and Ops
 
-- System architecture walkthrough: [`docs/architecture.md`](docs/architecture.md)
-- Language detection + highlighting behavior: [`docs/language-detection.md`](docs/language-detection.md)
-- Storage/backend compatibility contract: [`docs/storage.md`](docs/storage.md)
-- Security and environment variables: [`docs/security.md`](docs/security.md)
-- Service/background operation: [`docs/deployment.md`](docs/deployment.md)
-- Locking semantics (_owner lock + paste edit locks_): [`docs/dev/locking-model.md`](docs/dev/locking-model.md)
-- GUI keyboard/navigation contract: [`docs/dev/gui-notes.md#keyboard-and-navigation-contract`](docs/dev/gui-notes.md#keyboard-and-navigation-contract)
+- Documentation map: [`docs/README.md`](docs/README.md)
+- Build/run/validation workflow: [`docs/dev/devlog.md`](docs/dev/devlog.md)
 - GUI release pipeline and artifact contract: [`docs/release-gui.md`](docs/release-gui.md)
-- Documentation index: [`docs/README.md`](docs/README.md)
 
 ## License
 

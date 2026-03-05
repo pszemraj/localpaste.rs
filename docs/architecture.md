@@ -127,6 +127,8 @@ Derived/index tables:
 
 - `pastes_meta`: metadata projection for list/search.
 - `pastes_by_updated`: recency ordering index keyed by `(reverse_millis, paste_id)`.
+- `paste_versions_meta`: newest-first historical snapshot metadata per paste.
+- `paste_versions_content`: historical snapshot content keyed by `(paste_id, version_id_ms)`.
 
 Primary implementation:
 
@@ -170,6 +172,12 @@ Write surfaces:
 - tooling (`localpaste_tools`).
 
 The project centralizes sensitive folder assignment/delete logic in shared core helpers so API and GUI backend paths enforce equivalent invariants.
+
+Version and diff surfaces:
+
+- `/api/paste/:id/versions*` supports list/get/reset-hard/duplicate for historical snapshots.
+- `/api/diff` compares head or historical paste references.
+- Content-changing writes may persist an older-head snapshot based on `LOCALPASTE_VERSION_INTERVAL_SECS`.
 
 Read behavior:
 

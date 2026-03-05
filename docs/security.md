@@ -42,8 +42,10 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 | `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind               |
 | `MAX_PASTE_SIZE`      | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend) |
 | `AUTO_BACKUP`         | disabled          | Create DB backup on startup when existing DB is present               |
+| `LOCALPASTE_VERSION_INTERVAL_SECS` | `300` | Minimum seconds between persisted historical snapshots (`>= 1`) |
+| `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` | unset | Legacy fallback key for `LOCALPASTE_VERSION_INTERVAL_SECS` |
 
-`localpaste` startup now fails fast on malformed `BIND`/`PORT`/size/boolean env values so invalid deployment configuration is explicit.
+`localpaste` startup fails fast on malformed `BIND`/`PORT`/size/boolean/snapshot-interval env values so invalid deployment configuration is explicit.
 Reference defaults/examples: [`.env.example`](../.env.example).
 
 ### Security Headers
