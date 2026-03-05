@@ -50,6 +50,16 @@ impl LocalPasteApp {
                     "Ctrl+Home/End (Win/Linux) or Cmd+Up/Down (macOS)",
                     "Move caret to document start/end",
                 );
+                shortcut_row(
+                    ui,
+                    "Palette query: diff",
+                    "Open diff modal for selected paste",
+                );
+                shortcut_row(
+                    ui,
+                    "Palette query: history",
+                    "Open history modal for selected paste",
+                );
                 shortcut_row(ui, "Enter", "Open selected command palette result");
                 shortcut_row(ui, "Esc", "Close command palette/window");
                 shortcut_row(ui, "Ctrl/Cmd+C", "Copy selected text");

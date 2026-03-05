@@ -29,7 +29,26 @@ impl LocalPasteApp {
             .default_width(1080.0)
             .default_height(760.0)
             .show(ctx, |ui| {
+                let can_go_newer = self.version_ui.history_selected_index > 0;
+                let can_go_older =
+                    self.version_ui.history_selected_index < self.version_ui.history_versions.len();
+
                 ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(can_go_newer, egui::Button::new("← Newer"))
+                        .clicked()
+                    {
+                        pending_selected_index =
+                            Some(self.version_ui.history_selected_index.saturating_sub(1));
+                    }
+                    if ui
+                        .add_enabled(can_go_older, egui::Button::new("Older →"))
+                        .clicked()
+                    {
+                        pending_selected_index =
+                            Some(self.version_ui.history_selected_index.saturating_add(1));
+                    }
+                    ui.separator();
                     if ui.small_button("Refresh").clicked() {
                         pending_refresh = true;
                     }

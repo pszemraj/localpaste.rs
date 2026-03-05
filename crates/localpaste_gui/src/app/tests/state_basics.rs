@@ -430,3 +430,38 @@ fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
         "failed reselect should clear stale selection state"
     );
 }
+
+#[test]
+fn version_modal_failure_events_clear_stuck_loading_and_reset_flags() {
+    let mut harness = make_app();
+    harness.app.version_ui.diff_target_id = Some("alpha".to_string());
+    harness.app.version_ui.diff_loading_target = true;
+    harness.app.version_ui.history_loading_snapshot_id = Some(42);
+    harness.app.version_ui.history_snapshot =
+        Some(localpaste_core::models::paste::VersionSnapshot {
+            paste_id: "alpha".to_string(),
+            version_id_ms: 42,
+            created_at: chrono::Utc::now(),
+            content_hash: "hash".to_string(),
+            len: 4,
+            language: None,
+            language_is_manual: false,
+            content: "text".to_string(),
+        });
+    harness.app.version_ui.history_reset_in_flight = true;
+
+    harness.app.apply_event(CoreEvent::PasteLoadFailed {
+        id: "alpha".to_string(),
+        message: "Get failed: missing".to_string(),
+    });
+    assert!(!harness.app.version_ui.diff_loading_target);
+    assert!(harness.app.version_ui.diff_target_id.is_none());
+
+    harness.app.apply_event(CoreEvent::Error {
+        source: crate::backend::CoreErrorSource::SaveContent,
+        message: "reset failed".to_string(),
+    });
+    assert!(harness.app.version_ui.history_loading_snapshot_id.is_none());
+    assert!(harness.app.version_ui.history_snapshot.is_none());
+    assert!(!harness.app.version_ui.history_reset_in_flight);
+}

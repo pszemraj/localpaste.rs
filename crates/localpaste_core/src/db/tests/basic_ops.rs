@@ -337,6 +337,46 @@ fn reset_hard_restores_snapshot_language_state() {
 }
 
 #[test]
+fn reset_hard_restores_auto_language_state_without_redetecting() {
+    let (db, _temp) = setup_test_db();
+    let source = Paste::new(
+        "just plain text".to_string(),
+        "reset-auto-language".to_string(),
+    );
+    let source_id = source.id.clone();
+    db.pastes.create(&source).expect("create source");
+
+    update_existing_paste(
+        &db,
+        &source_id,
+        update_request(Some("still plain words"), None, None, Some(false)),
+        "create auto-language historical snapshot",
+    );
+    update_existing_paste(
+        &db,
+        &source_id,
+        update_request(None, None, Some("rust"), Some(true)),
+        "mutate language after snapshot",
+    );
+
+    let version_id = db
+        .pastes
+        .list_versions(&source_id, Some(1))
+        .expect("list versions")
+        .expect("source exists")[0]
+        .version_id_ms;
+
+    let reset = db
+        .pastes
+        .reset_hard_to_version(&source_id, version_id)
+        .expect("reset")
+        .expect("source exists");
+    assert_eq!(reset.content, "just plain text");
+    assert_eq!(reset.language, None);
+    assert!(!reset.language_is_manual);
+}
+
+#[test]
 fn diff_reports_equal_and_changed_content() {
     let (db, _temp) = setup_test_db();
     let left = Paste::new("same\n".to_string(), "left".to_string());

@@ -1,7 +1,7 @@
 //! Version-history and diff modal state/helpers for the editor panel.
 
 use super::LocalPasteApp;
-use crate::backend::{CoreCmd, CoreEvent, PasteSummary};
+use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use eframe::egui;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
 
@@ -84,7 +84,8 @@ impl LocalPasteApp {
         }
     }
 
-    fn open_history_modal(&mut self) {
+    /// Opens the history modal for the currently selected paste.
+    pub(super) fn open_history_modal(&mut self) {
         let Some(_) = self.selected_id else {
             self.set_status("Nothing selected.");
             return;
@@ -94,7 +95,8 @@ impl LocalPasteApp {
         self.request_versions_for_selected();
     }
 
-    fn open_diff_modal(&mut self) {
+    /// Opens the diff modal for the currently selected paste.
+    pub(super) fn open_diff_modal(&mut self) {
         let Some(_) = self.selected_id else {
             self.set_status("Nothing selected.");
             return;
@@ -302,11 +304,31 @@ impl LocalPasteApp {
                     self.set_status("Reset current paste to selected historical snapshot.");
                 }
             }
+            CoreEvent::PasteLoadFailed { id, .. } => {
+                if self.version_ui.diff_target_id.as_deref() == Some(id.as_str()) {
+                    self.version_ui.diff_target_paste = None;
+                    self.version_ui.diff_target_id = None;
+                    self.version_ui.diff_loading_target = false;
+                }
+            }
             CoreEvent::PasteMissing { id } => {
                 if self.version_ui.diff_target_id.as_deref() == Some(id.as_str()) {
                     self.version_ui.diff_target_paste = None;
                     self.version_ui.diff_target_id = None;
                     self.version_ui.diff_loading_target = false;
+                }
+            }
+            CoreEvent::Error { source, .. } => {
+                // Detached history/diff modals must never leave spinners or disabled
+                // actions stuck after backend failures.
+                if self.version_ui.history_loading_snapshot_id.is_some() {
+                    self.version_ui.history_loading_snapshot_id = None;
+                    self.version_ui.history_snapshot = None;
+                }
+                if matches!(source, CoreErrorSource::SaveContent)
+                    && self.version_ui.history_reset_in_flight
+                {
+                    self.version_ui.history_reset_in_flight = false;
                 }
             }
             _ => {}

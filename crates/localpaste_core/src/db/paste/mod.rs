@@ -493,15 +493,16 @@ impl PasteDb {
             };
             let target_content: String = bincode::deserialize(content_guard.value())?;
             drop(content_guard);
-            let reset_update = UpdatePasteRequest {
-                content: Some(target_content),
-                name: None,
-                language: target_meta.language,
-                language_is_manual: Some(target_meta.language_is_manual),
-                folder_id: None,
-                tags: None,
-            };
-            apply_update_request(&mut paste, &reset_update);
+
+            // Reset must restore the exact stored snapshot semantics. Reusing
+            // `apply_update_request` here is incorrect because it can re-run
+            // auto-detection and silently mutate `language` / `language_is_manual`
+            // instead of replaying the persisted historical state.
+            paste.content = target_content;
+            paste.is_markdown = is_markdown_content(&paste.content);
+            paste.language = target_meta.language.clone();
+            paste.language_is_manual = target_meta.language_is_manual;
+            paste.updated_at = Utc::now();
 
             let encoded_paste = bincode::serialize(&paste)?;
             let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
@@ -514,7 +515,8 @@ impl PasteDb {
             let mut removed_versions = Vec::new();
             version_items.retain(|item| {
                 // Historical table stores only snapshots older than current head.
-                // After reset, target snapshot becomes head, so prune it and newer.
+                // After reset, the target snapshot becomes the new head, so drop it
+                // and everything newer.
                 let keep = item.version_id_ms < version_id_ms;
                 if !keep {
                     removed_versions.push(item.version_id_ms);

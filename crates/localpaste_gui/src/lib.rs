@@ -153,7 +153,10 @@ fn is_target_deps_binary(path: &Path) -> bool {
 
 #[cfg(any(target_os = "linux", test))]
 fn linux_dev_desktop_entry_allowed(exe_path: &Path) -> bool {
-    cfg!(debug_assertions) && has_target_build_segment(exe_path) && !is_target_deps_binary(exe_path)
+    // Dev launches from workspace `target/{debug,release}` should still receive a
+    // managed user-level desktop entry so the Wayland app_id can resolve to the
+    // correct icon. Only skip the hashed `deps/` helper binaries.
+    has_target_build_segment(exe_path) && !is_target_deps_binary(exe_path)
 }
 
 #[cfg(any(target_os = "linux", test))]

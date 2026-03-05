@@ -299,6 +299,39 @@ fn palette_query_change_clears_stale_results_immediately() {
 }
 
 #[test]
+fn palette_version_actions_are_available_only_when_selection_exists() {
+    let mut harness = make_app();
+    harness.app.selected_id = None;
+
+    harness.app.set_command_palette_query("diff".to_string());
+    assert_eq!(
+        harness.app.command_palette_action_count(),
+        0,
+        "diff modal action should not appear without a selected paste"
+    );
+    harness.app.set_command_palette_query("history".to_string());
+    assert_eq!(
+        harness.app.command_palette_action_count(),
+        0,
+        "history modal action should not appear without a selected paste"
+    );
+
+    harness.app.selected_id = Some("alpha".to_string());
+    harness.app.set_command_palette_query("diff".to_string());
+    assert_eq!(
+        harness.app.command_palette_action_count(),
+        1,
+        "diff query should resolve to the diff modal action"
+    );
+    harness.app.set_command_palette_query("history".to_string());
+    assert_eq!(
+        harness.app.command_palette_action_count(),
+        1,
+        "history query should resolve to the history modal action"
+    );
+}
+
+#[test]
 fn failed_sidebar_search_dispatch_is_debounced_and_status_deduped() {
     let mut harness = make_app();
     let (dead_cmd_tx, dead_cmd_rx) = unbounded::<CoreCmd>();
