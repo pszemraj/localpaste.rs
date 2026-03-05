@@ -306,7 +306,7 @@ fn vertical_column_affinity_restores_target_after_short_line_and_resets_after_ho
 }
 
 #[test]
-fn wrapped_lines_move_by_visual_rows_and_home_end_use_visual_row_bounds() {
+fn wrapped_lines_move_by_visual_rows_and_line_home_end_ignore_wrap_bounds() {
     let mut harness = make_app();
     configure_virtual_editor_with_wrap(&mut harness.app, "abcdefghijkl\nz\n", 4.0);
     let ctx = egui::Context::default();
@@ -338,26 +338,6 @@ fn wrapped_lines_move_by_visual_rows_and_home_end_use_visual_row_bounds() {
         .virtual_editor_buffer
         .char_to_line_col(harness.app.virtual_editor_state.cursor());
     assert_eq!((line, col), (1, 1));
-
-    set_cursor(&mut harness.app, 0, 6);
-    let _ = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveHome { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 4));
-
-    set_cursor(&mut harness.app, 0, 6);
-    let _ = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveEnd { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 8));
 
     // Logical-line boundary commands should ignore soft-wrap row boundaries.
     set_cursor(&mut harness.app, 0, 6);
@@ -538,6 +518,12 @@ fn word_navigation_matrix_matches_expected_token_boundaries() {
             left: &[0],
             right_non_mac: &[9],
             right_mac: &[9],
+        },
+        Case {
+            text: "can't stop",
+            left: &[6, 0],
+            right_non_mac: &[6, 10],
+            right_mac: &[5, 10],
         },
     ];
     let ctx = egui::Context::default();

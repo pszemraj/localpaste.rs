@@ -613,7 +613,7 @@ fn long_line_navigation_commands_cross_legacy_render_cap_without_truncation() {
 
     let move_end = harness
         .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveEnd { select: false }]);
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
     assert!(!move_end.changed);
     assert_eq!(harness.app.virtual_editor_state.cursor(), line_end);
 
@@ -767,6 +767,35 @@ fn word_delete_crosses_line_boundaries() {
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::Backspace { word: true }]);
     assert!(backward_result.changed);
     assert_eq!(backward.app.virtual_editor_buffer.to_string(), "beta gamma");
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn word_delete_forward_matches_windows_linux_ctrl_delete_expectations() {
+    let ctx = egui::Context::default();
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "foo bar", 200.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(0, len);
+    let start_word = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
+    assert!(start_word.changed);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "bar");
+
+    harness.app.reset_virtual_editor("foo bar");
+    harness
+        .app
+        .virtual_layout
+        .rebuild(&harness.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(3, len);
+    let separator = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
+    assert!(separator.changed);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "foo");
 }
 
 #[test]

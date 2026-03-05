@@ -127,13 +127,14 @@ pub(crate) fn consume_virtual_editor_focus_keys(ctx: &egui::Context, editor_focu
 /// This is **code-editor oriented**:
 /// - Unicode alphanumerics count as word characters (`is_alphanumeric`)
 /// - `_` and `$` are included (common identifier characters across languages)
+/// - `'`/`’` are included so contractions/lifetimes move as a single word
 ///
 /// Anything else (whitespace, punctuation, operators) is treated as a boundary.
 ///
 /// # Returns
 /// `true` when `ch` should be considered part of an identifier-like token.
 pub(crate) fn is_editor_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || matches!(ch, '_' | '$')
+    ch.is_alphanumeric() || matches!(ch, '_' | '$' | '\'' | '’')
 }
 
 /// Calculates click streak count for virtual-editor single/double/triple click handling.

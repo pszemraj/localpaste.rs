@@ -15,10 +15,7 @@ pub(crate) enum VirtualInputCommand {
     MoveRight { select: bool, word: bool },
     MoveUp { select: bool },
     MoveDown { select: bool },
-    // Visual-row boundaries (respecting soft wrap).
-    MoveHome { select: bool },
-    MoveEnd { select: bool },
-    // Logical-line boundaries (ignoring soft wrap).
+    // Logical-line boundaries.
     MoveLineHome { select: bool },
     MoveLineEnd { select: bool },
     MoveDocHome { select: bool },
@@ -135,6 +132,34 @@ fn map_mac_ctrl_editing(key: egui::Key, modifiers: egui::Modifiers) -> Option<Vi
     }
 }
 
+/// Maps primary command shortcuts (`Cmd`/`Ctrl`) to editor commands.
+/// Shared by event extraction and fallback routing.
+///
+/// # Arguments
+/// - `key`: Pressed key.
+/// - `modifiers`: Active modifier state for the key event.
+///
+/// # Returns
+/// `Some(VirtualInputCommand)` when the chord maps to a primary editor
+/// shortcut, otherwise `None`.
+pub(crate) fn map_primary_command_shortcut(
+    key: egui::Key,
+    modifiers: egui::Modifiers,
+) -> Option<VirtualInputCommand> {
+    if !modifiers.command {
+        return None;
+    }
+    match key {
+        egui::Key::A => Some(VirtualInputCommand::SelectAll),
+        egui::Key::C => Some(VirtualInputCommand::Copy),
+        egui::Key::X => Some(VirtualInputCommand::Cut),
+        egui::Key::Z if modifiers.shift => Some(VirtualInputCommand::Redo),
+        egui::Key::Z => Some(VirtualInputCommand::Undo),
+        egui::Key::Y => Some(VirtualInputCommand::Redo),
+        _ => None,
+    }
+}
+
 fn map_navigation_key(
     platform: PlatformFlavor,
     key: egui::Key,
@@ -205,7 +230,7 @@ fn map_navigation_key(
                 if modifiers.command {
                     Some(VirtualInputCommand::MoveDocHome { select })
                 } else {
-                    Some(VirtualInputCommand::MoveHome { select })
+                    Some(VirtualInputCommand::MoveLineHome { select })
                 }
             }
             PlatformFlavor::Other => {
@@ -221,7 +246,7 @@ fn map_navigation_key(
                 if modifiers.command {
                     Some(VirtualInputCommand::MoveDocEnd { select })
                 } else {
-                    Some(VirtualInputCommand::MoveEnd { select })
+                    Some(VirtualInputCommand::MoveLineEnd { select })
                 }
             }
             PlatformFlavor::Other => {
@@ -360,23 +385,21 @@ fn commands_from_events_for_platform(
                 // IMPORTANT: Do *not* early-return/continue here.
                 // In egui, `modifiers.command == modifiers.ctrl` on Win/Linux.
                 // Early-returning would swallow Ctrl+Arrow, Ctrl+Backspace, etc.
-                if modifiers.command {
-                    match key {
-                        egui::Key::A if focused => out.push(VirtualInputCommand::SelectAll),
-                        egui::Key::C if focused && !emitted_copy => {
-                            out.push(VirtualInputCommand::Copy);
-                            emitted_copy = true;
+                if focused {
+                    if let Some(command) = map_primary_command_shortcut(*key, *modifiers) {
+                        match command {
+                            VirtualInputCommand::Copy if emitted_copy => {}
+                            VirtualInputCommand::Copy => {
+                                out.push(command);
+                                emitted_copy = true;
+                            }
+                            VirtualInputCommand::Cut if emitted_cut => {}
+                            VirtualInputCommand::Cut => {
+                                out.push(command);
+                                emitted_cut = true;
+                            }
+                            _ => out.push(command),
                         }
-                        egui::Key::X if focused && !emitted_cut => {
-                            out.push(VirtualInputCommand::Cut);
-                            emitted_cut = true;
-                        }
-                        egui::Key::Z if focused && modifiers.shift => {
-                            out.push(VirtualInputCommand::Redo)
-                        }
-                        egui::Key::Z if focused => out.push(VirtualInputCommand::Undo),
-                        egui::Key::Y if focused => out.push(VirtualInputCommand::Redo),
-                        _ => {}
                     }
                 }
 
@@ -681,8 +704,8 @@ mod tests {
         assert_eq!(
             mac_commands,
             vec![
-                VirtualInputCommand::MoveHome { select: false },
-                VirtualInputCommand::MoveEnd { select: false },
+                VirtualInputCommand::MoveLineHome { select: false },
+                VirtualInputCommand::MoveLineEnd { select: false },
             ]
         );
 

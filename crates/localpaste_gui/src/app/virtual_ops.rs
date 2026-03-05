@@ -417,6 +417,34 @@ impl LocalPasteApp {
         }
     }
 
+    /// Returns the forward word-deletion boundary for the active platform.
+    ///
+    /// macOS deletes to end-of-word (`Option+Delete`).
+    /// Windows/Linux generally delete current word plus trailing separators when
+    /// starting inside a word (`Ctrl+Delete`), and delete separator+next-word
+    /// runs when starting on separators.
+    ///
+    /// # Returns
+    /// Global cursor index representing the forward deletion boundary.
+    pub(super) fn virtual_word_delete_forward(&self, cursor: usize) -> usize {
+        if cfg!(target_os = "macos") {
+            return self.virtual_word_right_end(cursor);
+        }
+
+        let len = self.virtual_editor_buffer.len_chars();
+        let cursor = self.clamp_virtual_cursor_for_render(cursor).min(len);
+        if cursor >= len {
+            return len;
+        }
+
+        let ch = self.virtual_editor_buffer.rope().char(cursor);
+        if is_editor_word_char(ch) {
+            self.virtual_word_right_start(cursor)
+        } else {
+            self.virtual_word_right_end(cursor)
+        }
+    }
+
     /// Returns the end-of-next-word boundary.
     ///
     /// Used by word-delete-forward and by macOS word-right movement semantics.
@@ -589,55 +617,5 @@ impl LocalPasteApp {
             return None;
         }
         Some(local_start..local_end)
-    }
-
-    /// Returns the start/end cursor bounds of the wrapped visual row containing `cursor`.
-    ///
-    /// # Arguments
-    /// - `cursor`: Global cursor index.
-    ///
-    /// # Returns
-    /// Tuple of `(row_start_char_index, row_end_char_index)` in global char offsets.
-    ///
-    /// # Panics
-    /// Panics only if wrapped-row layout caches become internally inconsistent.
-    pub(super) fn virtual_visual_row_bounds(&self, cursor: usize) -> (usize, usize) {
-        let cursor = self.clamp_virtual_cursor_for_render(cursor);
-        let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
-        let wrap_cols = self.virtual_layout.wrap_columns().max(1);
-        let line_cols = self
-            .virtual_layout
-            .line_columns(&self.virtual_editor_buffer, line);
-        let rows = self.virtual_layout.line_visual_rows(line).max(1);
-        let display_col =
-            self.virtual_layout
-                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
-
-        let mut row = (display_col / wrap_cols).min(rows.saturating_sub(1));
-        if is_internal_wrap_boundary(display_col, wrap_cols, line_cols)
-            && self.virtual_editor_state.wrap_boundary_affinity() == WrapBoundaryAffinity::Upstream
-        {
-            row = row.saturating_sub(1);
-        }
-
-        let row_start_display = row.saturating_mul(wrap_cols);
-        let row_end_display = row_start_display.saturating_add(wrap_cols).min(line_cols);
-        let row_start_col = self.virtual_layout.line_display_column_to_char(
-            &self.virtual_editor_buffer,
-            line,
-            row_start_display,
-        );
-        let row_end_col = self.virtual_layout.line_display_column_to_char(
-            &self.virtual_editor_buffer,
-            line,
-            row_end_display,
-        );
-        let row_start = self
-            .virtual_editor_buffer
-            .line_col_to_char(line, row_start_col);
-        let row_end = self
-            .virtual_editor_buffer
-            .line_col_to_char(line, row_end_col.max(row_start_col));
-        (row_start, row_end.max(row_start))
     }
 }

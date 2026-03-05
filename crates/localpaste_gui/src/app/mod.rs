@@ -50,9 +50,9 @@ use tracing::{info, warn};
 use util::{display_language_label, env_flag_enabled, word_range_at};
 use version_ui::VersionUiState;
 use virtual_editor::{
-    commands_from_events, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
-    VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext, VirtualInputCommand,
-    WrapBoundaryAffinity, WrapLayoutCache,
+    commands_from_events, map_primary_command_shortcut, RopeBuffer, VirtualCommandRoute,
+    VirtualEditorHistory, VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext,
+    VirtualInputCommand, WrapBoundaryAffinity, WrapLayoutCache,
 };
 use virtual_view::{VirtualCursor, VirtualSelectionState};
 use window_bounds::enforce_window_bounds;
@@ -689,23 +689,28 @@ impl eframe::App for LocalPasteApp {
                 }
             }
             if self.editor_mode == EditorMode::VirtualEditor && input.modifiers.command {
-                if focus_active_pre && input.key_pressed(egui::Key::A) && !saw_virtual_select_all {
-                    fallback_virtual_select_all = true;
-                }
-                if focus_active_pre && input.key_pressed(egui::Key::X) && !saw_virtual_cut {
-                    fallback_virtual_cut = true;
-                }
-                if focus_active_pre && input.key_pressed(egui::Key::Z) {
-                    if input.modifiers.shift {
-                        if !saw_virtual_redo {
+                for key in [egui::Key::A, egui::Key::X, egui::Key::Z, egui::Key::Y] {
+                    if !focus_active_pre || !input.key_pressed(key) {
+                        continue;
+                    }
+                    let Some(command) = map_primary_command_shortcut(key, input.modifiers) else {
+                        continue;
+                    };
+                    match command {
+                        VirtualInputCommand::SelectAll if !saw_virtual_select_all => {
+                            fallback_virtual_select_all = true;
+                        }
+                        VirtualInputCommand::Cut if !saw_virtual_cut => {
+                            fallback_virtual_cut = true;
+                        }
+                        VirtualInputCommand::Undo if !saw_virtual_undo => {
+                            fallback_virtual_undo = true;
+                        }
+                        VirtualInputCommand::Redo if !saw_virtual_redo => {
                             fallback_virtual_redo = true;
                         }
-                    } else if !saw_virtual_undo {
-                        fallback_virtual_undo = true;
+                        _ => {}
                     }
-                }
-                if focus_active_pre && input.key_pressed(egui::Key::Y) && !saw_virtual_redo {
-                    fallback_virtual_redo = true;
                 }
             }
             for event in &input.events {
