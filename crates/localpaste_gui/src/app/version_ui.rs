@@ -275,6 +275,9 @@ impl LocalPasteApp {
                 if self.version_ui.history_reset_in_flight
                     && self.selected_id.as_deref() == Some(paste.id.as_str())
                 {
+                    // Reset is authoritative: replace any local unsaved/editor state
+                    // with the canonical backend row that reset produced.
+                    self.select_loaded_paste(paste.clone());
                     self.version_ui.history_reset_in_flight = false;
                     self.version_ui.history_modal_open = false;
                     self.version_ui.history_selected_index = 0;

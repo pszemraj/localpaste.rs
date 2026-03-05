@@ -196,8 +196,10 @@ fn reset_hard_prunes_newer_versions() {
         .list_versions(&paste_id, None)
         .expect("list versions")
         .expect("paste exists");
-    assert_eq!(versions_after_reset.len(), 1);
-    assert_eq!(versions_after_reset[0].version_id_ms, oldest_version_id);
+    assert!(
+        versions_after_reset.is_empty(),
+        "reset target becomes live head, so stored history keeps only older snapshots"
+    );
 
     let current = db
         .pastes

@@ -165,8 +165,7 @@ async fn test_version_and_diff_endpoints_roundtrip() {
         .await;
     assert_eq!(list_versions_after_reset.status_code(), StatusCode::OK);
     let versions_after_reset: Vec<serde_json::Value> = list_versions_after_reset.json();
-    assert_eq!(versions_after_reset.len(), 1);
-    assert_eq!(versions_after_reset[0]["version_id_ms"], oldest_version);
+    assert_eq!(versions_after_reset.len(), 0);
 }
 
 #[tokio::test]

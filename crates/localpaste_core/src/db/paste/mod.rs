@@ -513,7 +513,9 @@ impl PasteDb {
 
             let mut removed_versions = Vec::new();
             version_items.retain(|item| {
-                let keep = item.version_id_ms <= version_id_ms;
+                // Historical table stores only snapshots older than current head.
+                // After reset, target snapshot becomes head, so prune it and newer.
+                let keep = item.version_id_ms < version_id_ms;
                 if !keep {
                     removed_versions.push(item.version_id_ms);
                 }
