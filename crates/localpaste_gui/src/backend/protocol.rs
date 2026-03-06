@@ -6,6 +6,7 @@ use localpaste_core::models::{
     folder::Folder,
     paste::{Paste, PasteMeta, VersionMeta, VersionSnapshot},
 };
+use localpaste_core::semantic::DerivedMeta;
 use ropey::Rope;
 
 /// Commands issued by the UI thread for the backend worker to execute.
@@ -171,6 +172,7 @@ pub struct PasteSummary {
     pub updated_at: DateTime<Utc>,
     pub folder_id: Option<String>,
     pub tags: Vec<String>,
+    pub derived: DerivedMeta,
 }
 
 impl PasteSummary {
@@ -187,6 +189,10 @@ impl PasteSummary {
             updated_at: paste.updated_at,
             folder_id: paste.folder_id.clone(),
             tags: paste.tags.clone(),
+            derived: localpaste_core::semantic::derive(
+                paste.content.as_str(),
+                paste.language.as_deref(),
+            ),
         }
     }
 
@@ -203,6 +209,7 @@ impl PasteSummary {
             updated_at: meta.updated_at,
             folder_id: meta.folder_id.clone(),
             tags: meta.tags.clone(),
+            derived: meta.derived.clone(),
         }
     }
 }

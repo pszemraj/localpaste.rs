@@ -6,6 +6,21 @@ use eframe::egui::{self, RichText};
 const APP_VERSION_LABEL: &str = concat!("- v", env!("CARGO_PKG_VERSION"));
 const SIDEBAR_LANGUAGE_COLUMN_WIDTH: f32 = 84.0;
 
+fn sidebar_hover_text(paste: &PasteSummary) -> String {
+    let mut lines = vec![paste.name.clone()];
+    let derived = &paste.derived;
+    if derived.handle.is_some() || !derived.terms.is_empty() {
+        lines.push(format!("Kind: {}", derived.kind.label()));
+        if let Some(handle) = &derived.handle {
+            lines.push(format!("Handle: {}", handle));
+        }
+        if !derived.terms.is_empty() {
+            lines.push(format!("Terms: {}", derived.terms.join(", ")));
+        }
+    }
+    lines.join("\n")
+}
+
 fn sidebar_row_text_rects(
     row_rect: egui::Rect,
     padding_x: f32,
@@ -157,7 +172,10 @@ impl LocalPasteApp {
                                     COLOR_TEXT_MUTED,
                                 );
 
-                                if row_response.on_hover_text(paste.name.as_str()).clicked() {
+                                if row_response
+                                    .on_hover_text(sidebar_hover_text(paste))
+                                    .clicked()
+                                {
                                     pending_select = Some(paste.id.clone());
                                 }
                             }
@@ -300,7 +318,7 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::sidebar_row_text_rects;
+    use super::{sidebar_hover_text, sidebar_row_text_rects};
     use eframe::egui;
 
     #[test]
@@ -330,5 +348,28 @@ mod tests {
                 assert!((lang_rect.right() - expected_lang_right).abs() < f32::EPSILON);
             }
         }
+    }
+
+    #[test]
+    fn sidebar_hover_text_includes_derived_retrieval_hints_when_present() {
+        let summary = crate::backend::PasteSummary {
+            id: "id".to_string(),
+            name: "untamed-tundra".to_string(),
+            language: Some("rust".to_string()),
+            content_len: 10,
+            updated_at: chrono::Utc::now(),
+            folder_id: None,
+            tags: Vec::new(),
+            derived: localpaste_core::semantic::DerivedMeta {
+                kind: localpaste_core::semantic::PasteKind::Code,
+                handle: Some("fn handle_request".to_string()),
+                terms: vec!["fsdp2".to_string(), "cublaslt".to_string()],
+            },
+        };
+        let tooltip = sidebar_hover_text(&summary);
+        assert!(tooltip.contains("untamed-tundra"));
+        assert!(tooltip.contains("Kind: Code"));
+        assert!(tooltip.contains("Handle: fn handle_request"));
+        assert!(tooltip.contains("Terms: fsdp2, cublaslt"));
     }
 }

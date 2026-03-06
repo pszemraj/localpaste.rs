@@ -17,8 +17,8 @@ use std::time::Instant;
 use tracing::warn;
 
 use self::filters::{
-    is_code_summary, is_config_summary, is_link_summary, is_log_summary, language_extension,
-    normalize_language_filter_value, parse_tags_csv, sanitize_filename,
+    language_extension, matches_semantic_collection, normalize_language_filter_value,
+    parse_tags_csv, sanitize_filename,
 };
 
 impl LocalPasteApp {
@@ -882,10 +882,12 @@ impl LocalPasteApp {
             SidebarCollection::Week => item.updated_at >= week_cutoff,
             SidebarCollection::Recent => item.updated_at >= recent_cutoff,
             SidebarCollection::Unfiled => item.folder_id.is_none(),
-            SidebarCollection::Code => is_code_summary(item),
-            SidebarCollection::Config => is_config_summary(item),
-            SidebarCollection::Logs => is_log_summary(item),
-            SidebarCollection::Links => is_link_summary(item),
+            SidebarCollection::Code
+            | SidebarCollection::Config
+            | SidebarCollection::Logs
+            | SidebarCollection::Links => {
+                matches_semantic_collection(item, active_collection.clone())
+            }
         };
         if !collection_match {
             return false;

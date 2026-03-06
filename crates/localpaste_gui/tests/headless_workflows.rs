@@ -511,7 +511,7 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
 }
 
 #[test]
-fn backend_metadata_search_ranks_multi_term_matches_and_ignores_content_only_hits() {
+fn backend_metadata_search_surfaces_persisted_derived_retrieval_hints() {
     let env = TestEnv::new();
 
     let mut combined = Paste::new("plain body".to_string(), "docker compose".to_string());
@@ -529,7 +529,7 @@ fn backend_metadata_search_ranks_multi_term_matches_and_ignores_content_only_hit
     weak.language_is_manual = true;
     weak.tags = vec!["postgres".to_string()];
 
-    let content_only = Paste::new(
+    let derived_only = Paste::new(
         "docker postgres only in content".to_string(),
         "plain".to_string(),
     );
@@ -539,8 +539,8 @@ fn backend_metadata_search_ranks_multi_term_matches_and_ignores_content_only_hit
     env.db.pastes.create(&weak).expect("create weak");
     env.db
         .pastes
-        .create(&content_only)
-        .expect("create content-only");
+        .create(&derived_only)
+        .expect("create derived-only");
 
     let backend = env.spawn_backend();
     backend
@@ -557,14 +557,18 @@ fn backend_metadata_search_ranks_multi_term_matches_and_ignores_content_only_hit
         CoreEvent::SearchResults { query, items, .. } => {
             let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
             assert_eq!(query, "docker postgres");
-            assert_eq!(ids.first().copied(), Some(combined.id.as_str()));
+            assert_eq!(ids.first().copied(), Some(derived_only.id.as_str()));
+            assert!(
+                ids.iter().position(|id| *id == combined.id.as_str())
+                    < ids.iter().position(|id| *id == partial.id.as_str())
+            );
             assert!(
                 ids.iter().position(|id| *id == partial.id.as_str())
                     < ids.iter().position(|id| *id == weak.id.as_str())
             );
             assert!(
-                !ids.contains(&content_only.id.as_str()),
-                "metadata-only search should not surface content-only matches"
+                ids.contains(&derived_only.id.as_str()),
+                "backend metadata search should surface persisted derived handle/term matches"
             );
         }
         other => panic!("unexpected event: {:?}", other),

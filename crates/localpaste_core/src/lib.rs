@@ -20,6 +20,8 @@ pub mod folder_ops;
 pub mod models;
 /// Paste naming helpers.
 pub mod naming;
+/// Locally-derived retrieval metadata.
+pub mod semantic;
 /// Shared helpers used by `localpaste_core` tests.
 #[cfg(test)]
 pub(crate) mod test_support;

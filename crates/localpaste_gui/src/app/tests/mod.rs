@@ -38,6 +38,7 @@ fn test_summary(id: &str, name: &str, language: Option<&str>, content_len: usize
         updated_at: Utc::now(),
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     }
 }
 

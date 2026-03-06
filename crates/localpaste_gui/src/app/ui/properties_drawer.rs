@@ -2,6 +2,7 @@
 
 use super::super::*;
 use eframe::egui;
+use localpaste_core::semantic::DerivedMeta;
 
 const AUTO_LANGUAGE: &str = "__auto__";
 
@@ -71,6 +72,31 @@ pub(super) fn auto_language_choice_key() -> &'static str {
 /// option value when auto mode is active.
 fn auto_language_status_label() -> String {
     "Auto".to_string()
+}
+
+fn format_derived_terms(terms: &[String]) -> String {
+    if terms.is_empty() {
+        "None".to_string()
+    } else {
+        terms.join(", ")
+    }
+}
+
+fn render_derived_meta_section(ui: &mut egui::Ui, derived: &DerivedMeta) {
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new("Derived retrieval")
+            .small()
+            .color(COLOR_TEXT_MUTED),
+    );
+    ui.label(format!("Kind: {}", derived.kind.label()));
+    ui.label(format!(
+        "Handle: {}",
+        derived.handle.as_deref().unwrap_or("None")
+    ));
+    ui.label(format!("Terms: {}", format_derived_terms(&derived.terms)));
 }
 
 fn language_typeahead_target(letter: char) -> Option<&'static str> {
@@ -261,6 +287,9 @@ impl LocalPasteApp {
                     ui.add_space(6.0);
                     ui.label(RichText::new(reason).small().color(COLOR_TEXT_MUTED));
                 }
+                if let Some(summary) = self.selected_paste_summary() {
+                    render_derived_meta_section(ui, &summary.derived);
+                }
                 ui.add_space(10.0);
                 if ui.button("Export").clicked() {
                     self.export_selected_paste();
@@ -277,7 +306,7 @@ impl LocalPasteApp {
 mod tests {
     use super::{
         apply_language_choice, apply_language_selector_typeahead, auto_language_status_label,
-        language_typeahead_target, typed_letter_from_events, AUTO_LANGUAGE,
+        format_derived_terms, language_typeahead_target, typed_letter_from_events, AUTO_LANGUAGE,
     };
     use eframe::egui;
 
@@ -388,5 +417,14 @@ mod tests {
             egui::Event::Text("p".to_string()),
         ];
         assert_eq!(typed_letter_from_events(&events), Some('m'));
+    }
+
+    #[test]
+    fn format_derived_terms_handles_empty_and_joined_lists() {
+        assert_eq!(format_derived_terms(&[]), "None");
+        assert_eq!(
+            format_derived_terms(&["fsdp2".to_string(), "cublaslt".to_string()]),
+            "fsdp2, cublaslt"
+        );
     }
 }

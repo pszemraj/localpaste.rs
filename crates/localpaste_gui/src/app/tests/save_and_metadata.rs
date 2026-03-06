@@ -17,6 +17,7 @@ fn paste_meta_saved_refilters_when_selected_paste_leaves_active_scope() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "beta".to_string(),
@@ -26,6 +27,7 @@ fn paste_meta_saved_refilters_when_selected_paste_leaves_active_scope() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
         ],
     });
@@ -238,6 +240,7 @@ fn metadata_save_ack_updates_visible_search_row_before_backend_redispatch() {
         updated_at: Utc::now(),
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     }];
     harness.app.all_pastes = harness.app.pastes.clone();
 

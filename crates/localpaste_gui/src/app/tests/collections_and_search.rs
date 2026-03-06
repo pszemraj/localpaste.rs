@@ -42,6 +42,7 @@ fn search_results_respect_collection_filter() {
         updated_at: now,
         folder_id: Some("folder-1".to_string()),
         tags: Vec::new(),
+        derived: Default::default(),
     };
     let unfiled = PasteSummary {
         id: "b".to_string(),
@@ -51,6 +52,7 @@ fn search_results_respect_collection_filter() {
         updated_at: now,
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
 
     harness.app.apply_event(CoreEvent::SearchResults {
@@ -71,6 +73,7 @@ fn search_results_respect_collection_filter() {
         updated_at: now,
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
     harness.app.set_search_query(String::new());
     harness.app.apply_event(CoreEvent::SearchResults {
@@ -111,6 +114,7 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
         updated_at: Utc::now(),
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
     harness.app.apply_event(CoreEvent::SearchResults {
         query: "term".to_string(),
@@ -136,6 +140,7 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
         updated_at: Utc::now(),
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
     harness.app.apply_event(CoreEvent::SearchResults {
         query: "term".to_string(),
@@ -161,6 +166,7 @@ fn paste_list_filters_recent_collection() {
         updated_at: Utc::now() - chrono::Duration::days(30),
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
     let fresh = PasteSummary {
         id: "fresh".to_string(),
@@ -170,6 +176,7 @@ fn paste_list_filters_recent_collection() {
         updated_at: Utc::now(),
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
 
     harness.app.apply_event(CoreEvent::PasteList {
@@ -193,6 +200,7 @@ fn paste_saved_reprojects_non_search_results_for_active_language_filter() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "beta".to_string(),
@@ -202,6 +210,7 @@ fn paste_saved_reprojects_non_search_results_for_active_language_filter() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
         ],
     });
@@ -241,6 +250,7 @@ fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
         updated_at: Utc::now(),
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     }];
 
     harness.app.apply_event(CoreEvent::PaletteSearchResults {
@@ -253,6 +263,7 @@ fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
             updated_at: Utc::now(),
             folder_id: None,
             tags: Vec::new(),
+            derived: Default::default(),
         }],
     });
     assert!(harness.app.palette_search_results.is_empty());
@@ -267,6 +278,7 @@ fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
             updated_at: Utc::now(),
             folder_id: None,
             tags: Vec::new(),
+            derived: Default::default(),
         }],
     });
 
@@ -505,6 +517,7 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
                             updated_at: now,
                             folder_id: None,
                             tags: Vec::new(),
+                            derived: Default::default(),
                         },
                         PasteSummary {
                             id: "beta".to_string(),
@@ -514,6 +527,7 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
                             updated_at: now,
                             folder_id: None,
                             tags: Vec::new(),
+                            derived: Default::default(),
                         },
                     ],
                 });
@@ -606,6 +620,7 @@ fn clearing_search_restores_list_even_after_cached_query_was_invalidated() {
             updated_at: now,
             folder_id: None,
             tags: Vec::new(),
+            derived: Default::default(),
         },
         PasteSummary {
             id: "beta".to_string(),
@@ -615,6 +630,7 @@ fn clearing_search_restores_list_even_after_cached_query_was_invalidated() {
             updated_at: now,
             folder_id: None,
             tags: Vec::new(),
+            derived: Default::default(),
         },
     ];
     harness.app.pastes = vec![PasteSummary {
@@ -625,6 +641,7 @@ fn clearing_search_restores_list_even_after_cached_query_was_invalidated() {
         updated_at: now,
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     }];
     harness.app.search_query = "rust".to_string();
     harness.app.search_last_sent.clear();
@@ -649,6 +666,7 @@ fn language_filter_stacks_with_primary_collection() {
         updated_at: now,
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
     let code_python = PasteSummary {
         id: "code-python".to_string(),
@@ -658,6 +676,7 @@ fn language_filter_stacks_with_primary_collection() {
         updated_at: now,
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
     let config_rust = PasteSummary {
         id: "config-rust".to_string(),
@@ -667,6 +686,7 @@ fn language_filter_stacks_with_primary_collection() {
         updated_at: now,
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
     let config_yaml = PasteSummary {
         id: "config-yaml".to_string(),
@@ -676,6 +696,7 @@ fn language_filter_stacks_with_primary_collection() {
         updated_at: now,
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     };
     harness.app.apply_event(CoreEvent::PasteList {
         items: vec![
@@ -737,6 +758,7 @@ fn language_filter_options_dedupe_case_variants() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "b".to_string(),
@@ -746,6 +768,7 @@ fn language_filter_options_dedupe_case_variants() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "c".to_string(),
@@ -755,6 +778,7 @@ fn language_filter_options_dedupe_case_variants() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
         ],
     });
@@ -779,6 +803,7 @@ fn language_filter_aliases_match_in_client_projection() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "new-cs".to_string(),
@@ -788,6 +813,7 @@ fn language_filter_aliases_match_in_client_projection() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
         ],
     });
@@ -813,6 +839,7 @@ fn smart_collections_cover_time_and_heuristic_facets() {
                 updated_at: now,
                 folder_id: None,
                 tags: vec!["log".to_string()],
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "week-link".to_string(),
@@ -822,6 +849,7 @@ fn smart_collections_cover_time_and_heuristic_facets() {
                 updated_at: now - chrono::Duration::days(2),
                 folder_id: None,
                 tags: vec!["bookmark".to_string()],
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "old-config".to_string(),
@@ -831,6 +859,7 @@ fn smart_collections_cover_time_and_heuristic_facets() {
                 updated_at: now - chrono::Duration::days(40),
                 folder_id: None,
                 tags: vec!["config".to_string()],
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "code-command".to_string(),
@@ -840,6 +869,7 @@ fn smart_collections_cover_time_and_heuristic_facets() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "config-compose".to_string(),
@@ -849,6 +879,7 @@ fn smart_collections_cover_time_and_heuristic_facets() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "log-stderr".to_string(),
@@ -858,6 +889,7 @@ fn smart_collections_cover_time_and_heuristic_facets() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "link-url".to_string(),
@@ -867,6 +899,7 @@ fn smart_collections_cover_time_and_heuristic_facets() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
         ],
     );
@@ -910,4 +943,47 @@ fn smart_collections_cover_time_and_heuristic_facets() {
         SidebarCollection::Links,
         &["week-link", "link-url"],
     );
+}
+
+#[test]
+fn smart_collections_use_derived_kind_without_name_or_language_hints() {
+    let mut harness = make_app();
+    let code = PasteSummary {
+        derived: localpaste_core::semantic::DerivedMeta {
+            kind: localpaste_core::semantic::PasteKind::Code,
+            handle: Some("fn handle_request".to_string()),
+            terms: vec!["handle_request".to_string()],
+        },
+        ..test_summary("code", "untamed-tundra", None, 20)
+    };
+    let config = PasteSummary {
+        derived: localpaste_core::semantic::DerivedMeta {
+            kind: localpaste_core::semantic::PasteKind::Config,
+            handle: Some("model gpt-4".to_string()),
+            terms: vec!["gpt-4".to_string()],
+        },
+        ..test_summary("config", "silent-forest", None, 20)
+    };
+    let log = PasteSummary {
+        derived: localpaste_core::semantic::DerivedMeta {
+            kind: localpaste_core::semantic::PasteKind::Log,
+            handle: Some("panic failed".to_string()),
+            terms: vec!["panic".to_string()],
+        },
+        ..test_summary("log", "hidden-river", None, 20)
+    };
+    let link = PasteSummary {
+        derived: localpaste_core::semantic::DerivedMeta {
+            kind: localpaste_core::semantic::PasteKind::Link,
+            handle: Some("example.com".to_string()),
+            terms: vec!["example".to_string()],
+        },
+        ..test_summary("link", "quiet-valley", None, 20)
+    };
+
+    apply_paste_list(&mut harness, vec![code, config, log, link]);
+    assert_collection_ids(&mut harness, SidebarCollection::Code, &["code"]);
+    assert_collection_ids(&mut harness, SidebarCollection::Config, &["config"]);
+    assert_collection_ids(&mut harness, SidebarCollection::Logs, &["log"]);
+    assert_collection_ids(&mut harness, SidebarCollection::Links, &["link"]);
 }

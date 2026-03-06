@@ -1,7 +1,9 @@
 //! Search and metadata index behavior tests.
 
 use super::*;
+use crate::db::tables::PASTES_META;
 use chrono::Duration;
+use serde::{Deserialize, Serialize};
 
 #[test]
 fn paste_list_and_list_meta_order_by_updated_and_honor_limit() {
@@ -78,7 +80,7 @@ fn paste_search_respects_exact_match_and_top_k_ranking() {
 }
 
 #[test]
-fn paste_search_meta_is_metadata_only() {
+fn paste_search_meta_uses_persisted_metadata_and_derived_terms() {
     let (db, _temp) = setup_test_db();
 
     let mut by_name = Paste::new("hello".to_string(), "rust-note".to_string());
@@ -89,13 +91,13 @@ fn paste_search_meta_is_metadata_only() {
     by_tag.language = None;
     by_tag.tags = vec!["rusty".to_string()];
 
-    let mut content_only = Paste::new("rust appears in content".to_string(), "plain".to_string());
-    content_only.language = None;
-    content_only.tags = vec![];
+    let mut by_derived = Paste::new("rust appears in content".to_string(), "plain".to_string());
+    by_derived.language = None;
+    by_derived.tags = vec![];
 
     db.pastes.create(&by_name).expect("create");
     db.pastes.create(&by_tag).expect("create");
-    db.pastes.create(&content_only).expect("create");
+    db.pastes.create(&by_derived).expect("create");
 
     let results = db
         .pastes
@@ -104,7 +106,7 @@ fn paste_search_meta_is_metadata_only() {
     let ids: Vec<String> = results.into_iter().map(|m| m.id).collect();
     assert!(ids.contains(&by_name.id));
     assert!(ids.contains(&by_tag.id));
-    assert!(!ids.contains(&content_only.id));
+    assert!(ids.contains(&by_derived.id));
 }
 
 #[test]
@@ -138,6 +140,44 @@ fn paste_search_meta_multi_term_queries_rank_combined_metadata_hits() {
 
     assert_eq!(ids.first().map(String::as_str), Some(combined.id.as_str()));
     assert!(ids.iter().position(|id| id == &partial.id) < ids.iter().position(|id| id == &weak.id));
+}
+
+#[test]
+fn paste_search_meta_matches_derived_handle_and_terms() {
+    let (db, _temp) = setup_test_db();
+
+    let handle = Paste::new(
+        "cargo test --package trainer\n".to_string(),
+        "untamed-tundra".to_string(),
+    );
+    let terms = Paste::new(
+        "fsdp2 validation failed after cublaslt retry\nfsdp2 validation repeated\n".to_string(),
+        "silent-forest".to_string(),
+    );
+    let tag_only = Paste::new("body".to_string(), "misc".to_string());
+    let mut tag_only = tag_only;
+    tag_only.tags = vec!["fsdp2".to_string()];
+
+    db.pastes.create(&handle).expect("create handle");
+    db.pastes.create(&terms).expect("create terms");
+    db.pastes.create(&tag_only).expect("create tag");
+
+    let handle_results = db
+        .pastes
+        .search_meta("cargo test", 10, None, None)
+        .expect("search");
+    assert_eq!(
+        handle_results.first().map(|meta| meta.id.as_str()),
+        Some(handle.id.as_str())
+    );
+
+    let term_results = db
+        .pastes
+        .search_meta("fsdp2 cublaslt", 10, None, None)
+        .expect("search");
+    let ids: Vec<String> = term_results.into_iter().map(|meta| meta.id).collect();
+    assert_eq!(ids.first().map(String::as_str), Some(terms.id.as_str()));
+    assert!(ids.iter().any(|id| id == &tag_only.id));
 }
 
 #[test]
@@ -280,4 +320,63 @@ fn meta_indexes_stay_consistent_after_update_and_delete() {
     db.pastes.delete(&paste_id).expect("delete");
     let metas_after_delete = db.pastes.list_meta(10, None).expect("list");
     assert!(!metas_after_delete.into_iter().any(|m| m.id == paste_id));
+}
+
+#[derive(Serialize, Deserialize)]
+struct LegacyPasteMetaWire {
+    id: String,
+    name: String,
+    language: Option<String>,
+    folder_id: Option<String>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    tags: Vec<String>,
+    content_len: usize,
+    is_markdown: bool,
+}
+
+#[test]
+fn database_new_rebuilds_legacy_meta_rows_with_derived_fields() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let db_path_str = db_path.to_str().expect("db path").to_string();
+
+    let db = open_test_database(&db_path_str);
+    let paste = Paste::new(
+        "cargo test --package trainer\n".to_string(),
+        "legacy-meta".to_string(),
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let legacy_meta = LegacyPasteMetaWire {
+        id: paste_id.clone(),
+        name: paste.name.clone(),
+        language: paste.language.clone(),
+        folder_id: None,
+        updated_at: paste.updated_at,
+        tags: Vec::new(),
+        content_len: paste.content.len(),
+        is_markdown: paste.is_markdown,
+    };
+    let encoded = bincode::serialize(&legacy_meta).expect("serialize");
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
+        metas
+            .insert(paste_id.as_str(), encoded.as_slice())
+            .expect("overwrite legacy meta");
+    }
+    write_txn.commit().expect("commit");
+    drop(db);
+
+    let reopened = open_test_database(&db_path_str);
+    let meta = reopened
+        .pastes
+        .list_meta(10, None)
+        .expect("list")
+        .into_iter()
+        .find(|meta| meta.id == paste_id)
+        .expect("meta row");
+    assert_eq!(meta.derived.kind, crate::semantic::PasteKind::Code);
+    assert_eq!(meta.derived.handle.as_deref(), Some("cargo test"));
 }

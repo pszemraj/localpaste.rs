@@ -2,6 +2,7 @@
 
 use super::editor::EditorMode;
 use super::LocalPasteApp;
+use crate::backend::PasteSummary;
 
 impl LocalPasteApp {
     /// Returns whether a detached version-history or diff window currently owns the workflow.
@@ -75,5 +76,27 @@ impl LocalPasteApp {
             EditorMode::VirtualEditor => self.virtual_editor_buffer.to_string(),
             EditorMode::VirtualPreview => self.selected_content.to_string(),
         }
+    }
+
+    /// Returns the current selected list/search summary when available.
+    ///
+    /// # Returns
+    /// The best available summary for the selected paste across visible,
+    /// cached, and palette result projections.
+    pub(super) fn selected_paste_summary(&self) -> Option<&PasteSummary> {
+        let selected_id = self.selected_id.as_deref()?;
+        self.all_pastes
+            .iter()
+            .find(|item| item.id.as_str() == selected_id)
+            .or_else(|| {
+                self.pastes
+                    .iter()
+                    .find(|item| item.id.as_str() == selected_id)
+            })
+            .or_else(|| {
+                self.palette_search_results
+                    .iter()
+                    .find(|item| item.id.as_str() == selected_id)
+            })
     }
 }

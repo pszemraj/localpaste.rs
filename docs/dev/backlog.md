@@ -25,7 +25,8 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Track folder-count decrement failures with a persistent repair marker and run opportunistic `reconcile_folder_invariants` recovery in long-lived processes.
 - [ ] Add an explicit runtime reconcile entrypoint/scheduler for metadata indexes so degraded states are repaired without restart.
 - [ ] Add low-cost semantic drift detection for `pastes_meta` rows (without full content deserialization in list/search hot paths), e.g. metadata hash/version marker validation at write/reconcile time.
-- [ ] Add persisted derived semantic metadata for paste retrieval (`kind` / compact handle / derived terms) with compatible `pastes_meta` evolution or rebuild, then use it for metadata-only search, smart filters, and richer sidebar metadata.
+- [x] Add persisted derived semantic metadata for paste retrieval (`kind` / compact handle / derived terms) with `pastes_meta` rebuild, then use it for metadata-only search, smart filters, the properties drawer, and sidebar hover metadata.
+- [ ] Add a muted second sidebar metadata line when a derived handle exists, now that persisted semantic retrieval metadata and hover/details surfaces are in place.
 - [ ] Split history-reset worker failures out from generic `CoreErrorSource::SaveContent` so reset-specific UI transitions and error reporting do not rely on shared save-content handling.
 - [ ] Evaluate code-editor-style smart Home behavior for the virtual editor (first non-whitespace <-> column 0) without regressing platform-native line/document key bindings.
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.

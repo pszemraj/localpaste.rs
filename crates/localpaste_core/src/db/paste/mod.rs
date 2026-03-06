@@ -96,6 +96,48 @@ impl PasteDb {
         self.version_interval_secs
     }
 
+    /// Rebuild the persisted metadata projection from canonical paste rows.
+    ///
+    /// `PASTES_META` is derived state, so schema evolution can safely rewrite it
+    /// from authoritative `PASTES` content during startup.
+    ///
+    /// # Returns
+    /// `Ok(())` when the derived metadata projection is fully rewritten.
+    ///
+    /// # Errors
+    /// Returns an error when any read, decode, write, or commit step fails.
+    pub fn rebuild_meta_index(&self) -> Result<(), AppError> {
+        let rebuilt = {
+            let read_txn = self.db.begin_read()?;
+            let pastes = read_txn.open_table(PASTES)?;
+            let mut metas = Vec::new();
+            for item in pastes.iter()? {
+                let (_, value) = item?;
+                let paste = deserialize_paste(value.value())?;
+                metas.push(PasteMeta::from(&paste));
+            }
+            metas
+        };
+
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let existing_ids = metas
+                .iter()?
+                .map(|item| item.map(|(key, _)| key.value().to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for id in existing_ids {
+                let _ = metas.remove(id.as_str())?;
+            }
+            for meta in rebuilt {
+                let encoded = bincode::serialize(&meta)?;
+                metas.insert(meta.id.as_str(), encoded.as_slice())?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
     /// Insert a new paste row and derived metadata/index rows atomically.
     ///
     /// This API only supports unfiled inserts. Use

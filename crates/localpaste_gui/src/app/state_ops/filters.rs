@@ -1,6 +1,8 @@
 //! Helper filters and classifiers for app state operations.
 
+use crate::app::SidebarCollection;
 use crate::backend::PasteSummary;
+use localpaste_core::semantic::PasteKind;
 
 struct SummaryPattern {
     languages: &'static [&'static str],
@@ -228,40 +230,60 @@ fn summary_matches_pattern(item: &PasteSummary, pattern: &SummaryPattern) -> boo
     )
 }
 
-/// Returns whether a summary appears to represent source code content.
-///
-/// # Returns
-/// `true` when language, name, or tags match code heuristics.
-pub(super) fn is_code_summary(item: &PasteSummary) -> bool {
-    summary_matches_pattern(item, &CODE_SUMMARY_PATTERN)
-        || name_has_suffix_ci(item.name.as_str(), CODE_FILE_SUFFIXES)
-        || name_starts_with_any_ci(item.name.as_str(), COMMAND_NAME_PREFIXES)
+fn summary_has_kind(item: &PasteSummary, kind: PasteKind) -> bool {
+    item.derived.kind == kind
 }
 
-/// Returns whether a summary appears to represent config/infrastructure content.
-///
-/// # Returns
-/// `true` when language, name, or tags match config heuristics.
-pub(super) fn is_config_summary(item: &PasteSummary) -> bool {
-    summary_matches_pattern(item, &CONFIG_SUMMARY_PATTERN)
-        || name_has_suffix_ci(item.name.as_str(), CONFIG_FILE_SUFFIXES)
+fn summary_matches_kind_pattern_and_name(
+    item: &PasteSummary,
+    kind: PasteKind,
+    pattern: &SummaryPattern,
+    extra_name_match: bool,
+) -> bool {
+    summary_has_kind(item, kind) || summary_matches_pattern(item, pattern) || extra_name_match
 }
 
-/// Returns whether a summary appears to represent logs or traces.
+/// Returns whether a summary matches one of the semantic sidebar collections.
+///
+/// # Arguments
+/// - `item`: Sidebar summary under evaluation.
+/// - `collection`: Semantic collection bucket to test.
 ///
 /// # Returns
-/// `true` when language, name, or tags match log heuristics.
-pub(super) fn is_log_summary(item: &PasteSummary) -> bool {
-    summary_matches_pattern(item, &LOG_SUMMARY_PATTERN)
-        || name_has_suffix_ci(item.name.as_str(), LOG_FILE_SUFFIXES)
-}
-
-/// Returns whether a summary appears to represent URL/bookmark content.
-///
-/// # Returns
-/// `true` when name/tags indicate links.
-pub(super) fn is_link_summary(item: &PasteSummary) -> bool {
-    summary_matches_pattern(item, &LINK_SUMMARY_PATTERN) || looks_like_url_name(item.name.as_str())
+/// `true` when derived kind or legacy summary heuristics match the requested
+/// semantic collection bucket.
+pub(super) fn matches_semantic_collection(
+    item: &PasteSummary,
+    collection: SidebarCollection,
+) -> bool {
+    match collection {
+        SidebarCollection::Code => summary_matches_kind_pattern_and_name(
+            item,
+            PasteKind::Code,
+            &CODE_SUMMARY_PATTERN,
+            name_has_suffix_ci(item.name.as_str(), CODE_FILE_SUFFIXES)
+                || name_starts_with_any_ci(item.name.as_str(), COMMAND_NAME_PREFIXES),
+        ),
+        SidebarCollection::Config => summary_matches_kind_pattern_and_name(
+            item,
+            PasteKind::Config,
+            &CONFIG_SUMMARY_PATTERN,
+            name_has_suffix_ci(item.name.as_str(), CONFIG_FILE_SUFFIXES),
+        ),
+        SidebarCollection::Logs => summary_matches_kind_pattern_and_name(
+            item,
+            PasteKind::Log,
+            &LOG_SUMMARY_PATTERN,
+            name_has_suffix_ci(item.name.as_str(), LOG_FILE_SUFFIXES),
+        ),
+        SidebarCollection::Links => summary_matches_kind_pattern_and_name(
+            item,
+            PasteKind::Link,
+            &LINK_SUMMARY_PATTERN,
+            looks_like_url_name(item.name.as_str()),
+        ),
+        _ => false,
+    }
 }
 
 /// Maps canonical language labels to preferred export file extensions.
@@ -368,6 +390,7 @@ mod tests {
             updated_at: chrono::Utc::now(),
             folder_id: None,
             tags: Vec::new(),
+            derived: Default::default(),
         };
 
         let code = PasteSummary {
@@ -387,9 +410,67 @@ mod tests {
             ..base
         };
 
-        assert!(is_code_summary(&code));
-        assert!(is_config_summary(&config));
-        assert!(is_log_summary(&log));
-        assert!(is_link_summary(&link));
+        assert!(matches_semantic_collection(&code, SidebarCollection::Code));
+        assert!(matches_semantic_collection(
+            &config,
+            SidebarCollection::Config
+        ));
+        assert!(matches_semantic_collection(&log, SidebarCollection::Logs));
+        assert!(matches_semantic_collection(&link, SidebarCollection::Links));
+    }
+
+    #[test]
+    fn derived_kind_overrides_weak_name_and_tag_heuristics() {
+        let base = PasteSummary {
+            id: "id".to_string(),
+            name: "plain".to_string(),
+            language: None,
+            content_len: 10,
+            updated_at: chrono::Utc::now(),
+            folder_id: None,
+            tags: Vec::new(),
+            derived: Default::default(),
+        };
+
+        let code = PasteSummary {
+            derived: localpaste_core::semantic::DerivedMeta {
+                kind: PasteKind::Code,
+                handle: Some("fn handle_request".to_string()),
+                terms: vec!["handle_request".to_string()],
+            },
+            ..base.clone()
+        };
+        let config = PasteSummary {
+            derived: localpaste_core::semantic::DerivedMeta {
+                kind: PasteKind::Config,
+                handle: Some("model gpt-4".to_string()),
+                terms: vec!["gpt-4".to_string()],
+            },
+            ..base.clone()
+        };
+        let log = PasteSummary {
+            derived: localpaste_core::semantic::DerivedMeta {
+                kind: PasteKind::Log,
+                handle: Some("panic failed".to_string()),
+                terms: vec!["panic".to_string()],
+            },
+            ..base.clone()
+        };
+        let link = PasteSummary {
+            derived: localpaste_core::semantic::DerivedMeta {
+                kind: PasteKind::Link,
+                handle: Some("example.com".to_string()),
+                terms: vec!["example".to_string()],
+            },
+            ..base
+        };
+
+        assert!(matches_semantic_collection(&code, SidebarCollection::Code));
+        assert!(matches_semantic_collection(
+            &config,
+            SidebarCollection::Config
+        ));
+        assert!(matches_semantic_collection(&log, SidebarCollection::Logs));
+        assert!(matches_semantic_collection(&link, SidebarCollection::Links));
     }
 }

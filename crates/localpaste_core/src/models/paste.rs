@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::detect_language as detect_language_impl;
+use crate::semantic::DerivedMeta;
 
 /// Paste metadata stored in the database and returned by the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +39,8 @@ pub struct PasteMeta {
     pub tags: Vec<String>,
     pub content_len: usize,
     pub is_markdown: bool,
+    #[serde(default)]
+    pub derived: DerivedMeta,
 }
 
 /// Request payload for creating a paste.
@@ -180,6 +183,7 @@ impl From<&Paste> for PasteMeta {
             tags: value.tags.clone(),
             content_len: value.content.len(),
             is_markdown: value.is_markdown,
+            derived: crate::semantic::derive(value.content.as_str(), value.language.as_deref()),
         }
     }
 }
