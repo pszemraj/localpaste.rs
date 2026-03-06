@@ -2,8 +2,7 @@
 
 use super::super::*;
 use super::properties_drawer::{
-    apply_language_choice, auto_language_choice_key, auto_language_status_label,
-    selected_language_choice_text,
+    apply_language_choice, auto_language_choice_key, render_language_choice_combo,
 };
 use eframe::egui;
 
@@ -73,30 +72,12 @@ impl LocalPasteApp {
                             auto_language_choice_key().to_string()
                         };
                         let previous_language_choice = language_choice.clone();
-                        let auto_label = auto_language_status_label();
-                        let selected_language_text = selected_language_choice_text(
-                            language_choice.as_str(),
-                            auto_label.as_str(),
+                        render_language_choice_combo(
+                            ui,
+                            "header_language_select",
+                            Some(160.0),
+                            &mut language_choice,
                         );
-                        egui::ComboBox::from_id_salt("header_language_select")
-                            .selected_text(selected_language_text)
-                            .width(160.0)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut language_choice,
-                                    auto_language_choice_key().to_string(),
-                                    "Auto",
-                                );
-                                for option in
-                                    localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
-                                {
-                                    ui.selectable_value(
-                                        &mut language_choice,
-                                        option.value.to_string(),
-                                        option.label,
-                                    );
-                                }
-                            });
                         if language_choice != previous_language_choice {
                             apply_language_choice(
                                 &mut self.edit_language_is_manual,
