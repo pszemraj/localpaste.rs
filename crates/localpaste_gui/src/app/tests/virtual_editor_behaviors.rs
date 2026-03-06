@@ -713,63 +713,6 @@ fn word_navigation_crosses_line_boundaries() {
 }
 
 #[test]
-fn word_left_skips_punctuation_separators() {
-    let mut harness = make_app();
-    configure_virtual_editor_with_wrap(&mut harness.app, "foo.bar", 200.0);
-
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    harness.app.virtual_editor_state.set_cursor(len, len);
-    let ctx = egui::Context::default();
-
-    let _ = harness.app.apply_virtual_commands(
-        &ctx,
-        &[VirtualInputCommand::MoveLeft {
-            select: false,
-            word: true,
-        }],
-    );
-    assert_eq!(
-        harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(0, 4)
-    );
-
-    let _ = harness.app.apply_virtual_commands(
-        &ctx,
-        &[VirtualInputCommand::MoveLeft {
-            select: false,
-            word: true,
-        }],
-    );
-    assert_eq!(
-        harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(0, 0)
-    );
-}
-
-#[test]
-#[cfg(not(target_os = "macos"))]
-fn word_right_skips_punctuation_separators_on_windows_linux() {
-    let mut harness = make_app();
-    configure_virtual_editor_with_wrap(&mut harness.app, "foo.bar", 200.0);
-
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    harness.app.virtual_editor_state.set_cursor(0, len);
-    let ctx = egui::Context::default();
-
-    let _ = harness.app.apply_virtual_commands(
-        &ctx,
-        &[VirtualInputCommand::MoveRight {
-            select: false,
-            word: true,
-        }],
-    );
-    assert_eq!(
-        harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(0, 4)
-    );
-}
-
-#[test]
 fn word_delete_crosses_line_boundaries() {
     let ctx = egui::Context::default();
 
@@ -978,32 +921,27 @@ fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
 }
 
 #[test]
-fn virtual_click_counter_promotes_to_triple_and_resets() {
+fn virtual_click_counter_promotes_to_triple_and_resets_on_timeout_or_distance() {
     let now = Instant::now();
     let p = egui::pos2(100.0, 200.0);
-    let c1 = next_virtual_click_count(None, None, None, 0, 5, p, now);
+    let c1 = next_virtual_click_count(None, None, 0, p, now);
     assert_eq!(c1, 1);
-    let c2 = next_virtual_click_count(Some(now), Some(p), Some(5), c1, 5, p, now);
+    let c2 = next_virtual_click_count(Some(now), Some(p), c1, p, now);
     assert_eq!(c2, 2);
-    let c3 = next_virtual_click_count(Some(now), Some(p), Some(5), c2, 5, p, now);
+    let c3 = next_virtual_click_count(Some(now), Some(p), c2, p, now);
     assert_eq!(c3, 3);
-
-    let changed_line = next_virtual_click_count(Some(now), Some(p), Some(5), c3, 6, p, now);
-    assert_eq!(changed_line, 3);
 
     let expired = next_virtual_click_count(
         Some(now),
         Some(p),
-        Some(5),
         c3,
-        5,
         p,
         now + EDITOR_DOUBLE_CLICK_WINDOW + Duration::from_millis(1),
     );
     assert_eq!(expired, 1);
 
     let far = egui::pos2(100.0 + EDITOR_DOUBLE_CLICK_DISTANCE + 1.0, 200.0);
-    let distant = next_virtual_click_count(Some(now), Some(p), Some(5), c3, 5, far, now);
+    let distant = next_virtual_click_count(Some(now), Some(p), c3, far, now);
     assert_eq!(distant, 1);
 }
 

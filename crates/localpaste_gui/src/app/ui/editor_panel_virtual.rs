@@ -151,7 +151,6 @@ impl LocalPasteApp {
         let line_count = self.editor_lines.line_count();
         let mut last_virtual_click_at = self.last_virtual_click_at;
         let mut last_virtual_click_pos = self.last_virtual_click_pos;
-        let mut last_virtual_click_line = self.last_virtual_click_line;
         let mut last_virtual_click_count = self.last_virtual_click_count;
         let mut preview_render_capped_lines = 0usize;
         scroll.show_rows(ui, row_height, line_count, |ui, range| {
@@ -220,7 +219,6 @@ impl LocalPasteApp {
                         if response.drag_started() {
                             last_virtual_click_at = None;
                             last_virtual_click_pos = None;
-                            last_virtual_click_line = None;
                             last_virtual_click_count = 0;
                             pending_action = Some(RowAction::DragStart { cursor: vcursor });
                         } else {
@@ -228,15 +226,12 @@ impl LocalPasteApp {
                             let click_count = next_virtual_click_count(
                                 last_virtual_click_at,
                                 last_virtual_click_pos,
-                                last_virtual_click_line,
                                 last_virtual_click_count,
-                                line_idx,
                                 pointer_pos,
                                 now,
                             );
                             last_virtual_click_at = Some(now);
                             last_virtual_click_pos = Some(pointer_pos);
-                            last_virtual_click_line = Some(line_idx);
                             last_virtual_click_count = click_count;
                             match click_count {
                                 3 => {
@@ -378,7 +373,6 @@ impl LocalPasteApp {
         });
         self.last_virtual_click_at = last_virtual_click_at;
         self.last_virtual_click_pos = last_virtual_click_pos;
-        self.last_virtual_click_line = last_virtual_click_line;
         self.last_virtual_click_count = last_virtual_click_count;
         self.virtual_editor_active = false;
         if preview_render_capped_lines > 0 {
@@ -649,9 +643,7 @@ impl LocalPasteApp {
                                 editor_interacted = true;
                                 pending_action = Some(RowAction::DragStart { global });
                             } else {
-                                let click_count =
-                                    self.register_virtual_click(line_idx, pointer_pos);
-                                self.last_virtual_click_count = click_count;
+                                let click_count = self.register_virtual_click(pointer_pos);
                                 match click_count {
                                     3 => {
                                         editor_interacted = true;

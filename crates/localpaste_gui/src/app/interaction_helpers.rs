@@ -181,9 +181,7 @@ pub(crate) fn is_editor_word_char(ch: char) -> bool {
 /// # Arguments
 /// - `last_at`: Timestamp of previous click.
 /// - `last_pos`: Pointer position of previous click.
-/// - `_last_line`: Previous line index (currently unused).
 /// - `last_count`: Previous click streak count.
-/// - `_line_idx`: Current line index (currently unused).
 /// - `pointer_pos`: Current click pointer position.
 /// - `now`: Current timestamp.
 ///
@@ -192,9 +190,7 @@ pub(crate) fn is_editor_word_char(ch: char) -> bool {
 pub(crate) fn next_virtual_click_count(
     last_at: Option<Instant>,
     last_pos: Option<egui::Pos2>,
-    _last_line: Option<usize>,
     last_count: u8,
-    _line_idx: usize,
     pointer_pos: egui::Pos2,
     now: Instant,
 ) -> u8 {

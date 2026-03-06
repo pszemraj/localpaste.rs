@@ -249,36 +249,27 @@ impl LocalPasteApp {
     pub(super) fn reset_virtual_click_streak(&mut self) {
         self.last_virtual_click_at = None;
         self.last_virtual_click_pos = None;
-        self.last_virtual_click_line = None;
         self.last_virtual_click_count = 0;
     }
 
     /// Records a click in the virtual preview and returns the updated streak count.
     ///
     /// # Arguments
-    /// - `line_idx`: Line index of the click target.
     /// - `pointer_pos`: Pointer position in viewport coordinates.
     ///
     /// # Returns
     /// Click streak count in `[1, 3]` for single/double/triple click behavior.
-    pub(super) fn register_virtual_click(
-        &mut self,
-        line_idx: usize,
-        pointer_pos: egui::Pos2,
-    ) -> u8 {
+    pub(super) fn register_virtual_click(&mut self, pointer_pos: egui::Pos2) -> u8 {
         let now = Instant::now();
         let count = next_virtual_click_count(
             self.last_virtual_click_at,
             self.last_virtual_click_pos,
-            self.last_virtual_click_line,
             self.last_virtual_click_count,
-            line_idx,
             pointer_pos,
             now,
         );
         self.last_virtual_click_at = Some(now);
         self.last_virtual_click_pos = Some(pointer_pos);
-        self.last_virtual_click_line = Some(line_idx);
         self.last_virtual_click_count = count;
         count
     }
@@ -352,48 +343,58 @@ impl LocalPasteApp {
         idx
     }
 
-    fn virtual_word_right_start(&self, cursor: usize) -> usize {
+    fn advance_virtual_word_right_while<F>(
+        &self,
+        idx: &mut usize,
+        len: usize,
+        line_end: &mut usize,
+        capped: &mut bool,
+        keep_advancing: F,
+    ) -> Option<usize>
+    where
+        F: Fn(char) -> bool,
+    {
         let rope = self.virtual_editor_buffer.rope();
+        while *idx < len {
+            if *capped && *idx >= *line_end {
+                return Some(*line_end);
+            }
+            let ch = rope.char(*idx);
+            if !keep_advancing(ch) {
+                break;
+            }
+            *idx += 1;
+            if !*capped && *idx > *line_end {
+                (*line_end, *capped) = self.virtual_line_render_boundary(*idx);
+            }
+        }
+        None
+    }
+
+    fn virtual_word_right_start(&self, cursor: usize) -> usize {
         let len = self.virtual_editor_buffer.len_chars();
         let mut idx = self.clamp_virtual_cursor_for_render(cursor).min(len);
         if idx >= len {
             return len;
         }
 
-        // Only consult render boundaries when crossing lines (or if the line is capped).
         let (mut line_end, mut capped) = self.virtual_line_render_boundary(idx);
 
-        // 1) Skip the remainder of the current word (if any).
-        while idx < len {
-            if capped && idx >= line_end {
-                return line_end;
-            }
-            let ch = rope.char(idx);
-            if !is_editor_word_char(ch) {
-                break;
-            }
-            idx += 1;
-
-            // If we stepped over the newline into the next line, refresh render boundary info.
-            if !capped && idx > line_end {
-                (line_end, capped) = self.virtual_line_render_boundary(idx);
-            }
+        if let Some(boundary) = self.advance_virtual_word_right_while(
+            &mut idx,
+            len,
+            &mut line_end,
+            &mut capped,
+            is_editor_word_char,
+        ) {
+            return boundary;
         }
-
-        // 2) Skip separators/whitespace to the start of the next word.
-        while idx < len {
-            if capped && idx >= line_end {
-                return line_end;
-            }
-            let ch = rope.char(idx);
-            if is_editor_word_char(ch) {
-                break;
-            }
-            idx += 1;
-
-            if !capped && idx > line_end {
-                (line_end, capped) = self.virtual_line_render_boundary(idx);
-            }
+        if let Some(boundary) =
+            self.advance_virtual_word_right_while(&mut idx, len, &mut line_end, &mut capped, |ch| {
+                !is_editor_word_char(ch)
+            })
+        {
+            return boundary;
         }
 
         idx
@@ -453,62 +454,41 @@ impl LocalPasteApp {
     /// # Returns
     /// Cursor index positioned at the end of the next identifier-like token.
     pub(super) fn virtual_word_right_end(&self, cursor: usize) -> usize {
-        let rope = self.virtual_editor_buffer.rope();
         let len = self.virtual_editor_buffer.len_chars();
         let mut idx = self.clamp_virtual_cursor_for_render(cursor).min(len);
         if idx >= len {
             return len;
         }
 
-        // Only consult render boundaries when crossing lines (or if the line is capped).
         let (mut line_end, mut capped) = self.virtual_line_render_boundary(idx);
 
-        // If we're currently in a word, move to the end of this word.
-        if is_editor_word_char(rope.char(idx)) {
-            while idx < len {
-                if capped && idx >= line_end {
-                    return line_end;
-                }
-                let ch = rope.char(idx);
-                if !is_editor_word_char(ch) {
-                    break;
-                }
-                idx += 1;
-                if !capped && idx > line_end {
-                    (line_end, capped) = self.virtual_line_render_boundary(idx);
-                }
-            }
-            return idx;
+        if is_editor_word_char(self.virtual_editor_buffer.rope().char(idx)) {
+            return self
+                .advance_virtual_word_right_while(
+                    &mut idx,
+                    len,
+                    &mut line_end,
+                    &mut capped,
+                    is_editor_word_char,
+                )
+                .unwrap_or(idx);
         }
 
-        // Otherwise: skip separators/whitespace to the start of the next word…
-        while idx < len {
-            if capped && idx >= line_end {
-                return line_end;
-            }
-            let ch = rope.char(idx);
-            if is_editor_word_char(ch) {
-                break;
-            }
-            idx += 1;
-            if !capped && idx > line_end {
-                (line_end, capped) = self.virtual_line_render_boundary(idx);
-            }
+        if let Some(boundary) =
+            self.advance_virtual_word_right_while(&mut idx, len, &mut line_end, &mut capped, |ch| {
+                !is_editor_word_char(ch)
+            })
+        {
+            return boundary;
         }
-
-        // …then to the end of that word.
-        while idx < len {
-            if capped && idx >= line_end {
-                return line_end;
-            }
-            let ch = rope.char(idx);
-            if !is_editor_word_char(ch) {
-                break;
-            }
-            idx += 1;
-            if !capped && idx > line_end {
-                (line_end, capped) = self.virtual_line_render_boundary(idx);
-            }
+        if let Some(boundary) = self.advance_virtual_word_right_while(
+            &mut idx,
+            len,
+            &mut line_end,
+            &mut capped,
+            is_editor_word_char,
+        ) {
+            return boundary;
         }
 
         idx

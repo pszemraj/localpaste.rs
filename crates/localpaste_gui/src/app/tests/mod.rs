@@ -211,7 +211,6 @@ fn make_app() -> TestHarness {
         last_interaction_at: None,
         last_virtual_click_at: None,
         last_virtual_click_pos: None,
-        last_virtual_click_line: None,
         last_virtual_click_count: 0,
         paste_as_new_pending_frames: 0,
         paste_as_new_clipboard_requested_at: None,
