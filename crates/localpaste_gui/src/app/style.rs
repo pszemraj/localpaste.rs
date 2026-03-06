@@ -25,6 +25,8 @@ pub(super) const COLOR_ACCENT_TEXT: Color32 = Color32::from_rgb(0xD0, 0x84, 0x3A
 pub(super) const COLOR_ACCENT_SURFACE: Color32 = Color32::from_rgb(0xB8, 0x67, 0x24);
 /// Hover accent color for interactive controls.
 pub(super) const COLOR_ACCENT_SURFACE_HOVER: Color32 = Color32::from_rgb(0xC3, 0x74, 0x31);
+/// Muted burnt-orange used for large modal title bars.
+pub(super) const COLOR_MODAL_CHROME: Color32 = Color32::from_rgb(0x8A, 0x52, 0x2A);
 /// Selection outline color.
 pub(super) const COLOR_SELECTION_STROKE: Color32 = Color32::from_rgb(0x3B, 0x82, 0xF6);
 /// Selection fill color as RGBA bytes.
@@ -49,6 +51,40 @@ fn selection_fill_color() -> Color32 {
         COLOR_SELECTION_FILL_RGBA[2],
         COLOR_SELECTION_FILL_RGBA[3],
     )
+}
+
+fn modal_chrome_style(base_style: &egui::Style) -> egui::Style {
+    let mut style = base_style.clone();
+    style.visuals.widgets.active = WidgetVisuals {
+        bg_fill: COLOR_MODAL_CHROME,
+        weak_bg_fill: COLOR_MODAL_CHROME,
+        bg_stroke: Stroke::new(1.0, COLOR_MODAL_CHROME),
+        ..style.visuals.widgets.active
+    };
+    style.visuals.widgets.open = WidgetVisuals {
+        bg_fill: COLOR_MODAL_CHROME,
+        weak_bg_fill: COLOR_MODAL_CHROME,
+        bg_stroke: Stroke::new(1.0, COLOR_MODAL_CHROME),
+        ..style.visuals.widgets.open
+    };
+    style
+}
+
+/// Temporarily applies muted modal chrome so large window title bars do not
+/// overpower the rest of the dark palette.
+///
+/// # Arguments
+/// - `ctx`: Egui context whose style should be overridden for the duration of `render`.
+/// - `render`: Closure that renders a modal using the muted chrome style.
+///
+/// # Returns
+/// Returns whatever value `render` produces after restoring the original style.
+pub(super) fn with_muted_modal_chrome<R>(ctx: &egui::Context, render: impl FnOnce() -> R) -> R {
+    let original_style = (*ctx.style()).clone();
+    ctx.set_style(modal_chrome_style(&original_style));
+    let result = render();
+    ctx.set_style(original_style);
+    result
 }
 
 impl LocalPasteApp {

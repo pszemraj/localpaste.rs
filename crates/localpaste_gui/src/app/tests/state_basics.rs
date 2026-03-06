@@ -165,6 +165,60 @@ fn toast_queue_dedupes_tail_and_caps_length() {
     assert_eq!(harness.app.toasts.len(), TOAST_LIMIT);
 }
 
+fn pressed_key(key: eframe::egui::Key) -> eframe::egui::Event {
+    eframe::egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: eframe::egui::Modifiers::NONE,
+    }
+}
+
+#[test]
+fn shortcut_help_closes_on_escape() {
+    let mut harness = make_app();
+    harness.app.shortcut_help_open = true;
+    let ctx = eframe::egui::Context::default();
+
+    let _ = ctx.run(
+        eframe::egui::RawInput {
+            events: vec![pressed_key(eframe::egui::Key::Escape)],
+            ..Default::default()
+        },
+        |ctx| {
+            harness.app.render_shortcut_help(ctx);
+        },
+    );
+
+    assert!(
+        !harness.app.shortcut_help_open,
+        "shortcut help should dismiss on Escape"
+    );
+}
+
+#[test]
+fn history_modal_closes_on_escape() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_modal_open = true;
+    let ctx = eframe::egui::Context::default();
+
+    let _ = ctx.run(
+        eframe::egui::RawInput {
+            events: vec![pressed_key(eframe::egui::Key::Escape)],
+            ..Default::default()
+        },
+        |ctx| {
+            harness.app.render_history_modal(ctx);
+        },
+    );
+
+    assert!(
+        !harness.app.version_ui.history_modal_open,
+        "history modal should dismiss on Escape"
+    );
+}
+
 #[test]
 fn editor_buffer_tracks_char_len() {
     let mut buffer = EditorBuffer::new("ab".to_string());
