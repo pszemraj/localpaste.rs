@@ -509,7 +509,7 @@ fn version_modal_failure_events_clear_stuck_loading_and_reset_flags() {
             language_is_manual: false,
             content: "text".to_string(),
         });
-    harness.app.version_ui.history_reset_in_flight = true;
+    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
 
     harness.app.apply_event(CoreEvent::PasteLoadFailed {
         id: "alpha".to_string(),
@@ -524,7 +524,11 @@ fn version_modal_failure_events_clear_stuck_loading_and_reset_flags() {
     });
     assert!(harness.app.version_ui.history_loading_snapshot_id.is_none());
     assert!(harness.app.version_ui.history_snapshot.is_none());
-    assert!(!harness.app.version_ui.history_reset_in_flight);
+    assert!(harness
+        .app
+        .version_ui
+        .history_reset_in_flight_paste_id
+        .is_none());
 }
 
 #[test]
@@ -685,7 +689,14 @@ fn history_reset_confirm_keeps_original_target_after_selection_changes() {
         }
         other => panic!("expected ResetPasteHardToVersion command, got {:?}", other),
     }
-    assert!(harness.app.version_ui.history_reset_in_flight);
+    assert_eq!(
+        harness
+            .app
+            .version_ui
+            .history_reset_in_flight_paste_id
+            .as_deref(),
+        Some("alpha")
+    );
     assert!(harness
         .app
         .version_ui
@@ -740,7 +751,11 @@ fn history_reset_is_blocked_while_local_changes_are_unsaved_or_saving_matrix() {
 
         harness.app.reset_selected_history_version();
 
-        assert!(!harness.app.version_ui.history_reset_in_flight);
+        assert!(harness
+            .app
+            .version_ui
+            .history_reset_in_flight_paste_id
+            .is_none());
         assert_eq!(
             harness.app.version_ui.history_reset_confirm_target,
             Some(42)
@@ -751,7 +766,7 @@ fn history_reset_is_blocked_while_local_changes_are_unsaved_or_saving_matrix() {
                 .status
                 .as_ref()
                 .map(|status| status.text.as_str()),
-            Some("Reset is disabled while local changes are unsaved or saving.")
+            Some("Reset is unavailable while local changes are unsaved or saving.")
         );
         assert!(matches!(
             harness.cmd_rx.try_recv(),
@@ -761,10 +776,88 @@ fn history_reset_is_blocked_while_local_changes_are_unsaved_or_saving_matrix() {
 }
 
 #[test]
+fn history_reset_transition_survives_selection_changes_until_matching_ack() {
+    let mut harness = make_app();
+    harness.app.all_pastes = vec![
+        test_summary("alpha", "Alpha", None, 7),
+        test_summary("beta", "Beta", None, 5),
+    ];
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
+
+    assert!(harness.app.reset_transition_active());
+
+    assert!(harness.app.select_paste("beta".to_string()));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        other => panic!("expected GetPaste command, got {:?}", other),
+    }
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    assert_eq!(
+        harness
+            .app
+            .version_ui
+            .history_reset_in_flight_paste_id
+            .as_deref(),
+        Some("alpha")
+    );
+    assert!(
+        !harness.app.reset_transition_active(),
+        "switching away should close modal/editor state without dropping alpha's reset fence"
+    );
+
+    assert!(harness.app.select_paste("alpha".to_string()));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "alpha"),
+        other => panic!("expected GetPaste command, got {:?}", other),
+    }
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(
+        harness.app.reset_transition_active(),
+        "reselecting alpha should reactivate the pending reset fence"
+    );
+
+    let mut reset_paste = Paste::new("reset content".to_string(), "Alpha".to_string());
+    reset_paste.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteResetToVersion { paste: reset_paste });
+
+    assert!(harness
+        .app
+        .version_ui
+        .history_reset_in_flight_paste_id
+        .is_none());
+}
+
+#[test]
+fn content_save_error_does_not_clear_reset_pending_for_other_paste() {
+    let mut harness = make_app();
+    harness.app.selected_id = Some("beta".to_string());
+    harness.app.save_in_flight = true;
+    harness.app.save_status = SaveStatus::Saving;
+    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
+
+    harness.app.apply_event(CoreEvent::Error {
+        source: crate::backend::CoreErrorSource::SaveContent,
+        message: "Update failed: backend unavailable.".to_string(),
+    });
+
+    assert_eq!(
+        harness
+            .app
+            .version_ui
+            .history_reset_in_flight_paste_id
+            .as_deref(),
+        Some("alpha")
+    );
+}
+
+#[test]
 fn history_reset_in_flight_blocks_create_delete_and_paste_as_new_requests() {
     let mut harness = make_app();
     let ctx = eframe::egui::Context::default();
-    harness.app.version_ui.history_reset_in_flight = true;
+    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
 
     harness
         .app
@@ -792,7 +885,7 @@ fn history_reset_in_flight_blocks_create_delete_and_paste_as_new_requests() {
 #[test]
 fn history_reset_in_flight_blocks_dirtying_and_save_dispatches() {
     let mut harness = make_app();
-    harness.app.version_ui.history_reset_in_flight = true;
+    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
 
     harness.app.mark_dirty();
     assert!(matches!(harness.app.save_status, SaveStatus::Saved));

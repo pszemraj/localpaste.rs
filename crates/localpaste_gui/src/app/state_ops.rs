@@ -693,7 +693,7 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when the backend command was queued, otherwise `false`.
     pub(super) fn send_delete_paste(&mut self, id: String) -> bool {
-        if self.reset_transition_active() {
+        if self.reset_transition_active() || self.history_reset_pending_for(id.as_str()) {
             self.set_reset_transition_blocked_status();
             return false;
         }

@@ -192,9 +192,12 @@ impl LocalPasteApp {
                                     .small()
                                     .color(COLOR_TEXT_MUTED),
                                 );
-                            } else if can_act_on_snapshot && !self.can_queue_history_reset() {
+                            } else if let Some(reason) = self
+                                .history_reset_queue_block_reason()
+                                .filter(|_| can_act_on_snapshot)
+                            {
                                 ui.label(
-                                    RichText::new("Save current changes before hard reset.")
+                                    RichText::new(reason)
                                         .small()
                                         .color(COLOR_TEXT_MUTED),
                                 );
@@ -238,15 +241,9 @@ impl LocalPasteApp {
                         ui.label(
                             "Reset current paste to this snapshot? This discards newer history.",
                         );
-                        if !self.can_queue_history_reset() {
+                        if let Some(reason) = self.history_reset_queue_block_reason() {
                             ui.add_space(6.0);
-                            ui.label(
-                                RichText::new(
-                                    "Reset is unavailable while local changes are unsaved or saving.",
-                                )
-                                .small()
-                                .color(COLOR_TEXT_MUTED),
-                            );
+                            ui.label(RichText::new(reason).small().color(COLOR_TEXT_MUTED));
                         }
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {

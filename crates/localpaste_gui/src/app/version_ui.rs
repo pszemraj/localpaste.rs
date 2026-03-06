@@ -20,7 +20,7 @@ pub(crate) struct VersionUiState {
     pub(super) history_loading_snapshot_id: Option<u64>,
     pub(super) history_reset_confirm_open: bool,
     pub(super) history_reset_confirm_target: Option<u64>,
-    pub(super) history_reset_in_flight: bool,
+    pub(super) history_reset_in_flight_paste_id: Option<String>,
     pub(super) diff_modal_open: bool,
     pub(super) diff_query: String,
     pub(super) diff_target_id: Option<String>,
@@ -40,13 +40,30 @@ impl VersionUiState {
         self.history_loading_snapshot_id = None;
     }
 
+    fn begin_history_reset_for(&mut self, paste_id: String) {
+        self.history_reset_in_flight_paste_id = Some(paste_id);
+    }
+
+    fn clear_history_reset_transition(&mut self) {
+        self.history_reset_in_flight_paste_id = None;
+    }
+
+    fn history_reset_in_flight(&self) -> bool {
+        self.history_reset_in_flight_paste_id.is_some()
+    }
+
+    fn history_reset_in_flight_for(&self, paste_id: Option<&str>) -> bool {
+        self.history_reset_in_flight_paste_id.as_deref() == paste_id
+    }
+
     /// Clears history-list and snapshot selection state.
     pub(super) fn clear_history_selection(&mut self) {
         self.history_versions.clear();
         self.history_selected_index = 0;
         self.clear_history_snapshot_state();
         self.clear_history_reset_confirm();
-        self.history_reset_in_flight = false;
+        // Preserve the reset fence here. Ordinary modal teardown and selection changes
+        // must not drop a pending reset before its own backend ack/error arrives.
     }
 
     fn clear_diff_target_state(&mut self) {
@@ -190,19 +207,42 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when content and metadata state are both clean and no reset is in flight.
     pub(super) fn can_queue_history_reset(&self) -> bool {
-        !self.version_ui.history_reset_in_flight
-            && self.save_status == SaveStatus::Saved
-            && !self.save_in_flight
-            && !self.metadata_dirty
-            && !self.metadata_save_in_flight
+        self.history_reset_queue_block_reason().is_none()
     }
 
     /// Returns whether a confirmed history reset is still awaiting its authoritative backend ack.
     ///
     /// # Returns
-    /// `true` while reset temporarily fences local mutations for the selected paste.
+    /// `true` while the currently selected paste is still awaiting its own reset ack.
     pub(super) fn reset_transition_active(&self) -> bool {
-        self.version_ui.history_reset_in_flight
+        self.version_ui
+            .history_reset_in_flight_for(self.selected_id.as_deref())
+    }
+
+    /// Returns whether `paste_id` is still awaiting a reset ack/error.
+    ///
+    /// # Returns
+    /// `true` when reset is pending for that specific paste id.
+    pub(super) fn history_reset_pending_for(&self, paste_id: &str) -> bool {
+        self.version_ui.history_reset_in_flight_for(Some(paste_id))
+    }
+
+    /// Reports why a new hard reset cannot be queued right now.
+    ///
+    /// # Returns
+    /// `Some(reason)` when another reset is pending or local save state is not clean.
+    pub(super) fn history_reset_queue_block_reason(&self) -> Option<&'static str> {
+        if self.version_ui.history_reset_in_flight() {
+            return Some("Reset is unavailable while another history reset is still in progress.");
+        }
+        if self.save_status != SaveStatus::Saved
+            || self.save_in_flight
+            || self.metadata_dirty
+            || self.metadata_save_in_flight
+        {
+            return Some("Reset is unavailable while local changes are unsaved or saving.");
+        }
+        None
     }
 
     /// Reports the shared read-only status used while reset temporarily fences mutations.
@@ -224,8 +264,8 @@ impl LocalPasteApp {
 
     /// Requests backend reset to a specific confirmed historical snapshot.
     fn reset_history_version_by_id(&mut self, version_id_ms: u64) {
-        if !self.can_queue_history_reset() {
-            self.set_status("Reset is disabled while local changes are unsaved or saving.");
+        if let Some(reason) = self.history_reset_queue_block_reason() {
+            self.set_status(reason);
             return;
         }
         let Some(id) = self.selected_id.clone() else {
@@ -234,13 +274,16 @@ impl LocalPasteApp {
         if self
             .backend
             .cmd_tx
-            .send(CoreCmd::ResetPasteHardToVersion { id, version_id_ms })
+            .send(CoreCmd::ResetPasteHardToVersion {
+                id: id.clone(),
+                version_id_ms,
+            })
             .is_err()
         {
             self.set_status("Reset hard failed: backend unavailable.");
             return;
         }
-        self.version_ui.history_reset_in_flight = true;
+        self.version_ui.begin_history_reset_for(id);
         self.version_ui.clear_history_reset_confirm();
         self.set_status("Resetting paste to selected version...");
     }
@@ -374,7 +417,9 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteResetToVersion { paste } => {
                 let paste_id = paste.id.clone();
-                self.version_ui.history_reset_in_flight = false;
+                if self.history_reset_pending_for(paste_id.as_str()) {
+                    self.version_ui.clear_history_reset_transition();
+                }
                 self.upsert_cached_paste_summary(paste);
                 if !self.search_query.trim().is_empty() {
                     // Reset can change search inclusion/ranking (content/language/updated_at),
@@ -406,6 +451,9 @@ impl LocalPasteApp {
                 }
             }
             CoreEvent::PasteMissing { id } => {
+                if self.history_reset_pending_for(id.as_str()) {
+                    self.version_ui.clear_history_reset_transition();
+                }
                 if self.version_ui.diff_target_id.as_deref() == Some(id.as_str()) {
                     self.version_ui.clear_diff_target_state();
                 }
@@ -417,9 +465,10 @@ impl LocalPasteApp {
                     self.version_ui.clear_history_snapshot_state();
                 }
                 if matches!(source, CoreErrorSource::SaveContent)
-                    && self.version_ui.history_reset_in_flight
+                    && self.version_ui.history_reset_in_flight()
+                    && !self.save_in_flight
                 {
-                    self.version_ui.history_reset_in_flight = false;
+                    self.version_ui.clear_history_reset_transition();
                 }
             }
             _ => {}
