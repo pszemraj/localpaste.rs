@@ -8,6 +8,7 @@ mod paste_intent;
 mod perf_trace;
 mod shutdown;
 mod state_accessors;
+mod state_cache;
 mod state_feedback;
 mod state_ops;
 mod style;

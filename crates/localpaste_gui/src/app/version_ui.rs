@@ -252,6 +252,13 @@ impl LocalPasteApp {
             CoreEvent::PasteLoaded { paste } => {
                 self.maybe_capture_diff_target_from_loaded_paste(paste);
             }
+            CoreEvent::PasteSaved { paste } => {
+                if self.version_ui.history_modal_open
+                    && self.selected_id.as_deref() == Some(paste.id.as_str())
+                {
+                    self.request_versions_for_selected();
+                }
+            }
             CoreEvent::PasteVersionsLoaded { id, items } => {
                 if self.selected_id.as_deref() != Some(id.as_str()) {
                     return;
@@ -302,12 +309,7 @@ impl LocalPasteApp {
             CoreEvent::PasteResetToVersion { paste } => {
                 let paste_id = paste.id.clone();
                 self.version_ui.history_reset_in_flight = false;
-                if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste_id) {
-                    *item = PasteSummary::from_paste(paste);
-                }
-                if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste_id) {
-                    *item = PasteSummary::from_paste(paste);
-                }
+                self.upsert_cached_paste_summary(paste);
                 if !self.search_query.trim().is_empty() {
                     // Reset can change search inclusion/ranking (content/language/updated_at),
                     // so force a fresh backend search even when query text is unchanged.

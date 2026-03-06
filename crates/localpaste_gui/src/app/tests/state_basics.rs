@@ -512,6 +512,32 @@ fn version_refresh_reloads_selected_snapshot_after_prior_load_failure() {
 }
 
 #[test]
+fn content_save_refreshes_open_history_modal_for_active_paste() {
+    let mut harness = make_app();
+    harness.app.selected_id = Some("alpha".to_string());
+    harness.app.version_ui.history_modal_open = true;
+
+    let mut saved = Paste::new("updated".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    match harness
+        .cmd_rx
+        .recv_timeout(Duration::from_millis(200))
+        .expect("expected version refresh command")
+    {
+        CoreCmd::ListPasteVersions { id, limit } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(limit, 200);
+        }
+        other => panic!("expected ListPasteVersions command, got {:?}", other),
+    }
+}
+
+#[test]
 fn reset_to_version_invalidates_active_search_dispatch_state() {
     let mut harness = make_app();
     harness.app.search_query = "alpha".to_string();

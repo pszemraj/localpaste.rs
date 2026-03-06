@@ -112,12 +112,7 @@ impl LocalPasteApp {
             CoreEvent::PasteSaved { paste } => {
                 let paste_id = paste.id.clone();
                 let requested_revision = self.save_request_revision.take();
-                if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste_id) {
-                    *item = PasteSummary::from_paste(&paste);
-                }
-                if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste_id) {
-                    *item = PasteSummary::from_paste(&paste);
-                }
+                self.upsert_cached_paste_summary(&paste);
                 if !self.search_query.trim().is_empty() {
                     // Content saves can update metadata used by metadata-only search
                     // (language auto-detect, recency ordering), so force redispatch.
@@ -162,12 +157,7 @@ impl LocalPasteApp {
             CoreEvent::PasteMetaSaved { paste } => {
                 let requested_metadata = self.metadata_save_request.take();
                 self.metadata_save_in_flight = false;
-                if let Some(item) = self.all_pastes.iter_mut().find(|item| item.id == paste.id) {
-                    *item = PasteSummary::from_paste(&paste);
-                }
-                if let Some(item) = self.pastes.iter_mut().find(|item| item.id == paste.id) {
-                    *item = PasteSummary::from_paste(&paste);
-                }
+                self.upsert_cached_paste_summary(&paste);
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     if self.metadata_matches_request(requested_metadata.as_ref()) {
                         self.sync_editor_metadata(&paste);
@@ -858,7 +848,11 @@ impl LocalPasteApp {
         }
     }
 
-    fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
+    /// Filters sidebar summaries through the active collection/language state.
+    ///
+    /// # Returns
+    /// Visible sidebar rows preserving the input ordering of `items`.
+    pub(super) fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
         let now = Utc::now();
         let today_local = Local::now().date_naive();
         let week_cutoff = now - ChronoDuration::days(7);
@@ -897,11 +891,6 @@ impl LocalPasteApp {
                 recent_cutoff,
             )
         });
-    }
-
-    /// Recomputes the visible sidebar projection from the canonical paste cache.
-    pub(super) fn recompute_visible_pastes(&mut self) {
-        self.pastes = self.filter_by_collection(&self.all_pastes);
     }
 
     /// Ensures the current selection still exists in the visible sidebar list.
