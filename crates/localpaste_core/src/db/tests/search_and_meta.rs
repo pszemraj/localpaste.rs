@@ -108,6 +108,73 @@ fn paste_search_meta_is_metadata_only() {
 }
 
 #[test]
+fn paste_search_meta_multi_term_queries_rank_combined_metadata_hits() {
+    let (db, _temp) = setup_test_db();
+
+    let mut combined = Paste::new("body".to_string(), "docker compose".to_string());
+    combined.language = Some("yaml".to_string());
+    combined.language_is_manual = true;
+    combined.tags = vec!["postgres".to_string()];
+
+    let mut partial = Paste::new("body".to_string(), "docker".to_string());
+    partial.language = Some("yaml".to_string());
+    partial.language_is_manual = true;
+    partial.tags = vec!["misc".to_string()];
+
+    let mut weak = Paste::new("body".to_string(), "plain".to_string());
+    weak.language = Some("yaml".to_string());
+    weak.language_is_manual = true;
+    weak.tags = vec!["postgres".to_string()];
+
+    db.pastes.create(&combined).expect("create combined");
+    db.pastes.create(&partial).expect("create partial");
+    db.pastes.create(&weak).expect("create weak");
+
+    let results = db
+        .pastes
+        .search_meta("docker postgres", 10, None, None)
+        .expect("search");
+    let ids: Vec<String> = results.into_iter().map(|meta| meta.id).collect();
+
+    assert_eq!(ids.first().map(String::as_str), Some(combined.id.as_str()));
+    assert!(ids.iter().position(|id| id == &partial.id) < ids.iter().position(|id| id == &weak.id));
+}
+
+#[test]
+fn paste_search_meta_keeps_name_above_tags_above_language() {
+    let (db, _temp) = setup_test_db();
+
+    let mut by_name = Paste::new("body".to_string(), "python-guide".to_string());
+    by_name.language = None;
+    by_name.tags = Vec::new();
+
+    let mut by_tag = Paste::new("body".to_string(), "misc".to_string());
+    by_tag.language = None;
+    by_tag.tags = vec!["python".to_string()];
+
+    let mut by_language = Paste::new("body".to_string(), "plain".to_string());
+    by_language.language = Some("python".to_string());
+    by_language.language_is_manual = true;
+    by_language.tags = Vec::new();
+
+    db.pastes.create(&by_name).expect("create by_name");
+    db.pastes.create(&by_tag).expect("create by_tag");
+    db.pastes.create(&by_language).expect("create by_language");
+
+    let results = db
+        .pastes
+        .search_meta("python", 10, None, None)
+        .expect("search");
+    let ids: Vec<String> = results.into_iter().map(|meta| meta.id).collect();
+
+    assert_eq!(ids.first().map(String::as_str), Some(by_name.id.as_str()));
+    assert!(
+        ids.iter().position(|id| id == &by_tag.id)
+            < ids.iter().position(|id| id == &by_language.id)
+    );
+}
+
+#[test]
 fn search_language_filters_are_case_insensitive_and_trimmed_for_full_and_meta_queries() {
     enum SearchKind {
         Full,

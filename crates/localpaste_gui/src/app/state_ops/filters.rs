@@ -39,7 +39,8 @@ const CODE_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
     ],
     name_needles: &[
         ".rs", ".py", ".js", ".ts", ".go", ".java", ".cs", ".sql", ".sh", "snippet", "script",
-        "class", "function",
+        ".ps1", ".rb", ".php", ".cpp", ".kt", ".swift", ".lua", ".pl", ".zig", "class", "function",
+        "cargo ", "pytest ", "python ", "docker ", "kubectl ", "npm ", "pnpm ", "make ", "just ",
     ],
     tag_needles: &["code", "snippet", "script"],
 };
@@ -50,8 +51,17 @@ const CONFIG_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
         "config",
         "settings",
         ".env",
+        ".yml",
+        ".yaml",
+        ".json",
+        ".toml",
+        ".xml",
+        ".ini",
+        ".cfg",
+        ".conf",
         "dockerfile",
         "compose",
+        "docker-compose",
         "k8s",
         "kubernetes",
         "helm",
@@ -69,8 +79,30 @@ const CONFIG_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
 
 const LOG_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
     languages: &["log"],
-    name_needles: &["log", "logs", "trace", "stderr", "stdout", "error"],
-    tag_needles: &["log", "logs", "trace", "stderr", "stdout", "error"],
+    name_needles: &[
+        "log",
+        "logs",
+        "trace",
+        "stderr",
+        "stdout",
+        "error",
+        ".out",
+        ".err",
+        "traceback",
+        "panic",
+        "crash",
+        "journalctl",
+    ],
+    tag_needles: &[
+        "log",
+        "logs",
+        "trace",
+        "stderr",
+        "stdout",
+        "error",
+        "traceback",
+        "panic",
+    ],
 };
 
 const LINK_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
@@ -78,6 +110,33 @@ const LINK_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
     name_needles: &["http://", "https://", "www.", "url", "link", "links"],
     tag_needles: &["url", "link", "links", "bookmark"],
 };
+
+const CODE_FILE_SUFFIXES: &[&str] = &[
+    ".rs", ".py", ".js", ".ts", ".go", ".java", ".cs", ".sql", ".sh", ".ps1", ".rb", ".php",
+    ".cpp", ".c", ".h", ".hpp", ".kt", ".swift", ".lua", ".pl", ".zig",
+];
+const CONFIG_FILE_SUFFIXES: &[&str] = &[
+    ".json", ".yml", ".yaml", ".toml", ".xml", ".ini", ".cfg", ".conf", ".env",
+];
+const LOG_FILE_SUFFIXES: &[&str] = &[".log", ".out", ".err", ".trace"];
+const COMMAND_NAME_PREFIXES: &[&str] = &[
+    "cargo ",
+    "pytest ",
+    "python ",
+    "uv ",
+    "pip ",
+    "git ",
+    "docker ",
+    "kubectl ",
+    "npm ",
+    "pnpm ",
+    "make ",
+    "just ",
+    "curl ",
+    "wget ",
+    "ssh ",
+    "torchrun ",
+];
 
 /// Parses comma-separated tags, trimming whitespace and removing case-insensitive duplicates.
 ///
@@ -128,6 +187,27 @@ fn tags_contain_any(tags: &[String], needles: &[&str]) -> bool {
     tags.iter().any(|tag| contains_any_ci(tag, needles))
 }
 
+fn name_has_suffix_ci(value: &str, suffixes: &[&str]) -> bool {
+    let value_lower = value.trim().to_ascii_lowercase();
+    suffixes.iter().any(|suffix| value_lower.ends_with(suffix))
+}
+
+fn name_starts_with_any_ci(value: &str, prefixes: &[&str]) -> bool {
+    let value_lower = value.trim().to_ascii_lowercase();
+    prefixes
+        .iter()
+        .any(|prefix| value_lower.starts_with(prefix))
+}
+
+fn looks_like_url_name(value: &str) -> bool {
+    let value_lower = value.trim().to_ascii_lowercase();
+    !value_lower.contains(char::is_whitespace)
+        && (value_lower.starts_with("http://")
+            || value_lower.starts_with("https://")
+            || value_lower.starts_with("www.")
+            || value_lower.contains("://"))
+}
+
 fn summary_matches(
     item: &PasteSummary,
     languages: &[&str],
@@ -154,6 +234,8 @@ fn summary_matches_pattern(item: &PasteSummary, pattern: &SummaryPattern) -> boo
 /// `true` when language, name, or tags match code heuristics.
 pub(super) fn is_code_summary(item: &PasteSummary) -> bool {
     summary_matches_pattern(item, &CODE_SUMMARY_PATTERN)
+        || name_has_suffix_ci(item.name.as_str(), CODE_FILE_SUFFIXES)
+        || name_starts_with_any_ci(item.name.as_str(), COMMAND_NAME_PREFIXES)
 }
 
 /// Returns whether a summary appears to represent config/infrastructure content.
@@ -162,6 +244,7 @@ pub(super) fn is_code_summary(item: &PasteSummary) -> bool {
 /// `true` when language, name, or tags match config heuristics.
 pub(super) fn is_config_summary(item: &PasteSummary) -> bool {
     summary_matches_pattern(item, &CONFIG_SUMMARY_PATTERN)
+        || name_has_suffix_ci(item.name.as_str(), CONFIG_FILE_SUFFIXES)
 }
 
 /// Returns whether a summary appears to represent logs or traces.
@@ -170,6 +253,7 @@ pub(super) fn is_config_summary(item: &PasteSummary) -> bool {
 /// `true` when language, name, or tags match log heuristics.
 pub(super) fn is_log_summary(item: &PasteSummary) -> bool {
     summary_matches_pattern(item, &LOG_SUMMARY_PATTERN)
+        || name_has_suffix_ci(item.name.as_str(), LOG_FILE_SUFFIXES)
 }
 
 /// Returns whether a summary appears to represent URL/bookmark content.
@@ -177,7 +261,7 @@ pub(super) fn is_log_summary(item: &PasteSummary) -> bool {
 /// # Returns
 /// `true` when name/tags indicate links.
 pub(super) fn is_link_summary(item: &PasteSummary) -> bool {
-    summary_matches_pattern(item, &LINK_SUMMARY_PATTERN)
+    summary_matches_pattern(item, &LINK_SUMMARY_PATTERN) || looks_like_url_name(item.name.as_str())
 }
 
 /// Maps canonical language labels to preferred export file extensions.
@@ -272,5 +356,40 @@ mod tests {
     fn sanitize_filename_replaces_reserved_chars_and_falls_back() {
         assert_eq!(sanitize_filename("bad<>:\"/\\|?*name"), "bad_________name");
         assert_eq!(sanitize_filename("   "), "localpaste-export");
+    }
+
+    #[test]
+    fn smart_summary_heuristics_cover_suffixes_commands_and_urls() {
+        let base = PasteSummary {
+            id: "id".to_string(),
+            name: "sample".to_string(),
+            language: None,
+            content_len: 10,
+            updated_at: chrono::Utc::now(),
+            folder_id: None,
+            tags: Vec::new(),
+        };
+
+        let code = PasteSummary {
+            name: "cargo test --workspace".to_string(),
+            ..base.clone()
+        };
+        let config = PasteSummary {
+            name: "docker-compose.override.yml".to_string(),
+            ..base.clone()
+        };
+        let log = PasteSummary {
+            name: "panic.stderr".to_string(),
+            ..base.clone()
+        };
+        let link = PasteSummary {
+            name: "https://example.com/docs".to_string(),
+            ..base
+        };
+
+        assert!(is_code_summary(&code));
+        assert!(is_config_summary(&config));
+        assert!(is_log_summary(&log));
+        assert!(is_link_summary(&link));
     }
 }

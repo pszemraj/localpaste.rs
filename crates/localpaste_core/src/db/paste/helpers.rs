@@ -137,21 +137,87 @@ pub(super) fn meta_matches_filters(
 /// # Returns
 /// A non-negative score used for top-k ordering.
 pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
+    let query_lower = query_lower.trim();
+    if query_lower.is_empty() {
+        return 0;
+    }
+
     let mut score = 0;
     let canonical_query = crate::detection::canonical::canonicalize(query_lower);
-    if meta.name.to_lowercase().contains(query_lower) {
+    let name_lower = meta.name.to_lowercase();
+    let tag_lowers: Vec<String> = meta.tags.iter().map(|tag| tag.to_lowercase()).collect();
+    let query_terms = split_meta_query_terms(query_lower);
+
+    if name_lower.contains(query_lower) {
         score += 10;
     }
-    if meta
-        .tags
+    if tag_lowers
         .iter()
-        .any(|tag| tag.to_lowercase().contains(query_lower))
+        .any(|tag_lower| tag_lower.contains(query_lower))
     {
         score += 5;
     }
-    if meta
-        .language
-        .as_ref()
+    if language_matches_query(
+        meta.language.as_deref(),
+        query_lower,
+        canonical_query.as_str(),
+    ) {
+        score += 2;
+    }
+
+    // Search stays metadata-only, but multi-term queries can still rank rows by
+    // combined hits across the existing metadata fields.
+    if query_terms.len() > 1 {
+        let name_term_hits = query_terms
+            .iter()
+            .filter(|term| name_lower.contains(**term))
+            .count() as i32;
+        let tag_term_hits = query_terms
+            .iter()
+            .filter(|term| {
+                tag_lowers
+                    .iter()
+                    .any(|tag_lower| tag_lower.contains(**term))
+            })
+            .count() as i32;
+        let language_term_hit = meta
+            .language
+            .as_deref()
+            .map(|language| {
+                query_terms
+                    .iter()
+                    .any(|term| language_matches_query(Some(language), term, term))
+            })
+            .unwrap_or(false);
+
+        score += name_term_hits * 2;
+        score += tag_term_hits;
+        if language_term_hit {
+            score += 1;
+        }
+    }
+
+    score
+}
+
+fn split_meta_query_terms(query_lower: &str) -> Vec<&str> {
+    let mut terms = Vec::new();
+    for term in query_lower.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+    {
+        if term.len() < 2 || terms.contains(&term) {
+            continue;
+        }
+        terms.push(term);
+    }
+    terms
+}
+
+fn language_matches_query(
+    language: Option<&str>,
+    query_lower: &str,
+    canonical_query: &str,
+) -> bool {
+    language
         .map(|lang| {
             let language_lower = lang.to_lowercase();
             let canonical_language = crate::detection::canonical::canonicalize(lang);
@@ -161,10 +227,6 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
                     && (language_lower == canonical_query || canonical_language == canonical_query))
         })
         .unwrap_or(false)
-    {
-        score += 2;
-    }
-    score
 }
 
 /// Scores a full paste row for search ranking.
@@ -371,7 +433,8 @@ impl From<LegacyPaste> for Paste {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_update_request, reverse_timestamp_key, score_meta_match, LegacyPaste, Paste,
+        apply_update_request, reverse_timestamp_key, score_meta_match, split_meta_query_terms,
+        LegacyPaste, Paste,
     };
     use crate::models::paste::{PasteMeta, UpdatePasteRequest};
     use chrono::{TimeZone, Utc};
@@ -485,5 +548,17 @@ mod tests {
         assert_eq!(score_meta_match(&cs_meta, "csharp"), 2);
         assert_eq!(score_meta_match(&csharp_meta, "cs"), 2);
         assert_eq!(score_meta_match(&css_meta, "csharp"), 0);
+    }
+
+    #[test]
+    fn split_meta_query_terms_dedupes_and_skips_short_tokens() {
+        assert_eq!(
+            split_meta_query_terms(" cargo test  c c cargo "),
+            vec!["cargo", "test"]
+        );
+        assert_eq!(
+            split_meta_query_terms("docker-compose postgres"),
+            vec!["docker-compose", "postgres"]
+        );
     }
 }

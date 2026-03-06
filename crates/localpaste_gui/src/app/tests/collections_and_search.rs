@@ -827,3 +827,65 @@ fn smart_collections_match_time_and_content_facets() {
     assert_eq!(harness.app.pastes.len(), 1);
     assert_eq!(harness.app.pastes[0].id, "week-link");
 }
+
+#[test]
+fn smart_collections_use_command_suffix_and_url_heuristics() {
+    let mut harness = make_app();
+    let now = Utc::now();
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![
+            PasteSummary {
+                id: "code-command".to_string(),
+                name: "cargo test --workspace".to_string(),
+                language: None,
+                content_len: 30,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+            PasteSummary {
+                id: "config-compose".to_string(),
+                name: "docker-compose.override.yml".to_string(),
+                language: None,
+                content_len: 30,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+            PasteSummary {
+                id: "log-stderr".to_string(),
+                name: "panic.stderr".to_string(),
+                language: None,
+                content_len: 30,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+            PasteSummary {
+                id: "link-url".to_string(),
+                name: "https://example.com/docs".to_string(),
+                language: None,
+                content_len: 30,
+                updated_at: now,
+                folder_id: None,
+                tags: Vec::new(),
+            },
+        ],
+    });
+
+    harness.app.set_active_collection(SidebarCollection::Code);
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, "code-command");
+
+    harness.app.set_active_collection(SidebarCollection::Config);
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, "config-compose");
+
+    harness.app.set_active_collection(SidebarCollection::Logs);
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, "log-stderr");
+
+    harness.app.set_active_collection(SidebarCollection::Links);
+    assert_eq!(harness.app.pastes.len(), 1);
+    assert_eq!(harness.app.pastes[0].id, "link-url");
+}
