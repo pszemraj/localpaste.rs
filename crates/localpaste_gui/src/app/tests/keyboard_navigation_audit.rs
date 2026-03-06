@@ -450,6 +450,35 @@ fn select_all_follow_on_behaviors_match_editor_conventions() {
 }
 
 #[test]
+fn document_boundary_selection_preserves_anchor_when_reversing_direction() {
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "alpha\nbeta\ngamma", 400.0);
+    let ctx = egui::Context::default();
+
+    set_virtual_cursor_at(&mut harness.app, 1, 2);
+    let anchor = harness.app.virtual_editor_state.cursor();
+    let doc_end = harness.app.virtual_editor_buffer.len_chars();
+
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDocHome { select: true }]);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..anchor)
+    );
+
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDocEnd { select: true }]);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), doc_end);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(anchor..doc_end)
+    );
+}
+
+#[test]
 fn word_navigation_matrix_matches_expected_token_boundaries() {
     struct Case {
         text: &'static str,

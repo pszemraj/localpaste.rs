@@ -224,15 +224,12 @@ fn map_navigation_key(
             PlatformFlavor::Other => Some(VirtualInputCommand::MoveDown { select }),
         },
 
-        // --- Line boundaries (Home/End keys) ---
+        // --- Line/document boundaries ---
         egui::Key::Home => match platform {
-            PlatformFlavor::Mac => {
-                if modifiers.command {
-                    Some(VirtualInputCommand::MoveDocHome { select })
-                } else {
-                    Some(VirtualInputCommand::MoveLineHome { select })
-                }
-            }
+            // On macOS, physical Home/End (including Fn+Left/Fn+Right on compact
+            // keyboards) are document-boundary keys. Line-boundary movement stays
+            // on Cmd+Left/Cmd+Right.
+            PlatformFlavor::Mac => Some(VirtualInputCommand::MoveDocHome { select }),
             PlatformFlavor::Other => {
                 if modifiers.ctrl {
                     Some(VirtualInputCommand::MoveDocHome { select })
@@ -242,13 +239,7 @@ fn map_navigation_key(
             }
         },
         egui::Key::End => match platform {
-            PlatformFlavor::Mac => {
-                if modifiers.command {
-                    Some(VirtualInputCommand::MoveDocEnd { select })
-                } else {
-                    Some(VirtualInputCommand::MoveLineEnd { select })
-                }
-            }
+            PlatformFlavor::Mac => Some(VirtualInputCommand::MoveDocEnd { select }),
             PlatformFlavor::Other => {
                 if modifiers.ctrl {
                     Some(VirtualInputCommand::MoveDocEnd { select })
@@ -647,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_home_end_without_modifiers_as_line_moves() {
+    fn maps_home_end_without_modifiers_to_doc_moves_on_mac_and_line_moves_elsewhere() {
         let events = vec![
             key_event(egui::Key::Home, egui::Modifiers::default()),
             key_event(egui::Key::End, egui::Modifiers::default()),
@@ -656,8 +647,8 @@ mod tests {
         assert_eq!(
             mac_commands,
             vec![
-                VirtualInputCommand::MoveLineHome { select: false },
-                VirtualInputCommand::MoveLineEnd { select: false },
+                VirtualInputCommand::MoveDocHome { select: false },
+                VirtualInputCommand::MoveDocEnd { select: false },
             ]
         );
 
@@ -696,6 +687,34 @@ mod tests {
             vec![
                 VirtualInputCommand::MoveLineHome { select: true },
                 VirtualInputCommand::MoveLineEnd { select: true },
+            ]
+        );
+    }
+
+    #[test]
+    fn maps_shift_home_end_to_doc_selection_on_mac() {
+        let events = vec![
+            key_event(
+                egui::Key::Home,
+                egui::Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
+            key_event(
+                egui::Key::End,
+                egui::Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
+        ];
+        let commands = commands_from_events_for_platform(&events, true, PlatformFlavor::Mac);
+        assert_eq!(
+            commands,
+            vec![
+                VirtualInputCommand::MoveDocHome { select: true },
+                VirtualInputCommand::MoveDocEnd { select: true },
             ]
         );
     }

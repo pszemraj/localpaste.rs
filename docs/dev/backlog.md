@@ -27,6 +27,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Add low-cost semantic drift detection for `pastes_meta` rows (without full content deserialization in list/search hot paths), e.g. metadata hash/version marker validation at write/reconcile time.
 - [ ] Add persisted derived semantic metadata for paste retrieval (`kind` / compact handle / derived terms) with compatible `pastes_meta` evolution or rebuild, then use it for metadata-only search, smart filters, and richer sidebar metadata.
 - [ ] Split history-reset worker failures out from generic `CoreErrorSource::SaveContent` so reset-specific UI transitions and error reporting do not rely on shared save-content handling.
+- [ ] Evaluate code-editor-style smart Home behavior for the virtual editor (first non-whitespace <-> column 0) without regressing platform-native line/document key bindings.
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
