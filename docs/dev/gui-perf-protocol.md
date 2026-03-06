@@ -1,6 +1,5 @@
 # GUI Perf Test Protocol (Rewrite)
 
-This document defines the perf validation procedure for the rewrite GUI.
 Use this protocol for release-gate evidence and regression checks.
 
 ## Scope

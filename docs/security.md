@@ -1,12 +1,10 @@
 # Security Configuration
 
-Scope:
-
-- Security defaults, threat model, and security-relevant env toggles are defined here.
-- Storage/backend compatibility policy is documented in [storage.md](storage.md).
-- Service operation and lock-recovery procedures are documented in [deployment.md](deployment.md).
-- Detection/runtime-provider toggles (for example `MAGIKA_FORCE_CPU`) are documented in [language-detection.md](language-detection.md).
-- Build/run command matrices are documented in [dev/devlog.md](dev/devlog.md).
+Use this page for security defaults, exposure policy, and security-relevant env
+settings. Storage compatibility lives in [storage.md](storage.md), service
+operations in [deployment.md](deployment.md), runtime-provider toggles in
+[language-detection.md](language-detection.md), and build/run commands in
+[dev/devlog.md](dev/devlog.md).
 
 ---
 

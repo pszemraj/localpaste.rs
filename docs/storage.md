@@ -1,13 +1,14 @@
 # Storage Contract
 
-This document defines the storage and on-disk compatibility contract for LocalPaste.rs.
-
 ## Backend and File Layout
 
 - Storage backend: `redb` 3.x.
 - Database file: `DB_PATH/data.redb`.
 - Writer coordination lock file: `DB_PATH/db.owner.lock`.
 - Embedded GUI endpoint discovery file (GUI runtime only): `DB_PATH/.api-addr`.
+- `pastes_meta` is a derived projection used for list/search/filter work,
+  including derived retrieval metadata (`kind`, compact `handle`, top `terms`).
+  It is rebuilt from authoritative paste rows on startup.
 
 ## Compatibility Policy
 
@@ -31,9 +32,3 @@ This document defines the storage and on-disk compatibility contract for LocalPa
 - Do not run `localpaste-gui` and standalone `localpaste` concurrently on the same `DB_PATH`.
 - For isolated local testing, use distinct `DB_PATH` directories.
 
-## Related Docs
-
-- System architecture: [architecture.md](architecture.md)
-- Service operations: [deployment.md](deployment.md)
-- Lock semantics: [dev/locking-model.md](dev/locking-model.md)
-- Security posture: [security.md](security.md)

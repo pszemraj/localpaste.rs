@@ -1,11 +1,8 @@
 # Development Guide
 
-This guide covers the development workflow.
-Topic-specific ownership references are listed in
-[docs/README.md](../README.md).
-This guide includes the binary/build/run command matrix used in day-to-day development.
-System architecture context lives in
-[docs/architecture.md](../architecture.md).
+Use this page for the build, run, validation, and tooling command matrix.
+Runtime architecture lives in [../architecture.md](../architecture.md), and the
+broader docs map is [../README.md](../README.md).
 
 ## Workspace Layout
 
@@ -84,9 +81,7 @@ For repeatable GUI perf validation, see
 
 ## Validation Loop
 
-Policy reference:
-This document and linked `docs/dev/*` references define mandatory validation gates and when smoke/manual GUI checks are required.
-This section is the quick command reference used during active development.
+Use this loop when touching Rust/runtime behavior.
 
 ```bash
 # 1) format
@@ -230,30 +225,4 @@ used in automation/CI contracts.
 
 ## GUI Release Pipeline
 
-Release contract details:
-[docs/release-gui.md](../release-gui.md).
-
-Dev-facing quick links:
-
-- Release workflow: [`.github/workflows/release-gui.yml`](../../.github/workflows/release-gui.yml)
-- Packaging verification workflow: [`.github/workflows/verify-gui-packaging.yml`](../../.github/workflows/verify-gui-packaging.yml)
-- Packaging config roots:
-  - [`../../packaging/windows/packager.json`](../../packaging/windows/packager.json)
-  - [`../../packaging/linux/packager.json`](../../packaging/linux/packager.json)
-  - [`../../packaging/macos/packager.json`](../../packaging/macos/packager.json)
-
-Release workflows intentionally keep validation scoped to packaging/runtime gates rather than running the full local development loop.
-
-## Behavior Contracts
-
-This file is intentionally command/workflow-focused. For runtime behavior contracts, use:
-
-- System/runtime architecture: [docs/architecture.md](../architecture.md)
-- Security defaults and env policy: [docs/security.md](../security.md)
-- Service operation and lock recovery: [docs/deployment.md](../deployment.md)
-- Lock semantics and API `423 Locked` behavior: [docs/dev/locking-model.md](locking-model.md)
-- Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md)
-- API wiring + handler behavior in code:
-  - [`../../crates/localpaste_server/src/lib.rs`](../../crates/localpaste_server/src/lib.rs)
-  - [`../../crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs)
-- Engineering backlog: [docs/dev/backlog.md](backlog.md)
+Packaging/release behavior lives in [../release-gui.md](../release-gui.md).

@@ -1,8 +1,5 @@
 # Language Detection And Highlighting
 
-This document describes language detection, normalization, and syntax
-highlighting behavior in LocalPaste.
-
 Implementation roots:
 
 - Core detection entrypoint: [`../crates/localpaste_core/src/detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs)
@@ -106,10 +103,6 @@ Examples covered by the resolver tests include:
 
 - fallback-to-grammar labels (for example: `typescript`, `powershell`, `sass`)
 - metadata-only/plain-render labels (for example: `zig`, `kotlin`, `dart`)
-
-> [!NOTE]
-> Keep docs aligned with code/tests to avoid drift.
-> Metadata-only labels remain useful for search/filtering even when rendering is plain text.
 
 ## Virtual Editor Async Highlight Flow
 

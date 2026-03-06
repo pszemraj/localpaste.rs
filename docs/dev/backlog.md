@@ -1,6 +1,4 @@
 # Engineering Backlog
-
-This file tracks deferred technical follow-ups.
 Status uses the same checklist markers as other dev docs:
 
 - [ ] not started

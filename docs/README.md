@@ -11,7 +11,7 @@
 | Service operations and lock recovery | [deployment.md](deployment.md) |
 | Detection, normalization, and highlighting | [language-detection.md](language-detection.md) |
 | Lock semantics (`db.owner.lock`, paste edit locks, API `423`) | [dev/locking-model.md](dev/locking-model.md) |
-| Version history and diff API surfaces | [architecture.md#5-read-and-write-paths](architecture.md#5-read-and-write-paths) |
+| Version history, diff, and metadata retrieval/search path | [architecture.md#5-read-and-write-paths](architecture.md#5-read-and-write-paths) |
 | GUI runtime flags and interaction behavior | [dev/gui-notes.md](dev/gui-notes.md) |
 | GUI perf protocol and thresholds | [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md) |
 | Build/run/validation workflow | [dev/devlog.md](dev/devlog.md) |

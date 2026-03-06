@@ -1,8 +1,6 @@
 # GUI Release Pipeline
 
-This document defines release pipeline behavior for GUI packaging and publication.
-
-Primary implementation:
+Workflow and helper-script entrypoints:
 
 - [`.github/workflows/release-gui.yml`](../.github/workflows/release-gui.yml)
 - [`.github/workflows/verify-gui-packaging.yml`](../.github/workflows/verify-gui-packaging.yml)
@@ -13,7 +11,7 @@ Primary implementation:
 
 `release-gui.yml` supports two source modes:
 
-- `release_tag`: package from an existing `v*` tag and publish assets.
+- `release_tag`: package from an existing stable tag/version.
 - `current_ref`: package from the current commit for verification; publish job is skipped.
 
 Manual `workflow_dispatch` defaults to the safe verification path:
@@ -24,6 +22,9 @@ Manual `workflow_dispatch` defaults to the safe verification path:
 To publish from a manual run, the operator must explicitly choose `release_tag`,
 provide a stable release tag/version (`vX.Y.Z` or `X.Y.Z`), and set `dry_run`
 to `false`.
+
+`release_tag` publishes on tag-triggered runs and on manual runs where
+`dry_run` is `false`.
 
 `release_tag` gates:
 
@@ -61,8 +62,6 @@ Release/packaging workflows enforce these baseline controls:
 - Immutable action pinning (`uses:` entries pinned to commit SHAs) for release-critical jobs.
 - Deterministic source checkout for packaging jobs via resolved `SOURCE_REF` (no selective tree overlay from a different ref).
 - Windows WiX toolchain pinning (`3.14.1`) plus major-version assertion in `release_gui_prepare.py`.
-
-These controls are part of the release contract and should be preserved when editing release workflows.
 
 ## macOS Signing And Notarization
 

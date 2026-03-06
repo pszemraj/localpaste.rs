@@ -52,6 +52,7 @@ Navigation/selection contract:
 - Language display behavior is explicit: auto + unset -> `auto`; manual + unset -> `plain`.
 - Rename/title edits commit on `Enter` and on title-field blur.
 - Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
+- Properties drawer is non-modal; opening it does not disable virtual-editor typing, caret movement, or editor shortcuts.
 - Folder create/edit/move controls are intentionally removed from the rewrite GUI; organization is smart-filter + search based.
 
 ## Diff And History Workflows
@@ -65,6 +66,10 @@ Navigation/selection contract:
   - `Current working copy` is index `0`,
   - stored snapshots are older-only entries,
   - reset restores the selected snapshot and then prunes that snapshot and newer entries from stored history.
+- History, Diff, and reset-confirm windows fence background mutations:
+  - create/delete/save/paste-as-new shortcuts are blocked while a version window is open,
+  - the selected paste stays pinned during a queued hard reset,
+  - the selected paste is temporarily read-only until reset success/error arrives.
 - Reset and snapshot loading clear their in-flight UI state on backend errors so modal actions cannot get stuck.
 
 ## Language/Highlight QA (Magika + Fallback)
