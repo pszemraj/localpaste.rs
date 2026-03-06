@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import tarfile
 import zipfile
 from pathlib import Path
+
+RELEASE_TAG_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 
 def fail(message: str) -> None:
@@ -154,13 +157,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    tag = args.tag.strip()
+def normalize_release_tag(raw_tag: str) -> str:
+    tag = raw_tag.strip()
     if not tag:
         fail("release tag cannot be empty")
-    if not tag.startswith("v"):
-        fail(f"release tag must start with 'v' (got: {tag})")
+
+    normalized_version = tag
+    if normalized_version[:1] in {"v", "V"}:
+        normalized_version = normalized_version[1:]
+
+    if not RELEASE_TAG_RE.fullmatch(normalized_version):
+        fail(
+            "release tag/version must match stable vX.Y.Z or X.Y.Z format "
+            f"(got: {raw_tag})"
+        )
+
+    return f"v{normalized_version}"
+
+
+def main() -> int:
+    args = parse_args()
+    tag = normalize_release_tag(args.tag)
 
     runner_os = args.runner_os.strip()
     asset_suffix = args.asset_suffix.strip()

@@ -16,6 +16,15 @@ Primary implementation:
 - `release_tag`: package from an existing `v*` tag and publish assets.
 - `current_ref`: package from the current commit for verification; publish job is skipped.
 
+Manual `workflow_dispatch` defaults to the safe verification path:
+
+- `source_mode: current_ref`
+- `dry_run: true`
+
+To publish from a manual run, the operator must explicitly choose `release_tag`,
+provide a stable release tag/version (`vX.Y.Z` or `X.Y.Z`), and set `dry_run`
+to `false`.
+
 `release_tag` gates:
 
 - tag format/existence validation,

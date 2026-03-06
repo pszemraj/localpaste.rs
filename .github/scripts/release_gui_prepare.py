@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 from typing import Iterable, Sequence
 
+RELEASE_TAG_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+
 
 def fail(message: str) -> None:
     print(message, file=sys.stderr)
@@ -215,18 +217,29 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def normalize_release_tag(raw_tag: str) -> str:
+    tag = raw_tag.strip()
+    if not tag:
+        fail("release tag cannot be empty")
+
+    normalized_version = tag
+    if normalized_version[:1] in {"v", "V"}:
+        normalized_version = normalized_version[1:]
+
+    if not RELEASE_TAG_RE.fullmatch(normalized_version):
+        fail(
+            "release tag/version must match stable vX.Y.Z or X.Y.Z format "
+            f"(got: {raw_tag})"
+        )
+
+    return f"v{normalized_version}"
+
+
 def main() -> int:
     args = parse_args()
 
-    tag = args.tag.strip()
-    if not tag:
-        fail("release tag cannot be empty")
-    if not tag.startswith("v"):
-        fail(f"release tag must start with 'v' (got: {tag})")
-
+    tag = normalize_release_tag(args.tag)
     version = tag[1:]
-    if not version:
-        fail(f"release tag is missing semantic version segment: {tag}")
 
     runner_os = args.runner_os.strip()
     source_config = Path(args.packager_config)
