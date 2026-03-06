@@ -162,6 +162,8 @@ impl LocalPasteApp {
                         right.horizontal_wrapped(|ui| {
                             let can_act_on_snapshot = self.version_ui.history_selected_index > 0
                                 && self.version_ui.history_snapshot.is_some();
+                            let can_open_reset_confirm =
+                                can_act_on_snapshot && self.can_queue_history_reset();
                             if ui
                                 .add_enabled(
                                     can_act_on_snapshot,
@@ -173,12 +175,19 @@ impl LocalPasteApp {
                             }
                             if ui
                                 .add_enabled(
-                                    can_act_on_snapshot && !self.version_ui.history_reset_in_flight,
+                                    can_open_reset_confirm,
                                     egui::Button::new("Reset Current Paste to This Version"),
                                 )
                                 .clicked()
                             {
                                 pending_open_reset_confirm = true;
+                            }
+                            if can_act_on_snapshot && !self.can_queue_history_reset() {
+                                ui.label(
+                                    RichText::new("Save current changes before hard reset.")
+                                        .small()
+                                        .color(COLOR_TEXT_MUTED),
+                                );
                             }
                         });
                     });
@@ -195,19 +204,19 @@ impl LocalPasteApp {
             self.duplicate_selected_history_version();
         }
         if pending_open_reset_confirm {
-            self.version_ui.history_reset_confirm_open = true;
+            self.open_history_reset_confirm();
         }
         if close_history_on_escape {
             keep_open = false;
         }
         if !keep_open {
             self.version_ui.history_modal_open = false;
-            self.version_ui.history_reset_confirm_open = false;
+            self.version_ui.clear_history_reset_confirm();
         }
 
         if self.version_ui.history_reset_confirm_open {
             if close_confirm_on_escape {
-                self.version_ui.history_reset_confirm_open = false;
+                self.version_ui.clear_history_reset_confirm();
             }
             let mut confirm_open = self.version_ui.history_reset_confirm_open;
             with_muted_modal_chrome(ctx, || {
@@ -217,25 +226,42 @@ impl LocalPasteApp {
                     .open(&mut confirm_open)
                     .show(ctx, |ui| {
                         ui.label(
-                            "Reset current paste to this snapshot? This discards newer history and any unsaved local edits.",
+                            "Reset current paste to this snapshot? This discards newer history.",
                         );
+                        if !self.can_queue_history_reset() {
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(
+                                    "Reset is unavailable while local changes are unsaved or saving.",
+                                )
+                                .small()
+                                .color(COLOR_TEXT_MUTED),
+                            );
+                        }
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             if ui.button("Cancel").clicked() {
-                                self.version_ui.history_reset_confirm_open = false;
+                                self.version_ui.clear_history_reset_confirm();
                             }
-                            if ui.button("Reset --hard").clicked() {
+                            if ui
+                                .add_enabled(
+                                    self.can_queue_history_reset(),
+                                    egui::Button::new("Reset --hard"),
+                                )
+                                .clicked()
+                            {
                                 self.reset_selected_history_version();
                             }
                         });
                     });
             });
-            self.version_ui.history_reset_confirm_open =
-                confirm_open && self.version_ui.history_reset_confirm_open;
+            if !(confirm_open && self.version_ui.history_reset_confirm_open) {
+                self.version_ui.clear_history_reset_confirm();
+            }
         }
 
         if !self.version_ui.history_modal_open {
-            self.version_ui.history_reset_confirm_open = false;
+            self.version_ui.clear_history_reset_confirm();
             self.version_ui.history_loading_snapshot_id = None;
             self.version_ui.history_snapshot = None;
             self.version_ui.history_selected_index = 0;
@@ -243,7 +269,7 @@ impl LocalPasteApp {
 
         if self.selected_id.as_deref() != Some(selected_id.as_str()) {
             self.version_ui.history_modal_open = false;
-            self.version_ui.history_reset_confirm_open = false;
+            self.version_ui.clear_history_reset_confirm();
         }
     }
 }

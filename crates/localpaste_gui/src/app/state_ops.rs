@@ -91,23 +91,42 @@ impl LocalPasteApp {
                 }
             }
             CoreEvent::PasteCreated { paste } => {
-                let summary = PasteSummary::from_paste(&paste);
-                self.all_pastes.insert(0, summary.clone());
-                self.pastes.insert(0, summary);
+                let paste_id = paste.id.clone();
+                let search_active = !self.search_query.trim().is_empty();
+                // `all_pastes` is authoritative; `pastes` must stay a derived projection.
+                self.upsert_cached_paste_summary(&paste);
+                if search_active {
+                    self.search_last_sent.clear();
+                    self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+                } else {
+                    self.recompute_visible_pastes();
+                }
+                let paste_visible =
+                    !search_active && self.pastes.iter().any(|item| item.id == paste_id);
                 let has_unsaved_edits =
                     self.save_status == SaveStatus::Dirty || self.metadata_dirty;
                 let save_in_progress = self.save_in_flight
                     || self.metadata_save_in_flight
                     || self.save_status == SaveStatus::Saving;
-                if has_unsaved_edits || save_in_progress {
+                if paste_visible && (has_unsaved_edits || save_in_progress) {
                     // Keep current editor/save state untouched when switching is deferred.
-                    self.select_paste(paste.id.clone());
+                    self.select_paste(paste_id);
                     return;
                 }
-                self.select_loaded_paste(paste);
-                self.pending_selection_id = None;
-                self.focus_editor_next = true;
-                self.set_status("Created new paste.");
+                if paste_visible && !has_unsaved_edits && !save_in_progress {
+                    self.select_loaded_paste(paste);
+                    self.pending_selection_id = None;
+                    self.focus_editor_next = true;
+                    self.set_status("Created new paste.");
+                    return;
+                }
+                self.ensure_selection_after_list_update();
+                let status = if search_active {
+                    "Created new paste; refreshing search results."
+                } else {
+                    "Created new paste; current filters keep it hidden."
+                };
+                self.set_status(status);
             }
             CoreEvent::PasteSaved { paste } => {
                 let paste_id = paste.id.clone();
@@ -379,7 +398,6 @@ impl LocalPasteApp {
     }
 
     /// Builds sorted language filter options from the currently known paste summaries.
-    ///
     /// # Returns
     /// Canonicalized language values in ascending sort order.
     pub(super) fn language_filter_options(&self) -> Vec<String> {
@@ -497,9 +515,8 @@ impl LocalPasteApp {
     }
 
     /// Selects a paste by id, deferring selection when unsaved edits must be flushed first.
-    ///
     /// # Returns
-    /// `true` when selection was applied or successfully deferred, `false` on dispatch failure.
+    /// `true` when selection was applied or successfully deferred, otherwise `false`.
     pub(super) fn select_paste(&mut self, id: String) -> bool {
         if self.selected_id.as_deref() == Some(id.as_str()) {
             return true;
@@ -669,7 +686,6 @@ impl LocalPasteApp {
     }
 
     /// Sends a delete command for `id` and reports whether dispatch succeeded.
-    ///
     /// # Returns
     /// `true` when the backend command was queued, otherwise `false`.
     pub(super) fn send_delete_paste(&mut self, id: String) -> bool {
@@ -798,8 +814,7 @@ impl LocalPasteApp {
         self.set_status("Export started...");
     }
 
-    /// Returns the visible-list index of the selected paste.
-    ///
+    /// Returns the visible-list index of the selected paste, if visible.
     /// # Returns
     /// `Some(index)` when the selected paste is visible, otherwise `None`.
     pub(super) fn selected_index(&self) -> Option<usize> {
@@ -849,7 +864,6 @@ impl LocalPasteApp {
     }
 
     /// Filters sidebar summaries through the active collection/language state.
-    ///
     /// # Returns
     /// Visible sidebar rows preserving the input ordering of `items`.
     pub(super) fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {

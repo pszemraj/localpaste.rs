@@ -654,3 +654,108 @@ fn reset_to_version_reprojects_sidebar_filters_without_search_query() {
         other => panic!("expected GetPaste command, got {:?}", other),
     }
 }
+
+#[test]
+fn history_reset_confirm_keeps_original_target_after_selection_changes() {
+    let mut harness = make_app();
+    let version = |version_id_ms| localpaste_core::models::paste::VersionMeta {
+        version_id_ms,
+        created_at: chrono::Utc::now(),
+        content_hash: format!("hash-{version_id_ms}"),
+        len: 4,
+        language: None,
+        language_is_manual: false,
+    };
+    harness.app.version_ui.history_versions = vec![version(41), version(42)];
+    harness.app.version_ui.history_selected_index = 1;
+
+    harness.app.open_history_reset_confirm();
+    assert_eq!(
+        harness.app.version_ui.history_reset_confirm_target,
+        Some(41)
+    );
+
+    harness.app.version_ui.history_selected_index = 2;
+    harness.app.reset_selected_history_version();
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::ResetPasteHardToVersion { id, version_id_ms } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(version_id_ms, 41);
+        }
+        other => panic!("expected ResetPasteHardToVersion command, got {:?}", other),
+    }
+    assert!(harness.app.version_ui.history_reset_in_flight);
+    assert!(harness
+        .app
+        .version_ui
+        .history_reset_confirm_target
+        .is_none());
+}
+
+#[test]
+fn history_reset_is_blocked_while_local_changes_are_unsaved_or_saving_matrix() {
+    #[derive(Clone, Copy)]
+    enum ResetBlockCase {
+        ContentDirty,
+        ContentSaving,
+        MetadataDirty,
+        MetadataSaving,
+    }
+
+    for case in [
+        ResetBlockCase::ContentDirty,
+        ResetBlockCase::ContentSaving,
+        ResetBlockCase::MetadataDirty,
+        ResetBlockCase::MetadataSaving,
+    ] {
+        let mut harness = make_app();
+        harness.app.version_ui.history_versions =
+            vec![localpaste_core::models::paste::VersionMeta {
+                version_id_ms: 42,
+                created_at: chrono::Utc::now(),
+                content_hash: "hash".to_string(),
+                len: 4,
+                language: None,
+                language_is_manual: false,
+            }];
+        harness.app.version_ui.history_selected_index = 1;
+        harness.app.open_history_reset_confirm();
+
+        match case {
+            ResetBlockCase::ContentDirty => {
+                harness.app.save_status = SaveStatus::Dirty;
+            }
+            ResetBlockCase::ContentSaving => {
+                harness.app.save_status = SaveStatus::Saving;
+                harness.app.save_in_flight = true;
+            }
+            ResetBlockCase::MetadataDirty => {
+                harness.app.metadata_dirty = true;
+            }
+            ResetBlockCase::MetadataSaving => {
+                harness.app.metadata_save_in_flight = true;
+            }
+        }
+
+        harness.app.reset_selected_history_version();
+
+        assert!(!harness.app.version_ui.history_reset_in_flight);
+        assert_eq!(
+            harness.app.version_ui.history_reset_confirm_target,
+            Some(42)
+        );
+        assert_eq!(
+            harness
+                .app
+                .status
+                .as_ref()
+                .map(|status| status.text.as_str()),
+            Some("Reset is disabled while local changes are unsaved or saving.")
+        );
+        assert!(matches!(
+            harness.cmd_rx.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
+    }
+}

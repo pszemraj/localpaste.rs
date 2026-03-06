@@ -1,6 +1,6 @@
 //! Version-history and diff modal state/helpers for the editor panel.
 
-use super::LocalPasteApp;
+use super::{LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE};
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use eframe::egui;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
@@ -18,6 +18,7 @@ pub(crate) struct VersionUiState {
     pub(super) history_snapshot: Option<VersionSnapshot>,
     pub(super) history_loading_snapshot_id: Option<u64>,
     pub(super) history_reset_confirm_open: bool,
+    pub(super) history_reset_confirm_target: Option<u64>,
     pub(super) history_reset_in_flight: bool,
     pub(super) diff_modal_open: bool,
     pub(super) diff_query: String,
@@ -27,6 +28,12 @@ pub(crate) struct VersionUiState {
 }
 
 impl VersionUiState {
+    /// Clears any open reset-confirm dialog state and captured target version id.
+    pub(super) fn clear_history_reset_confirm(&mut self) {
+        self.history_reset_confirm_open = false;
+        self.history_reset_confirm_target = None;
+    }
+
     fn clear_history_snapshot_state(&mut self) {
         self.history_snapshot = None;
         self.history_loading_snapshot_id = None;
@@ -37,7 +44,7 @@ impl VersionUiState {
         self.history_versions.clear();
         self.history_selected_index = 0;
         self.clear_history_snapshot_state();
-        self.history_reset_confirm_open = false;
+        self.clear_history_reset_confirm();
         self.history_reset_in_flight = false;
     }
 
@@ -172,29 +179,54 @@ impl LocalPasteApp {
         self.set_status("Duplicating historical version...");
     }
 
-    /// Requests backend reset to the selected historical snapshot.
-    pub(super) fn reset_selected_history_version(&mut self) {
-        let Some(id) = self.selected_id.clone() else {
+    /// Reports whether hard reset can run without racing unsaved or in-flight local saves.
+    /// # Returns
+    /// `true` when content and metadata state are both clean and no reset is in flight.
+    pub(super) fn can_queue_history_reset(&self) -> bool {
+        !self.version_ui.history_reset_in_flight
+            && self.save_status == SaveStatus::Saved
+            && !self.save_in_flight
+            && !self.metadata_dirty
+            && !self.metadata_save_in_flight
+    }
+
+    /// Captures the currently selected history row as the immutable reset-confirm target.
+    pub(super) fn open_history_reset_confirm(&mut self) {
+        // Destructive confirmation must bind to immutable intent, not live selection.
+        let target = self.selected_history_meta().map(|meta| meta.version_id_ms);
+        self.version_ui.history_reset_confirm_target = target;
+        self.version_ui.history_reset_confirm_open = target.is_some();
+    }
+
+    /// Requests backend reset to a specific confirmed historical snapshot.
+    fn reset_history_version_by_id(&mut self, version_id_ms: u64) {
+        if !self.can_queue_history_reset() {
+            self.set_status("Reset is disabled while local changes are unsaved or saving.");
             return;
-        };
-        let Some(meta) = self.selected_history_meta() else {
+        }
+        let Some(id) = self.selected_id.clone() else {
             return;
         };
         if self
             .backend
             .cmd_tx
-            .send(CoreCmd::ResetPasteHardToVersion {
-                id,
-                version_id_ms: meta.version_id_ms,
-            })
+            .send(CoreCmd::ResetPasteHardToVersion { id, version_id_ms })
             .is_err()
         {
             self.set_status("Reset hard failed: backend unavailable.");
             return;
         }
         self.version_ui.history_reset_in_flight = true;
-        self.version_ui.history_reset_confirm_open = false;
+        self.version_ui.clear_history_reset_confirm();
         self.set_status("Resetting paste to selected version...");
+    }
+
+    /// Requests backend reset to the confirmed historical snapshot.
+    pub(super) fn reset_selected_history_version(&mut self) {
+        let Some(version_id_ms) = self.version_ui.history_reset_confirm_target else {
+            return;
+        };
+        self.reset_history_version_by_id(version_id_ms);
     }
 
     /// Side-loads a paste for diff comparison without changing active selection.
@@ -266,6 +298,16 @@ impl LocalPasteApp {
                 let selected_version_id =
                     self.selected_history_meta().map(|meta| meta.version_id_ms);
                 self.version_ui.history_versions = items.clone();
+                if let Some(target) = self.version_ui.history_reset_confirm_target {
+                    let target_still_available = self
+                        .version_ui
+                        .history_versions
+                        .iter()
+                        .any(|meta| meta.version_id_ms == target);
+                    if !target_still_available {
+                        self.version_ui.clear_history_reset_confirm();
+                    }
+                }
                 match selected_version_id {
                     Some(version_id_ms) => {
                         if let Some(index) = self
@@ -314,7 +356,7 @@ impl LocalPasteApp {
                     // Reset can change search inclusion/ranking (content/language/updated_at),
                     // so force a fresh backend search even when query text is unchanged.
                     self.search_last_sent.clear();
-                    self.search_last_input_at = Some(Instant::now() - super::SEARCH_DEBOUNCE);
+                    self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 } else {
                     // Reset mutates metadata that drives smart collections and language
                     // filters, so the visible sidebar projection must be recomputed
