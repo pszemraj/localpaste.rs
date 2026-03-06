@@ -70,6 +70,14 @@ impl VersionUiState {
 }
 
 impl LocalPasteApp {
+    fn ensure_selected_paste_for_version_modal(&mut self) -> bool {
+        if self.selected_id.is_some() {
+            return true;
+        }
+        self.set_status("Nothing selected.");
+        false
+    }
+
     /// Clears all version/diff modal state.
     pub(super) fn clear_version_view_state(&mut self) {
         self.version_ui.clear_all();
@@ -102,8 +110,7 @@ impl LocalPasteApp {
 
     /// Opens the history modal for the currently selected paste.
     pub(super) fn open_history_modal(&mut self) {
-        if self.selected_id.is_none() {
-            self.set_status("Nothing selected.");
+        if !self.ensure_selected_paste_for_version_modal() {
             return;
         }
         self.version_ui.history_modal_open = true;
@@ -113,8 +120,7 @@ impl LocalPasteApp {
 
     /// Opens the diff modal for the currently selected paste.
     pub(super) fn open_diff_modal(&mut self) {
-        if self.selected_id.is_none() {
-            self.set_status("Nothing selected.");
+        if !self.ensure_selected_paste_for_version_modal() {
             return;
         }
         self.version_ui.diff_modal_open = true;

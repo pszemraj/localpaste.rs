@@ -637,61 +637,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn maps_word_delete_variants_by_platform() {
-        let non_mac_events = vec![
-            key_event(
-                egui::Key::Backspace,
-                egui::Modifiers {
-                    ctrl: true,
-                    command: true,
-                    ..Default::default()
-                },
-            ),
-            key_event(
-                egui::Key::Delete,
-                egui::Modifiers {
-                    ctrl: true,
-                    command: true,
-                    ..Default::default()
-                },
-            ),
-        ];
-        let non_mac_commands =
-            commands_from_events_for_platform(&non_mac_events, true, PlatformFlavor::Other);
-        assert_eq!(
-            non_mac_commands,
-            vec![
-                VirtualInputCommand::Backspace { word: true },
-                VirtualInputCommand::DeleteForward { word: true },
-            ]
-        );
-
-        let mac_events = vec![
-            key_event(
-                egui::Key::Backspace,
-                egui::Modifiers {
-                    alt: true,
-                    ..Default::default()
-                },
-            ),
-            key_event(
-                egui::Key::Delete,
-                egui::Modifiers {
-                    alt: true,
-                    ..Default::default()
-                },
-            ),
-        ];
-        let mac_commands =
-            commands_from_events_for_platform(&mac_events, true, PlatformFlavor::Mac);
-        assert_eq!(
-            mac_commands,
-            vec![
-                VirtualInputCommand::Backspace { word: true },
-                VirtualInputCommand::DeleteForward { word: true },
-            ]
-        );
+    fn assert_platform_commands_matrix(
+        cases: &[(Vec<egui::Event>, PlatformFlavor, Vec<VirtualInputCommand>)],
+    ) {
+        for (events, platform, expected) in cases {
+            let commands = commands_from_events_for_platform(events, true, *platform);
+            assert_eq!(commands, *expected);
+        }
     }
 
     #[test]
@@ -905,59 +857,105 @@ mod tests {
     }
 
     #[test]
-    fn maps_shift_vertical_selection_variants_for_each_platform() {
-        let non_mac_events = vec![
-            key_event(
-                egui::Key::ArrowUp,
-                egui::Modifiers {
-                    shift: true,
-                    ..Default::default()
-                },
+    fn platform_specific_word_delete_and_vertical_selection_mappings() {
+        let cases = vec![
+            (
+                vec![
+                    key_event(
+                        egui::Key::Backspace,
+                        egui::Modifiers {
+                            ctrl: true,
+                            command: true,
+                            ..Default::default()
+                        },
+                    ),
+                    key_event(
+                        egui::Key::Delete,
+                        egui::Modifiers {
+                            ctrl: true,
+                            command: true,
+                            ..Default::default()
+                        },
+                    ),
+                ],
+                PlatformFlavor::Other,
+                vec![
+                    VirtualInputCommand::Backspace { word: true },
+                    VirtualInputCommand::DeleteForward { word: true },
+                ],
             ),
-            key_event(
-                egui::Key::ArrowDown,
-                egui::Modifiers {
-                    shift: true,
-                    ..Default::default()
-                },
+            (
+                vec![
+                    key_event(
+                        egui::Key::Backspace,
+                        egui::Modifiers {
+                            alt: true,
+                            ..Default::default()
+                        },
+                    ),
+                    key_event(
+                        egui::Key::Delete,
+                        egui::Modifiers {
+                            alt: true,
+                            ..Default::default()
+                        },
+                    ),
+                ],
+                PlatformFlavor::Mac,
+                vec![
+                    VirtualInputCommand::Backspace { word: true },
+                    VirtualInputCommand::DeleteForward { word: true },
+                ],
+            ),
+            (
+                vec![
+                    key_event(
+                        egui::Key::ArrowUp,
+                        egui::Modifiers {
+                            shift: true,
+                            ..Default::default()
+                        },
+                    ),
+                    key_event(
+                        egui::Key::ArrowDown,
+                        egui::Modifiers {
+                            shift: true,
+                            ..Default::default()
+                        },
+                    ),
+                ],
+                PlatformFlavor::Other,
+                vec![
+                    VirtualInputCommand::MoveUp { select: true },
+                    VirtualInputCommand::MoveDown { select: true },
+                ],
+            ),
+            (
+                vec![
+                    key_event(
+                        egui::Key::ArrowUp,
+                        egui::Modifiers {
+                            command: true,
+                            shift: true,
+                            ..Default::default()
+                        },
+                    ),
+                    key_event(
+                        egui::Key::ArrowDown,
+                        egui::Modifiers {
+                            shift: true,
+                            ..Default::default()
+                        },
+                    ),
+                ],
+                PlatformFlavor::Mac,
+                vec![
+                    VirtualInputCommand::MoveDocHome { select: true },
+                    VirtualInputCommand::MoveDown { select: true },
+                ],
             ),
         ];
-        let non_mac_commands =
-            commands_from_events_for_platform(&non_mac_events, true, PlatformFlavor::Other);
-        assert_eq!(
-            non_mac_commands,
-            vec![
-                VirtualInputCommand::MoveUp { select: true },
-                VirtualInputCommand::MoveDown { select: true },
-            ]
-        );
-
-        let mac_events = vec![
-            key_event(
-                egui::Key::ArrowUp,
-                egui::Modifiers {
-                    command: true,
-                    shift: true,
-                    ..Default::default()
-                },
-            ),
-            key_event(
-                egui::Key::ArrowDown,
-                egui::Modifiers {
-                    shift: true,
-                    ..Default::default()
-                },
-            ),
-        ];
-        let mac_commands =
-            commands_from_events_for_platform(&mac_events, true, PlatformFlavor::Mac);
-        assert_eq!(
-            mac_commands,
-            vec![
-                VirtualInputCommand::MoveDocHome { select: true },
-                VirtualInputCommand::MoveDown { select: true },
-            ]
-        );
+        assert_platform_commands_matrix(cases.as_slice());
     }
 
     #[test]

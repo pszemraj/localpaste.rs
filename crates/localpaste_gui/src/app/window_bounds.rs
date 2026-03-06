@@ -93,31 +93,38 @@ mod tests {
     use super::clamped_size_for_texture_limit;
     use eframe::egui;
 
-    #[test]
-    fn no_clamp_when_within_texture_bounds() {
-        let current = egui::vec2(1000.0, 700.0);
-        let min = egui::vec2(900.0, 600.0);
+    fn assert_clamp_case(
+        current: egui::Vec2,
+        pixels_per_point: f32,
+        min: egui::Vec2,
+        max_dimension_px: f32,
+        expected: Option<egui::Vec2>,
+    ) {
         assert_eq!(
-            clamped_size_for_texture_limit(current, 1.0, min, 8192.0),
-            None
+            clamped_size_for_texture_limit(current, pixels_per_point, min, max_dimension_px),
+            expected
         );
     }
 
     #[test]
-    fn clamps_to_texture_bounds_in_points() {
-        let current = egui::vec2(9360.0, 6166.0);
+    fn no_clamp_when_within_texture_bounds() {
         let min = egui::vec2(900.0, 600.0);
-        let clamped =
-            clamped_size_for_texture_limit(current, 1.0, min, 8192.0).expect("expected clamp");
-        assert_eq!(clamped, egui::vec2(8192.0, 6166.0));
-    }
+        let cases = [
+            (egui::vec2(1000.0, 700.0), 1.0, None),
+            (
+                egui::vec2(9360.0, 6166.0),
+                1.0,
+                Some(egui::vec2(8192.0, 6166.0)),
+            ),
+            (
+                egui::vec2(5000.0, 5000.0),
+                2.0,
+                Some(egui::vec2(4096.0, 4096.0)),
+            ),
+        ];
 
-    #[test]
-    fn clamps_using_pixels_per_point_scaling() {
-        let current = egui::vec2(5000.0, 5000.0);
-        let min = egui::vec2(900.0, 600.0);
-        let clamped =
-            clamped_size_for_texture_limit(current, 2.0, min, 8192.0).expect("expected clamp");
-        assert_eq!(clamped, egui::vec2(4096.0, 4096.0));
+        for (current, pixels_per_point, expected) in cases {
+            assert_clamp_case(current, pixels_per_point, min, 8192.0, expected);
+        }
     }
 }

@@ -296,25 +296,31 @@ mod tests {
     use eframe::egui;
 
     #[test]
-    fn sidebar_row_text_layout_preserves_left_title_and_right_language_columns() {
-        let row_rect = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(300.0, 28.0));
-        let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0);
+    fn sidebar_row_text_layout_matrix() {
+        let cases = [
+            (
+                egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(300.0, 28.0)),
+                18.0,
+                Some(302.0),
+            ),
+            (
+                egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(80.0, 28.0)),
+                8.0,
+                Some(72.0),
+            ),
+        ];
 
-        assert!((title_rect.left() - 18.0).abs() < f32::EPSILON);
-        assert!((lang_rect.right() - 302.0).abs() < f32::EPSILON);
-        assert!(title_rect.right() <= lang_rect.left());
-        assert!(title_rect.width() > 0.0);
-        assert!(lang_rect.width() > 0.0);
-    }
+        for (row_rect, expected_title_left, expected_lang_right) in cases {
+            let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0);
 
-    #[test]
-    fn sidebar_row_text_layout_clamps_when_sidebar_is_very_narrow() {
-        let row_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(80.0, 28.0));
-        let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0);
-
-        assert!((title_rect.left() - 8.0).abs() < f32::EPSILON);
-        assert!(title_rect.width() >= 0.0);
-        assert!(lang_rect.left() >= title_rect.left());
-        assert!(lang_rect.right() <= 72.0);
+            assert!((title_rect.left() - expected_title_left).abs() < f32::EPSILON);
+            assert!(title_rect.width() >= 0.0);
+            assert!(lang_rect.left() >= title_rect.left());
+            assert!(title_rect.right() <= lang_rect.left());
+            assert!(lang_rect.width() > 0.0);
+            if let Some(expected_lang_right) = expected_lang_right {
+                assert!((lang_rect.right() - expected_lang_right).abs() < f32::EPSILON);
+            }
+        }
     }
 }

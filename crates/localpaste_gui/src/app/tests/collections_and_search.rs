@@ -2,6 +2,28 @@
 
 use super::*;
 
+fn apply_paste_list(harness: &mut TestHarness, items: Vec<PasteSummary>) {
+    harness.app.apply_event(CoreEvent::PasteList { items });
+}
+
+fn assert_collection_ids(
+    harness: &mut TestHarness,
+    collection: SidebarCollection,
+    expected_ids: &[&str],
+) {
+    harness.app.set_active_collection(collection);
+    let mut actual = harness
+        .app
+        .pastes
+        .iter()
+        .map(|paste| paste.id.as_str())
+        .collect::<Vec<_>>();
+    let mut expected = expected_ids.to_vec();
+    actual.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
+}
+
 #[test]
 fn search_results_respect_collection_filter() {
     let mut harness = make_app();
@@ -777,11 +799,12 @@ fn language_filter_aliases_match_in_client_projection() {
 }
 
 #[test]
-fn smart_collections_match_time_and_content_facets() {
+fn smart_collections_cover_time_and_heuristic_facets() {
     let mut harness = make_app();
     let now = Utc::now();
-    harness.app.apply_event(CoreEvent::PasteList {
-        items: vec![
+    apply_paste_list(
+        &mut harness,
+        vec![
             PasteSummary {
                 id: "today-log".to_string(),
                 name: "service.log".to_string(),
@@ -809,31 +832,6 @@ fn smart_collections_match_time_and_content_facets() {
                 folder_id: None,
                 tags: vec!["config".to_string()],
             },
-        ],
-    });
-
-    harness.app.set_active_collection(SidebarCollection::Today);
-    assert_eq!(harness.app.pastes.len(), 1);
-    assert_eq!(harness.app.pastes[0].id, "today-log");
-
-    harness.app.set_active_collection(SidebarCollection::Week);
-    assert_eq!(harness.app.pastes.len(), 2);
-
-    harness.app.set_active_collection(SidebarCollection::Logs);
-    assert_eq!(harness.app.pastes.len(), 1);
-    assert_eq!(harness.app.pastes[0].id, "today-log");
-
-    harness.app.set_active_collection(SidebarCollection::Links);
-    assert_eq!(harness.app.pastes.len(), 1);
-    assert_eq!(harness.app.pastes[0].id, "week-link");
-}
-
-#[test]
-fn smart_collections_use_command_suffix_and_url_heuristics() {
-    let mut harness = make_app();
-    let now = Utc::now();
-    harness.app.apply_event(CoreEvent::PasteList {
-        items: vec![
             PasteSummary {
                 id: "code-command".to_string(),
                 name: "cargo test --workspace".to_string(),
@@ -871,21 +869,45 @@ fn smart_collections_use_command_suffix_and_url_heuristics() {
                 tags: Vec::new(),
             },
         ],
-    });
+    );
 
-    harness.app.set_active_collection(SidebarCollection::Code);
-    assert_eq!(harness.app.pastes.len(), 1);
-    assert_eq!(harness.app.pastes[0].id, "code-command");
-
-    harness.app.set_active_collection(SidebarCollection::Config);
-    assert_eq!(harness.app.pastes.len(), 1);
-    assert_eq!(harness.app.pastes[0].id, "config-compose");
-
-    harness.app.set_active_collection(SidebarCollection::Logs);
-    assert_eq!(harness.app.pastes.len(), 1);
-    assert_eq!(harness.app.pastes[0].id, "log-stderr");
-
-    harness.app.set_active_collection(SidebarCollection::Links);
-    assert_eq!(harness.app.pastes.len(), 1);
-    assert_eq!(harness.app.pastes[0].id, "link-url");
+    assert_collection_ids(
+        &mut harness,
+        SidebarCollection::Today,
+        &[
+            "today-log",
+            "code-command",
+            "config-compose",
+            "log-stderr",
+            "link-url",
+        ],
+    );
+    assert_collection_ids(
+        &mut harness,
+        SidebarCollection::Week,
+        &[
+            "today-log",
+            "week-link",
+            "code-command",
+            "config-compose",
+            "log-stderr",
+            "link-url",
+        ],
+    );
+    assert_collection_ids(&mut harness, SidebarCollection::Code, &["code-command"]);
+    assert_collection_ids(
+        &mut harness,
+        SidebarCollection::Config,
+        &["old-config", "config-compose"],
+    );
+    assert_collection_ids(
+        &mut harness,
+        SidebarCollection::Logs,
+        &["today-log", "log-stderr"],
+    );
+    assert_collection_ids(
+        &mut harness,
+        SidebarCollection::Links,
+        &["week-link", "link-url"],
+    );
 }

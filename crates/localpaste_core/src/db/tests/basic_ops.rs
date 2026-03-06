@@ -34,6 +34,37 @@ fn update_existing_paste(
         .expect("paste exists")
 }
 
+fn create_source_with_manual_language_snapshot(
+    db: &Database,
+    initial_content: &str,
+    name: &str,
+    snapshot_content: &str,
+) -> (String, u64) {
+    let source = Paste::new(initial_content.to_string(), name.to_string());
+    let source_id = source.id.clone();
+    db.pastes.create(&source).expect("create source");
+    update_existing_paste(
+        db,
+        &source_id,
+        update_request(None, None, Some("python"), Some(true)),
+        "set manual language",
+    );
+    update_existing_paste(
+        db,
+        &source_id,
+        update_request(Some(snapshot_content), None, None, None),
+        "create historical snapshot",
+    );
+
+    let version_id = db
+        .pastes
+        .list_versions(&source_id, Some(1))
+        .expect("list versions")
+        .expect("source exists")[0]
+        .version_id_ms;
+    (source_id, version_id)
+}
+
 #[test]
 fn test_create_database_and_flush_noop() {
     let (db, _temp) = setup_test_db();
@@ -288,28 +319,8 @@ fn delete_removes_version_rows() {
 #[test]
 fn duplicate_from_version_creates_new_paste_with_snapshot_content() {
     let (db, _temp) = setup_test_db();
-    let source = Paste::new("alpha".to_string(), "source".to_string());
-    let source_id = source.id.clone();
-    db.pastes.create(&source).expect("create source");
-    update_existing_paste(
-        &db,
-        &source_id,
-        update_request(None, None, Some("python"), Some(true)),
-        "set manual language",
-    );
-    update_existing_paste(
-        &db,
-        &source_id,
-        update_request(Some("beta"), None, None, None),
-        "create historical snapshot",
-    );
-
-    let version_id = db
-        .pastes
-        .list_versions(&source_id, Some(1))
-        .expect("list versions")
-        .expect("source exists")[0]
-        .version_id_ms;
+    let (source_id, version_id) =
+        create_source_with_manual_language_snapshot(&db, "alpha", "source", "beta");
 
     let duplicate = db
         .pastes
@@ -326,35 +337,14 @@ fn duplicate_from_version_creates_new_paste_with_snapshot_content() {
 #[test]
 fn reset_hard_restores_snapshot_language_state() {
     let (db, _temp) = setup_test_db();
-    let source = Paste::new("one".to_string(), "reset-language".to_string());
-    let source_id = source.id.clone();
-    db.pastes.create(&source).expect("create source");
-
-    update_existing_paste(
-        &db,
-        &source_id,
-        update_request(None, None, Some("python"), Some(true)),
-        "set manual language",
-    );
-    update_existing_paste(
-        &db,
-        &source_id,
-        update_request(Some("two"), None, None, None),
-        "create historical snapshot",
-    );
+    let (source_id, version_id) =
+        create_source_with_manual_language_snapshot(&db, "one", "reset-language", "two");
     update_existing_paste(
         &db,
         &source_id,
         update_request(None, None, Some("rust"), Some(true)),
         "mutate language after snapshot",
     );
-
-    let version_id = db
-        .pastes
-        .list_versions(&source_id, Some(1))
-        .expect("list versions")
-        .expect("source exists")[0]
-        .version_id_ms;
 
     let reset = db
         .pastes

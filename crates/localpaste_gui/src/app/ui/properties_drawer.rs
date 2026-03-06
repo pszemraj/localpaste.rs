@@ -47,7 +47,7 @@ pub(super) fn apply_language_choice(
 ///
 /// # Returns
 /// User-facing text for the current language choice.
-pub(super) fn selected_language_choice_text(language_choice: &str, auto_label: &str) -> String {
+fn selected_language_choice_text(language_choice: &str, auto_label: &str) -> String {
     if language_choice == AUTO_LANGUAGE {
         return auto_label.to_string();
     }
@@ -69,7 +69,7 @@ pub(super) fn auto_language_choice_key() -> &'static str {
 /// # Returns
 /// Static `Auto` label so combo-box selected text always matches the selected
 /// option value when auto mode is active.
-pub(super) fn auto_language_status_label() -> String {
+fn auto_language_status_label() -> String {
     "Auto".to_string()
 }
 
