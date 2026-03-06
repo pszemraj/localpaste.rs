@@ -8,7 +8,7 @@ use super::{
     ServerResolutionSource,
 };
 use super::{Cli, Commands};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use localpaste_core::config::api_addr_file_path_from_env_or_default;
 use localpaste_core::diff::{unified_diff_lines, DiffResponse};
 use localpaste_core::env::{env_lock, EnvGuard};
@@ -440,6 +440,70 @@ fn cli_parses_no_discovery_flag() {
     let cli = Cli::try_parse_from(["lpaste", "--no-discovery", "list"])
         .expect("cli should parse no-discovery flag");
     assert!(cli.no_discovery);
+}
+
+#[test]
+fn cli_global_connection_flags_parse_before_and_after_subcommand() {
+    let before = Cli::try_parse_from([
+        "lpaste",
+        "--server",
+        "http://127.0.0.1:45556",
+        "--timeout",
+        "9",
+        "list",
+    ])
+    .expect("global flags should parse before the subcommand");
+    assert_eq!(before.server.as_deref(), Some("http://127.0.0.1:45556"));
+    assert_eq!(before.timeout.get(), 9);
+
+    let after = Cli::try_parse_from([
+        "lpaste",
+        "list",
+        "--server",
+        "http://127.0.0.1:45556",
+        "--timeout",
+        "9",
+    ])
+    .expect("global flags should parse after the subcommand");
+    assert_eq!(after.server.as_deref(), Some("http://127.0.0.1:45556"));
+    assert_eq!(after.timeout.get(), 9);
+}
+
+#[test]
+fn cli_rejects_zero_timeout() {
+    let err = match Cli::try_parse_from(["lpaste", "--timeout", "0", "list"]) {
+        Ok(_) => panic!("zero timeout should be rejected"),
+        Err(err) => err,
+    };
+    assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+}
+
+#[test]
+fn cli_help_describes_version_and_reset_arguments() {
+    let mut cli = Cli::command();
+    let mut diff = cli
+        .find_subcommand_mut("diff")
+        .expect("diff subcommand should exist")
+        .clone();
+    let mut reset = cli
+        .find_subcommand_mut("reset-hard")
+        .expect("reset-hard subcommand should exist")
+        .clone();
+
+    let mut diff_help = Vec::new();
+    diff.write_long_help(&mut diff_help)
+        .expect("diff help should render");
+    let diff_help = String::from_utf8(diff_help).expect("diff help utf8");
+    assert!(diff_help.contains("Left-hand paste id"));
+    assert!(diff_help.contains("Optional historical version id for the left-hand paste"));
+
+    let mut reset_help = Vec::new();
+    reset
+        .write_long_help(&mut reset_help)
+        .expect("reset help should render");
+    let reset_help = String::from_utf8(reset_help).expect("reset help utf8");
+    assert!(reset_help.contains("Required acknowledgement for the destructive reset"));
+    assert!(reset_help.contains("Historical version timestamp id in milliseconds"));
 }
 
 #[test]

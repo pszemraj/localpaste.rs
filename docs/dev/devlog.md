@@ -189,6 +189,17 @@ Remove-Item -Recurse -Force $env:DB_PATH
 This section documents `localpaste_tools` CLI behavior
 used in automation/CI contracts.
 
+### `generate-test-data`
+
+- Database target policy:
+  - requires explicit database intent via `--db-path` or `DB_PATH`
+  - platform-default `DB_PATH` use is rejected unless `--allow-default-db` is supplied
+  - blank `DB_PATH` is rejected
+- Destructive clear policy:
+  - `--clear` requires `--yes`
+- Side effects:
+  - opens the chosen database path as a writer and mutates paste/folder data
+
 ### `check-loc`
 
 - Parse-time validation:

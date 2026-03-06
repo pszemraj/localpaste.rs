@@ -75,6 +75,24 @@ fn default_db_path() -> String {
     default_data_dir().join("db").to_string_lossy().to_string()
 }
 
+fn normalize_db_path_value(raw: String, strict_empty: bool) -> Result<String, String> {
+    let expanded = expand_tilde(raw);
+    if expanded.trim().is_empty() {
+        if strict_empty {
+            Err("Environment variable DB_PATH is empty".to_string())
+        } else {
+            let default = default_db_path();
+            warn!(
+                "Environment variable DB_PATH is empty; using default {}",
+                default
+            );
+            Ok(default)
+        }
+    } else {
+        Ok(expanded)
+    }
+}
+
 /// Resolve the configured DB path, falling back to the default path.
 ///
 /// This uses the same env/default rules as [`Config::from_env`].
@@ -82,9 +100,63 @@ fn default_db_path() -> String {
 /// # Returns
 /// The expanded `DB_PATH` value or the platform default path.
 pub fn db_path_from_env_or_default() -> String {
-    env::var("DB_PATH")
-        .map(expand_tilde)
-        .unwrap_or_else(|_| default_db_path())
+    match env::var("DB_PATH") {
+        Ok(value) => normalize_db_path_value(value, false).unwrap_or_else(|_| default_db_path()),
+        Err(_) => default_db_path(),
+    }
+}
+
+/// Resolve the configured DB path in strict mode.
+///
+/// Missing `DB_PATH` still falls back to the platform default path, but an
+/// explicitly empty value is rejected instead of silently defaulting.
+///
+/// # Returns
+/// The expanded `DB_PATH` value or the platform default path.
+///
+/// # Errors
+/// Returns an error when `DB_PATH` is present but empty after trimming.
+pub fn db_path_from_env_strict() -> Result<String, String> {
+    match env::var("DB_PATH") {
+        Ok(value) => normalize_db_path_value(value, true),
+        Err(_) => Ok(default_db_path()),
+    }
+}
+
+/// Resolve a database path from an explicit CLI flag, `DB_PATH`, or the
+/// platform default path when allowed.
+///
+/// # Arguments
+/// - `explicit`: optional CLI-provided database path
+/// - `allow_default`: whether the platform default path may be used when
+///   neither a CLI flag nor `DB_PATH` is provided
+///
+/// # Returns
+/// The normalized database path.
+///
+/// # Errors
+/// Returns an error when the explicit path or `DB_PATH` is blank, or when no
+/// explicit path is provided and default use is disallowed.
+pub fn resolve_db_path_with_explicit_or_env(
+    explicit: Option<String>,
+    allow_default: bool,
+) -> Result<String, String> {
+    if let Some(raw) = explicit {
+        let expanded = expand_tilde(raw);
+        if expanded.trim().is_empty() {
+            return Err("--db-path cannot be empty".to_string());
+        }
+        return Ok(expanded);
+    }
+
+    match env::var("DB_PATH") {
+        Ok(value) => normalize_db_path_value(value, true),
+        Err(_) if allow_default => Ok(default_db_path()),
+        Err(_) => Err(
+            "database path is required; pass --db-path, set DB_PATH, or rerun with --allow-default-db"
+                .to_string(),
+        ),
+    }
 }
 
 /// Resolve the discovery-file path for a given database path.
@@ -309,16 +381,7 @@ impl Config {
     /// # Errors
     /// Returns a descriptive message when any configured value is invalid.
     pub fn from_env_strict() -> Result<Self, String> {
-        let db_path = match env::var("DB_PATH") {
-            Ok(value) => {
-                let expanded = expand_tilde(value);
-                if expanded.trim().is_empty() {
-                    return Err("Environment variable DB_PATH is empty".to_string());
-                }
-                expanded
-            }
-            Err(_) => default_db_path(),
-        };
+        let db_path = db_path_from_env_strict()?;
 
         // Validate snapshot interval envs during strict startup so malformed values
         // fail fast instead of surfacing later during write operations.
@@ -340,8 +403,9 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::{
-        api_addr_file_path_for_db_path, env_flag_enabled, parse_bool_env, parse_bool_env_strict,
-        parse_env_flag, paste_version_interval_secs_from_env, Config,
+        api_addr_file_path_for_db_path, db_path_from_env_or_default, db_path_from_env_strict,
+        env_flag_enabled, parse_bool_env, parse_bool_env_strict, parse_env_flag,
+        paste_version_interval_secs_from_env, resolve_db_path_with_explicit_or_env, Config,
     };
     use crate::constants::{
         API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE,
@@ -397,6 +461,51 @@ mod tests {
         let _backup = EnvGuard::set("AUTO_BACKUP", "maybe");
         let err = Config::from_env_strict().expect_err("strict bool parse should fail");
         assert!(err.contains("AUTO_BACKUP"));
+    }
+
+    #[test]
+    fn blank_db_path_defaults_in_permissive_mode_and_fails_in_strict_mode() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::set("DB_PATH", "   ");
+
+        let permissive = db_path_from_env_or_default();
+        assert!(
+            !permissive.trim().is_empty(),
+            "permissive path should not preserve an empty DB_PATH"
+        );
+
+        let err = db_path_from_env_strict().expect_err("strict db path should reject blank");
+        assert!(err.contains("DB_PATH"));
+    }
+
+    #[test]
+    fn resolve_db_path_requires_explicit_or_env_when_default_is_disallowed() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::remove("DB_PATH");
+
+        let err = resolve_db_path_with_explicit_or_env(None, false)
+            .expect_err("default db path should require explicit opt-in");
+        assert!(err.contains("--db-path"));
+        assert!(err.contains("--allow-default-db"));
+    }
+
+    #[test]
+    fn resolve_db_path_prefers_explicit_then_env_then_default() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::set("DB_PATH", "/tmp/from-env");
+
+        let explicit = resolve_db_path_with_explicit_or_env(Some("~/from-flag".to_string()), true)
+            .expect("explicit db path");
+        assert!(explicit.ends_with("from-flag"));
+
+        let from_env = resolve_db_path_with_explicit_or_env(None, false).expect("env db path");
+        assert_eq!(from_env, "/tmp/from-env");
+
+        drop(_db_path);
+        let _db_path = EnvGuard::remove("DB_PATH");
+        let default_path =
+            resolve_db_path_with_explicit_or_env(None, true).expect("default db path");
+        assert!(!default_path.trim().is_empty());
     }
 
     #[test]

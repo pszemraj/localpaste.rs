@@ -7,6 +7,7 @@ use localpaste_core::DEFAULT_CLI_SERVER_URL;
 use serde_json::Value;
 use std::io::{self, Read, Write};
 use std::net::ToSocketAddrs;
+use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
@@ -16,7 +17,7 @@ struct Cli {
     ///
     /// Resolution order when unset: discovered `.api-addr` endpoint (unless
     /// `--no-discovery`) then the default local endpoint.
-    #[arg(short, long, env = "LP_SERVER")]
+    #[arg(short, long, global = true, env = "LP_SERVER")]
     server: Option<String>,
 
     /// Disable `.api-addr` discovery/probing fallback.
@@ -34,9 +35,9 @@ struct Cli {
     #[arg(long, global = true)]
     timing: bool,
 
-    /// Request timeout in seconds
-    #[arg(short = 't', long, default_value = "30")]
-    timeout: u64,
+    /// Request timeout in seconds (must be greater than zero)
+    #[arg(short = 't', long, global = true, default_value = "30")]
+    timeout: NonZeroU64,
 
     #[command(subcommand)]
     command: Commands,
@@ -50,62 +51,99 @@ enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Create a new paste from stdin or a file.
     New {
+        /// Read paste content from a file instead of stdin.
         #[arg(short, long)]
         file: Option<String>,
+        /// Optional paste name. When omitted, the server generates one.
         #[arg(short, long)]
         name: Option<String>,
     },
+    /// Fetch a paste by id and print its content.
     Get {
+        /// Paste id to read.
         id: String,
     },
+    /// List recent paste metadata.
     List {
+        /// Maximum number of rows to return.
         #[arg(short, long, default_value = "10")]
         limit: usize,
     },
+    /// Search pastes by full content.
     Search {
+        /// Search query text.
         query: String,
     },
+    /// Search persisted metadata only (name, tags, language, derived terms).
     SearchMeta {
+        /// Search query text.
         query: String,
     },
+    /// Delete a paste by id.
     Delete {
+        /// Paste id to delete.
         id: String,
     },
+    /// List stored historical versions for a paste.
     Versions {
+        /// Paste id whose version history should be listed.
         id: String,
+        /// Maximum number of historical versions to return.
         #[arg(short, long, default_value = "50")]
         limit: usize,
     },
+    /// Fetch one stored historical version by paste id and version id.
     GetVersion {
+        /// Paste id whose version should be read.
         id: String,
+        /// Historical version timestamp id in milliseconds.
         version_id_ms: u64,
     },
+    /// Diff two paste refs, optionally pinning each side to a historical version.
     Diff {
+        /// Left-hand paste id.
         left_id: String,
+        /// Right-hand paste id.
         right_id: String,
+        /// Optional historical version id for the left-hand paste.
         #[arg(long)]
         left_version: Option<u64>,
+        /// Optional historical version id for the right-hand paste.
         #[arg(long)]
         right_version: Option<u64>,
     },
+    /// Compare two paste refs and return a success exit code only when equal.
     Equal {
+        /// Left-hand paste id.
         left_id: String,
+        /// Right-hand paste id.
         right_id: String,
+        /// Optional historical version id for the left-hand paste.
         #[arg(long)]
         left_version: Option<u64>,
+        /// Optional historical version id for the right-hand paste.
         #[arg(long)]
         right_version: Option<u64>,
     },
+    /// Reset a paste to a stored historical version and discard newer history.
     ResetHard {
+        /// Paste id to reset.
         id: String,
+        /// Historical version timestamp id in milliseconds.
         version_id_ms: u64,
+        /// Required acknowledgement for the destructive reset.
         #[arg(long, action = clap::ArgAction::SetTrue, required = true)]
         yes: bool,
     },
+    /// Create a new paste from a stored historical version.
     DuplicateVersion {
+        /// Paste id whose historical version should be duplicated.
         id: String,
+        /// Historical version timestamp id in milliseconds.
         version_id_ms: u64,
+        /// Optional name for the duplicated paste.
         #[arg(short, long)]
         name: Option<String>,
     },
@@ -691,7 +729,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout))
+        .timeout(std::time::Duration::from_secs(timeout.get()))
         .build()?;
     let (resolved_server, source) = resolve_server_with_source(server, !no_discovery);
     let server = normalize_server(resolved_server);

@@ -6,14 +6,14 @@
 //! # Usage
 //!
 //! ```bash
-//! # Generate 1000 pastes (default)
-//! cargo run -p localpaste_tools --bin generate-test-data
+//! # Generate 1000 pastes in an explicit scratch database
+//! cargo run -p localpaste_tools --bin generate-test-data -- --db-path /tmp/localpaste-fixtures
 //!
 //! # Generate 10k pastes with 50 folders
-//! cargo run -p localpaste_tools --bin generate-test-data -- --count 10000 --folders 50
+//! cargo run -p localpaste_tools --bin generate-test-data -- --db-path /tmp/localpaste-fixtures --count 10000 --folders 50
 //!
 //! # Clear existing data first
-//! cargo run -p localpaste_tools --bin generate-test-data -- --clear --count 5000
+//! cargo run -p localpaste_tools --bin generate-test-data -- --db-path /tmp/localpaste-fixtures --clear --yes --count 5000
 //!
 //! # Use custom database path
 //! DB_PATH=/tmp/test-db cargo run -p localpaste_tools --bin generate-test-data -- --count 100
@@ -21,7 +21,7 @@
 
 use clap::Parser;
 use localpaste_core::{
-    config::Config,
+    config::resolve_db_path_with_explicit_or_env,
     db::{Database, TransactionOps},
     folder_ops::delete_folder_tree_and_migrate,
     models::folder::Folder,
@@ -40,6 +40,17 @@ use std::time::Instant;
     about = "Generate synthetic test data for LocalPaste"
 )]
 struct Args {
+    /// Database path to mutate. When omitted, DB_PATH may be used instead.
+    #[arg(long)]
+    db_path: Option<String>,
+
+    /// Allow writing to the platform-default LocalPaste database path.
+    ///
+    /// By default this tool requires `--db-path` or `DB_PATH` so test-data
+    /// generation does not silently mutate the main app database.
+    #[arg(long, default_value_t = false)]
+    allow_default_db: bool,
+
     /// Number of pastes to generate
     #[arg(short, long, default_value = "1000")]
     count: usize,
@@ -634,10 +645,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target(false)
         .init();
 
-    let config = Config::from_env();
-    println!("Using database at: {}", config.db_path);
+    let db_path =
+        resolve_db_path_with_explicit_or_env(args.db_path.clone(), args.allow_default_db)?;
+    println!("Using database at: {}", db_path);
 
-    let db = Database::new(&config.db_path)?;
+    let db = Database::new(&db_path)?;
 
     if args.clear {
         println!("Clearing existing data...");
@@ -745,7 +757,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Pastes:  {}", args.count);
     println!("  Time:    {:.2}s", elapsed.as_secs_f64());
     println!("  Rate:    {:.1} pastes/sec", rate);
-    println!("\nDatabase path: {}", config.db_path);
+    println!("\nDatabase path: {}", db_path);
 
     Ok(())
 }
@@ -767,6 +779,8 @@ mod tests {
     fn parser_rejects_invalid_flag_combinations() {
         let progress_zero = Args::try_parse_from([
             "generate-test-data",
+            "--db-path",
+            "tmp-db",
             "--count",
             "1",
             "--folders",
@@ -779,6 +793,46 @@ mod tests {
         let yes_without_clear =
             Args::try_parse_from(["generate-test-data", "--yes", "--count", "1"]);
         assert!(yes_without_clear.is_err());
+    }
+
+    #[test]
+    fn validate_args_requires_explicit_database_intent() {
+        let args = Args::try_parse_from(["generate-test-data", "--count", "1"])
+            .expect("arg parse should succeed");
+        let err = resolve_db_path_with_explicit_or_env(args.db_path.clone(), args.allow_default_db)
+            .expect_err("default db path should require explicit opt-in");
+        assert!(err.contains("--db-path"));
+        assert!(err.contains("--allow-default-db"));
+    }
+
+    #[test]
+    fn validate_args_accepts_explicit_db_path_and_default_opt_in() {
+        let explicit = Args::try_parse_from([
+            "generate-test-data",
+            "--db-path",
+            "scratch-db",
+            "--count",
+            "1",
+        ])
+        .expect("explicit db path parse");
+        assert_eq!(
+            resolve_db_path_with_explicit_or_env(
+                explicit.db_path.clone(),
+                explicit.allow_default_db
+            )
+            .expect("explicit path should resolve"),
+            "scratch-db"
+        );
+
+        let allow_default =
+            Args::try_parse_from(["generate-test-data", "--allow-default-db", "--count", "1"])
+                .expect("default opt-in parse");
+        let resolved = resolve_db_path_with_explicit_or_env(
+            allow_default.db_path.clone(),
+            allow_default.allow_default_db,
+        )
+        .expect("default db path should resolve when explicitly allowed");
+        assert!(!resolved.trim().is_empty());
     }
 
     #[test]
