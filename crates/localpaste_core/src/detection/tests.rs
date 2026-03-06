@@ -26,6 +26,10 @@ fn heuristic_detects_existing_language_matrix() {
         ("name: app", Some("yaml")),
         ("display name: app\nport: 8080", Some("yaml")),
         ("services: [web]\nversion: 3", Some("yaml")),
+        (
+            "jobs:\n  build:\n    runs-on: ubuntu-latest\n",
+            Some("yaml"),
+        ),
         ("select id, name from users where active = 1", Some("sql")),
         ("[tool]\nname = \"demo\"\nversion = \"0.1.0\"", Some("toml")),
         ("just some plain text words", None),
@@ -38,6 +42,9 @@ fn yaml_shape_helper_handles_flow_values_and_single_list_guard() {
     assert!(looks_like_yaml("root: {child: value}\n"));
     assert!(looks_like_yaml("display name: api\nport: 8080\n"));
     assert!(looks_like_yaml("services: [web]\nversion: 3\n"));
+    assert!(looks_like_yaml(
+        "jobs:\n  build:\n    runs-on: ubuntu-latest\n"
+    ));
     assert!(!looks_like_yaml("- item\n"));
 }
 

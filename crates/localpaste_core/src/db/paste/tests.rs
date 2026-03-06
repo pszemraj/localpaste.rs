@@ -2,7 +2,8 @@
 
 use super::PasteDb;
 use crate::db::tables::{PASTES, PASTES_BY_UPDATED, PASTES_META, REDB_FILE_NAME};
-use crate::models::paste::Paste;
+use crate::diff::{DiffRef, DiffRequest};
+use crate::models::paste::{Paste, UpdatePasteRequest};
 use redb::{ReadableDatabase, ReadableTable};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -47,4 +48,54 @@ fn aborted_write_transaction_leaves_no_partial_rows() {
         .expect("iter updated")
         .any(|entry| entry.expect("entry").0.value().1 == paste.id.as_str());
     assert!(!has_updated);
+}
+
+#[test]
+fn diff_resolution_uses_one_read_snapshot_for_both_refs() {
+    let (_db, paste_db, _dir) = setup_paste_db();
+    let paste = Paste::new("v1\n".to_string(), "diff-snapshot".to_string());
+    let paste_id = paste.id.clone();
+    paste_db.create(&paste).expect("create paste");
+
+    let read_txn = paste_db.db.begin_read().expect("begin read");
+    let updated = paste_db
+        .update(
+            &paste_id,
+            UpdatePasteRequest {
+                content: Some("v2\n".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: None,
+                tags: None,
+            },
+        )
+        .expect("update")
+        .expect("paste exists");
+    assert_eq!(updated.content, "v2\n");
+
+    let diff = paste_db
+        .diff_in_txn(
+            &read_txn,
+            &DiffRequest {
+                left: DiffRef {
+                    paste_id: paste_id.clone(),
+                    version_id_ms: None,
+                },
+                right: DiffRef {
+                    paste_id,
+                    version_id_ms: None,
+                },
+            },
+        )
+        .expect("diff in txn")
+        .expect("resolved");
+    assert!(
+        diff.equal,
+        "same-ref diff must stay equal within one snapshot"
+    );
+    assert!(
+        diff.unified.is_empty(),
+        "same-ref diff should not report changes from a later write"
+    );
 }

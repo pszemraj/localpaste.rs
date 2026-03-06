@@ -350,6 +350,14 @@ fn format_versions_output(items: &[Value], json: bool) -> Result<String, String>
     Ok(rows.join("\n"))
 }
 
+fn format_cli_diff_lines(lines: &[String]) -> String {
+    lines
+        .iter()
+        .map(|line| line.trim_end_matches(['\r', '\n']))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn format_diff_output(diff: &DiffResponse, json: bool) -> Result<String, String> {
     if json {
         return serde_json::to_string_pretty(diff)
@@ -358,7 +366,7 @@ fn format_diff_output(diff: &DiffResponse, json: bool) -> Result<String, String>
     if diff.equal {
         return Ok("No changes.".to_string());
     }
-    Ok(diff.unified.join(""))
+    Ok(format_cli_diff_lines(&diff.unified))
 }
 
 fn api_url(server: &str, segments: &[&str]) -> Result<reqwest::Url, String> {

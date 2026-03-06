@@ -3,12 +3,14 @@
 use super::{
     api_url, default_resolution_connect_hint, discovered_server_from_file_with_reachability,
     discovery_probe_response_looks_like_localpaste, error_message_for_response,
-    format_delete_output, format_get_output, format_summary_output, normalize_server,
-    paste_id_and_name, resolve_server, resolve_server_with_source, ServerResolutionSource,
+    format_delete_output, format_diff_output, format_get_output, format_summary_output,
+    normalize_server, paste_id_and_name, resolve_server, resolve_server_with_source,
+    ServerResolutionSource,
 };
 use super::{Cli, Commands};
 use clap::Parser;
 use localpaste_core::config::api_addr_file_path_from_env_or_default;
+use localpaste_core::diff::{unified_diff_lines, DiffResponse};
 use localpaste_core::env::{env_lock, EnvGuard};
 use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
 use std::io::{Read, Write};
@@ -255,6 +257,30 @@ fn json_output_helpers_preserve_payload_shape() {
     let delete_parsed: serde_json::Value =
         serde_json::from_str(&delete_rendered).expect("rendered delete should be valid json");
     assert_eq!(delete_parsed["success"], true);
+}
+
+#[test]
+fn cli_diff_output_stays_line_oriented_without_trailing_newlines() {
+    let diff = DiffResponse {
+        equal: false,
+        unified: unified_diff_lines("old", "new"),
+    };
+    assert_eq!(
+        format_diff_output(&diff, false).expect("diff output"),
+        "-old\n+new"
+    );
+}
+
+#[test]
+fn cli_diff_output_normalizes_embedded_line_endings() {
+    let diff = DiffResponse {
+        equal: false,
+        unified: unified_diff_lines("old\n", "new\n"),
+    };
+    assert_eq!(
+        format_diff_output(&diff, false).expect("diff output"),
+        "-old\n+new"
+    );
 }
 
 #[test]

@@ -159,6 +159,8 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
             continue;
         }
         if trimmed.contains(':') && looks_like_single_line_yaml_mapping(trimmed, true) {
+            // Block-style mapping heads like `jobs:` and `build:` are still
+            // YAML pairs even when the nested value appears on later lines.
             yaml_pairs = yaml_pairs.saturating_add(1);
         }
     }

@@ -17,7 +17,7 @@ use crate::{
     naming,
 };
 use chrono::{DateTime, Utc};
-use redb::{ReadableDatabase, ReadableTable};
+use redb::{ReadTransaction, ReadableDatabase, ReadableTable};
 use std::sync::Arc;
 
 use self::helpers::{
@@ -394,6 +394,15 @@ impl PasteDb {
         version_id_ms: u64,
     ) -> Result<Option<VersionSnapshot>, AppError> {
         let read_txn = self.db.begin_read()?;
+        self.get_version_in_txn(&read_txn, paste_id, version_id_ms)
+    }
+
+    fn get_version_in_txn(
+        &self,
+        read_txn: &ReadTransaction,
+        paste_id: &str,
+        version_id_ms: u64,
+    ) -> Result<Option<VersionSnapshot>, AppError> {
         let pastes = read_txn.open_table(PASTES)?;
         if pastes.get(paste_id)?.is_none() {
             return Ok(None);
@@ -430,6 +439,24 @@ impl PasteDb {
         }))
     }
 
+    fn resolve_diff_ref_content_in_txn(
+        &self,
+        read_txn: &ReadTransaction,
+        reference: &DiffRef,
+    ) -> Result<Option<String>, AppError> {
+        if let Some(version_id_ms) = reference.version_id_ms {
+            return Ok(self
+                .get_version_in_txn(read_txn, reference.paste_id.as_str(), version_id_ms)?
+                .map(|snapshot| snapshot.content));
+        }
+
+        let pastes = read_txn.open_table(PASTES)?;
+        match pastes.get(reference.paste_id.as_str())? {
+            Some(value) => Ok(Some(deserialize_paste(value.value())?.content)),
+            None => Ok(None),
+        }
+    }
+
     /// Resolve a [`DiffRef`] to raw content from head or a historical version.
     ///
     /// # Returns
@@ -441,14 +468,28 @@ impl PasteDb {
         &self,
         reference: &DiffRef,
     ) -> Result<Option<String>, AppError> {
-        if let Some(version_id_ms) = reference.version_id_ms {
-            return Ok(self
-                .get_version(reference.paste_id.as_str(), version_id_ms)?
-                .map(|snapshot| snapshot.content));
-        }
-        Ok(self
-            .get(reference.paste_id.as_str())?
-            .map(|paste| paste.content))
+        let read_txn = self.db.begin_read()?;
+        self.resolve_diff_ref_content_in_txn(&read_txn, reference)
+    }
+
+    fn diff_in_txn(
+        &self,
+        read_txn: &ReadTransaction,
+        request: &DiffRequest,
+    ) -> Result<Option<DiffResponse>, AppError> {
+        let Some(left) = self.resolve_diff_ref_content_in_txn(read_txn, &request.left)? else {
+            return Ok(None);
+        };
+        let Some(right) = self.resolve_diff_ref_content_in_txn(read_txn, &request.right)? else {
+            return Ok(None);
+        };
+        let equal = left == right;
+        let unified = if equal {
+            Vec::new()
+        } else {
+            unified_diff_lines(left.as_str(), right.as_str())
+        };
+        Ok(Some(DiffResponse { equal, unified }))
     }
 
     /// Compute a line-based diff between two paste references.
@@ -459,19 +500,10 @@ impl PasteDb {
     /// # Errors
     /// Returns an error when storage access fails.
     pub fn diff(&self, request: &DiffRequest) -> Result<Option<DiffResponse>, AppError> {
-        let Some(left) = self.resolve_diff_ref_content(&request.left)? else {
-            return Ok(None);
-        };
-        let Some(right) = self.resolve_diff_ref_content(&request.right)? else {
-            return Ok(None);
-        };
-        let equal = left == right;
-        let unified = if equal {
-            Vec::new()
-        } else {
-            unified_diff_lines(left.as_str(), right.as_str())
-        };
-        Ok(Some(DiffResponse { equal, unified }))
+        // Both refs must resolve from one read snapshot so head-vs-head diffs do
+        // not tear when a write lands between left and right lookups.
+        let read_txn = self.db.begin_read()?;
+        self.diff_in_txn(&read_txn, request)
     }
 
     /// Reset current paste content to a historical version and prune newer snapshots.
