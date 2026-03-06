@@ -7,14 +7,27 @@ use localpaste_core::diff::unified_diff_lines;
 const MAX_INLINE_DIFF_BYTES: usize = 1024 * 1024;
 const DIFF_MODAL_HEIGHT: f32 = 360.0;
 
-#[derive(Debug, PartialEq, Eq)]
-enum InlineDiffPreview {
+/// Cached inline diff preview state for the detached diff modal.
+///
+/// Large inputs collapse to a size warning instead of recomputing/rendering a
+/// full inline diff on the UI thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InlineDiffPreview {
     TooLarge { lhs_bytes: usize, rhs_bytes: usize },
     NoChanges,
     Lines(Vec<String>),
 }
 
-fn inline_diff_preview(lhs: &str, rhs: &str) -> InlineDiffPreview {
+/// Builds a bounded inline diff preview classification for two snapshot bodies.
+///
+/// # Arguments
+/// - `lhs`: Current editor snapshot shown on the left side of the modal.
+/// - `rhs`: Loaded comparison target content shown on the right side.
+///
+/// # Returns
+/// A cached-friendly preview state describing whether the modal should show a
+/// line diff, a no-op message, or a size cap warning.
+pub(crate) fn inline_diff_preview(lhs: &str, rhs: &str) -> InlineDiffPreview {
     if lhs.len().saturating_add(rhs.len()) > MAX_INLINE_DIFF_BYTES {
         return InlineDiffPreview::TooLarge {
             lhs_bytes: lhs.len(),
@@ -52,6 +65,7 @@ impl LocalPasteApp {
 
         let mut keep_open = true;
         let mut pending_target: Option<String> = None;
+        let _recomputed_diff_preview = self.sync_diff_preview_cache();
 
         egui::Window::new("Diff")
             .open(&mut keep_open)
@@ -96,7 +110,6 @@ impl LocalPasteApp {
                     right.label(RichText::new("Line diff").small().color(COLOR_TEXT_MUTED));
                     right.add_space(4.0);
 
-                    let lhs = self.active_snapshot();
                     match self.version_ui.diff_target_paste.as_ref() {
                         None => {
                             if self.version_ui.diff_loading_target {
@@ -124,13 +137,19 @@ impl LocalPasteApp {
                                 );
                             });
 
-                            // Never return from inside this window closure: target changes and
-                            // close-button state must still be applied after `show(...)`.
-                            match inline_diff_preview(lhs.as_str(), rhs.content.as_str()) {
-                                InlineDiffPreview::TooLarge {
+                            // Preview generation is cached by active buffer revision + diff target.
+                            // Repaints should not reclone large buffers or rerun the diff engine.
+                            match self.version_ui.diff_preview.as_ref() {
+                                None => {
+                                    right.label(
+                                        RichText::new("Preparing diff preview...")
+                                            .color(COLOR_TEXT_MUTED),
+                                    );
+                                }
+                                Some(InlineDiffPreview::TooLarge {
                                     lhs_bytes,
                                     rhs_bytes,
-                                } => {
+                                }) => {
                                     right.add_space(8.0);
                                     right.label(
                                         RichText::new(
@@ -143,16 +162,16 @@ impl LocalPasteApp {
                                         lhs_bytes, rhs_bytes
                                     ));
                                 }
-                                InlineDiffPreview::NoChanges => {
+                                Some(InlineDiffPreview::NoChanges) => {
                                     right.label(
                                         RichText::new("No changes.").color(COLOR_TEXT_MUTED),
                                     );
                                 }
-                                InlineDiffPreview::Lines(diff_lines) => {
+                                Some(InlineDiffPreview::Lines(diff_lines)) => {
                                     egui::ScrollArea::vertical()
                                         .max_height(DIFF_MODAL_HEIGHT)
                                         .show(right, |ui| {
-                                            for line in &diff_lines {
+                                            for line in diff_lines {
                                                 let color = match line.chars().next() {
                                                     Some('-') => egui::Color32::LIGHT_RED,
                                                     Some('+') => egui::Color32::LIGHT_GREEN,

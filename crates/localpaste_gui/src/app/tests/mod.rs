@@ -158,6 +158,7 @@ fn make_app() -> TestHarness {
         pending_copy_action: None,
         pending_selection_id: None,
         clipboard_outgoing: None,
+        active_buffer_epoch: 0,
         selected_content: EditorBuffer::new("content".to_string()),
         editor_lines: EditorLineIndex::default(),
         editor_mode: EditorMode::VirtualPreview,
@@ -254,4 +255,5 @@ mod keyboard_navigation_audit;
 mod save_and_metadata;
 mod shutdown_behavior;
 mod state_basics;
+mod version_modal_caching;
 mod virtual_editor_behaviors;

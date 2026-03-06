@@ -597,6 +597,7 @@ impl LocalPasteApp {
             }
         }
         self.sync_editor_metadata(&paste);
+        self.bump_active_buffer_epoch();
         self.selected_content.reset(paste.content.clone());
         self.reset_virtual_editor(paste.content.as_str());
         self.editor_lines.reset();
@@ -622,6 +623,7 @@ impl LocalPasteApp {
         self.metadata_dirty = false;
         self.metadata_save_in_flight = false;
         self.metadata_save_request = None;
+        self.bump_active_buffer_epoch();
         self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
         self.editor_lines.reset();

@@ -1,7 +1,9 @@
 //! Version-history and diff modal state/helpers for the editor panel.
 
+use super::ui::diff_modal::{inline_diff_preview, InlineDiffPreview};
 use super::{non_focusable_click_sense, LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE};
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
+use chrono::{DateTime, Utc};
 use eframe::egui;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
 use std::time::Instant;
@@ -11,6 +13,29 @@ const MAX_DIFF_CANDIDATES: usize = 40;
 const RESET_TRANSITION_BLOCKED_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
 const VERSION_OVERLAY_MUTATION_BLOCKED_STATUS: &str =
     "Close the open version window before mutating the selected paste.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActiveSnapshotCacheKey {
+    paste_id: String,
+    buffer_epoch: u64,
+    revision: u64,
+    text_len: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HistoryPreviewCacheKey {
+    paste_id: String,
+    version_id_ms: u64,
+    len: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiffPreviewCacheKey {
+    lhs: ActiveSnapshotCacheKey,
+    rhs_paste_id: String,
+    rhs_updated_at: DateTime<Utc>,
+    rhs_content_len: usize,
+}
 
 /// UI state for detached diff/history modals.
 #[derive(Debug, Clone, Default)]
@@ -23,11 +48,17 @@ pub(crate) struct VersionUiState {
     pub(super) history_reset_confirm_open: bool,
     pub(super) history_reset_confirm_target: Option<u64>,
     pub(super) history_reset_in_flight_paste_id: Option<String>,
+    active_snapshot_cache_key: Option<ActiveSnapshotCacheKey>,
+    pub(super) active_snapshot_cache_text: String,
+    history_preview_cache_key: Option<HistoryPreviewCacheKey>,
+    pub(super) history_preview_text: String,
     pub(super) diff_modal_open: bool,
     pub(super) diff_query: String,
     pub(super) diff_target_id: Option<String>,
     pub(super) diff_target_paste: Option<Paste>,
     pub(super) diff_loading_target: bool,
+    diff_preview_cache_key: Option<DiffPreviewCacheKey>,
+    pub(super) diff_preview: Option<InlineDiffPreview>,
 }
 
 impl VersionUiState {
@@ -37,9 +68,20 @@ impl VersionUiState {
         self.history_reset_confirm_target = None;
     }
 
+    fn clear_active_snapshot_cache(&mut self) {
+        self.active_snapshot_cache_key = None;
+        self.active_snapshot_cache_text.clear();
+    }
+
+    fn clear_history_preview_cache(&mut self) {
+        self.history_preview_cache_key = None;
+        self.history_preview_text.clear();
+    }
+
     fn clear_history_snapshot_state(&mut self) {
         self.history_snapshot = None;
         self.history_loading_snapshot_id = None;
+        self.clear_history_preview_cache();
     }
 
     fn begin_history_reset_for(&mut self, paste_id: String) {
@@ -72,6 +114,8 @@ impl VersionUiState {
         self.diff_target_id = None;
         self.diff_target_paste = None;
         self.diff_loading_target = false;
+        self.diff_preview_cache_key = None;
+        self.diff_preview = None;
     }
 
     /// Clears diff-target selection state.
@@ -85,10 +129,30 @@ impl VersionUiState {
         self.diff_modal_open = false;
         self.clear_history_selection();
         self.clear_diff_selection();
+        self.clear_active_snapshot_cache();
     }
 }
 
 impl LocalPasteApp {
+    /// Advances the active-buffer identity token after a full buffer replacement.
+    ///
+    /// # Notes
+    /// Editor revisions cover incremental edits, but selection changes and load
+    /// acks can replace the entire buffer while resetting revision counters.
+    pub(super) fn bump_active_buffer_epoch(&mut self) {
+        self.active_buffer_epoch = self.active_buffer_epoch.wrapping_add(1);
+        self.version_ui.clear_active_snapshot_cache();
+    }
+
+    fn active_snapshot_cache_key(&self) -> Option<ActiveSnapshotCacheKey> {
+        Some(ActiveSnapshotCacheKey {
+            paste_id: self.selected_id.clone()?,
+            buffer_epoch: self.active_buffer_epoch,
+            revision: self.active_revision(),
+            text_len: self.active_text_len_bytes(),
+        })
+    }
+
     fn ensure_selected_paste_for_version_modal(&mut self) -> bool {
         if self.selected_id.is_some() {
             return true;
@@ -179,6 +243,87 @@ impl LocalPasteApp {
             self.version_ui.clear_history_snapshot_state();
             self.set_status("Load version failed: backend unavailable.");
         }
+    }
+
+    /// Refreshes the cached current editor snapshot only when the active buffer identity changes.
+    ///
+    /// # Returns
+    /// `true` when a fresh owned snapshot had to be cloned from the editor buffer.
+    pub(super) fn sync_active_snapshot_cache(&mut self) -> bool {
+        let Some(cache_key) = self.active_snapshot_cache_key() else {
+            self.version_ui.clear_active_snapshot_cache();
+            return false;
+        };
+        if self.version_ui.active_snapshot_cache_key.as_ref() == Some(&cache_key) {
+            return false;
+        }
+        self.version_ui.active_snapshot_cache_text = self.active_snapshot();
+        self.version_ui.active_snapshot_cache_key = Some(cache_key);
+        true
+    }
+
+    /// Refreshes the cached read-only history preview body for the selected stored snapshot.
+    ///
+    /// # Returns
+    /// `true` when the snapshot body had to be cloned into preview storage.
+    pub(super) fn sync_history_preview_cache(&mut self) -> bool {
+        let Some(snapshot) = self.version_ui.history_snapshot.as_ref() else {
+            self.version_ui.clear_history_preview_cache();
+            return false;
+        };
+        let cache_key = HistoryPreviewCacheKey {
+            paste_id: snapshot.paste_id.clone(),
+            version_id_ms: snapshot.version_id_ms,
+            len: snapshot.len,
+        };
+        if self.version_ui.history_preview_cache_key.as_ref() == Some(&cache_key) {
+            return false;
+        }
+        self.version_ui.history_preview_text = snapshot.content.clone();
+        self.version_ui.history_preview_cache_key = Some(cache_key);
+        true
+    }
+
+    /// Refreshes the cached inline diff preview only when either side of the comparison changes.
+    ///
+    /// # Returns
+    /// `true` when diff preview classification or line generation was recomputed.
+    pub(super) fn sync_diff_preview_cache(&mut self) -> bool {
+        let Some(lhs_cache_key) = self.active_snapshot_cache_key() else {
+            self.version_ui.clear_active_snapshot_cache();
+            self.version_ui.diff_preview_cache_key = None;
+            self.version_ui.diff_preview = None;
+            return false;
+        };
+        let Some(cache_key) =
+            self.version_ui
+                .diff_target_paste
+                .as_ref()
+                .map(|rhs| DiffPreviewCacheKey {
+                    lhs: lhs_cache_key,
+                    rhs_paste_id: rhs.id.clone(),
+                    rhs_updated_at: rhs.updated_at,
+                    rhs_content_len: rhs.content.len(),
+                })
+        else {
+            self.version_ui.diff_preview_cache_key = None;
+            self.version_ui.diff_preview = None;
+            return false;
+        };
+        if self.version_ui.diff_preview_cache_key.as_ref() == Some(&cache_key) {
+            return false;
+        }
+        let _recomputed_snapshot = self.sync_active_snapshot_cache();
+        let Some(rhs) = self.version_ui.diff_target_paste.as_ref() else {
+            self.version_ui.diff_preview_cache_key = None;
+            self.version_ui.diff_preview = None;
+            return false;
+        };
+        let lhs = self.version_ui.active_snapshot_cache_text.as_str();
+        let diff_preview = inline_diff_preview(lhs, rhs.content.as_str());
+        self.version_ui.diff_preview = Some(diff_preview);
+        self.version_ui.diff_preview_cache_key = Some(cache_key);
+        true
     }
 
     /// Requests backend duplication for the selected historical snapshot.
@@ -327,6 +472,8 @@ impl LocalPasteApp {
         self.version_ui.diff_target_id = Some(id.clone());
         self.version_ui.diff_target_paste = None;
         self.version_ui.diff_loading_target = true;
+        self.version_ui.diff_preview_cache_key = None;
+        self.version_ui.diff_preview = None;
         if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
             self.version_ui.clear_diff_target_state();
             self.set_status("Diff load failed: backend unavailable.");
@@ -337,6 +484,8 @@ impl LocalPasteApp {
         if self.version_ui.diff_target_id.as_deref() == Some(paste.id.as_str()) {
             self.version_ui.diff_target_paste = Some(paste.clone());
             self.version_ui.diff_loading_target = false;
+            self.version_ui.diff_preview_cache_key = None;
+            self.version_ui.diff_preview = None;
         }
     }
 

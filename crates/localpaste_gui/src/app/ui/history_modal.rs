@@ -26,6 +26,11 @@ impl LocalPasteApp {
         let escape_pressed = ctx.input(|input| input.key_pressed(egui::Key::Escape));
         let close_history_on_escape = escape_pressed && !self.version_ui.history_reset_confirm_open;
         let close_confirm_on_escape = escape_pressed && self.version_ui.history_reset_confirm_open;
+        if self.version_ui.history_selected_index == 0 {
+            let _recomputed_active_snapshot = self.sync_active_snapshot_cache();
+        } else {
+            let _recomputed_history_preview = self.sync_history_preview_cache();
+        }
 
         with_muted_modal_chrome(ctx, || {
             egui::Window::new("History")
@@ -125,14 +130,6 @@ impl LocalPasteApp {
                         }
                         right.add_space(6.0);
 
-                        let mut body = if self.version_ui.history_selected_index == 0 {
-                            self.active_snapshot()
-                        } else if let Some(snapshot) = self.version_ui.history_snapshot.as_ref() {
-                            snapshot.content.clone()
-                        } else {
-                            String::new()
-                        };
-
                         if self.version_ui.history_selected_index > 0
                             && self.version_ui.history_snapshot.is_none()
                         {
@@ -151,13 +148,20 @@ impl LocalPasteApp {
                             }
                         }
 
-                        right.add(
-                            egui::TextEdit::multiline(&mut body)
-                                .font(egui::TextStyle::Monospace)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(30)
-                                .interactive(false),
-                        );
+                        {
+                            let body = if self.version_ui.history_selected_index == 0 {
+                                &mut self.version_ui.active_snapshot_cache_text
+                            } else {
+                                &mut self.version_ui.history_preview_text
+                            };
+                            right.add(
+                                egui::TextEdit::multiline(body)
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(f32::INFINITY)
+                                    .desired_rows(30)
+                                    .interactive(false),
+                            );
+                        }
 
                         right.add_space(8.0);
                         right.horizontal_wrapped(|ui| {
