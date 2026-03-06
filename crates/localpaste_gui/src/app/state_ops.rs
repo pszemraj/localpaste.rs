@@ -521,6 +521,13 @@ impl LocalPasteApp {
         if self.selected_id.as_deref() == Some(id.as_str()) {
             return true;
         }
+        // The GUI holds exactly one paste lock at a time. Once a hard reset is queued for the
+        // current selection, keep that paste selected and locked until its authoritative
+        // backend ack/error arrives; switching away early would release the lock too soon.
+        if self.reset_transition_active() {
+            self.set_reset_transition_blocked_status();
+            return false;
+        }
         if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
             self.queue_pending_selection(id);
             let content_save_needed = self.save_status == SaveStatus::Dirty;
@@ -646,6 +653,9 @@ impl LocalPasteApp {
     }
 
     fn try_apply_pending_selection(&mut self) {
+        if self.reset_transition_active() {
+            return;
+        }
         if self.save_in_flight || self.metadata_save_in_flight {
             return;
         }
@@ -936,6 +946,9 @@ impl LocalPasteApp {
     /// When the active item no longer matches the current filters, this selects
     /// the first remaining visible paste or clears selection if none remain.
     pub(super) fn ensure_selection_after_list_update(&mut self) {
+        if self.reset_transition_active() {
+            return;
+        }
         let selection_valid = self
             .selected_id
             .as_ref()

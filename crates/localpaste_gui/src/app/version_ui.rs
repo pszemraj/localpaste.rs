@@ -53,7 +53,7 @@ impl VersionUiState {
     }
 
     fn history_reset_in_flight_for(&self, paste_id: Option<&str>) -> bool {
-        self.history_reset_in_flight_paste_id.as_deref() == paste_id
+        paste_id.is_some() && self.history_reset_in_flight_paste_id.as_deref() == paste_id
     }
 
     /// Clears history-list and snapshot selection state.

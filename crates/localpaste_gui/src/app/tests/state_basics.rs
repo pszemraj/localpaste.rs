@@ -776,46 +776,43 @@ fn history_reset_is_blocked_while_local_changes_are_unsaved_or_saving_matrix() {
 }
 
 #[test]
-fn history_reset_transition_survives_selection_changes_until_matching_ack() {
+fn history_reset_in_flight_blocks_selection_switches_until_matching_ack() {
     let mut harness = make_app();
     harness.app.all_pastes = vec![
         test_summary("alpha", "Alpha", None, 7),
         test_summary("beta", "Beta", None, 5),
     ];
     harness.app.pastes = harness.app.all_pastes.clone();
+    harness
+        .app
+        .locks
+        .acquire("alpha", &harness.app.lock_owner_id)
+        .expect("acquire alpha lock");
     harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
 
     assert!(harness.app.reset_transition_active());
-
-    assert!(harness.app.select_paste("beta".to_string()));
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
-        other => panic!("expected GetPaste command, got {:?}", other),
-    }
-    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    assert!(!harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(
+        harness
+            .app
+            .locks
+            .is_locked("alpha")
+            .expect("alpha lock state"),
+        "pending reset should keep the current paste locked until ack/error"
+    );
     assert_eq!(
         harness
             .app
-            .version_ui
-            .history_reset_in_flight_paste_id
-            .as_deref(),
-        Some("alpha")
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Reset in progress; editor is temporarily read-only.")
     );
-    assert!(
-        !harness.app.reset_transition_active(),
-        "switching away should close modal/editor state without dropping alpha's reset fence"
-    );
-
-    assert!(harness.app.select_paste("alpha".to_string()));
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "alpha"),
-        other => panic!("expected GetPaste command, got {:?}", other),
-    }
-    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
-    assert!(
-        harness.app.reset_transition_active(),
-        "reselecting alpha should reactivate the pending reset fence"
-    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
 
     let mut reset_paste = Paste::new("reset content".to_string(), "Alpha".to_string());
     reset_paste.id = "alpha".to_string();
@@ -828,6 +825,57 @@ fn history_reset_transition_survives_selection_changes_until_matching_ack() {
         .version_ui
         .history_reset_in_flight_paste_id
         .is_none());
+
+    assert!(harness.app.select_paste("beta".to_string()));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        other => panic!("expected GetPaste command, got {:?}", other),
+    }
+}
+
+#[test]
+fn history_reset_in_flight_preserves_selection_across_list_reprojection() {
+    let mut harness = make_app();
+    harness.app.all_pastes = vec![
+        test_summary("alpha", "Alpha", None, 7),
+        test_summary("beta", "Beta", None, 5),
+    ];
+    harness.app.pastes = vec![test_summary("beta", "Beta", None, 5)];
+    harness
+        .app
+        .locks
+        .acquire("alpha", &harness.app.lock_owner_id)
+        .expect("acquire alpha lock");
+    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
+
+    harness.app.ensure_selection_after_list_update();
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(
+        harness
+            .app
+            .locks
+            .is_locked("alpha")
+            .expect("alpha lock state"),
+        "filter/search reprojection should not release the selected paste lock during reset"
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn reset_transition_is_inactive_without_selected_or_pending_reset_paste() {
+    let mut harness = make_app();
+    harness.app.selected_id = None;
+    harness.app.selected_paste = None;
+    harness.app.version_ui.history_reset_in_flight_paste_id = None;
+
+    assert!(
+        !harness.app.reset_transition_active(),
+        "lack of selection must not be mistaken for a pending reset fence"
+    );
 }
 
 #[test]
