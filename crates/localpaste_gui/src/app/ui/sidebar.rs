@@ -50,7 +50,8 @@ impl LocalPasteApp {
         egui::SidePanel::left("sidebar")
             .default_width(300.0)
             .show(ctx, |ui| {
-                let reset_transition_active = self.reset_transition_active();
+                let mutation_block_reason = self.mutation_shortcut_block_reason();
+                let background_mutation_blocked = mutation_block_reason.is_some();
                 ui.heading(
                     RichText::new(format!(
                         "Pastes ({}/{})",
@@ -78,14 +79,17 @@ impl LocalPasteApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(!reset_transition_active, egui::Button::new("+ New Paste"))
+                        .add_enabled(
+                            !background_mutation_blocked,
+                            egui::Button::new("+ New Paste"),
+                        )
                         .clicked()
                     {
                         self.create_new_paste();
                     }
                     if ui
                         .add_enabled(
-                            self.selected_id.is_some() && !reset_transition_active,
+                            self.selected_id.is_some() && !background_mutation_blocked,
                             egui::Button::new("Delete"),
                         )
                         .clicked()
@@ -93,6 +97,10 @@ impl LocalPasteApp {
                         self.delete_selected();
                     }
                 });
+                if let Some(reason) = mutation_block_reason {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(reason).small().color(COLOR_TEXT_MUTED));
+                }
 
                 ui.add_space(10.0);
                 self.render_collection_filters(ui);

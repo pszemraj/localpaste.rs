@@ -24,7 +24,8 @@ impl LocalPasteApp {
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
-                let reset_transition_active = self.reset_transition_active();
+                let mutation_block_reason = self.mutation_shortcut_block_reason();
+                let background_mutation_blocked = mutation_block_reason.is_some();
                 let mut preserve_virtual_editor_focus = false;
                 let mut pending_tag_search: Option<String> = None;
                 let mut apply_metadata = false;
@@ -37,7 +38,7 @@ impl LocalPasteApp {
                 ui.scope(|ui| {
                     apply_compact_meta_row_style(ui);
                     ui.horizontal_wrapped(|ui| {
-                        ui.add_enabled_ui(!reset_transition_active, |ui| {
+                        ui.add_enabled_ui(!background_mutation_blocked, |ui| {
                             let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
                             let name_response = ui.add(
                                 egui::TextEdit::singleline(&mut self.edit_name)
@@ -105,7 +106,7 @@ impl LocalPasteApp {
                         ui.separator();
                         if ui
                             .add_enabled(
-                                !reset_transition_active
+                                !background_mutation_blocked
                                     && self.metadata_dirty
                                     && !self.metadata_save_in_flight,
                                 toolbar_button("Apply"),
@@ -123,7 +124,7 @@ impl LocalPasteApp {
                             preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
                         if ui
-                            .add_enabled(!reset_transition_active, toolbar_button("Duplicate"))
+                            .add_enabled(!background_mutation_blocked, toolbar_button("Duplicate"))
                             .clicked()
                         {
                             duplicate_requested = true;
@@ -137,7 +138,7 @@ impl LocalPasteApp {
                             open_properties = true;
                         }
                         if ui
-                            .add_enabled(!reset_transition_active, toolbar_button("Delete"))
+                            .add_enabled(!background_mutation_blocked, toolbar_button("Delete"))
                             .clicked()
                         {
                             delete_requested = true;
@@ -181,12 +182,10 @@ impl LocalPasteApp {
                         .monospace()
                         .color(COLOR_TEXT_MUTED),
                 );
-                if reset_transition_active {
+                if let Some(reason) = mutation_block_reason {
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new("Reset in progress; editor is temporarily read-only.")
-                            .small()
-                            .color(COLOR_TEXT_MUTED),
+                        RichText::new(reason).small().color(COLOR_TEXT_MUTED),
                     );
                 }
                 ui.add_space(6.0);

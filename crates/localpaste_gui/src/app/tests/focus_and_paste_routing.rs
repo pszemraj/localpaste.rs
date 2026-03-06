@@ -578,6 +578,43 @@ fn version_overlay_blocks_mutating_shortcuts_and_reports_reason() {
 }
 
 #[test]
+fn version_overlay_blocks_background_mutation_dispatches() {
+    let mut harness = make_app();
+    harness.app.version_ui.diff_modal_open = true;
+    harness.app.selected_content.reset("dirty".to_string());
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.last_edit_at =
+        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+    harness.app.metadata_dirty = true;
+
+    harness.app.maybe_autosave();
+    harness.app.save_now();
+    harness.app.save_metadata_now();
+    harness
+        .app
+        .create_new_paste_with_content("hello".to_string());
+    harness.app.delete_selected();
+    harness.app.send_palette_delete("alpha".to_string());
+
+    assert!(!harness.app.save_in_flight);
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(!harness.app.metadata_save_in_flight);
+    assert!(harness.app.metadata_dirty);
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Close the open version window before mutating the selected paste.")
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
 fn explicit_paste_as_new_shortcut_is_rejected_while_version_overlay_is_open() {
     let mut harness = make_app();
     harness.app.version_ui.history_modal_open = true;

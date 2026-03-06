@@ -171,7 +171,7 @@ impl LocalPasteApp {
         ctx: &egui::Context,
         action: CommandPaletteAction,
     ) {
-        if self.reset_transition_active()
+        if self.mutation_shortcut_block_reason().is_some()
             && matches!(
                 action,
                 CommandPaletteAction::NewPaste
@@ -182,7 +182,7 @@ impl LocalPasteApp {
                     | CommandPaletteAction::DeletePaste(_)
             )
         {
-            self.set_reset_transition_blocked_status();
+            self.set_mutation_shortcut_blocked_status();
             return;
         }
         match action {

@@ -229,7 +229,7 @@ impl LocalPasteApp {
         self.version_ui.history_reset_in_flight_for(Some(paste_id))
     }
 
-    /// Reports why a global mutating shortcut should be blocked right now.
+    /// Reports why a background mutating action should be blocked right now.
     ///
     /// # Returns
     /// `Some(reason)` when reset or a detached version window must fence mutations.
@@ -270,7 +270,7 @@ impl LocalPasteApp {
         }
     }
 
-    /// Reports the shared status used when detached version windows fence mutation shortcuts.
+    /// Reports the shared status used when detached version windows fence background mutations.
     pub(super) fn set_mutation_shortcut_blocked_status(&mut self) {
         let Some(reason) = self.mutation_shortcut_block_reason() else {
             return;

@@ -163,7 +163,8 @@ impl LocalPasteApp {
             return;
         }
 
-        let reset_transition_active = self.reset_transition_active();
+        let mutation_block_reason = self.mutation_shortcut_block_reason();
+        let background_mutation_blocked = mutation_block_reason.is_some();
         let mut keep_open = true;
         egui::SidePanel::right("properties_drawer")
             .default_width(320.0)
@@ -188,7 +189,7 @@ impl LocalPasteApp {
                 }
                 ui.separator();
 
-                ui.add_enabled_ui(!reset_transition_active, |ui| {
+                ui.add_enabled_ui(!background_mutation_blocked, |ui| {
                     ui.label(RichText::new("Name").small().color(COLOR_TEXT_MUTED));
                     if ui
                         .add(
@@ -256,13 +257,9 @@ impl LocalPasteApp {
                         }
                     });
                 });
-                if reset_transition_active {
+                if let Some(reason) = mutation_block_reason {
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Reset in progress; metadata is temporarily read-only.")
-                            .small()
-                            .color(COLOR_TEXT_MUTED),
-                    );
+                    ui.label(RichText::new(reason).small().color(COLOR_TEXT_MUTED));
                 }
                 ui.add_space(10.0);
                 if ui.button("Export").clicked() {

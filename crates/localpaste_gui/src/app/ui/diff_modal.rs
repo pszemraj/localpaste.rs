@@ -7,6 +7,33 @@ use localpaste_core::diff::unified_diff_lines;
 const MAX_INLINE_DIFF_BYTES: usize = 1024 * 1024;
 const DIFF_MODAL_HEIGHT: f32 = 360.0;
 
+#[derive(Debug, PartialEq, Eq)]
+enum InlineDiffPreview {
+    TooLarge { lhs_bytes: usize, rhs_bytes: usize },
+    NoChanges,
+    Lines(Vec<String>),
+}
+
+fn inline_diff_preview(lhs: &str, rhs: &str) -> InlineDiffPreview {
+    if lhs.len().saturating_add(rhs.len()) > MAX_INLINE_DIFF_BYTES {
+        return InlineDiffPreview::TooLarge {
+            lhs_bytes: lhs.len(),
+            rhs_bytes: rhs.len(),
+        };
+    }
+
+    if lhs == rhs {
+        return InlineDiffPreview::NoChanges;
+    }
+
+    let diff_lines = unified_diff_lines(lhs, rhs);
+    if diff_lines.is_empty() {
+        InlineDiffPreview::NoChanges
+    } else {
+        InlineDiffPreview::Lines(diff_lines)
+    }
+}
+
 impl LocalPasteApp {
     /// Renders the detached diff modal using current editor snapshot as left side.
     ///
@@ -97,40 +124,47 @@ impl LocalPasteApp {
                                 );
                             });
 
-                            if lhs.len().saturating_add(rhs.content.len()) > MAX_INLINE_DIFF_BYTES {
-                                right.add_space(8.0);
-                                right.label(
-                                    RichText::new(
-                                        "Diff preview capped for now; payloads are too large.",
-                                    )
-                                    .color(egui::Color32::YELLOW),
-                                );
-                                right.label(format!(
-                                    "left={} bytes, right={} bytes",
-                                    lhs.len(),
-                                    rhs.content.len()
-                                ));
-                                return;
+                            // Never return from inside this window closure: target changes and
+                            // close-button state must still be applied after `show(...)`.
+                            match inline_diff_preview(lhs.as_str(), rhs.content.as_str()) {
+                                InlineDiffPreview::TooLarge {
+                                    lhs_bytes,
+                                    rhs_bytes,
+                                } => {
+                                    right.add_space(8.0);
+                                    right.label(
+                                        RichText::new(
+                                            "Diff preview capped for now; payloads are too large.",
+                                        )
+                                        .color(egui::Color32::YELLOW),
+                                    );
+                                    right.label(format!(
+                                        "left={} bytes, right={} bytes",
+                                        lhs_bytes, rhs_bytes
+                                    ));
+                                }
+                                InlineDiffPreview::NoChanges => {
+                                    right.label(
+                                        RichText::new("No changes.").color(COLOR_TEXT_MUTED),
+                                    );
+                                }
+                                InlineDiffPreview::Lines(diff_lines) => {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(DIFF_MODAL_HEIGHT)
+                                        .show(right, |ui| {
+                                            for line in &diff_lines {
+                                                let color = match line.chars().next() {
+                                                    Some('-') => egui::Color32::LIGHT_RED,
+                                                    Some('+') => egui::Color32::LIGHT_GREEN,
+                                                    _ => COLOR_TEXT_SECONDARY,
+                                                };
+                                                ui.label(
+                                                    RichText::new(line).monospace().color(color),
+                                                );
+                                            }
+                                        });
+                                }
                             }
-
-                            let diff_lines = unified_diff_lines(lhs.as_str(), rhs.content.as_str());
-                            if diff_lines.is_empty() {
-                                right.label(RichText::new("No changes.").color(COLOR_TEXT_MUTED));
-                                return;
-                            }
-
-                            egui::ScrollArea::vertical()
-                                .max_height(DIFF_MODAL_HEIGHT)
-                                .show(right, |ui| {
-                                    for line in &diff_lines {
-                                        let color = match line.chars().next() {
-                                            Some('-') => egui::Color32::LIGHT_RED,
-                                            Some('+') => egui::Color32::LIGHT_GREEN,
-                                            _ => COLOR_TEXT_SECONDARY,
-                                        };
-                                        ui.label(RichText::new(line).monospace().color(color));
-                                    }
-                                });
                         }
                     }
                 });
@@ -143,5 +177,33 @@ impl LocalPasteApp {
             self.version_ui.diff_modal_open = false;
             self.version_ui.clear_diff_selection();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{inline_diff_preview, InlineDiffPreview, MAX_INLINE_DIFF_BYTES};
+
+    #[test]
+    fn inline_diff_preview_classifies_changes_size_and_identity() {
+        assert_eq!(
+            inline_diff_preview("same", "same"),
+            InlineDiffPreview::NoChanges
+        );
+
+        let changed = inline_diff_preview("alpha", "beta");
+        assert!(
+            matches!(changed, InlineDiffPreview::Lines(lines) if !lines.is_empty()),
+            "changed content should produce inline diff lines"
+        );
+
+        let large = "x".repeat(MAX_INLINE_DIFF_BYTES);
+        assert_eq!(
+            inline_diff_preview(large.as_str(), "y"),
+            InlineDiffPreview::TooLarge {
+                lhs_bytes: MAX_INLINE_DIFF_BYTES,
+                rhs_bytes: 1,
+            }
+        );
     }
 }
