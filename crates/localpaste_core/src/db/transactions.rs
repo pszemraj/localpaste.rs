@@ -86,15 +86,38 @@ fn apply_folder_count_transition(
     Ok(())
 }
 
-impl TransactionOps {
-    fn with_folder_guard<T, F>(db: &Database, f: F) -> Result<T, AppError>
-    where
-        F: FnOnce(&FolderTxnGuard<'_>) -> Result<T, AppError>,
-    {
-        let guard = Self::acquire_folder_txn_guard(db)?;
-        f(&guard)
-    }
+struct PersistPasteIndexUpdate<'a> {
+    old_recency_key: Option<u64>,
+    old_folder_id: Option<&'a str>,
+    new_folder_id: Option<&'a str>,
+}
 
+fn persist_paste_with_indexes_and_folder_counts(
+    pastes: &mut redb::Table<&str, &[u8]>,
+    metas: &mut redb::Table<&str, &[u8]>,
+    updated: &mut redb::Table<(u64, &str), ()>,
+    folders: &mut redb::Table<&str, &[u8]>,
+    paste: &Paste,
+    index_update: PersistPasteIndexUpdate<'_>,
+) -> Result<(), AppError> {
+    let paste_id = paste.id.as_str();
+    let encoded_paste = bincode::serialize(paste)?;
+    let encoded_meta = bincode::serialize(&PasteMeta::from(paste))?;
+    if let Some(old_key) = index_update.old_recency_key {
+        let _ = updated.remove((old_key, paste_id))?;
+    }
+    updated.insert((reverse_timestamp_key(paste.updated_at), paste_id), ())?;
+    pastes.insert(paste_id, encoded_paste.as_slice())?;
+    metas.insert(paste_id, encoded_meta.as_slice())?;
+    apply_folder_count_transition(
+        folders,
+        index_update.old_folder_id,
+        index_update.new_folder_id,
+    )?;
+    Ok(())
+}
+
+impl TransactionOps {
     /// Acquire the global folder transaction guard.
     ///
     /// This typed guard must be passed to guarded mutation helpers to guarantee
@@ -130,9 +153,16 @@ impl TransactionOps {
         paste: &Paste,
         folder_id: &str,
     ) -> Result<(), AppError> {
-        Self::with_folder_guard(db, |guard| {
-            Self::create_paste_with_folder_locked(db, guard, paste, folder_id)
-        })
+        if let Some(existing_folder_id) = paste.folder_id.as_deref() {
+            if existing_folder_id != folder_id {
+                return Err(AppError::BadRequest(format!(
+                    "Create folder_id '{}' does not match paste.folder_id '{}'",
+                    folder_id, existing_folder_id
+                )));
+            }
+        }
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::create_paste_with_folder_locked(db, &guard, paste, folder_id)
     }
 
     /// Create a paste while holding a folder transaction guard.
@@ -160,9 +190,6 @@ impl TransactionOps {
         let mut paste = paste.clone();
         paste.folder_id = Some(folder_id.to_string());
 
-        let encoded_paste = bincode::serialize(&paste)?;
-        let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
-        let recency_key = reverse_timestamp_key(paste.updated_at);
         let write_txn = db.db.begin_write()?;
         {
             let mut pastes = write_txn.open_table(PASTES)?;
@@ -179,10 +206,18 @@ impl TransactionOps {
                 )));
             }
 
-            pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
-            metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
-            updated.insert((recency_key, paste.id.as_str()), ())?;
-            apply_folder_count_transition(&mut folders, None, Some(folder_id))?;
+            persist_paste_with_indexes_and_folder_counts(
+                &mut pastes,
+                &mut metas,
+                &mut updated,
+                &mut folders,
+                &paste,
+                PersistPasteIndexUpdate {
+                    old_recency_key: None,
+                    old_folder_id: None,
+                    new_folder_id: Some(folder_id),
+                },
+            )?;
         }
         write_txn.commit()?;
         Ok(())
@@ -200,9 +235,8 @@ impl TransactionOps {
     /// # Errors
     /// Returns an error when storage access or deserialization fails.
     pub fn delete_paste_with_folder(db: &Database, paste_id: &str) -> Result<bool, AppError> {
-        Self::with_folder_guard(db, |guard| {
-            Self::delete_paste_with_folder_locked(db, guard, paste_id)
-        })
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::delete_paste_with_folder_locked(db, &guard, paste_id)
     }
 
     /// Delete a paste while holding a folder transaction guard.
@@ -281,9 +315,21 @@ impl TransactionOps {
         new_folder_id: Option<&str>,
         update_req: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
-        Self::with_folder_guard(db, |guard| {
-            Self::move_paste_between_folders_locked(db, guard, paste_id, new_folder_id, update_req)
-        })
+        if let Some(request_folder_id) = update_req.folder_id.as_deref() {
+            let normalized_request_folder = if request_folder_id.is_empty() {
+                None
+            } else {
+                Some(request_folder_id)
+            };
+            if normalized_request_folder != new_folder_id {
+                return Err(AppError::BadRequest(format!(
+                    "Move new_folder_id {:?} does not match update_req.folder_id {:?}",
+                    new_folder_id, normalized_request_folder
+                )));
+            }
+        }
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::move_paste_between_folders_locked(db, &guard, paste_id, new_folder_id, update_req)
     }
 
     /// Move a paste between folders while holding a folder transaction guard.
@@ -337,6 +383,7 @@ impl TransactionOps {
             let old_content = paste.content.clone();
             let old_language = paste.language.clone();
             let old_language_is_manual = paste.language_is_manual;
+            let old_folder_id_ref = old_folder_id.as_deref();
             let mut version_items = decode_version_meta_list(
                 versions_meta
                     .get(paste_id)?
@@ -366,22 +413,18 @@ impl TransactionOps {
                 }
             }
 
-            let encoded_paste = bincode::serialize(&paste)?;
-            let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
-            let new_recency_key = reverse_timestamp_key(paste.updated_at);
-
-            pastes.insert(paste_id, encoded_paste.as_slice())?;
-            metas.insert(paste_id, encoded_meta.as_slice())?;
-            let _ = updated.remove((old_recency_key, paste_id))?;
-            updated.insert((new_recency_key, paste_id), ())?;
-
-            if folder_changing {
-                apply_folder_count_transition(
-                    &mut folders,
-                    old_folder_id.as_deref(),
+            persist_paste_with_indexes_and_folder_counts(
+                &mut pastes,
+                &mut metas,
+                &mut updated,
+                &mut folders,
+                &paste,
+                PersistPasteIndexUpdate {
+                    old_recency_key: Some(old_recency_key),
+                    old_folder_id: old_folder_id_ref,
                     new_folder_id,
-                )?;
-            }
+                },
+            )?;
 
             Some(paste)
         };

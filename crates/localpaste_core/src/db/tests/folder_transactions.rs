@@ -56,6 +56,32 @@ fn create_with_folder_rejects_when_folder_is_marked_for_delete() {
 }
 
 #[test]
+fn create_with_folder_rejects_conflicting_paste_folder_id() {
+    let (db, _temp) = setup_test_db();
+
+    let folder = Folder::new("target-folder".to_string());
+    let folder_id = folder.id.clone();
+    db.folders.create(&folder).expect("create folder");
+
+    let other_folder = Folder::new("other-folder".to_string());
+    let other_folder_id = other_folder.id.clone();
+    db.folders
+        .create(&other_folder)
+        .expect("create other folder");
+
+    let mut paste = Paste::new("content".to_string(), "name".to_string());
+    paste.folder_id = Some(other_folder_id.clone());
+
+    let result = TransactionOps::create_paste_with_folder(&db, &paste, &folder_id);
+    assert!(
+        matches!(result, Err(AppError::BadRequest(ref message)) if message.contains("does not match")),
+        "conflicting create folder assignment should be rejected: {:?}",
+        result
+    );
+    assert!(db.pastes.get(&paste.id).expect("lookup").is_none());
+}
+
+#[test]
 fn create_with_folder_duplicate_id_keeps_counts_consistent() {
     let fixture = setup_folder_move_fixture();
     let db = &fixture.db;
@@ -127,6 +153,50 @@ fn move_between_folders_updates_counts_and_assignment() {
 }
 
 #[test]
+fn move_within_same_folder_updates_paste_without_count_drift() {
+    let fixture = setup_folder_move_fixture();
+    let db = &fixture.db;
+
+    let update = UpdatePasteRequest {
+        content: Some("updated content".to_string()),
+        name: Some("renamed".to_string()),
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(fixture.old_folder_id.clone()),
+        tags: None,
+    };
+
+    let moved = TransactionOps::move_paste_between_folders(
+        db,
+        &fixture.paste_id,
+        Some(fixture.old_folder_id.as_str()),
+        update,
+    )
+    .expect("move")
+    .expect("paste exists");
+
+    assert_eq!(
+        moved.folder_id.as_deref(),
+        Some(fixture.old_folder_id.as_str())
+    );
+    assert_eq!(moved.name, "renamed");
+    assert_eq!(moved.content, "updated content");
+
+    let old_after = db
+        .folders
+        .get(&fixture.old_folder_id)
+        .expect("old")
+        .expect("row");
+    let new_after = db
+        .folders
+        .get(&fixture.new_folder_id)
+        .expect("new")
+        .expect("row");
+    assert_eq!(old_after.paste_count, 1);
+    assert_eq!(new_after.paste_count, 0);
+}
+
+#[test]
 fn move_missing_paste_returns_none_without_count_drift() {
     let (db, _temp) = setup_test_db();
 
@@ -160,6 +230,43 @@ fn move_missing_paste_returns_none_without_count_drift() {
     let new_after = db.folders.get(&new_folder_id).expect("new").expect("row");
     assert_eq!(old_after.paste_count, 0);
     assert_eq!(new_after.paste_count, 0);
+}
+
+#[test]
+fn move_between_folders_rejects_conflicting_update_request_folder_id() {
+    let fixture = setup_folder_move_fixture();
+    let db = &fixture.db;
+
+    let update = UpdatePasteRequest {
+        content: None,
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(fixture.old_folder_id.clone()),
+        tags: None,
+    };
+
+    let result = TransactionOps::move_paste_between_folders(
+        db,
+        &fixture.paste_id,
+        Some(fixture.new_folder_id.as_str()),
+        update,
+    );
+    assert!(
+        matches!(result, Err(AppError::BadRequest(ref message)) if message.contains("does not match")),
+        "conflicting move folder assignment should be rejected: {:?}",
+        result
+    );
+
+    let current = db
+        .pastes
+        .get(&fixture.paste_id)
+        .expect("lookup")
+        .expect("paste exists");
+    assert_eq!(
+        current.folder_id.as_deref(),
+        Some(fixture.old_folder_id.as_str())
+    );
 }
 
 #[test]
