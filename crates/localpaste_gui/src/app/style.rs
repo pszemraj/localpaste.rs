@@ -19,10 +19,12 @@ pub(super) const COLOR_TEXT_PRIMARY: Color32 = Color32::from_rgb(0xc9, 0xd1, 0xd
 pub(super) const COLOR_TEXT_SECONDARY: Color32 = Color32::from_rgb(0x8b, 0x94, 0x9e);
 /// Muted text color for low-priority labels.
 pub(super) const COLOR_TEXT_MUTED: Color32 = Color32::from_rgb(0x6e, 0x76, 0x81);
-/// Primary accent color for active controls.
-pub(super) const COLOR_ACCENT: Color32 = Color32::from_rgb(0xE5, 0x70, 0x00);
+/// Accent color used for orange text and link treatments.
+pub(super) const COLOR_ACCENT_TEXT: Color32 = Color32::from_rgb(0xD0, 0x84, 0x3A);
+/// Matte accent color used for larger filled surfaces and active controls.
+pub(super) const COLOR_ACCENT_SURFACE: Color32 = Color32::from_rgb(0xB8, 0x67, 0x24);
 /// Hover accent color for interactive controls.
-pub(super) const COLOR_ACCENT_HOVER: Color32 = Color32::from_rgb(0xCE, 0x42, 0x2B);
+pub(super) const COLOR_ACCENT_SURFACE_HOVER: Color32 = Color32::from_rgb(0xC3, 0x74, 0x31);
 /// Selection outline color.
 pub(super) const COLOR_SELECTION_STROKE: Color32 = Color32::from_rgb(0x3B, 0x82, 0xF6);
 /// Selection fill color as RGBA bytes.
@@ -92,7 +94,7 @@ impl LocalPasteApp {
         style.visuals.extreme_bg_color = COLOR_BG_PRIMARY;
         style.visuals.faint_bg_color = COLOR_BG_TERTIARY;
         style.visuals.window_stroke = Stroke::new(1.0, COLOR_BORDER);
-        style.visuals.hyperlink_color = COLOR_ACCENT;
+        style.visuals.hyperlink_color = COLOR_ACCENT_TEXT;
         style.visuals.selection.bg_fill = selection_fill_color();
         style.visuals.selection.stroke = Stroke::new(1.0, COLOR_SELECTION_STROKE);
         style.visuals.text_edit_bg_color = Some(COLOR_BG_TERTIARY);
@@ -114,25 +116,25 @@ impl LocalPasteApp {
             expansion: 0.0,
         };
         style.visuals.widgets.hovered = WidgetVisuals {
-            bg_fill: COLOR_ACCENT_HOVER,
-            weak_bg_fill: COLOR_ACCENT_HOVER,
-            bg_stroke: Stroke::new(1.0, COLOR_ACCENT_HOVER),
+            bg_fill: COLOR_ACCENT_SURFACE_HOVER,
+            weak_bg_fill: COLOR_ACCENT_SURFACE_HOVER,
+            bg_stroke: Stroke::new(1.0, COLOR_ACCENT_SURFACE_HOVER),
             corner_radius: CornerRadius::same(6),
             fg_stroke: Stroke::new(1.0, Color32::WHITE),
             expansion: 0.5,
         };
         style.visuals.widgets.active = WidgetVisuals {
-            bg_fill: COLOR_ACCENT,
-            weak_bg_fill: COLOR_ACCENT,
-            bg_stroke: Stroke::new(1.0, COLOR_ACCENT),
+            bg_fill: COLOR_ACCENT_SURFACE,
+            weak_bg_fill: COLOR_ACCENT_SURFACE,
+            bg_stroke: Stroke::new(1.0, COLOR_ACCENT_SURFACE),
             corner_radius: CornerRadius::same(6),
             fg_stroke: Stroke::new(1.0, Color32::WHITE),
             expansion: 0.5,
         };
         style.visuals.widgets.open = WidgetVisuals {
-            bg_fill: COLOR_ACCENT,
-            weak_bg_fill: COLOR_ACCENT,
-            bg_stroke: Stroke::new(1.0, COLOR_ACCENT),
+            bg_fill: COLOR_ACCENT_SURFACE,
+            weak_bg_fill: COLOR_ACCENT_SURFACE,
+            bg_stroke: Stroke::new(1.0, COLOR_ACCENT_SURFACE),
             corner_radius: CornerRadius::same(6),
             fg_stroke: Stroke::new(1.0, Color32::WHITE),
             expansion: 0.0,

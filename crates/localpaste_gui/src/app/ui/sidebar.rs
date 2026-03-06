@@ -30,7 +30,7 @@ impl LocalPasteApp {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading(RichText::new("LocalPaste.rs").color(COLOR_ACCENT));
+                    ui.heading(RichText::new("LocalPaste.rs").color(COLOR_ACCENT_TEXT));
                     ui.label(
                         RichText::new(APP_VERSION_LABEL)
                             .small()

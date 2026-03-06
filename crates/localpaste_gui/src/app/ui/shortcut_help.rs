@@ -76,7 +76,11 @@ impl LocalPasteApp {
 
 fn shortcut_row(ui: &mut egui::Ui, keys: &str, description: &str) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(keys).monospace().color(COLOR_ACCENT));
+        ui.label(
+            egui::RichText::new(keys)
+                .monospace()
+                .color(COLOR_ACCENT_TEXT),
+        );
         ui.label(egui::RichText::new(description).color(COLOR_TEXT_PRIMARY));
     });
 }
