@@ -521,3 +521,24 @@ fn delete_shortcut_guard_blocks_when_text_input_virtual_focus_or_focus_promotion
         assert_eq!(actual, case.expected, "case '{}'", case.name);
     }
 }
+
+#[test]
+fn keyboard_overlay_open_includes_detached_version_windows() {
+    let mut harness = make_app();
+    assert!(!harness.app.keyboard_overlay_open());
+
+    harness.app.version_ui.history_modal_open = true;
+    assert!(harness.app.keyboard_overlay_open());
+    harness.app.version_ui.history_modal_open = false;
+
+    harness.app.version_ui.diff_modal_open = true;
+    assert!(harness.app.keyboard_overlay_open());
+    harness.app.version_ui.diff_modal_open = false;
+
+    harness.app.version_ui.history_reset_confirm_open = true;
+    assert!(harness.app.keyboard_overlay_open());
+    harness.app.version_ui.history_reset_confirm_open = false;
+
+    harness.app.command_palette_open = true;
+    assert!(harness.app.keyboard_overlay_open());
+}

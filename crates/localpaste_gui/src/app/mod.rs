@@ -34,7 +34,7 @@ use highlight::{
 pub(super) use interaction_helpers::{
     classify_virtual_command, consume_virtual_editor_focus_keys, drag_autoscroll_delta,
     is_command_shift_shortcut, is_editor_word_char, is_plain_command_shortcut,
-    next_virtual_click_count, paint_virtual_selection_overlay,
+    next_virtual_click_count, non_focusable_click_sense, paint_virtual_selection_overlay,
     should_consume_virtual_editor_focus_keys, should_route_sidebar_arrows, VirtualCommandBucket,
 };
 use localpaste_core::models::paste::Paste;
@@ -279,6 +279,15 @@ struct InputTraceFrame<'a> {
 }
 
 impl LocalPasteApp {
+    fn keyboard_overlay_open(&self) -> bool {
+        self.command_palette_open
+            || self.properties_drawer_open
+            || self.shortcut_help_open
+            || self.version_ui.history_modal_open
+            || self.version_ui.diff_modal_open
+            || self.version_ui.history_reset_confirm_open
+    }
+
     /// Construct a new app instance from the current environment config.
     ///
     /// Opens the embedded database, spawns the backend worker thread, and kicks
@@ -568,6 +577,10 @@ impl eframe::App for LocalPasteApp {
         let mut deferred_focus_apply_ms = 0.0f32;
         let mut deferred_copy_apply_ms = 0.0f32;
         let reset_transition_active = self.reset_transition_active();
+        let version_overlay_open = self.version_ui.history_modal_open
+            || self.version_ui.diff_modal_open
+            || self.version_ui.history_reset_confirm_open;
+        let keyboard_overlay_open = self.keyboard_overlay_open();
         let focus_promotion_requested =
             self.editor_mode == EditorMode::VirtualEditor && self.focus_editor_next;
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
@@ -580,7 +593,7 @@ impl eframe::App for LocalPasteApp {
             virtual_editor_focus_active_pre || focus_promotion_requested;
         let virtual_editor_events_allowed = virtual_editor_keyboard_claim_pre
             || (self.editor_mode == EditorMode::VirtualEditor && !wants_keyboard_input_before);
-        if self.is_virtual_editor_mode() && !reset_transition_active {
+        if self.is_virtual_editor_mode() && !reset_transition_active && !keyboard_overlay_open {
             let route_started = Instant::now();
             let commands = ctx
                 .input(|input| commands_from_events(&input.events, virtual_editor_events_allowed));
@@ -631,7 +644,7 @@ impl eframe::App for LocalPasteApp {
             should_consume_virtual_editor_focus_keys(
                 virtual_editor_keyboard_claim_pre,
                 self.command_palette_open,
-                self.properties_drawer_open,
+                self.properties_drawer_open || version_overlay_open,
                 self.shortcut_help_open,
             ),
         );
@@ -765,7 +778,7 @@ impl eframe::App for LocalPasteApp {
                 !self.pastes.is_empty(),
                 virtual_editor_keyboard_claim_pre,
                 self.command_palette_open,
-                self.properties_drawer_open,
+                self.properties_drawer_open || version_overlay_open,
                 self.shortcut_help_open,
             ) {
                 if input.key_pressed(egui::Key::ArrowDown) {

@@ -124,6 +124,19 @@ pub(crate) fn consume_virtual_editor_focus_keys(ctx: &egui::Context, editor_clai
     });
 }
 
+/// Returns a click sense that never enters egui's keyboard-focus ring.
+///
+/// Use this for mouse-first command buttons in the editor chrome so arrow-key
+/// navigation cannot hop out of the editor and start traversing toolbar actions.
+///
+/// # Returns
+/// A click-only [`egui::Sense`] with focusability removed.
+pub(crate) fn non_focusable_click_sense() -> egui::Sense {
+    let mut sense = egui::Sense::click();
+    sense.remove(egui::Sense::focusable_noninteractive());
+    sense
+}
+
 /// Returns whether virtual-editor key consumption should run this frame.
 ///
 /// Overlay surfaces that intentionally own keyboard input must win over the
@@ -320,7 +333,8 @@ pub(crate) fn paint_virtual_selection_overlay(
 mod tests {
     use super::{
         consume_virtual_editor_focus_keys, is_command_shift_shortcut, is_plain_command_shortcut,
-        should_consume_virtual_editor_focus_keys, should_route_sidebar_arrows,
+        non_focusable_click_sense, should_consume_virtual_editor_focus_keys,
+        should_route_sidebar_arrows,
     };
     use eframe::egui;
 
@@ -501,5 +515,13 @@ mod tests {
         };
         assert!(!is_plain_command_shortcut(command_shift_alt));
         assert!(!is_command_shift_shortcut(command_shift_alt));
+    }
+
+    #[test]
+    fn non_focusable_click_sense_stays_clickable_without_entering_focus_ring() {
+        let sense = non_focusable_click_sense();
+        assert!(sense.senses_click());
+        assert!(!sense.senses_drag());
+        assert!(!sense.is_focusable());
     }
 }

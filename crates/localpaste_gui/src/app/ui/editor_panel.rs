@@ -1,6 +1,7 @@
 //! Central editor panel rendering for virtual preview and virtual editor modes.
 
 use super::super::*;
+use super::editor_panel_virtual::VirtualEditorRenderOptions;
 use super::properties_drawer::{
     apply_language_choice, auto_language_choice_key, render_language_choice_combo,
 };
@@ -16,10 +17,15 @@ impl LocalPasteApp {
             let selected_meta = self.selected_paste.as_ref().map(|paste| paste.id.clone());
 
             if let Some(id) = selected_meta {
+                let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+                let editor_had_virtual_focus = self.editor_mode == EditorMode::VirtualEditor
+                    && (self.virtual_editor_state.has_focus
+                        || ctx.memory(|m| m.has_focus(editor_id)));
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
                 let reset_transition_active = self.reset_transition_active();
+                let mut preserve_virtual_editor_focus = false;
                 let mut pending_tag_search: Option<String> = None;
                 let mut apply_metadata = false;
                 let mut copy_requested = false;
@@ -91,7 +97,8 @@ impl LocalPasteApp {
                             }
                         });
                         for tag in &visible_tags {
-                            if ui.small_button(format!("#{}", tag)).clicked() {
+                            if non_focusable_small_toolbar_button(ui, format!("#{}", tag)).clicked()
+                            {
                                 pending_tag_search = Some(tag.clone());
                             }
                         }
@@ -101,37 +108,42 @@ impl LocalPasteApp {
                                 !reset_transition_active
                                     && self.metadata_dirty
                                     && !self.metadata_save_in_flight,
-                                egui::Button::new("Apply"),
+                                toolbar_button("Apply"),
                             )
                             .clicked()
                         {
                             apply_metadata = true;
                         }
-                        if ui.small_button("Copy").clicked() {
+                        if non_focusable_small_toolbar_button(ui, "Copy").clicked() {
                             copy_requested = true;
+                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
-                        if ui.small_button("Copy Link").clicked() {
+                        if non_focusable_small_toolbar_button(ui, "Copy Link").clicked() {
                             copy_link_requested = true;
+                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
                         if ui
-                            .add_enabled(!reset_transition_active, egui::Button::new("Duplicate"))
+                            .add_enabled(!reset_transition_active, toolbar_button("Duplicate"))
                             .clicked()
                         {
                             duplicate_requested = true;
+                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
-                        if ui.small_button("Export").clicked() {
+                        if non_focusable_small_toolbar_button(ui, "Export").clicked() {
                             export_requested = true;
+                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
-                        if ui.small_button("Properties").clicked() {
+                        if non_focusable_small_toolbar_button(ui, "Properties").clicked() {
                             open_properties = true;
                         }
                         if ui
-                            .add_enabled(!reset_transition_active, egui::Button::new("Delete"))
+                            .add_enabled(!reset_transition_active, toolbar_button("Delete"))
                             .clicked()
                         {
                             delete_requested = true;
                         }
-                        self.render_version_toolbar(ui);
+                        preserve_virtual_editor_focus |=
+                            self.render_version_toolbar(ui, editor_had_virtual_focus);
                     });
                 });
                 if let Some(tag) = pending_tag_search {
@@ -319,6 +331,9 @@ impl LocalPasteApp {
                         }
                     });
                 let row_height = ui.text_style_height(&editor_style);
+                if preserve_virtual_editor_focus {
+                    self.focus_editor_next = true;
+                }
 
                 let scroll = egui::ScrollArea::vertical()
                     .id_salt("editor_scroll")
@@ -339,8 +354,11 @@ impl LocalPasteApp {
                         row_height,
                         editor_height,
                         &editor_font,
-                        highlight_render_match,
-                        use_plain,
+                        VirtualEditorRenderOptions {
+                            highlight_render_match,
+                            use_plain,
+                            preserve_focus_from_editor_chrome: preserve_virtual_editor_focus,
+                        },
                     );
                 } else {
                     // Defensive fallback for impossible mode values.
@@ -358,6 +376,17 @@ impl LocalPasteApp {
             }
         });
     }
+}
+
+fn toolbar_button(label: impl Into<egui::WidgetText>) -> egui::Button<'static> {
+    egui::Button::new(label).sense(non_focusable_click_sense())
+}
+
+fn non_focusable_small_toolbar_button(
+    ui: &mut egui::Ui,
+    label: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.add(toolbar_button(label).small())
 }
 
 fn compact_header_tags(input: &str) -> Vec<String> {
