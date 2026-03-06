@@ -95,6 +95,10 @@ impl LocalPasteApp {
     /// # Arguments
     /// - `ctx`: Egui context used to dispatch viewport paste requests.
     pub(super) fn request_paste_as_new(&mut self, ctx: &egui::Context) {
+        if self.reset_transition_active() {
+            self.set_reset_transition_blocked_status();
+            return;
+        }
         self.arm_paste_as_new_intent();
         self.paste_as_new_clipboard_requested_at = Some(Instant::now());
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);

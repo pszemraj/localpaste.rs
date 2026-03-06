@@ -679,6 +679,10 @@ impl LocalPasteApp {
 
     /// Creates a new paste pre-populated with `content`.
     pub(super) fn create_new_paste_with_content(&mut self, content: String) {
+        if self.reset_transition_active() {
+            self.set_reset_transition_blocked_status();
+            return;
+        }
         let _sent = self.send_backend_cmd_or_status(
             CoreCmd::CreatePaste { content },
             "Create failed: backend unavailable.",
@@ -689,6 +693,10 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when the backend command was queued, otherwise `false`.
     pub(super) fn send_delete_paste(&mut self, id: String) -> bool {
+        if self.reset_transition_active() {
+            self.set_reset_transition_blocked_status();
+            return false;
+        }
         self.send_backend_cmd_or_status(
             CoreCmd::DeletePaste { id },
             "Delete failed: backend unavailable.",
@@ -704,6 +712,11 @@ impl LocalPasteApp {
 
     /// Marks current editor content dirty and arms autosave timing.
     pub(super) fn mark_dirty(&mut self) {
+        // Reset is authoritative once queued; the selected paste must stop accepting
+        // local dirty-state transitions until the backend replies.
+        if self.reset_transition_active() {
+            return;
+        }
         if self.selected_id.is_some() {
             self.save_status = SaveStatus::Dirty;
             self.last_edit_at = Some(Instant::now());
@@ -715,6 +728,9 @@ impl LocalPasteApp {
 
     /// Dispatches autosave once dirty content has been idle past the autosave delay.
     pub(super) fn maybe_autosave(&mut self) {
+        if self.reset_transition_active() {
+            return;
+        }
         if self.save_in_flight || self.save_status != SaveStatus::Dirty {
             return;
         }
@@ -732,6 +748,10 @@ impl LocalPasteApp {
 
     /// Forces immediate content save dispatch when the current paste is dirty.
     pub(super) fn save_now(&mut self) {
+        if self.reset_transition_active() {
+            self.set_reset_transition_blocked_status();
+            return;
+        }
         if self.save_in_flight || self.save_status != SaveStatus::Dirty {
             return;
         }
@@ -743,6 +763,10 @@ impl LocalPasteApp {
 
     /// Dispatches metadata save for the current editor metadata draft when needed.
     pub(super) fn save_metadata_now(&mut self) {
+        if self.reset_transition_active() {
+            self.set_reset_transition_blocked_status();
+            return;
+        }
         if !self.metadata_dirty || self.metadata_save_in_flight {
             return;
         }

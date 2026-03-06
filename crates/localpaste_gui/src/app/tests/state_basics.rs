@@ -759,3 +759,74 @@ fn history_reset_is_blocked_while_local_changes_are_unsaved_or_saving_matrix() {
         ));
     }
 }
+
+#[test]
+fn history_reset_in_flight_blocks_create_delete_and_paste_as_new_requests() {
+    let mut harness = make_app();
+    let ctx = eframe::egui::Context::default();
+    harness.app.version_ui.history_reset_in_flight = true;
+
+    harness
+        .app
+        .create_new_paste_with_content("hello".to_string());
+    harness.app.delete_selected();
+    harness.app.send_palette_delete("alpha".to_string());
+    harness.app.request_paste_as_new(&ctx);
+
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Reset in progress; editor is temporarily read-only.")
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn history_reset_in_flight_blocks_dirtying_and_save_dispatches() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_reset_in_flight = true;
+
+    harness.app.mark_dirty();
+    assert!(matches!(harness.app.save_status, SaveStatus::Saved));
+    assert!(harness.app.last_edit_at.is_none());
+
+    harness.app.selected_content.reset("auto-save".to_string());
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.last_edit_at =
+        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+    harness.app.maybe_autosave();
+    assert!(!harness.app.save_in_flight);
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+
+    harness.app.save_now();
+    assert!(!harness.app.save_in_flight);
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+
+    harness.app.metadata_dirty = true;
+    harness.app.save_metadata_now();
+    assert!(!harness.app.metadata_save_in_flight);
+    assert!(harness.app.metadata_dirty);
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Reset in progress; editor is temporarily read-only.")
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}

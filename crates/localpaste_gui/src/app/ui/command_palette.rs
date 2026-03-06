@@ -171,6 +171,20 @@ impl LocalPasteApp {
         ctx: &egui::Context,
         action: CommandPaletteAction,
     ) {
+        if self.reset_transition_active()
+            && matches!(
+                action,
+                CommandPaletteAction::NewPaste
+                    | CommandPaletteAction::PasteAsNew
+                    | CommandPaletteAction::DeleteSelected
+                    | CommandPaletteAction::SaveNow
+                    | CommandPaletteAction::SaveMetadata
+                    | CommandPaletteAction::DeletePaste(_)
+            )
+        {
+            self.set_reset_transition_blocked_status();
+            return;
+        }
         match action {
             CommandPaletteAction::NewPaste => {
                 self.create_new_paste();

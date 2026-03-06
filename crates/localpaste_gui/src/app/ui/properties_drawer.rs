@@ -163,6 +163,7 @@ impl LocalPasteApp {
             return;
         }
 
+        let reset_transition_active = self.reset_transition_active();
         let mut keep_open = true;
         egui::SidePanel::right("properties_drawer")
             .default_width(320.0)
@@ -187,75 +188,86 @@ impl LocalPasteApp {
                 }
                 ui.separator();
 
-                ui.label(RichText::new("Name").small().color(COLOR_TEXT_MUTED));
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut self.edit_name)
-                            .desired_width(f32::INFINITY),
-                    )
-                    .changed()
-                {
-                    self.metadata_dirty = true;
-                }
+                ui.add_enabled_ui(!reset_transition_active, |ui| {
+                    ui.label(RichText::new("Name").small().color(COLOR_TEXT_MUTED));
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.edit_name)
+                                .desired_width(f32::INFINITY),
+                        )
+                        .changed()
+                    {
+                        self.metadata_dirty = true;
+                    }
 
-                ui.add_space(6.0);
-                ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
-                let current_manual_value = self
-                    .edit_language
-                    .as_deref()
-                    .map(localpaste_core::detection::canonical::canonicalize)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| "text".to_string());
-                let mut language_choice = if self.edit_language_is_manual {
-                    current_manual_value.clone()
-                } else {
-                    AUTO_LANGUAGE.to_string()
-                };
-                let previous_language_choice = language_choice.clone();
-                render_language_choice_combo(
-                    ui,
-                    "drawer_language_select",
-                    None,
-                    &mut language_choice,
-                );
-                if language_choice != previous_language_choice {
-                    apply_language_choice(
-                        &mut self.edit_language_is_manual,
-                        &mut self.edit_language,
-                        &mut self.metadata_dirty,
-                        language_choice.as_str(),
-                        current_manual_value.as_str(),
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
+                    let current_manual_value = self
+                        .edit_language
+                        .as_deref()
+                        .map(localpaste_core::detection::canonical::canonicalize)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| "text".to_string());
+                    let mut language_choice = if self.edit_language_is_manual {
+                        current_manual_value.clone()
+                    } else {
+                        AUTO_LANGUAGE.to_string()
+                    };
+                    let previous_language_choice = language_choice.clone();
+                    render_language_choice_combo(
+                        ui,
+                        "drawer_language_select",
+                        None,
+                        &mut language_choice,
+                    );
+                    if language_choice != previous_language_choice {
+                        apply_language_choice(
+                            &mut self.edit_language_is_manual,
+                            &mut self.edit_language,
+                            &mut self.metadata_dirty,
+                            language_choice.as_str(),
+                            current_manual_value.as_str(),
+                        );
+                    }
+
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.edit_tags)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("comma,separated,tags"),
+                        )
+                        .changed()
+                    {
+                        self.metadata_dirty = true;
+                    }
+
+                    ui.add_space(10.0);
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .add_enabled(
+                                self.metadata_dirty && !self.metadata_save_in_flight,
+                                egui::Button::new("Save Metadata"),
+                            )
+                            .clicked()
+                        {
+                            self.save_metadata_now();
+                        }
+                    });
+                });
+                if reset_transition_active {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Reset in progress; metadata is temporarily read-only.")
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
                     );
                 }
-
-                ui.add_space(6.0);
-                ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut self.edit_tags)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("comma,separated,tags"),
-                    )
-                    .changed()
-                {
-                    self.metadata_dirty = true;
-                }
-
                 ui.add_space(10.0);
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .add_enabled(
-                            self.metadata_dirty && !self.metadata_save_in_flight,
-                            egui::Button::new("Save Metadata"),
-                        )
-                        .clicked()
-                    {
-                        self.save_metadata_now();
-                    }
-                    if ui.button("Export").clicked() {
-                        self.export_selected_paste();
-                    }
-                });
+                if ui.button("Export").clicked() {
+                    self.export_selected_paste();
+                }
             });
 
         if !keep_open {

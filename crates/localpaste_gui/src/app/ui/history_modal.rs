@@ -33,6 +33,7 @@ impl LocalPasteApp {
                 .default_width(1080.0)
                 .default_height(760.0)
                 .show(ctx, |ui| {
+                    let reset_transition_active = self.reset_transition_active();
                     let can_go_newer = self.version_ui.history_selected_index > 0;
                     let can_go_older = self.version_ui.history_selected_index
                         < self.version_ui.history_versions.len();
@@ -162,11 +163,12 @@ impl LocalPasteApp {
                         right.horizontal_wrapped(|ui| {
                             let can_act_on_snapshot = self.version_ui.history_selected_index > 0
                                 && self.version_ui.history_snapshot.is_some();
+                            let can_duplicate = can_act_on_snapshot && !reset_transition_active;
                             let can_open_reset_confirm =
                                 can_act_on_snapshot && self.can_queue_history_reset();
                             if ui
                                 .add_enabled(
-                                    can_act_on_snapshot,
+                                    can_duplicate,
                                     egui::Button::new("Duplicate as New Paste"),
                                 )
                                 .clicked()
@@ -182,7 +184,15 @@ impl LocalPasteApp {
                             {
                                 pending_open_reset_confirm = true;
                             }
-                            if can_act_on_snapshot && !self.can_queue_history_reset() {
+                            if can_act_on_snapshot && reset_transition_active {
+                                ui.label(
+                                    RichText::new(
+                                        "Reset in progress; current paste is temporarily read-only.",
+                                    )
+                                    .small()
+                                    .color(COLOR_TEXT_MUTED),
+                                );
+                            } else if can_act_on_snapshot && !self.can_queue_history_reset() {
                                 ui.label(
                                     RichText::new("Save current changes before hard reset.")
                                         .small()

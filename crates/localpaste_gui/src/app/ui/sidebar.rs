@@ -50,6 +50,7 @@ impl LocalPasteApp {
         egui::SidePanel::left("sidebar")
             .default_width(300.0)
             .show(ctx, |ui| {
+                let reset_transition_active = self.reset_transition_active();
                 ui.heading(
                     RichText::new(format!(
                         "Pastes ({}/{})",
@@ -76,11 +77,17 @@ impl LocalPasteApp {
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("+ New Paste").clicked() {
+                    if ui
+                        .add_enabled(!reset_transition_active, egui::Button::new("+ New Paste"))
+                        .clicked()
+                    {
                         self.create_new_paste();
                     }
                     if ui
-                        .add_enabled(self.selected_id.is_some(), egui::Button::new("Delete"))
+                        .add_enabled(
+                            self.selected_id.is_some() && !reset_transition_active,
+                            egui::Button::new("Delete"),
+                        )
                         .clicked()
                     {
                         self.delete_selected();

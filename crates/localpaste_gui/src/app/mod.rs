@@ -567,6 +567,7 @@ impl eframe::App for LocalPasteApp {
         let mut immediate_apply_ms = 0.0f32;
         let mut deferred_focus_apply_ms = 0.0f32;
         let mut deferred_copy_apply_ms = 0.0f32;
+        let reset_transition_active = self.reset_transition_active();
         let focus_promotion_requested =
             self.editor_mode == EditorMode::VirtualEditor && self.focus_editor_next;
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
@@ -579,7 +580,7 @@ impl eframe::App for LocalPasteApp {
             virtual_editor_focus_active_pre || focus_promotion_requested;
         let virtual_editor_events_allowed = virtual_editor_keyboard_claim_pre
             || (self.editor_mode == EditorMode::VirtualEditor && !wants_keyboard_input_before);
-        if self.is_virtual_editor_mode() {
+        if self.is_virtual_editor_mode() && !reset_transition_active {
             let route_started = Instant::now();
             let commands = ctx
                 .input(|input| commands_from_events(&input.events, virtual_editor_events_allowed));
@@ -654,7 +655,11 @@ impl eframe::App for LocalPasteApp {
             let command_shift = is_command_shift_shortcut(input.modifiers);
 
             if plain_command && input.key_pressed(egui::Key::N) {
-                self.create_new_paste();
+                if reset_transition_active {
+                    self.set_reset_transition_blocked_status();
+                } else {
+                    self.create_new_paste();
+                }
             }
             if plain_command
                 && input.key_pressed(egui::Key::Delete)
@@ -664,11 +669,19 @@ impl eframe::App for LocalPasteApp {
                     focus_promotion_requested,
                 ))
             {
-                self.delete_selected();
+                if reset_transition_active {
+                    self.set_reset_transition_blocked_status();
+                } else {
+                    self.delete_selected();
+                }
             }
             if plain_command && input.key_pressed(egui::Key::S) {
-                self.save_now();
-                self.save_metadata_now();
+                if reset_transition_active {
+                    self.set_reset_transition_blocked_status();
+                } else {
+                    self.save_now();
+                    self.save_metadata_now();
+                }
             }
             if plain_command && input.key_pressed(egui::Key::F) {
                 self.search_focus_requested = true;
@@ -687,13 +700,21 @@ impl eframe::App for LocalPasteApp {
                 self.properties_drawer_open = !self.properties_drawer_open;
             }
             if command_shift && input.key_pressed(egui::Key::V) {
-                request_paste_as_new = true;
+                if reset_transition_active {
+                    self.set_reset_transition_blocked_status();
+                } else {
+                    request_paste_as_new = true;
+                }
             }
             if plain_command && input.key_pressed(egui::Key::V) {
-                // A newer plain paste intent should take precedence over any older
-                // explicit paste-as-new intent still waiting on clipboard payload.
-                self.cancel_paste_as_new_intent();
-                plain_paste_shortcut_pressed = true;
+                if reset_transition_active {
+                    self.set_reset_transition_blocked_status();
+                } else {
+                    // A newer plain paste intent should take precedence over any older
+                    // explicit paste-as-new intent still waiting on clipboard payload.
+                    self.cancel_paste_as_new_intent();
+                    plain_paste_shortcut_pressed = true;
+                }
             }
             if input.key_pressed(egui::Key::F1) {
                 self.shortcut_help_open = !self.shortcut_help_open;
@@ -762,7 +783,7 @@ impl eframe::App for LocalPasteApp {
                 ctx.send_cmd(egui::OutputCommand::CopyText(selection));
             }
         }
-        if self.editor_mode == EditorMode::VirtualEditor {
+        if self.editor_mode == EditorMode::VirtualEditor && !reset_transition_active {
             let mut fallback_commands = Vec::new();
             if fallback_virtual_select_all {
                 fallback_commands.push(VirtualInputCommand::SelectAll);
@@ -856,7 +877,7 @@ impl eframe::App for LocalPasteApp {
             self.request_paste_as_new(ctx);
         }
         let copy_ready_post = focus_active_post || has_virtual_selection_post;
-        if focus_active_post || focus_promotion_requested {
+        if (focus_active_post || focus_promotion_requested) && !reset_transition_active {
             let deferred_started = Instant::now();
             deferred_focus_apply_result =
                 self.apply_virtual_commands(ctx, &deferred_focus_commands);
@@ -868,7 +889,7 @@ impl eframe::App for LocalPasteApp {
                 self.virtual_follow_cursor_next_frame = true;
             }
         }
-        if copy_ready_post {
+        if copy_ready_post && !reset_transition_active {
             let deferred_started = Instant::now();
             deferred_copy_apply_result = self.apply_virtual_commands(ctx, &deferred_copy_commands);
             deferred_copy_apply_ms = deferred_started.elapsed().as_secs_f32() * 1000.0;

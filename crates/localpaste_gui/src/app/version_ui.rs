@@ -8,6 +8,7 @@ use std::time::Instant;
 
 const VERSION_UI_LIST_LIMIT: usize = 200;
 const MAX_DIFF_CANDIDATES: usize = 40;
+const RESET_TRANSITION_BLOCKED_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
 
 /// UI state for detached diff/history modals.
 #[derive(Debug, Clone, Default)]
@@ -188,6 +189,23 @@ impl LocalPasteApp {
             && !self.save_in_flight
             && !self.metadata_dirty
             && !self.metadata_save_in_flight
+    }
+
+    /// Returns whether a confirmed history reset is still awaiting its authoritative backend ack.
+    ///
+    /// # Returns
+    /// `true` while reset temporarily fences local mutations for the selected paste.
+    pub(super) fn reset_transition_active(&self) -> bool {
+        self.version_ui.history_reset_in_flight
+    }
+
+    /// Reports the shared read-only status used while reset temporarily fences mutations.
+    pub(super) fn set_reset_transition_blocked_status(&mut self) {
+        if self.status.as_ref().map(|status| status.text.as_str())
+            != Some(RESET_TRANSITION_BLOCKED_STATUS)
+        {
+            self.set_status(RESET_TRANSITION_BLOCKED_STATUS);
+        }
     }
 
     /// Captures the currently selected history row as the immutable reset-confirm target.

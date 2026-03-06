@@ -30,3 +30,13 @@ reason = "Integration coverage remains centralized while version/diff endpoint c
 path = "crates/localpaste_gui/src/app/ui/editor_panel_virtual.rs"
 max_lines = 1100
 reason = "Virtual editor rendering and interaction logic is still in one module pending extraction into row rendering/scroll coordination submodules."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/mod.rs"
+max_lines = 1050
+reason = "The main GUI update loop still centralizes frame input routing and per-frame orchestration; the reset-mutation fence landed here pending extraction into a dedicated input pipeline module."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/state_ops.rs"
+max_lines = 1050
+reason = "Selection, save, and backend event transitions remain centralized; the reset-mutation fence added bounded guard logic here until save/export/selection helpers are split into smaller modules."
