@@ -2,6 +2,16 @@
 
 use super::*;
 
+fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
 #[test]
 fn click_outside_editor_viewport_blurs_focus() {
     let mut harness = make_app();
@@ -523,9 +533,13 @@ fn delete_shortcut_guard_blocks_when_text_input_virtual_focus_or_focus_promotion
 }
 
 #[test]
-fn keyboard_overlay_open_includes_detached_version_windows() {
+fn keyboard_overlay_open_excludes_properties_drawer_but_includes_modal_overlays() {
     let mut harness = make_app();
     assert!(!harness.app.keyboard_overlay_open());
+
+    harness.app.properties_drawer_open = true;
+    assert!(!harness.app.keyboard_overlay_open());
+    harness.app.properties_drawer_open = false;
 
     harness.app.version_ui.history_modal_open = true;
     assert!(harness.app.keyboard_overlay_open());
@@ -541,4 +555,83 @@ fn keyboard_overlay_open_includes_detached_version_windows() {
 
     harness.app.command_palette_open = true;
     assert!(harness.app.keyboard_overlay_open());
+}
+
+#[test]
+fn version_overlay_blocks_mutating_shortcuts_and_reports_reason() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_modal_open = true;
+
+    assert_eq!(
+        harness.app.mutation_shortcut_block_reason(),
+        Some("Close the open version window before mutating the selected paste.")
+    );
+    harness.app.set_mutation_shortcut_blocked_status();
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Close the open version window before mutating the selected paste.")
+    );
+}
+
+#[test]
+fn explicit_paste_as_new_shortcut_is_rejected_while_version_overlay_is_open() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_modal_open = true;
+    let ctx = egui::Context::default();
+    let modifiers = egui::Modifiers {
+        command: true,
+        shift: true,
+        ..Default::default()
+    };
+
+    let mut armed = false;
+    let _ = ctx.run(
+        egui::RawInput {
+            events: vec![key_event(egui::Key::V, modifiers)],
+            ..Default::default()
+        },
+        |ctx| {
+            armed = harness.app.maybe_arm_paste_as_new_shortcut_intent(ctx);
+        },
+    );
+
+    assert!(!armed);
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Close the open version window before mutating the selected paste.")
+    );
+}
+
+#[test]
+fn version_overlay_cancels_pending_paste_as_new_and_blocks_implicit_clipboard_create() {
+    let mut harness = make_app();
+    harness.app.arm_paste_as_new_intent();
+    harness.app.version_ui.diff_modal_open = true;
+
+    let mut explicit_clipboard = Some("from clipboard".to_string());
+    assert!(!harness
+        .app
+        .maybe_consume_explicit_paste_as_new(&mut explicit_clipboard));
+    assert_eq!(explicit_clipboard.as_deref(), Some("from clipboard"));
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+    assert!(harness.cmd_rx.try_recv().is_err());
+
+    assert!(!harness.app.maybe_route_implicit_global_clipboard_create(
+        Some("from clipboard".to_string()),
+        false,
+        false,
+        false,
+    ));
+    assert!(harness.cmd_rx.try_recv().is_err());
 }

@@ -4,6 +4,27 @@ use super::editor::EditorMode;
 use super::LocalPasteApp;
 
 impl LocalPasteApp {
+    /// Returns whether a detached version-history or diff window currently owns the workflow.
+    ///
+    /// # Returns
+    /// `true` when History, Diff, or reset confirmation is open.
+    pub(super) fn version_overlay_open(&self) -> bool {
+        self.version_ui.history_modal_open
+            || self.version_ui.diff_modal_open
+            || self.version_ui.history_reset_confirm_open
+    }
+
+    /// Returns whether a modal keyboard overlay should block background editor routing.
+    ///
+    /// Non-modal chrome like the properties drawer is intentionally excluded so
+    /// the editor can remain live beside it.
+    ///
+    /// # Returns
+    /// `true` when a modal keyboard-owning surface is open.
+    pub(super) fn keyboard_overlay_open(&self) -> bool {
+        self.command_palette_open || self.shortcut_help_open || self.version_overlay_open()
+    }
+
     /// Returns whether the app is currently in interactive virtual-editor mode.
     ///
     /// # Returns

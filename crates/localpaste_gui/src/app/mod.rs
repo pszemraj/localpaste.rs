@@ -279,15 +279,6 @@ struct InputTraceFrame<'a> {
 }
 
 impl LocalPasteApp {
-    fn keyboard_overlay_open(&self) -> bool {
-        self.command_palette_open
-            || self.properties_drawer_open
-            || self.shortcut_help_open
-            || self.version_ui.history_modal_open
-            || self.version_ui.diff_modal_open
-            || self.version_ui.history_reset_confirm_open
-    }
-
     /// Construct a new app instance from the current environment config.
     ///
     /// Opens the embedded database, spawns the backend worker thread, and kicks
@@ -577,10 +568,9 @@ impl eframe::App for LocalPasteApp {
         let mut deferred_focus_apply_ms = 0.0f32;
         let mut deferred_copy_apply_ms = 0.0f32;
         let reset_transition_active = self.reset_transition_active();
-        let version_overlay_open = self.version_ui.history_modal_open
-            || self.version_ui.diff_modal_open
-            || self.version_ui.history_reset_confirm_open;
+        let version_overlay_open = self.version_overlay_open();
         let keyboard_overlay_open = self.keyboard_overlay_open();
+        let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
         let focus_promotion_requested =
             self.editor_mode == EditorMode::VirtualEditor && self.focus_editor_next;
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
@@ -644,7 +634,7 @@ impl eframe::App for LocalPasteApp {
             should_consume_virtual_editor_focus_keys(
                 virtual_editor_keyboard_claim_pre,
                 self.command_palette_open,
-                self.properties_drawer_open || version_overlay_open,
+                version_overlay_open,
                 self.shortcut_help_open,
             ),
         );
@@ -668,8 +658,8 @@ impl eframe::App for LocalPasteApp {
             let command_shift = is_command_shift_shortcut(input.modifiers);
 
             if plain_command && input.key_pressed(egui::Key::N) {
-                if reset_transition_active {
-                    self.set_reset_transition_blocked_status();
+                if mutation_shortcut_blocked.is_some() {
+                    self.set_mutation_shortcut_blocked_status();
                 } else {
                     self.create_new_paste();
                 }
@@ -682,15 +672,15 @@ impl eframe::App for LocalPasteApp {
                     focus_promotion_requested,
                 ))
             {
-                if reset_transition_active {
-                    self.set_reset_transition_blocked_status();
+                if mutation_shortcut_blocked.is_some() {
+                    self.set_mutation_shortcut_blocked_status();
                 } else {
                     self.delete_selected();
                 }
             }
             if plain_command && input.key_pressed(egui::Key::S) {
-                if reset_transition_active {
-                    self.set_reset_transition_blocked_status();
+                if mutation_shortcut_blocked.is_some() {
+                    self.set_mutation_shortcut_blocked_status();
                 } else {
                     self.save_now();
                     self.save_metadata_now();
@@ -713,15 +703,15 @@ impl eframe::App for LocalPasteApp {
                 self.properties_drawer_open = !self.properties_drawer_open;
             }
             if command_shift && input.key_pressed(egui::Key::V) {
-                if reset_transition_active {
-                    self.set_reset_transition_blocked_status();
+                if mutation_shortcut_blocked.is_some() {
+                    self.set_mutation_shortcut_blocked_status();
                 } else {
                     request_paste_as_new = true;
                 }
             }
             if plain_command && input.key_pressed(egui::Key::V) {
-                if reset_transition_active {
-                    self.set_reset_transition_blocked_status();
+                if mutation_shortcut_blocked.is_some() {
+                    self.set_mutation_shortcut_blocked_status();
                 } else {
                     // A newer plain paste intent should take precedence over any older
                     // explicit paste-as-new intent still waiting on clipboard payload.
@@ -778,7 +768,7 @@ impl eframe::App for LocalPasteApp {
                 !self.pastes.is_empty(),
                 virtual_editor_keyboard_claim_pre,
                 self.command_palette_open,
-                self.properties_drawer_open || version_overlay_open,
+                version_overlay_open,
                 self.shortcut_help_open,
             ) {
                 if input.key_pressed(egui::Key::ArrowDown) {
@@ -917,16 +907,12 @@ impl eframe::App for LocalPasteApp {
             || deferred_focus_apply_result.pasted
             || deferred_copy_apply_result.pasted;
         let paste_as_new_consumed = self.maybe_consume_explicit_paste_as_new(&mut pasted_text);
-        if !editor_focus_post && !ctx.wants_keyboard_input() && !virtual_paste_consumed {
-            if let Some(text) = pasted_text {
-                if Self::should_create_paste_from_clipboard(
-                    text.as_str(),
-                    paste_intent::ClipboardCreatePolicy::ImplicitGlobalShortcut,
-                ) {
-                    self.create_new_paste_with_content(text);
-                }
-            }
-        }
+        let _implicit_clipboard_created = self.maybe_route_implicit_global_clipboard_create(
+            pasted_text,
+            editor_focus_post,
+            ctx.wants_keyboard_input(),
+            virtual_paste_consumed,
+        );
         let combined_apply = VirtualApplyResult {
             changed: immediate_apply_result.changed
                 || deferred_focus_apply_result.changed

@@ -9,6 +9,8 @@ use std::time::Instant;
 const VERSION_UI_LIST_LIMIT: usize = 200;
 const MAX_DIFF_CANDIDATES: usize = 40;
 const RESET_TRANSITION_BLOCKED_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
+const VERSION_OVERLAY_MUTATION_BLOCKED_STATUS: &str =
+    "Close the open version window before mutating the selected paste.";
 
 /// UI state for detached diff/history modals.
 #[derive(Debug, Clone, Default)]
@@ -227,6 +229,20 @@ impl LocalPasteApp {
         self.version_ui.history_reset_in_flight_for(Some(paste_id))
     }
 
+    /// Reports why a global mutating shortcut should be blocked right now.
+    ///
+    /// # Returns
+    /// `Some(reason)` when reset or a detached version window must fence mutations.
+    pub(super) fn mutation_shortcut_block_reason(&self) -> Option<&'static str> {
+        if self.reset_transition_active() {
+            Some(RESET_TRANSITION_BLOCKED_STATUS)
+        } else if self.version_overlay_open() {
+            Some(VERSION_OVERLAY_MUTATION_BLOCKED_STATUS)
+        } else {
+            None
+        }
+    }
+
     /// Reports why a new hard reset cannot be queued right now.
     ///
     /// # Returns
@@ -251,6 +267,16 @@ impl LocalPasteApp {
             != Some(RESET_TRANSITION_BLOCKED_STATUS)
         {
             self.set_status(RESET_TRANSITION_BLOCKED_STATUS);
+        }
+    }
+
+    /// Reports the shared status used when detached version windows fence mutation shortcuts.
+    pub(super) fn set_mutation_shortcut_blocked_status(&mut self) {
+        let Some(reason) = self.mutation_shortcut_block_reason() else {
+            return;
+        };
+        if self.status.as_ref().map(|status| status.text.as_str()) != Some(reason) {
+            self.set_status(reason);
         }
     }
 

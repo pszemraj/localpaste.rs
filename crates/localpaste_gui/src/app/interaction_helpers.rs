@@ -29,7 +29,7 @@ pub(crate) enum VirtualCommandBucket {
 /// - `editor_claims_navigation_pre`: Whether the virtual editor already owns,
 ///   or is in the middle of explicitly claiming, navigation keys this frame.
 /// - `command_palette_open`: Whether command palette modal is open.
-/// - `properties_drawer_open`: Whether properties drawer is open.
+/// - `modal_overlay_open`: Whether a modal keyboard-owning overlay is open.
 /// - `shortcut_help_open`: Whether shortcut help modal is open.
 ///
 /// # Returns
@@ -40,11 +40,11 @@ pub(crate) fn should_route_sidebar_arrows(
     has_pastes: bool,
     editor_claims_navigation_pre: bool,
     command_palette_open: bool,
-    properties_drawer_open: bool,
+    modal_overlay_open: bool,
     shortcut_help_open: bool,
 ) -> bool {
     let has_nav_modifiers = modifiers.ctrl || modifiers.alt || modifiers.shift || modifiers.command;
-    let overlays_open = command_palette_open || properties_drawer_open || shortcut_help_open;
+    let overlays_open = command_palette_open || modal_overlay_open || shortcut_help_open;
 
     has_pastes
         && !wants_keyboard_input_before
@@ -146,7 +146,7 @@ pub(crate) fn non_focusable_click_sense() -> egui::Sense {
 /// - `editor_claims_keyboard`: Whether the virtual editor would otherwise
 ///   consume navigation/editing keys this frame.
 /// - `command_palette_open`: Whether the command palette currently owns input.
-/// - `properties_drawer_open`: Whether the properties drawer is open.
+/// - `modal_overlay_open`: Whether a modal keyboard-owning overlay is open.
 /// - `shortcut_help_open`: Whether shortcut help is open.
 ///
 /// # Returns
@@ -155,11 +155,10 @@ pub(crate) fn non_focusable_click_sense() -> egui::Sense {
 pub(crate) fn should_consume_virtual_editor_focus_keys(
     editor_claims_keyboard: bool,
     command_palette_open: bool,
-    properties_drawer_open: bool,
+    modal_overlay_open: bool,
     shortcut_help_open: bool,
 ) -> bool {
-    editor_claims_keyboard
-        && !(command_palette_open || properties_drawer_open || shortcut_help_open)
+    editor_claims_keyboard && !(command_palette_open || modal_overlay_open || shortcut_help_open)
 }
 
 /// Returns whether a character should be treated as an editor "word" character.
@@ -397,7 +396,7 @@ mod tests {
             has_pastes: bool,
             editor_claims_navigation_pre: bool,
             command_palette_open: bool,
-            properties_drawer_open: bool,
+            modal_overlay_open: bool,
             shortcut_help_open: bool,
             expected: bool,
         }
@@ -409,7 +408,7 @@ mod tests {
                 has_pastes: true,
                 editor_claims_navigation_pre: false,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: true,
             },
@@ -419,7 +418,7 @@ mod tests {
                 has_pastes: true,
                 editor_claims_navigation_pre: false,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -432,7 +431,7 @@ mod tests {
                 has_pastes: true,
                 editor_claims_navigation_pre: false,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -442,7 +441,7 @@ mod tests {
                 has_pastes: true,
                 editor_claims_navigation_pre: true,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -452,7 +451,7 @@ mod tests {
                 has_pastes: true,
                 editor_claims_navigation_pre: false,
                 command_palette_open: true,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -462,7 +461,7 @@ mod tests {
                 has_pastes: false,
                 editor_claims_navigation_pre: false,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -475,7 +474,7 @@ mod tests {
                 case.has_pastes,
                 case.editor_claims_navigation_pre,
                 case.command_palette_open,
-                case.properties_drawer_open,
+                case.modal_overlay_open,
                 case.shortcut_help_open,
             );
             assert_eq!(actual, case.expected);
