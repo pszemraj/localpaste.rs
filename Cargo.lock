@@ -2461,7 +2461,7 @@ checksum = "f5e54036fe321fd421e10d732f155734c4e4afd610dd556d9a82833ab3ee0bed"
 
 [[package]]
 name = "localpaste_cli"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2473,7 +2473,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_core"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "bincode",
  "blake3",
@@ -2493,7 +2493,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_gui"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -2516,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_server"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -2534,7 +2534,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_tools"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "clap",
  "localpaste_core",
