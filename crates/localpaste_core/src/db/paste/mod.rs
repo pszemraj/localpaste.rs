@@ -18,6 +18,7 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use redb::{ReadTransaction, ReadableDatabase, ReadableTable};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use self::helpers::{
@@ -36,6 +37,15 @@ pub struct PasteDb {
 
 const DEFAULT_VERSION_LIST_LIMIT: usize = 50;
 const MAX_VERSION_LIST_LIMIT: usize = 1_000;
+/// Singleton key storing the persisted metadata projection schema version.
+pub(crate) const META_SCHEMA_VERSION_KEY: &str = "__schema_version";
+/// Current `PASTES_META` projection schema version for derived retrieval fields.
+pub(crate) const CURRENT_PASTES_META_SCHEMA_VERSION: u64 = 1;
+
+enum MetaProjectionStartupAction {
+    MarkCurrent,
+    Rebuild,
+}
 
 impl PasteDb {
     fn ensure_content_within_size_limit(
@@ -76,6 +86,7 @@ impl PasteDb {
         let write_txn = db.begin_write()?;
         write_txn.open_table(PASTES)?;
         write_txn.open_table(PASTES_META)?;
+        write_txn.open_table(PASTES_META_STATE)?;
         write_txn.open_table(PASTES_BY_UPDATED)?;
         write_txn.open_table(PASTE_VERSIONS_META)?;
         write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
@@ -120,6 +131,7 @@ impl PasteDb {
         let write_txn = self.db.begin_write()?;
         {
             let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut meta_state = write_txn.open_table(PASTES_META_STATE)?;
             let existing_ids = metas
                 .iter()?
                 .map(|item| item.map(|(key, _)| key.value().to_string()))
@@ -131,9 +143,79 @@ impl PasteDb {
                 let encoded = bincode::serialize(&meta)?;
                 metas.insert(meta.id.as_str(), encoded.as_slice())?;
             }
+            let encoded_version = bincode::serialize(&CURRENT_PASTES_META_SCHEMA_VERSION)?;
+            meta_state.insert(META_SCHEMA_VERSION_KEY, encoded_version.as_slice())?;
         }
         write_txn.commit()?;
         Ok(())
+    }
+
+    /// Ensure the metadata projection is current without rebuilding it on every open.
+    ///
+    /// Older databases that predate the persisted schema marker are scanned once
+    /// at startup. Current-format rows are marked in-place; legacy or drifted
+    /// projections are rebuilt from canonical `PASTES`.
+    ///
+    /// # Returns
+    /// `Ok(())` when the projection is already current or has been upgraded.
+    ///
+    /// # Errors
+    /// Returns an error when storage access, decode checks, or a required
+    /// rebuild fails.
+    pub fn ensure_meta_index_current(&self) -> Result<(), AppError> {
+        let startup_action = {
+            let read_txn = self.db.begin_read()?;
+            let meta_state = read_txn.open_table(PASTES_META_STATE)?;
+            if let Some(value) = meta_state.get(META_SCHEMA_VERSION_KEY)? {
+                let decoded_version = bincode::deserialize::<u64>(value.value()).ok();
+                if decoded_version == Some(CURRENT_PASTES_META_SCHEMA_VERSION) {
+                    return Ok(());
+                }
+                MetaProjectionStartupAction::Rebuild
+            } else if self.meta_projection_needs_rebuild(&read_txn)? {
+                MetaProjectionStartupAction::Rebuild
+            } else {
+                MetaProjectionStartupAction::MarkCurrent
+            }
+        };
+
+        match startup_action {
+            MetaProjectionStartupAction::MarkCurrent => self.write_meta_schema_version(),
+            MetaProjectionStartupAction::Rebuild => self.rebuild_meta_index(),
+        }
+    }
+
+    fn write_meta_schema_version(&self) -> Result<(), AppError> {
+        let encoded_version = bincode::serialize(&CURRENT_PASTES_META_SCHEMA_VERSION)?;
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut meta_state = write_txn.open_table(PASTES_META_STATE)?;
+            meta_state.insert(META_SCHEMA_VERSION_KEY, encoded_version.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    fn meta_projection_needs_rebuild(&self, read_txn: &ReadTransaction) -> Result<bool, AppError> {
+        let pastes = read_txn.open_table(PASTES)?;
+        let metas = read_txn.open_table(PASTES_META)?;
+        let mut paste_ids = BTreeSet::new();
+        let mut meta_ids = BTreeSet::new();
+
+        for item in pastes.iter()? {
+            let (key, _) = item?;
+            paste_ids.insert(key.value().to_string());
+        }
+
+        for item in metas.iter()? {
+            let (key, value) = item?;
+            meta_ids.insert(key.value().to_string());
+            if bincode::deserialize::<PasteMeta>(value.value()).is_err() {
+                return Ok(true);
+            }
+        }
+
+        Ok(paste_ids != meta_ids)
     }
 
     /// Insert a new paste row and derived metadata/index rows atomically.

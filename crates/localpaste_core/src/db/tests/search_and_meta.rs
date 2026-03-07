@@ -1,8 +1,10 @@
 //! Search and metadata index behavior tests.
 
 use super::*;
-use crate::db::tables::PASTES_META;
+use crate::db::paste::{CURRENT_PASTES_META_SCHEMA_VERSION, META_SCHEMA_VERSION_KEY};
+use crate::db::tables::{PASTES_META, PASTES_META_STATE};
 use chrono::Duration;
+use redb::ReadableDatabase;
 use serde::{Deserialize, Serialize};
 
 #[test]
@@ -362,9 +364,13 @@ fn database_new_rebuilds_legacy_meta_rows_with_derived_fields() {
     let write_txn = db.db.begin_write().expect("begin write");
     {
         let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
+        let mut meta_state = write_txn.open_table(PASTES_META_STATE).expect("open meta state");
         metas
             .insert(paste_id.as_str(), encoded.as_slice())
             .expect("overwrite legacy meta");
+        let _ = meta_state
+            .remove(META_SCHEMA_VERSION_KEY)
+            .expect("remove schema marker");
     }
     write_txn.commit().expect("commit");
     drop(db);
@@ -379,4 +385,78 @@ fn database_new_rebuilds_legacy_meta_rows_with_derived_fields() {
         .expect("meta row");
     assert_eq!(meta.derived.kind, crate::semantic::PasteKind::Code);
     assert_eq!(meta.derived.handle.as_deref(), Some("cargo test"));
+}
+
+#[test]
+fn database_new_marks_current_meta_rows_without_rebuilding_them() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let db_path_str = db_path.to_str().expect("db path").to_string();
+
+    let db = open_test_database(&db_path_str);
+    let paste = Paste::new(
+        "cargo test --package trainer\n".to_string(),
+        "stable-meta".to_string(),
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let mut current_meta = PasteMeta::from(&paste);
+    current_meta.derived = crate::semantic::DerivedMeta {
+        kind: crate::semantic::PasteKind::Other,
+        handle: Some("frozen-handle".to_string()),
+        terms: vec!["frozen-term".to_string()],
+    };
+    let encoded = bincode::serialize(&current_meta).expect("serialize");
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
+        let mut meta_state = write_txn
+            .open_table(PASTES_META_STATE)
+            .expect("open meta state");
+        metas
+            .insert(paste_id.as_str(), encoded.as_slice())
+            .expect("overwrite current meta");
+        let _ = meta_state
+            .remove(META_SCHEMA_VERSION_KEY)
+            .expect("remove schema marker");
+    }
+    write_txn.commit().expect("commit");
+    drop(db);
+
+    let reopened = open_test_database(&db_path_str);
+    let first_meta = reopened
+        .pastes
+        .list_meta(10, None)
+        .expect("list")
+        .into_iter()
+        .find(|meta| meta.id == paste_id)
+        .expect("meta row");
+    assert_eq!(first_meta.derived.handle.as_deref(), Some("frozen-handle"));
+    assert_eq!(first_meta.derived.terms, vec!["frozen-term".to_string()]);
+
+    let read_txn = reopened.db.begin_read().expect("begin read");
+    let meta_state = read_txn
+        .open_table(PASTES_META_STATE)
+        .expect("open meta state");
+    let stored_version = meta_state
+        .get(META_SCHEMA_VERSION_KEY)
+        .expect("schema lookup")
+        .expect("schema row");
+    let stored_version: u64 =
+        bincode::deserialize(stored_version.value()).expect("decode schema version");
+    assert_eq!(stored_version, CURRENT_PASTES_META_SCHEMA_VERSION);
+    drop(read_txn);
+    drop(reopened);
+
+    let reopened_again = open_test_database(&db_path_str);
+    let second_meta = reopened_again
+        .pastes
+        .list_meta(10, None)
+        .expect("list again")
+        .into_iter()
+        .find(|meta| meta.id == paste_id)
+        .expect("meta row");
+    assert_eq!(second_meta.derived.handle.as_deref(), Some("frozen-handle"));
+    assert_eq!(second_meta.derived.terms, vec!["frozen-term".to_string()]);
 }

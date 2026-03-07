@@ -40,3 +40,13 @@ reason = "The main GUI update loop still centralizes frame input routing and per
 path = "crates/localpaste_gui/src/app/state_ops.rs"
 max_lines = 1050
 reason = "Selection, save, and backend event transitions remain centralized; the reset-mutation fence added bounded guard logic here until save/export/selection helpers are split into smaller modules."
+
+[[exceptions]]
+path = "crates/localpaste_core/src/db/paste/mod.rs"
+max_lines = 1050
+reason = "PasteDb still centralizes canonical/meta/version storage workflows; the meta-schema gate for derived retrieval startup now lives here until startup compatibility checks are extracted."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/tests/collections_and_search.rs"
+max_lines = 1050
+reason = "Collection/search regressions remain in one integration-style matrix while metadata retrieval and visible-projection freshness stabilize."

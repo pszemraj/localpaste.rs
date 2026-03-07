@@ -85,16 +85,18 @@ impl LocalPasteApp {
     /// cached, and palette result projections.
     pub(super) fn selected_paste_summary(&self) -> Option<&PasteSummary> {
         let selected_id = self.selected_id.as_deref()?;
-        self.all_pastes
+        // Active search/palette projections can be fresher than `all_pastes`,
+        // which is only refreshed by full list updates.
+        self.pastes
             .iter()
             .find(|item| item.id.as_str() == selected_id)
             .or_else(|| {
-                self.pastes
+                self.palette_search_results
                     .iter()
                     .find(|item| item.id.as_str() == selected_id)
             })
             .or_else(|| {
-                self.palette_search_results
+                self.all_pastes
                     .iter()
                     .find(|item| item.id.as_str() == selected_id)
             })

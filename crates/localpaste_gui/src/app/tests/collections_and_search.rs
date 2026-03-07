@@ -155,6 +155,55 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
 }
 
 #[test]
+fn selected_paste_summary_prefers_visible_search_result_over_stale_cache() {
+    let mut harness = make_app();
+    let now = Utc::now();
+    harness.app.selected_id = Some("alpha".to_string());
+    harness.app.all_pastes = vec![PasteSummary {
+        id: "alpha".to_string(),
+        name: "Stale".to_string(),
+        language: Some("text".to_string()),
+        content_len: 5,
+        updated_at: now,
+        folder_id: None,
+        tags: Vec::new(),
+        derived: Default::default(),
+    }];
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.set_search_query("alpha".to_string());
+    harness.app.search_last_sent = "alpha".to_string();
+
+    let fresh = PasteSummary {
+        id: "alpha".to_string(),
+        name: "Fresh".to_string(),
+        language: Some("rust".to_string()),
+        content_len: 9,
+        updated_at: now,
+        folder_id: None,
+        tags: vec!["tag".to_string()],
+        derived: localpaste_core::semantic::DerivedMeta {
+            kind: localpaste_core::semantic::PasteKind::Code,
+            handle: Some("cargo test".to_string()),
+            terms: vec!["cargo".to_string(), "test".to_string()],
+        },
+    };
+    harness.app.apply_event(CoreEvent::SearchResults {
+        query: "alpha".to_string(),
+        folder_id: None,
+        language: None,
+        items: vec![fresh],
+    });
+
+    let summary = harness
+        .app
+        .selected_paste_summary()
+        .expect("selected summary");
+    assert_eq!(summary.name, "Fresh");
+    assert_eq!(summary.derived.handle.as_deref(), Some("cargo test"));
+    assert_eq!(summary.tags, vec!["tag".to_string()]);
+}
+
+#[test]
 fn paste_list_filters_recent_collection() {
     let mut harness = make_app();
     harness.app.set_active_collection(SidebarCollection::Recent);

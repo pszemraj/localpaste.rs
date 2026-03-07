@@ -9,6 +9,9 @@ pub const REDB_FILE_NAME: &str = "data.redb";
 pub const PASTES: TableDefinition<&str, &[u8]> = TableDefinition::new("pastes");
 /// Paste metadata rows (`PasteMeta`, bincode-encoded).
 pub const PASTES_META: TableDefinition<&str, &[u8]> = TableDefinition::new("pastes_meta");
+/// Metadata projection state rows (`u64`, bincode-encoded).
+pub const PASTES_META_STATE: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("pastes_meta_state");
 /// Canonical folder rows (`Folder`, bincode-encoded).
 pub const FOLDERS: TableDefinition<&str, &[u8]> = TableDefinition::new("folders");
 /// Per-paste version metadata (`Vec<VersionMeta>`, bincode-encoded).

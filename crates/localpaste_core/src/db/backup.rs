@@ -1,8 +1,8 @@
 //! Backup and restore helpers for redb databases.
 
 use super::tables::{
-    FOLDERS, FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META, PASTE_VERSIONS_CONTENT,
-    PASTE_VERSIONS_META, REDB_FILE_NAME,
+    FOLDERS, FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META, PASTES_META_STATE,
+    PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META, REDB_FILE_NAME,
 };
 use super::time_util::unix_timestamp_seconds;
 use crate::error::AppError;
@@ -55,6 +55,7 @@ impl BackupManager {
         let backup_write = backup_db.begin_write()?;
         Self::copy_bytes_table(&source_read, &backup_write, PASTES)?;
         Self::copy_bytes_table(&source_read, &backup_write, PASTES_META)?;
+        Self::copy_bytes_table(&source_read, &backup_write, PASTES_META_STATE)?;
         Self::copy_bytes_table(&source_read, &backup_write, PASTE_VERSIONS_META)?;
         Self::copy_version_content_table(&source_read, &backup_write)?;
         Self::copy_bytes_table(&source_read, &backup_write, FOLDERS)?;
@@ -173,7 +174,10 @@ impl BackupManager {
 #[cfg(test)]
 mod tests {
     use super::{unix_timestamp_seconds, BackupManager};
-    use crate::db::tables::{PASTES, PASTES_META, PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META};
+    use crate::db::paste::{CURRENT_PASTES_META_SCHEMA_VERSION, META_SCHEMA_VERSION_KEY};
+    use crate::db::tables::{
+        PASTES, PASTES_META, PASTES_META_STATE, PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META,
+    };
     use crate::error::AppError;
     use crate::models::paste::{Paste, UpdatePasteRequest};
     use crate::test_support::open_test_database;
@@ -242,6 +246,9 @@ mod tests {
         let read_txn = backup_db.begin_read().expect("begin read");
         let pastes = read_txn.open_table(PASTES).expect("open pastes");
         let metas = read_txn.open_table(PASTES_META).expect("open metas");
+        let meta_state = read_txn
+            .open_table(PASTES_META_STATE)
+            .expect("open meta state");
         let versions_meta = read_txn
             .open_table(PASTE_VERSIONS_META)
             .expect("open versions meta");
@@ -259,6 +266,13 @@ mod tests {
             metas.get(paste.id.as_str()).expect("meta lookup").is_some(),
             "backup must include metadata rows"
         );
+        let schema_version = meta_state
+            .get(META_SCHEMA_VERSION_KEY)
+            .expect("meta state lookup")
+            .expect("meta state row");
+        let schema_version: u64 =
+            bincode::deserialize(schema_version.value()).expect("decode schema version");
+        assert_eq!(schema_version, CURRENT_PASTES_META_SCHEMA_VERSION);
         assert!(
             versions_meta
                 .get(paste.id.as_str())

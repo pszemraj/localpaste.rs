@@ -426,7 +426,7 @@ impl Database {
                 err
             );
         }
-        database.pastes.rebuild_meta_index()?;
+        database.pastes.ensure_meta_index_current()?;
 
         Ok(database)
     }
