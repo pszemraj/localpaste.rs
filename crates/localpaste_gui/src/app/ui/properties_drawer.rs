@@ -190,6 +190,7 @@ impl LocalPasteApp {
         }
 
         let mutation_block_reason = self.mutation_shortcut_block_reason();
+        let save_blocked = self.save_block_reason().is_some();
         let background_mutation_blocked = mutation_block_reason.is_some();
         let mut keep_open = true;
         egui::SidePanel::right("properties_drawer")
@@ -269,19 +270,18 @@ impl LocalPasteApp {
                     {
                         self.metadata_dirty = true;
                     }
-
-                    ui.add_space(10.0);
-                    ui.horizontal_wrapped(|ui| {
-                        if ui
-                            .add_enabled(
-                                self.metadata_dirty && !self.metadata_save_in_flight,
-                                egui::Button::new("Save Metadata"),
-                            )
-                            .clicked()
-                        {
-                            self.save_metadata_now();
-                        }
-                    });
+                });
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(
+                            !save_blocked && self.metadata_dirty && !self.metadata_save_in_flight,
+                            egui::Button::new("Save Metadata"),
+                        )
+                        .clicked()
+                    {
+                        self.save_metadata_now();
+                    }
                 });
                 if let Some(reason) = mutation_block_reason {
                     ui.add_space(6.0);

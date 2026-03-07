@@ -25,6 +25,7 @@ impl LocalPasteApp {
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
                 let mutation_block_reason = self.mutation_shortcut_block_reason();
+                let save_blocked = self.save_block_reason().is_some();
                 let background_mutation_blocked = mutation_block_reason.is_some();
                 let mut preserve_virtual_editor_focus = false;
                 let mut pending_tag_search: Option<String> = None;
@@ -106,9 +107,7 @@ impl LocalPasteApp {
                         ui.separator();
                         if ui
                             .add_enabled(
-                                !background_mutation_blocked
-                                    && self.metadata_dirty
-                                    && !self.metadata_save_in_flight,
+                                !save_blocked && self.metadata_dirty && !self.metadata_save_in_flight,
                                 toolbar_button("Apply"),
                             )
                             .clicked()

@@ -67,7 +67,8 @@ Navigation/selection contract:
   - stored snapshots are older-only entries,
   - reset restores the selected snapshot and then prunes that snapshot and newer entries from stored history.
 - History, Diff, and reset-confirm windows fence background mutations:
-  - create/delete/save/paste-as-new shortcuts are blocked while a version window is open,
+  - create/delete/paste-as-new and other destructive workflow shortcuts are blocked while a version window is open,
+  - autosave and explicit save still persist already-dirty content/metadata while a version window is open,
   - the selected paste stays pinned during a queued hard reset,
   - the selected paste is temporarily read-only until reset success/error arrives.
 - Reset and snapshot loading clear their in-flight UI state on backend errors so modal actions cannot get stuck.

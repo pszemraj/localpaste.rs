@@ -566,6 +566,7 @@ fn version_overlay_blocks_mutating_shortcuts_and_reports_reason() {
         harness.app.mutation_shortcut_block_reason(),
         Some("Close the open version window before mutating the selected paste.")
     );
+    assert!(harness.app.save_block_reason().is_none());
     harness.app.set_mutation_shortcut_blocked_status();
     assert_eq!(
         harness
@@ -578,28 +579,15 @@ fn version_overlay_blocks_mutating_shortcuts_and_reports_reason() {
 }
 
 #[test]
-fn version_overlay_blocks_background_mutation_dispatches() {
+fn version_overlay_blocks_background_destructive_dispatches() {
     let mut harness = make_app();
     harness.app.version_ui.diff_modal_open = true;
-    harness.app.selected_content.reset("dirty".to_string());
-    harness.app.save_status = SaveStatus::Dirty;
-    harness.app.last_edit_at =
-        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
-    harness.app.metadata_dirty = true;
-
-    harness.app.maybe_autosave();
-    harness.app.save_now();
-    harness.app.save_metadata_now();
     harness
         .app
         .create_new_paste_with_content("hello".to_string());
     harness.app.delete_selected();
     harness.app.send_palette_delete("alpha".to_string());
 
-    assert!(!harness.app.save_in_flight);
-    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
-    assert!(!harness.app.metadata_save_in_flight);
-    assert!(harness.app.metadata_dirty);
     assert_eq!(
         harness
             .app
@@ -612,6 +600,93 @@ fn version_overlay_blocks_background_mutation_dispatches() {
         harness.cmd_rx.try_recv(),
         Err(TryRecvError::Empty)
     ));
+}
+
+#[test]
+fn version_overlay_allows_content_and_metadata_persistence_dispatches() {
+    enum SaveCase {
+        Autosave,
+        ManualContent,
+        Metadata,
+    }
+
+    for case in [
+        SaveCase::Autosave,
+        SaveCase::ManualContent,
+        SaveCase::Metadata,
+    ] {
+        let mut harness = make_app();
+        harness.app.version_ui.history_modal_open = true;
+
+        match case {
+            SaveCase::Autosave => {
+                harness
+                    .app
+                    .selected_content
+                    .reset("dirty-autosave".to_string());
+                harness.app.save_status = SaveStatus::Dirty;
+                harness.app.last_edit_at =
+                    Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+                harness.app.maybe_autosave();
+                assert!(harness.app.save_in_flight);
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::UpdatePaste { id, content } => {
+                        assert_eq!(id, "alpha");
+                        assert_eq!(content, "dirty-autosave");
+                    }
+                    other => panic!("unexpected command: {:?}", other),
+                }
+            }
+            SaveCase::ManualContent => {
+                harness
+                    .app
+                    .selected_content
+                    .reset("dirty-manual".to_string());
+                harness.app.save_status = SaveStatus::Dirty;
+                harness.app.save_now();
+                assert!(harness.app.save_in_flight);
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::UpdatePaste { id, content } => {
+                        assert_eq!(id, "alpha");
+                        assert_eq!(content, "dirty-manual");
+                    }
+                    other => panic!("unexpected command: {:?}", other),
+                }
+            }
+            SaveCase::Metadata => {
+                harness.app.metadata_dirty = true;
+                harness.app.edit_name = "overlay-save".to_string();
+                harness.app.edit_language = Some("rust".to_string());
+                harness.app.edit_language_is_manual = true;
+                harness.app.edit_tags = "one, two".to_string();
+                harness.app.save_metadata_now();
+                assert!(harness.app.metadata_save_in_flight);
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::UpdatePasteMeta {
+                        id,
+                        name,
+                        language,
+                        language_is_manual,
+                        folder_id,
+                        tags,
+                    } => {
+                        assert_eq!(id, "alpha");
+                        assert_eq!(name.as_deref(), Some("overlay-save"));
+                        assert_eq!(language.as_deref(), Some("rust"));
+                        assert_eq!(language_is_manual, Some(true));
+                        assert!(folder_id.is_none());
+                        assert_eq!(tags, Some(vec!["one".to_string(), "two".to_string()]));
+                    }
+                    other => panic!("unexpected command: {:?}", other),
+                }
+            }
+        }
+
+        assert!(
+            harness.app.save_block_reason().is_none(),
+            "version overlays should not fence save dispatch"
+        );
+    }
 }
 
 #[test]

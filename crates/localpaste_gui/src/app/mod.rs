@@ -679,12 +679,8 @@ impl eframe::App for LocalPasteApp {
                 }
             }
             if plain_command && input.key_pressed(egui::Key::S) {
-                if mutation_shortcut_blocked.is_some() {
-                    self.set_mutation_shortcut_blocked_status();
-                } else {
-                    self.save_now();
-                    self.save_metadata_now();
-                }
+                self.save_now();
+                self.save_metadata_now();
             }
             if plain_command && input.key_pressed(egui::Key::F) {
                 self.search_focus_requested = true;

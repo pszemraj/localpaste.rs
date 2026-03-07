@@ -177,8 +177,6 @@ impl LocalPasteApp {
                 CommandPaletteAction::NewPaste
                     | CommandPaletteAction::PasteAsNew
                     | CommandPaletteAction::DeleteSelected
-                    | CommandPaletteAction::SaveNow
-                    | CommandPaletteAction::SaveMetadata
                     | CommandPaletteAction::DeletePaste(_)
             )
         {

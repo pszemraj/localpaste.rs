@@ -744,9 +744,7 @@ impl LocalPasteApp {
 
     /// Dispatches autosave once dirty content has been idle past the autosave delay.
     pub(super) fn maybe_autosave(&mut self) {
-        if self.mutation_shortcut_block_reason().is_some() {
-            // Detached history/diff windows own a modal workflow; do not let background
-            // autosave mutate the selected paste until the overlay is dismissed.
+        if self.save_block_reason().is_some() {
             return;
         }
         if self.save_in_flight || self.save_status != SaveStatus::Dirty {
@@ -766,8 +764,8 @@ impl LocalPasteApp {
 
     /// Forces immediate content save dispatch when the current paste is dirty.
     pub(super) fn save_now(&mut self) {
-        if self.mutation_shortcut_block_reason().is_some() {
-            self.set_mutation_shortcut_blocked_status();
+        if self.save_block_reason().is_some() {
+            self.set_save_blocked_status();
             return;
         }
         if self.save_in_flight || self.save_status != SaveStatus::Dirty {
@@ -781,8 +779,8 @@ impl LocalPasteApp {
 
     /// Dispatches metadata save for the current editor metadata draft when needed.
     pub(super) fn save_metadata_now(&mut self) {
-        if self.mutation_shortcut_block_reason().is_some() {
-            self.set_mutation_shortcut_blocked_status();
+        if self.save_block_reason().is_some() {
+            self.set_save_blocked_status();
             return;
         }
         if !self.metadata_dirty || self.metadata_save_in_flight {

@@ -374,13 +374,34 @@ impl LocalPasteApp {
         self.version_ui.history_reset_in_flight_for(Some(paste_id))
     }
 
-    /// Reports why a background mutating action should be blocked right now.
+    /// Reports why persisting the current dirty draft should be blocked right now.
+    ///
+    /// Detached version windows stay read-only, but they must not strand existing
+    /// dirty state. Only an authoritative reset transition fences save dispatch.
     ///
     /// # Returns
-    /// `Some(reason)` when reset or a detached version window must fence mutations.
-    pub(super) fn mutation_shortcut_block_reason(&self) -> Option<&'static str> {
+    /// `Some(reason)` only while a queued reset is still authoritative for the
+    /// currently selected paste.
+    pub(super) fn save_block_reason(&self) -> Option<&'static str> {
         if self.reset_transition_active() {
             Some(RESET_TRANSITION_BLOCKED_STATUS)
+        } else {
+            None
+        }
+    }
+
+    /// Reports why a background mutating action should be blocked right now.
+    ///
+    /// Detached version windows block destructive workflow changes like create,
+    /// delete, reset, and selection-changing shortcuts, but do not block save
+    /// dispatch for already-dirty editor state.
+    ///
+    /// # Returns
+    /// `Some(reason)` when destructive workflow changes should be fenced by a
+    /// queued reset or an open detached version window.
+    pub(super) fn mutation_shortcut_block_reason(&self) -> Option<&'static str> {
+        if let Some(reason) = self.save_block_reason() {
+            Some(reason)
         } else if self.version_overlay_open() {
             Some(VERSION_OVERLAY_MUTATION_BLOCKED_STATUS)
         } else {
@@ -408,10 +429,19 @@ impl LocalPasteApp {
 
     /// Reports the shared read-only status used while reset temporarily fences mutations.
     pub(super) fn set_reset_transition_blocked_status(&mut self) {
-        if self.status.as_ref().map(|status| status.text.as_str())
-            != Some(RESET_TRANSITION_BLOCKED_STATUS)
-        {
-            self.set_status(RESET_TRANSITION_BLOCKED_STATUS);
+        self.set_blocked_status(RESET_TRANSITION_BLOCKED_STATUS);
+    }
+
+    fn set_blocked_status(&mut self, reason: &'static str) {
+        if self.status.as_ref().map(|status| status.text.as_str()) != Some(reason) {
+            self.set_status(reason);
+        }
+    }
+
+    /// Reports the shared status used when save dispatch is fenced.
+    pub(super) fn set_save_blocked_status(&mut self) {
+        if let Some(reason) = self.save_block_reason() {
+            self.set_blocked_status(reason);
         }
     }
 
@@ -420,9 +450,7 @@ impl LocalPasteApp {
         let Some(reason) = self.mutation_shortcut_block_reason() else {
             return;
         };
-        if self.status.as_ref().map(|status| status.text.as_str()) != Some(reason) {
-            self.set_status(reason);
-        }
+        self.set_blocked_status(reason);
     }
 
     /// Captures the currently selected history row as the immutable reset-confirm target.
