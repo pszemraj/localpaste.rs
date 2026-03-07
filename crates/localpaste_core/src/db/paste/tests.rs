@@ -83,7 +83,7 @@ fn diff_resolution_uses_one_read_snapshot_for_both_refs() {
                     version_id_ms: None,
                 },
                 right: DiffRef {
-                    paste_id,
+                    paste_id: paste_id.clone(),
                     version_id_ms: None,
                 },
             },
@@ -97,5 +97,26 @@ fn diff_resolution_uses_one_read_snapshot_for_both_refs() {
     assert!(
         diff.unified.is_empty(),
         "same-ref diff should not report changes from a later write"
+    );
+
+    let equal = paste_db
+        .equal_in_txn(
+            &read_txn,
+            &DiffRequest {
+                left: DiffRef {
+                    paste_id: paste_id.clone(),
+                    version_id_ms: None,
+                },
+                right: DiffRef {
+                    paste_id,
+                    version_id_ms: None,
+                },
+            },
+        )
+        .expect("equal in txn")
+        .expect("resolved");
+    assert!(
+        equal.equal,
+        "same-ref equality must stay true within one snapshot"
     );
 }

@@ -9,6 +9,9 @@ use localpaste_core::models::{
 use localpaste_core::semantic::DerivedMeta;
 use ropey::Rope;
 
+/// Version row count requested by detached history workflows.
+pub(crate) const VERSION_WORKFLOW_LIST_LIMIT: usize = 200;
+
 /// Commands issued by the UI thread for the backend worker to execute.
 #[derive(Debug)]
 pub enum CoreCmd {

@@ -11,7 +11,7 @@ use crate::{
             should_record_version,
         },
     },
-    diff::{unified_diff_lines, DiffRef, DiffRequest, DiffResponse},
+    diff::{unified_diff_lines, DiffRef, DiffRequest, DiffResponse, EqualResponse},
     error::AppError,
     models::paste::*,
     naming,
@@ -616,6 +616,22 @@ impl PasteDb {
         Ok(Some(DiffResponse { equal, unified }))
     }
 
+    fn equal_in_txn(
+        &self,
+        read_txn: &ReadTransaction,
+        request: &DiffRequest,
+    ) -> Result<Option<EqualResponse>, AppError> {
+        let Some(left) = self.resolve_diff_ref_content_in_txn(read_txn, &request.left)? else {
+            return Ok(None);
+        };
+        let Some(right) = self.resolve_diff_ref_content_in_txn(read_txn, &request.right)? else {
+            return Ok(None);
+        };
+        Ok(Some(EqualResponse {
+            equal: left == right,
+        }))
+    }
+
     /// Compute a line-based diff between two paste references.
     ///
     /// # Returns
@@ -628,6 +644,20 @@ impl PasteDb {
         // not tear when a write lands between left and right lookups.
         let read_txn = self.db.begin_read()?;
         self.diff_in_txn(&read_txn, request)
+    }
+
+    /// Compare two paste references for equality without building a full diff.
+    ///
+    /// # Returns
+    /// `Ok(Some(equal))` when both references resolve, `Ok(None)` when either is missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access fails.
+    pub fn equal(&self, request: &DiffRequest) -> Result<Option<EqualResponse>, AppError> {
+        // Equality uses the same single-snapshot contract as diff so head-vs-head
+        // comparisons cannot observe torn reads between left and right.
+        let read_txn = self.db.begin_read()?;
+        self.equal_in_txn(&read_txn, request)
     }
 
     /// Reset current paste content to a historical version and prune newer snapshots.

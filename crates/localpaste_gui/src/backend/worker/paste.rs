@@ -1,7 +1,7 @@
 //! Paste CRUD command handlers for the GUI backend worker.
 
 use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerState};
-use crate::backend::{CoreErrorSource, CoreEvent};
+use crate::backend::{CoreErrorSource, CoreEvent, VERSION_WORKFLOW_LIST_LIMIT};
 use localpaste_core::{
     db::TransactionOps,
     diff::{unified_diff_lines, DiffResponse},
@@ -426,7 +426,9 @@ pub(super) fn handle_reset_paste_hard_to_version(
         Ok(Some(paste)) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::PasteResetToVersion { paste });
-            handle_list_paste_versions(state, id, 50);
+            // Reset refresh should preserve the same history window depth the GUI
+            // requested for detached version workflows.
+            handle_list_paste_versions(state, id, VERSION_WORKFLOW_LIST_LIMIT);
         }
         Ok(None) => match state.db.pastes.get(id.as_str()) {
             Ok(Some(_)) => send_error(

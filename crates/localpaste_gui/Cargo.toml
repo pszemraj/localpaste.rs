@@ -36,3 +36,4 @@ winresource = "0.1"
 tempfile.workspace = true
 reqwest = { workspace = true, features = ["json", "blocking"] }
 serde_json.workspace = true
+bincode = "1.3"

@@ -571,11 +571,11 @@ fn diff_reports_equal_and_changed_content() {
         .pastes
         .diff(&crate::diff::DiffRequest {
             left: crate::diff::DiffRef {
-                paste_id: left_id,
+                paste_id: left_id.clone(),
                 version_id_ms: None,
             },
             right: crate::diff::DiffRef {
-                paste_id: right_id,
+                paste_id: right_id.clone(),
                 version_id_ms: None,
             },
         })
@@ -583,6 +583,38 @@ fn diff_reports_equal_and_changed_content() {
         .expect("resolved");
     assert!(!changed.equal);
     assert!(!changed.unified.is_empty());
+
+    let changed_equal = db
+        .pastes
+        .equal(&crate::diff::DiffRequest {
+            left: crate::diff::DiffRef {
+                paste_id: left_id.clone(),
+                version_id_ms: None,
+            },
+            right: crate::diff::DiffRef {
+                paste_id: right_id.clone(),
+                version_id_ms: None,
+            },
+        })
+        .expect("equal changed")
+        .expect("resolved");
+    assert!(!changed_equal.equal);
+
+    let matching_equal = db
+        .pastes
+        .equal(&crate::diff::DiffRequest {
+            left: crate::diff::DiffRef {
+                paste_id: right_id.clone(),
+                version_id_ms: None,
+            },
+            right: crate::diff::DiffRef {
+                paste_id: right_id,
+                version_id_ms: None,
+            },
+        })
+        .expect("equal same")
+        .expect("resolved");
+    assert!(matching_equal.equal);
 }
 
 #[test]

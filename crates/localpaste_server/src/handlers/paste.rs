@@ -9,7 +9,7 @@ use axum::{
     response::Response,
     Json,
 };
-use localpaste_core::diff::{DiffRequest, DiffResponse};
+use localpaste_core::diff::{DiffRequest, DiffResponse, EqualResponse};
 use localpaste_core::folder_ops::map_missing_folder_for_optional_request;
 
 const RESPONSE_SHAPE_HEADER: &str = "x-localpaste-response-shape";
@@ -169,6 +169,18 @@ fn search_meta_response(
         response,
         include_meta_shape_header,
     ))
+}
+
+fn compare_pastes_json<T, F>(
+    state: &AppState,
+    req: DiffRequest,
+    compare: F,
+) -> Result<Json<T>, HttpError>
+where
+    F: FnOnce(&localpaste_core::Database, &DiffRequest) -> Result<Option<T>, AppError>,
+{
+    let response = compare(state.db.as_ref(), &req)?.ok_or(AppError::NotFound)?;
+    Ok(Json(response))
 }
 
 /// Create a new paste.
@@ -384,8 +396,25 @@ pub async fn diff_pastes(
     State(state): State<AppState>,
     Json(req): Json<DiffRequest>,
 ) -> Result<Json<DiffResponse>, HttpError> {
-    let diff = state.db.pastes.diff(&req)?.ok_or(AppError::NotFound)?;
-    Ok(Json(diff))
+    compare_pastes_json(&state, req, |db, request| db.pastes.diff(request))
+}
+
+/// Compare two paste references for equality without building a diff payload.
+///
+/// # Arguments
+/// - `state`: Application state.
+/// - `req`: Equality request payload containing left/right refs.
+///
+/// # Returns
+/// Equality response as JSON.
+///
+/// # Errors
+/// Returns an error when either reference cannot be resolved or comparison fails.
+pub async fn equal_pastes(
+    State(state): State<AppState>,
+    Json(req): Json<DiffRequest>,
+) -> Result<Json<EqualResponse>, HttpError> {
+    compare_pastes_json(&state, req, |db, request| db.pastes.equal(request))
 }
 
 /// Update an existing paste.

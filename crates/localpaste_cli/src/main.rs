@@ -2,7 +2,7 @@
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
-use localpaste_core::diff::{DiffRef, DiffRequest, DiffResponse};
+use localpaste_core::diff::{DiffRef, DiffRequest, DiffResponse, EqualResponse};
 use localpaste_core::DEFAULT_CLI_SERVER_URL;
 use serde_json::Value;
 use std::io::{self, Read, Write};
@@ -405,6 +405,14 @@ fn format_diff_output(diff: &DiffResponse, json: bool) -> Result<String, String>
         return Ok("No changes.".to_string());
     }
     Ok(format_cli_diff_lines(&diff.unified))
+}
+
+fn format_equal_output(equal: &EqualResponse, json: bool) -> Result<String, String> {
+    if json {
+        return serde_json::to_string_pretty(equal)
+            .map_err(|err| format!("response encoding error: {}", err));
+    }
+    Ok(if equal.equal { "equal" } else { "different" }.to_string())
 }
 
 fn api_url(server: &str, segments: &[&str]) -> Result<reqwest::Url, String> {
@@ -1025,7 +1033,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             left_version,
             right_version,
         } => {
-            let endpoint = api_url_or_exit(&server, "Equal", &["api", "diff"]);
+            let endpoint = api_url_or_exit(&server, "Equal", &["api", "equal"]);
             let body = DiffRequest {
                 left: DiffRef {
                     paste_id: left_id,
@@ -1048,17 +1056,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let res = ensure_success_or_exit(res, "Equal").await;
 
             let parse_start = Instant::now();
-            let diff: DiffResponse = res.json().await?;
+            let equal: EqualResponse = res.json().await?;
             let parse_elapsed = parse_start.elapsed();
             log_timing_parts(timing, "equal", request_elapsed, Some(parse_elapsed));
-            if json {
-                println!("{}", serde_json::to_string_pretty(&diff)?);
-            } else if diff.equal {
-                println!("equal");
-            } else {
-                println!("different");
-            }
-            std::process::exit(if diff.equal { 0 } else { 1 });
+            let output = match format_equal_output(&equal, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("Equal failed: {}", message);
+                    std::process::exit(1);
+                }
+            };
+            println!("{}", output);
+            std::process::exit(if equal.equal { 0 } else { 1 });
         }
         ApiCommand::ResetHard { id, version_id_ms } => {
             let version_segment = version_id_ms.to_string();

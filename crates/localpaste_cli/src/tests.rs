@@ -3,14 +3,14 @@
 use super::{
     api_url, default_resolution_connect_hint, discovered_server_from_file_with_reachability,
     discovery_probe_response_looks_like_localpaste, error_message_for_response,
-    format_delete_output, format_diff_output, format_get_output, format_summary_output,
-    normalize_server, paste_id_and_name, resolve_server, resolve_server_with_source,
-    ServerResolutionSource,
+    format_delete_output, format_diff_output, format_equal_output, format_get_output,
+    format_summary_output, normalize_server, paste_id_and_name, resolve_server,
+    resolve_server_with_source, ServerResolutionSource,
 };
 use super::{Cli, Commands};
 use clap::{CommandFactory, Parser};
 use localpaste_core::config::api_addr_file_path_from_env_or_default;
-use localpaste_core::diff::{unified_diff_lines, DiffResponse};
+use localpaste_core::diff::{unified_diff_lines, DiffResponse, EqualResponse};
 use localpaste_core::env::{env_lock, EnvGuard};
 use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
 use std::io::{Read, Write};
@@ -280,6 +280,25 @@ fn cli_diff_output_normalizes_embedded_line_endings() {
     assert_eq!(
         format_diff_output(&diff, false).expect("diff output"),
         "-old\n+new"
+    );
+}
+
+#[test]
+fn cli_equal_output_formats_boolean_shape_for_text_and_json() {
+    let equal = EqualResponse { equal: true };
+    assert_eq!(
+        format_equal_output(&equal, false).expect("text equal output"),
+        "equal"
+    );
+    assert_eq!(
+        format_equal_output(&equal, true).expect("json equal output"),
+        "{\n  \"equal\": true\n}"
+    );
+
+    let different = EqualResponse { equal: false };
+    assert_eq!(
+        format_equal_output(&different, false).expect("text different output"),
+        "different"
     );
 }
 

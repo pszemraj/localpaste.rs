@@ -254,6 +254,7 @@ fn create_app_with_cors(state: AppState, allow_public_access: bool, listener_por
         .route("/api/search", get(handlers::paste::search_pastes))
         .route("/api/search/meta", get(handlers::paste::search_pastes_meta))
         .route("/api/diff", post(handlers::paste::diff_pastes))
+        .route("/api/equal", post(handlers::paste::equal_pastes))
         .route("/api/folder", post(handlers::folder::create_folder))
         .route("/api/folder/:id", put(handlers::folder::update_folder))
         .route("/api/folder/:id", delete(handlers::folder::delete_folder))

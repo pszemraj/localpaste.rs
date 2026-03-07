@@ -24,6 +24,12 @@ pub struct DiffResponse {
     pub unified: Vec<String>,
 }
 
+/// Equality response payload for boolean-only compare flows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EqualResponse {
+    pub equal: bool,
+}
+
 /// Build a compact unified line diff.
 ///
 /// # Arguments

@@ -6,6 +6,7 @@
 mod protocol;
 mod worker;
 
+pub(crate) use protocol::VERSION_WORKFLOW_LIST_LIMIT;
 pub use protocol::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 pub use worker::{
     spawn_backend, spawn_backend_with_locks, spawn_backend_with_locks_and_owner, BackendHandle,
@@ -14,8 +15,10 @@ pub use worker::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Duration as ChronoDuration, Utc};
+    use localpaste_core::db::tables::{PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META};
     use localpaste_core::models::folder::Folder;
-    use localpaste_core::models::paste::Paste;
+    use localpaste_core::models::paste::{Paste, VersionMeta};
     use localpaste_core::Database;
     use ropey::Rope;
     use std::thread;
@@ -189,6 +192,77 @@ mod tests {
                 assert_eq!(
                     diff.unified,
                     localpaste_core::diff::unified_diff_lines("old\n", "new\n")
+                );
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn backend_reset_refreshes_versions_with_full_history_window_limit() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let paste = Paste::new("v1".to_string(), "versioned".to_string());
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).expect("create paste");
+
+        let mut version_items = Vec::new();
+        let write_txn = db.db.begin_write().expect("begin write");
+        {
+            let mut versions_meta = write_txn
+                .open_table(PASTE_VERSIONS_META)
+                .expect("open versions meta");
+            let mut versions_content = write_txn
+                .open_table(PASTE_VERSIONS_CONTENT)
+                .expect("open versions content");
+            for version_id_ms in 1_u64..=120 {
+                version_items.push(VersionMeta {
+                    version_id_ms,
+                    created_at: Utc::now()
+                        - ChronoDuration::milliseconds((121 - version_id_ms) as i64),
+                    content_hash: format!("hash-{version_id_ms}"),
+                    len: 3,
+                    language: None,
+                    language_is_manual: false,
+                });
+                let encoded_content = bincode::serialize(&format!("v{version_id_ms}"))
+                    .expect("serialize version content");
+                versions_content
+                    .insert(
+                        (paste_id.as_str(), version_id_ms),
+                        encoded_content.as_slice(),
+                    )
+                    .expect("insert version content");
+            }
+            version_items.reverse();
+            let encoded_versions =
+                bincode::serialize(&version_items).expect("serialize version metadata");
+            versions_meta
+                .insert(paste_id.as_str(), encoded_versions.as_slice())
+                .expect("insert versions metadata");
+        }
+        write_txn.commit().expect("commit version fixtures");
+        let version_id_ms = version_items[59].version_id_ms;
+
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
+        backend
+            .cmd_tx
+            .send(CoreCmd::ResetPasteHardToVersion {
+                id: paste_id.clone(),
+                version_id_ms,
+            })
+            .expect("send reset");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteResetToVersion { paste } => assert_eq!(paste.id, paste_id),
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteVersionsLoaded { id, items } => {
+                assert_eq!(id, paste_id);
+                assert!(
+                    items.len() > 50,
+                    "reset refresh should preserve older reset targets beyond the CLI/default 50-row window"
                 );
             }
             other => panic!("unexpected event: {:?}", other),

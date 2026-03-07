@@ -6,13 +6,14 @@ use super::ui::diff_modal::{
 use super::{
     non_focusable_click_sense, EditorLineIndex, LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE,
 };
-use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
+use crate::backend::{
+    CoreCmd, CoreErrorSource, CoreEvent, PasteSummary, VERSION_WORKFLOW_LIST_LIMIT,
+};
 use chrono::{DateTime, Utc};
 use eframe::egui;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
 use std::time::Instant;
 
-const VERSION_UI_LIST_LIMIT: usize = 200;
 const MAX_DIFF_CANDIDATES: usize = 40;
 const RESET_TRANSITION_BLOCKED_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
 const VERSION_OVERLAY_MUTATION_BLOCKED_STATUS: &str =
@@ -247,7 +248,7 @@ impl LocalPasteApp {
             .cmd_tx
             .send(CoreCmd::ListPasteVersions {
                 id,
-                limit: VERSION_UI_LIST_LIMIT,
+                limit: VERSION_WORKFLOW_LIST_LIMIT,
             })
             .is_err()
         {

@@ -2495,6 +2495,7 @@ dependencies = [
 name = "localpaste_gui"
 version = "0.4.7"
 dependencies = [
+ "bincode",
  "chrono",
  "crossbeam-channel",
  "eframe",
