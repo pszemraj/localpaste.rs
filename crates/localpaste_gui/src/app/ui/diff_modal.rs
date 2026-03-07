@@ -4,7 +4,8 @@ use super::super::*;
 use eframe::egui::{self, RichText};
 use localpaste_core::diff::unified_diff_lines;
 
-const MAX_INLINE_DIFF_BYTES: usize = 1024 * 1024;
+/// Maximum combined byte size allowed for inline diff preview generation.
+pub(crate) const MAX_INLINE_DIFF_BYTES: usize = 1024 * 1024;
 const DIFF_MODAL_HEIGHT: f32 = 360.0;
 
 /// Cached inline diff preview state for the detached diff modal.

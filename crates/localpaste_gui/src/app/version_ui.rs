@@ -1,7 +1,9 @@
 //! Version-history and diff modal state/helpers for the editor panel.
 
-use super::ui::diff_modal::{inline_diff_preview, InlineDiffPreview};
-use super::{non_focusable_click_sense, LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE};
+use super::ui::diff_modal::{inline_diff_preview, InlineDiffPreview, MAX_INLINE_DIFF_BYTES};
+use super::{
+    non_focusable_click_sense, EditorLineIndex, LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE,
+};
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use chrono::{DateTime, Utc};
 use eframe::egui;
@@ -50,8 +52,10 @@ pub(crate) struct VersionUiState {
     pub(super) history_reset_in_flight_paste_id: Option<String>,
     active_snapshot_cache_key: Option<ActiveSnapshotCacheKey>,
     pub(super) active_snapshot_cache_text: String,
+    pub(super) active_snapshot_preview_lines: EditorLineIndex,
     history_preview_cache_key: Option<HistoryPreviewCacheKey>,
     pub(super) history_preview_text: String,
+    pub(super) history_preview_lines: EditorLineIndex,
     pub(super) diff_modal_open: bool,
     pub(super) diff_query: String,
     pub(super) diff_target_id: Option<String>,
@@ -71,11 +75,13 @@ impl VersionUiState {
     fn clear_active_snapshot_cache(&mut self) {
         self.active_snapshot_cache_key = None;
         self.active_snapshot_cache_text.clear();
+        self.active_snapshot_preview_lines.reset();
     }
 
     fn clear_history_preview_cache(&mut self) {
         self.history_preview_cache_key = None;
         self.history_preview_text.clear();
+        self.history_preview_lines.reset();
     }
 
     fn clear_history_snapshot_state(&mut self) {
@@ -258,6 +264,10 @@ impl LocalPasteApp {
             return false;
         }
         self.version_ui.active_snapshot_cache_text = self.active_snapshot();
+        self.version_ui.active_snapshot_preview_lines.rebuild(
+            cache_key.revision,
+            self.version_ui.active_snapshot_cache_text.as_str(),
+        );
         self.version_ui.active_snapshot_cache_key = Some(cache_key);
         true
     }
@@ -280,6 +290,10 @@ impl LocalPasteApp {
             return false;
         }
         self.version_ui.history_preview_text = snapshot.content.clone();
+        self.version_ui.history_preview_lines.rebuild(
+            snapshot.version_id_ms,
+            self.version_ui.history_preview_text.as_str(),
+        );
         self.version_ui.history_preview_cache_key = Some(cache_key);
         true
     }
@@ -312,6 +326,16 @@ impl LocalPasteApp {
         };
         if self.version_ui.diff_preview_cache_key.as_ref() == Some(&cache_key) {
             return false;
+        }
+        let lhs_bytes = self.active_text_len_bytes();
+        let rhs_bytes = cache_key.rhs_content_len;
+        if lhs_bytes.saturating_add(rhs_bytes) > MAX_INLINE_DIFF_BYTES {
+            self.version_ui.diff_preview = Some(InlineDiffPreview::TooLarge {
+                lhs_bytes,
+                rhs_bytes,
+            });
+            self.version_ui.diff_preview_cache_key = Some(cache_key);
+            return true;
         }
         let _recomputed_snapshot = self.sync_active_snapshot_cache();
         let Some(rhs) = self.version_ui.diff_target_paste.as_ref() else {

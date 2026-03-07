@@ -114,14 +114,14 @@ impl fmt::Display for EditorBuffer {
 }
 
 /// Holds byte offsets for each line in the buffer to enable fast line lookups.
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub(super) struct EditorLineIndex {
     revision: u64,
     text_len: usize,
     lines: Vec<LineEntry>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct LineEntry {
     start: usize,
     len: usize,

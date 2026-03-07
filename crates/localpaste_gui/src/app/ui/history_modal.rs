@@ -1,7 +1,71 @@
 //! Detached version-history modal rendering.
 
 use super::super::*;
+use crate::app::text_coords::prefix_by_chars;
 use eframe::egui::{self, RichText};
+
+const MAX_INLINE_HISTORY_TEXTEDIT_BYTES: usize = 256 * 1024;
+const HISTORY_PREVIEW_MAX_HEIGHT: f32 = 560.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryPreviewRenderMode {
+    InlineTextEdit,
+    FastRows,
+}
+
+fn history_preview_render_mode(body_len: usize) -> HistoryPreviewRenderMode {
+    if body_len > MAX_INLINE_HISTORY_TEXTEDIT_BYTES {
+        HistoryPreviewRenderMode::FastRows
+    } else {
+        HistoryPreviewRenderMode::InlineTextEdit
+    }
+}
+
+fn render_large_history_preview(ui: &mut egui::Ui, text: &str, lines: &EditorLineIndex) {
+    let row_height = ui.text_style_height(&egui::TextStyle::Monospace).max(1.0);
+    let line_count = lines.line_count();
+    let line_digits = line_count.max(1).to_string().len();
+
+    ui.label(
+        RichText::new(format!(
+            "Large snapshot view optimized for responsiveness; lines render up to {} chars.",
+            MAX_RENDER_CHARS_PER_LINE
+        ))
+        .small()
+        .color(COLOR_TEXT_MUTED),
+    );
+    ui.add_space(6.0);
+
+    egui::ScrollArea::vertical()
+        .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
+        .auto_shrink([false, false])
+        .show_rows(ui, row_height, line_count, |ui, range| {
+            ui.set_min_width(ui.available_width());
+            for line_idx in range {
+                let line = lines.line_without_newline(text, line_idx);
+                let render_line = prefix_by_chars(line, MAX_RENDER_CHARS_PER_LINE);
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [((line_digits + 2) as f32) * row_height * 0.7, row_height],
+                        egui::Label::new(
+                            RichText::new(format!(
+                                "{:>width$}",
+                                line_idx.saturating_add(1),
+                                width = line_digits
+                            ))
+                            .monospace()
+                            .color(COLOR_TEXT_MUTED),
+                        )
+                        .truncate(),
+                    );
+                    ui.add_sized(
+                        [ui.available_width(), row_height],
+                        egui::Label::new(RichText::new(render_line).monospace()).truncate(),
+                    );
+                });
+            }
+        });
+}
 
 impl LocalPasteApp {
     /// Renders the detached history modal for read-only snapshot navigation.
@@ -148,19 +212,53 @@ impl LocalPasteApp {
                             }
                         }
 
-                        {
-                            let body = if self.version_ui.history_selected_index == 0 {
-                                &mut self.version_ui.active_snapshot_cache_text
-                            } else {
-                                &mut self.version_ui.history_preview_text
-                            };
-                            right.add(
-                                egui::TextEdit::multiline(body)
-                                    .font(egui::TextStyle::Monospace)
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(30)
-                                    .interactive(false),
+                        if self.version_ui.history_selected_index == 0 {
+                            let mode = history_preview_render_mode(
+                                self.version_ui.active_snapshot_cache_text.len(),
                             );
+                            match mode {
+                                HistoryPreviewRenderMode::InlineTextEdit => {
+                                    right.add(
+                                        egui::TextEdit::multiline(
+                                            &mut self.version_ui.active_snapshot_cache_text,
+                                        )
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(f32::INFINITY)
+                                        .desired_rows(30)
+                                        .interactive(false),
+                                    );
+                                }
+                                HistoryPreviewRenderMode::FastRows => {
+                                    render_large_history_preview(
+                                        right,
+                                        self.version_ui.active_snapshot_cache_text.as_str(),
+                                        &self.version_ui.active_snapshot_preview_lines,
+                                    );
+                                }
+                            }
+                        } else {
+                            let mode =
+                                history_preview_render_mode(self.version_ui.history_preview_text.len());
+                            match mode {
+                                HistoryPreviewRenderMode::InlineTextEdit => {
+                                    right.add(
+                                        egui::TextEdit::multiline(
+                                            &mut self.version_ui.history_preview_text,
+                                        )
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(f32::INFINITY)
+                                        .desired_rows(30)
+                                        .interactive(false),
+                                    );
+                                }
+                                HistoryPreviewRenderMode::FastRows => {
+                                    render_large_history_preview(
+                                        right,
+                                        self.version_ui.history_preview_text.as_str(),
+                                        &self.version_ui.history_preview_lines,
+                                    );
+                                }
+                            }
                         }
 
                         right.add_space(8.0);
@@ -282,5 +380,24 @@ impl LocalPasteApp {
             self.version_ui.history_modal_open = false;
             self.version_ui.clear_history_reset_confirm();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        history_preview_render_mode, HistoryPreviewRenderMode, MAX_INLINE_HISTORY_TEXTEDIT_BYTES,
+    };
+
+    #[test]
+    fn history_preview_switches_to_fast_rows_for_large_bodies() {
+        assert_eq!(
+            history_preview_render_mode(MAX_INLINE_HISTORY_TEXTEDIT_BYTES),
+            HistoryPreviewRenderMode::InlineTextEdit
+        );
+        assert_eq!(
+            history_preview_render_mode(MAX_INLINE_HISTORY_TEXTEDIT_BYTES.saturating_add(1)),
+            HistoryPreviewRenderMode::FastRows
+        );
     }
 }
