@@ -287,6 +287,9 @@ impl LocalPasteApp {
             | CoreEvent::PasteDiffComputed { .. }
             | CoreEvent::FoldersLoaded { items: _ }
             | CoreEvent::ShutdownComplete { flush_result: _ } => {}
+            CoreEvent::PasteVersionLoadFailed { message, .. } => {
+                self.set_status(message);
+            }
             CoreEvent::FolderSaved { folder: _ } | CoreEvent::FolderDeleted { id: _ } => {
                 self.request_refresh();
             }

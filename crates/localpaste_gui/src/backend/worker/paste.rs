@@ -358,27 +358,32 @@ pub(super) fn handle_get_paste_version(state: &mut WorkerState, id: String, vers
                 .send(CoreEvent::PasteVersionLoaded { snapshot });
         }
         Ok(None) => match state.db.pastes.get(id.as_str()) {
-            Ok(Some(_)) => send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Version {} not found for paste {}.", version_id_ms, id),
-            ),
+            Ok(Some(_)) => {
+                let message = format!("Version {} not found for paste {}.", version_id_ms, id);
+                let _ = state.evt_tx.send(CoreEvent::PasteVersionLoadFailed {
+                    paste_id: id,
+                    version_id_ms,
+                    message,
+                });
+            }
             Ok(None) => {
                 let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
             }
-            Err(err) => send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Get version failed: {}", err),
-            ),
+            Err(err) => {
+                let _ = state.evt_tx.send(CoreEvent::PasteVersionLoadFailed {
+                    paste_id: id,
+                    version_id_ms,
+                    message: format!("Get version failed: {}", err),
+                });
+            }
         },
         Err(err) => {
             error!("backend get version failed: {}", err);
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Get version failed: {}", err),
-            );
+            let _ = state.evt_tx.send(CoreEvent::PasteVersionLoadFailed {
+                paste_id: id,
+                version_id_ms,
+                message: format!("Get version failed: {}", err),
+            });
         }
     }
 }

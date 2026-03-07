@@ -19,6 +19,13 @@ pub(crate) enum InlineDiffPreview {
     Lines(Vec<String>),
 }
 
+fn normalize_gui_diff_lines(lines: Vec<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .map(|line| line.trim_end_matches(['\r', '\n']).to_string())
+        .collect()
+}
+
 /// Builds a bounded inline diff preview classification for two snapshot bodies.
 ///
 /// # Arguments
@@ -40,7 +47,7 @@ pub(crate) fn inline_diff_preview(lhs: &str, rhs: &str) -> InlineDiffPreview {
         return InlineDiffPreview::NoChanges;
     }
 
-    let diff_lines = unified_diff_lines(lhs, rhs);
+    let diff_lines = normalize_gui_diff_lines(unified_diff_lines(lhs, rhs));
     if diff_lines.is_empty() {
         InlineDiffPreview::NoChanges
     } else {
@@ -224,6 +231,20 @@ mod tests {
                 lhs_bytes: MAX_INLINE_DIFF_BYTES,
                 rhs_bytes: 1,
             }
+        );
+    }
+
+    #[test]
+    fn inline_diff_preview_trims_line_endings_for_gui_rows() {
+        let preview = inline_diff_preview("old\n", "new\n");
+        let InlineDiffPreview::Lines(lines) = preview else {
+            panic!("changed content should produce diff lines");
+        };
+        assert!(
+            lines
+                .iter()
+                .all(|line| !line.ends_with('\n') && !line.ends_with('\r')),
+            "GUI preview rows should not keep raw trailing newlines"
         );
     }
 }

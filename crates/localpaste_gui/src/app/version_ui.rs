@@ -642,6 +642,18 @@ impl LocalPasteApp {
                 self.version_ui.history_snapshot = Some(snapshot.clone());
                 self.version_ui.history_loading_snapshot_id = None;
             }
+            CoreEvent::PasteVersionLoadFailed {
+                paste_id,
+                version_id_ms,
+                ..
+            } => {
+                if self.selected_id.as_deref() != Some(paste_id.as_str()) {
+                    return;
+                }
+                if self.version_ui.history_loading_snapshot_id == Some(*version_id_ms) {
+                    self.version_ui.clear_history_snapshot_state();
+                }
+            }
             CoreEvent::PasteResetToVersion { paste } => {
                 let paste_id = paste.id.clone();
                 if self.history_reset_pending_for(paste_id.as_str()) {
@@ -686,11 +698,9 @@ impl LocalPasteApp {
                 }
             }
             CoreEvent::Error { source, .. } => {
-                // Detached history/diff modals must never leave spinners or disabled
-                // actions stuck after backend failures.
-                if self.version_ui.history_loading_snapshot_id.is_some() {
-                    self.version_ui.clear_history_snapshot_state();
-                }
+                // Version-preview cleanup is driven by version-specific failure events.
+                // Generic backend errors (save/search/list) must not tear down an
+                // unrelated history preview that is still waiting on its own reply.
                 if matches!(source, CoreErrorSource::SaveContent)
                     && self.version_ui.history_reset_in_flight()
                     && !self.save_in_flight

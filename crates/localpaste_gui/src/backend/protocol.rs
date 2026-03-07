@@ -126,6 +126,12 @@ pub enum CoreEvent {
     PasteVersionsLoaded { id: String, items: Vec<VersionMeta> },
     /// Response containing a historical version snapshot.
     PasteVersionLoaded { snapshot: VersionSnapshot },
+    /// Loading a historical version snapshot failed.
+    PasteVersionLoadFailed {
+        paste_id: String,
+        version_id_ms: u64,
+        message: String,
+    },
     /// Response containing a computed diff between two paste references.
     PasteDiffComputed {
         left_id: String,

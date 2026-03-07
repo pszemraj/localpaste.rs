@@ -493,9 +493,9 @@ fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
 }
 
 #[test]
-fn version_modal_failure_events_clear_stuck_loading_and_reset_flags() {
+fn version_modal_failure_cleanup_is_scoped_to_the_matching_request() {
     let mut harness = make_app();
-    harness.app.version_ui.diff_target_id = Some("alpha".to_string());
+    harness.app.version_ui.diff_target_id = Some("beta".to_string());
     harness.app.version_ui.diff_loading_target = true;
     harness.app.version_ui.history_loading_snapshot_id = Some(42);
     harness.app.version_ui.history_snapshot =
@@ -512,18 +512,33 @@ fn version_modal_failure_events_clear_stuck_loading_and_reset_flags() {
     harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
 
     harness.app.apply_event(CoreEvent::PasteLoadFailed {
-        id: "alpha".to_string(),
+        id: "beta".to_string(),
         message: "Get failed: missing".to_string(),
     });
     assert!(!harness.app.version_ui.diff_loading_target);
     assert!(harness.app.version_ui.diff_target_id.is_none());
+    assert_eq!(harness.app.version_ui.history_loading_snapshot_id, Some(42));
+    assert!(harness.app.version_ui.history_snapshot.is_some());
+
+    harness.app.apply_event(CoreEvent::Error {
+        source: crate::backend::CoreErrorSource::Other,
+        message: "Search failed".to_string(),
+    });
+    assert_eq!(harness.app.version_ui.history_loading_snapshot_id, Some(42));
+    assert!(harness.app.version_ui.history_snapshot.is_some());
+
+    harness.app.apply_event(CoreEvent::PasteVersionLoadFailed {
+        paste_id: "alpha".to_string(),
+        version_id_ms: 42,
+        message: "Get version failed".to_string(),
+    });
+    assert!(harness.app.version_ui.history_loading_snapshot_id.is_none());
+    assert!(harness.app.version_ui.history_snapshot.is_none());
 
     harness.app.apply_event(CoreEvent::Error {
         source: crate::backend::CoreErrorSource::SaveContent,
         message: "reset failed".to_string(),
     });
-    assert!(harness.app.version_ui.history_loading_snapshot_id.is_none());
-    assert!(harness.app.version_ui.history_snapshot.is_none());
     assert!(harness
         .app
         .version_ui
