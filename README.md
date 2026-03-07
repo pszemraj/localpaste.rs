@@ -88,6 +88,7 @@ Get-FileHash .\localpaste-v<tag>-windows-x86_64.msi -Algorithm SHA256
 ## Configuration and Ops
 
 - Documentation map: [`docs/README.md`](docs/README.md)
+- Practical terminal workflows alongside the GUI: [`docs/cli-gui-workflows.md`](docs/cli-gui-workflows.md)
 - Build/run/validation workflow: [`docs/dev/devlog.md`](docs/dev/devlog.md)
 - GUI release pipeline and artifact contract: [`docs/release-gui.md`](docs/release-gui.md)
 

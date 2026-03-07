@@ -5,6 +5,7 @@
 | Concept | Reference |
 | --- | --- |
 | Product overview and quick start | [../README.md](../README.md) |
+| Practical `lpaste` workflows alongside the GUI | [cli-gui-workflows.md](cli-gui-workflows.md) |
 | System architecture, runtime topology, and discovery | [architecture.md](architecture.md) |
 | Storage backend and single-writer `DB_PATH` contract | [storage.md](storage.md) |
 | Security defaults and exposure policy | [security.md](security.md) |
