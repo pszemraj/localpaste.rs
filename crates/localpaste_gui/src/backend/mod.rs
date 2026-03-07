@@ -169,6 +169,33 @@ mod tests {
     }
 
     #[test]
+    fn backend_computes_detached_diff_preview_from_frozen_text_snapshots() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::ComputeDiffPreview {
+                request_id: 7,
+                left_text: "old\n".to_string(),
+                right_text: "new\n".to_string(),
+            })
+            .expect("send detached diff preview");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::DiffPreviewComputed { request_id, diff } => {
+                assert_eq!(request_id, 7);
+                assert!(!diff.equal);
+                assert_eq!(
+                    diff.unified,
+                    localpaste_core::diff::unified_diff_lines("old\n", "new\n")
+                );
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
     fn backend_creates_updates_and_deletes_paste() {
         let TestDb { _dir: _guard, db } = setup_db();
         let backend = spawn_backend(db, 10 * 1024 * 1024);

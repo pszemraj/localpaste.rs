@@ -235,19 +235,12 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             paste::handle_duplicate_paste_version(state, id, version_id_ms, name);
             true
         }
-        CoreCmd::DiffPastes {
-            left_id,
-            right_id,
-            left_version_id_ms,
-            right_version_id_ms,
+        CoreCmd::ComputeDiffPreview {
+            request_id,
+            left_text,
+            right_text,
         } => {
-            paste::handle_diff_pastes(
-                state,
-                left_id,
-                right_id,
-                left_version_id_ms,
-                right_version_id_ms,
-            );
+            paste::handle_compute_diff_preview(state, request_id, left_text, right_text);
             true
         }
         CoreCmd::ListFolders => {

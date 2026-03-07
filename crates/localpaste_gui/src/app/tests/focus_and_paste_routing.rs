@@ -603,6 +603,61 @@ fn version_overlay_blocks_background_destructive_dispatches() {
 }
 
 #[test]
+fn version_overlay_blocks_selection_switches_and_auto_reselection() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_modal_open = true;
+
+    assert!(!harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Close the open version window before changing selection.")
+    );
+
+    harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)];
+    harness.app.ensure_selection_after_list_update();
+    assert_eq!(
+        harness.app.selected_id.as_deref(),
+        Some("alpha"),
+        "open version workflows should pin selection instead of auto-reselecting visible rows"
+    );
+}
+
+#[test]
+fn opening_version_overlay_cancels_pending_selection_switch_before_save_ack() {
+    let mut harness = make_app();
+    harness.app.selected_content.reset("dirty".to_string());
+    harness.app.save_status = SaveStatus::Dirty;
+
+    assert!(harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+    assert!(harness.app.save_in_flight);
+
+    harness.app.open_diff_modal();
+    assert!(harness.app.version_ui.diff_modal_open);
+    assert!(
+        harness.app.pending_selection_id.is_none(),
+        "opening a detached version workflow should cancel any queued subject switch"
+    );
+
+    let mut saved = Paste::new("dirty".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert_eq!(
+        harness.app.selected_id.as_deref(),
+        Some("alpha"),
+        "late save ack must not tear down an open version workflow by applying an old pending selection"
+    );
+}
+
+#[test]
 fn version_overlay_allows_content_and_metadata_persistence_dispatches() {
     enum SaveCase {
         Autosave,

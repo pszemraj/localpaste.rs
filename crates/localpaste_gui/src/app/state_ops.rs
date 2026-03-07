@@ -284,7 +284,7 @@ impl LocalPasteApp {
             CoreEvent::PasteVersionsLoaded { .. }
             | CoreEvent::PasteVersionLoaded { .. }
             | CoreEvent::PasteResetToVersion { .. }
-            | CoreEvent::PasteDiffComputed { .. }
+            | CoreEvent::DiffPreviewComputed { .. }
             | CoreEvent::FoldersLoaded { items: _ }
             | CoreEvent::ShutdownComplete { flush_result: _ } => {}
             CoreEvent::PasteVersionLoadFailed { message, .. } => {
@@ -524,11 +524,10 @@ impl LocalPasteApp {
         if self.selected_id.as_deref() == Some(id.as_str()) {
             return true;
         }
-        // The GUI holds exactly one paste lock at a time. Once a hard reset is queued for the
-        // current selection, keep that paste selected and locked until its authoritative
-        // backend ack/error arrives; switching away early would release the lock too soon.
-        if self.reset_transition_active() {
-            self.set_reset_transition_blocked_status();
+        // Detached version workflows own the current subject paste; switching away would
+        // invalidate the open modal context and, during reset, release the held lock too early.
+        if self.selection_transition_block_reason().is_some() {
+            self.set_selection_transition_blocked_status();
             return false;
         }
         if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
@@ -541,7 +540,6 @@ impl LocalPasteApp {
             if metadata_save_needed {
                 self.save_metadata_now();
             }
-
             let content_save_dispatched = !content_save_needed || self.save_in_flight;
             let metadata_save_dispatched = !metadata_save_needed || self.metadata_save_in_flight;
             if !content_save_dispatched || !metadata_save_dispatched {
@@ -585,6 +583,13 @@ impl LocalPasteApp {
         }
         if let Some(replaced) = self.pending_selection_id.replace(id) {
             self.clear_pending_copy_for(replaced.as_str());
+        }
+    }
+
+    /// Cancels any queued selection switch that has not been applied yet.
+    pub(super) fn clear_pending_selection_request(&mut self) {
+        if let Some(pending) = self.pending_selection_id.take() {
+            self.clear_pending_copy_for(pending.as_str());
         }
     }
 
@@ -658,7 +663,7 @@ impl LocalPasteApp {
     }
 
     fn try_apply_pending_selection(&mut self) {
-        if self.reset_transition_active() {
+        if self.selection_transition_block_reason().is_some() {
             return;
         }
         if self.save_in_flight || self.metadata_save_in_flight {
@@ -678,9 +683,7 @@ impl LocalPasteApp {
 
     /// Clears active/pending selection and releases any held paste lock.
     pub(super) fn clear_selection(&mut self) {
-        if let Some(pending) = self.pending_selection_id.take() {
-            self.clear_pending_copy_for(pending.as_str());
-        }
+        self.clear_pending_selection_request();
         if let Some(prev) = self.selected_id.take() {
             self.release_paste_lock(prev.as_str());
         }
@@ -957,7 +960,7 @@ impl LocalPasteApp {
     /// When the active item no longer matches the current filters, this selects
     /// the first remaining visible paste or clears selection if none remain.
     pub(super) fn ensure_selection_after_list_update(&mut self) {
-        if self.reset_transition_active() {
+        if self.selection_transition_block_reason().is_some() {
             return;
         }
         let selection_valid = self

@@ -4,7 +4,7 @@ use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerSt
 use crate::backend::{CoreErrorSource, CoreEvent};
 use localpaste_core::{
     db::TransactionOps,
-    diff::{DiffRef, DiffRequest},
+    diff::{unified_diff_lines, DiffResponse},
     folder_ops::map_missing_folder_for_optional_request,
     models::paste::{self, UpdatePasteRequest},
     naming,
@@ -506,55 +506,29 @@ pub(super) fn handle_duplicate_paste_version(
     }
 }
 
-/// Computes a line-based diff between two paste references.
+/// Computes a diff preview from explicit left/right text snapshots off the UI thread.
 ///
 /// # Arguments
-/// - `state`: Worker state containing db and event channel handles.
-/// - `left_id`: Left paste id.
-/// - `right_id`: Right paste id.
-/// - `left_version_id_ms`: Optional left historical version id.
-/// - `right_version_id_ms`: Optional right historical version id.
-pub(super) fn handle_diff_pastes(
+/// - `state`: Worker state containing event channel handles.
+/// - `request_id`: Caller-owned request token used to drop stale preview results.
+/// - `left_text`: Frozen current-editor snapshot for the diff left side.
+/// - `right_text`: Frozen comparison target snapshot for the diff right side.
+pub(super) fn handle_compute_diff_preview(
     state: &mut WorkerState,
-    left_id: String,
-    right_id: String,
-    left_version_id_ms: Option<u64>,
-    right_version_id_ms: Option<u64>,
+    request_id: u64,
+    left_text: String,
+    right_text: String,
 ) {
-    let request = DiffRequest {
-        left: DiffRef {
-            paste_id: left_id.clone(),
-            version_id_ms: left_version_id_ms,
-        },
-        right: DiffRef {
-            paste_id: right_id.clone(),
-            version_id_ms: right_version_id_ms,
+    let equal = left_text == right_text;
+    let diff = DiffResponse {
+        equal,
+        unified: if equal {
+            Vec::new()
+        } else {
+            unified_diff_lines(left_text.as_str(), right_text.as_str())
         },
     };
-    match state.db.pastes.diff(&request) {
-        Ok(Some(diff)) => {
-            let _ = state.evt_tx.send(CoreEvent::PasteDiffComputed {
-                left_id,
-                right_id,
-                left_version_id_ms,
-                right_version_id_ms,
-                diff,
-            });
-        }
-        Ok(None) => {
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                "Diff failed: one or both references are missing.".to_string(),
-            );
-        }
-        Err(err) => {
-            error!("backend diff failed: {}", err);
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Diff failed: {}", err),
-            );
-        }
-    }
+    let _ = state
+        .evt_tx
+        .send(CoreEvent::DiffPreviewComputed { request_id, diff });
 }

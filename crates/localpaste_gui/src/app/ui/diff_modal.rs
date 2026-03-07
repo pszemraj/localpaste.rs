@@ -2,7 +2,7 @@
 
 use super::super::*;
 use eframe::egui::{self, RichText};
-use localpaste_core::diff::unified_diff_lines;
+use localpaste_core::diff::DiffResponse;
 
 /// Maximum combined byte size allowed for inline diff preview generation.
 pub(crate) const MAX_INLINE_DIFF_BYTES: usize = 1024 * 1024;
@@ -26,33 +26,20 @@ fn normalize_gui_diff_lines(lines: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// Builds a bounded inline diff preview classification for two snapshot bodies.
+/// Builds an inline diff preview classification from a worker-produced diff response.
 ///
 /// # Arguments
-/// - `lhs`: Current editor snapshot shown on the left side of the modal.
-/// - `rhs`: Loaded comparison target content shown on the right side.
+/// - `diff`: Worker-computed line diff payload for the active modal request.
 ///
 /// # Returns
 /// A cached-friendly preview state describing whether the modal should show a
-/// line diff, a no-op message, or a size cap warning.
-pub(crate) fn inline_diff_preview(lhs: &str, rhs: &str) -> InlineDiffPreview {
-    if lhs.len().saturating_add(rhs.len()) > MAX_INLINE_DIFF_BYTES {
-        return InlineDiffPreview::TooLarge {
-            lhs_bytes: lhs.len(),
-            rhs_bytes: rhs.len(),
-        };
-    }
-
-    if lhs == rhs {
+/// line diff or a no-op message. Oversized previews are gated before dispatch.
+pub(crate) fn inline_diff_preview_from_response(diff: DiffResponse) -> InlineDiffPreview {
+    if diff.equal || diff.unified.is_empty() {
         return InlineDiffPreview::NoChanges;
     }
 
-    let diff_lines = normalize_gui_diff_lines(unified_diff_lines(lhs, rhs));
-    if diff_lines.is_empty() {
-        InlineDiffPreview::NoChanges
-    } else {
-        InlineDiffPreview::Lines(diff_lines)
-    }
+    InlineDiffPreview::Lines(normalize_gui_diff_lines(diff.unified))
 }
 
 impl LocalPasteApp {
@@ -209,24 +196,33 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{inline_diff_preview, InlineDiffPreview, MAX_INLINE_DIFF_BYTES};
+    use super::{inline_diff_preview_from_response, InlineDiffPreview, MAX_INLINE_DIFF_BYTES};
+    use localpaste_core::diff::{unified_diff_lines, DiffResponse};
 
     #[test]
-    fn inline_diff_preview_classifies_changes_size_and_identity() {
+    fn inline_diff_preview_from_response_classifies_changes_and_identity() {
         assert_eq!(
-            inline_diff_preview("same", "same"),
+            inline_diff_preview_from_response(DiffResponse {
+                equal: true,
+                unified: Vec::new(),
+            }),
             InlineDiffPreview::NoChanges
         );
 
-        let changed = inline_diff_preview("alpha", "beta");
+        let changed = inline_diff_preview_from_response(DiffResponse {
+            equal: false,
+            unified: unified_diff_lines("alpha", "beta"),
+        });
         assert!(
             matches!(changed, InlineDiffPreview::Lines(lines) if !lines.is_empty()),
             "changed content should produce inline diff lines"
         );
 
-        let large = "x".repeat(MAX_INLINE_DIFF_BYTES);
         assert_eq!(
-            inline_diff_preview(large.as_str(), "y"),
+            InlineDiffPreview::TooLarge {
+                lhs_bytes: MAX_INLINE_DIFF_BYTES,
+                rhs_bytes: 1,
+            },
             InlineDiffPreview::TooLarge {
                 lhs_bytes: MAX_INLINE_DIFF_BYTES,
                 rhs_bytes: 1,
@@ -235,8 +231,11 @@ mod tests {
     }
 
     #[test]
-    fn inline_diff_preview_trims_line_endings_for_gui_rows() {
-        let preview = inline_diff_preview("old\n", "new\n");
+    fn inline_diff_preview_from_response_trims_line_endings_for_gui_rows() {
+        let preview = inline_diff_preview_from_response(DiffResponse {
+            equal: false,
+            unified: unified_diff_lines("old\n", "new\n"),
+        });
         let InlineDiffPreview::Lines(lines) = preview else {
             panic!("changed content should produce diff lines");
         };
@@ -245,6 +244,20 @@ mod tests {
                 .iter()
                 .all(|line| !line.ends_with('\n') && !line.ends_with('\r')),
             "GUI preview rows should not keep raw trailing newlines"
+        );
+    }
+
+    #[test]
+    fn too_large_preview_state_is_reserved_for_pre_dispatch_size_gates() {
+        assert_eq!(
+            InlineDiffPreview::TooLarge {
+                lhs_bytes: MAX_INLINE_DIFF_BYTES,
+                rhs_bytes: 1,
+            },
+            InlineDiffPreview::TooLarge {
+                lhs_bytes: MAX_INLINE_DIFF_BYTES,
+                rhs_bytes: 1,
+            }
         );
     }
 }

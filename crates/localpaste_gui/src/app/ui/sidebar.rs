@@ -124,6 +124,7 @@ impl LocalPasteApp {
                 ui.separator();
                 ui.add_space(4.0);
                 let mut pending_select: Option<String> = None;
+                let selection_blocked = self.selection_transition_block_reason().is_some();
                 let row_height = ui.spacing().interact_size.y;
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
@@ -176,7 +177,11 @@ impl LocalPasteApp {
                                     .on_hover_text(sidebar_hover_text(paste))
                                     .clicked()
                                 {
-                                    pending_select = Some(paste.id.clone());
+                                    if selection_blocked {
+                                        self.set_selection_transition_blocked_status();
+                                    } else {
+                                        pending_select = Some(paste.id.clone());
+                                    }
                                 }
                             }
                         }

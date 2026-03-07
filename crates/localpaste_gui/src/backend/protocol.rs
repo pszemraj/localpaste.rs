@@ -59,12 +59,15 @@ pub enum CoreCmd {
         version_id_ms: u64,
         name: Option<String>,
     },
-    /// Compute a line-based diff between two paste references.
-    DiffPastes {
-        left_id: String,
-        right_id: String,
-        left_version_id_ms: Option<u64>,
-        right_version_id_ms: Option<u64>,
+    /// Compute a detached diff preview from frozen left/right text snapshots.
+    ///
+    /// The GUI diff modal compares unsaved local edits on the left against a
+    /// loaded target paste on the right, so preview computation runs off the UI
+    /// thread against explicit text snapshots rather than DB refs.
+    ComputeDiffPreview {
+        request_id: u64,
+        left_text: String,
+        right_text: String,
     },
     /// Gracefully stop the backend worker.
     ///
@@ -132,14 +135,8 @@ pub enum CoreEvent {
         version_id_ms: u64,
         message: String,
     },
-    /// Response containing a computed diff between two paste references.
-    PasteDiffComputed {
-        left_id: String,
-        right_id: String,
-        left_version_id_ms: Option<u64>,
-        right_version_id_ms: Option<u64>,
-        diff: DiffResponse,
-    },
+    /// Response containing a detached diff preview for the matching request id.
+    DiffPreviewComputed { request_id: u64, diff: DiffResponse },
     /// The requested paste id no longer exists in the database.
     PasteMissing { id: String },
     /// Response containing current folder list.

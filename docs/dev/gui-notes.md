@@ -69,9 +69,11 @@ Navigation/selection contract:
 - History, Diff, and reset-confirm windows fence background mutations:
   - create/delete/paste-as-new and other destructive workflow shortcuts are blocked while a version window is open,
   - autosave and explicit save still persist already-dirty content/metadata while a version window is open,
+  - selection changes and automatic reselection are blocked while a version window is open,
   - the selected paste stays pinned during a queued hard reset,
   - the selected paste is temporarily read-only until reset success/error arrives.
-- Reset and snapshot loading clear their in-flight UI state on backend errors so modal actions cannot get stuck.
+- Diff preview generation runs on the backend worker against frozen left/right text snapshots; the UI only renders cached results.
+- Reset and snapshot loading clear their in-flight UI state only for matching version-load/reset failures so unrelated backend errors cannot tear down the modal context.
 
 ## Language/Highlight QA (Magika + Fallback)
 

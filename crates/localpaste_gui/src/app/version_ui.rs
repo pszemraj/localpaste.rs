@@ -1,6 +1,8 @@
 //! Version-history and diff modal state/helpers for the editor panel.
 
-use super::ui::diff_modal::{inline_diff_preview, InlineDiffPreview, MAX_INLINE_DIFF_BYTES};
+use super::ui::diff_modal::{
+    inline_diff_preview_from_response, InlineDiffPreview, MAX_INLINE_DIFF_BYTES,
+};
 use super::{
     non_focusable_click_sense, EditorLineIndex, LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE,
 };
@@ -15,6 +17,8 @@ const MAX_DIFF_CANDIDATES: usize = 40;
 const RESET_TRANSITION_BLOCKED_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
 const VERSION_OVERLAY_MUTATION_BLOCKED_STATUS: &str =
     "Close the open version window before mutating the selected paste.";
+const VERSION_OVERLAY_SELECTION_BLOCKED_STATUS: &str =
+    "Close the open version window before changing selection.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ActiveSnapshotCacheKey {
@@ -62,6 +66,8 @@ pub(crate) struct VersionUiState {
     pub(super) diff_target_paste: Option<Paste>,
     pub(super) diff_loading_target: bool,
     diff_preview_cache_key: Option<DiffPreviewCacheKey>,
+    diff_preview_pending_request_id: Option<u64>,
+    diff_preview_request_seq: u64,
     pub(super) diff_preview: Option<InlineDiffPreview>,
 }
 
@@ -121,6 +127,7 @@ impl VersionUiState {
         self.diff_target_paste = None;
         self.diff_loading_target = false;
         self.diff_preview_cache_key = None;
+        self.diff_preview_pending_request_id = None;
         self.diff_preview = None;
     }
 
@@ -136,6 +143,11 @@ impl VersionUiState {
         self.clear_history_selection();
         self.clear_diff_selection();
         self.clear_active_snapshot_cache();
+    }
+
+    fn next_diff_preview_request_id(&mut self) -> u64 {
+        self.diff_preview_request_seq = self.diff_preview_request_seq.wrapping_add(1);
+        self.diff_preview_request_seq
     }
 }
 
@@ -165,6 +177,14 @@ impl LocalPasteApp {
         }
         self.set_status("Nothing selected.");
         false
+    }
+
+    fn begin_version_overlay(&mut self) -> bool {
+        if !self.ensure_selected_paste_for_version_modal() {
+            return false;
+        }
+        self.clear_pending_selection_request();
+        true
     }
 
     /// Clears all version/diff modal state.
@@ -199,7 +219,7 @@ impl LocalPasteApp {
 
     /// Opens the history modal for the currently selected paste.
     pub(super) fn open_history_modal(&mut self) {
-        if !self.ensure_selected_paste_for_version_modal() {
+        if !self.begin_version_overlay() {
             return;
         }
         self.version_ui.history_modal_open = true;
@@ -209,7 +229,7 @@ impl LocalPasteApp {
 
     /// Opens the diff modal for the currently selected paste.
     pub(super) fn open_diff_modal(&mut self) {
-        if !self.ensure_selected_paste_for_version_modal() {
+        if !self.begin_version_overlay() {
             return;
         }
         self.version_ui.diff_modal_open = true;
@@ -298,14 +318,19 @@ impl LocalPasteApp {
         true
     }
 
-    /// Refreshes the cached inline diff preview only when either side of the comparison changes.
+    /// Refreshes detached diff preview state when the left or right side changes.
+    ///
+    /// At most one worker diff request stays in flight. While a request is pending,
+    /// newer editor revisions wait for that result to drain and then enqueue the
+    /// freshest preview on the next repaint.
     ///
     /// # Returns
-    /// `true` when diff preview classification or line generation was recomputed.
+    /// `true` when preview state changed or a fresh worker request was queued.
     pub(super) fn sync_diff_preview_cache(&mut self) -> bool {
         let Some(lhs_cache_key) = self.active_snapshot_cache_key() else {
             self.version_ui.clear_active_snapshot_cache();
             self.version_ui.diff_preview_cache_key = None;
+            self.version_ui.diff_preview_pending_request_id = None;
             self.version_ui.diff_preview = None;
             return false;
         };
@@ -321,12 +346,14 @@ impl LocalPasteApp {
                 })
         else {
             self.version_ui.diff_preview_cache_key = None;
+            self.version_ui.diff_preview_pending_request_id = None;
             self.version_ui.diff_preview = None;
             return false;
         };
         if self.version_ui.diff_preview_cache_key.as_ref() == Some(&cache_key) {
             return false;
         }
+
         let lhs_bytes = self.active_text_len_bytes();
         let rhs_bytes = cache_key.rhs_content_len;
         if lhs_bytes.saturating_add(rhs_bytes) > MAX_INLINE_DIFF_BYTES {
@@ -335,18 +362,46 @@ impl LocalPasteApp {
                 rhs_bytes,
             });
             self.version_ui.diff_preview_cache_key = Some(cache_key);
+            self.version_ui.diff_preview_pending_request_id = None;
             return true;
         }
+
+        if self.version_ui.diff_preview_pending_request_id.is_some() {
+            return false;
+        }
+
         let _recomputed_snapshot = self.sync_active_snapshot_cache();
-        let Some(rhs) = self.version_ui.diff_target_paste.as_ref() else {
+        let Some(right_text) = self
+            .version_ui
+            .diff_target_paste
+            .as_ref()
+            .map(|rhs| rhs.content.clone())
+        else {
             self.version_ui.diff_preview_cache_key = None;
+            self.version_ui.diff_preview_pending_request_id = None;
             self.version_ui.diff_preview = None;
             return false;
         };
-        let lhs = self.version_ui.active_snapshot_cache_text.as_str();
-        let diff_preview = inline_diff_preview(lhs, rhs.content.as_str());
-        self.version_ui.diff_preview = Some(diff_preview);
+        let request_id = self.version_ui.next_diff_preview_request_id();
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::ComputeDiffPreview {
+                request_id,
+                left_text: self.version_ui.active_snapshot_cache_text.clone(),
+                right_text,
+            })
+            .is_err()
+        {
+            self.version_ui.diff_preview_cache_key = None;
+            self.version_ui.diff_preview_pending_request_id = None;
+            self.version_ui.diff_preview = None;
+            self.set_status("Diff preview failed: backend unavailable.");
+            return false;
+        }
         self.version_ui.diff_preview_cache_key = Some(cache_key);
+        self.version_ui.diff_preview_pending_request_id = Some(request_id);
+        self.version_ui.diff_preview = None;
         true
     }
 
@@ -409,6 +464,25 @@ impl LocalPasteApp {
     pub(super) fn save_block_reason(&self) -> Option<&'static str> {
         if self.reset_transition_active() {
             Some(RESET_TRANSITION_BLOCKED_STATUS)
+        } else {
+            None
+        }
+    }
+
+    /// Reports why selection transitions should be blocked right now.
+    ///
+    /// Detached version workflows own the current paste while they are open.
+    /// Selection must not move underneath them, and queued reset transitions are
+    /// stricter still because they also preserve the current paste lock.
+    ///
+    /// # Returns
+    /// `Some(reason)` when selection must stay pinned to the current paste for
+    /// an open version workflow or in-flight hard reset.
+    pub(super) fn selection_transition_block_reason(&self) -> Option<&'static str> {
+        if self.reset_transition_active() {
+            Some(RESET_TRANSITION_BLOCKED_STATUS)
+        } else if self.version_overlay_open() {
+            Some(VERSION_OVERLAY_SELECTION_BLOCKED_STATUS)
         } else {
             None
         }
@@ -477,6 +551,14 @@ impl LocalPasteApp {
         self.set_blocked_status(reason);
     }
 
+    /// Reports the shared status used when a version workflow pins selection.
+    pub(super) fn set_selection_transition_blocked_status(&mut self) {
+        let Some(reason) = self.selection_transition_block_reason() else {
+            return;
+        };
+        self.set_blocked_status(reason);
+    }
+
     /// Captures the currently selected history row as the immutable reset-confirm target.
     pub(super) fn open_history_reset_confirm(&mut self) {
         // Destructive confirmation must bind to immutable intent, not live selection.
@@ -525,6 +607,7 @@ impl LocalPasteApp {
         self.version_ui.diff_target_paste = None;
         self.version_ui.diff_loading_target = true;
         self.version_ui.diff_preview_cache_key = None;
+        self.version_ui.diff_preview_pending_request_id = None;
         self.version_ui.diff_preview = None;
         if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
             self.version_ui.clear_diff_target_state();
@@ -537,6 +620,7 @@ impl LocalPasteApp {
             self.version_ui.diff_target_paste = Some(paste.clone());
             self.version_ui.diff_loading_target = false;
             self.version_ui.diff_preview_cache_key = None;
+            self.version_ui.diff_preview_pending_request_id = None;
             self.version_ui.diff_preview = None;
         }
     }
@@ -577,6 +661,14 @@ impl LocalPasteApp {
         match event {
             CoreEvent::PasteLoaded { paste } => {
                 self.maybe_capture_diff_target_from_loaded_paste(paste);
+            }
+            CoreEvent::DiffPreviewComputed { request_id, diff } => {
+                if self.version_ui.diff_preview_pending_request_id != Some(*request_id) {
+                    return;
+                }
+                self.version_ui.diff_preview_pending_request_id = None;
+                self.version_ui.diff_preview =
+                    Some(inline_diff_preview_from_response(diff.clone()));
             }
             CoreEvent::PasteSaved { paste } => {
                 if self.version_ui.history_modal_open
