@@ -108,6 +108,10 @@ pub(crate) fn consume_virtual_editor_focus_keys(ctx: &egui::Context, editor_clai
                 | egui::Key::PageUp
                 | egui::Key::PageDown
         );
+        // Delete/backspace stay editor-owned here on purpose: the documented
+        // global Ctrl/Cmd+Delete shortcut only applies when no text input owns
+        // keyboard focus, while focused editor delete chords should remain
+        // native text-editing operations.
         if should_consume {
             keys_to_consume.push((modifiers, key));
         }
@@ -344,25 +348,64 @@ mod tests {
     }
 
     #[test]
-    fn consume_virtual_editor_focus_keys_eats_modified_navigation_when_editor_claims_keyboard() {
-        let ctx = egui::Context::default();
-        let modifiers = egui::Modifiers {
-            command: true,
-            shift: true,
-            ..Default::default()
-        };
+    fn virtual_editor_focus_key_consumption_matrix() {
+        struct Case {
+            key: egui::Key,
+            modifiers: egui::Modifiers,
+            editor_claims_keyboard: bool,
+            expected_consumed: bool,
+        }
 
-        let _ = ctx.run(
-            egui::RawInput {
-                events: vec![key_event(egui::Key::ArrowRight, modifiers)],
-                ..Default::default()
+        let cases = [
+            Case {
+                key: egui::Key::ArrowRight,
+                modifiers: egui::Modifiers {
+                    command: true,
+                    shift: true,
+                    ..Default::default()
+                },
+                editor_claims_keyboard: true,
+                expected_consumed: true,
             },
-            |ctx| {
-                assert!(ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)));
-                consume_virtual_editor_focus_keys(ctx, true);
-                assert!(!ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)));
+            Case {
+                key: egui::Key::Delete,
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                },
+                editor_claims_keyboard: false,
+                expected_consumed: false,
             },
-        );
+            Case {
+                key: egui::Key::Delete,
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                },
+                editor_claims_keyboard: true,
+                expected_consumed: true,
+            },
+        ];
+
+        for case in cases {
+            let ctx = egui::Context::default();
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![key_event(case.key, case.modifiers)],
+                    ..Default::default()
+                },
+                |ctx| {
+                    assert!(ctx.input(|input| input.key_pressed(case.key)));
+                    consume_virtual_editor_focus_keys(ctx, case.editor_claims_keyboard);
+                    assert_eq!(
+                        ctx.input(|input| input.key_pressed(case.key)),
+                        !case.expected_consumed
+                    );
+                },
+            );
+        }
     }
 
     #[test]

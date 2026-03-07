@@ -478,7 +478,7 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
 }
 
 #[test]
-fn delete_shortcut_guard_blocks_when_text_input_virtual_focus_or_focus_promotion_active() {
+fn delete_shortcut_guard_preserves_editor_delete_ownership_and_global_unfocused_behavior() {
     struct Case {
         name: &'static str,
         wants_keyboard_input: bool,
