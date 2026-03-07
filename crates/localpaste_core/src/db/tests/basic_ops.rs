@@ -90,22 +90,18 @@ fn from_shared_reuses_folder_transaction_lock_for_same_shared_db() {
 }
 
 #[test]
-fn database_new_rejects_invalid_version_interval_env() {
+fn database_new_uses_default_version_interval_on_invalid_env_in_permissive_callers() {
     let _lock = env_lock().lock().expect("env lock");
-    let result = with_db_init_test_lock(|| {
+    let (db, _temp_dir) = with_db_init_test_lock(|| {
         let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "invalid");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");
-        Database::new(db_path.to_str().expect("db path"))
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+        (db, temp_dir)
     });
-    let err = match result {
-        Ok(_) => panic!("db init should fail"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(err, AppError::StorageMessage(ref message) if message.contains("LOCALPASTE_VERSION_INTERVAL_SECS")),
-        "unexpected error for invalid interval env: {}",
-        err
+    assert_eq!(
+        db.pastes.version_interval_secs(),
+        crate::constants::DEFAULT_PASTE_VERSION_INTERVAL_SECS
     );
 }
 
@@ -202,6 +198,62 @@ fn content_update_respects_version_interval_and_hash_dedupe() {
         1,
         "hash-equal updates must not create snapshots"
     );
+}
+
+#[test]
+fn content_update_archives_middle_version_after_wait_since_last_archive() {
+    let _lock = env_lock().lock().expect("env lock");
+    let (db, _temp) = with_db_init_test_lock(|| {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+        (db, temp_dir)
+    });
+
+    let paste = Paste::new("v1".to_string(), "interval-middle-version".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v2"), None, None, None),
+        "update to v2",
+    );
+
+    std::thread::sleep(Duration::from_millis(1100));
+
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v3"), None, None, None),
+        "update to v3",
+    );
+
+    let versions = db
+        .pastes
+        .list_versions(&paste_id, None)
+        .expect("list versions")
+        .expect("paste exists");
+    assert_eq!(
+        versions.len(),
+        2,
+        "later edit after the version interval should archive the outgoing middle version"
+    );
+
+    let newest = db
+        .pastes
+        .get_version(&paste_id, versions[0].version_id_ms)
+        .expect("load newest version")
+        .expect("newest version exists");
+    let oldest = db
+        .pastes
+        .get_version(&paste_id, versions[1].version_id_ms)
+        .expect("load oldest version")
+        .expect("oldest version exists");
+    assert_eq!(newest.content, "v2");
+    assert_eq!(oldest.content, "v1");
 }
 
 #[test]

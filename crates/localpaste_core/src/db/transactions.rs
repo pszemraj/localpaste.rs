@@ -396,6 +396,8 @@ impl TransactionOps {
 
             if content_changed {
                 let latest = version_items.first();
+                // `apply_update_request` already advanced `paste.updated_at` to
+                // the archival moment for the outgoing head snapshot.
                 let next = next_version_meta_for_content(
                     old_content.as_str(),
                     old_language.as_deref(),

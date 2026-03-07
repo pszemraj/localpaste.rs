@@ -3,7 +3,7 @@
 mod helpers;
 
 use crate::{
-    config::paste_version_interval_secs_from_env,
+    config::paste_version_interval_secs_from_env_or_default,
     db::{
         tables::*,
         versioning::{
@@ -69,12 +69,10 @@ impl PasteDb {
     /// # Errors
     /// Returns an error when redb transaction/table initialization fails.
     pub fn new(db: Arc<redb::Database>) -> Result<Self, AppError> {
-        let version_interval_secs = paste_version_interval_secs_from_env().map_err(|err| {
-            AppError::StorageMessage(format!(
-                "Invalid paste version interval configuration: {}",
-                err
-            ))
-        })?;
+        // Strict startup paths validate interval envs before reaching storage
+        // init. GUI/tool callers intentionally use permissive config loading, so
+        // PasteDb follows the same fallback-to-default behavior here.
+        let version_interval_secs = paste_version_interval_secs_from_env_or_default();
         let write_txn = db.begin_write()?;
         write_txn.open_table(PASTES)?;
         write_txn.open_table(PASTES_META)?;
@@ -281,6 +279,8 @@ impl PasteDb {
 
             if content_changed {
                 let latest = version_items.first();
+                // `apply_update_request` already advanced `paste.updated_at` to
+                // the archival moment for the outgoing head snapshot.
                 let next = next_version_meta_for_content(
                     old_content.as_str(),
                     old_language.as_deref(),
