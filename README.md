@@ -66,6 +66,9 @@ Runtime/provider note:
 
 GitHub Releases publish GUI assets under `localpaste-*` filenames.
 
+> [!IMPORTANT]
+> Release assets currently cover the GUI only. `lpaste` and the standalone `localpaste` server are source-built with Cargo.
+
 Platform coverage:
 
 - Windows x64: `.msi` + `.zip`
