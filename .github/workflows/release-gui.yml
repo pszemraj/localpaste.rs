@@ -43,6 +43,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          fetch-tags: true
       - name: Resolve source
         id: resolve
         shell: bash
@@ -51,6 +52,12 @@ jobs:
           INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
+
+          if [[ ! -d .git ]] || ! git rev-parse --git-dir >/dev/null 2>&1; then
+            echo "resolve_tag requires a checked-out repository (.git missing or invalid)" >&2
+            exit 1
+          fi
+
           MODE="release_tag"
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
             MODE="current_ref"
@@ -76,9 +83,18 @@ jobs:
 
               TAG="$(bash .github/scripts/normalize_release_tag.sh "${TAG_INPUT}")"
 
+              if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "normalized tag contains unsafe characters: ${TAG}" >&2
+                exit 1
+              fi
+
               git fetch --force --tags origin
-              git rev-parse "refs/tags/${TAG}" >/dev/null
-              SOURCE_REF="refs/tags/${TAG}"
+              if ! git show-ref --tags --verify --quiet "refs/tags/${TAG}"; then
+                echo "release tag does not exist: ${TAG}" >&2
+                exit 1
+              fi
+
+              SOURCE_REF="$(git rev-parse "refs/tags/${TAG}^{commit}")"
               ;;
             current_ref)
               WORKSPACE_VERSION="$(bash .github/scripts/workspace_version.sh)"
@@ -105,6 +121,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          fetch-tags: true
           ref: ${{ steps.resolve.outputs.source_ref }}
       - name: Validate workspace version matches tag
         if: steps.resolve.outputs.source_mode == 'release_tag'
@@ -136,6 +153,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          fetch-tags: true
           ref: ${{ env.SOURCE_REF }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9  # master @ 2026-02-23
@@ -248,6 +266,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          fetch-tags: true
           ref: ${{ env.SOURCE_REF }}
       - name: Summarize build source
         shell: bash
