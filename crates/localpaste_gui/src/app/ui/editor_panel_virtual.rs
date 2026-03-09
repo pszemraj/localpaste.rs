@@ -11,19 +11,16 @@ const VIRTUAL_EDITOR_LINE_NUMBER_PADDING: f32 = 8.0;
 fn line_number_font_for_row_height(row_height: f32) -> egui::FontId {
     egui::FontId::monospace((row_height * 0.72).clamp(10.0, 14.0))
 }
-
 fn line_number_gutter_width(line_count: usize, line_number_char_width: f32) -> f32 {
     let line_number_digits = line_count.max(1).to_string().len();
     (line_number_digits as f32 * line_number_char_width.max(1.0))
         + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0
 }
-
 fn virtual_row_hit_test_sense() -> egui::Sense {
     let mut sense = egui::Sense::click_and_drag();
     sense.remove(egui::Sense::focusable_noninteractive());
     sense
 }
-
 fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rect {
     let scrollbar_gutter = (wrap_width - inner_rect.width()).max(0.0);
     if scrollbar_gutter <= 0.0 {
@@ -34,7 +31,6 @@ fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rec
         egui::pos2(inner_rect.max.x + scrollbar_gutter, inner_rect.max.y),
     )
 }
-
 fn should_explicitly_blur_virtual_editor(
     clicked_outside_editor: bool,
     window_blurred: bool,
@@ -42,7 +38,6 @@ fn should_explicitly_blur_virtual_editor(
 ) -> bool {
     window_blurred || (clicked_outside_editor && !preserve_editor_focus)
 }
-
 /// Rendering flags for the interactive rope-backed virtual editor surface.
 #[derive(Clone, Copy)]
 pub(super) struct VirtualEditorRenderOptions<'a> {
@@ -53,7 +48,6 @@ pub(super) struct VirtualEditorRenderOptions<'a> {
     /// Whether same-frame editor-chrome actions should preserve editor focus.
     pub(super) preserve_focus_from_editor_chrome: bool,
 }
-
 fn preview_triple_click_selection_bounds(
     line_idx: usize,
     line_count: usize,
@@ -76,7 +70,6 @@ fn preview_triple_click_selection_bounds(
     };
     (start, end)
 }
-
 fn virtual_editor_double_click_selection_bounds<F>(
     line_start: usize,
     column_in_line: usize,
@@ -92,7 +85,6 @@ where
         clamp_global(line_start.saturating_add(end)),
     ))
 }
-
 fn follow_cursor_scroll_offset_y(
     follow_requested: bool,
     cursor_row: usize,
@@ -117,7 +109,6 @@ fn follow_cursor_scroll_offset_y(
     }
     None
 }
-
 impl LocalPasteApp {
     /// Renders the read-only virtual preview panel for large text payloads.
     ///
@@ -149,6 +140,17 @@ impl LocalPasteApp {
         self.editor_lines
             .ensure_for(self.selected_content.revision(), text);
         let line_count = self.editor_lines.line_count();
+        // Preview rows are unwrapped physical lines; cache them so idle large-buffer frames do not reshape every visible row on each repaint.
+        self.virtual_galley_cache.prepare_frame(
+            line_count,
+            VirtualGalleyContext::new(
+                f32::INFINITY,
+                use_plain,
+                editor_font,
+                ui.visuals().text_color(),
+                ui.ctx().pixels_per_point(),
+            ),
+        );
         let mut last_virtual_click_at = self.last_virtual_click_at;
         let mut last_virtual_click_pos = self.last_virtual_click_pos;
         let mut last_virtual_click_count = self.last_virtual_click_count;
@@ -192,16 +194,24 @@ impl LocalPasteApp {
                 } else {
                     line
                 };
-                let render_line =
-                    highlight_render_match.and_then(|render| render.lines.get(line_idx));
-                let job = build_virtual_line_job(
-                    ui,
-                    line_for_render,
-                    editor_font,
-                    render_line,
-                    use_plain,
-                );
-                let galley = ui.fonts_mut(|f| f.layout_job(job));
+                self.virtual_galley_cache.sync_line_rows(line_idx, 1);
+                let galley = if let Some(cached) = self.virtual_galley_cache.get(line_idx, 0) {
+                    cached
+                } else {
+                    let render_line =
+                        highlight_render_match.and_then(|render| render.lines.get(line_idx));
+                    let job = build_virtual_line_job(
+                        ui,
+                        line_for_render,
+                        editor_font,
+                        render_line,
+                        use_plain,
+                    );
+                    let shaped = ui.fonts_mut(|f| f.layout_job(job));
+                    self.virtual_galley_cache
+                        .insert(line_idx, 0, shaped.clone());
+                    shaped
+                };
                 let row_width = ui.available_width();
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(row_width, row_height), sense);
@@ -237,9 +247,7 @@ impl LocalPasteApp {
                                 3 => {
                                     pending_action = Some(RowAction::Triple {
                                         line_idx,
-                                        // Triple-click should target the full physical line.
-                                        // On the terminal line this must not be capped by render
-                                        // truncation, otherwise copy/select silently drops data.
+                                        // Triple-click must target the full physical line, even when render truncation is active.
                                         line_chars: full_line_chars,
                                     });
                                 }
