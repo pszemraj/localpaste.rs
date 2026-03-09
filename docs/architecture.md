@@ -125,9 +125,9 @@ Derived/index tables:
 - `paste_versions_content`: historical snapshot content keyed by `(paste_id, version_id_ms)`.
 
 `pastes_meta` carries the search/list projection, including derived retrieval
-metadata (`kind`, compact `handle`, top `terms`). Startup rebuild rewrites this
-projection from authoritative paste rows so metadata-only search/filter paths
-stay current without content scans in the hot path.
+metadata (`kind`, compact `handle`, top `terms`). `pastes_meta_state` stores the
+projection schema version; startup rebuilds the projection from authoritative
+paste rows when that marker is missing or stale.
 
 Primary implementation:
 

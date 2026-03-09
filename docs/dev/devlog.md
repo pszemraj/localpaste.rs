@@ -1,8 +1,8 @@
 # Development Guide
 
-Use this page for the build, run, validation, and tooling command matrix.
-Runtime architecture lives in [../architecture.md](../architecture.md), and the
-broader docs map is [../README.md](../README.md).
+Build, run, validation, and tooling command matrix.
+Runtime architecture: [../architecture.md](../architecture.md).
+Docs map: [../README.md](../README.md).
 
 ## Workspace Layout
 
@@ -81,7 +81,7 @@ For repeatable GUI perf validation, see
 
 ## Validation Loop
 
-Use this loop when touching Rust/runtime behavior.
+Run this loop when touching Rust/runtime behavior.
 
 ```bash
 # 1) format
@@ -130,7 +130,7 @@ Language detection/normalization/highlight behavior is tracked in
 
 ## Runtime Smoke Test (Server CLI)
 
-Use this API/core smoke runbook.
+Run this API/core smoke test.
 It validates CRUD behavior and persistence across process restart.
 
 ### Bash

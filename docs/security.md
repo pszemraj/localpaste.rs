@@ -1,8 +1,8 @@
 # Security Configuration
 
-Use this page for security defaults, exposure policy, and security-relevant env
-settings. Storage compatibility lives in [storage.md](storage.md), service
-operations in [deployment.md](deployment.md), runtime-provider toggles in
+Security defaults, exposure policy, and security-relevant environment settings.
+Storage compatibility lives in [storage.md](storage.md), service operations in
+[deployment.md](deployment.md), runtime-provider toggles in
 [language-detection.md](language-detection.md), and build/run commands in
 [dev/devlog.md](dev/devlog.md).
 

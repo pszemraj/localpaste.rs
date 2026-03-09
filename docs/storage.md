@@ -8,7 +8,9 @@
 - Embedded GUI endpoint discovery file (GUI runtime only): `DB_PATH/.api-addr`.
 - `pastes_meta` is a derived projection used for list/search/filter work,
   including derived retrieval metadata (`kind`, compact `handle`, top `terms`).
-  It is rebuilt from authoritative paste rows on startup.
+- `pastes_meta_state` stores the projection schema version; startup rebuilds
+  `pastes_meta` from authoritative paste rows only when that marker is missing
+  or stale.
 
 ## Compatibility Policy
 
@@ -31,4 +33,3 @@
 - One writer process per `DB_PATH` at a time.
 - Do not run `localpaste-gui` and standalone `localpaste` concurrently on the same `DB_PATH`.
 - For isolated local testing, use distinct `DB_PATH` directories.
-

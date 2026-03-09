@@ -1,11 +1,8 @@
 # GUI Notes
 
-Use this document for rewrite GUI runtime flags and interaction contracts.
-Detection/normalization/highlight semantics are defined in
-[docs/language-detection.md](../language-detection.md)
-and own those behavior details.
-For perf validation steps/gates, use
-[docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
+GUI runtime flags and interaction contracts.
+Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md).
+Perf validation steps and gates: [docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Runtime Flags
 
@@ -77,7 +74,7 @@ Navigation/selection contract:
 
 ## Language/Highlight QA (Magika + Fallback)
 
-Use this checklist when touching detection/highlight/filter code.
+Run this checklist when touching detection/highlight/filter code.
 
 1. Start GUI with default features (Magika enabled): `cargo run -p localpaste_gui --bin localpaste-gui`.
 2. Create new pastes with representative snippets and confirm detected language chip (auto mode):
@@ -104,7 +101,7 @@ Use this checklist when touching detection/highlight/filter code.
 
 ## Manual GUI Human-Step Checklist (Comprehensive)
 
-Use this when a change touches GUI interaction/state logic and you want an end-to-end manual pass.
+Run this end-to-end pass when a change touches GUI interaction or state logic.
 
 ### Preflight Commands
 

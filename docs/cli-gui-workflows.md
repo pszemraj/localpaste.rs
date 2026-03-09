@@ -17,13 +17,8 @@
 
 ## Connect to the running GUI
 
-When the GUI is open, `lpaste` resolves its endpoint in this order:
-
-1. `--server`
-2. `LP_SERVER`
-3. discovered `.api-addr` for the active `DB_PATH` (unless `--no-discovery`)
-4. the default local endpoint
-
+When the GUI is open, `lpaste` follows the discovery and trust rules in
+[architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust).
 In practice, if the GUI is already running on the same `DB_PATH`, `lpaste` usually works without extra flags:
 
 ```bash

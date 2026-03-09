@@ -1,6 +1,6 @@
 # GUI Perf Test Protocol (Rewrite)
 
-Use this protocol for release-gate evidence and regression checks.
+Release-gate evidence and regression checks for GUI perf.
 
 ## Scope
 
@@ -38,7 +38,7 @@ Minimum binaries required for this protocol:
 
 ## Runbook
 
-Use this runbook for reproducible perf checks:
+Run this for reproducible perf checks:
 Flag behavior/meanings are documented in [gui-notes.md](gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell
