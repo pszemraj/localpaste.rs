@@ -12,25 +12,65 @@ use localpaste_core::{
 use ropey::Rope;
 use tracing::error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasteLoadRoute {
+    Selection,
+    DiffTarget,
+}
+
 /// Fetches a paste by id and emits load/missing/error events.
 ///
 /// # Arguments
 /// - `state`: Worker state containing db and event channel handles.
 /// - `id`: Paste id to load.
 pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
+    handle_get_paste_for_route(state, id, PasteLoadRoute::Selection);
+}
+
+/// Fetches a detached diff target paste by id and emits diff-specific events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Paste id to load for detached comparison.
+pub(super) fn handle_get_diff_target_paste(state: &mut WorkerState, id: String) {
+    handle_get_paste_for_route(state, id, PasteLoadRoute::DiffTarget);
+}
+
+fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteLoadRoute) {
     match state.db.pastes.get(&id) {
         Ok(Some(paste)) => {
-            let _ = state.evt_tx.send(CoreEvent::PasteLoaded { paste });
+            let event = match route {
+                PasteLoadRoute::Selection => CoreEvent::PasteLoaded { paste },
+                PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetLoaded { paste },
+            };
+            let _ = state.evt_tx.send(event);
         }
         Ok(None) => {
-            let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+            let event = match route {
+                PasteLoadRoute::Selection => CoreEvent::PasteMissing { id },
+                PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetMissing { id },
+            };
+            let _ = state.evt_tx.send(event);
         }
         Err(err) => {
-            error!("backend get failed: {}", err);
-            let _ = state.evt_tx.send(CoreEvent::PasteLoadFailed {
-                id,
-                message: format!("Get failed: {}", err),
-            });
+            let (log_label, event) = match route {
+                PasteLoadRoute::Selection => (
+                    "backend get failed",
+                    CoreEvent::PasteLoadFailed {
+                        id,
+                        message: format!("Get failed: {}", err),
+                    },
+                ),
+                PasteLoadRoute::DiffTarget => (
+                    "backend diff target get failed",
+                    CoreEvent::DiffTargetLoadFailed {
+                        id,
+                        message: format!("Diff load failed: {}", err),
+                    },
+                ),
+            };
+            error!("{}: {}", log_label, err);
+            let _ = state.evt_tx.send(event);
         }
     }
 }

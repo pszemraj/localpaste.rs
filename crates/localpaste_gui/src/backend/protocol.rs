@@ -31,6 +31,8 @@ pub enum CoreCmd {
     SearchPalette { query: String, limit: usize },
     /// Load a single paste by id for display in the editor pane.
     GetPaste { id: String },
+    /// Load a comparison target for the detached diff modal.
+    GetDiffTargetPaste { id: String },
     /// Create a new paste with the provided content.
     CreatePaste { content: String },
     /// Persist updated content for an existing paste.
@@ -118,6 +120,12 @@ pub enum CoreEvent {
     PasteLoaded { paste: Paste },
     /// Loading a specific paste failed due to backend/storage error.
     PasteLoadFailed { id: String, message: String },
+    /// Response containing the detached diff target payload requested by id.
+    DiffTargetLoaded { paste: Paste },
+    /// The requested detached diff target id no longer exists in the database.
+    DiffTargetMissing { id: String },
+    /// Loading a detached diff target failed due to backend/storage error.
+    DiffTargetLoadFailed { id: String, message: String },
     /// Response containing a newly created paste.
     PasteCreated { paste: Paste },
     /// Response confirming a paste was updated.

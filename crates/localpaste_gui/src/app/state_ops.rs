@@ -274,6 +274,21 @@ impl LocalPasteApp {
                 }
                 self.request_refresh();
             }
+            CoreEvent::DiffTargetMissing { id } => {
+                let diff_target_was_active =
+                    self.version_ui.diff_target_id.as_deref() == Some(id.as_str());
+                self.all_pastes.retain(|paste| paste.id != id);
+                self.pastes.retain(|paste| paste.id != id);
+                self.clear_pending_copy_for(id.as_str());
+                if self.selected_id.as_deref() == Some(id.as_str()) {
+                    self.clear_selection();
+                    self.set_status("Selected paste was deleted; list refreshed.");
+                } else if diff_target_was_active {
+                    self.version_ui.clear_diff_target_state();
+                    self.set_status("Comparison paste was deleted; list refreshed.");
+                }
+                self.request_refresh();
+            }
             CoreEvent::PasteLoadFailed { id, message } => {
                 self.clear_pending_copy_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
@@ -283,13 +298,13 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteVersionsLoaded { .. }
             | CoreEvent::PasteVersionLoaded { .. }
+            | CoreEvent::PasteVersionLoadFailed { .. }
             | CoreEvent::PasteResetToVersion { .. }
+            | CoreEvent::DiffTargetLoaded { .. }
+            | CoreEvent::DiffTargetLoadFailed { .. }
             | CoreEvent::DiffPreviewComputed { .. }
             | CoreEvent::FoldersLoaded { items: _ }
             | CoreEvent::ShutdownComplete { flush_result: _ } => {}
-            CoreEvent::PasteVersionLoadFailed { message, .. } => {
-                self.set_status(message);
-            }
             CoreEvent::FolderSaved { folder: _ } | CoreEvent::FolderDeleted { id: _ } => {
                 self.request_refresh();
             }

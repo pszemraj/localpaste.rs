@@ -12,7 +12,7 @@ Workflow and helper-script entrypoints:
 `release-gui.yml` supports two source modes:
 
 - `release_tag`: package from an existing stable tag/version.
-- `current_ref`: package from the current commit for verification; publish job is skipped.
+- `current_ref`: package from the current commit for verification; publish job is skipped and packaging metadata is derived from the workspace semver (stable or prerelease).
 
 Manual `workflow_dispatch` defaults to the safe verification path:
 
@@ -22,6 +22,11 @@ Manual `workflow_dispatch` defaults to the safe verification path:
 To publish from a manual run, the operator must explicitly choose `release_tag`,
 provide a stable release tag/version (`vX.Y.Z` or `X.Y.Z`), and set `dry_run`
 to `false`.
+
+`verify-gui-packaging.yml` follows the same split:
+
+- explicit `tag` input remains stable-only,
+- empty `tag` derives packaging metadata from `[workspace.package].version`, including prerelease workspace versions used for smoke/verification branches.
 
 `release_tag` publishes on tag-triggered runs and on manual runs where
 `dry_run` is `false`.

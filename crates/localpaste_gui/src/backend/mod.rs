@@ -172,6 +172,45 @@ mod tests {
     }
 
     #[test]
+    fn backend_gets_diff_target_and_reports_missing_without_selection_events() {
+        let TestDb { _dir: _guard, db } = setup_db();
+        let paste = Paste::new("gamma".to_string(), "third".to_string());
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).expect("create paste");
+
+        let backend = spawn_backend(db, 10 * 1024 * 1024);
+        backend
+            .cmd_tx
+            .send(CoreCmd::GetDiffTargetPaste {
+                id: paste_id.clone(),
+            })
+            .expect("send diff target get");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::DiffTargetLoaded { paste } => {
+                assert_eq!(paste.id, paste_id);
+                assert_eq!(paste.content, "gamma");
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        let missing_id = "missing-id".to_string();
+        backend
+            .cmd_tx
+            .send(CoreCmd::GetDiffTargetPaste {
+                id: missing_id.clone(),
+            })
+            .expect("send missing diff target");
+
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::DiffTargetMissing { id } => assert_eq!(id, missing_id),
+            other => panic!("unexpected event: {:?}", other),
+        }
+
+        drop(backend);
+    }
+
+    #[test]
     fn backend_computes_detached_diff_preview_from_frozen_text_snapshots() {
         let TestDb { _dir: _guard, db } = setup_db();
         let backend = spawn_backend(db, 10 * 1024 * 1024);

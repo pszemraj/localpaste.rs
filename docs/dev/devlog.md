@@ -110,6 +110,18 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 rustdoc-checker crates --strict
 ```
 
+- Workflow/release helper changes:
+  when touching `.github/workflows/*`, `.github/scripts/*`, or GUI packaging/release behavior, also run:
+
+```bash
+# release helper regression tests
+python -m unittest discover -s .github/scripts -p 'test_*.py'
+
+# workflow YAML + shell/release invariant validation
+# requires yamllint in PATH
+python .github/scripts/validate_workflow.py .github/workflows
+```
+
 - Manual GUI checklist:
   [docs/dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
 
@@ -226,3 +238,8 @@ used in automation/CI contracts.
 ## GUI Release Pipeline
 
 Packaging/release behavior lives in [../release-gui.md](../release-gui.md).
+
+Current workflow-helper regression coverage includes prerelease workspace
+version handling for `release-gui.yml` `current_ref` runs and for
+`verify-gui-packaging.yml` when packaging metadata is derived from
+`[workspace.package].version`.

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Optional stable tag/version used for packaging metadata (for example vX.Y.Z or X.Y.Z). If empty, derives from workspace version.
+        description: Optional stable tag/version used for packaging metadata (for example vX.Y.Z or X.Y.Z). If empty, derives from the workspace semver, which may include prerelease identifiers.
         required: false
         type: string
 permissions:
@@ -35,7 +35,7 @@ jobs:
             SOURCE_LABEL="workflow input"
           else
             WORKSPACE_VERSION="$(bash .github/scripts/workspace_version.sh)"
-            VERIFY_TAG="$(bash .github/scripts/normalize_release_tag.sh "${WORKSPACE_VERSION}")"
+            VERIFY_TAG="$(python3 .github/scripts/normalize_packaging_tag.py "${WORKSPACE_VERSION}")"
             SOURCE_LABEL="workspace version"
           fi
 

@@ -123,7 +123,7 @@ impl VersionUiState {
         // must not drop a pending reset before its own backend ack/error arrives.
     }
 
-    fn clear_diff_target_state(&mut self) {
+    pub(super) fn clear_diff_target_state(&mut self) {
         self.diff_target_id = None;
         self.diff_target_paste = None;
         self.diff_loading_target = false;
@@ -610,10 +610,24 @@ impl LocalPasteApp {
         self.version_ui.diff_preview_cache_key = None;
         self.version_ui.diff_preview_pending_request_id = None;
         self.version_ui.diff_preview = None;
-        if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::GetDiffTargetPaste { id })
+            .is_err()
+        {
             self.version_ui.clear_diff_target_state();
             self.set_status("Diff load failed: backend unavailable.");
         }
+    }
+
+    fn is_active_history_snapshot_request(&self, paste_id: &str, version_id_ms: u64) -> bool {
+        self.selected_id.as_deref() == Some(paste_id)
+            && self.version_ui.history_loading_snapshot_id == Some(version_id_ms)
+    }
+
+    fn is_active_diff_target_request(&self, paste_id: &str) -> bool {
+        self.version_ui.diff_target_id.as_deref() == Some(paste_id)
     }
 
     fn maybe_capture_diff_target_from_loaded_paste(&mut self, paste: &Paste) {
@@ -660,7 +674,7 @@ impl LocalPasteApp {
     /// Applies version/diff backend events to detached modal state.
     pub(super) fn on_version_event(&mut self, event: &CoreEvent) {
         match event {
-            CoreEvent::PasteLoaded { paste } => {
+            CoreEvent::DiffTargetLoaded { paste } => {
                 self.maybe_capture_diff_target_from_loaded_paste(paste);
             }
             CoreEvent::DiffPreviewComputed { request_id, diff } => {
@@ -738,14 +752,13 @@ impl LocalPasteApp {
             CoreEvent::PasteVersionLoadFailed {
                 paste_id,
                 version_id_ms,
-                ..
+                message,
             } => {
-                if self.selected_id.as_deref() != Some(paste_id.as_str()) {
+                if !self.is_active_history_snapshot_request(paste_id.as_str(), *version_id_ms) {
                     return;
                 }
-                if self.version_ui.history_loading_snapshot_id == Some(*version_id_ms) {
-                    self.version_ui.clear_history_snapshot_state();
-                }
+                self.version_ui.clear_history_snapshot_state();
+                self.set_status(message.clone());
             }
             CoreEvent::PasteResetToVersion { paste } => {
                 let paste_id = paste.id.clone();
@@ -777,16 +790,18 @@ impl LocalPasteApp {
                     self.set_status("Reset current paste to selected historical snapshot.");
                 }
             }
-            CoreEvent::PasteLoadFailed { id, .. } => {
-                if self.version_ui.diff_target_id.as_deref() == Some(id.as_str()) {
-                    self.version_ui.clear_diff_target_state();
+            CoreEvent::DiffTargetLoadFailed { id, message } => {
+                if !self.is_active_diff_target_request(id.as_str()) {
+                    return;
                 }
+                self.version_ui.clear_diff_target_state();
+                self.set_status(message.clone());
             }
             CoreEvent::PasteMissing { id } => {
                 if self.history_reset_pending_for(id.as_str()) {
                     self.version_ui.clear_history_reset_transition();
                 }
-                if self.version_ui.diff_target_id.as_deref() == Some(id.as_str()) {
+                if self.is_active_diff_target_request(id.as_str()) {
                     self.version_ui.clear_diff_target_state();
                 }
             }

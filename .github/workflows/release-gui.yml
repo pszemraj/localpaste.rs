@@ -98,7 +98,7 @@ jobs:
               ;;
             current_ref)
               WORKSPACE_VERSION="$(bash .github/scripts/workspace_version.sh)"
-              TAG="v${WORKSPACE_VERSION}"
+              TAG="$(python3 .github/scripts/normalize_packaging_tag.py "${WORKSPACE_VERSION}")"
               SOURCE_REF="${GITHUB_SHA}"
               {
                 echo "### current_ref mode"
