@@ -188,6 +188,10 @@ impl LocalPasteApp {
         if !self.ensure_selected_paste_for_version_modal() {
             return false;
         }
+        if self.reset_transition_active() {
+            self.set_status(RESET_TRANSITION_BLOCKED_STATUS);
+            return false;
+        }
         if self.version_overlay_open() {
             self.set_status(VERSION_OVERLAY_REENTRY_BLOCKED_STATUS);
             return false;
@@ -213,15 +217,17 @@ impl LocalPasteApp {
         self.reset_transition_active() || self.keyboard_overlay_open()
     }
 
-    /// Reconciles visible selection after detached version workflow ownership ends.
+    /// Reconciles deferred selection and visible selection after version ownership ends.
     ///
     /// While History/Diff owns the workflow, selection stays pinned even if
     /// sidebar projections refresh underneath it. Once ownership is released, the
-    /// main view must immediately restore its normal visible-selection invariant.
+    /// main view must first apply any deferred selection switch and then restore
+    /// its normal visible-selection invariant.
     pub(super) fn on_version_overlay_closed(&mut self) {
         if self.version_overlay_open() || self.reset_transition_active() {
             return;
         }
+        self.try_apply_pending_selection();
         self.ensure_selection_after_list_update();
     }
 

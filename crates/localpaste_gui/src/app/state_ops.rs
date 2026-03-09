@@ -111,6 +111,13 @@ impl LocalPasteApp {
                 let save_in_progress = self.save_in_flight
                     || self.metadata_save_in_flight
                     || self.save_status == SaveStatus::Saving;
+                if paste_visible && self.selection_transition_block_reason().is_some() {
+                    self.queue_pending_selection(paste_id);
+                    self.set_status(
+                        "Created new paste; current selection stays pinned until the version workflow finishes.",
+                    );
+                    return;
+                }
                 if paste_visible && (has_unsaved_edits || save_in_progress) {
                     // Keep current editor/save state untouched when switching is deferred.
                     self.select_paste(paste_id);
@@ -679,7 +686,8 @@ impl LocalPasteApp {
         true
     }
 
-    fn try_apply_pending_selection(&mut self) {
+    /// Applies a queued selection switch once save and workflow fences have cleared.
+    pub(super) fn try_apply_pending_selection(&mut self) {
         if self.selection_transition_block_reason().is_some() {
             return;
         }

@@ -4,6 +4,9 @@ use super::*;
 use crossbeam_channel::TryRecvError;
 
 const REENTRY_STATUS: &str = "Close the open version window before opening another one.";
+const CREATE_DEFERRED_STATUS: &str =
+    "Created new paste; current selection stays pinned until the version workflow finishes.";
+const RESET_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
 
 #[test]
 fn history_modal_rejects_opening_diff_modal_while_it_owns_version_workflow() {
@@ -186,6 +189,86 @@ fn history_reset_confirm_rejects_opening_diff_modal() {
             .as_ref()
             .map(|status| status.text.as_str()),
         Some(REENTRY_STATUS)
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn paste_created_during_version_overlay_defers_selection_until_overlay_closes() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_modal_open = true;
+    harness.app.version_ui.history_selected_index = 1;
+    let initial_content = harness.app.selected_content.as_str().to_string();
+
+    let mut created = Paste::new("new-content".to_string(), "new-note".to_string());
+    created.id = "new-id".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteCreated { paste: created });
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(harness.app.version_ui.history_modal_open);
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("new-id"));
+    assert_eq!(harness.app.selected_content.as_str(), initial_content);
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some(CREATE_DEFERRED_STATUS)
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+
+    harness.app.close_history_modal();
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
+    assert!(harness.app.pending_selection_id.is_none());
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "new-id"),
+        other => panic!("expected GetPaste command, got {:?}", other),
+    }
+}
+
+#[test]
+fn reset_in_flight_rejects_opening_version_overlays_after_history_closes() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_modal_open = true;
+    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
+
+    harness.app.close_history_modal();
+    assert!(harness
+        .app
+        .version_ui
+        .history_reset_in_flight_paste_id
+        .is_some());
+
+    harness.app.open_diff_modal();
+    assert!(!harness.app.version_ui.diff_modal_open);
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some(RESET_STATUS)
+    );
+
+    harness.app.open_history_modal();
+    assert!(!harness.app.version_ui.history_modal_open);
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some(RESET_STATUS)
     );
     assert!(matches!(
         harness.cmd_rx.try_recv(),
