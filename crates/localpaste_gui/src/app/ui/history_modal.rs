@@ -77,8 +77,7 @@ impl LocalPasteApp {
             return;
         }
         let Some(selected_id) = self.selected_id.clone() else {
-            self.version_ui.clear_history_selection();
-            self.version_ui.history_modal_open = false;
+            self.close_history_modal();
             return;
         };
 
@@ -325,8 +324,7 @@ impl LocalPasteApp {
             keep_open = false;
         }
         if !keep_open {
-            self.version_ui.history_modal_open = false;
-            self.version_ui.clear_history_reset_confirm();
+            self.close_history_modal();
         }
 
         if self.version_ui.history_reset_confirm_open {
@@ -370,15 +368,11 @@ impl LocalPasteApp {
         }
 
         if !self.version_ui.history_modal_open {
-            self.version_ui.clear_history_reset_confirm();
-            self.version_ui.history_loading_snapshot_id = None;
-            self.version_ui.history_snapshot = None;
-            self.version_ui.history_selected_index = 0;
+            self.close_history_modal();
         }
 
         if self.selected_id.as_deref() != Some(selected_id.as_str()) {
-            self.version_ui.history_modal_open = false;
-            self.version_ui.clear_history_reset_confirm();
+            self.close_history_modal();
         }
     }
 }

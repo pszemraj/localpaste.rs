@@ -200,6 +200,53 @@ impl LocalPasteApp {
         self.version_ui.clear_all();
     }
 
+    /// Returns whether editor keyboard shortcuts should be fenced this frame.
+    ///
+    /// Detached version dialogs own keyboard interaction while open, and reset
+    /// transitions are stricter still because they temporarily make the editor
+    /// read-only.
+    ///
+    /// # Returns
+    /// `true` when modal ownership or reset fencing must block editor shortcuts.
+    pub(super) fn editor_shortcuts_blocked(&self) -> bool {
+        self.reset_transition_active() || self.keyboard_overlay_open()
+    }
+
+    /// Reconciles visible selection after detached version workflow ownership ends.
+    ///
+    /// While History/Diff owns the workflow, selection stays pinned even if
+    /// sidebar projections refresh underneath it. Once ownership is released, the
+    /// main view must immediately restore its normal visible-selection invariant.
+    pub(super) fn on_version_overlay_closed(&mut self) {
+        if self.version_overlay_open() || self.reset_transition_active() {
+            return;
+        }
+        self.ensure_selection_after_list_update();
+    }
+
+    /// Closes the detached diff modal and restores main-view selection invariants.
+    pub(super) fn close_diff_modal(&mut self) {
+        let was_open = self.version_ui.diff_modal_open;
+        self.version_ui.diff_modal_open = false;
+        self.version_ui.clear_diff_selection();
+        if was_open {
+            self.on_version_overlay_closed();
+        }
+    }
+
+    /// Closes the detached history modal and restores main-view selection invariants.
+    pub(super) fn close_history_modal(&mut self) {
+        let was_open =
+            self.version_ui.history_modal_open || self.version_ui.history_reset_confirm_open;
+        self.version_ui.history_modal_open = false;
+        self.version_ui.clear_history_reset_confirm();
+        self.version_ui.clear_history_snapshot_state();
+        self.version_ui.history_selected_index = 0;
+        if was_open {
+            self.on_version_overlay_closed();
+        }
+    }
+
     /// Returns metadata for the currently selected historical entry.
     ///
     /// # Returns
@@ -788,12 +835,8 @@ impl LocalPasteApp {
                     // Reset is authoritative: replace any local unsaved/editor state
                     // with the canonical backend row that reset produced.
                     self.select_loaded_paste(paste.clone());
-                    if self.search_query.trim().is_empty() {
-                        self.ensure_selection_after_list_update();
-                    }
-                    self.version_ui.history_modal_open = false;
-                    self.version_ui.history_selected_index = 0;
-                    self.version_ui.clear_history_snapshot_state();
+                    self.close_history_modal();
+                    self.ensure_selection_after_list_update();
                     self.set_status("Reset current paste to selected historical snapshot.");
                 }
             }

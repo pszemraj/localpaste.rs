@@ -567,9 +567,8 @@ impl eframe::App for LocalPasteApp {
         let mut immediate_apply_ms = 0.0f32;
         let mut deferred_focus_apply_ms = 0.0f32;
         let mut deferred_copy_apply_ms = 0.0f32;
-        let reset_transition_active = self.reset_transition_active();
         let version_overlay_open = self.version_overlay_open();
-        let keyboard_overlay_open = self.keyboard_overlay_open();
+        let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
         let focus_promotion_requested =
             self.editor_mode == EditorMode::VirtualEditor && self.focus_editor_next;
@@ -583,7 +582,7 @@ impl eframe::App for LocalPasteApp {
             virtual_editor_focus_active_pre || focus_promotion_requested;
         let virtual_editor_events_allowed = virtual_editor_keyboard_claim_pre
             || (self.editor_mode == EditorMode::VirtualEditor && !wants_keyboard_input_before);
-        if self.is_virtual_editor_mode() && !reset_transition_active && !keyboard_overlay_open {
+        if self.is_virtual_editor_mode() && !editor_shortcuts_blocked_pre {
             let route_started = Instant::now();
             let commands = ctx
                 .input(|input| commands_from_events(&input.events, virtual_editor_events_allowed));
@@ -718,7 +717,12 @@ impl eframe::App for LocalPasteApp {
             if input.key_pressed(egui::Key::F1) {
                 self.shortcut_help_open = !self.shortcut_help_open;
             }
-            if input.modifiers.command && input.key_pressed(egui::Key::C) {
+            // These fallback shortcuts bypass the primary event-to-command path, so they
+            // must honor the same modal/reset fence as the main virtual-editor extractor.
+            if input.modifiers.command
+                && input.key_pressed(egui::Key::C)
+                && !editor_shortcuts_blocked_pre
+            {
                 match self.editor_mode {
                     EditorMode::VirtualPreview => copy_virtual_preview = true,
                     EditorMode::VirtualEditor => {
@@ -728,7 +732,10 @@ impl eframe::App for LocalPasteApp {
                     }
                 }
             }
-            if self.editor_mode == EditorMode::VirtualEditor && input.modifiers.command {
+            if self.editor_mode == EditorMode::VirtualEditor
+                && input.modifiers.command
+                && !editor_shortcuts_blocked_pre
+            {
                 for key in [egui::Key::A, egui::Key::X, egui::Key::Z, egui::Key::Y] {
                     if !focus_active_pre || !input.key_pressed(key) {
                         continue;
@@ -782,7 +789,7 @@ impl eframe::App for LocalPasteApp {
                 ctx.send_cmd(egui::OutputCommand::CopyText(selection));
             }
         }
-        if self.editor_mode == EditorMode::VirtualEditor && !reset_transition_active {
+        if self.editor_mode == EditorMode::VirtualEditor && !editor_shortcuts_blocked_pre {
             let mut fallback_commands = Vec::new();
             if fallback_virtual_select_all {
                 fallback_commands.push(VirtualInputCommand::SelectAll);
@@ -861,6 +868,7 @@ impl eframe::App for LocalPasteApp {
             editor_focus_for_plain_paste_post,
             wants_keyboard_input_after,
         );
+        let editor_shortcuts_blocked_post = self.editor_shortcuts_blocked();
         let (plain_request_virtual, plain_request_new) = self.resolve_plain_paste_shortcut_request(
             plain_paste_shortcut_pressed,
             plain_paste_focus_state,
@@ -876,7 +884,7 @@ impl eframe::App for LocalPasteApp {
             self.request_paste_as_new(ctx);
         }
         let copy_ready_post = focus_active_post || has_virtual_selection_post;
-        if (focus_active_post || focus_promotion_requested) && !reset_transition_active {
+        if (focus_active_post || focus_promotion_requested) && !editor_shortcuts_blocked_post {
             let deferred_started = Instant::now();
             deferred_focus_apply_result =
                 self.apply_virtual_commands(ctx, &deferred_focus_commands);
@@ -888,7 +896,7 @@ impl eframe::App for LocalPasteApp {
                 self.virtual_follow_cursor_next_frame = true;
             }
         }
-        if copy_ready_post && !reset_transition_active {
+        if copy_ready_post && !editor_shortcuts_blocked_post {
             let deferred_started = Instant::now();
             deferred_copy_apply_result = self.apply_virtual_commands(ctx, &deferred_copy_commands);
             deferred_copy_apply_ms = deferred_started.elapsed().as_secs_f32() * 1000.0;

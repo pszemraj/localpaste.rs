@@ -2,8 +2,36 @@
 
 use super::*;
 use crossbeam_channel::TryRecvError;
+use eframe::App as _;
 
 const REENTRY_STATUS: &str = "Close the open version window before opening another one.";
+
+fn command_key_event(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers {
+            command: true,
+            ..Default::default()
+        },
+    }
+}
+
+fn run_full_update(app: &mut LocalPasteApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+    app.ensure_style(ctx);
+    let mut frame = eframe::Frame::_new_kittest();
+    let _ = ctx.run(
+        egui::RawInput {
+            events,
+            ..Default::default()
+        },
+        |ctx| {
+            app.update(ctx, &mut frame);
+        },
+    );
+}
 
 #[test]
 fn history_modal_rejects_opening_diff_modal_while_it_owns_version_workflow() {
@@ -31,6 +59,100 @@ fn history_modal_rejects_opening_diff_modal_while_it_owns_version_workflow() {
         harness.cmd_rx.try_recv(),
         Err(TryRecvError::Empty)
     ));
+}
+
+#[test]
+fn version_overlays_block_virtual_editor_fallback_shortcuts() {
+    enum OverlayCase {
+        History,
+        Diff,
+    }
+
+    enum ShortcutCase {
+        Cut,
+        Undo,
+    }
+
+    for overlay in [OverlayCase::History, OverlayCase::Diff] {
+        for shortcut in [ShortcutCase::Cut, ShortcutCase::Undo] {
+            let mut harness = make_app();
+            let ctx = egui::Context::default();
+            harness.app.editor_mode = EditorMode::VirtualEditor;
+            harness.app.reset_virtual_editor("abcdef");
+            harness.app.virtual_editor_active = true;
+            harness.app.virtual_editor_state.has_focus = true;
+
+            let before_text = match shortcut {
+                ShortcutCase::Cut => {
+                    let len = harness.app.virtual_editor_buffer.len_chars();
+                    harness.app.virtual_editor_state.set_cursor(1, len);
+                    harness.app.virtual_editor_state.move_cursor(4, len, true);
+                    "abcdef".to_string()
+                }
+                ShortcutCase::Undo => {
+                    let len = harness.app.virtual_editor_buffer.len_chars();
+                    harness.app.virtual_editor_state.set_cursor(len, len);
+                    let applied = harness.app.apply_virtual_commands(
+                        &ctx,
+                        &[VirtualInputCommand::InsertText("!".to_string())],
+                    );
+                    assert!(applied.changed);
+                    "abcdef!".to_string()
+                }
+            };
+
+            match overlay {
+                OverlayCase::History => harness.app.version_ui.history_modal_open = true,
+                OverlayCase::Diff => harness.app.version_ui.diff_modal_open = true,
+            }
+
+            let event = match shortcut {
+                ShortcutCase::Cut => command_key_event(egui::Key::X),
+                ShortcutCase::Undo => command_key_event(egui::Key::Z),
+            };
+            run_full_update(&mut harness.app, &ctx, vec![event]);
+
+            assert_eq!(
+                harness.app.virtual_editor_buffer.to_string(),
+                before_text,
+                "open version overlays must fence fallback editor shortcuts"
+            );
+        }
+    }
+}
+
+#[test]
+fn closing_version_overlays_reconciles_hidden_selection_back_to_visible_projection() {
+    enum OverlayCase {
+        History,
+        Diff,
+    }
+
+    for overlay in [OverlayCase::History, OverlayCase::Diff] {
+        let mut harness = make_app();
+        harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)];
+
+        match overlay {
+            OverlayCase::History => {
+                harness.app.version_ui.history_modal_open = true;
+                harness.app.close_history_modal();
+            }
+            OverlayCase::Diff => {
+                harness.app.version_ui.diff_modal_open = true;
+                harness.app.close_diff_modal();
+            }
+        }
+
+        assert_eq!(
+            harness.app.selected_id.as_deref(),
+            Some("beta"),
+            "closing a detached version workflow should restore a visible main-view selection"
+        );
+        match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+            other => panic!("expected GetPaste command, got {:?}", other),
+        }
+    }
 }
 
 #[test]

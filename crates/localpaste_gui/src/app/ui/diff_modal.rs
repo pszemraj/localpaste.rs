@@ -53,8 +53,7 @@ impl LocalPasteApp {
         }
         let Some(selected_name) = self.selected_paste.as_ref().map(|paste| paste.name.clone())
         else {
-            self.version_ui.diff_modal_open = false;
-            self.version_ui.clear_diff_selection();
+            self.close_diff_modal();
             return;
         };
 
@@ -188,8 +187,7 @@ impl LocalPasteApp {
             self.request_diff_target(target_id);
         }
         if !keep_open {
-            self.version_ui.diff_modal_open = false;
-            self.version_ui.clear_diff_selection();
+            self.close_diff_modal();
         }
     }
 }
