@@ -8,14 +8,14 @@ import re
 # SemVer 2.0 / Cargo package version pattern, including optional prerelease
 # and build metadata segments.
 SEMVER_VERSION_RE = re.compile(
-    r"^(0|[1-9]\d*)\."
-    r"(0|[1-9]\d*)\."
-    r"(0|[1-9]\d*)"
-    r"(?:-"
+    r"^(?P<major>0|[1-9]\d*)\."
+    r"(?P<minor>0|[1-9]\d*)\."
+    r"(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<prerelease>"
     r"(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
     r"(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*"
-    r")?"
-    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+    r"))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 
 
@@ -33,8 +33,8 @@ def _strip_and_remove_leading_v(raw_tag: str, *, empty_message: str) -> str:
     return tag
 
 
-def normalize_packaging_tag(raw_tag: str) -> str:
-    """Normalize stable/prerelease semver into the repo's `vX.Y.Z` tag form."""
+def normalize_packaging_version(raw_tag: str) -> str:
+    """Normalize stable/prerelease semver into a validated bare version string."""
 
     normalized_version = _strip_and_remove_leading_v(
         raw_tag,
@@ -48,4 +48,38 @@ def normalize_packaging_tag(raw_tag: str) -> str:
             f"(got: {raw_tag})"
         )
 
-    return f"v{normalized_version}"
+    return normalized_version
+
+
+def normalize_packaging_tag(raw_tag: str) -> str:
+    """Normalize stable/prerelease semver into the repo's `vX.Y.Z` tag form."""
+
+    return f"v{normalize_packaging_version(raw_tag)}"
+
+
+def packager_version_for_runner(raw_tag: str, *, runner_os: str) -> str:
+    """Return the packager config version string for a specific runner OS.
+
+    Windows MSI packaging routes through WiX, whose ProductVersion field accepts
+    numeric dotted components only. Verification jobs may derive prerelease
+    semver from the workspace version, so Windows needs the numeric semver core
+    while artifact naming continues to use the full prerelease tag elsewhere.
+    """
+
+    normalized_version = normalize_packaging_version(raw_tag)
+    if runner_os.strip() != "Windows":
+        return normalized_version
+
+    match = SEMVER_VERSION_RE.fullmatch(normalized_version)
+    if match is None:
+        raise VersionValidationError(
+            "validated semver failed to reparse while deriving Windows packager version"
+        )
+
+    return ".".join(
+        (
+            match.group("major"),
+            match.group("minor"),
+            match.group("patch"),
+        )
+    )

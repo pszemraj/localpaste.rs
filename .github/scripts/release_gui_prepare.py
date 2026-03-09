@@ -21,7 +21,11 @@ import sys
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from release_versioning import VersionValidationError, normalize_packaging_tag
+from release_versioning import (
+    VersionValidationError,
+    normalize_packaging_tag,
+    packager_version_for_runner,
+)
 
 
 def fail(message: str) -> None:
@@ -227,10 +231,9 @@ def normalize_release_tag(raw_tag: str) -> str:
 def main() -> int:
     args = parse_args()
 
-    tag = normalize_release_tag(args.tag)
-    version = tag[1:]
-
     runner_os = args.runner_os.strip()
+    tag = normalize_release_tag(args.tag)
+    version = packager_version_for_runner(tag, runner_os=runner_os)
     source_config = Path(args.packager_config)
     if not source_config.is_file():
         fail(f"packager config file not found: {source_config}")

@@ -28,6 +28,11 @@ to `false`.
 - explicit `tag` input remains stable-only,
 - empty `tag` derives packaging metadata from `[workspace.package].version`, including prerelease workspace versions used for smoke/verification branches.
 
+When packaging metadata comes from a prerelease workspace version, artifact
+names and manifests keep the full prerelease tag. Windows packager config uses
+the numeric `major.minor.patch` core only, because WiX/MSI product versions do
+not accept prerelease/build metadata.
+
 `release_tag` publishes on tag-triggered runs and on manual runs where
 `dry_run` is `false`.
 
