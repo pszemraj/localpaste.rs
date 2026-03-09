@@ -6,6 +6,7 @@ use crate::backend::{BackendHandle, CoreCmd, CoreEvent};
 use chrono::Utc;
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use eframe::egui::TextBuffer;
+use eframe::App as _;
 use localpaste_server::LockOwnerId;
 use syntect::util::LinesWithEndings;
 use tempfile::TempDir;
@@ -102,10 +103,69 @@ pub(super) fn set_virtual_cursor_at(app: &mut LocalPasteApp, line: usize, col: u
     app.virtual_editor_state.set_cursor(pos, len);
 }
 
+/// Builds a pressed key event with the provided modifier state.
+///
+/// # Arguments
+/// - `key`: Logical egui key code to emit.
+/// - `modifiers`: Modifier state carried by the event.
+///
+/// # Returns
+/// A pressed [`egui::Event::Key`] test event.
+pub(super) fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+/// Builds a command-modified pressed key event for platform-agnostic shortcut tests.
+///
+/// # Arguments
+/// - `key`: Logical egui key code to emit with the command modifier set.
+///
+/// # Returns
+/// A pressed [`egui::Event::Key`] test event carrying `command: true`.
+pub(super) fn command_key_event(key: egui::Key) -> egui::Event {
+    key_event(
+        key,
+        egui::Modifiers {
+            command: true,
+            ..Default::default()
+        },
+    )
+}
+
 fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
     let _ = ctx.run(input, |ctx| {
         app.render_editor_panel(ctx);
     });
+}
+
+/// Runs a full app update pass with the supplied raw egui events.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `ctx`: egui context used for the frame.
+/// - `events`: Raw input events to deliver during the frame.
+pub(super) fn run_full_update(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) {
+    app.ensure_style(ctx);
+    let mut frame = eframe::Frame::_new_kittest();
+    let _ = ctx.run(
+        egui::RawInput {
+            events,
+            ..Default::default()
+        },
+        |ctx| {
+            app.update(ctx, &mut frame);
+        },
+    );
 }
 
 fn make_app() -> TestHarness {

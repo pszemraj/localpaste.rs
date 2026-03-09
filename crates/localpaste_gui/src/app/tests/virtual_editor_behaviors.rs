@@ -52,16 +52,6 @@ fn run_virtual_editor_frame(
     focus_active_pre
 }
 
-fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
-    egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers,
-    }
-}
-
 #[test]
 fn virtual_copy_and_cut_report_expected_mutation_state() {
     struct ClipboardCase {

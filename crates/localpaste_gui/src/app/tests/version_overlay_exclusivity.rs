@@ -2,36 +2,8 @@
 
 use super::*;
 use crossbeam_channel::TryRecvError;
-use eframe::App as _;
 
 const REENTRY_STATUS: &str = "Close the open version window before opening another one.";
-
-fn command_key_event(key: egui::Key) -> egui::Event {
-    egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers {
-            command: true,
-            ..Default::default()
-        },
-    }
-}
-
-fn run_full_update(app: &mut LocalPasteApp, ctx: &egui::Context, events: Vec<egui::Event>) {
-    app.ensure_style(ctx);
-    let mut frame = eframe::Frame::_new_kittest();
-    let _ = ctx.run(
-        egui::RawInput {
-            events,
-            ..Default::default()
-        },
-        |ctx| {
-            app.update(ctx, &mut frame);
-        },
-    );
-}
 
 #[test]
 fn history_modal_rejects_opening_diff_modal_while_it_owns_version_workflow() {

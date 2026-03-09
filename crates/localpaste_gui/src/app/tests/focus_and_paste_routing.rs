@@ -1,31 +1,6 @@
 //! Focus and paste-routing regression tests for the virtual editor.
 
 use super::*;
-use eframe::App as _;
-
-fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
-    egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers,
-    }
-}
-
-fn run_full_update(app: &mut LocalPasteApp, ctx: &egui::Context, events: Vec<egui::Event>) {
-    app.ensure_style(ctx);
-    let mut frame = eframe::Frame::_new_kittest();
-    let _ = ctx.run(
-        egui::RawInput {
-            events,
-            ..Default::default()
-        },
-        |ctx| {
-            app.update(ctx, &mut frame);
-        },
-    );
-}
 
 #[test]
 fn click_outside_editor_viewport_blurs_focus() {
