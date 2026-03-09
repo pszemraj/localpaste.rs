@@ -20,6 +20,8 @@ const VERSION_OVERLAY_MUTATION_BLOCKED_STATUS: &str =
     "Close the open version window before mutating the selected paste.";
 const VERSION_OVERLAY_SELECTION_BLOCKED_STATUS: &str =
     "Close the open version window before changing selection.";
+const VERSION_OVERLAY_REENTRY_BLOCKED_STATUS: &str =
+    "Close the open version window before opening another one.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ActiveSnapshotCacheKey {
@@ -183,6 +185,10 @@ impl LocalPasteApp {
 
     fn begin_version_overlay(&mut self) -> bool {
         if !self.ensure_selected_paste_for_version_modal() {
+            return false;
+        }
+        if self.version_overlay_open() {
+            self.set_status(VERSION_OVERLAY_REENTRY_BLOCKED_STATUS);
             return false;
         }
         self.clear_pending_selection_request();
