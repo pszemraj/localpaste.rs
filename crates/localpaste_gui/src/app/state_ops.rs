@@ -90,6 +90,9 @@ impl LocalPasteApp {
                     self.select_loaded_paste(paste);
                 }
             }
+            CoreEvent::DiffPreviewComputed { request_id, diff } => {
+                self.apply_diff_preview_response(request_id, diff);
+            }
             CoreEvent::PasteCreated { paste } => {
                 let paste_id = paste.id.clone();
                 let search_active = !self.search_query.trim().is_empty();
@@ -302,7 +305,6 @@ impl LocalPasteApp {
             | CoreEvent::PasteResetToVersion { .. }
             | CoreEvent::DiffTargetLoaded { .. }
             | CoreEvent::DiffTargetLoadFailed { .. }
-            | CoreEvent::DiffPreviewComputed { .. }
             | CoreEvent::FoldersLoaded { items: _ }
             | CoreEvent::ShutdownComplete { flush_result: _ } => {}
             CoreEvent::FolderSaved { folder: _ } | CoreEvent::FolderDeleted { id: _ } => {

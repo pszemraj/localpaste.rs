@@ -11,6 +11,7 @@ use crate::backend::{
 };
 use chrono::{DateTime, Utc};
 use eframe::egui;
+use localpaste_core::diff::DiffResponse;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
 use std::time::Instant;
 
@@ -460,6 +461,22 @@ impl LocalPasteApp {
         true
     }
 
+    /// Applies a completed detached diff preview response for the active request.
+    ///
+    /// Stale worker replies are ignored so background diff jobs cannot overwrite
+    /// a newer modal request after the target or editor snapshot changed.
+    ///
+    /// # Arguments
+    /// - `request_id`: Worker request id associated with the currently active modal preview.
+    /// - `diff`: Worker-computed unified diff payload for that request.
+    pub(super) fn apply_diff_preview_response(&mut self, request_id: u64, diff: DiffResponse) {
+        if self.version_ui.diff_preview_pending_request_id != Some(request_id) {
+            return;
+        }
+        self.version_ui.diff_preview_pending_request_id = None;
+        self.version_ui.diff_preview = Some(inline_diff_preview_from_response(diff));
+    }
+
     /// Requests backend duplication for the selected historical snapshot.
     pub(super) fn duplicate_selected_history_version(&mut self) {
         let Some(id) = self.selected_id.clone() else {
@@ -730,14 +747,6 @@ impl LocalPasteApp {
         match event {
             CoreEvent::DiffTargetLoaded { paste } => {
                 self.maybe_capture_diff_target_from_loaded_paste(paste);
-            }
-            CoreEvent::DiffPreviewComputed { request_id, diff } => {
-                if self.version_ui.diff_preview_pending_request_id != Some(*request_id) {
-                    return;
-                }
-                self.version_ui.diff_preview_pending_request_id = None;
-                self.version_ui.diff_preview =
-                    Some(inline_diff_preview_from_response(diff.clone()));
             }
             CoreEvent::PasteSaved { paste } => {
                 if self.version_ui.history_modal_open

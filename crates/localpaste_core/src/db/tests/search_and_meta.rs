@@ -390,7 +390,7 @@ fn database_new_rebuilds_legacy_meta_rows_with_derived_fields() {
 }
 
 #[test]
-fn database_new_marks_current_meta_rows_without_rebuilding_them() {
+fn database_new_rebuilds_markerless_current_meta_rows() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let db_path = temp_dir.path().join("db");
     let db_path_str = db_path.to_str().expect("db path").to_string();
@@ -434,8 +434,16 @@ fn database_new_marks_current_meta_rows_without_rebuilding_them() {
         .into_iter()
         .find(|meta| meta.id == paste_id)
         .expect("meta row");
-    assert_eq!(first_meta.derived.handle.as_deref(), Some("frozen-handle"));
-    assert_eq!(first_meta.derived.terms, vec!["frozen-term".to_string()]);
+    assert_eq!(first_meta.derived.kind, crate::semantic::PasteKind::Code);
+    assert_eq!(first_meta.derived.handle.as_deref(), Some("cargo test"));
+    assert!(
+        !first_meta
+            .derived
+            .terms
+            .iter()
+            .any(|term| term == "frozen-term"),
+        "marker-less databases must rebuild derived metadata before stamping it current"
+    );
 
     let read_txn = reopened.db.begin_read().expect("begin read");
     let meta_state = read_txn
@@ -459,6 +467,14 @@ fn database_new_marks_current_meta_rows_without_rebuilding_them() {
         .into_iter()
         .find(|meta| meta.id == paste_id)
         .expect("meta row");
-    assert_eq!(second_meta.derived.handle.as_deref(), Some("frozen-handle"));
-    assert_eq!(second_meta.derived.terms, vec!["frozen-term".to_string()]);
+    assert_eq!(second_meta.derived.kind, crate::semantic::PasteKind::Code);
+    assert_eq!(second_meta.derived.handle.as_deref(), Some("cargo test"));
+    assert!(
+        !second_meta
+            .derived
+            .terms
+            .iter()
+            .any(|term| term == "frozen-term"),
+        "rebuilt metadata should remain current on subsequent opens"
+    );
 }

@@ -1,11 +1,15 @@
 //! Detached diff modal rendering.
 
 use super::super::*;
+use crate::app::text_coords::prefix_by_chars;
 use eframe::egui::{self, RichText};
 use localpaste_core::diff::DiffResponse;
+use std::sync::Arc;
 
 /// Maximum combined byte size allowed for inline diff preview generation.
 pub(crate) const MAX_INLINE_DIFF_BYTES: usize = 1024 * 1024;
+/// Maximum diff row count cached/rendered inline before preview is summarized.
+pub(crate) const MAX_INLINE_DIFF_LINES: usize = 20_000;
 const DIFF_MODAL_HEIGHT: f32 = 360.0;
 
 /// Cached inline diff preview state for the detached diff modal.
@@ -15,15 +19,17 @@ const DIFF_MODAL_HEIGHT: f32 = 360.0;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InlineDiffPreview {
     TooLarge { lhs_bytes: usize, rhs_bytes: usize },
+    TooManyLines { line_count: usize },
     NoChanges,
-    Lines(Vec<String>),
+    Lines(Arc<[String]>),
 }
 
-fn normalize_gui_diff_lines(lines: Vec<String>) -> Vec<String> {
+fn normalize_gui_diff_lines(mut lines: Vec<String>) -> Vec<String> {
+    for line in &mut lines {
+        let trimmed_len = line.trim_end_matches(['\r', '\n']).len();
+        line.truncate(trimmed_len);
+    }
     lines
-        .into_iter()
-        .map(|line| line.trim_end_matches(['\r', '\n']).to_string())
-        .collect()
 }
 
 /// Builds an inline diff preview classification from a worker-produced diff response.
@@ -39,7 +45,14 @@ pub(crate) fn inline_diff_preview_from_response(diff: DiffResponse) -> InlineDif
         return InlineDiffPreview::NoChanges;
     }
 
-    InlineDiffPreview::Lines(normalize_gui_diff_lines(diff.unified))
+    let lines = normalize_gui_diff_lines(diff.unified);
+    if lines.len() > MAX_INLINE_DIFF_LINES {
+        return InlineDiffPreview::TooManyLines {
+            line_count: lines.len(),
+        };
+    }
+
+    InlineDiffPreview::Lines(lines.into())
 }
 
 impl LocalPasteApp {
@@ -161,18 +174,44 @@ impl LocalPasteApp {
                                         RichText::new("No changes.").color(COLOR_TEXT_MUTED),
                                     );
                                 }
+                                Some(InlineDiffPreview::TooManyLines { line_count }) => {
+                                    right.add_space(8.0);
+                                    right.label(
+                                        RichText::new(
+                                            "Diff preview capped for now; too many changed lines to render inline.",
+                                        )
+                                        .color(egui::Color32::YELLOW),
+                                    );
+                                    right.label(format!(
+                                        "{} diff rows exceed the inline preview cap of {}.",
+                                        line_count, MAX_INLINE_DIFF_LINES
+                                    ));
+                                }
                                 Some(InlineDiffPreview::Lines(diff_lines)) => {
+                                    let row_height =
+                                        right.text_style_height(&egui::TextStyle::Monospace).max(1.0);
                                     egui::ScrollArea::vertical()
                                         .max_height(DIFF_MODAL_HEIGHT)
-                                        .show(right, |ui| {
-                                            for line in diff_lines {
-                                                let color = match line.chars().next() {
-                                                    Some('-') => egui::Color32::LIGHT_RED,
-                                                    Some('+') => egui::Color32::LIGHT_GREEN,
+                                        .auto_shrink([false, false])
+                                        .show_rows(right, row_height, diff_lines.len(), |ui, range| {
+                                            ui.set_min_width(ui.available_width());
+                                            for idx in range {
+                                                let line = &diff_lines[idx];
+                                                let color = match line.as_bytes().first().copied() {
+                                                    Some(b'-') => egui::Color32::LIGHT_RED,
+                                                    Some(b'+') => egui::Color32::LIGHT_GREEN,
                                                     _ => COLOR_TEXT_SECONDARY,
                                                 };
-                                                ui.label(
-                                                    RichText::new(line).monospace().color(color),
+                                                let render_line =
+                                                    prefix_by_chars(line, MAX_RENDER_CHARS_PER_LINE);
+                                                ui.add_sized(
+                                                    [ui.available_width(), row_height],
+                                                    egui::Label::new(
+                                                        RichText::new(render_line)
+                                                            .monospace()
+                                                            .color(color),
+                                                    )
+                                                    .truncate(),
                                                 );
                                             }
                                         });
@@ -194,7 +233,10 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{inline_diff_preview_from_response, InlineDiffPreview, MAX_INLINE_DIFF_BYTES};
+    use super::{
+        inline_diff_preview_from_response, InlineDiffPreview, MAX_INLINE_DIFF_BYTES,
+        MAX_INLINE_DIFF_LINES,
+    };
     use localpaste_core::diff::{unified_diff_lines, DiffResponse};
 
     #[test]
@@ -242,6 +284,23 @@ mod tests {
                 .iter()
                 .all(|line| !line.ends_with('\n') && !line.ends_with('\r')),
             "GUI preview rows should not keep raw trailing newlines"
+        );
+    }
+
+    #[test]
+    fn inline_diff_preview_from_response_caps_large_line_counts() {
+        let preview = inline_diff_preview_from_response(DiffResponse {
+            equal: false,
+            unified: (0..=MAX_INLINE_DIFF_LINES)
+                .map(|idx| format!("+line-{idx}\n"))
+                .collect(),
+        });
+
+        assert_eq!(
+            preview,
+            InlineDiffPreview::TooManyLines {
+                line_count: MAX_INLINE_DIFF_LINES + 1,
+            }
         );
     }
 
