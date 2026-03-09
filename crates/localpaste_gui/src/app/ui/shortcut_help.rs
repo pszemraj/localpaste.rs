@@ -16,7 +16,7 @@ impl LocalPasteApp {
             egui::Window::new("Keyboard Shortcuts")
                 .open(&mut open)
                 .resizable(false)
-                .default_width(420.0)
+                .default_width(560.0)
                 .show(ctx, |ui| {
                     ui.label(
                         egui::RichText::new("Core actions")
@@ -46,11 +46,30 @@ impl LocalPasteApp {
                             .color(COLOR_TEXT_MUTED),
                     );
                     shortcut_row(ui, "Arrow Up/Down", "Navigate paste list and palette");
-                    shortcut_row(ui, "Home/End", "Move caret to line start/end");
                     shortcut_row(
                         ui,
-                        "Ctrl+Home/End (Win/Linux) or Cmd+Up/Down (macOS)",
+                        "Ctrl+Left/Right (Win/Linux) or Option+Left/Right (macOS)",
+                        "Move caret by word",
+                    );
+                    shortcut_row(
+                        ui,
+                        "Home/End (Win/Linux) or Cmd+Left/Right (macOS)",
+                        "Move caret to line start/end",
+                    );
+                    shortcut_row(
+                        ui,
+                        "Ctrl+Home/End (Win/Linux) or Cmd+Up/Down/Home/End (macOS)",
                         "Move caret to document start/end",
+                    );
+                    shortcut_row(
+                        ui,
+                        "Ctrl+Backspace/Delete (Win/Linux) or Option+Backspace/Delete (macOS)",
+                        "Delete one word backward/forward",
+                    );
+                    shortcut_row(
+                        ui,
+                        "Cmd+Backspace / Ctrl+K (macOS)",
+                        "Delete to line start / end",
                     );
                     shortcut_row(
                         ui,

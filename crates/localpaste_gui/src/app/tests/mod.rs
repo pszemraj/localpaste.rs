@@ -121,6 +121,30 @@ pub(super) fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Eve
     }
 }
 
+/// Returns the runtime-accurate primary command modifiers for the host platform.
+///
+/// # Returns
+/// Modifier state that matches how egui reports `Cmd`/`Ctrl` shortcuts on the
+/// active platform.
+pub(super) fn primary_command_modifiers() -> egui::Modifiers {
+    #[cfg(target_os = "macos")]
+    {
+        egui::Modifiers {
+            command: true,
+            ..Default::default()
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        }
+    }
+}
+
 /// Builds a command-modified pressed key event for platform-agnostic shortcut tests.
 ///
 /// # Arguments
@@ -129,13 +153,7 @@ pub(super) fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Eve
 /// # Returns
 /// A pressed [`egui::Event::Key`] test event carrying `command: true`.
 pub(super) fn command_key_event(key: egui::Key) -> egui::Event {
-    key_event(
-        key,
-        egui::Modifiers {
-            command: true,
-            ..Default::default()
-        },
-    )
+    key_event(key, primary_command_modifiers())
 }
 
 fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {

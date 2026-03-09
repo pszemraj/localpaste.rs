@@ -386,13 +386,7 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
         assert!(ctx.memory(|m| m.has_focus(editor_id)));
     }
 
-    let select_all_event = key_event(
-        egui::Key::A,
-        egui::Modifiers {
-            command: true,
-            ..Default::default()
-        },
-    );
+    let select_all_event = key_event(egui::Key::A, primary_command_modifiers());
     let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![select_all_event]);
     assert!(focus_active_pre);
     let full_len = harness.app.virtual_editor_buffer.len_chars();
