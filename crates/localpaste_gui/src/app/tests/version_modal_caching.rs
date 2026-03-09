@@ -212,6 +212,58 @@ fn diff_preview_cache_waits_for_in_flight_worker_before_queueing_latest_revision
 }
 
 #[test]
+fn diff_preview_cache_invalidates_when_rhs_content_changes_without_metadata_change() {
+    let mut harness = make_app();
+    let mut rhs = Paste::new("beta-one".to_string(), "Beta".to_string());
+    rhs.id = "beta".to_string();
+    let stable_updated_at = rhs.updated_at;
+    harness.app.version_ui.diff_target_paste = Some(rhs);
+
+    assert!(harness.app.sync_diff_preview_cache());
+    let request_id = match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::ComputeDiffPreview {
+            request_id,
+            left_text,
+            right_text,
+        } => {
+            assert_eq!(left_text, "content");
+            assert_eq!(right_text, "beta-one");
+            request_id
+        }
+        other => panic!("unexpected command: {:?}", other),
+    };
+    harness.app.apply_event(CoreEvent::DiffPreviewComputed {
+        request_id,
+        diff: localpaste_core::diff::DiffResponse {
+            equal: false,
+            unified: localpaste_core::diff::unified_diff_lines("content", "beta-one"),
+        },
+    });
+
+    let mut rhs_same_metadata = Paste::new("beta-two".to_string(), "Beta".to_string());
+    rhs_same_metadata.id = "beta".to_string();
+    rhs_same_metadata.updated_at = stable_updated_at;
+    harness.app.version_ui.diff_target_paste = Some(rhs_same_metadata);
+
+    assert!(
+        harness.app.sync_diff_preview_cache(),
+        "right-hand content changes must invalidate the cached diff even if len/id/timestamp stay the same"
+    );
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::ComputeDiffPreview {
+            request_id: next_request_id,
+            left_text,
+            right_text,
+        } => {
+            assert_ne!(next_request_id, request_id);
+            assert_eq!(left_text, "content");
+            assert_eq!(right_text, "beta-two");
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
 fn diff_preview_cache_short_circuits_large_payloads_before_snapshot_clone() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;

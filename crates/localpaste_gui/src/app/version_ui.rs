@@ -4,12 +4,12 @@ use super::ui::diff_modal::{
     inline_diff_preview_from_response, InlineDiffPreview, MAX_INLINE_DIFF_BYTES,
 };
 use super::{
-    non_focusable_click_sense, EditorLineIndex, LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE,
+    highlight::hash_bytes, non_focusable_click_sense, EditorLineIndex, LocalPasteApp, SaveStatus,
+    SEARCH_DEBOUNCE,
 };
 use crate::backend::{
     CoreCmd, CoreErrorSource, CoreEvent, PasteSummary, VERSION_WORKFLOW_LIST_LIMIT,
 };
-use chrono::{DateTime, Utc};
 use eframe::egui;
 use localpaste_core::diff::DiffResponse;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
@@ -43,8 +43,8 @@ struct HistoryPreviewCacheKey {
 struct DiffPreviewCacheKey {
     lhs: ActiveSnapshotCacheKey,
     rhs_paste_id: String,
-    rhs_updated_at: DateTime<Utc>,
     rhs_content_len: usize,
+    rhs_content_hash: u64,
 }
 
 /// UI state for detached diff/history modals.
@@ -397,8 +397,10 @@ impl LocalPasteApp {
                 .map(|rhs| DiffPreviewCacheKey {
                     lhs: lhs_cache_key,
                     rhs_paste_id: rhs.id.clone(),
-                    rhs_updated_at: rhs.updated_at,
                     rhs_content_len: rhs.content.len(),
+                    // Diff output depends on the exact right-hand content, not
+                    // on incidental metadata like timestamps.
+                    rhs_content_hash: hash_bytes(rhs.content.as_bytes()),
                 })
         else {
             self.version_ui.diff_preview_cache_key = None;
