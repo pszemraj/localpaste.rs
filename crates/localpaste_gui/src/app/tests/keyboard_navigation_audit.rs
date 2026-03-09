@@ -2,6 +2,13 @@
 
 use super::*;
 
+fn assert_cursor_line_col(app: &LocalPasteApp, expected: (usize, usize)) {
+    let line_col = app
+        .virtual_editor_buffer
+        .char_to_line_col(app.virtual_editor_state.cursor());
+    assert_eq!(line_col, expected);
+}
+
 #[test]
 fn shift_word_selection_extends_and_contracts_without_resetting_anchor() {
     let mut harness = make_app();
@@ -258,20 +265,12 @@ fn vertical_column_affinity_restores_target_after_short_line_and_resets_after_ho
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (1, 1));
+    assert_cursor_line_col(&harness.app, (1, 1));
 
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (2, 8));
+    assert_cursor_line_col(&harness.app, (2, 8));
 
     let _ = harness.app.apply_virtual_commands(
         &ctx,
@@ -286,11 +285,7 @@ fn vertical_column_affinity_restores_target_after_short_line_and_resets_after_ho
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 7));
+    assert_cursor_line_col(&harness.app, (0, 7));
 }
 
 #[test]
@@ -303,50 +298,30 @@ fn wrapped_lines_move_by_visual_rows_and_line_home_end_ignore_wrap_bounds() {
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 6));
+    assert_cursor_line_col(&harness.app, (0, 6));
 
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 10));
+    assert_cursor_line_col(&harness.app, (0, 10));
 
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (1, 1));
+    assert_cursor_line_col(&harness.app, (1, 1));
 
     // Logical-line boundary commands should ignore soft-wrap row boundaries.
     set_virtual_cursor_at(&mut harness.app, 0, 6);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 0));
+    assert_cursor_line_col(&harness.app, (0, 0));
 
     set_virtual_cursor_at(&mut harness.app, 0, 6);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 12));
+    assert_cursor_line_col(&harness.app, (0, 12));
 }
 
 #[test]
