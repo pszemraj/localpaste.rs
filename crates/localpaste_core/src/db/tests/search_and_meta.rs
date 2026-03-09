@@ -364,7 +364,9 @@ fn database_new_rebuilds_legacy_meta_rows_with_derived_fields() {
     let write_txn = db.db.begin_write().expect("begin write");
     {
         let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
-        let mut meta_state = write_txn.open_table(PASTES_META_STATE).expect("open meta state");
+        let mut meta_state = write_txn
+            .open_table(PASTES_META_STATE)
+            .expect("open meta state");
         metas
             .insert(paste_id.as_str(), encoded.as_slice())
             .expect("overwrite legacy meta");
