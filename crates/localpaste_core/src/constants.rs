@@ -5,6 +5,8 @@ pub const DEFAULT_PORT: u16 = 38411;
 
 /// Default maximum paste size accepted by the API layer.
 pub const DEFAULT_MAX_PASTE_SIZE: usize = 10 * 1024 * 1024;
+/// Maximum combined source byte size allowed for diff generation.
+pub const MAX_DIFF_INPUT_BYTES: usize = 1024 * 1024;
 
 /// Default autosave interval in milliseconds.
 pub const DEFAULT_AUTO_SAVE_INTERVAL_MS: u64 = 2_000;

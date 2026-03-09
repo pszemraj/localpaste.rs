@@ -180,6 +180,49 @@ async fn test_version_and_diff_endpoints_roundtrip() {
 }
 
 #[tokio::test]
+async fn test_diff_endpoint_rejects_oversized_compare_inputs() {
+    let (server, _temp, _locks) = setup_test_server();
+    let oversized = "x".repeat((localpaste_core::MAX_DIFF_INPUT_BYTES / 2) + 1);
+
+    let left_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": oversized,
+            "name": "diff-left"
+        }))
+        .await;
+    assert_eq!(left_response.status_code(), StatusCode::OK);
+    let left: serde_json::Value = left_response.json();
+
+    let right_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "y".repeat((localpaste_core::MAX_DIFF_INPUT_BYTES / 2) + 1),
+            "name": "diff-right"
+        }))
+        .await;
+    assert_eq!(right_response.status_code(), StatusCode::OK);
+    let right: serde_json::Value = right_response.json();
+
+    let diff_response = server
+        .post("/api/diff")
+        .json(&json!({
+            "left": { "paste_id": left["id"].as_str().unwrap(), "version_id_ms": null },
+            "right": { "paste_id": right["id"].as_str().unwrap(), "version_id_ms": null }
+        }))
+        .await;
+
+    assert_eq!(diff_response.status_code(), StatusCode::PAYLOAD_TOO_LARGE);
+    let body: serde_json::Value = diff_response.json();
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("Combined diff input exceeds")),
+        "unexpected error payload: {body}"
+    );
+}
+
+#[tokio::test]
 async fn test_folder_lifecycle() {
     let (server, _temp, _locks) = setup_test_server();
 

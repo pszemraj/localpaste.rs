@@ -175,7 +175,8 @@ The project centralizes sensitive folder assignment/delete logic in shared core 
 Version and diff surfaces:
 
 - `/api/paste/:id/versions*` supports list/get/reset-hard/duplicate for historical snapshots.
-- `/api/diff` compares head or historical paste references.
+- `/api/diff` compares head or historical paste references and rejects combined
+  diff sources above 1 MiB with `413 Payload Too Large`.
 - Content-changing writes may persist an older-head snapshot based on `LOCALPASTE_VERSION_INTERVAL_SECS`.
 
 Read behavior:

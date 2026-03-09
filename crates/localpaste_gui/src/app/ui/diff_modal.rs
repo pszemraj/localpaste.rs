@@ -4,10 +4,11 @@ use super::super::*;
 use crate::app::text_coords::prefix_by_chars;
 use eframe::egui::{self, RichText};
 use localpaste_core::diff::DiffResponse;
+use localpaste_core::MAX_DIFF_INPUT_BYTES;
 use std::sync::Arc;
 
 /// Maximum combined byte size allowed for inline diff preview generation.
-pub(crate) const MAX_INLINE_DIFF_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_INLINE_DIFF_BYTES: usize = MAX_DIFF_INPUT_BYTES;
 /// Maximum diff row count cached/rendered inline before preview is summarized.
 pub(crate) const MAX_INLINE_DIFF_LINES: usize = 20_000;
 const DIFF_MODAL_HEIGHT: f32 = 360.0;

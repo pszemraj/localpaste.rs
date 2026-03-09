@@ -23,6 +23,7 @@ impl IntoResponse for HttpError {
         let (status, error_message) = match &self.0 {
             AppError::NotFound => (StatusCode::NOT_FOUND, "Not found"),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
+            AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg.as_str()),
             AppError::Locked(msg) => (StatusCode::LOCKED, msg.as_str()),
             AppError::Database(err) => {
                 tracing::error!("Database error: {}", err);
