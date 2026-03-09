@@ -38,8 +38,8 @@ reason = "The main GUI update loop still centralizes frame input routing and per
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/app/state_ops.rs"
-max_lines = 1055
-reason = "Selection, save, and backend event transitions remain centralized; the reset-mutation fence added bounded guard logic here until save/export/selection helpers are split into smaller modules."
+max_lines = 1075
+reason = "Selection, save, and backend event transitions remain centralized; reset fencing and detached diff/history stale-reply guards are still co-located here until save/export/selection helpers are split into smaller modules."
 
 [[exceptions]]
 path = "crates/localpaste_core/src/db/paste/mod.rs"
@@ -48,8 +48,8 @@ reason = "PasteDb still centralizes canonical/meta/version storage workflows; th
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/backend/mod.rs"
-max_lines = 1050
-reason = "Backend worker tests still centralize worker/query/version scenarios in one module while detached diff/history behavior and backend parity stabilize."
+max_lines = 1100
+reason = "Backend worker tests still centralize worker/query/version scenarios in one module while detached diff/history behavior and backend parity stabilize, including detached diff target routing coverage."
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/app/tests/collections_and_search.rs"

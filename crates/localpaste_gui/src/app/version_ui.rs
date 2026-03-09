@@ -123,6 +123,7 @@ impl VersionUiState {
         // must not drop a pending reset before its own backend ack/error arrives.
     }
 
+    /// Clears only the loaded diff target and cached preview state.
     pub(super) fn clear_diff_target_state(&mut self) {
         self.diff_target_id = None;
         self.diff_target_paste = None;
