@@ -1,6 +1,7 @@
 //! Focus and paste-routing regression tests for the virtual editor.
 
 use super::*;
+use eframe::App as _;
 
 fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
     egui::Event::Key {
@@ -10,6 +11,20 @@ fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
         repeat: false,
         modifiers,
     }
+}
+
+fn run_full_update(app: &mut LocalPasteApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+    app.ensure_style(ctx);
+    let mut frame = eframe::Frame::_new_kittest();
+    let _ = ctx.run(
+        egui::RawInput {
+            events,
+            ..Default::default()
+        },
+        |ctx| {
+            app.update(ctx, &mut frame);
+        },
+    );
 }
 
 #[test]
@@ -124,6 +139,66 @@ fn focus_promotion_consumes_bare_arrows_before_sidebar_routing() {
             });
             assert!(!sidebar_routed);
         },
+    );
+}
+
+#[test]
+fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha beta gamma");
+    harness.app.focus_editor_next = true;
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+
+    run_full_update(&mut harness.app, &ctx, Vec::new());
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+
+    #[cfg(target_os = "macos")]
+    let word_select_event = key_event(
+        egui::Key::ArrowRight,
+        egui::Modifiers {
+            alt: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    #[cfg(not(target_os = "macos"))]
+    let word_select_event = key_event(
+        egui::Key::ArrowRight,
+        egui::Modifiers {
+            ctrl: true,
+            command: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+
+    run_full_update(&mut harness.app, &ctx, vec![word_select_event.clone()]);
+    #[cfg(target_os = "macos")]
+    let first_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 5);
+    #[cfg(not(target_os = "macos"))]
+    let first_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 6);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..first_expected)
+    );
+
+    run_full_update(&mut harness.app, &ctx, vec![word_select_event]);
+    #[cfg(target_os = "macos")]
+    let second_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 10);
+    #[cfg(not(target_os = "macos"))]
+    let second_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 11);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..second_expected)
     );
 }
 

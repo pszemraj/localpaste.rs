@@ -52,7 +52,16 @@ impl LocalPasteApp {
                             .color(COLOR_TEXT_MUTED),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Shortcuts (F1)").clicked() {
+                        // Background chrome should not enter egui's keyboard focus ring while the
+                        // editor owns arrow/home/end navigation on muscle memory.
+                        if ui
+                            .add(
+                                egui::Button::new("Shortcuts (F1)")
+                                    .small()
+                                    .sense(non_focusable_click_sense()),
+                            )
+                            .clicked()
+                        {
                             self.shortcut_help_open = true;
                         }
                     });
@@ -96,7 +105,7 @@ impl LocalPasteApp {
                     if ui
                         .add_enabled(
                             !background_mutation_blocked,
-                            egui::Button::new("+ New Paste"),
+                            egui::Button::new("+ New Paste").sense(non_focusable_click_sense()),
                         )
                         .clicked()
                     {
@@ -105,7 +114,7 @@ impl LocalPasteApp {
                     if ui
                         .add_enabled(
                             self.selected_id.is_some() && !background_mutation_blocked,
-                            egui::Button::new("Delete"),
+                            egui::Button::new("Delete").sense(non_focusable_click_sense()),
                         )
                         .clicked()
                     {
