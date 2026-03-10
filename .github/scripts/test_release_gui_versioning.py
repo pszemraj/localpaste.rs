@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import shutil
 import tarfile
-import tempfile
 import unittest
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -27,6 +29,19 @@ def working_directory(path: Path):
         yield
     finally:
         os.chdir(previous)
+
+
+@contextmanager
+def workspace_tempdir():
+    root = Path(".tmp") / "release-gui-tests"
+    root.mkdir(parents=True, exist_ok=True)
+    tempdir = root / uuid.uuid4().hex
+    tempdir.mkdir()
+    resolved = tempdir.resolve()
+    try:
+        yield resolved
+    finally:
+        shutil.rmtree(resolved, ignore_errors=True)
 
 
 class ReleaseVersioningTests(unittest.TestCase):
@@ -63,9 +78,38 @@ class ReleaseVersioningTests(unittest.TestCase):
 
 
 class ReleaseGuiPrepareTests(unittest.TestCase):
+    def test_probe_wix_version_accepts_nonzero_help_exit_when_output_has_version(self) -> None:
+        with workspace_tempdir() as wix_bin:
+            (wix_bin / "candle.exe").write_text("", encoding="utf-8")
+            (wix_bin / "light.exe").write_text("", encoding="utf-8")
+
+            side_effect = [
+                subprocess.CompletedProcess(
+                    [str(wix_bin / "candle.exe"), "-?"],
+                    1,
+                    stdout="WiX Toolset Compiler version 3.14.1.8722\n",
+                    stderr="",
+                ),
+                subprocess.CompletedProcess(
+                    [str(wix_bin / "light.exe"), "-?"],
+                    2,
+                    stdout="",
+                    stderr="WiX Toolset Linker version 3.14.1.8722\n",
+                ),
+            ]
+
+            with mock.patch.object(
+                release_gui_prepare.subprocess,
+                "run",
+                side_effect=side_effect,
+            ):
+                self.assertEqual(
+                    release_gui_prepare.probe_wix_version(wix_bin),
+                    "3.14.1.8722",
+                )
+
     def test_prepare_accepts_prerelease_workspace_version(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+        with workspace_tempdir() as root:
             config_dir = root / "packaging" / "linux"
             config_dir.mkdir(parents=True)
 
@@ -113,8 +157,7 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
             self.assertTrue((root / "dist" / "stage" / "linux-x86_64" / "localpaste").is_file())
 
     def test_prepare_windows_uses_numeric_version_for_prerelease_workspace_version(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+        with workspace_tempdir() as root:
             config_dir = root / "packaging" / "windows"
             config_dir.mkdir(parents=True)
 
@@ -173,8 +216,7 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
 
 class ReleaseGuiCollectTests(unittest.TestCase):
     def test_collect_accepts_prerelease_packaging_tag(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+        with workspace_tempdir() as root:
             packager_out = root / "dist" / "packager" / "linux-x86_64"
             packager_out.mkdir(parents=True)
             (packager_out / "LocalPaste.AppImage").write_text("appimage\n", encoding="utf-8")

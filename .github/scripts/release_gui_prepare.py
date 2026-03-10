@@ -97,19 +97,22 @@ def probe_wix_version(wix_bin: Path) -> str | None:
         command = wix_bin / executable
         if not command.is_file():
             return None
-        result = subprocess.run(
-            [str(command), "-?"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                [str(command), "-?"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return None
+        output = f"{result.stdout}\n{result.stderr}"
+        match = version_pattern.search(output)
+        if match:
+            detected_version = match.group(1)
+            continue
         if result.returncode != 0:
             return None
-        if detected_version is None:
-            output = f"{result.stdout}\n{result.stderr}"
-            match = version_pattern.search(output)
-            if match:
-                detected_version = match.group(1)
 
     return detected_version
 
