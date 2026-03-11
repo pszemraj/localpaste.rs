@@ -1,12 +1,10 @@
 # Security Configuration
 
-Scope:
-
-- Security defaults, threat model, and security-relevant env toggles are defined here.
-- Storage/backend compatibility policy is documented in [storage.md](storage.md).
-- Service operation and lock-recovery procedures are documented in [deployment.md](deployment.md).
-- Detection/runtime-provider toggles (for example `MAGIKA_FORCE_CPU`) are documented in [language-detection.md](language-detection.md).
-- Build/run command matrices are documented in [dev/devlog.md](dev/devlog.md).
+Security defaults, exposure policy, and security-relevant environment settings.
+Storage compatibility lives in [storage.md](storage.md), service operations in
+[deployment.md](deployment.md), runtime-provider toggles in
+[language-detection.md](language-detection.md), and build/run commands in
+[dev/devlog.md](dev/devlog.md).
 
 ---
 
@@ -42,8 +40,10 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 | `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind               |
 | `MAX_PASTE_SIZE`      | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend) |
 | `AUTO_BACKUP`         | disabled          | Create DB backup on startup when existing DB is present               |
+| `LOCALPASTE_VERSION_INTERVAL_SECS` | `300` | Minimum seconds between persisted historical snapshots (`>= 1`) |
+| `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` | unset | Legacy fallback key for `LOCALPASTE_VERSION_INTERVAL_SECS` |
 
-`localpaste` startup now fails fast on malformed `BIND`/`PORT`/size/boolean env values so invalid deployment configuration is explicit.
+`localpaste` startup fails fast on malformed `BIND`/`PORT`/size/boolean/snapshot-interval env values so invalid deployment configuration is explicit.
 Reference defaults/examples: [`.env.example`](../.env.example).
 
 ### Security Headers

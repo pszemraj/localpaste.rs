@@ -24,10 +24,12 @@ YAMLLINT_CONFIG = (
 )
 
 GHA_EXPR_RE = re.compile(r"\$\{\{.*?\}\}", re.DOTALL)
+INPUT_EXPR_RE = re.compile(r"\$\{\{\s*github\.event\.inputs\.[^}]+\}\}")
 PYTHON_C_RE = re.compile(r"""python3?\s+-c\s+(['"])(.*?)\1""", re.DOTALL)
 MATRIX_EXPR_RE = re.compile(
     r"^\$\{\{\s*matrix\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$"
 )
+PINNED_ACTION_RE = re.compile(r"^.+@[0-9a-fA-F]{40}$")
 POWERSHELL_TESTPATH_AND_RE = re.compile(
     r"(?<!\()Test-Path\s+\([^)]*\)\s+-and\s+(?<!\()Test-Path\s+\(",
     re.IGNORECASE,
@@ -267,6 +269,31 @@ def extract_job_run_blocks(data: dict[str, Any]) -> list[tuple[str, str, str]]:
     return blocks
 
 
+def extract_uses_steps(data: dict[str, Any]) -> list[tuple[str, str]]:
+    steps_with_uses: list[tuple[str, str]] = []
+
+    jobs = data.get("jobs")
+    if not isinstance(jobs, dict):
+        return steps_with_uses
+
+    for job_name, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+
+        steps = job.get("steps")
+        if not isinstance(steps, list):
+            continue
+
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            uses = step.get("uses")
+            if isinstance(uses, str):
+                steps_with_uses.append((f"jobs.{job_name}.steps[{index}]", uses))
+
+    return steps_with_uses
+
+
 def is_bash_shell(shell: str) -> bool:
     return normalize_shell_name(shell) == "bash"
 
@@ -471,6 +498,35 @@ def validate_release_trigger_rules(path: Path, data: dict[str, Any]) -> list[str
 
     if "workflow_dispatch" not in on_section:
         errors.append(f"{path}: release workflow must define workflow_dispatch")
+        return errors
+
+    dispatch_section = on_section.get("workflow_dispatch")
+    if not isinstance(dispatch_section, dict):
+        errors.append(f"{path}: release workflow workflow_dispatch must be a mapping")
+        return errors
+
+    inputs = dispatch_section.get("inputs")
+    if not isinstance(inputs, dict):
+        errors.append(f"{path}: release workflow workflow_dispatch.inputs must be a mapping")
+        return errors
+
+    source_mode = inputs.get("source_mode")
+    if not isinstance(source_mode, dict):
+        errors.append(
+            f"{path}: release workflow workflow_dispatch.inputs.source_mode must be a mapping"
+        )
+    elif source_mode.get("default") != "current_ref":
+        errors.append(
+            f"{path}: release workflow source_mode default must be current_ref"
+        )
+
+    dry_run = inputs.get("dry_run")
+    if not isinstance(dry_run, dict):
+        errors.append(
+            f"{path}: release workflow workflow_dispatch.inputs.dry_run must be a mapping"
+        )
+    elif dry_run.get("default") is not True:
+        errors.append(f"{path}: release workflow dry_run default must be true")
 
     return errors
 
@@ -542,12 +598,24 @@ def validate_workflow_file(path: Path) -> list[str]:
 
     run_blocks = extract_job_run_blocks(data)
     for block_path, shell, script in run_blocks:
+        if INPUT_EXPR_RE.search(script):
+            errors.append(
+                f"{path}:{block_path}: do not interpolate github.event.inputs directly into run scripts; pass them via env"
+            )
         if is_bash_shell(shell):
             errors.extend(check_bash_syntax(script, f"{path}:{block_path}"))
             errors.extend(check_python_c_snippets(script, f"{path}:{block_path}"))
         if is_pwsh_shell(shell):
             errors.extend(
                 check_powershell_command_mode_traps(script, f"{path}:{block_path}")
+            )
+
+    for step_path, uses in extract_uses_steps(data):
+        if uses.startswith("./") or uses.startswith("docker://"):
+            continue
+        if not PINNED_ACTION_RE.fullmatch(uses):
+            errors.append(
+                f"{path}:{step_path}: actions must be pinned to a full commit SHA (got {uses})"
             )
 
     return errors

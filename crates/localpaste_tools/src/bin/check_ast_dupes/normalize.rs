@@ -29,12 +29,12 @@ impl<'ast> Visit<'ast> for AstNormalizer {
     }
 
     fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
-        self.nodes.push(path_kind("path", &node.path));
+        self.push_path_node("path", &node.path);
         syn::visit::visit_expr_path(self, node);
     }
 
     fn visit_type_path(&mut self, node: &'ast syn::TypePath) {
-        self.nodes.push(path_kind("type", &node.path));
+        self.push_path_node("type", &node.path);
         syn::visit::visit_type_path(self, node);
     }
 
@@ -58,6 +58,10 @@ impl AstNormalizer {
         let next = self.ident_map.len();
         let idx = *self.ident_map.entry(key).or_insert(next);
         format!("id_{}", idx)
+    }
+
+    fn push_path_node(&mut self, prefix: &str, path: &syn::Path) {
+        self.nodes.push(path_kind(prefix, path));
     }
 }
 
@@ -225,34 +229,10 @@ struct CallRefCollector {
 impl<'ast> Visit<'ast> for CallRefCollector {
     fn visit_expr_call(&mut self, node: &'ast ExprCall) {
         if let Expr::Path(path_expr) = node.func.as_ref() {
-            let segments: Vec<String> = path_expr
-                .path
-                .segments
-                .iter()
-                .map(|segment| segment.ident.to_string())
-                .collect();
-            if !segments.is_empty() {
-                self.calls.push(CallRef {
-                    segments,
-                    is_method: false,
-                });
-            }
+            push_path_call_ref(&mut self.calls, &path_expr.path);
         }
         for arg in &node.args {
-            if let Expr::Path(path_expr) = arg {
-                let segments: Vec<String> = path_expr
-                    .path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.ident.to_string())
-                    .collect();
-                if !segments.is_empty() {
-                    self.calls.push(CallRef {
-                        segments,
-                        is_method: false,
-                    });
-                }
-            }
+            push_expr_path_call_ref(&mut self.calls, arg);
         }
         syn::visit::visit_expr_call(self, node);
     }
@@ -263,20 +243,7 @@ impl<'ast> Visit<'ast> for CallRefCollector {
             is_method: true,
         });
         for arg in &node.args {
-            if let Expr::Path(path_expr) = arg {
-                let segments: Vec<String> = path_expr
-                    .path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.ident.to_string())
-                    .collect();
-                if !segments.is_empty() {
-                    self.calls.push(CallRef {
-                        segments,
-                        is_method: false,
-                    });
-                }
-            }
+            push_expr_path_call_ref(&mut self.calls, arg);
         }
         syn::visit::visit_expr_method_call(self, node);
     }
@@ -291,6 +258,26 @@ impl<'ast> Visit<'ast> for CallRefCollector {
             });
         }
         syn::visit::visit_macro(self, node);
+    }
+}
+
+fn push_expr_path_call_ref(calls: &mut Vec<CallRef>, expr: &Expr) {
+    if let Expr::Path(path_expr) = expr {
+        push_path_call_ref(calls, &path_expr.path);
+    }
+}
+
+fn push_path_call_ref(calls: &mut Vec<CallRef>, path: &syn::Path) {
+    let segments: Vec<String> = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect();
+    if !segments.is_empty() {
+        calls.push(CallRef {
+            segments,
+            is_method: false,
+        });
     }
 }
 

@@ -8,6 +8,8 @@ pub mod constants;
 pub mod db;
 /// Language detection adapters and canonicalization.
 pub mod detection;
+/// Line-based diff helpers and API payload types.
+pub mod diff;
 /// Process-global environment mutation helpers.
 pub mod env;
 /// Application error types (storage/domain).
@@ -18,6 +20,8 @@ pub mod folder_ops;
 pub mod models;
 /// Paste naming helpers.
 pub mod naming;
+/// Locally-derived retrieval metadata.
+pub mod semantic;
 /// Shared helpers used by `localpaste_core` tests.
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -27,8 +31,9 @@ pub mod text;
 pub use config::Config;
 pub use constants::{
     API_ADDR_FILE_NAME, DB_OWNER_LOCK_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS,
-    DEFAULT_CLI_SERVER_URL, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
-    DEFAULT_SEARCH_PASTES_LIMIT,
+    DEFAULT_CLI_SERVER_URL, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_MAX_PASTE_SIZE,
+    DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PORT, DEFAULT_SEARCH_PASTES_LIMIT,
+    MAX_DIFF_INPUT_BYTES,
 };
 pub use db::Database;
 pub use detection::detect_language;

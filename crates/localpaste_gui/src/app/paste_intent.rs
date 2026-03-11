@@ -95,6 +95,10 @@ impl LocalPasteApp {
     /// # Arguments
     /// - `ctx`: Egui context used to dispatch viewport paste requests.
     pub(super) fn request_paste_as_new(&mut self, ctx: &egui::Context) {
+        if self.mutation_shortcut_block_reason().is_some() {
+            self.set_mutation_shortcut_blocked_status();
+            return;
+        }
         self.arm_paste_as_new_intent();
         self.paste_as_new_clipboard_requested_at = Some(Instant::now());
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
@@ -122,6 +126,11 @@ impl LocalPasteApp {
             })
         });
         if explicit_shortcut {
+            if self.mutation_shortcut_block_reason().is_some() {
+                self.cancel_paste_as_new_intent();
+                self.set_mutation_shortcut_blocked_status();
+                return false;
+            }
             self.arm_paste_as_new_intent();
         }
         explicit_shortcut
@@ -153,6 +162,12 @@ impl LocalPasteApp {
     ) -> bool {
         if self.paste_as_new_pending_frames == 0 {
             self.paste_as_new_clipboard_requested_at = None;
+            return false;
+        }
+        if self.mutation_shortcut_block_reason().is_some() {
+            // Detached version windows and reset fences must not let older
+            // clipboard intents materialize into a hidden new-paste mutation.
+            self.cancel_paste_as_new_intent();
             return false;
         }
         if let Some(text) = pasted_text.take() {
@@ -195,6 +210,43 @@ impl LocalPasteApp {
         pasted_text: Option<&str>,
     ) -> bool {
         request_paste_as_new && pasted_text.is_none()
+    }
+
+    /// Routes an unfocused paste event into a new paste when the global contract allows it.
+    ///
+    /// # Arguments
+    /// - `pasted_text`: Clipboard payload observed for this frame, if any.
+    /// - `editor_focus_active`: Whether the virtual editor currently owns focus.
+    /// - `wants_keyboard_input`: Whether egui reports focused text input elsewhere.
+    /// - `virtual_paste_consumed`: Whether the editor already consumed the paste event.
+    ///
+    /// # Returns
+    /// `true` when the clipboard payload was turned into `CreatePaste`.
+    pub(super) fn maybe_route_implicit_global_clipboard_create(
+        &mut self,
+        pasted_text: Option<String>,
+        editor_focus_active: bool,
+        wants_keyboard_input: bool,
+        virtual_paste_consumed: bool,
+    ) -> bool {
+        if self.mutation_shortcut_block_reason().is_some()
+            || editor_focus_active
+            || wants_keyboard_input
+            || virtual_paste_consumed
+        {
+            return false;
+        }
+        let Some(text) = pasted_text else {
+            return false;
+        };
+        if Self::should_create_paste_from_clipboard(
+            text.as_str(),
+            ClipboardCreatePolicy::ImplicitGlobalShortcut,
+        ) {
+            self.create_new_paste_with_content(text);
+            return true;
+        }
+        false
     }
 
     /// Routes plain paste shortcut behavior based on editor-focus state.
@@ -261,6 +313,9 @@ impl LocalPasteApp {
     }
 
     /// Returns whether the global delete-selected shortcut should run this frame.
+    ///
+    /// When the virtual editor owns keyboard focus, `Ctrl/Cmd+Delete` belongs to
+    /// native text-editing behavior instead of deleting the selected paste.
     ///
     /// # Arguments
     /// - `focus_state`: Focus/ownership context for the current shortcut frame.

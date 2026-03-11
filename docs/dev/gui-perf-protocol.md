@@ -1,7 +1,6 @@
 # GUI Perf Test Protocol (Rewrite)
 
-This document defines the perf validation procedure for the rewrite GUI.
-Use this protocol for release-gate evidence and regression checks.
+Release-gate evidence and regression checks for GUI perf.
 
 ## Scope
 
@@ -39,7 +38,7 @@ Minimum binaries required for this protocol:
 
 ## Runbook
 
-Use this runbook for reproducible perf checks:
+Run this for reproducible perf checks:
 Flag behavior/meanings are documented in [gui-notes.md](gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell
@@ -76,21 +75,15 @@ Run the full functional GUI checklist first:
 
 Perf gating in this protocol is based on the checks below:
 
-1. Medium (~1-10KB) code paste: typing at start/middle/end stays responsive.
-2. Large (~10-50KB) code paste: highlight remains visible while edits debounce/refresh.
-3. Large-to-very-large (~50-256KB) code paste: async/staged highlight remains stable; transient plain fallback is acceptable during refresh but should not stick.
-4. Huge (`>= 256KB`) code paste: plain fallback mode is active by design and scrolling remains smooth.
-5. Sustained typing scenario: in a 5K-50K line document, hold a key for 3 seconds near the middle; verify no visible hitching and p95 trend stays under target budget.
-6. Long-line typing scenario: open a single wrapped minified line (JSON/log payload), type near the middle, and verify no multi-frame stalls.
-7. Idle baseline scenario: open a ~200KB paste and wait without interaction; verify CPU drops near idle between repaint intervals.
-8. Long document paste (thousands of lines): rapid scroll and mid-document typing show no major hitching.
-9. Window resize reflow: no long plain-text gaps after resize.
-10. Trace sanity (when enabled):
-
-- input trace: deterministic `virtual input frame` routing outcomes
-- highlight trace: deterministic `queue -> worker_done -> apply` (or `apply_now/apply_idle`) with stale staged renders dropped.
-- editor perf trace: `virtual_input_frame`, `virtual_edit_apply`, and `virtual_editor_render` events present with non-zero timing fields while typing in virtual editor mode.
-- backend perf trace: list/search cache hit+miss counters and per-query latency logs (`localpaste_gui::backend_perf` target).
+1. Medium paste (~1-10KB): typing at start/middle/end stays responsive.
+2. Large paste (~10-50KB): highlighting stays visible while edits debounce/refresh.
+3. Very large paste (~50-256KB): async/staged highlight stays stable; transient plain fallback during refresh is acceptable but should not stick.
+4. Huge paste (`>= 256KB`): plain fallback is active by design and scrolling stays smooth.
+5. Sustained typing: in a 5K-50K line document, hold a key for 3 seconds near the middle; no visible hitching and p95 stays within gate.
+6. Long wrapped line: type near the middle of a minified JSON/log payload and verify no multi-frame stalls.
+7. Idle baseline: open ~200KB content and verify CPU drops near idle between repaint intervals.
+8. Window resize reflow: no long plain-text gaps after resize.
+9. Trace sanity (when enabled): validate `virtual input`, `highlight`, and `editor/backend perf` logs using the runtime-flag behavior in [gui-notes.md#runtime-flags](gui-notes.md#runtime-flags).
 
 ## Related Docs
 

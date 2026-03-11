@@ -180,6 +180,10 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             paste::handle_get_paste(state, id);
             true
         }
+        CoreCmd::GetDiffTargetPaste { id } => {
+            paste::handle_get_diff_target_paste(state, id);
+            true
+        }
         CoreCmd::CreatePaste { content } => {
             paste::handle_create_paste(state, content);
             true
@@ -213,6 +217,34 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
         }
         CoreCmd::DeletePaste { id } => {
             paste::handle_delete_paste(state, id);
+            true
+        }
+        CoreCmd::ListPasteVersions { id, limit } => {
+            paste::handle_list_paste_versions(state, id, limit);
+            true
+        }
+        CoreCmd::GetPasteVersion { id, version_id_ms } => {
+            paste::handle_get_paste_version(state, id, version_id_ms);
+            true
+        }
+        CoreCmd::ResetPasteHardToVersion { id, version_id_ms } => {
+            paste::handle_reset_paste_hard_to_version(state, id, version_id_ms);
+            true
+        }
+        CoreCmd::DuplicatePasteVersion {
+            id,
+            version_id_ms,
+            name,
+        } => {
+            paste::handle_duplicate_paste_version(state, id, version_id_ms, name);
+            true
+        }
+        CoreCmd::ComputeDiffPreview {
+            request_id,
+            left_text,
+            right_text,
+        } => {
+            paste::handle_compute_diff_preview(state, request_id, left_text, right_text);
             true
         }
         CoreCmd::ListFolders => {

@@ -113,10 +113,6 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("shell".to_string());
     }
 
-    if looks_like_yaml(sample) {
-        return Some("yaml".to_string());
-    }
-
     let has_toml_header = lines().any(|l| {
         let t = l.trim();
         t.starts_with('[') && t.ends_with(']') && t.len() > 2
@@ -142,8 +138,14 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("sql".to_string());
     }
 
-    if is_markdown_content(sample) {
+    let yaml_like = looks_like_yaml(sample);
+
+    if is_markdown_content(sample) && !yaml_like {
         return Some("markdown".to_string());
+    }
+
+    if yaml_like {
+        return Some("yaml".to_string());
     }
 
     let latex_hits = [

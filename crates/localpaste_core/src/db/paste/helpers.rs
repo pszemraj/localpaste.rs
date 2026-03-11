@@ -1,7 +1,9 @@
 //! Helper functions shared by paste storage operations.
 
 use crate::models::paste::*;
+use crate::semantic::{DerivedMeta, PasteKind};
 use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Converts a timestamp into a reverse-sorted key for newest-first indexes.
@@ -137,21 +139,125 @@ pub(super) fn meta_matches_filters(
 /// # Returns
 /// A non-negative score used for top-k ordering.
 pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
+    let query_lower = query_lower.trim();
+    if query_lower.is_empty() {
+        return 0;
+    }
+
     let mut score = 0;
     let canonical_query = crate::detection::canonical::canonicalize(query_lower);
-    if meta.name.to_lowercase().contains(query_lower) {
+    let name_lower = meta.name.to_lowercase();
+    let handle_lower = meta
+        .derived
+        .handle
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let term_lowers: Vec<String> = meta
+        .derived
+        .terms
+        .iter()
+        .map(|term| term.to_ascii_lowercase())
+        .collect();
+    let tag_lowers: Vec<String> = meta.tags.iter().map(|tag| tag.to_lowercase()).collect();
+    let query_terms = split_meta_query_terms(query_lower);
+    let mut matched_query_terms = 0;
+
+    if name_lower.contains(query_lower) {
+        score += 12;
+    }
+    if !handle_lower.is_empty() && handle_lower.contains(query_lower) {
         score += 10;
     }
-    if meta
-        .tags
+    if term_lowers
         .iter()
-        .any(|tag| tag.to_lowercase().contains(query_lower))
+        .any(|term_lower| term_lower.contains(query_lower))
+    {
+        score += 8;
+    }
+    if tag_lowers
+        .iter()
+        .any(|tag_lower| tag_lower.contains(query_lower))
     {
         score += 5;
     }
-    if meta
-        .language
-        .as_ref()
+    if language_matches_query(
+        meta.language.as_deref(),
+        query_lower,
+        canonical_query.as_str(),
+    ) {
+        score += 2;
+    }
+    if kind_matches_query(meta.derived.kind, query_lower) {
+        score += 3;
+    }
+
+    // Search stays metadata-only, but persisted derived semantic hints make
+    // multi-term retrieval useful without scanning full content in hot paths.
+    for term in &query_terms {
+        let mut term_matched = false;
+
+        if name_lower.contains(*term) {
+            score += 3;
+            term_matched = true;
+        }
+        if !handle_lower.is_empty() && handle_lower.contains(*term) {
+            score += 4;
+            term_matched = true;
+        }
+        if term_lowers
+            .iter()
+            .any(|candidate| candidate.contains(*term))
+        {
+            score += 3;
+            term_matched = true;
+        }
+        if tag_lowers.iter().any(|tag_lower| tag_lower.contains(*term)) {
+            score += 2;
+            term_matched = true;
+        }
+        if kind_matches_query(meta.derived.kind, term) {
+            score += 1;
+            term_matched = true;
+        }
+        if language_matches_query(meta.language.as_deref(), term, term) {
+            score += 1;
+            term_matched = true;
+        }
+
+        if term_matched {
+            matched_query_terms += 1;
+        }
+    }
+
+    if matched_query_terms > 1 {
+        // Multi-term retrieval should prefer rows that cover more of the
+        // query intent across metadata signals instead of over-rewarding one
+        // strong partial match.
+        score += matched_query_terms * 2;
+    }
+
+    score
+}
+
+fn split_meta_query_terms(query_lower: &str) -> Vec<&str> {
+    let mut terms = Vec::new();
+    for term in query_lower.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+    {
+        if term.len() < 2 || terms.contains(&term) {
+            continue;
+        }
+        terms.push(term);
+    }
+    terms
+}
+
+fn language_matches_query(
+    language: Option<&str>,
+    query_lower: &str,
+    canonical_query: &str,
+) -> bool {
+    language
         .map(|lang| {
             let language_lower = lang.to_lowercase();
             let canonical_language = crate::detection::canonical::canonicalize(lang);
@@ -161,10 +267,14 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
                     && (language_lower == canonical_query || canonical_language == canonical_query))
         })
         .unwrap_or(false)
-    {
-        score += 2;
-    }
-    score
+}
+
+fn kind_matches_query(kind: PasteKind, query_lower: &str) -> bool {
+    kind != PasteKind::Other
+        && kind
+            .label()
+            .to_ascii_lowercase()
+            .contains(query_lower.trim())
 }
 
 /// Scores a full paste row for search ranking.
@@ -306,11 +416,7 @@ pub(super) fn folder_matches_expected(
 /// Returns the primary deserialization error when neither current nor legacy
 /// wire formats can be decoded.
 pub(crate) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
-    bincode::deserialize::<Paste>(bytes).or_else(|err| {
-        bincode::deserialize::<LegacyPaste>(bytes)
-            .map(Paste::from)
-            .map_err(|_| err)
-    })
+    deserialize_current_or_legacy::<Paste, LegacyPaste>(bytes, Paste::from)
 }
 
 /// Deserializes a [`PasteMeta`] row from storage bytes.
@@ -321,7 +427,22 @@ pub(crate) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
 /// # Errors
 /// Returns a bincode error when the row bytes are malformed or incompatible.
 pub(super) fn deserialize_meta(bytes: &[u8]) -> Result<PasteMeta, bincode::Error> {
-    bincode::deserialize(bytes)
+    deserialize_current_or_legacy::<PasteMeta, LegacyPasteMeta>(bytes, PasteMeta::from)
+}
+
+fn deserialize_current_or_legacy<T, L>(
+    bytes: &[u8],
+    upgrade_legacy: impl FnOnce(L) -> T,
+) -> Result<T, bincode::Error>
+where
+    T: DeserializeOwned,
+    L: DeserializeOwned,
+{
+    bincode::deserialize::<T>(bytes).or_else(|err| {
+        bincode::deserialize::<L>(bytes)
+            .map(upgrade_legacy)
+            .map_err(|_| err)
+    })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -334,6 +455,18 @@ struct LegacyPaste {
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     tags: Vec<String>,
+    is_markdown: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LegacyPasteMeta {
+    id: String,
+    name: String,
+    language: Option<String>,
+    folder_id: Option<String>,
+    updated_at: DateTime<Utc>,
+    tags: Vec<String>,
+    content_len: usize,
     is_markdown: bool,
 }
 
@@ -368,10 +501,37 @@ impl From<LegacyPaste> for Paste {
     }
 }
 
+impl From<LegacyPasteMeta> for PasteMeta {
+    fn from(old: LegacyPasteMeta) -> Self {
+        let LegacyPasteMeta {
+            id,
+            name,
+            language,
+            folder_id,
+            updated_at,
+            tags,
+            content_len,
+            is_markdown,
+        } = old;
+        Self {
+            id,
+            name,
+            language,
+            folder_id,
+            updated_at,
+            tags,
+            content_len,
+            is_markdown,
+            derived: DerivedMeta::default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_update_request, reverse_timestamp_key, score_meta_match, LegacyPaste, Paste,
+        apply_update_request, reverse_timestamp_key, score_meta_match, split_meta_query_terms,
+        DerivedMeta, LegacyPaste, LegacyPasteMeta, Paste, PasteKind,
     };
     use crate::models::paste::{PasteMeta, UpdatePasteRequest};
     use chrono::{TimeZone, Utc};
@@ -467,6 +627,7 @@ mod tests {
             tags: Vec::new(),
             content_len: 10,
             is_markdown: false,
+            derived: DerivedMeta::default(),
         };
 
         let cs_meta = PasteMeta {
@@ -483,7 +644,86 @@ mod tests {
         };
 
         assert_eq!(score_meta_match(&cs_meta, "csharp"), 2);
-        assert_eq!(score_meta_match(&csharp_meta, "cs"), 2);
+        assert_eq!(score_meta_match(&csharp_meta, "cs"), 3);
         assert_eq!(score_meta_match(&css_meta, "csharp"), 0);
+    }
+
+    #[test]
+    fn score_meta_match_prefers_handle_then_terms_then_tags_then_language() {
+        let base = PasteMeta {
+            id: "id-1".to_string(),
+            name: "random-slug".to_string(),
+            language: None,
+            folder_id: None,
+            updated_at: Utc::now(),
+            tags: Vec::new(),
+            content_len: 10,
+            is_markdown: false,
+            derived: DerivedMeta::default(),
+        };
+
+        let by_handle = PasteMeta {
+            derived: DerivedMeta {
+                kind: PasteKind::Code,
+                handle: Some("cargo test".to_string()),
+                terms: Vec::new(),
+            },
+            ..base.clone()
+        };
+        let by_terms = PasteMeta {
+            derived: DerivedMeta {
+                kind: PasteKind::Code,
+                handle: None,
+                terms: vec!["cargo".to_string(), "test".to_string()],
+            },
+            ..base.clone()
+        };
+        let by_tag = PasteMeta {
+            tags: vec!["cargo-test".to_string()],
+            ..base.clone()
+        };
+        let by_language = PasteMeta {
+            language: Some("test".to_string()),
+            ..base
+        };
+
+        let handle_score = score_meta_match(&by_handle, "cargo test");
+        let term_score = score_meta_match(&by_terms, "cargo test");
+        let tag_score = score_meta_match(&by_tag, "cargo test");
+        let language_score = score_meta_match(&by_language, "test");
+
+        assert!(handle_score > term_score);
+        assert!(term_score > tag_score);
+        assert!(tag_score > language_score);
+    }
+
+    #[test]
+    fn deserialize_meta_accepts_legacy_rows_without_derived_fields() {
+        let legacy = LegacyPasteMeta {
+            id: "id".to_string(),
+            name: "legacy".to_string(),
+            language: Some("python".to_string()),
+            folder_id: None,
+            updated_at: Utc::now(),
+            tags: vec!["tag".to_string()],
+            content_len: 8,
+            is_markdown: false,
+        };
+        let encoded = bincode::serialize(&legacy).expect("serialize");
+        let decoded = super::deserialize_meta(&encoded).expect("decode");
+        assert_eq!(decoded.name, "legacy");
+        assert_eq!(decoded.derived, DerivedMeta::default());
+    }
+
+    #[test]
+    fn split_meta_query_terms_dedupes_and_skips_short_tokens() {
+        assert_eq!(
+            split_meta_query_terms(" cargo test  c c cargo "),
+            vec!["cargo", "test"]
+        );
+        assert_eq!(
+            split_meta_query_terms("docker-compose postgres"),
+            vec!["docker-compose", "postgres"]
+        );
     }
 }

@@ -6,6 +6,21 @@ use eframe::egui::{self, RichText};
 const APP_VERSION_LABEL: &str = concat!("- v", env!("CARGO_PKG_VERSION"));
 const SIDEBAR_LANGUAGE_COLUMN_WIDTH: f32 = 84.0;
 
+fn sidebar_hover_text(paste: &PasteSummary) -> String {
+    let mut lines = vec![paste.name.clone()];
+    let derived = &paste.derived;
+    if derived.handle.is_some() || !derived.terms.is_empty() {
+        lines.push(format!("Kind: {}", derived.kind.label()));
+        if let Some(handle) = &derived.handle {
+            lines.push(format!("Handle: {}", handle));
+        }
+        if !derived.terms.is_empty() {
+            lines.push(format!("Terms: {}", derived.terms.join(", ")));
+        }
+    }
+    lines.join("\n")
+}
+
 fn sidebar_row_text_rects(
     row_rect: egui::Rect,
     padding_x: f32,
@@ -30,14 +45,23 @@ impl LocalPasteApp {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading(RichText::new("LocalPaste.rs").color(COLOR_ACCENT));
+                    ui.heading(RichText::new("LocalPaste.rs").color(COLOR_ACCENT_TEXT));
                     ui.label(
                         RichText::new(APP_VERSION_LABEL)
                             .small()
                             .color(COLOR_TEXT_MUTED),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Shortcuts (F1)").clicked() {
+                        // Background chrome should not enter egui's keyboard focus ring while the
+                        // editor owns arrow/home/end navigation on muscle memory.
+                        if ui
+                            .add(
+                                egui::Button::new("Shortcuts (F1)")
+                                    .small()
+                                    .sense(non_focusable_click_sense()),
+                            )
+                            .clicked()
+                        {
                             self.shortcut_help_open = true;
                         }
                     });
@@ -50,6 +74,8 @@ impl LocalPasteApp {
         egui::SidePanel::left("sidebar")
             .default_width(300.0)
             .show(ctx, |ui| {
+                let mutation_block_reason = self.mutation_shortcut_block_reason();
+                let background_mutation_blocked = mutation_block_reason.is_some();
                 ui.heading(
                     RichText::new(format!(
                         "Pastes ({}/{})",
@@ -76,16 +102,29 @@ impl LocalPasteApp {
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("+ New Paste").clicked() {
+                    if ui
+                        .add_enabled(
+                            !background_mutation_blocked,
+                            egui::Button::new("+ New Paste").sense(non_focusable_click_sense()),
+                        )
+                        .clicked()
+                    {
                         self.create_new_paste();
                     }
                     if ui
-                        .add_enabled(self.selected_id.is_some(), egui::Button::new("Delete"))
+                        .add_enabled(
+                            self.selected_id.is_some() && !background_mutation_blocked,
+                            egui::Button::new("Delete").sense(non_focusable_click_sense()),
+                        )
                         .clicked()
                     {
                         self.delete_selected();
                     }
                 });
+                if let Some(reason) = mutation_block_reason {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(reason).small().color(COLOR_TEXT_MUTED));
+                }
 
                 ui.add_space(10.0);
                 self.render_collection_filters(ui);
@@ -94,6 +133,7 @@ impl LocalPasteApp {
                 ui.separator();
                 ui.add_space(4.0);
                 let mut pending_select: Option<String> = None;
+                let selection_blocked = self.selection_transition_block_reason().is_some();
                 let row_height = ui.spacing().interact_size.y;
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
@@ -142,8 +182,15 @@ impl LocalPasteApp {
                                     COLOR_TEXT_MUTED,
                                 );
 
-                                if row_response.on_hover_text(paste.name.as_str()).clicked() {
-                                    pending_select = Some(paste.id.clone());
+                                if row_response
+                                    .on_hover_text(sidebar_hover_text(paste))
+                                    .clicked()
+                                {
+                                    if selection_blocked {
+                                        self.set_selection_transition_blocked_status();
+                                    } else {
+                                        pending_select = Some(paste.id.clone());
+                                    }
                                 }
                             }
                         }
@@ -285,29 +332,58 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::sidebar_row_text_rects;
+    use super::{sidebar_hover_text, sidebar_row_text_rects};
     use eframe::egui;
 
     #[test]
-    fn sidebar_row_text_layout_preserves_left_title_and_right_language_columns() {
-        let row_rect = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(300.0, 28.0));
-        let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0);
+    fn sidebar_row_text_layout_matrix() {
+        let cases = [
+            (
+                egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(300.0, 28.0)),
+                18.0,
+                Some(302.0),
+            ),
+            (
+                egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(80.0, 28.0)),
+                8.0,
+                Some(72.0),
+            ),
+        ];
 
-        assert!((title_rect.left() - 18.0).abs() < f32::EPSILON);
-        assert!((lang_rect.right() - 302.0).abs() < f32::EPSILON);
-        assert!(title_rect.right() <= lang_rect.left());
-        assert!(title_rect.width() > 0.0);
-        assert!(lang_rect.width() > 0.0);
+        for (row_rect, expected_title_left, expected_lang_right) in cases {
+            let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0);
+
+            assert!((title_rect.left() - expected_title_left).abs() < f32::EPSILON);
+            assert!(title_rect.width() >= 0.0);
+            assert!(lang_rect.left() >= title_rect.left());
+            assert!(title_rect.right() <= lang_rect.left());
+            assert!(lang_rect.width() > 0.0);
+            if let Some(expected_lang_right) = expected_lang_right {
+                assert!((lang_rect.right() - expected_lang_right).abs() < f32::EPSILON);
+            }
+        }
     }
 
     #[test]
-    fn sidebar_row_text_layout_clamps_when_sidebar_is_very_narrow() {
-        let row_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(80.0, 28.0));
-        let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0);
-
-        assert!((title_rect.left() - 8.0).abs() < f32::EPSILON);
-        assert!(title_rect.width() >= 0.0);
-        assert!(lang_rect.left() >= title_rect.left());
-        assert!(lang_rect.right() <= 72.0);
+    fn sidebar_hover_text_includes_derived_retrieval_hints_when_present() {
+        let summary = crate::backend::PasteSummary {
+            id: "id".to_string(),
+            name: "untamed-tundra".to_string(),
+            language: Some("rust".to_string()),
+            content_len: 10,
+            updated_at: chrono::Utc::now(),
+            folder_id: None,
+            tags: Vec::new(),
+            derived: localpaste_core::semantic::DerivedMeta {
+                kind: localpaste_core::semantic::PasteKind::Code,
+                handle: Some("fn handle_request".to_string()),
+                terms: vec!["fsdp2".to_string(), "cublaslt".to_string()],
+            },
+        };
+        let tooltip = sidebar_hover_text(&summary);
+        assert!(tooltip.contains("untamed-tundra"));
+        assert!(tooltip.contains("Kind: Code"));
+        assert!(tooltip.contains("Handle: fn handle_request"));
+        assert!(tooltip.contains("Terms: fsdp2, cublaslt"));
     }
 }

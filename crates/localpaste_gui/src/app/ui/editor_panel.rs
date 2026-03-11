@@ -1,9 +1,9 @@
 //! Central editor panel rendering for virtual preview and virtual editor modes.
 
 use super::super::*;
+use super::editor_panel_virtual::VirtualEditorRenderOptions;
 use super::properties_drawer::{
-    apply_language_choice, auto_language_choice_key, auto_language_status_label,
-    selected_language_choice_text,
+    apply_language_choice, auto_language_choice_key, render_language_choice_combo,
 };
 use eframe::egui;
 
@@ -17,10 +17,17 @@ impl LocalPasteApp {
             let selected_meta = self.selected_paste.as_ref().map(|paste| paste.id.clone());
 
             if let Some(id) = selected_meta {
+                let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+                let editor_had_virtual_focus = self.editor_mode == EditorMode::VirtualEditor
+                    && (self.virtual_editor_state.has_focus
+                        || ctx.memory(|m| m.has_focus(editor_id)));
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
-
+                let mutation_block_reason = self.mutation_shortcut_block_reason();
+                let save_blocked = self.save_block_reason().is_some();
+                let background_mutation_blocked = mutation_block_reason.is_some();
+                let mut preserve_virtual_editor_focus = false;
                 let mut pending_tag_search: Option<String> = None;
                 let mut apply_metadata = false;
                 let mut copy_requested = false;
@@ -32,114 +39,111 @@ impl LocalPasteApp {
                 ui.scope(|ui| {
                     apply_compact_meta_row_style(ui);
                     ui.horizontal_wrapped(|ui| {
-                        let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
-                        let name_response = ui.add(
-                            egui::TextEdit::singleline(&mut self.edit_name)
-                                .font(egui::TextStyle::Button)
-                                .desired_width(title_width)
-                                .hint_text("Untitled paste"),
-                        );
-                        if name_response.changed() {
-                            self.metadata_dirty = true;
-                        }
-                        if name_response.lost_focus() && self.metadata_dirty {
-                            apply_metadata = true;
-                        }
-                        if name_response.has_focus()
-                            && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                        {
-                            apply_metadata = true;
-                        }
-                        if name_response.has_focus()
-                            && ui.input(|input| input.key_pressed(egui::Key::Escape))
-                        {
-                            if let Some(paste) = self.selected_paste.as_ref() {
-                                self.edit_name = paste.name.clone();
-                                self.metadata_dirty = self.edit_name != paste.name
-                                    || self.edit_language != paste.language
-                                    || self.edit_language_is_manual != paste.language_is_manual
-                                    || self.edit_tags != paste.tags.join(", ");
-                            }
-                        }
-
-                        let current_manual_value = self
-                            .edit_language
-                            .as_deref()
-                            .map(localpaste_core::detection::canonical::canonicalize)
-                            .filter(|value| !value.is_empty())
-                            .unwrap_or_else(|| "text".to_string());
-                        let mut language_choice = if self.edit_language_is_manual {
-                            current_manual_value.clone()
-                        } else {
-                            auto_language_choice_key().to_string()
-                        };
-                        let previous_language_choice = language_choice.clone();
-                        let auto_label = auto_language_status_label();
-                        let selected_language_text = selected_language_choice_text(
-                            language_choice.as_str(),
-                            auto_label.as_str(),
-                        );
-                        egui::ComboBox::from_id_salt("header_language_select")
-                            .selected_text(selected_language_text)
-                            .width(160.0)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut language_choice,
-                                    auto_language_choice_key().to_string(),
-                                    "Auto",
-                                );
-                                for option in
-                                    localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
-                                {
-                                    ui.selectable_value(
-                                        &mut language_choice,
-                                        option.value.to_string(),
-                                        option.label,
-                                    );
-                                }
-                            });
-                        if language_choice != previous_language_choice {
-                            apply_language_choice(
-                                &mut self.edit_language_is_manual,
-                                &mut self.edit_language,
-                                &mut self.metadata_dirty,
-                                language_choice.as_str(),
-                                current_manual_value.as_str(),
+                        ui.add_enabled_ui(!background_mutation_blocked, |ui| {
+                            let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
+                            let name_response = ui.add(
+                                egui::TextEdit::singleline(&mut self.edit_name)
+                                    .font(egui::TextStyle::Button)
+                                    .desired_width(title_width)
+                                    .hint_text("Untitled paste"),
                             );
-                        }
+                            if name_response.changed() {
+                                self.metadata_dirty = true;
+                            }
+                            if name_response.lost_focus() && self.metadata_dirty {
+                                apply_metadata = true;
+                            }
+                            if name_response.has_focus()
+                                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                            {
+                                apply_metadata = true;
+                            }
+                            if name_response.has_focus()
+                                && ui.input(|input| input.key_pressed(egui::Key::Escape))
+                            {
+                                if let Some(paste) = self.selected_paste.as_ref() {
+                                    self.edit_name = paste.name.clone();
+                                    self.metadata_dirty = self.edit_name != paste.name
+                                        || self.edit_language != paste.language
+                                        || self.edit_language_is_manual != paste.language_is_manual
+                                        || self.edit_tags != paste.tags.join(", ");
+                                }
+                            }
+
+                            let current_manual_value = self
+                                .edit_language
+                                .as_deref()
+                                .map(localpaste_core::detection::canonical::canonicalize)
+                                .filter(|value| !value.is_empty())
+                                .unwrap_or_else(|| "text".to_string());
+                            let mut language_choice = if self.edit_language_is_manual {
+                                current_manual_value.clone()
+                            } else {
+                                auto_language_choice_key().to_string()
+                            };
+                            let previous_language_choice = language_choice.clone();
+                            render_language_choice_combo(
+                                ui,
+                                "header_language_select",
+                                Some(160.0),
+                                &mut language_choice,
+                            );
+                            if language_choice != previous_language_choice {
+                                apply_language_choice(
+                                    &mut self.edit_language_is_manual,
+                                    &mut self.edit_language,
+                                    &mut self.metadata_dirty,
+                                    language_choice.as_str(),
+                                    current_manual_value.as_str(),
+                                );
+                            }
+                        });
                         for tag in &visible_tags {
-                            if ui.small_button(format!("#{}", tag)).clicked() {
+                            if non_focusable_small_toolbar_button(ui, format!("#{}", tag)).clicked()
+                            {
                                 pending_tag_search = Some(tag.clone());
                             }
                         }
                         ui.separator();
                         if ui
                             .add_enabled(
-                                self.metadata_dirty && !self.metadata_save_in_flight,
-                                egui::Button::new("Apply"),
+                                !save_blocked && self.metadata_dirty && !self.metadata_save_in_flight,
+                                toolbar_button("Apply"),
                             )
                             .clicked()
                         {
                             apply_metadata = true;
                         }
-                        if ui.small_button("Copy").clicked() {
+                        if non_focusable_small_toolbar_button(ui, "Copy").clicked() {
                             copy_requested = true;
+                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
-                        if ui.small_button("Copy Link").clicked() {
+                        if non_focusable_small_toolbar_button(ui, "Copy Link").clicked() {
                             copy_link_requested = true;
+                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
-                        if ui.small_button("Duplicate").clicked() {
+                        if ui
+                            .add_enabled(!background_mutation_blocked, toolbar_button("Duplicate"))
+                            .clicked()
+                        {
                             duplicate_requested = true;
+                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
-                        if ui.small_button("Export").clicked() {
+                        if non_focusable_small_toolbar_button(ui, "Export").clicked() {
                             export_requested = true;
+                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
-                        if ui.small_button("Properties").clicked() {
+                        if non_focusable_small_toolbar_button(ui, "Properties").clicked() {
                             open_properties = true;
                         }
-                        if ui.small_button("Delete").clicked() {
+                        if ui
+                            .add_enabled(!background_mutation_blocked, toolbar_button("Delete"))
+                            .clicked()
+                        {
                             delete_requested = true;
                         }
+                        preserve_virtual_editor_focus |=
+                            self.render_version_toolbar(ui, editor_had_virtual_focus);
                     });
                 });
                 if let Some(tag) = pending_tag_search {
@@ -177,6 +181,12 @@ impl LocalPasteApp {
                         .monospace()
                         .color(COLOR_TEXT_MUTED),
                 );
+                if let Some(reason) = mutation_block_reason {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(reason).small().color(COLOR_TEXT_MUTED),
+                    );
+                }
                 ui.add_space(6.0);
                 let editor_height = ui.available_height();
                 let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
@@ -319,6 +329,9 @@ impl LocalPasteApp {
                         }
                     });
                 let row_height = ui.text_style_height(&editor_style);
+                if preserve_virtual_editor_focus {
+                    self.focus_editor_next = true;
+                }
 
                 let scroll = egui::ScrollArea::vertical()
                     .id_salt("editor_scroll")
@@ -339,8 +352,11 @@ impl LocalPasteApp {
                         row_height,
                         editor_height,
                         &editor_font,
-                        highlight_render_match,
-                        use_plain,
+                        VirtualEditorRenderOptions {
+                            highlight_render_match,
+                            use_plain,
+                            preserve_focus_from_editor_chrome: preserve_virtual_editor_focus,
+                        },
                     );
                 } else {
                     // Defensive fallback for impossible mode values.
@@ -348,6 +364,7 @@ impl LocalPasteApp {
                     scroll.show(ui, |_| {});
                 }
                 self.highlight_render = highlight_render;
+                self.render_version_dialogs(ctx);
             } else if self.selected_id.is_some() {
                 self.virtual_editor_active = false;
                 ui.label(RichText::new("Loading paste...").color(COLOR_TEXT_MUTED));
@@ -357,6 +374,17 @@ impl LocalPasteApp {
             }
         });
     }
+}
+
+fn toolbar_button(label: impl Into<egui::WidgetText>) -> egui::Button<'static> {
+    egui::Button::new(label).sense(non_focusable_click_sense())
+}
+
+fn non_focusable_small_toolbar_button(
+    ui: &mut egui::Ui,
+    label: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.add(toolbar_button(label).small())
 }
 
 fn compact_header_tags(input: &str) -> Vec<String> {

@@ -1,9 +1,10 @@
 //! Paste CRUD command handlers for the GUI backend worker.
 
 use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerState};
-use crate::backend::{CoreErrorSource, CoreEvent};
+use crate::backend::{CoreErrorSource, CoreEvent, VERSION_WORKFLOW_LIST_LIMIT};
 use localpaste_core::{
     db::TransactionOps,
+    diff::{unified_diff_lines, DiffResponse},
     folder_ops::map_missing_folder_for_optional_request,
     models::paste::{self, UpdatePasteRequest},
     naming,
@@ -11,25 +12,65 @@ use localpaste_core::{
 use ropey::Rope;
 use tracing::error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasteLoadRoute {
+    Selection,
+    DiffTarget,
+}
+
 /// Fetches a paste by id and emits load/missing/error events.
 ///
 /// # Arguments
 /// - `state`: Worker state containing db and event channel handles.
 /// - `id`: Paste id to load.
 pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
+    handle_get_paste_for_route(state, id, PasteLoadRoute::Selection);
+}
+
+/// Fetches a detached diff target paste by id and emits diff-specific events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Paste id to load for detached comparison.
+pub(super) fn handle_get_diff_target_paste(state: &mut WorkerState, id: String) {
+    handle_get_paste_for_route(state, id, PasteLoadRoute::DiffTarget);
+}
+
+fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteLoadRoute) {
     match state.db.pastes.get(&id) {
         Ok(Some(paste)) => {
-            let _ = state.evt_tx.send(CoreEvent::PasteLoaded { paste });
+            let event = match route {
+                PasteLoadRoute::Selection => CoreEvent::PasteLoaded { paste },
+                PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetLoaded { paste },
+            };
+            let _ = state.evt_tx.send(event);
         }
         Ok(None) => {
-            let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+            let event = match route {
+                PasteLoadRoute::Selection => CoreEvent::PasteMissing { id },
+                PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetMissing { id },
+            };
+            let _ = state.evt_tx.send(event);
         }
         Err(err) => {
-            error!("backend get failed: {}", err);
-            let _ = state.evt_tx.send(CoreEvent::PasteLoadFailed {
-                id,
-                message: format!("Get failed: {}", err),
-            });
+            let (log_label, event) = match route {
+                PasteLoadRoute::Selection => (
+                    "backend get failed",
+                    CoreEvent::PasteLoadFailed {
+                        id,
+                        message: format!("Get failed: {}", err),
+                    },
+                ),
+                PasteLoadRoute::DiffTarget => (
+                    "backend diff target get failed",
+                    CoreEvent::DiffTargetLoadFailed {
+                        id,
+                        message: format!("Diff load failed: {}", err),
+                    },
+                ),
+            };
+            error!("{}: {}", log_label, err);
+            let _ = state.evt_tx.send(event);
         }
     }
 }
@@ -314,4 +355,222 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
             );
         }
     }
+}
+
+/// Lists historical versions for a paste and emits version events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Paste id to inspect.
+/// - `limit`: Maximum version rows to return.
+pub(super) fn handle_list_paste_versions(state: &mut WorkerState, id: String, limit: usize) {
+    match state.db.pastes.list_versions(id.as_str(), Some(limit)) {
+        Ok(Some(items)) => {
+            let _ = state
+                .evt_tx
+                .send(CoreEvent::PasteVersionsLoaded { id, items });
+        }
+        Ok(None) => {
+            let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+        }
+        Err(err) => {
+            error!("backend list versions failed: {}", err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("List versions failed: {}", err),
+            );
+        }
+    }
+}
+
+/// Loads one historical version snapshot and emits version load/missing events.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Paste id to inspect.
+/// - `version_id_ms`: Historical version id to load.
+pub(super) fn handle_get_paste_version(state: &mut WorkerState, id: String, version_id_ms: u64) {
+    match state.db.pastes.get_version(id.as_str(), version_id_ms) {
+        Ok(Some(snapshot)) => {
+            let _ = state
+                .evt_tx
+                .send(CoreEvent::PasteVersionLoaded { snapshot });
+        }
+        Ok(None) => match state.db.pastes.get(id.as_str()) {
+            Ok(Some(_)) => {
+                let message = format!("Version {} not found for paste {}.", version_id_ms, id);
+                let _ = state.evt_tx.send(CoreEvent::PasteVersionLoadFailed {
+                    paste_id: id,
+                    version_id_ms,
+                    message,
+                });
+            }
+            Ok(None) => {
+                let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+            }
+            Err(err) => {
+                let _ = state.evt_tx.send(CoreEvent::PasteVersionLoadFailed {
+                    paste_id: id,
+                    version_id_ms,
+                    message: format!("Get version failed: {}", err),
+                });
+            }
+        },
+        Err(err) => {
+            error!("backend get version failed: {}", err);
+            let _ = state.evt_tx.send(CoreEvent::PasteVersionLoadFailed {
+                paste_id: id,
+                version_id_ms,
+                message: format!("Get version failed: {}", err),
+            });
+        }
+    }
+}
+
+/// Resets current paste content to a historical version.
+///
+/// # Arguments
+/// - `state`: Worker state containing db, locks, and event channel handles.
+/// - `id`: Target paste id.
+/// - `version_id_ms`: Historical version id used as reset target.
+pub(super) fn handle_reset_paste_hard_to_version(
+    state: &mut WorkerState,
+    id: String,
+    version_id_ms: u64,
+) {
+    let reset_result = {
+        let _mutation_guard = match localpaste_server::locks::acquire_paste_mutation_guard(
+            state.locks.as_ref(),
+            id.as_str(),
+            "Paste is currently open for editing.",
+            Some(&state.lock_owner_id),
+        ) {
+            Ok(guard) => guard,
+            Err(err) => {
+                send_error(
+                    &state.evt_tx,
+                    CoreErrorSource::SaveContent,
+                    format!("Reset hard failed: {}", err),
+                );
+                return;
+            }
+        };
+        state
+            .db
+            .pastes
+            .reset_hard_to_version(id.as_str(), version_id_ms, state.max_paste_size)
+    };
+
+    match reset_result {
+        Ok(Some(paste)) => {
+            state.query_cache.invalidate();
+            let _ = state.evt_tx.send(CoreEvent::PasteResetToVersion { paste });
+            // Reset refresh should preserve the same history window depth the GUI
+            // requested for detached version workflows.
+            handle_list_paste_versions(state, id, VERSION_WORKFLOW_LIST_LIMIT);
+        }
+        Ok(None) => match state.db.pastes.get(id.as_str()) {
+            Ok(Some(_)) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::SaveContent,
+                format!("Reset hard failed: version {} not found.", version_id_ms),
+            ),
+            Ok(None) => {
+                let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+            }
+            Err(err) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::SaveContent,
+                format!("Reset hard failed: {}", err),
+            ),
+        },
+        Err(err) => {
+            error!("backend reset hard failed: {}", err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::SaveContent,
+                format!("Reset hard failed: {}", err),
+            );
+        }
+    }
+}
+
+/// Duplicates a historical version into a new paste.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Source paste id.
+/// - `version_id_ms`: Source historical version id.
+/// - `name`: Optional explicit name for the duplicate.
+pub(super) fn handle_duplicate_paste_version(
+    state: &mut WorkerState,
+    id: String,
+    version_id_ms: u64,
+    name: Option<String>,
+) {
+    match state.db.pastes.duplicate_from_version(
+        id.as_str(),
+        version_id_ms,
+        state.max_paste_size,
+        name,
+    ) {
+        Ok(Some(paste)) => {
+            state.query_cache.invalidate();
+            let _ = state.evt_tx.send(CoreEvent::PasteCreated { paste });
+        }
+        Ok(None) => match state.db.pastes.get(id.as_str()) {
+            Ok(Some(_)) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!(
+                    "Duplicate version failed: version {} not found.",
+                    version_id_ms
+                ),
+            ),
+            Ok(None) => {
+                let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
+            }
+            Err(err) => send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Duplicate version failed: {}", err),
+            ),
+        },
+        Err(err) => {
+            error!("backend duplicate version failed: {}", err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Duplicate version failed: {}", err),
+            );
+        }
+    }
+}
+
+/// Computes a diff preview from explicit left/right text snapshots off the UI thread.
+///
+/// # Arguments
+/// - `state`: Worker state containing event channel handles.
+/// - `request_id`: Caller-owned request token used to drop stale preview results.
+/// - `left_text`: Frozen current-editor snapshot for the diff left side.
+/// - `right_text`: Frozen comparison target snapshot for the diff right side.
+pub(super) fn handle_compute_diff_preview(
+    state: &mut WorkerState,
+    request_id: u64,
+    left_text: String,
+    right_text: String,
+) {
+    let equal = left_text == right_text;
+    let diff = DiffResponse {
+        equal,
+        unified: if equal {
+            Vec::new()
+        } else {
+            unified_diff_lines(left_text.as_str(), right_text.as_str())
+        },
+    };
+    let _ = state
+        .evt_tx
+        .send(CoreEvent::DiffPreviewComputed { request_id, diff });
 }

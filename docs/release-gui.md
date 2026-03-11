@@ -1,8 +1,6 @@
 # GUI Release Pipeline
 
-This document defines release pipeline behavior for GUI packaging and publication.
-
-Primary implementation:
+Workflow and helper-script entrypoints:
 
 - [`.github/workflows/release-gui.yml`](../.github/workflows/release-gui.yml)
 - [`.github/workflows/verify-gui-packaging.yml`](../.github/workflows/verify-gui-packaging.yml)
@@ -13,8 +11,30 @@ Primary implementation:
 
 `release-gui.yml` supports two source modes:
 
-- `release_tag`: package from an existing `v*` tag and publish assets.
-- `current_ref`: package from the current commit for verification; publish job is skipped.
+- `release_tag`: package from an existing stable tag/version.
+- `current_ref`: package from the current commit for verification; publish job is skipped and packaging metadata is derived from the workspace semver (stable or prerelease).
+
+Manual `workflow_dispatch` defaults to the safe verification path:
+
+- `source_mode: current_ref`
+- `dry_run: true`
+
+To publish from a manual run, the operator must explicitly choose `release_tag`,
+provide a stable release tag/version (`vX.Y.Z` or `X.Y.Z`), and set `dry_run`
+to `false`.
+
+`verify-gui-packaging.yml` follows the same split:
+
+- explicit `tag` input remains stable-only,
+- empty `tag` derives packaging metadata from `[workspace.package].version`, including prerelease workspace versions used for smoke/verification branches.
+
+When packaging metadata comes from a prerelease workspace version, artifact
+names and manifests keep the full prerelease tag. Windows packager config uses
+the numeric `major.minor.patch` core only, because WiX/MSI product versions do
+not accept prerelease/build metadata.
+
+`release_tag` publishes on tag-triggered runs and on manual runs where
+`dry_run` is `false`.
 
 `release_tag` gates:
 
@@ -52,8 +72,6 @@ Release/packaging workflows enforce these baseline controls:
 - Immutable action pinning (`uses:` entries pinned to commit SHAs) for release-critical jobs.
 - Deterministic source checkout for packaging jobs via resolved `SOURCE_REF` (no selective tree overlay from a different ref).
 - Windows WiX toolchain pinning (`3.14.1`) plus major-version assertion in `release_gui_prepare.py`.
-
-These controls are part of the release contract and should be preserved when editing release workflows.
 
 ## macOS Signing And Notarization
 

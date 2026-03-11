@@ -13,6 +13,10 @@ mod tests;
 /// # Returns
 /// Canonicalized language label when detection succeeds, otherwise `None`.
 pub fn detect_language(content: &str) -> Option<String> {
+    if markdown_fence_override_applies(content) {
+        return Some("markdown".to_string());
+    }
+
     #[cfg(feature = "magika")]
     {
         if let Some(label) = magika::detect(content) {
@@ -28,10 +32,83 @@ pub fn detect_language(content: &str) -> Option<String> {
         .filter(|label| !label.is_empty() && label != "text")
 }
 
-#[cfg(feature = "magika")]
+#[derive(Clone, Copy)]
+struct MarkdownFence {
+    marker: char,
+    len: usize,
+}
+
+fn markdown_fence_override_applies(content: &str) -> bool {
+    if !crate::models::paste::is_markdown_content(content) {
+        return false;
+    }
+    is_standalone_fenced_markdown_block(content)
+}
+
+fn is_standalone_fenced_markdown_block(content: &str) -> bool {
+    let lines: Vec<&str> = content.lines().collect();
+    let Some((start_idx, fence)) = lines.iter().enumerate().find_map(|(idx, line)| {
+        (!line.trim().is_empty())
+            .then(|| parse_markdown_fence_opener(line).map(|fence| (idx, fence)))
+            .flatten()
+    }) else {
+        return false;
+    };
+
+    let Some(end_idx) = lines
+        .iter()
+        .enumerate()
+        .skip(start_idx.saturating_add(1))
+        .find_map(|(idx, line)| line_closes_markdown_fence(line, fence).then_some(idx))
+    else {
+        return false;
+    };
+
+    lines
+        .iter()
+        .skip(end_idx.saturating_add(1))
+        .all(|line| line.trim().is_empty())
+}
+
+fn parse_markdown_fence_opener(line: &str) -> Option<MarkdownFence> {
+    let trimmed_trailing = line.trim_end();
+    let indent = trimmed_trailing.chars().take_while(|ch| *ch == ' ').count();
+    if indent > 3 {
+        return None;
+    }
+    let remainder = &trimmed_trailing[indent..];
+    let marker = remainder.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+    let len = remainder.chars().take_while(|ch| *ch == marker).count();
+    (len >= 3).then_some(MarkdownFence { marker, len })
+}
+
+fn line_closes_markdown_fence(line: &str, fence: MarkdownFence) -> bool {
+    let trimmed_trailing = line.trim_end();
+    let indent = trimmed_trailing.chars().take_while(|ch| *ch == ' ').count();
+    if indent > 3 {
+        return false;
+    }
+    let remainder = &trimmed_trailing[indent..];
+    let marker_run = remainder
+        .chars()
+        .take_while(|ch| *ch == fence.marker)
+        .count();
+    marker_run >= fence.len
+        && marker_run == remainder.chars().count()
+        && remainder.chars().all(|ch| ch == fence.marker)
+}
+
+#[cfg(any(feature = "magika", test))]
 fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     if label.is_empty() || label == "text" {
         return None;
+    }
+
+    if markdown_fence_override_applies(content) {
+        return Some("markdown".to_string());
     }
 
     if label == "yaml" && !looks_like_yaml(content) {
@@ -51,6 +128,7 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
 /// `true` when line-level patterns strongly indicate YAML.
 pub(crate) fn looks_like_yaml(content: &str) -> bool {
     let mut yaml_pairs = 0usize;
+    let mut bare_sequence_items = 0usize;
     let mut content_lines = 0usize;
     let mut first_content_line: Option<&str> = None;
     let mut has_doc_start = false;
@@ -72,18 +150,18 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
         if first_content_line.is_none() {
             first_content_line = Some(trimmed);
         }
-        if trimmed.starts_with("- ")
-            || trimmed.contains(": ")
-            || (trimmed.ends_with(':') && trimmed.len() > 1)
-        {
-            let yaml_like = if trimmed.ends_with(':') && trimmed.len() > 1 {
-                true
-            } else {
-                looks_like_single_line_yaml_mapping(trimmed, true)
-            };
-            if yaml_like {
+        if let Some(sequence_item) = trimmed.strip_prefix("- ") {
+            if looks_like_yaml_sequence_item(sequence_item) {
                 yaml_pairs = yaml_pairs.saturating_add(1);
+            } else {
+                bare_sequence_items = bare_sequence_items.saturating_add(1);
             }
+            continue;
+        }
+        if trimmed.contains(':') && looks_like_single_line_yaml_mapping(trimmed, true) {
+            // Block-style mapping heads like `jobs:` and `build:` are still
+            // YAML pairs even when the nested value appears on later lines.
+            yaml_pairs = yaml_pairs.saturating_add(1);
         }
     }
 
@@ -98,9 +176,26 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
     }
 
     if has_doc_start {
-        return yaml_pairs >= 1;
+        return yaml_pairs >= 1 || bare_sequence_items >= 2;
     }
 
+    false
+}
+
+fn looks_like_yaml_sequence_item(item: &str) -> bool {
+    let trimmed = item.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if looks_like_single_line_yaml_mapping(trimmed, true) {
+        return true;
+    }
+    if trimmed.starts_with('{') || trimmed.ends_with('}') {
+        return looks_like_yaml_flow_mapping(trimmed);
+    }
+    if trimmed.starts_with('[') || trimmed.ends_with(']') {
+        return looks_like_yaml_flow_sequence(trimmed);
+    }
     false
 }
 
@@ -108,9 +203,6 @@ fn looks_like_single_line_yaml_mapping(line: &str, allow_unquoted_space_keys: bo
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return false;
-    }
-    if trimmed.starts_with("- ") {
-        return true;
     }
 
     let Some((raw_key, raw_value)) = trimmed.split_once(':') else {
@@ -122,6 +214,9 @@ fn looks_like_single_line_yaml_mapping(line: &str, allow_unquoted_space_keys: bo
     }
     let quoted_key = (key.starts_with('"') && key.ends_with('"'))
         || (key.starts_with('\'') && key.ends_with('\''));
+    if !quoted_key && key.split_whitespace().count() > 3 {
+        return false;
+    }
     if key.contains(char::is_whitespace) && !allow_unquoted_space_keys && !quoted_key {
         return false;
     }
@@ -178,7 +273,7 @@ fn looks_like_yaml_flow_sequence(value: &str) -> bool {
     true
 }
 
-#[cfg(feature = "magika")]
+#[cfg(any(feature = "magika", test))]
 fn looks_like_plain_css(content: &str) -> bool {
     let lower = content.to_ascii_lowercase();
     let has_css_block = lower.contains('{')
@@ -198,7 +293,7 @@ fn looks_like_plain_css(content: &str) -> bool {
     has_css_block && !(has_scss_specific_tokens || has_nested_scss_selector)
 }
 
-#[cfg(feature = "magika")]
+#[cfg(any(feature = "magika", test))]
 fn content_has_scss_placeholder_selector(content: &str) -> bool {
     for line in content.lines() {
         let Some((selectors, _rest)) = line.split_once('{') else {
@@ -213,7 +308,7 @@ fn content_has_scss_placeholder_selector(content: &str) -> bool {
     false
 }
 
-#[cfg(feature = "magika")]
+#[cfg(any(feature = "magika", test))]
 fn content_has_nested_scss_selector(content: &str) -> bool {
     let mut block_depth = 0usize;
     for line in content.lines() {
@@ -236,7 +331,7 @@ fn content_has_nested_scss_selector(content: &str) -> bool {
     false
 }
 
-#[cfg(feature = "magika")]
+#[cfg(any(feature = "magika", test))]
 fn appears_nested_scss_selector(selector: &str) -> bool {
     let selector = selector.trim().trim_end_matches(',');
     if selector.is_empty() || selector.ends_with(';') {

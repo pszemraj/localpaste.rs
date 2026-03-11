@@ -4,7 +4,6 @@ These instructions apply to the headless `localpaste` server. The desktop GUI (`
 
 ---
 
-- [Related Docs](#related-docs)
 - [Quick Start](#quick-start)
 - [Process Management](#process-management)
 - [Linux (systemd)](#linux-systemd)
@@ -14,17 +13,13 @@ These instructions apply to the headless `localpaste` server. The desktop GUI (`
 - [Embedded API Address Discovery (.api-addr)](#embedded-api-address-discovery-api-addr)
 
 ---
-
-## Related Docs
-
-> Security posture, bind policy, and public exposure guidance: [security.md](security.md).
-> Storage backend and compatibility policy: [storage.md](storage.md).
-> Development build/run command matrix: [dev/devlog.md](dev/devlog.md).
-
 ## Quick Start
 
 Build/install commands are documented in [dev/devlog.md](dev/devlog.md).
 The examples below assume the server binary is available at `$HOME/.cargo/bin/localpaste` (the default `cargo install` location on Unix-like systems).
+
+Security defaults and public-bind policy live in [security.md](security.md).
+Storage compatibility and single-writer rules live in [storage.md](storage.md).
 
 ```bash
 mkdir -p ~/.cache/localpaste

@@ -96,6 +96,39 @@ impl LocalPasteApp {
             wrap_cols,
         }
     }
+
+    /// Returns the global visual-row index containing `cursor`.
+    ///
+    /// # Returns
+    /// Zero-based visual-row index in the current wrapped layout.
+    ///
+    /// # Panics
+    /// This helper does not intentionally panic.
+    pub(super) fn virtual_cursor_row_index(&self, cursor: usize) -> usize {
+        let metrics = self.virtual_cursor_wrap_metrics(cursor);
+        if metrics.wrap_cols == 0 {
+            return 0;
+        }
+
+        let mut row_in_line = metrics.display_col / metrics.wrap_cols;
+        if is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols)
+            && self.virtual_editor_state.wrap_boundary_affinity() == WrapBoundaryAffinity::Upstream
+        {
+            row_in_line = row_in_line.saturating_sub(1);
+        }
+
+        let at_eol_wrap_boundary = metrics.display_col == metrics.line_cols
+            && metrics.display_col > 0
+            && metrics.display_col % metrics.wrap_cols == 0;
+        if at_eol_wrap_boundary {
+            row_in_line = row_in_line.saturating_sub(1);
+        }
+
+        let line_rows = self.virtual_layout.line_visual_rows(metrics.line).max(1);
+        row_in_line = row_in_line.min(line_rows.saturating_sub(1));
+        self.virtual_layout.line_start_row(metrics.line) + row_in_line
+    }
+
     /// Derives preferred wrapped-row column for subsequent vertical cursor moves.
     ///
     /// # Returns
@@ -202,6 +235,8 @@ impl LocalPasteApp {
         self.reset_virtual_caret_blink();
         self.highlight_edit_hint = None;
         self.virtual_drag_active = false;
+        self.virtual_pending_scroll_offset_y = None;
+        self.virtual_follow_cursor_next_frame = false;
         self.reset_virtual_click_streak();
     }
 
@@ -214,36 +249,27 @@ impl LocalPasteApp {
     pub(super) fn reset_virtual_click_streak(&mut self) {
         self.last_virtual_click_at = None;
         self.last_virtual_click_pos = None;
-        self.last_virtual_click_line = None;
         self.last_virtual_click_count = 0;
     }
 
     /// Records a click in the virtual preview and returns the updated streak count.
     ///
     /// # Arguments
-    /// - `line_idx`: Line index of the click target.
     /// - `pointer_pos`: Pointer position in viewport coordinates.
     ///
     /// # Returns
     /// Click streak count in `[1, 3]` for single/double/triple click behavior.
-    pub(super) fn register_virtual_click(
-        &mut self,
-        line_idx: usize,
-        pointer_pos: egui::Pos2,
-    ) -> u8 {
+    pub(super) fn register_virtual_click(&mut self, pointer_pos: egui::Pos2) -> u8 {
         let now = Instant::now();
         let count = next_virtual_click_count(
             self.last_virtual_click_at,
             self.last_virtual_click_pos,
-            self.last_virtual_click_line,
             self.last_virtual_click_count,
-            line_idx,
             pointer_pos,
             now,
         );
         self.last_virtual_click_at = Some(now);
         self.last_virtual_click_pos = Some(pointer_pos);
-        self.last_virtual_click_line = Some(line_idx);
         self.last_virtual_click_count = count;
         count
     }
@@ -317,48 +343,58 @@ impl LocalPasteApp {
         idx
     }
 
-    fn virtual_word_right_start(&self, cursor: usize) -> usize {
+    fn advance_virtual_word_right_while<F>(
+        &self,
+        idx: &mut usize,
+        len: usize,
+        line_end: &mut usize,
+        capped: &mut bool,
+        keep_advancing: F,
+    ) -> Option<usize>
+    where
+        F: Fn(char) -> bool,
+    {
         let rope = self.virtual_editor_buffer.rope();
+        while *idx < len {
+            if *capped && *idx >= *line_end {
+                return Some(*line_end);
+            }
+            let ch = rope.char(*idx);
+            if !keep_advancing(ch) {
+                break;
+            }
+            *idx += 1;
+            if !*capped && *idx > *line_end {
+                (*line_end, *capped) = self.virtual_line_render_boundary(*idx);
+            }
+        }
+        None
+    }
+
+    fn virtual_word_right_start(&self, cursor: usize) -> usize {
         let len = self.virtual_editor_buffer.len_chars();
         let mut idx = self.clamp_virtual_cursor_for_render(cursor).min(len);
         if idx >= len {
             return len;
         }
 
-        // Only consult render boundaries when crossing lines (or if the line is capped).
         let (mut line_end, mut capped) = self.virtual_line_render_boundary(idx);
 
-        // 1) Skip the remainder of the current word (if any).
-        while idx < len {
-            if capped && idx >= line_end {
-                return line_end;
-            }
-            let ch = rope.char(idx);
-            if !is_editor_word_char(ch) {
-                break;
-            }
-            idx += 1;
-
-            // If we stepped over the newline into the next line, refresh render boundary info.
-            if !capped && idx > line_end {
-                (line_end, capped) = self.virtual_line_render_boundary(idx);
-            }
+        if let Some(boundary) = self.advance_virtual_word_right_while(
+            &mut idx,
+            len,
+            &mut line_end,
+            &mut capped,
+            is_editor_word_char,
+        ) {
+            return boundary;
         }
-
-        // 2) Skip separators/whitespace to the start of the next word.
-        while idx < len {
-            if capped && idx >= line_end {
-                return line_end;
-            }
-            let ch = rope.char(idx);
-            if is_editor_word_char(ch) {
-                break;
-            }
-            idx += 1;
-
-            if !capped && idx > line_end {
-                (line_end, capped) = self.virtual_line_render_boundary(idx);
-            }
+        if let Some(boundary) =
+            self.advance_virtual_word_right_while(&mut idx, len, &mut line_end, &mut capped, |ch| {
+                !is_editor_word_char(ch)
+            })
+        {
+            return boundary;
         }
 
         idx
@@ -366,89 +402,26 @@ impl LocalPasteApp {
 
     /// Finds the next word boundary for word-right navigation.
     ///
-    /// Platform conventions differ:
-    /// - **Windows/Linux**: `Ctrl+Right` lands at the *start* of the next word.
-    /// - **macOS**: `Option+Right` lands at the *end* of the next word.
-    ///
-    /// We follow those conventions while keeping the underlying definition of
-    /// "word character" consistent (`is_editor_word_char`).
+    /// The editor always lands at the *start* of the next word/token run so
+    /// word movement, shift-selection, and word-delete-forward all share the
+    /// same boundary semantics.
     ///
     /// # Returns
-    /// Cursor index positioned at the next platform-appropriate word boundary.
+    /// Cursor index positioned at the next token-start boundary.
     pub(super) fn virtual_word_right(&self, cursor: usize) -> usize {
-        if cfg!(target_os = "macos") {
-            self.virtual_word_right_end(cursor)
-        } else {
-            self.virtual_word_right_start(cursor)
-        }
+        self.virtual_word_right_start(cursor)
     }
 
-    /// Returns the end-of-next-word boundary.
+    /// Returns the forward word-deletion boundary.
     ///
-    /// Used by word-delete-forward and by macOS word-right movement semantics.
+    /// Forward word deletion intentionally shares the same boundary helper as
+    /// word-right movement so navigation and deletion cannot disagree about
+    /// what constitutes the "next word".
     ///
     /// # Returns
-    /// Cursor index positioned at the end of the next identifier-like token.
-    pub(super) fn virtual_word_right_end(&self, cursor: usize) -> usize {
-        let rope = self.virtual_editor_buffer.rope();
-        let len = self.virtual_editor_buffer.len_chars();
-        let mut idx = self.clamp_virtual_cursor_for_render(cursor).min(len);
-        if idx >= len {
-            return len;
-        }
-
-        // Only consult render boundaries when crossing lines (or if the line is capped).
-        let (mut line_end, mut capped) = self.virtual_line_render_boundary(idx);
-
-        // If we're currently in a word, move to the end of this word.
-        if is_editor_word_char(rope.char(idx)) {
-            while idx < len {
-                if capped && idx >= line_end {
-                    return line_end;
-                }
-                let ch = rope.char(idx);
-                if !is_editor_word_char(ch) {
-                    break;
-                }
-                idx += 1;
-                if !capped && idx > line_end {
-                    (line_end, capped) = self.virtual_line_render_boundary(idx);
-                }
-            }
-            return idx;
-        }
-
-        // Otherwise: skip separators/whitespace to the start of the next word…
-        while idx < len {
-            if capped && idx >= line_end {
-                return line_end;
-            }
-            let ch = rope.char(idx);
-            if is_editor_word_char(ch) {
-                break;
-            }
-            idx += 1;
-            if !capped && idx > line_end {
-                (line_end, capped) = self.virtual_line_render_boundary(idx);
-            }
-        }
-
-        // …then to the end of that word.
-        while idx < len {
-            if capped && idx >= line_end {
-                return line_end;
-            }
-            let ch = rope.char(idx);
-            if !is_editor_word_char(ch) {
-                break;
-            }
-            idx += 1;
-            if !capped && idx > line_end {
-                (line_end, capped) = self.virtual_line_render_boundary(idx);
-            }
-        }
-
-        idx
+    /// Global cursor index representing the forward deletion boundary.
+    pub(super) fn virtual_word_delete_forward(&self, cursor: usize) -> usize {
+        self.virtual_word_right(cursor)
     }
 
     /// Computes the cursor target for vertical movement across wrapped rows/lines.
@@ -555,55 +528,5 @@ impl LocalPasteApp {
             return None;
         }
         Some(local_start..local_end)
-    }
-
-    /// Returns the start/end cursor bounds of the wrapped visual row containing `cursor`.
-    ///
-    /// # Arguments
-    /// - `cursor`: Global cursor index.
-    ///
-    /// # Returns
-    /// Tuple of `(row_start_char_index, row_end_char_index)` in global char offsets.
-    ///
-    /// # Panics
-    /// Panics only if wrapped-row layout caches become internally inconsistent.
-    pub(super) fn virtual_visual_row_bounds(&self, cursor: usize) -> (usize, usize) {
-        let cursor = self.clamp_virtual_cursor_for_render(cursor);
-        let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
-        let wrap_cols = self.virtual_layout.wrap_columns().max(1);
-        let line_cols = self
-            .virtual_layout
-            .line_columns(&self.virtual_editor_buffer, line);
-        let rows = self.virtual_layout.line_visual_rows(line).max(1);
-        let display_col =
-            self.virtual_layout
-                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
-
-        let mut row = (display_col / wrap_cols).min(rows.saturating_sub(1));
-        if is_internal_wrap_boundary(display_col, wrap_cols, line_cols)
-            && self.virtual_editor_state.wrap_boundary_affinity() == WrapBoundaryAffinity::Upstream
-        {
-            row = row.saturating_sub(1);
-        }
-
-        let row_start_display = row.saturating_mul(wrap_cols);
-        let row_end_display = row_start_display.saturating_add(wrap_cols).min(line_cols);
-        let row_start_col = self.virtual_layout.line_display_column_to_char(
-            &self.virtual_editor_buffer,
-            line,
-            row_start_display,
-        );
-        let row_end_col = self.virtual_layout.line_display_column_to_char(
-            &self.virtual_editor_buffer,
-            line,
-            row_end_display,
-        );
-        let row_start = self
-            .virtual_editor_buffer
-            .line_col_to_char(line, row_start_col);
-        let row_end = self
-            .virtual_editor_buffer
-            .line_col_to_char(line, row_end_col.max(row_start_col));
-        (row_start, row_end.max(row_start))
     }
 }

@@ -7,7 +7,8 @@ use std::str::FromStr;
 use tracing::warn;
 
 use crate::constants::{
-    API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
+    API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE,
+    DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PORT,
 };
 
 /// Runtime configuration for LocalPaste.
@@ -74,6 +75,24 @@ fn default_db_path() -> String {
     default_data_dir().join("db").to_string_lossy().to_string()
 }
 
+fn normalize_db_path_value(raw: String, strict_empty: bool) -> Result<String, String> {
+    let expanded = expand_tilde(raw);
+    if expanded.trim().is_empty() {
+        if strict_empty {
+            Err("Environment variable DB_PATH is empty".to_string())
+        } else {
+            let default = default_db_path();
+            warn!(
+                "Environment variable DB_PATH is empty; using default {}",
+                default
+            );
+            Ok(default)
+        }
+    } else {
+        Ok(expanded)
+    }
+}
+
 /// Resolve the configured DB path, falling back to the default path.
 ///
 /// This uses the same env/default rules as [`Config::from_env`].
@@ -81,9 +100,63 @@ fn default_db_path() -> String {
 /// # Returns
 /// The expanded `DB_PATH` value or the platform default path.
 pub fn db_path_from_env_or_default() -> String {
-    env::var("DB_PATH")
-        .map(expand_tilde)
-        .unwrap_or_else(|_| default_db_path())
+    match env::var("DB_PATH") {
+        Ok(value) => normalize_db_path_value(value, false).unwrap_or_else(|_| default_db_path()),
+        Err(_) => default_db_path(),
+    }
+}
+
+/// Resolve the configured DB path in strict mode.
+///
+/// Missing `DB_PATH` still falls back to the platform default path, but an
+/// explicitly empty value is rejected instead of silently defaulting.
+///
+/// # Returns
+/// The expanded `DB_PATH` value or the platform default path.
+///
+/// # Errors
+/// Returns an error when `DB_PATH` is present but empty after trimming.
+pub fn db_path_from_env_strict() -> Result<String, String> {
+    match env::var("DB_PATH") {
+        Ok(value) => normalize_db_path_value(value, true),
+        Err(_) => Ok(default_db_path()),
+    }
+}
+
+/// Resolve a database path from an explicit CLI flag, `DB_PATH`, or the
+/// platform default path when allowed.
+///
+/// # Arguments
+/// - `explicit`: optional CLI-provided database path
+/// - `allow_default`: whether the platform default path may be used when
+///   neither a CLI flag nor `DB_PATH` is provided
+///
+/// # Returns
+/// The normalized database path.
+///
+/// # Errors
+/// Returns an error when the explicit path or `DB_PATH` is blank, or when no
+/// explicit path is provided and default use is disallowed.
+pub fn resolve_db_path_with_explicit_or_env(
+    explicit: Option<String>,
+    allow_default: bool,
+) -> Result<String, String> {
+    if let Some(raw) = explicit {
+        let expanded = expand_tilde(raw);
+        if expanded.trim().is_empty() {
+            return Err("--db-path cannot be empty".to_string());
+        }
+        return Ok(expanded);
+    }
+
+    match env::var("DB_PATH") {
+        Ok(value) => normalize_db_path_value(value, true),
+        Err(_) if allow_default => Ok(default_db_path()),
+        Err(_) => Err(
+            "database path is required; pass --db-path, set DB_PATH, or rerun with --allow-default-db"
+                .to_string(),
+        ),
+    }
 }
 
 /// Resolve the discovery-file path for a given database path.
@@ -110,6 +183,111 @@ pub fn api_addr_file_path_for_db_path(db_path: &str) -> PathBuf {
 /// Path to the `.api-addr` discovery file.
 pub fn api_addr_file_path_from_env_or_default() -> PathBuf {
     api_addr_file_path_for_db_path(db_path_from_env_or_default().as_str())
+}
+
+fn parse_nonzero_interval_seconds_strict(name: &str, default: u64) -> Result<u64, String> {
+    let value = parse_env_number_strict(name, default)?;
+    if value == 0 {
+        return Err(format!(
+            "Invalid value for {}='0': expected integer >= 1",
+            name
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_nonzero_interval_seconds_permissive(name: &str, default: u64) -> u64 {
+    let Ok(value) = env::var(name) else {
+        return default;
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        warn!(
+            "Environment variable {} is empty; using default {}",
+            name, default
+        );
+        return default;
+    }
+    match trimmed.parse::<u64>() {
+        Ok(parsed) if parsed >= 1 => parsed,
+        Ok(_) => {
+            warn!(
+                "Invalid value for {}='{}': expected integer >= 1. Using default {}",
+                name, value, default
+            );
+            default
+        }
+        Err(err) => {
+            warn!(
+                "Invalid value for {}='{}': {}. Using default {}",
+                name, value, err, default
+            );
+            default
+        }
+    }
+}
+
+enum IntervalParseMode {
+    Permissive,
+    Strict,
+}
+
+fn selected_paste_version_interval_env_key() -> Option<&'static str> {
+    const PRIMARY_KEY: &str = "LOCALPASTE_VERSION_INTERVAL_SECS";
+    const LEGACY_KEY: &str = "LOCALPASTE_PASTE_VERSION_INTERVAL_SECS";
+    if env::var(PRIMARY_KEY).is_ok() {
+        Some(PRIMARY_KEY)
+    } else if env::var(LEGACY_KEY).is_ok() {
+        Some(LEGACY_KEY)
+    } else {
+        None
+    }
+}
+
+fn resolve_paste_version_interval_secs(mode: IntervalParseMode) -> Result<u64, String> {
+    let Some(key) = selected_paste_version_interval_env_key() else {
+        return Ok(DEFAULT_PASTE_VERSION_INTERVAL_SECS);
+    };
+    match mode {
+        IntervalParseMode::Permissive => Ok(parse_nonzero_interval_seconds_permissive(
+            key,
+            DEFAULT_PASTE_VERSION_INTERVAL_SECS,
+        )),
+        IntervalParseMode::Strict => {
+            parse_nonzero_interval_seconds_strict(key, DEFAULT_PASTE_VERSION_INTERVAL_SECS)
+        }
+    }
+}
+
+/// Resolve the minimum interval between persisted paste-version snapshots using
+/// permissive env/default semantics.
+///
+/// # Returns
+/// Interval in seconds (minimum `1`), sourced from
+/// `LOCALPASTE_VERSION_INTERVAL_SECS` when set, with
+/// `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` as a legacy fallback.
+///
+/// Malformed or zero values emit a warning and fall back to the default
+/// interval instead of failing startup. Strict entrypoints should validate the
+/// same keys via [`paste_version_interval_secs_from_env`].
+pub fn paste_version_interval_secs_from_env_or_default() -> u64 {
+    match resolve_paste_version_interval_secs(IntervalParseMode::Permissive) {
+        Ok(value) => value,
+        Err(_) => DEFAULT_PASTE_VERSION_INTERVAL_SECS,
+    }
+}
+
+/// Resolve the minimum interval between persisted paste-version snapshots.
+///
+/// # Returns
+/// Interval in seconds (minimum `1`), sourced from
+/// `LOCALPASTE_VERSION_INTERVAL_SECS` when set, with
+/// `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` as a legacy fallback.
+///
+/// # Errors
+/// Returns an error when an explicitly provided interval is malformed or less than `1`.
+pub fn paste_version_interval_secs_from_env() -> Result<u64, String> {
+    resolve_paste_version_interval_secs(IntervalParseMode::Strict)
 }
 
 /// Parse a boolean-like environment flag value.
@@ -270,16 +448,11 @@ impl Config {
     /// # Errors
     /// Returns a descriptive message when any configured value is invalid.
     pub fn from_env_strict() -> Result<Self, String> {
-        let db_path = match env::var("DB_PATH") {
-            Ok(value) => {
-                let expanded = expand_tilde(value);
-                if expanded.trim().is_empty() {
-                    return Err("Environment variable DB_PATH is empty".to_string());
-                }
-                expanded
-            }
-            Err(_) => default_db_path(),
-        };
+        let db_path = db_path_from_env_strict()?;
+
+        // Validate snapshot interval envs during strict startup so malformed values
+        // fail fast instead of surfacing later during write operations.
+        let _ = paste_version_interval_secs_from_env()?;
 
         Ok(Self {
             db_path,
@@ -297,11 +470,14 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::{
-        api_addr_file_path_for_db_path, env_flag_enabled, parse_bool_env, parse_bool_env_strict,
-        parse_env_flag, Config,
+        api_addr_file_path_for_db_path, db_path_from_env_or_default, db_path_from_env_strict,
+        env_flag_enabled, parse_bool_env, parse_bool_env_strict, parse_env_flag,
+        paste_version_interval_secs_from_env, paste_version_interval_secs_from_env_or_default,
+        resolve_db_path_with_explicit_or_env, Config,
     };
     use crate::constants::{
-        API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE, DEFAULT_PORT,
+        API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE,
+        DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PORT,
     };
     use crate::env::{env_lock, EnvGuard};
     use std::path::PathBuf;
@@ -353,6 +529,51 @@ mod tests {
         let _backup = EnvGuard::set("AUTO_BACKUP", "maybe");
         let err = Config::from_env_strict().expect_err("strict bool parse should fail");
         assert!(err.contains("AUTO_BACKUP"));
+    }
+
+    #[test]
+    fn blank_db_path_defaults_in_permissive_mode_and_fails_in_strict_mode() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::set("DB_PATH", "   ");
+
+        let permissive = db_path_from_env_or_default();
+        assert!(
+            !permissive.trim().is_empty(),
+            "permissive path should not preserve an empty DB_PATH"
+        );
+
+        let err = db_path_from_env_strict().expect_err("strict db path should reject blank");
+        assert!(err.contains("DB_PATH"));
+    }
+
+    #[test]
+    fn resolve_db_path_requires_explicit_or_env_when_default_is_disallowed() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::remove("DB_PATH");
+
+        let err = resolve_db_path_with_explicit_or_env(None, false)
+            .expect_err("default db path should require explicit opt-in");
+        assert!(err.contains("--db-path"));
+        assert!(err.contains("--allow-default-db"));
+    }
+
+    #[test]
+    fn resolve_db_path_prefers_explicit_then_env_then_default() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::set("DB_PATH", "/tmp/from-env");
+
+        let explicit = resolve_db_path_with_explicit_or_env(Some("~/from-flag".to_string()), true)
+            .expect("explicit db path");
+        assert!(explicit.ends_with("from-flag"));
+
+        let from_env = resolve_db_path_with_explicit_or_env(None, false).expect("env db path");
+        assert_eq!(from_env, "/tmp/from-env");
+
+        drop(_db_path);
+        let _db_path = EnvGuard::remove("DB_PATH");
+        let default_path =
+            resolve_db_path_with_explicit_or_env(None, true).expect("default db path");
+        assert!(!default_path.trim().is_empty());
     }
 
     #[test]
@@ -422,6 +643,57 @@ mod tests {
             let config = Config::from_env();
             assert_eq!(config.auto_backup, expected, "value: {value}");
         }
+    }
+
+    #[test]
+    fn paste_version_interval_parsing_respects_strict_and_permissive_modes() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _primary = EnvGuard::remove("LOCALPASTE_VERSION_INTERVAL_SECS");
+        let _legacy = EnvGuard::remove("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS");
+        assert_eq!(
+            paste_version_interval_secs_from_env().expect("strict default interval"),
+            DEFAULT_PASTE_VERSION_INTERVAL_SECS
+        );
+        assert_eq!(
+            paste_version_interval_secs_from_env_or_default(),
+            DEFAULT_PASTE_VERSION_INTERVAL_SECS
+        );
+
+        let _legacy = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "7");
+        assert_eq!(
+            paste_version_interval_secs_from_env().expect("strict legacy interval"),
+            7
+        );
+        assert_eq!(paste_version_interval_secs_from_env_or_default(), 7);
+        drop(_legacy);
+
+        let _primary = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "9");
+        let _legacy = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "7");
+        assert_eq!(
+            paste_version_interval_secs_from_env().expect("strict primary interval"),
+            9
+        );
+        assert_eq!(paste_version_interval_secs_from_env_or_default(), 9);
+        drop(_primary);
+        drop(_legacy);
+
+        let _primary = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "0");
+        let err = paste_version_interval_secs_from_env().expect_err("strict zero should fail");
+        assert!(err.contains("LOCALPASTE_VERSION_INTERVAL_SECS"));
+        assert_eq!(
+            paste_version_interval_secs_from_env_or_default(),
+            DEFAULT_PASTE_VERSION_INTERVAL_SECS
+        );
+        drop(_primary);
+
+        let _legacy = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "not-a-number");
+        let err =
+            paste_version_interval_secs_from_env().expect_err("strict invalid legacy should fail");
+        assert!(err.contains("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS"));
+        assert_eq!(
+            paste_version_interval_secs_from_env_or_default(),
+            DEFAULT_PASTE_VERSION_INTERVAL_SECS
+        );
     }
 
     #[test]

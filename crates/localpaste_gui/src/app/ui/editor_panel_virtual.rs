@@ -11,19 +11,16 @@ const VIRTUAL_EDITOR_LINE_NUMBER_PADDING: f32 = 8.0;
 fn line_number_font_for_row_height(row_height: f32) -> egui::FontId {
     egui::FontId::monospace((row_height * 0.72).clamp(10.0, 14.0))
 }
-
 fn line_number_gutter_width(line_count: usize, line_number_char_width: f32) -> f32 {
     let line_number_digits = line_count.max(1).to_string().len();
     (line_number_digits as f32 * line_number_char_width.max(1.0))
         + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0
 }
-
 fn virtual_row_hit_test_sense() -> egui::Sense {
     let mut sense = egui::Sense::click_and_drag();
     sense.remove(egui::Sense::focusable_noninteractive());
     sense
 }
-
 fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rect {
     let scrollbar_gutter = (wrap_width - inner_rect.width()).max(0.0);
     if scrollbar_gutter <= 0.0 {
@@ -34,7 +31,23 @@ fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rec
         egui::pos2(inner_rect.max.x + scrollbar_gutter, inner_rect.max.y),
     )
 }
-
+fn should_explicitly_blur_virtual_editor(
+    clicked_outside_editor: bool,
+    window_blurred: bool,
+    preserve_editor_focus: bool,
+) -> bool {
+    window_blurred || (clicked_outside_editor && !preserve_editor_focus)
+}
+/// Rendering flags for the interactive rope-backed virtual editor surface.
+#[derive(Clone, Copy)]
+pub(super) struct VirtualEditorRenderOptions<'a> {
+    /// Optional precomputed highlight render payload.
+    pub(super) highlight_render_match: Option<&'a HighlightRender>,
+    /// When `true`, bypass syntax-highlighted rendering.
+    pub(super) use_plain: bool,
+    /// Whether same-frame editor-chrome actions should preserve editor focus.
+    pub(super) preserve_focus_from_editor_chrome: bool,
+}
 fn preview_triple_click_selection_bounds(
     line_idx: usize,
     line_count: usize,
@@ -57,7 +70,6 @@ fn preview_triple_click_selection_bounds(
     };
     (start, end)
 }
-
 fn virtual_editor_double_click_selection_bounds<F>(
     line_start: usize,
     column_in_line: usize,
@@ -73,7 +85,30 @@ where
         clamp_global(line_start.saturating_add(end)),
     ))
 }
-
+fn follow_cursor_scroll_offset_y(
+    follow_requested: bool,
+    cursor_row: usize,
+    visible_row_range: std::ops::Range<usize>,
+    viewport_rows: usize,
+    line_height: f32,
+) -> Option<f32> {
+    if !follow_requested || viewport_rows == 0 {
+        return None;
+    }
+    let scrolloff_rows = 2usize.min(viewport_rows.saturating_sub(1));
+    if cursor_row.saturating_add(scrolloff_rows) >= visible_row_range.end {
+        let desired_top = cursor_row
+            .saturating_add(1)
+            .saturating_add(scrolloff_rows)
+            .saturating_sub(viewport_rows);
+        return Some(desired_top as f32 * line_height);
+    }
+    if cursor_row < visible_row_range.start.saturating_add(scrolloff_rows) {
+        let desired_top = cursor_row.saturating_sub(scrolloff_rows);
+        return Some(desired_top as f32 * line_height);
+    }
+    None
+}
 impl LocalPasteApp {
     /// Renders the read-only virtual preview panel for large text payloads.
     ///
@@ -93,18 +128,31 @@ impl LocalPasteApp {
         highlight_render_match: Option<&HighlightRender>,
         use_plain: bool,
     ) {
-        let scroll = egui::ScrollArea::vertical()
+        let mut scroll = egui::ScrollArea::vertical()
             .id_salt("editor_scroll")
             .max_height(editor_height)
             .auto_shrink([false; 2]);
+        if let Some(offset) = self.virtual_pending_scroll_offset_y.take() {
+            scroll = scroll.vertical_scroll_offset(offset.max(0.0));
+        }
 
         let text = self.selected_content.as_str();
         self.editor_lines
             .ensure_for(self.selected_content.revision(), text);
         let line_count = self.editor_lines.line_count();
+        // Preview rows are unwrapped physical lines; cache them so idle large-buffer frames do not reshape every visible row on each repaint.
+        self.virtual_galley_cache.prepare_frame(
+            line_count,
+            VirtualGalleyContext::new(
+                f32::INFINITY,
+                use_plain,
+                editor_font,
+                ui.visuals().text_color(),
+                ui.ctx().pixels_per_point(),
+            ),
+        );
         let mut last_virtual_click_at = self.last_virtual_click_at;
         let mut last_virtual_click_pos = self.last_virtual_click_pos;
-        let mut last_virtual_click_line = self.last_virtual_click_line;
         let mut last_virtual_click_count = self.last_virtual_click_count;
         let mut preview_render_capped_lines = 0usize;
         scroll.show_rows(ui, row_height, line_count, |ui, range| {
@@ -146,16 +194,24 @@ impl LocalPasteApp {
                 } else {
                     line
                 };
-                let render_line =
-                    highlight_render_match.and_then(|render| render.lines.get(line_idx));
-                let job = build_virtual_line_job(
-                    ui,
-                    line_for_render,
-                    editor_font,
-                    render_line,
-                    use_plain,
-                );
-                let galley = ui.fonts_mut(|f| f.layout_job(job));
+                self.virtual_galley_cache.sync_line_rows(line_idx, 1);
+                let galley = if let Some(cached) = self.virtual_galley_cache.get(line_idx, 0) {
+                    cached
+                } else {
+                    let render_line =
+                        highlight_render_match.and_then(|render| render.lines.get(line_idx));
+                    let job = build_virtual_line_job(
+                        ui,
+                        line_for_render,
+                        editor_font,
+                        render_line,
+                        use_plain,
+                    );
+                    let shaped = ui.fonts_mut(|f| f.layout_job(job));
+                    self.virtual_galley_cache
+                        .insert(line_idx, 0, shaped.clone());
+                    shaped
+                };
                 let row_width = ui.available_width();
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(row_width, row_height), sense);
@@ -173,7 +229,6 @@ impl LocalPasteApp {
                         if response.drag_started() {
                             last_virtual_click_at = None;
                             last_virtual_click_pos = None;
-                            last_virtual_click_line = None;
                             last_virtual_click_count = 0;
                             pending_action = Some(RowAction::DragStart { cursor: vcursor });
                         } else {
@@ -181,23 +236,18 @@ impl LocalPasteApp {
                             let click_count = next_virtual_click_count(
                                 last_virtual_click_at,
                                 last_virtual_click_pos,
-                                last_virtual_click_line,
                                 last_virtual_click_count,
-                                line_idx,
                                 pointer_pos,
                                 now,
                             );
                             last_virtual_click_at = Some(now);
                             last_virtual_click_pos = Some(pointer_pos);
-                            last_virtual_click_line = Some(line_idx);
                             last_virtual_click_count = click_count;
                             match click_count {
                                 3 => {
                                     pending_action = Some(RowAction::Triple {
                                         line_idx,
-                                        // Triple-click should target the full physical line.
-                                        // On the terminal line this must not be capped by render
-                                        // truncation, otherwise copy/select silently drops data.
+                                        // Triple-click must target the full physical line, even when render truncation is active.
                                         line_chars: full_line_chars,
                                     });
                                 }
@@ -331,7 +381,6 @@ impl LocalPasteApp {
         });
         self.last_virtual_click_at = last_virtual_click_at;
         self.last_virtual_click_pos = last_virtual_click_pos;
-        self.last_virtual_click_line = last_virtual_click_line;
         self.last_virtual_click_count = last_virtual_click_count;
         self.virtual_editor_active = false;
         if preview_render_capped_lines > 0 {
@@ -359,8 +408,7 @@ impl LocalPasteApp {
     /// - `row_height`: Height per rendered row.
     /// - `editor_height`: Available viewport height.
     /// - `editor_font`: Font id used to shape line galleys.
-    /// - `highlight_render_match`: Optional precomputed highlight render payload.
-    /// - `use_plain`: When `true`, bypass syntax-highlighted rendering.
+    /// - `options`: Highlight/focus rendering flags for this frame.
     ///
     /// # Panics
     /// Panics if shaped virtual row galleys unexpectedly wrap.
@@ -370,13 +418,15 @@ impl LocalPasteApp {
         row_height: f32,
         editor_height: f32,
         editor_font: &egui::FontId,
-        highlight_render_match: Option<&HighlightRender>,
-        use_plain: bool,
+        options: VirtualEditorRenderOptions<'_>,
     ) {
-        let scroll = egui::ScrollArea::vertical()
+        let mut scroll = egui::ScrollArea::vertical()
             .id_salt("editor_scroll")
             .max_height(editor_height)
             .auto_shrink([false; 2]);
+        if let Some(offset) = self.virtual_pending_scroll_offset_y.take() {
+            scroll = scroll.vertical_scroll_offset(offset.max(0.0));
+        }
 
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         if self.focus_editor_next {
@@ -441,12 +491,14 @@ impl LocalPasteApp {
                 layout_rebuild_ms = started.elapsed().as_secs_f32() * 1000.0;
             }
         }
-        let total_rows = self.virtual_layout.total_rows().max(1);
+        const EOF_PADDING_ROWS: usize = 3;
+        let content_rows = self.virtual_layout.total_rows().max(1);
+        let total_rows = content_rows.saturating_add(EOF_PADDING_ROWS);
         self.virtual_galley_cache.prepare_frame(
             line_count,
             VirtualGalleyContext::new(
                 content_wrap_width,
-                use_plain,
+                options.use_plain,
                 editor_font,
                 ui.visuals().text_color(),
                 ui.ctx().pixels_per_point(),
@@ -454,7 +506,10 @@ impl LocalPasteApp {
         );
         let mut focused = ui.memory(|m| m.has_focus(editor_id));
         let had_focus = focused || self.virtual_editor_state.has_focus;
+        let frame_contains_focus_retaining_command = had_focus
+            && ui.input(|input| frame_contains_focus_retaining_editor_command(&input.events));
         let mut editor_interacted = false;
+        let mut pending_follow_scroll_offset_y: Option<f32> = None;
         let scroll_output =
             scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
                 ui.set_min_width(wrap_width);
@@ -489,7 +544,18 @@ impl LocalPasteApp {
                 let mut rows = Vec::with_capacity(range.len());
                 let mut pending_action: Option<RowAction> = None;
                 let mut last_synced_line: Option<usize> = None;
-                for row_idx in range {
+                for row_idx in range.clone() {
+                    if row_idx >= content_rows {
+                        let row_width = ui.available_width();
+                        let (_, response) = ui.allocate_exact_size(
+                            egui::vec2(row_width, self.virtual_line_height),
+                            virtual_row_hit_test_sense(),
+                        );
+                        if response.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                        }
+                        continue;
+                    }
                     let (line_idx, row_in_line) = self.virtual_layout.row_to_line(row_idx);
                     let line_start = self.virtual_editor_buffer.line_col_to_char(line_idx, 0);
                     let line_chars = self.virtual_layout.line_chars(line_idx);
@@ -513,8 +579,9 @@ impl LocalPasteApp {
                     let line_visual_rows = self.virtual_layout.line_visual_rows(line_idx);
                     let starts_line = row_in_line == 0;
                     let ends_line = row_in_line.saturating_add(1) >= line_visual_rows;
-                    let render_line =
-                        highlight_render_match.and_then(|render| render.lines.get(line_idx));
+                    let render_line = options
+                        .highlight_render_match
+                        .and_then(|render| render.lines.get(line_idx));
                     if last_synced_line != Some(line_idx) {
                         self.virtual_galley_cache
                             .sync_line_rows(line_idx, line_visual_rows);
@@ -541,7 +608,7 @@ impl LocalPasteApp {
                             std::mem::take(&mut self.virtual_line_scratch),
                             editor_font,
                             render_line,
-                            use_plain,
+                            options.use_plain,
                             segment_start_byte..segment_end_byte,
                         );
                         job.wrap.max_width = f32::INFINITY;
@@ -586,9 +653,7 @@ impl LocalPasteApp {
                                 editor_interacted = true;
                                 pending_action = Some(RowAction::DragStart { global });
                             } else {
-                                let click_count =
-                                    self.register_virtual_click(line_idx, pointer_pos);
-                                self.last_virtual_click_count = click_count;
+                                let click_count = self.register_virtual_click(pointer_pos);
                                 match click_count {
                                     3 => {
                                         editor_interacted = true;
@@ -824,7 +889,28 @@ impl LocalPasteApp {
                 if let Some(started) = paint_started {
                     paint_ms = started.elapsed().as_secs_f32() * 1000.0;
                 }
+
+                let follow_requested = self.virtual_follow_cursor_next_frame;
+                if follow_requested {
+                    self.virtual_follow_cursor_next_frame = false;
+                }
+                if had_focus && !self.virtual_drag_active {
+                    let cursor_row =
+                        self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
+                    let viewport_rows =
+                        ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
+                    pending_follow_scroll_offset_y = follow_cursor_scroll_offset_y(
+                        follow_requested,
+                        cursor_row,
+                        range,
+                        viewport_rows,
+                        self.virtual_line_height,
+                    );
+                }
             });
+        if let Some(offset) = pending_follow_scroll_offset_y {
+            self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
+        }
         // Include scrollbar gutter when classifying inside/outside editor clicks.
         // Scrollbar interaction should not be treated as an external blur.
         let interaction_rect = editor_interaction_rect(scroll_output.inner_rect, wrap_width);
@@ -863,11 +949,18 @@ impl LocalPasteApp {
         });
         let window_blurred =
             ui.input(|input| !input.focused || input.viewport().focused == Some(false));
-        let explicit_blur = clicked_outside_editor || window_blurred;
+        let explicit_blur = should_explicitly_blur_virtual_editor(
+            clicked_outside_editor,
+            window_blurred,
+            options.preserve_focus_from_editor_chrome,
+        );
         if explicit_blur {
             ui.memory_mut(|m| m.surrender_focus(editor_id));
             egui_focus = false;
-        } else if had_focus && !egui_focus && !ui.ctx().wants_keyboard_input() {
+        } else if had_focus
+            && !egui_focus
+            && (frame_contains_focus_retaining_command || !ui.ctx().wants_keyboard_input())
+        {
             ui.memory_mut(|m| m.request_focus(editor_id));
             egui_focus = true;
         }
@@ -901,8 +994,9 @@ impl LocalPasteApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        editor_interaction_rect, line_number_font_for_row_height, line_number_gutter_width,
-        preview_triple_click_selection_bounds, virtual_editor_double_click_selection_bounds,
+        editor_interaction_rect, follow_cursor_scroll_offset_y, line_number_font_for_row_height,
+        line_number_gutter_width, preview_triple_click_selection_bounds,
+        should_explicitly_blur_virtual_editor, virtual_editor_double_click_selection_bounds,
         virtual_row_hit_test_sense,
     };
     use crate::app::MAX_RENDER_CHARS_PER_LINE;
@@ -933,6 +1027,18 @@ mod tests {
             assert_eq!(rect.max.y, inner.max.y);
             assert_eq!(rect.max.x, inner.max.x + case.expected_extra_right);
         }
+    }
+
+    #[test]
+    fn follow_cursor_scroll_offset_only_applies_when_requested() {
+        let hidden_cursor_offset = follow_cursor_scroll_offset_y(false, 100, 0..20, 20, 12.0);
+        assert_eq!(hidden_cursor_offset, None);
+
+        let requested_offset = follow_cursor_scroll_offset_y(true, 100, 0..20, 20, 12.0);
+        assert!(
+            requested_offset.is_some(),
+            "requested follow should produce a scroll offset when caret is out of view"
+        );
     }
 
     #[test]
@@ -987,5 +1093,13 @@ mod tests {
         assert!(sense.senses_click());
         assert!(sense.senses_drag());
         assert!(!sense.is_focusable());
+    }
+
+    #[test]
+    fn explicit_blur_policy_preserves_editor_focus_for_editor_chrome_actions() {
+        assert!(should_explicitly_blur_virtual_editor(true, false, false));
+        assert!(!should_explicitly_blur_virtual_editor(true, false, true));
+        assert!(should_explicitly_blur_virtual_editor(false, true, true));
+        assert!(!should_explicitly_blur_virtual_editor(false, false, false));
     }
 }

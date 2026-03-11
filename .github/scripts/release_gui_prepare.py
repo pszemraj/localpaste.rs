@@ -21,6 +21,12 @@ import sys
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from release_versioning import (
+    VersionValidationError,
+    normalize_packaging_tag,
+    packager_version_for_runner,
+)
+
 
 def fail(message: str) -> None:
     print(message, file=sys.stderr)
@@ -91,19 +97,22 @@ def probe_wix_version(wix_bin: Path) -> str | None:
         command = wix_bin / executable
         if not command.is_file():
             return None
-        result = subprocess.run(
-            [str(command), "-?"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                [str(command), "-?"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return None
+        output = f"{result.stdout}\n{result.stderr}"
+        match = version_pattern.search(output)
+        if match:
+            detected_version = match.group(1)
+            continue
         if result.returncode != 0:
             return None
-        if detected_version is None:
-            output = f"{result.stdout}\n{result.stderr}"
-            match = version_pattern.search(output)
-            if match:
-                detected_version = match.group(1)
 
     return detected_version
 
@@ -215,20 +224,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def normalize_release_tag(raw_tag: str) -> str:
+    try:
+        return normalize_packaging_tag(raw_tag)
+    except VersionValidationError as exc:
+        fail(str(exc))
+
+
 def main() -> int:
     args = parse_args()
 
-    tag = args.tag.strip()
-    if not tag:
-        fail("release tag cannot be empty")
-    if not tag.startswith("v"):
-        fail(f"release tag must start with 'v' (got: {tag})")
-
-    version = tag[1:]
-    if not version:
-        fail(f"release tag is missing semantic version segment: {tag}")
-
     runner_os = args.runner_os.strip()
+    tag = normalize_release_tag(args.tag)
+    version = packager_version_for_runner(tag, runner_os=runner_os)
     source_config = Path(args.packager_config)
     if not source_config.is_file():
         fail(f"packager config file not found: {source_config}")

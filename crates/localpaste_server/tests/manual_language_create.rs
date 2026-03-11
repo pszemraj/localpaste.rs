@@ -7,42 +7,45 @@ use serde_json::json;
 use support::setup_test_server;
 
 #[tokio::test]
-async fn test_create_paste_respects_explicit_language_even_when_content_differs() {
-    let (server, _temp, _locks) = setup_test_server();
+async fn test_create_paste_manual_language_mode_matrix() {
+    struct Case {
+        request: serde_json::Value,
+        expected_language: Option<&'static str>,
+        expected_manual: bool,
+    }
 
-    let create_response = server
-        .post("/api/paste")
-        .json(&json!({
-            "content": "fn main() { println!(\"hello\"); }",
-            "name": "manual-language",
-            "language": "python",
-            "language_is_manual": true
-        }))
-        .await;
+    let cases = [
+        Case {
+            request: json!({
+                "content": "fn main() { println!(\"hello\"); }",
+                "name": "manual-language",
+                "language": "python",
+                "language_is_manual": true
+            }),
+            expected_language: Some("python"),
+            expected_manual: true,
+        },
+        Case {
+            request: json!({
+                "content": "fn main() { println!(\"hello\"); }",
+                "name": "auto-language",
+                "language_is_manual": false
+            }),
+            expected_language: None,
+            expected_manual: false,
+        },
+    ];
 
-    assert_eq!(create_response.status_code(), StatusCode::OK);
-    let paste: serde_json::Value = create_response.json();
-    assert_eq!(paste["language"], "python");
-    assert_eq!(paste["language_is_manual"], true);
-}
+    for case in cases {
+        let (server, _temp, _locks) = setup_test_server();
 
-#[tokio::test]
-async fn test_create_paste_with_explicit_auto_mode_starts_unresolved() {
-    let (server, _temp, _locks) = setup_test_server();
+        let create_response = server.post("/api/paste").json(&case.request).await;
 
-    let create_response = server
-        .post("/api/paste")
-        .json(&json!({
-            "content": "fn main() { println!(\"hello\"); }",
-            "name": "auto-language",
-            "language_is_manual": false
-        }))
-        .await;
-
-    assert_eq!(create_response.status_code(), StatusCode::OK);
-    let paste: serde_json::Value = create_response.json();
-    assert!(paste["language"].is_null());
-    assert_eq!(paste["language_is_manual"], false);
+        assert_eq!(create_response.status_code(), StatusCode::OK);
+        let paste: serde_json::Value = create_response.json();
+        assert_eq!(paste["language"].as_str(), case.expected_language);
+        assert_eq!(paste["language_is_manual"], case.expected_manual);
+    }
 }
 
 #[tokio::test]

@@ -147,6 +147,12 @@ fn print_help() {
     );
     println!("  MAX_PASTE_SIZE    Maximum paste size in bytes (default: 10MB)");
     println!(
+        "  LOCALPASTE_VERSION_INTERVAL_SECS  Min seconds between saved historical snapshots (default: 300, must be >= 1)"
+    );
+    println!(
+        "  LOCALPASTE_PASTE_VERSION_INTERVAL_SECS  Legacy fallback for LOCALPASTE_VERSION_INTERVAL_SECS"
+    );
+    println!(
         "  AUTO_BACKUP       Create backup at startup when DB already exists (1/0/true/false)"
     );
     println!("  ALLOW_PUBLIC_ACCESS  Allow CORS from any origin");

@@ -1,11 +1,16 @@
 //! Protocol types for the native GUI backend worker.
 
 use chrono::{DateTime, Utc};
+use localpaste_core::diff::DiffResponse;
 use localpaste_core::models::{
     folder::Folder,
-    paste::{Paste, PasteMeta},
+    paste::{Paste, PasteMeta, VersionMeta, VersionSnapshot},
 };
+use localpaste_core::semantic::DerivedMeta;
 use ropey::Rope;
+
+/// Version row count requested by detached history workflows.
+pub(crate) const VERSION_WORKFLOW_LIST_LIMIT: usize = 200;
 
 /// Commands issued by the UI thread for the backend worker to execute.
 #[derive(Debug)]
@@ -26,6 +31,8 @@ pub enum CoreCmd {
     SearchPalette { query: String, limit: usize },
     /// Load a single paste by id for display in the editor pane.
     GetPaste { id: String },
+    /// Load a comparison target for the detached diff modal.
+    GetDiffTargetPaste { id: String },
     /// Create a new paste with the provided content.
     CreatePaste { content: String },
     /// Persist updated content for an existing paste.
@@ -45,6 +52,28 @@ pub enum CoreCmd {
     },
     /// Delete a paste by id.
     DeletePaste { id: String },
+    /// List historical versions for a paste.
+    ListPasteVersions { id: String, limit: usize },
+    /// Load one historical version snapshot.
+    GetPasteVersion { id: String, version_id_ms: u64 },
+    /// Reset current paste content to a historical version.
+    ResetPasteHardToVersion { id: String, version_id_ms: u64 },
+    /// Duplicate a paste from a historical version snapshot.
+    DuplicatePasteVersion {
+        id: String,
+        version_id_ms: u64,
+        name: Option<String>,
+    },
+    /// Compute a detached diff preview from frozen left/right text snapshots.
+    ///
+    /// The GUI diff modal compares unsaved local edits on the left against a
+    /// loaded target paste on the right, so preview computation runs off the UI
+    /// thread against explicit text snapshots rather than DB refs.
+    ComputeDiffPreview {
+        request_id: u64,
+        left_text: String,
+        right_text: String,
+    },
     /// Gracefully stop the backend worker.
     ///
     /// When `flush` is true, the worker flushes pending database writes before
@@ -91,14 +120,34 @@ pub enum CoreEvent {
     PasteLoaded { paste: Paste },
     /// Loading a specific paste failed due to backend/storage error.
     PasteLoadFailed { id: String, message: String },
+    /// Response containing the detached diff target payload requested by id.
+    DiffTargetLoaded { paste: Paste },
+    /// The requested detached diff target id no longer exists in the database.
+    DiffTargetMissing { id: String },
+    /// Loading a detached diff target failed due to backend/storage error.
+    DiffTargetLoadFailed { id: String, message: String },
     /// Response containing a newly created paste.
     PasteCreated { paste: Paste },
     /// Response confirming a paste was updated.
     PasteSaved { paste: Paste },
+    /// Response confirming a paste was reset to a historical version.
+    PasteResetToVersion { paste: Paste },
     /// Response confirming a paste's metadata was updated.
     PasteMetaSaved { paste: Paste },
     /// Response confirming a paste was deleted.
     PasteDeleted { id: String },
+    /// Response containing historical version metadata rows for a paste.
+    PasteVersionsLoaded { id: String, items: Vec<VersionMeta> },
+    /// Response containing a historical version snapshot.
+    PasteVersionLoaded { snapshot: VersionSnapshot },
+    /// Loading a historical version snapshot failed.
+    PasteVersionLoadFailed {
+        paste_id: String,
+        version_id_ms: u64,
+        message: String,
+    },
+    /// Response containing a detached diff preview for the matching request id.
+    DiffPreviewComputed { request_id: u64, diff: DiffResponse },
     /// The requested paste id no longer exists in the database.
     PasteMissing { id: String },
     /// Response containing current folder list.
@@ -137,6 +186,7 @@ pub struct PasteSummary {
     pub updated_at: DateTime<Utc>,
     pub folder_id: Option<String>,
     pub tags: Vec<String>,
+    pub derived: DerivedMeta,
 }
 
 impl PasteSummary {
@@ -153,6 +203,10 @@ impl PasteSummary {
             updated_at: paste.updated_at,
             folder_id: paste.folder_id.clone(),
             tags: paste.tags.clone(),
+            derived: localpaste_core::semantic::derive(
+                paste.content.as_str(),
+                paste.language.as_deref(),
+            ),
         }
     }
 
@@ -169,6 +223,7 @@ impl PasteSummary {
             updated_at: meta.updated_at,
             folder_id: meta.folder_id.clone(),
             tags: meta.tags.clone(),
+            derived: meta.derived.clone(),
         }
     }
 }

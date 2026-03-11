@@ -59,6 +59,73 @@ fn on_exit_dispatches_dirty_content_and_metadata_save_and_drop_releases_selected
 }
 
 #[test]
+fn on_exit_dispatches_dirty_saves_even_with_version_overlay_open() {
+    enum OverlayCase {
+        History,
+        Diff,
+    }
+
+    for overlay in [OverlayCase::History, OverlayCase::Diff] {
+        let mut harness = make_app();
+        harness
+            .app
+            .selected_content
+            .reset("overlay-exit-content".to_string());
+        harness.app.save_status = SaveStatus::Dirty;
+        harness.app.save_in_flight = false;
+        harness.app.last_edit_at = Some(Instant::now());
+        harness.app.edit_name = "overlay-exit-name".to_string();
+        harness.app.edit_language = Some("rust".to_string());
+        harness.app.edit_language_is_manual = true;
+        harness.app.edit_tags = "one, two".to_string();
+        harness.app.metadata_dirty = true;
+        harness.app.metadata_save_in_flight = false;
+
+        match overlay {
+            OverlayCase::History => harness.app.version_ui.history_modal_open = true,
+            OverlayCase::Diff => harness.app.version_ui.diff_modal_open = true,
+        }
+
+        eframe::App::on_exit(&mut harness.app, None);
+
+        let first = recv_cmd(&harness.cmd_rx);
+        let second = recv_cmd(&harness.cmd_rx);
+        let mut saw_content = false;
+        let mut saw_metadata = false;
+
+        for cmd in [first, second] {
+            match cmd {
+                CoreCmd::UpdatePaste { id, content } => {
+                    assert_eq!(id, "alpha");
+                    assert_eq!(content, "overlay-exit-content");
+                    saw_content = true;
+                }
+                CoreCmd::UpdatePasteMeta {
+                    id,
+                    name,
+                    language,
+                    language_is_manual,
+                    folder_id,
+                    tags,
+                } => {
+                    assert_eq!(id, "alpha");
+                    assert_eq!(name.as_deref(), Some("overlay-exit-name"));
+                    assert_eq!(language.as_deref(), Some("rust"));
+                    assert_eq!(language_is_manual, Some(true));
+                    assert!(folder_id.is_none());
+                    assert_eq!(tags, Some(vec!["one".to_string(), "two".to_string()]));
+                    saw_metadata = true;
+                }
+                other => panic!("unexpected command: {:?}", other),
+            }
+        }
+
+        assert!(saw_content, "expected shutdown to persist dirty content");
+        assert!(saw_metadata, "expected shutdown to persist dirty metadata");
+    }
+}
+
+#[test]
 fn on_exit_requeues_dirty_tails_after_stale_in_flight_acks() {
     let (mut harness, evt_tx) = make_app_with_event_tx();
     harness

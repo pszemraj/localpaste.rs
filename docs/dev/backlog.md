@@ -1,6 +1,4 @@
 # Engineering Backlog
-
-This file tracks deferred technical follow-ups.
 Status uses the same checklist markers as other dev docs:
 
 - [ ] not started
@@ -25,13 +23,19 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Track folder-count decrement failures with a persistent repair marker and run opportunistic `reconcile_folder_invariants` recovery in long-lived processes.
 - [ ] Add an explicit runtime reconcile entrypoint/scheduler for metadata indexes so degraded states are repaired without restart.
 - [ ] Add low-cost semantic drift detection for `pastes_meta` rows (without full content deserialization in list/search hot paths), e.g. metadata hash/version marker validation at write/reconcile time.
+- [x] Add persisted derived semantic metadata for paste retrieval (`kind` / compact handle / derived terms) with `pastes_meta` rebuild, then use it for metadata-only search, smart filters, the properties drawer, and sidebar hover metadata.
+- [ ] Add a muted second sidebar metadata line when a derived handle exists, now that persisted semantic retrieval metadata and hover/details surfaces are in place.
+- [ ] Split history-reset worker failures out from generic `CoreErrorSource::SaveContent` so reset-specific UI transitions and error reporting do not rely on shared save-content handling.
+- [ ] Evaluate code-editor-style smart Home behavior for the virtual editor (first non-whitespace <-> column 0) without regressing platform-native line/document key bindings.
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
+- [ ] Work through the remaining `check-ast-dupes --include-tests` heuristic findings: either tighten visibility for `localpaste_core::db::versioning::{content_hash_hex, version_meta_for_content}` or document why `pub(crate)` stays, and decide whether the current near-miss pairs in `localpaste_server/tests/manual_language_create.rs` and `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` should be de-duplicated or kept as intentionally distinct coverage.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
 - [ ] Expand `verify-gui-packaging.yml` beyond macOS (at least Linux x64) so packaging script regressions are caught before release-tag runs.
 - [ ] Revisit `TransactionOps` create/delete/move wrapper consolidation with a lock-safe transaction template only if we can preserve operation-specific invariants and error semantics without reducing readability.
-- [ ] Resolve `check-ast-dupes` finding in `crates/localpaste_core/src/db/transactions.rs` (`create_paste_with_folder` vs `move_paste_between_folders`) by extracting shared transactional structure while keeping operation-specific invariant checks explicit.
+- [ ] Revisit the duplicated selected-paste gate/setup in `crates/localpaste_gui/src/app/version_ui.rs` (`open_history_modal` vs `open_diff_modal`) and extract a shared helper only if it improves readability without hiding modal-specific state.
 - [ ] De-duplicate overlapping heuristic detection matrix tests in `crates/localpaste_core/src/detection/tests.rs` (`heuristic_detects_expanded_fallback_languages` vs `heuristic_handles_shebang_and_import_conflict_matrix`) without reducing scenario coverage.
+- [ ] Revisit Markdown-vs-YAML bias for top-level `- key: value` bullet-note content (no `---` doc start, no nesting) and decide whether product UX should prefer Markdown over YAML in that narrow shape.
 - [ ] Evaluate a shared test bootstrap utility for temporary DB + backend event receive flows across GUI/server/core tests while keeping unit-vs-integration boundaries explicit (avoid forcing production API exposure only for tests).
 - [ ] Re-evaluate whether `LocalPasteApp::{active_text_len_bytes, active_text_chars, active_revision, active_snapshot}` should remain separate explicit helpers or move behind a single active-buffer abstraction; keep separate until a clear readability/perf win is demonstrated.
 - [x] Add explicit `Paste as new paste` UX (`Ctrl/Cmd+Shift+V` + command palette action) so new-paste clipboard flow does not depend on editor blur/focus heuristics.

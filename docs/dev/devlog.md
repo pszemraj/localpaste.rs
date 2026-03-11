@@ -1,11 +1,8 @@
 # Development Guide
 
-This guide covers the development workflow.
-Topic-specific ownership references are listed in
-[docs/README.md](../README.md).
-This guide includes the binary/build/run command matrix used in day-to-day development.
-System architecture context lives in
-[docs/architecture.md](../architecture.md).
+Build, run, validation, and tooling command matrix.
+Runtime architecture: [../architecture.md](../architecture.md).
+Docs map: [../README.md](../README.md).
 
 ## Workspace Layout
 
@@ -84,9 +81,7 @@ For repeatable GUI perf validation, see
 
 ## Validation Loop
 
-Policy reference:
-This document and linked `docs/dev/*` references define mandatory validation gates and when smoke/manual GUI checks are required.
-This section is the quick command reference used during active development.
+Run this loop when touching Rust/runtime behavior.
 
 ```bash
 # 1) format
@@ -115,6 +110,18 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 rustdoc-checker crates --strict
 ```
 
+- Workflow/release helper changes:
+  when touching `.github/workflows/*`, `.github/scripts/*`, or GUI packaging/release behavior, also run:
+
+```bash
+# release helper regression tests
+python -m unittest discover -s .github/scripts -p 'test_*.py'
+
+# workflow YAML + shell/release invariant validation
+# requires yamllint in PATH
+python .github/scripts/validate_workflow.py .github/workflows
+```
+
 - Manual GUI checklist:
   [docs/dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
 
@@ -123,7 +130,7 @@ Language detection/normalization/highlight behavior is tracked in
 
 ## Runtime Smoke Test (Server CLI)
 
-Use this API/core smoke runbook.
+Run this API/core smoke test.
 It validates CRUD behavior and persistence across process restart.
 
 ### Bash
@@ -189,6 +196,17 @@ Remove-Item -Recurse -Force $env:DB_PATH
 This section documents `localpaste_tools` CLI behavior
 used in automation/CI contracts.
 
+### `generate-test-data`
+
+- Database target policy:
+  - requires explicit database intent via `--db-path` or `DB_PATH`
+  - platform-default `DB_PATH` use is rejected unless `--allow-default-db` is supplied
+  - blank `DB_PATH` is rejected
+- Destructive clear policy:
+  - `--clear` requires `--yes`
+- Side effects:
+  - opens the chosen database path as a writer and mutates paste/folder data
+
 ### `check-loc`
 
 - Parse-time validation:
@@ -219,30 +237,9 @@ used in automation/CI contracts.
 
 ## GUI Release Pipeline
 
-Release contract details:
-[docs/release-gui.md](../release-gui.md).
+Packaging/release behavior lives in [../release-gui.md](../release-gui.md).
 
-Dev-facing quick links:
-
-- Release workflow: [`.github/workflows/release-gui.yml`](../../.github/workflows/release-gui.yml)
-- Packaging verification workflow: [`.github/workflows/verify-gui-packaging.yml`](../../.github/workflows/verify-gui-packaging.yml)
-- Packaging config roots:
-  - [`../../packaging/windows/packager.json`](../../packaging/windows/packager.json)
-  - [`../../packaging/linux/packager.json`](../../packaging/linux/packager.json)
-  - [`../../packaging/macos/packager.json`](../../packaging/macos/packager.json)
-
-Release workflows intentionally keep validation scoped to packaging/runtime gates rather than running the full local development loop.
-
-## Behavior Contracts
-
-This file is intentionally command/workflow-focused. For runtime behavior contracts, use:
-
-- System/runtime architecture: [docs/architecture.md](../architecture.md)
-- Security defaults and env policy: [docs/security.md](../security.md)
-- Service operation and lock recovery: [docs/deployment.md](../deployment.md)
-- Lock semantics and API `423 Locked` behavior: [docs/dev/locking-model.md](locking-model.md)
-- Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md)
-- API wiring + handler behavior in code:
-  - [`../../crates/localpaste_server/src/lib.rs`](../../crates/localpaste_server/src/lib.rs)
-  - [`../../crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs)
-- Engineering backlog: [docs/dev/backlog.md](backlog.md)
+Current workflow-helper regression coverage includes prerelease workspace
+version handling for `release-gui.yml` `current_ref` runs and for
+`verify-gui-packaging.yml` when packaging metadata is derived from
+`[workspace.package].version`.

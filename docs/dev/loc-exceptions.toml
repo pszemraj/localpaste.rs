@@ -15,3 +15,48 @@
 path = "crates/localpaste_gui/src/app/tests/virtual_editor_behaviors.rs"
 max_lines = 1100
 reason = "Temporary overage while keyboard parity regression matrix lands; split planned after stabilization."
+
+[[exceptions]]
+path = "crates/localpaste_cli/src/main.rs"
+max_lines = 1200
+reason = "CLI currently centralizes endpoint resolution and command execution; split into subcommand modules is pending follow-up cleanup."
+
+[[exceptions]]
+path = "crates/localpaste_server/tests/api_integration.rs"
+max_lines = 1200
+reason = "Integration coverage remains centralized while version/diff endpoint contracts land; follow-up will split into focused test files."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/ui/editor_panel_virtual.rs"
+max_lines = 1105
+reason = "Virtual editor rendering and interaction logic is still in one module pending extraction into row rendering/scroll coordination submodules."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/mod.rs"
+max_lines = 1050
+reason = "The main GUI update loop still centralizes frame input routing and per-frame orchestration; the reset-mutation fence landed here pending extraction into a dedicated input pipeline module."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/state_ops.rs"
+max_lines = 1076
+reason = "Selection, save, and backend event transitions remain centralized; reset fencing and detached diff/history stale-reply guards are still co-located here until save/export/selection helpers are split into smaller modules."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/virtual_editor/input.rs"
+max_lines = 1044
+reason = "Virtual editor input translation deliberately centralizes platform shortcut normalization and focus-retention regressions in one place; split test/support modules if the command matrix grows further."
+
+[[exceptions]]
+path = "crates/localpaste_core/src/db/paste/mod.rs"
+max_lines = 1060
+reason = "PasteDb still centralizes canonical/meta/version storage workflows; the meta-schema gate for derived retrieval startup now lives here until startup compatibility checks are extracted."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/backend/mod.rs"
+max_lines = 1100
+reason = "Backend worker tests still centralize worker/query/version scenarios in one module while detached diff/history behavior and backend parity stabilize, including detached diff target routing coverage."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/tests/collections_and_search.rs"
+max_lines = 1050
+reason = "Collection/search regressions remain in one integration-style matrix while metadata retrieval and visible-projection freshness stabilize."

@@ -16,6 +16,8 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+from release_versioning import VersionValidationError, normalize_packaging_tag
+
 
 def fail(message: str) -> None:
     print(message, file=sys.stderr)
@@ -154,13 +156,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def normalize_release_tag(raw_tag: str) -> str:
+    try:
+        return normalize_packaging_tag(raw_tag)
+    except VersionValidationError as exc:
+        fail(str(exc))
+
+
 def main() -> int:
     args = parse_args()
-    tag = args.tag.strip()
-    if not tag:
-        fail("release tag cannot be empty")
-    if not tag.startswith("v"):
-        fail(f"release tag must start with 'v' (got: {tag})")
+    tag = normalize_release_tag(args.tag)
 
     runner_os = args.runner_os.strip()
     asset_suffix = args.asset_suffix.strip()

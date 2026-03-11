@@ -3,12 +3,14 @@
 use super::{
     api_url, default_resolution_connect_hint, discovered_server_from_file_with_reachability,
     discovery_probe_response_looks_like_localpaste, error_message_for_response,
-    format_delete_output, format_get_output, format_summary_output, normalize_server,
-    paste_id_and_name, resolve_server, resolve_server_with_source, ServerResolutionSource,
+    format_delete_output, format_diff_output, format_equal_output, format_get_output,
+    format_summary_output, normalize_server, paste_id_and_name, resolve_server,
+    resolve_server_with_source, ServerResolutionSource,
 };
 use super::{Cli, Commands};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use localpaste_core::config::api_addr_file_path_from_env_or_default;
+use localpaste_core::diff::{unified_diff_lines, DiffResponse, EqualResponse};
 use localpaste_core::env::{env_lock, EnvGuard};
 use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
 use std::io::{Read, Write};
@@ -258,6 +260,49 @@ fn json_output_helpers_preserve_payload_shape() {
 }
 
 #[test]
+fn cli_diff_output_stays_line_oriented_without_trailing_newlines() {
+    let diff = DiffResponse {
+        equal: false,
+        unified: unified_diff_lines("old", "new"),
+    };
+    assert_eq!(
+        format_diff_output(&diff, false).expect("diff output"),
+        "-old\n+new"
+    );
+}
+
+#[test]
+fn cli_diff_output_normalizes_embedded_line_endings() {
+    let diff = DiffResponse {
+        equal: false,
+        unified: unified_diff_lines("old\n", "new\n"),
+    };
+    assert_eq!(
+        format_diff_output(&diff, false).expect("diff output"),
+        "-old\n+new"
+    );
+}
+
+#[test]
+fn cli_equal_output_formats_boolean_shape_for_text_and_json() {
+    let equal = EqualResponse { equal: true };
+    assert_eq!(
+        format_equal_output(&equal, false).expect("text equal output"),
+        "equal"
+    );
+    assert_eq!(
+        format_equal_output(&equal, true).expect("json equal output"),
+        "{\n  \"equal\": true\n}"
+    );
+
+    let different = EqualResponse { equal: false };
+    assert_eq!(
+        format_equal_output(&different, false).expect("text different output"),
+        "different"
+    );
+}
+
+#[test]
 fn api_url_matrix_covers_encoding_and_base_path_append() {
     let cases = [
         (
@@ -292,10 +337,192 @@ fn cli_parses_search_meta_subcommand() {
 }
 
 #[test]
+fn cli_parses_versions_and_get_version_subcommands() {
+    let versions = Cli::try_parse_from(["lpaste", "versions", "abc", "--limit", "25"])
+        .expect("cli should parse versions");
+    match versions.command {
+        Commands::Versions { id, limit } => {
+            assert_eq!(id, "abc");
+            assert_eq!(limit, 25);
+        }
+        _ => panic!("expected versions command"),
+    }
+
+    let get_version = Cli::try_parse_from(["lpaste", "get-version", "abc", "123"])
+        .expect("cli should parse get-version");
+    match get_version.command {
+        Commands::GetVersion { id, version_id_ms } => {
+            assert_eq!(id, "abc");
+            assert_eq!(version_id_ms, 123);
+        }
+        _ => panic!("expected get-version command"),
+    }
+}
+
+#[test]
+fn cli_parses_diff_equal_and_reset_commands() {
+    let diff = Cli::try_parse_from([
+        "lpaste",
+        "diff",
+        "left",
+        "right",
+        "--left-version",
+        "10",
+        "--right-version",
+        "20",
+    ])
+    .expect("cli should parse diff");
+    match diff.command {
+        Commands::Diff {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        } => {
+            assert_eq!(left_id, "left");
+            assert_eq!(right_id, "right");
+            assert_eq!(left_version, Some(10));
+            assert_eq!(right_version, Some(20));
+        }
+        _ => panic!("expected diff command"),
+    }
+
+    let equal =
+        Cli::try_parse_from(["lpaste", "equal", "left", "right"]).expect("cli should parse equal");
+    match equal.command {
+        Commands::Equal {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        } => {
+            assert_eq!(left_id, "left");
+            assert_eq!(right_id, "right");
+            assert_eq!(left_version, None);
+            assert_eq!(right_version, None);
+        }
+        _ => panic!("expected equal command"),
+    }
+
+    let reset = Cli::try_parse_from(["lpaste", "reset-hard", "abc", "123", "--yes"])
+        .expect("cli should parse reset-hard");
+    match reset.command {
+        Commands::ResetHard {
+            id,
+            version_id_ms,
+            yes,
+        } => {
+            assert_eq!(id, "abc");
+            assert_eq!(version_id_ms, 123);
+            assert!(yes);
+        }
+        _ => panic!("expected reset-hard command"),
+    }
+}
+
+#[test]
+fn cli_rejects_reset_hard_without_yes_flag() {
+    let err = match Cli::try_parse_from(["lpaste", "reset-hard", "abc", "123"]) {
+        Ok(_) => panic!("reset-hard must require --yes"),
+        Err(err) => err,
+    };
+    assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+}
+
+#[test]
+fn cli_parses_duplicate_version_subcommand() {
+    let duplicate = Cli::try_parse_from([
+        "lpaste",
+        "duplicate-version",
+        "abc",
+        "99",
+        "--name",
+        "from-version",
+    ])
+    .expect("cli should parse duplicate-version");
+    match duplicate.command {
+        Commands::DuplicateVersion {
+            id,
+            version_id_ms,
+            name,
+        } => {
+            assert_eq!(id, "abc");
+            assert_eq!(version_id_ms, 99);
+            assert_eq!(name.as_deref(), Some("from-version"));
+        }
+        _ => panic!("expected duplicate-version command"),
+    }
+}
+
+#[test]
 fn cli_parses_no_discovery_flag() {
     let cli = Cli::try_parse_from(["lpaste", "--no-discovery", "list"])
         .expect("cli should parse no-discovery flag");
     assert!(cli.no_discovery);
+}
+
+#[test]
+fn cli_global_connection_flags_parse_before_and_after_subcommand() {
+    let before = Cli::try_parse_from([
+        "lpaste",
+        "--server",
+        "http://127.0.0.1:45556",
+        "--timeout",
+        "9",
+        "list",
+    ])
+    .expect("global flags should parse before the subcommand");
+    assert_eq!(before.server.as_deref(), Some("http://127.0.0.1:45556"));
+    assert_eq!(before.timeout.get(), 9);
+
+    let after = Cli::try_parse_from([
+        "lpaste",
+        "list",
+        "--server",
+        "http://127.0.0.1:45556",
+        "--timeout",
+        "9",
+    ])
+    .expect("global flags should parse after the subcommand");
+    assert_eq!(after.server.as_deref(), Some("http://127.0.0.1:45556"));
+    assert_eq!(after.timeout.get(), 9);
+}
+
+#[test]
+fn cli_rejects_zero_timeout() {
+    let err = match Cli::try_parse_from(["lpaste", "--timeout", "0", "list"]) {
+        Ok(_) => panic!("zero timeout should be rejected"),
+        Err(err) => err,
+    };
+    assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+}
+
+#[test]
+fn cli_help_describes_version_and_reset_arguments() {
+    let mut cli = Cli::command();
+    let mut diff = cli
+        .find_subcommand_mut("diff")
+        .expect("diff subcommand should exist")
+        .clone();
+    let mut reset = cli
+        .find_subcommand_mut("reset-hard")
+        .expect("reset-hard subcommand should exist")
+        .clone();
+
+    let mut diff_help = Vec::new();
+    diff.write_long_help(&mut diff_help)
+        .expect("diff help should render");
+    let diff_help = String::from_utf8(diff_help).expect("diff help utf8");
+    assert!(diff_help.contains("Left-hand paste id"));
+    assert!(diff_help.contains("Optional historical version id for the left-hand paste"));
+
+    let mut reset_help = Vec::new();
+    reset
+        .write_long_help(&mut reset_help)
+        .expect("reset help should render");
+    let reset_help = String::from_utf8(reset_help).expect("reset help utf8");
+    assert!(reset_help.contains("Required acknowledgement for the destructive reset"));
+    assert!(reset_help.contains("Historical version timestamp id in milliseconds"));
 }
 
 #[test]

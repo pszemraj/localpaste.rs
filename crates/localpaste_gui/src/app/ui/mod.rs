@@ -2,10 +2,14 @@
 
 /// Command palette modal and quick-action behavior.
 pub(super) mod command_palette;
+/// Detached diff modal for side-by-side compare operations.
+pub(super) mod diff_modal;
 /// Standard text editor panel and header controls.
 pub(super) mod editor_panel;
 /// Virtual preview/editor panel rendering.
 pub(super) mod editor_panel_virtual;
+/// Detached version-history modal for historical snapshots/reset.
+pub(super) mod history_modal;
 /// Right-side properties drawer.
 pub(super) mod properties_drawer;
 /// Keyboard shortcut help window.

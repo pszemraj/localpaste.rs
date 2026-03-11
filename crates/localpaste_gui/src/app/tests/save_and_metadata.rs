@@ -17,6 +17,7 @@ fn paste_meta_saved_refilters_when_selected_paste_leaves_active_scope() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
             PasteSummary {
                 id: "beta".to_string(),
@@ -26,6 +27,7 @@ fn paste_meta_saved_refilters_when_selected_paste_leaves_active_scope() {
                 updated_at: now,
                 folder_id: None,
                 tags: Vec::new(),
+                derived: Default::default(),
             },
         ],
     });
@@ -154,6 +156,78 @@ fn save_events_during_active_search_force_fresh_backend_search() {
 }
 
 #[test]
+fn authoritative_paste_events_resort_sidebar_by_updated_at_matrix() {
+    #[derive(Clone, Copy)]
+    enum SaveEventKind {
+        Metadata,
+        Content,
+        Reset,
+    }
+
+    let older = Utc::now() - chrono::Duration::minutes(10);
+    let newer = Utc::now() - chrono::Duration::minutes(5);
+    let newest = Utc::now();
+
+    for event in [
+        SaveEventKind::Metadata,
+        SaveEventKind::Content,
+        SaveEventKind::Reset,
+    ] {
+        let mut harness = make_app();
+        let mut alpha = test_summary("alpha", "Alpha", None, 7);
+        alpha.updated_at = older;
+        let mut beta = test_summary("beta", "Beta", None, 7);
+        beta.updated_at = newer;
+        harness.app.all_pastes = vec![beta.clone(), alpha.clone()];
+        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.selected_id = Some("alpha".to_string());
+
+        let mut updated = Paste::new("updated body".to_string(), "Alpha".to_string());
+        updated.id = "alpha".to_string();
+        updated.updated_at = newest;
+
+        match event {
+            SaveEventKind::Metadata => {
+                harness
+                    .app
+                    .apply_event(CoreEvent::PasteMetaSaved { paste: updated });
+            }
+            SaveEventKind::Content => {
+                harness
+                    .app
+                    .apply_event(CoreEvent::PasteSaved { paste: updated });
+            }
+            SaveEventKind::Reset => {
+                harness
+                    .app
+                    .apply_event(CoreEvent::PasteResetToVersion { paste: updated });
+            }
+        }
+
+        assert_eq!(
+            harness
+                .app
+                .all_pastes
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "beta"],
+            "canonical cache should stay newest-first after authoritative update"
+        );
+        assert_eq!(
+            harness
+                .app
+                .pastes
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "beta"],
+            "visible sidebar should reflect newest-first order without a later refresh"
+        );
+    }
+}
+
+#[test]
 fn metadata_save_ack_updates_visible_search_row_before_backend_redispatch() {
     let mut harness = make_app();
     harness.app.search_query = "alpha".to_string();
@@ -166,6 +240,7 @@ fn metadata_save_ack_updates_visible_search_row_before_backend_redispatch() {
         updated_at: Utc::now(),
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     }];
     harness.app.all_pastes = harness.app.pastes.clone();
 

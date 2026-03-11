@@ -6,6 +6,7 @@ use crate::backend::{BackendHandle, CoreCmd, CoreEvent};
 use chrono::Utc;
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use eframe::egui::TextBuffer;
+use eframe::App as _;
 use localpaste_server::LockOwnerId;
 use syntect::util::LinesWithEndings;
 use tempfile::TempDir;
@@ -38,6 +39,7 @@ fn test_summary(id: &str, name: &str, language: Option<&str>, content_len: usize
         updated_at: Utc::now(),
         folder_id: None,
         tags: Vec::new(),
+        derived: Default::default(),
     }
 }
 
@@ -73,10 +75,115 @@ pub(super) fn configure_virtual_editor_test_ctx(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// Reset the virtual editor and rebuild wrapping metrics for a test buffer.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `text`: Replacement buffer text.
+/// - `wrap_width`: Wrap width used for layout reconstruction.
+pub(super) fn configure_virtual_editor_with_wrap(
+    app: &mut LocalPasteApp,
+    text: &str,
+    wrap_width: f32,
+) {
+    app.reset_virtual_editor(text);
+    app.virtual_layout
+        .rebuild(&app.virtual_editor_buffer, wrap_width, 1.0, 1.0);
+}
+
+/// Position the virtual editor cursor at a logical line/column pair for tests.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `line`: Zero-based logical line index.
+/// - `col`: Zero-based logical column within `line`.
+pub(super) fn set_virtual_cursor_at(app: &mut LocalPasteApp, line: usize, col: usize) {
+    let len = app.virtual_editor_buffer.len_chars();
+    let pos = app.virtual_editor_buffer.line_col_to_char(line, col);
+    app.virtual_editor_state.set_cursor(pos, len);
+}
+
+/// Builds a pressed key event with the provided modifier state.
+///
+/// # Arguments
+/// - `key`: Logical egui key code to emit.
+/// - `modifiers`: Modifier state carried by the event.
+///
+/// # Returns
+/// A pressed [`egui::Event::Key`] test event.
+pub(super) fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+/// Returns the runtime-accurate primary command modifiers for the host platform.
+///
+/// # Returns
+/// Modifier state that matches how egui reports `Cmd`/`Ctrl` shortcuts on the
+/// active platform.
+pub(super) fn primary_command_modifiers() -> egui::Modifiers {
+    #[cfg(target_os = "macos")]
+    {
+        egui::Modifiers {
+            command: true,
+            ..Default::default()
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        }
+    }
+}
+
+/// Builds a command-modified pressed key event for platform-agnostic shortcut tests.
+///
+/// # Arguments
+/// - `key`: Logical egui key code to emit with the command modifier set.
+///
+/// # Returns
+/// A pressed [`egui::Event::Key`] test event carrying `command: true`.
+pub(super) fn command_key_event(key: egui::Key) -> egui::Event {
+    key_event(key, primary_command_modifiers())
+}
+
 fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
     let _ = ctx.run(input, |ctx| {
         app.render_editor_panel(ctx);
     });
+}
+
+/// Runs a full app update pass with the supplied raw egui events.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `ctx`: egui context used for the frame.
+/// - `events`: Raw input events to deliver during the frame.
+pub(super) fn run_full_update(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) {
+    app.ensure_style(ctx);
+    let mut frame = eframe::Frame::_new_kittest();
+    let _ = ctx.run(
+        egui::RawInput {
+            events,
+            ..Default::default()
+        },
+        |ctx| {
+            app.update(ctx, &mut frame);
+        },
+    );
 }
 
 fn make_app() -> TestHarness {
@@ -129,6 +236,7 @@ fn make_app() -> TestHarness {
         pending_copy_action: None,
         pending_selection_id: None,
         clipboard_outgoing: None,
+        active_buffer_epoch: 0,
         selected_content: EditorBuffer::new("content".to_string()),
         editor_lines: EditorLineIndex::default(),
         editor_mode: EditorMode::VirtualPreview,
@@ -145,6 +253,9 @@ fn make_app() -> TestHarness {
         virtual_viewport_height: 0.0,
         virtual_line_height: 1.0,
         virtual_wrap_width: 0.0,
+        virtual_pending_scroll_offset_y: None,
+        virtual_follow_cursor_next_frame: false,
+        version_ui: super::version_ui::VersionUiState::default(),
         highlight_worker: spawn_highlight_worker(),
         highlight_pending: None,
         highlight_render: None,
@@ -179,7 +290,6 @@ fn make_app() -> TestHarness {
         last_interaction_at: None,
         last_virtual_click_at: None,
         last_virtual_click_pos: None,
-        last_virtual_click_line: None,
         last_virtual_click_count: 0,
         paste_as_new_pending_frames: 0,
         paste_as_new_clipboard_requested_at: None,
@@ -204,15 +314,26 @@ fn make_app_with_event_tx() -> (TestHarness, Sender<CoreEvent>) {
 }
 
 fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
-    rx.recv_timeout(Duration::from_millis(200))
-        .expect("expected outbound command")
+    loop {
+        let cmd = rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("expected outbound command");
+        if matches!(cmd, CoreCmd::ListPasteVersions { .. }) {
+            continue;
+        }
+        return cmd;
+    }
 }
 
 mod collections_and_search;
+mod creation_and_projection;
 mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod keyboard_navigation_audit;
 mod save_and_metadata;
 mod shutdown_behavior;
 mod state_basics;
+mod version_async_status;
+mod version_modal_caching;
+mod version_overlay_exclusivity;
 mod virtual_editor_behaviors;

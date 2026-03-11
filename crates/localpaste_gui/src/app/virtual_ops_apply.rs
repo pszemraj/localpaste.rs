@@ -293,7 +293,7 @@ impl LocalPasteApp {
                     } else {
                         let cursor = self.virtual_editor_state.cursor();
                         let end = if *word {
-                            self.virtual_word_right_end(cursor)
+                            self.virtual_word_delete_forward(cursor)
                         } else {
                             cursor
                                 .saturating_add(1)
@@ -408,28 +408,6 @@ impl LocalPasteApp {
                             .saturating_add(1)
                             .min(self.virtual_editor_buffer.len_chars())
                     };
-                    let target = self.clamp_virtual_cursor_for_render(target);
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::MoveHome { select } => {
-                    let (target, _) =
-                        self.virtual_visual_row_bounds(self.virtual_editor_state.cursor());
-                    let target = self.clamp_virtual_cursor_for_render(target);
-                    self.virtual_editor_state.move_cursor(
-                        target,
-                        self.virtual_editor_buffer.len_chars(),
-                        *select,
-                    );
-                    self.virtual_editor_state.clear_preferred_column();
-                }
-                VirtualInputCommand::MoveEnd { select } => {
-                    let (_, target) =
-                        self.virtual_visual_row_bounds(self.virtual_editor_state.cursor());
                     let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
@@ -692,6 +670,9 @@ impl LocalPasteApp {
                 || result.changed != changed_before
             {
                 self.reset_virtual_caret_blink();
+            }
+            if self.virtual_editor_state.cursor() != cursor_before {
+                result.cursor_moved = true;
             }
         }
         result

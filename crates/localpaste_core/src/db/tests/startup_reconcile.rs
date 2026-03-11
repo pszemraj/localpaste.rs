@@ -11,17 +11,13 @@ fn setup_temp_db_path(name: &str) -> (TempDir, String) {
     (temp_dir, db_path_str)
 }
 
-fn open_test_database(path: &str) -> Database {
-    Database::new(path).expect("db")
-}
-
 #[test]
 fn database_new_reports_error_for_non_directory_db_path() {
     let temp_dir = TempDir::new().expect("temp dir");
     let db_path = temp_dir.path().join("not-a-db-file");
     std::fs::write(&db_path, b"not-a-db").expect("seed file");
 
-    let result = Database::new(db_path.to_str().expect("path"));
+    let result = open_test_database_result(db_path.to_str().expect("path"));
     assert!(
         matches!(result, Err(AppError::StorageMessage(_))),
         "opening a non-directory DB_PATH should fail"
@@ -140,7 +136,7 @@ fn database_new_rejects_legacy_sled_layout_when_data_redb_missing() {
     std::fs::create_dir_all(&db_path).expect("create dir");
     std::fs::write(db_path.join("pastes"), b"legacy").expect("seed legacy artifact");
 
-    let err = match Database::new(db_path.to_str().expect("path")) {
+    let err = match open_test_database_result(db_path.to_str().expect("path")) {
         Ok(_) => panic!("legacy sled layout without data.redb should fail"),
         Err(err) => err,
     };
@@ -168,8 +164,7 @@ fn database_new_ignores_unrelated_lock_files_when_data_redb_missing() {
     std::fs::create_dir_all(&db_path).expect("create dir");
     std::fs::write(db_path.join("random.lock"), b"not-sled").expect("seed lock artifact");
 
-    let db = Database::new(db_path.to_str().expect("path"))
-        .expect("unrelated lock file should not block startup");
+    let db = open_test_database(db_path.to_str().expect("path"));
     drop(db);
 
     assert!(

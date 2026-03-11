@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::detect_language as detect_language_impl;
+use crate::semantic::DerivedMeta;
 
 /// Paste metadata stored in the database and returned by the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +39,8 @@ pub struct PasteMeta {
     pub tags: Vec<String>,
     pub content_len: usize,
     pub is_markdown: bool,
+    #[serde(default)]
+    pub derived: DerivedMeta,
 }
 
 /// Request payload for creating a paste.
@@ -76,6 +79,44 @@ pub struct SearchQuery {
 pub struct ListQuery {
     pub limit: Option<usize>,
     pub folder_id: Option<String>,
+}
+
+/// Metadata row for a persisted historical version of a paste.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VersionMeta {
+    pub version_id_ms: u64,
+    pub created_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub len: usize,
+    pub language: Option<String>,
+    #[serde(default)]
+    pub language_is_manual: bool,
+}
+
+/// Full snapshot payload for a historical version of a paste.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VersionSnapshot {
+    pub paste_id: String,
+    pub version_id_ms: u64,
+    pub created_at: DateTime<Utc>,
+    pub content_hash: String,
+    pub len: usize,
+    pub language: Option<String>,
+    #[serde(default)]
+    pub language_is_manual: bool,
+    pub content: String,
+}
+
+/// Query parameters for listing paste versions.
+#[derive(Debug, Deserialize)]
+pub struct VersionListQuery {
+    pub limit: Option<usize>,
+}
+
+/// Request payload for duplicating a paste from a historical version.
+#[derive(Debug, Deserialize)]
+pub struct DuplicateVersionRequest {
+    pub name: Option<String>,
 }
 
 impl Paste {
@@ -142,6 +183,7 @@ impl From<&Paste> for PasteMeta {
             tags: value.tags.clone(),
             content_len: value.content.len(),
             is_markdown: value.is_markdown,
+            derived: crate::semantic::derive(value.content.as_str(), value.language.as_deref()),
         }
     }
 }

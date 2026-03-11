@@ -511,6 +511,71 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
 }
 
 #[test]
+fn backend_metadata_search_surfaces_persisted_derived_retrieval_hints() {
+    let env = TestEnv::new();
+
+    let mut combined = Paste::new("plain body".to_string(), "docker compose".to_string());
+    combined.language = Some("yaml".to_string());
+    combined.language_is_manual = true;
+    combined.tags = vec!["postgres".to_string()];
+
+    let mut partial = Paste::new("plain body".to_string(), "docker".to_string());
+    partial.language = Some("yaml".to_string());
+    partial.language_is_manual = true;
+    partial.tags = vec!["misc".to_string()];
+
+    let mut weak = Paste::new("plain body".to_string(), "plain".to_string());
+    weak.language = Some("yaml".to_string());
+    weak.language_is_manual = true;
+    weak.tags = vec!["postgres".to_string()];
+
+    let derived_only = Paste::new(
+        "docker postgres only in content".to_string(),
+        "plain".to_string(),
+    );
+
+    env.db.pastes.create(&combined).expect("create combined");
+    env.db.pastes.create(&partial).expect("create partial");
+    env.db.pastes.create(&weak).expect("create weak");
+    env.db
+        .pastes
+        .create(&derived_only)
+        .expect("create derived-only");
+
+    let backend = env.spawn_backend();
+    backend
+        .cmd_tx
+        .send(CoreCmd::SearchPastes {
+            query: "docker postgres".to_string(),
+            limit: 10,
+            folder_id: None,
+            language: None,
+        })
+        .expect("send search");
+
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::SearchResults { query, items, .. } => {
+            let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+            assert_eq!(query, "docker postgres");
+            assert_eq!(ids.first().copied(), Some(derived_only.id.as_str()));
+            assert!(
+                ids.iter().position(|id| *id == combined.id.as_str())
+                    < ids.iter().position(|id| *id == partial.id.as_str())
+            );
+            assert!(
+                ids.iter().position(|id| *id == partial.id.as_str())
+                    < ids.iter().position(|id| *id == weak.id.as_str())
+            );
+            assert!(
+                ids.contains(&derived_only.id.as_str()),
+                "backend metadata search should surface persisted derived handle/term matches"
+            );
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+}
+
+#[test]
 fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
     let env = TestEnv::new();
     let locks = Arc::new(PasteLockManager::default());

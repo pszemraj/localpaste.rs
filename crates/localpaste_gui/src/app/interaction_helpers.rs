@@ -26,9 +26,10 @@ pub(crate) enum VirtualCommandBucket {
 /// - `wants_keyboard_input_before`: Egui keyboard-input ownership snapshot.
 /// - `modifiers`: Active keyboard modifiers for this frame.
 /// - `has_pastes`: Whether sidebar list has at least one selectable paste.
-/// - `focus_active_pre`: Virtual-editor focus state before routing.
+/// - `editor_claims_navigation_pre`: Whether the virtual editor already owns,
+///   or is in the middle of explicitly claiming, navigation keys this frame.
 /// - `command_palette_open`: Whether command palette modal is open.
-/// - `properties_drawer_open`: Whether properties drawer is open.
+/// - `modal_overlay_open`: Whether a modal keyboard-owning overlay is open.
 /// - `shortcut_help_open`: Whether shortcut help modal is open.
 ///
 /// # Returns
@@ -37,18 +38,18 @@ pub(crate) fn should_route_sidebar_arrows(
     wants_keyboard_input_before: bool,
     modifiers: egui::Modifiers,
     has_pastes: bool,
-    focus_active_pre: bool,
+    editor_claims_navigation_pre: bool,
     command_palette_open: bool,
-    properties_drawer_open: bool,
+    modal_overlay_open: bool,
     shortcut_help_open: bool,
 ) -> bool {
     let has_nav_modifiers = modifiers.ctrl || modifiers.alt || modifiers.shift || modifiers.command;
-    let overlays_open = command_palette_open || properties_drawer_open || shortcut_help_open;
+    let overlays_open = command_palette_open || modal_overlay_open || shortcut_help_open;
 
     has_pastes
         && !wants_keyboard_input_before
         && !has_nav_modifiers
-        && !focus_active_pre
+        && !editor_claims_navigation_pre
         && !overlays_open
 }
 
@@ -68,18 +69,115 @@ pub(crate) fn is_command_shift_shortcut(modifiers: egui::Modifiers) -> bool {
     modifiers.command && modifiers.shift && !modifiers.alt
 }
 
+/// Consume editor-owned navigation/editing keys so focus does not leak to sibling widgets.
+///
+/// # Arguments
+/// - `ctx`: Egui context for mutable input access.
+/// - `editor_claims_keyboard`: Whether the virtual editor should own
+///   navigation/editing keys for this frame, including same-frame focus promotion.
+pub(crate) fn consume_virtual_editor_focus_keys(ctx: &egui::Context, editor_claims_keyboard: bool) {
+    if !editor_claims_keyboard {
+        return;
+    }
+
+    let events = ctx.input(|input| input.events.clone());
+    let mut keys_to_consume: Vec<(egui::Modifiers, egui::Key)> = Vec::new();
+    for event in events {
+        let egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            continue;
+        };
+
+        let should_consume = matches!(
+            key,
+            egui::Key::Tab
+                | egui::Key::Enter
+                | egui::Key::Backspace
+                | egui::Key::Delete
+                | egui::Key::ArrowLeft
+                | egui::Key::ArrowRight
+                | egui::Key::ArrowUp
+                | egui::Key::ArrowDown
+                | egui::Key::Home
+                | egui::Key::End
+                | egui::Key::PageUp
+                | egui::Key::PageDown
+        );
+        // Delete/backspace stay editor-owned here on purpose: the documented
+        // global Ctrl/Cmd+Delete shortcut only applies when no text input owns
+        // keyboard focus, while focused editor delete chords should remain
+        // native text-editing operations.
+        if should_consume {
+            keys_to_consume.push((modifiers, key));
+        }
+    }
+
+    if keys_to_consume.is_empty() {
+        return;
+    }
+
+    ctx.input_mut(|input| {
+        for (modifiers, key) in keys_to_consume.drain(..) {
+            input.consume_key(modifiers, key);
+        }
+    });
+}
+
+/// Returns a click sense that never enters egui's keyboard-focus ring.
+///
+/// Use this for mouse-first command buttons in the editor chrome so arrow-key
+/// navigation cannot hop out of the editor and start traversing toolbar actions.
+///
+/// # Returns
+/// A click-only [`egui::Sense`] with focusability removed.
+pub(crate) fn non_focusable_click_sense() -> egui::Sense {
+    let mut sense = egui::Sense::click();
+    sense.remove(egui::Sense::focusable_noninteractive());
+    sense
+}
+
+/// Returns whether virtual-editor key consumption should run this frame.
+///
+/// Overlay surfaces that intentionally own keyboard input must win over the
+/// background editor's focus-leak prevention.
+///
+/// # Arguments
+/// - `editor_claims_keyboard`: Whether the virtual editor would otherwise
+///   consume navigation/editing keys this frame.
+/// - `command_palette_open`: Whether the command palette currently owns input.
+/// - `modal_overlay_open`: Whether a modal keyboard-owning overlay is open.
+/// - `shortcut_help_open`: Whether shortcut help is open.
+///
+/// # Returns
+/// `true` when focus-leak prevention should consume editor-owned keys, `false`
+/// when an overlay should receive them instead.
+pub(crate) fn should_consume_virtual_editor_focus_keys(
+    editor_claims_keyboard: bool,
+    command_palette_open: bool,
+    modal_overlay_open: bool,
+    shortcut_help_open: bool,
+) -> bool {
+    editor_claims_keyboard && !(command_palette_open || modal_overlay_open || shortcut_help_open)
+}
+
 /// Returns whether a character should be treated as an editor "word" character.
 ///
 /// This is **code-editor oriented**:
 /// - Unicode alphanumerics count as word characters (`is_alphanumeric`)
 /// - `_` and `$` are included (common identifier characters across languages)
+/// - `'`/`’` are included so contractions/lifetimes move as a single word
 ///
 /// Anything else (whitespace, punctuation, operators) is treated as a boundary.
 ///
 /// # Returns
 /// `true` when `ch` should be considered part of an identifier-like token.
 pub(crate) fn is_editor_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || matches!(ch, '_' | '$')
+    ch.is_alphanumeric() || matches!(ch, '_' | '$' | '\'' | '’')
 }
 
 /// Calculates click streak count for virtual-editor single/double/triple click handling.
@@ -87,9 +185,7 @@ pub(crate) fn is_editor_word_char(ch: char) -> bool {
 /// # Arguments
 /// - `last_at`: Timestamp of previous click.
 /// - `last_pos`: Pointer position of previous click.
-/// - `_last_line`: Previous line index (currently unused).
 /// - `last_count`: Previous click streak count.
-/// - `_line_idx`: Current line index (currently unused).
 /// - `pointer_pos`: Current click pointer position.
 /// - `now`: Current timestamp.
 ///
@@ -98,9 +194,7 @@ pub(crate) fn is_editor_word_char(ch: char) -> bool {
 pub(crate) fn next_virtual_click_count(
     last_at: Option<Instant>,
     last_pos: Option<egui::Pos2>,
-    _last_line: Option<usize>,
     last_count: u8,
-    _line_idx: usize,
     pointer_pos: egui::Pos2,
     now: Instant,
 ) -> u8 {
@@ -237,9 +331,101 @@ pub(crate) fn paint_virtual_selection_overlay(
 #[cfg(test)]
 mod tests {
     use super::{
-        is_command_shift_shortcut, is_plain_command_shortcut, should_route_sidebar_arrows,
+        consume_virtual_editor_focus_keys, is_command_shift_shortcut, is_plain_command_shortcut,
+        non_focusable_click_sense, should_consume_virtual_editor_focus_keys,
+        should_route_sidebar_arrows,
     };
     use eframe::egui;
+
+    fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn virtual_editor_focus_key_consumption_matrix() {
+        struct Case {
+            key: egui::Key,
+            modifiers: egui::Modifiers,
+            editor_claims_keyboard: bool,
+            expected_consumed: bool,
+        }
+
+        let cases = [
+            Case {
+                key: egui::Key::ArrowRight,
+                modifiers: egui::Modifiers {
+                    command: true,
+                    shift: true,
+                    ..Default::default()
+                },
+                editor_claims_keyboard: true,
+                expected_consumed: true,
+            },
+            Case {
+                key: egui::Key::Delete,
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                },
+                editor_claims_keyboard: false,
+                expected_consumed: false,
+            },
+            Case {
+                key: egui::Key::Delete,
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                },
+                editor_claims_keyboard: true,
+                expected_consumed: true,
+            },
+        ];
+
+        for case in cases {
+            let ctx = egui::Context::default();
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![key_event(case.key, case.modifiers)],
+                    ..Default::default()
+                },
+                |ctx| {
+                    assert!(ctx.input(|input| input.key_pressed(case.key)));
+                    consume_virtual_editor_focus_keys(ctx, case.editor_claims_keyboard);
+                    assert_eq!(
+                        ctx.input(|input| input.key_pressed(case.key)),
+                        !case.expected_consumed
+                    );
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn virtual_editor_focus_key_consumption_yields_to_keyboard_overlays() {
+        assert!(should_consume_virtual_editor_focus_keys(
+            true, false, false, false
+        ));
+        assert!(!should_consume_virtual_editor_focus_keys(
+            true, true, false, false
+        ));
+        assert!(!should_consume_virtual_editor_focus_keys(
+            true, false, true, false
+        ));
+        assert!(!should_consume_virtual_editor_focus_keys(
+            true, false, false, true
+        ));
+        assert!(!should_consume_virtual_editor_focus_keys(
+            false, false, false, false
+        ));
+    }
 
     #[test]
     fn sidebar_arrow_routing_guard_matrix() {
@@ -247,9 +433,9 @@ mod tests {
             wants_keyboard_input_before: bool,
             modifiers: egui::Modifiers,
             has_pastes: bool,
-            focus_active_pre: bool,
+            editor_claims_navigation_pre: bool,
             command_palette_open: bool,
-            properties_drawer_open: bool,
+            modal_overlay_open: bool,
             shortcut_help_open: bool,
             expected: bool,
         }
@@ -259,9 +445,9 @@ mod tests {
                 wants_keyboard_input_before: false,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: true,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: true,
             },
@@ -269,9 +455,9 @@ mod tests {
                 wants_keyboard_input_before: true,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: true,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -282,9 +468,9 @@ mod tests {
                     ..egui::Modifiers::NONE
                 },
                 has_pastes: true,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -292,9 +478,9 @@ mod tests {
                 wants_keyboard_input_before: false,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: true,
-                focus_active_pre: true,
+                editor_claims_navigation_pre: true,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -302,9 +488,9 @@ mod tests {
                 wants_keyboard_input_before: false,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: true,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: true,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -312,9 +498,9 @@ mod tests {
                 wants_keyboard_input_before: false,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: false,
-                focus_active_pre: false,
+                editor_claims_navigation_pre: false,
                 command_palette_open: false,
-                properties_drawer_open: false,
+                modal_overlay_open: false,
                 shortcut_help_open: false,
                 expected: false,
             },
@@ -325,9 +511,9 @@ mod tests {
                 case.wants_keyboard_input_before,
                 case.modifiers,
                 case.has_pastes,
-                case.focus_active_pre,
+                case.editor_claims_navigation_pre,
                 case.command_palette_open,
-                case.properties_drawer_open,
+                case.modal_overlay_open,
                 case.shortcut_help_open,
             );
             assert_eq!(actual, case.expected);
@@ -367,5 +553,13 @@ mod tests {
         };
         assert!(!is_plain_command_shortcut(command_shift_alt));
         assert!(!is_command_shift_shortcut(command_shift_alt));
+    }
+
+    #[test]
+    fn non_focusable_click_sense_stays_clickable_without_entering_focus_ring() {
+        let sense = non_focusable_click_sense();
+        assert!(sense.senses_click());
+        assert!(!sense.senses_drag());
+        assert!(!sense.is_focusable());
     }
 }

@@ -1,10 +1,23 @@
 //! Paste storage operations backed by redb.
 
+mod compare;
 mod helpers;
 
-use crate::{db::tables::*, error::AppError, models::paste::*};
+use crate::{
+    config::paste_version_interval_secs_from_env_or_default,
+    db::{
+        tables::*,
+        versioning::{
+            decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
+            should_record_version,
+        },
+    },
+    error::AppError,
+    models::paste::*,
+    naming,
+};
 use chrono::{DateTime, Utc};
-use redb::{ReadableDatabase, ReadableTable};
+use redb::{ReadTransaction, ReadableDatabase, ReadableTable};
 use std::sync::Arc;
 
 use self::helpers::{
@@ -18,9 +31,33 @@ pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_
 /// Accessor for paste-related redb tables.
 pub struct PasteDb {
     db: Arc<redb::Database>,
+    version_interval_secs: u64,
 }
 
+const DEFAULT_VERSION_LIST_LIMIT: usize = 50;
+const MAX_VERSION_LIST_LIMIT: usize = 1_000;
+/// Singleton key storing the persisted metadata projection schema version.
+pub(crate) const META_SCHEMA_VERSION_KEY: &str = "__schema_version";
+/// Current `PASTES_META` projection schema version for derived retrieval fields.
+///
+/// Bump this whenever the persisted `PasteMeta` projection contract changes,
+/// including semantic-derived fields produced by [`PasteMeta::from`].
+pub(crate) const CURRENT_PASTES_META_SCHEMA_VERSION: u64 = 1;
+
 impl PasteDb {
+    fn ensure_content_within_size_limit(
+        content: &str,
+        max_paste_size: usize,
+    ) -> Result<(), AppError> {
+        if content.len() > max_paste_size {
+            return Err(AppError::BadRequest(format!(
+                "Paste size exceeds maximum of {} bytes",
+                max_paste_size
+            )));
+        }
+        Ok(())
+    }
+
     fn reject_direct_folder_operation(
         violates: bool,
         message: &'static str,
@@ -39,12 +76,101 @@ impl PasteDb {
     /// # Errors
     /// Returns an error when redb transaction/table initialization fails.
     pub fn new(db: Arc<redb::Database>) -> Result<Self, AppError> {
+        // Strict startup paths validate interval envs before reaching storage
+        // init. GUI/tool callers intentionally use permissive config loading, so
+        // PasteDb follows the same fallback-to-default behavior here.
+        let version_interval_secs = paste_version_interval_secs_from_env_or_default();
         let write_txn = db.begin_write()?;
         write_txn.open_table(PASTES)?;
         write_txn.open_table(PASTES_META)?;
+        write_txn.open_table(PASTES_META_STATE)?;
         write_txn.open_table(PASTES_BY_UPDATED)?;
+        write_txn.open_table(PASTE_VERSIONS_META)?;
+        write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
         write_txn.commit()?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            version_interval_secs,
+        })
+    }
+
+    /// Effective minimum interval between recorded version snapshots.
+    ///
+    /// # Returns
+    /// Minimum elapsed seconds required between persisted snapshots.
+    pub(crate) fn version_interval_secs(&self) -> u64 {
+        self.version_interval_secs
+    }
+
+    /// Rebuild the persisted metadata projection from canonical paste rows.
+    ///
+    /// `PASTES_META` is derived state, so schema evolution can safely rewrite it
+    /// from authoritative `PASTES` content during startup.
+    ///
+    /// # Returns
+    /// `Ok(())` when the derived metadata projection is fully rewritten.
+    ///
+    /// # Errors
+    /// Returns an error when any read, decode, write, or commit step fails.
+    pub fn rebuild_meta_index(&self) -> Result<(), AppError> {
+        let rebuilt = {
+            let read_txn = self.db.begin_read()?;
+            let pastes = read_txn.open_table(PASTES)?;
+            let mut metas = Vec::new();
+            for item in pastes.iter()? {
+                let (_, value) = item?;
+                let paste = deserialize_paste(value.value())?;
+                metas.push(PasteMeta::from(&paste));
+            }
+            metas
+        };
+
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut meta_state = write_txn.open_table(PASTES_META_STATE)?;
+            let existing_ids = metas
+                .iter()?
+                .map(|item| item.map(|(key, _)| key.value().to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            for id in existing_ids {
+                let _ = metas.remove(id.as_str())?;
+            }
+            for meta in rebuilt {
+                let encoded = bincode::serialize(&meta)?;
+                metas.insert(meta.id.as_str(), encoded.as_slice())?;
+            }
+            let encoded_version = bincode::serialize(&CURRENT_PASTES_META_SCHEMA_VERSION)?;
+            meta_state.insert(META_SCHEMA_VERSION_KEY, encoded_version.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Ensure the metadata projection is current without rebuilding it on every open.
+    ///
+    /// `PASTES_META` is derived state, so marker-less or schema-mismatched
+    /// databases must rebuild once from canonical `PASTES` before they can be
+    /// stamped current. That preserves upgrade correctness for derived fields.
+    ///
+    /// # Returns
+    /// `Ok(())` when the projection is already current or has been upgraded.
+    ///
+    /// # Errors
+    /// Returns an error when storage access, decode checks, or a required
+    /// rebuild fails.
+    pub fn ensure_meta_index_current(&self) -> Result<(), AppError> {
+        {
+            let read_txn = self.db.begin_read()?;
+            let meta_state = read_txn.open_table(PASTES_META_STATE)?;
+            if let Some(value) = meta_state.get(META_SCHEMA_VERSION_KEY)? {
+                let decoded_version = bincode::deserialize::<u64>(value.value()).ok();
+                if decoded_version == Some(CURRENT_PASTES_META_SCHEMA_VERSION) {
+                    return Ok(());
+                }
+            }
+        }
+        self.rebuild_meta_index()
     }
 
     /// Insert a new paste row and derived metadata/index rows atomically.
@@ -70,7 +196,6 @@ impl PasteDb {
         let meta = PasteMeta::from(paste);
         let encoded_meta = bincode::serialize(&meta)?;
         let recency_key = reverse_timestamp_key(paste.updated_at);
-
         let write_txn = self.db.begin_write()?;
         {
             let mut pastes = write_txn.open_table(PASTES)?;
@@ -157,11 +282,14 @@ impl PasteDb {
             update.folder_id.is_some(),
             "Direct folder updates via PasteDb::update are not allowed; use TransactionOps::move_paste_between_folders",
         )?;
+        let version_interval_secs = self.version_interval_secs();
         let write_txn = self.db.begin_write()?;
         let updated_paste = {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
 
             let Some(old_guard) = pastes.get(id)? else {
                 return Ok(None);
@@ -177,7 +305,35 @@ impl PasteDb {
                 }
             }
 
+            let old_content = paste.content.clone();
+            let old_language = paste.language.clone();
+            let old_language_is_manual = paste.language_is_manual;
+            let mut version_items = decode_version_meta_list(
+                versions_meta.get(id)?.as_ref().map(|value| value.value()),
+            )?;
             apply_update_request(&mut paste, &update);
+            let content_changed = paste.content != old_content;
+
+            if content_changed {
+                let latest = version_items.first();
+                // `apply_update_request` already advanced `paste.updated_at` to
+                // the archival moment for the outgoing head snapshot.
+                let next = next_version_meta_for_content(
+                    old_content.as_str(),
+                    old_language.as_deref(),
+                    old_language_is_manual,
+                    paste.updated_at,
+                    latest,
+                );
+                if should_record_version(latest, &next, version_interval_secs) {
+                    let encoded_content = bincode::serialize(&old_content)?;
+                    versions_content
+                        .insert((id, next.version_id_ms), encoded_content.as_slice())?;
+                    version_items.insert(0, next);
+                    let encoded_versions = encode_version_meta_list(&version_items)?;
+                    versions_meta.insert(id, encoded_versions.as_slice())?;
+                }
+            }
 
             let encoded_paste = bincode::serialize(&paste)?;
             let meta = PasteMeta::from(&paste);
@@ -214,6 +370,8 @@ impl PasteDb {
             let mut pastes = write_txn.open_table(PASTES)?;
             let mut metas = write_txn.open_table(PASTES_META)?;
             let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
 
             let Some(old_guard) = pastes.get(id)? else {
                 return Ok(None);
@@ -229,6 +387,13 @@ impl PasteDb {
             let _ = updated.remove((recency_key, id))?;
             let _ = pastes.remove(id)?;
             let _ = metas.remove(id)?;
+            let version_items = decode_version_meta_list(
+                versions_meta.get(id)?.as_ref().map(|value| value.value()),
+            )?;
+            for version in version_items {
+                let _ = versions_content.remove((id, version.version_id_ms))?;
+            }
+            let _ = versions_meta.remove(id)?;
             Some(paste)
         };
 
@@ -245,6 +410,248 @@ impl PasteDb {
     /// Returns an error when storage or deserialization fails.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
         Ok(self.delete_and_return(id)?.is_some())
+    }
+
+    fn normalized_version_limit(limit: Option<usize>) -> usize {
+        match limit {
+            Some(0) => 0,
+            Some(value) => value.min(MAX_VERSION_LIST_LIMIT),
+            None => DEFAULT_VERSION_LIST_LIMIT,
+        }
+    }
+
+    /// List persisted historical versions for a paste, newest first.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Canonical paste id.
+    /// - `limit`: Optional row limit (clamped to internal max).
+    ///
+    /// # Returns
+    /// `Ok(Some(items))` for an existing paste, `Ok(None)` when the paste does not exist.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn list_versions(
+        &self,
+        paste_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Option<Vec<VersionMeta>>, AppError> {
+        let limit = Self::normalized_version_limit(limit);
+
+        let read_txn = self.db.begin_read()?;
+        let pastes = read_txn.open_table(PASTES)?;
+        if pastes.get(paste_id)?.is_none() {
+            return Ok(None);
+        }
+        if limit == 0 {
+            return Ok(Some(Vec::new()));
+        }
+        let versions_meta = read_txn.open_table(PASTE_VERSIONS_META)?;
+        let items = decode_version_meta_list(
+            versions_meta
+                .get(paste_id)?
+                .as_ref()
+                .map(|value| value.value()),
+        )?;
+        Ok(Some(items.into_iter().take(limit).collect()))
+    }
+
+    /// Load a single persisted historical version snapshot for a paste.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Canonical paste id.
+    /// - `version_id_ms`: Historical version id.
+    ///
+    /// # Returns
+    /// `Ok(Some(snapshot))` when found, `Ok(None)` when paste/version is missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn get_version(
+        &self,
+        paste_id: &str,
+        version_id_ms: u64,
+    ) -> Result<Option<VersionSnapshot>, AppError> {
+        let read_txn = self.db.begin_read()?;
+        self.get_version_in_txn(&read_txn, paste_id, version_id_ms)
+    }
+
+    fn get_version_in_txn(
+        &self,
+        read_txn: &ReadTransaction,
+        paste_id: &str,
+        version_id_ms: u64,
+    ) -> Result<Option<VersionSnapshot>, AppError> {
+        let pastes = read_txn.open_table(PASTES)?;
+        if pastes.get(paste_id)?.is_none() {
+            return Ok(None);
+        }
+
+        let versions_meta = read_txn.open_table(PASTE_VERSIONS_META)?;
+        let version_items = decode_version_meta_list(
+            versions_meta
+                .get(paste_id)?
+                .as_ref()
+                .map(|value| value.value()),
+        )?;
+        let Some(meta) = version_items
+            .into_iter()
+            .find(|item| item.version_id_ms == version_id_ms)
+        else {
+            return Ok(None);
+        };
+
+        let versions_content = read_txn.open_table(PASTE_VERSIONS_CONTENT)?;
+        let Some(content_guard) = versions_content.get((paste_id, version_id_ms))? else {
+            return Ok(None);
+        };
+        let content: String = bincode::deserialize(content_guard.value())?;
+        Ok(Some(VersionSnapshot {
+            paste_id: paste_id.to_string(),
+            version_id_ms: meta.version_id_ms,
+            created_at: meta.created_at,
+            content_hash: meta.content_hash,
+            len: meta.len,
+            language: meta.language,
+            language_is_manual: meta.language_is_manual,
+            content,
+        }))
+    }
+
+    /// Reset current paste content to a historical version and prune newer snapshots.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Canonical paste id.
+    /// - `version_id_ms`: Target historical version id.
+    /// - `max_paste_size`: Maximum allowed content size for the restored head row.
+    ///
+    /// # Returns
+    /// `Ok(Some(updated))` when reset succeeds, `Ok(None)` when paste/version is missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or serialization fails.
+    pub fn reset_hard_to_version(
+        &self,
+        paste_id: &str,
+        version_id_ms: u64,
+        max_paste_size: usize,
+    ) -> Result<Option<Paste>, AppError> {
+        let write_txn = self.db.begin_write()?;
+        let updated_paste = {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
+
+            let Some(paste_guard) = pastes.get(paste_id)? else {
+                return Ok(None);
+            };
+            let mut paste = deserialize_paste(paste_guard.value())?;
+            let old_recency_key = reverse_timestamp_key(paste.updated_at);
+            drop(paste_guard);
+
+            let mut version_items = decode_version_meta_list(
+                versions_meta
+                    .get(paste_id)?
+                    .as_ref()
+                    .map(|value| value.value()),
+            )?;
+            let Some(target_meta) = version_items
+                .iter()
+                .find(|item| item.version_id_ms == version_id_ms)
+                .cloned()
+            else {
+                return Ok(None);
+            };
+
+            let Some(content_guard) = versions_content.get((paste_id, version_id_ms))? else {
+                return Ok(None);
+            };
+            let target_content: String = bincode::deserialize(content_guard.value())?;
+            drop(content_guard);
+            Self::ensure_content_within_size_limit(&target_content, max_paste_size)?;
+
+            // Reset must restore the exact stored snapshot semantics. Reusing
+            // `apply_update_request` here is incorrect because it can re-run
+            // auto-detection and silently mutate `language` / `language_is_manual`
+            // instead of replaying the persisted historical state.
+            paste.content = target_content;
+            paste.is_markdown = is_markdown_content(&paste.content);
+            paste.language = target_meta.language.clone();
+            paste.language_is_manual = target_meta.language_is_manual;
+            paste.updated_at = Utc::now();
+
+            let encoded_paste = bincode::serialize(&paste)?;
+            let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
+            let new_recency_key = reverse_timestamp_key(paste.updated_at);
+            pastes.insert(paste_id, encoded_paste.as_slice())?;
+            metas.insert(paste_id, encoded_meta.as_slice())?;
+            let _ = updated.remove((old_recency_key, paste_id))?;
+            updated.insert((new_recency_key, paste_id), ())?;
+
+            let mut removed_versions = Vec::new();
+            version_items.retain(|item| {
+                // Historical table stores only snapshots older than current head.
+                // After reset, the target snapshot becomes the new head, so drop it
+                // and everything newer.
+                let keep = item.version_id_ms < version_id_ms;
+                if !keep {
+                    removed_versions.push(item.version_id_ms);
+                }
+                keep
+            });
+            for removed in removed_versions {
+                let _ = versions_content.remove((paste_id, removed))?;
+            }
+            let encoded_versions = encode_version_meta_list(&version_items)?;
+            versions_meta.insert(paste_id, encoded_versions.as_slice())?;
+
+            Some(paste)
+        };
+
+        write_txn.commit()?;
+        Ok(updated_paste)
+    }
+
+    /// Create a new paste from a historical version snapshot.
+    ///
+    /// # Arguments
+    /// - `paste_id`: Source paste id.
+    /// - `version_id_ms`: Source historical version id.
+    /// - `max_paste_size`: Maximum allowed content size for the new duplicate row.
+    /// - `name`: Optional explicit name for the duplicate.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when source version exists, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or insert fails.
+    pub fn duplicate_from_version(
+        &self,
+        paste_id: &str,
+        version_id_ms: u64,
+        max_paste_size: usize,
+        name: Option<String>,
+    ) -> Result<Option<Paste>, AppError> {
+        let Some(snapshot) = self.get_version(paste_id, version_id_ms)? else {
+            return Ok(None);
+        };
+        Self::ensure_content_within_size_limit(&snapshot.content, max_paste_size)?;
+        let duplicate_name = name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(naming::generate_name);
+        let duplicate = Paste::new_with_language(
+            snapshot.content,
+            duplicate_name,
+            snapshot.language,
+            snapshot.language_is_manual,
+        );
+        self.create(&duplicate)?;
+        Ok(Some(duplicate))
     }
 
     /// List canonical paste rows sorted by `updated_at` descending.

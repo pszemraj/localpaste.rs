@@ -2,10 +2,12 @@
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
+use localpaste_core::diff::{DiffRef, DiffRequest, DiffResponse, EqualResponse};
 use localpaste_core::DEFAULT_CLI_SERVER_URL;
 use serde_json::Value;
 use std::io::{self, Read, Write};
 use std::net::ToSocketAddrs;
+use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
@@ -15,7 +17,7 @@ struct Cli {
     ///
     /// Resolution order when unset: discovered `.api-addr` endpoint (unless
     /// `--no-discovery`) then the default local endpoint.
-    #[arg(short, long, env = "LP_SERVER")]
+    #[arg(short, long, global = true, env = "LP_SERVER")]
     server: Option<String>,
 
     /// Disable `.api-addr` discovery/probing fallback.
@@ -33,9 +35,9 @@ struct Cli {
     #[arg(long, global = true)]
     timing: bool,
 
-    /// Request timeout in seconds
-    #[arg(short = 't', long, default_value = "30")]
-    timeout: u64,
+    /// Request timeout in seconds (must be greater than zero)
+    #[arg(short = 't', long, global = true, default_value = "30")]
+    timeout: NonZeroU64,
 
     #[command(subcommand)]
     command: Commands,
@@ -49,27 +51,101 @@ enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Create a new paste from stdin or a file.
     New {
+        /// Read paste content from a file instead of stdin.
         #[arg(short, long)]
         file: Option<String>,
+        /// Optional paste name. When omitted, the server generates one.
         #[arg(short, long)]
         name: Option<String>,
     },
+    /// Fetch a paste by id and print its content.
     Get {
+        /// Paste id to read.
         id: String,
     },
+    /// List recent paste metadata.
     List {
+        /// Maximum number of rows to return.
         #[arg(short, long, default_value = "10")]
         limit: usize,
     },
+    /// Search pastes by full content.
     Search {
+        /// Search query text.
         query: String,
     },
+    /// Search persisted metadata only (name, tags, language, derived terms).
     SearchMeta {
+        /// Search query text.
         query: String,
     },
+    /// Delete a paste by id.
     Delete {
+        /// Paste id to delete.
         id: String,
+    },
+    /// List stored historical versions for a paste.
+    Versions {
+        /// Paste id whose version history should be listed.
+        id: String,
+        /// Maximum number of historical versions to return.
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+    },
+    /// Fetch one stored historical version by paste id and version id.
+    GetVersion {
+        /// Paste id whose version should be read.
+        id: String,
+        /// Historical version timestamp id in milliseconds.
+        version_id_ms: u64,
+    },
+    /// Diff two paste refs, optionally pinning each side to a historical version.
+    Diff {
+        /// Left-hand paste id.
+        left_id: String,
+        /// Right-hand paste id.
+        right_id: String,
+        /// Optional historical version id for the left-hand paste.
+        #[arg(long)]
+        left_version: Option<u64>,
+        /// Optional historical version id for the right-hand paste.
+        #[arg(long)]
+        right_version: Option<u64>,
+    },
+    /// Compare two paste refs and return a success exit code only when equal.
+    Equal {
+        /// Left-hand paste id.
+        left_id: String,
+        /// Right-hand paste id.
+        right_id: String,
+        /// Optional historical version id for the left-hand paste.
+        #[arg(long)]
+        left_version: Option<u64>,
+        /// Optional historical version id for the right-hand paste.
+        #[arg(long)]
+        right_version: Option<u64>,
+    },
+    /// Reset a paste to a stored historical version and discard newer history.
+    ResetHard {
+        /// Paste id to reset.
+        id: String,
+        /// Historical version timestamp id in milliseconds.
+        version_id_ms: u64,
+        /// Required acknowledgement for the destructive reset.
+        #[arg(long, action = clap::ArgAction::SetTrue, required = true)]
+        yes: bool,
+    },
+    /// Create a new paste from a stored historical version.
+    DuplicateVersion {
+        /// Paste id whose historical version should be duplicated.
+        id: String,
+        /// Historical version timestamp id in milliseconds.
+        version_id_ms: u64,
+        /// Optional name for the duplicated paste.
+        #[arg(short, long)]
+        name: Option<String>,
     },
 }
 
@@ -93,6 +169,35 @@ enum ApiCommand {
     Delete {
         id: String,
     },
+    Versions {
+        id: String,
+        limit: usize,
+    },
+    GetVersion {
+        id: String,
+        version_id_ms: u64,
+    },
+    Diff {
+        left_id: String,
+        right_id: String,
+        left_version: Option<u64>,
+        right_version: Option<u64>,
+    },
+    Equal {
+        left_id: String,
+        right_id: String,
+        left_version: Option<u64>,
+        right_version: Option<u64>,
+    },
+    ResetHard {
+        id: String,
+        version_id_ms: u64,
+    },
+    DuplicateVersion {
+        id: String,
+        version_id_ms: u64,
+        name: Option<String>,
+    },
 }
 
 fn classify_command(command: Commands) -> Result<ApiCommand, Shell> {
@@ -104,6 +209,44 @@ fn classify_command(command: Commands) -> Result<ApiCommand, Shell> {
         Commands::Search { query } => Ok(ApiCommand::Search { query }),
         Commands::SearchMeta { query } => Ok(ApiCommand::SearchMeta { query }),
         Commands::Delete { id } => Ok(ApiCommand::Delete { id }),
+        Commands::Versions { id, limit } => Ok(ApiCommand::Versions { id, limit }),
+        Commands::GetVersion { id, version_id_ms } => {
+            Ok(ApiCommand::GetVersion { id, version_id_ms })
+        }
+        Commands::Diff {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        } => Ok(ApiCommand::Diff {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        }),
+        Commands::Equal {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        } => Ok(ApiCommand::Equal {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        }),
+        Commands::ResetHard {
+            id, version_id_ms, ..
+        } => Ok(ApiCommand::ResetHard { id, version_id_ms }),
+        Commands::DuplicateVersion {
+            id,
+            version_id_ms,
+            name,
+        } => Ok(ApiCommand::DuplicateVersion {
+            id,
+            version_id_ms,
+            name,
+        }),
     }
 }
 
@@ -215,6 +358,61 @@ fn format_delete_output(id: &str, response: &Value, json: bool) -> Result<String
     }
 
     Ok(format!("Deleted paste: {}", id))
+}
+
+fn format_versions_output(items: &[Value], json: bool) -> Result<String, String> {
+    if json {
+        return serde_json::to_string_pretty(items)
+            .map_err(|err| format!("response encoding error: {}", err));
+    }
+
+    let mut rows = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let version_id = item
+            .get("version_id_ms")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("response item {} missing 'version_id_ms' field", index))?;
+        let created_at = item
+            .get("created_at")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("response item {} missing 'created_at' field", index))?;
+        let len = item
+            .get("len")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("response item {} missing 'len' field", index))?;
+        rows.push(format!(
+            "{:<16} {:<28} {} bytes",
+            version_id, created_at, len
+        ));
+    }
+    Ok(rows.join("\n"))
+}
+
+fn format_cli_diff_lines(lines: &[String]) -> String {
+    lines
+        .iter()
+        .map(|line| line.trim_end_matches(['\r', '\n']))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_diff_output(diff: &DiffResponse, json: bool) -> Result<String, String> {
+    if json {
+        return serde_json::to_string_pretty(diff)
+            .map_err(|err| format!("response encoding error: {}", err));
+    }
+    if diff.equal {
+        return Ok("No changes.".to_string());
+    }
+    Ok(format_cli_diff_lines(&diff.unified))
+}
+
+fn format_equal_output(equal: &EqualResponse, json: bool) -> Result<String, String> {
+    if json {
+        return serde_json::to_string_pretty(equal)
+            .map_err(|err| format!("response encoding error: {}", err));
+    }
+    Ok(if equal.equal { "equal" } else { "different" }.to_string())
 }
 
 fn api_url(server: &str, segments: &[&str]) -> Result<reqwest::Url, String> {
@@ -539,7 +737,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout))
+        .timeout(std::time::Duration::from_secs(timeout.get()))
         .build()?;
     let (resolved_server, source) = resolve_server_with_source(server, !no_discovery);
     let server = normalize_server(resolved_server);
@@ -718,6 +916,238 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             println!("{}", output);
+        }
+        ApiCommand::Versions { id, limit } => {
+            let endpoint = api_url_or_exit(
+                &server,
+                "Versions",
+                &["api", "paste", id.as_str(), "versions"],
+            );
+            let request_start = Instant::now();
+            let res = send_or_exit(
+                client.get(endpoint).query(&[("limit", limit)]),
+                "Versions",
+                source,
+                server.as_str(),
+            )
+            .await;
+            let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "Versions").await;
+
+            let parse_start = Instant::now();
+            let versions: Vec<Value> = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+            log_timing_parts(timing, "versions", request_elapsed, Some(parse_elapsed));
+
+            let output = match format_versions_output(&versions, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("Versions failed: {}", message);
+                    std::process::exit(1);
+                }
+            };
+            if !output.is_empty() {
+                println!("{}", output);
+            }
+        }
+        ApiCommand::GetVersion { id, version_id_ms } => {
+            let version_segment = version_id_ms.to_string();
+            let endpoint = api_url_or_exit(
+                &server,
+                "Get version",
+                &[
+                    "api",
+                    "paste",
+                    id.as_str(),
+                    "versions",
+                    version_segment.as_str(),
+                ],
+            );
+            let request_start = Instant::now();
+            let res =
+                send_or_exit(client.get(endpoint), "Get version", source, server.as_str()).await;
+            let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "Get version").await;
+
+            let parse_start = Instant::now();
+            let snapshot: Value = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+            log_timing_parts(timing, "get-version", request_elapsed, Some(parse_elapsed));
+
+            let output = match format_get_output(&snapshot, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("Get version failed: {}", message);
+                    std::process::exit(1);
+                }
+            };
+            println!("{}", output);
+        }
+        ApiCommand::Diff {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        } => {
+            let endpoint = api_url_or_exit(&server, "Diff", &["api", "diff"]);
+            let body = DiffRequest {
+                left: DiffRef {
+                    paste_id: left_id,
+                    version_id_ms: left_version,
+                },
+                right: DiffRef {
+                    paste_id: right_id,
+                    version_id_ms: right_version,
+                },
+            };
+            let request_start = Instant::now();
+            let res = send_or_exit(
+                client.post(endpoint).json(&body),
+                "Diff",
+                source,
+                server.as_str(),
+            )
+            .await;
+            let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "Diff").await;
+
+            let parse_start = Instant::now();
+            let diff: DiffResponse = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+            log_timing_parts(timing, "diff", request_elapsed, Some(parse_elapsed));
+
+            let output = match format_diff_output(&diff, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("Diff failed: {}", message);
+                    std::process::exit(1);
+                }
+            };
+            if !output.is_empty() {
+                println!("{}", output);
+            }
+        }
+        ApiCommand::Equal {
+            left_id,
+            right_id,
+            left_version,
+            right_version,
+        } => {
+            let endpoint = api_url_or_exit(&server, "Equal", &["api", "equal"]);
+            let body = DiffRequest {
+                left: DiffRef {
+                    paste_id: left_id,
+                    version_id_ms: left_version,
+                },
+                right: DiffRef {
+                    paste_id: right_id,
+                    version_id_ms: right_version,
+                },
+            };
+            let request_start = Instant::now();
+            let res = send_or_exit(
+                client.post(endpoint).json(&body),
+                "Equal",
+                source,
+                server.as_str(),
+            )
+            .await;
+            let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "Equal").await;
+
+            let parse_start = Instant::now();
+            let equal: EqualResponse = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+            log_timing_parts(timing, "equal", request_elapsed, Some(parse_elapsed));
+            let output = match format_equal_output(&equal, json) {
+                Ok(output) => output,
+                Err(message) => {
+                    eprintln!("Equal failed: {}", message);
+                    std::process::exit(1);
+                }
+            };
+            println!("{}", output);
+            std::process::exit(if equal.equal { 0 } else { 1 });
+        }
+        ApiCommand::ResetHard { id, version_id_ms } => {
+            let version_segment = version_id_ms.to_string();
+            let endpoint = api_url_or_exit(
+                &server,
+                "Reset hard",
+                &[
+                    "api",
+                    "paste",
+                    id.as_str(),
+                    "versions",
+                    version_segment.as_str(),
+                    "reset-hard",
+                ],
+            );
+            let request_start = Instant::now();
+            let res =
+                send_or_exit(client.post(endpoint), "Reset hard", source, server.as_str()).await;
+            let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "Reset hard").await;
+
+            let parse_start = Instant::now();
+            let paste: Value = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+            log_timing_parts(timing, "reset-hard", request_elapsed, Some(parse_elapsed));
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&paste)?);
+            } else {
+                println!("Reset paste {} to version {}.", id, version_id_ms);
+            }
+        }
+        ApiCommand::DuplicateVersion {
+            id,
+            version_id_ms,
+            name,
+        } => {
+            let version_segment = version_id_ms.to_string();
+            let endpoint = api_url_or_exit(
+                &server,
+                "Duplicate version",
+                &[
+                    "api",
+                    "paste",
+                    id.as_str(),
+                    "versions",
+                    version_segment.as_str(),
+                    "duplicate",
+                ],
+            );
+            let body = serde_json::json!({ "name": name });
+            let request_start = Instant::now();
+            let res = send_or_exit(
+                client.post(endpoint).json(&body),
+                "Duplicate version",
+                source,
+                server.as_str(),
+            )
+            .await;
+            let request_elapsed = request_start.elapsed();
+            let res = ensure_success_or_exit(res, "Duplicate version").await;
+
+            let parse_start = Instant::now();
+            let paste: Value = res.json().await?;
+            let parse_elapsed = parse_start.elapsed();
+            log_timing_parts(
+                timing,
+                "duplicate-version",
+                request_elapsed,
+                Some(parse_elapsed),
+            );
+            if json {
+                println!("{}", serde_json::to_string_pretty(&paste)?);
+            } else {
+                let Some((new_id, new_name)) = paste_id_and_name(&paste) else {
+                    eprintln!("Duplicate version failed: response missing 'id' or 'name' field");
+                    std::process::exit(1);
+                };
+                println!("Created: {} ({})", new_name, new_id);
+            }
         }
     }
 

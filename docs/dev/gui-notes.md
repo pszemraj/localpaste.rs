@@ -1,11 +1,8 @@
 # GUI Notes
 
-Use this document for rewrite GUI runtime flags and interaction contracts.
-Detection/normalization/highlight semantics are defined in
-[docs/language-detection.md](../language-detection.md)
-and own those behavior details.
-For perf validation steps/gates, use
-[docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
+GUI runtime flags and interaction contracts.
+Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md).
+Perf validation steps and gates: [docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Runtime Flags
 
@@ -52,11 +49,32 @@ Navigation/selection contract:
 - Language display behavior is explicit: auto + unset -> `auto`; manual + unset -> `plain`.
 - Rename/title edits commit on `Enter` and on title-field blur.
 - Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
+- Properties drawer is non-modal; opening it does not disable virtual-editor typing, caret movement, or editor shortcuts.
 - Folder create/edit/move controls are intentionally removed from the rewrite GUI; organization is smart-filter + search based.
+
+## Diff And History Workflows
+
+- Editor toolbar exposes `Diff` and `History` for the selected paste.
+- Command palette exposes `Open diff modal` and `Open history modal` when a paste is selected.
+- Diff is detached from main editor state:
+  - left side uses the active snapshot (`active_snapshot`) so unsaved edits are included,
+  - loading a comparison target does not change current selection or paste locks.
+- History is detached and read-only:
+  - `Current working copy` is index `0`,
+  - stored snapshots are older-only entries,
+  - reset restores the selected snapshot and then prunes that snapshot and newer entries from stored history.
+- History, Diff, and reset-confirm windows fence background mutations:
+  - create/delete/paste-as-new and other destructive workflow shortcuts are blocked while a version window is open,
+  - autosave and explicit save still persist already-dirty content/metadata while a version window is open,
+  - selection changes and automatic reselection are blocked while a version window is open,
+  - the selected paste stays pinned during a queued hard reset,
+  - the selected paste is temporarily read-only until reset success/error arrives.
+- Diff preview generation runs on the backend worker against frozen left/right text snapshots; the UI only renders cached results.
+- Reset and snapshot loading clear their in-flight UI state only for matching version-load/reset failures so unrelated backend errors cannot tear down the modal context.
 
 ## Language/Highlight QA (Magika + Fallback)
 
-Use this checklist when touching detection/highlight/filter code.
+Run this checklist when touching detection/highlight/filter code.
 
 1. Start GUI with default features (Magika enabled): `cargo run -p localpaste_gui --bin localpaste-gui`.
 2. Create new pastes with representative snippets and confirm detected language chip (auto mode):
@@ -83,7 +101,7 @@ Use this checklist when touching detection/highlight/filter code.
 
 ## Manual GUI Human-Step Checklist (Comprehensive)
 
-Use this when a change touches GUI interaction/state logic and you want an end-to-end manual pass.
+Run this end-to-end pass when a change touches GUI interaction or state logic.
 
 ### Preflight Commands
 
@@ -109,6 +127,7 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
    - Open selected paste from palette.
    - Delete from palette and confirm list removal.
    - Copy raw/copy fenced commands complete and close/open behavior is correct.
+   - Open history and diff modals from palette queries (`history`, `diff`) when a paste is selected.
 6. Search and filters:
    - Sidebar query narrows results and clearing query restores list.
    - Smart collections (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) re-scope results.
@@ -152,11 +171,15 @@ Use this when a change touches GUI interaction/state logic and you want an end-t
     - Resize window repeatedly; expected: no persistent plain-text gap artifacts and caret remains aligned.
 18. Lock behavior sanity:
     - While GUI is open on a paste, verify external API mutation attempts against same paste are lock-gated (423 behavior per lock model).
-19. Trace sanity (if enabled):
+19. Version workflow sanity:
+    - Open `Diff`, select another paste, and verify current unsaved edits appear on the left side.
+    - Open `History`, navigate with `Older/Newer`, duplicate a historical snapshot, and verify a new paste is created.
+    - Trigger reset-to-version and verify current paste updates to the selected snapshot.
+20. Trace sanity (if enabled):
     - Input trace logs show deterministic virtual input routing.
     - Highlight trace logs show queue/worker/apply flow with stale drops when applicable.
     - Perf logs emit frame percentiles (`avg/p50/p95/p99/worst`) periodically.
-20. Persistence check:
+21. Persistence check:
     - Close GUI and relaunch with the same `DB_PATH`; verify seeded/edited content persists.
 
 ## Edit Locks

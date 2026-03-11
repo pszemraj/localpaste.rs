@@ -12,6 +12,8 @@ pub(crate) enum CommandPaletteAction {
     DeleteSelected,
     SaveNow,
     SaveMetadata,
+    OpenDiffModal,
+    OpenHistoryModal,
     FocusSearch,
     ToggleProperties,
     RefreshList,
@@ -169,6 +171,18 @@ impl LocalPasteApp {
         ctx: &egui::Context,
         action: CommandPaletteAction,
     ) {
+        if self.mutation_shortcut_block_reason().is_some()
+            && matches!(
+                action,
+                CommandPaletteAction::NewPaste
+                    | CommandPaletteAction::PasteAsNew
+                    | CommandPaletteAction::DeleteSelected
+                    | CommandPaletteAction::DeletePaste(_)
+            )
+        {
+            self.set_mutation_shortcut_blocked_status();
+            return;
+        }
         match action {
             CommandPaletteAction::NewPaste => {
                 self.create_new_paste();
@@ -189,6 +203,14 @@ impl LocalPasteApp {
             }
             CommandPaletteAction::SaveMetadata => {
                 self.save_metadata_now();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::OpenDiffModal => {
+                self.open_diff_modal();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::OpenHistoryModal => {
+                self.open_history_modal();
                 self.command_palette_open = false;
             }
             CommandPaletteAction::FocusSearch => {
@@ -272,6 +294,16 @@ impl LocalPasteApp {
                 label: "Save metadata".to_string(),
                 hint: "persist title/type/tags".to_string(),
                 action: CommandPaletteAction::SaveMetadata,
+            });
+            items.push(CommandPaletteItem {
+                label: "Open diff modal".to_string(),
+                hint: "compare current paste".to_string(),
+                action: CommandPaletteAction::OpenDiffModal,
+            });
+            items.push(CommandPaletteItem {
+                label: "Open history modal".to_string(),
+                hint: "browse snapshots".to_string(),
+                action: CommandPaletteAction::OpenHistoryModal,
             });
         }
         items.push(CommandPaletteItem {

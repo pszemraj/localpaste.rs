@@ -116,6 +116,34 @@ mod model_tests {
     }
 
     #[test]
+    fn test_paste_meta_from_populates_derived_retrieval_fields() {
+        let code = paste::Paste::new(
+            "fn handle_request() {\n    let fsdp2 = \"cublaslt\";\n}\n".to_string(),
+            "random-slug".to_string(),
+        );
+        let config = paste::Paste::new(
+            "model: gpt-4\nservice: trainer\n".to_string(),
+            "config".to_string(),
+        );
+        let link = paste::Paste::new("https://example.com/docs\n".to_string(), "link".to_string());
+
+        let code_meta = paste::PasteMeta::from(&code);
+        let config_meta = paste::PasteMeta::from(&config);
+        let link_meta = paste::PasteMeta::from(&link);
+
+        assert_eq!(code_meta.derived.kind, crate::semantic::PasteKind::Code);
+        assert_eq!(
+            code_meta.derived.handle.as_deref(),
+            Some("fn handle_request")
+        );
+        assert!(code_meta.derived.terms.iter().any(|term| term == "fsdp2"));
+        assert_eq!(config_meta.derived.kind, crate::semantic::PasteKind::Config);
+        assert_eq!(config_meta.derived.handle.as_deref(), Some("model gpt-4"));
+        assert_eq!(link_meta.derived.kind, crate::semantic::PasteKind::Link);
+        assert_eq!(link_meta.derived.handle.as_deref(), Some("example.com"));
+    }
+
+    #[test]
     fn test_paste_request_validation() {
         let valid_req = paste::CreatePasteRequest {
             content: "test".to_string(),

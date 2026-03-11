@@ -349,16 +349,17 @@ async fn test_search_empty_or_whitespace_query_returns_no_results() {
 async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
     let (server, _temp, _locks) = setup_test_server();
 
-    // Content-only match (should be excluded from /api/search/meta).
+    // Content-only match for canonical search using a low-signal stopword that
+    // derived metadata intentionally drops.
     server
         .post("/api/paste")
         .json(&json!({
-            "content": "needle-in-content only",
+            "content": "with with with",
             "name": "content-only"
         }))
         .await;
 
-    // Name/tag match (should be included by /api/search/meta).
+    // Name/tag match for metadata search.
     let tagged_response = server
         .post("/api/paste")
         .json(&json!({
@@ -377,11 +378,12 @@ async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
         .iter()
         .all(|item| item.get("content").is_none() && item.get("content_len").is_some()));
 
-    let full_search_response = server.get("/api/search?q=needle").await;
+    let full_search_response = server.get("/api/search?q=with").await;
     assert_eq!(full_search_response.status_code(), StatusCode::OK);
     assert_meta_only_shape_header(&full_search_response);
     let full_results: Vec<serde_json::Value> = full_search_response.json();
-    assert_eq!(full_results.len(), 2);
+    assert_eq!(full_results.len(), 1);
+    assert_eq!(full_results[0]["name"], "content-only");
     assert!(full_results
         .iter()
         .all(|item| item.get("content").is_none() && item.get("content_len").is_some()));

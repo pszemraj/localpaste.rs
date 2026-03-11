@@ -3,7 +3,6 @@
 use super::canonical::canonicalize;
 use super::detect_language;
 use super::looks_like_yaml;
-#[cfg(feature = "magika")]
 use super::refine_magika_label;
 
 fn assert_detection_cases(cases: &[(&str, Option<&str>)]) {
@@ -27,6 +26,10 @@ fn heuristic_detects_existing_language_matrix() {
         ("name: app", Some("yaml")),
         ("display name: app\nport: 8080", Some("yaml")),
         ("services: [web]\nversion: 3", Some("yaml")),
+        (
+            "jobs:\n  build:\n    runs-on: ubuntu-latest\n",
+            Some("yaml"),
+        ),
         ("select id, name from users where active = 1", Some("sql")),
         ("[tool]\nname = \"demo\"\nversion = \"0.1.0\"", Some("toml")),
         ("just some plain text words", None),
@@ -39,6 +42,9 @@ fn yaml_shape_helper_handles_flow_values_and_single_list_guard() {
     assert!(looks_like_yaml("root: {child: value}\n"));
     assert!(looks_like_yaml("display name: api\nport: 8080\n"));
     assert!(looks_like_yaml("services: [web]\nversion: 3\n"));
+    assert!(looks_like_yaml(
+        "jobs:\n  build:\n    runs-on: ubuntu-latest\n"
+    ));
     assert!(!looks_like_yaml("- item\n"));
 }
 
@@ -52,6 +58,7 @@ fn yaml_shape_helper_requires_yaml_body_after_doc_start() {
     assert!(looks_like_yaml("---\nname: app\n"));
     assert!(!looks_like_yaml("---\njust a separator\n"));
     assert!(!looks_like_yaml("---\n- item\n"));
+    assert!(looks_like_yaml("---\n- alpha\n- beta\n"));
 }
 
 #[test]
@@ -122,6 +129,42 @@ fn markdown_separator_content_is_not_mislabeled_as_yaml() {
 }
 
 #[test]
+fn markdown_heading_with_colon_prefers_markdown_over_yaml() {
+    let content = "Consolidate this nonsense:\n\n# test duplication review:\n";
+    assert_eq!(detect_language(content).as_deref(), Some("markdown"));
+}
+
+#[test]
+fn markdown_fence_prefers_markdown_over_structured_yaml() {
+    let content = "```json\n{\"a\":1}\n```\n";
+    assert_eq!(detect_language(content).as_deref(), Some("markdown"));
+}
+
+#[test]
+fn markdown_yaml_fence_prefers_markdown_over_yaml_body() {
+    let content = "```yaml\nname: app\nport: 8080\n```\n";
+    assert_eq!(detect_language(content).as_deref(), Some("markdown"));
+}
+
+#[test]
+fn shell_heredoc_with_fenced_example_stays_shell() {
+    let content = "if [ -n \"$DEMO\" ]; then\ncat <<'EOF'\n```bash\necho hi\n```\nEOF\nfi\n";
+    assert_eq!(detect_language(content).as_deref(), Some("shell"));
+}
+
+#[test]
+fn yaml_block_scalar_with_indented_fences_stays_yaml() {
+    let content = "script: |\n  ```bash\n  echo hi\n  ```\ntimeout: 30\n";
+    assert_eq!(detect_language(content).as_deref(), Some("yaml"));
+}
+
+#[test]
+fn markdown_bullet_list_prefers_markdown_over_yaml_sequence() {
+    let content = "- alpha\n- beta\n";
+    assert_eq!(detect_language(content).as_deref(), Some("markdown"));
+}
+
+#[test]
 fn canonicalization_matrix_handles_aliases() {
     let cases = [
         ("csharp", "cs"),
@@ -169,7 +212,6 @@ fn magika_detects_high_signal_code_snippets() {
     }
 }
 
-#[cfg(feature = "magika")]
 #[test]
 fn magika_refinement_rejects_weak_yaml_shape() {
     assert_eq!(refine_magika_label("yaml", "status report:\ndone\n"), None);
@@ -204,9 +246,28 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         Some("yaml".to_string())
     );
     assert_eq!(refine_magika_label("yaml", "status report: done\n"), None);
+    assert_eq!(
+        refine_magika_label("yaml", "```json\n{\"k\":1}\n```\n"),
+        Some("markdown".to_string())
+    );
 }
 
-#[cfg(feature = "magika")]
+#[test]
+fn magika_refinement_does_not_override_shell_to_markdown_on_comment_heading() {
+    assert_eq!(
+        refine_magika_label("shell", "# install script\necho hi\n"),
+        Some("shell".to_string())
+    );
+}
+
+#[test]
+fn magika_refinement_does_not_override_json_with_fenced_string_content() {
+    assert_eq!(
+        refine_magika_label("json", r#"{"note":"```bash\nls\n```"}"#),
+        Some("json".to_string())
+    );
+}
+
 #[test]
 fn magika_refinement_converts_plain_css_mislabeled_as_scss() {
     assert_eq!(

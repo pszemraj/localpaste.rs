@@ -52,28 +52,6 @@ fn run_virtual_editor_frame(
     focus_active_pre
 }
 
-fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
-    egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers,
-    }
-}
-
-fn configure_virtual_editor_with_wrap(app: &mut LocalPasteApp, text: &str, wrap_width: f32) {
-    app.reset_virtual_editor(text);
-    app.virtual_layout
-        .rebuild(&app.virtual_editor_buffer, wrap_width, 1.0, 1.0);
-}
-
-fn set_virtual_cursor_at(app: &mut LocalPasteApp, line: usize, col: usize) {
-    let len = app.virtual_editor_buffer.len_chars();
-    let pos = app.virtual_editor_buffer.line_col_to_char(line, col);
-    app.virtual_editor_state.set_cursor(pos, len);
-}
-
 #[test]
 fn virtual_copy_and_cut_report_expected_mutation_state() {
     struct ClipboardCase {
@@ -351,6 +329,25 @@ fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
 }
 
 #[test]
+fn virtual_editor_frame_consumes_pending_follow_scroll_offset() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness
+        .app
+        .reset_virtual_editor("line one\nline two\nline three\n");
+    harness.app.virtual_pending_scroll_offset_y = Some(240.0);
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    run_editor_panel_once(&mut harness.app, &ctx, egui::RawInput::default());
+
+    assert!(
+        harness.app.virtual_pending_scroll_offset_y.is_none(),
+        "virtual editor frame should consume queued scroll-follow offset"
+    );
+}
+
+#[test]
 fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;
@@ -389,13 +386,7 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
         assert!(ctx.memory(|m| m.has_focus(editor_id)));
     }
 
-    let select_all_event = key_event(
-        egui::Key::A,
-        egui::Modifiers {
-            command: true,
-            ..Default::default()
-        },
-    );
+    let select_all_event = key_event(egui::Key::A, primary_command_modifiers());
     let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![select_all_event]);
     assert!(focus_active_pre);
     let full_len = harness.app.virtual_editor_buffer.len_chars();
@@ -423,6 +414,32 @@ fn virtual_editor_enter_in_first_focus_handoff_frame_inserts_top_newline() {
         "\nalpha\nbeta\n"
     );
     assert_eq!(harness.app.virtual_editor_state.cursor(), 1);
+}
+
+#[test]
+fn virtual_editor_shift_arrow_in_first_focus_handoff_frame_extends_selection() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha\n");
+    harness.app.focus_editor_next = true;
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let shift_right = key_event(
+        egui::Key::ArrowRight,
+        egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![shift_right]);
+
+    assert!(!focus_active_pre);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 1);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..1)
+    );
 }
 
 #[test]
@@ -613,7 +630,7 @@ fn long_line_navigation_commands_cross_legacy_render_cap_without_truncation() {
 
     let move_end = harness
         .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveEnd { select: false }]);
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
     assert!(!move_end.changed);
     assert_eq!(harness.app.virtual_editor_state.cursor(), line_end);
 
@@ -649,11 +666,7 @@ fn word_navigation_crosses_line_boundaries() {
             word: true,
         }],
     );
-
-    #[cfg(target_os = "macos")]
-    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 4); // end of "beta"
-    #[cfg(not(target_os = "macos"))]
-    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 0); // start of "beta"
+    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 0);
 
     assert_eq!(
         harness.app.virtual_editor_state.cursor(),
@@ -667,72 +680,11 @@ fn word_navigation_crosses_line_boundaries() {
             word: true,
         }],
     );
-
-    #[cfg(target_os = "macos")]
-    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(1, 0); // start of "beta"
-    #[cfg(not(target_os = "macos"))]
-    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(0, 0); // start of "alpha"
+    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(0, 0);
 
     assert_eq!(
         harness.app.virtual_editor_state.cursor(),
         expected_after_left
-    );
-}
-
-#[test]
-fn word_left_skips_punctuation_separators() {
-    let mut harness = make_app();
-    configure_virtual_editor_with_wrap(&mut harness.app, "foo.bar", 200.0);
-
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    harness.app.virtual_editor_state.set_cursor(len, len);
-    let ctx = egui::Context::default();
-
-    let _ = harness.app.apply_virtual_commands(
-        &ctx,
-        &[VirtualInputCommand::MoveLeft {
-            select: false,
-            word: true,
-        }],
-    );
-    assert_eq!(
-        harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(0, 4)
-    );
-
-    let _ = harness.app.apply_virtual_commands(
-        &ctx,
-        &[VirtualInputCommand::MoveLeft {
-            select: false,
-            word: true,
-        }],
-    );
-    assert_eq!(
-        harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(0, 0)
-    );
-}
-
-#[test]
-#[cfg(not(target_os = "macos"))]
-fn word_right_skips_punctuation_separators_on_windows_linux() {
-    let mut harness = make_app();
-    configure_virtual_editor_with_wrap(&mut harness.app, "foo.bar", 200.0);
-
-    let len = harness.app.virtual_editor_buffer.len_chars();
-    harness.app.virtual_editor_state.set_cursor(0, len);
-    let ctx = egui::Context::default();
-
-    let _ = harness.app.apply_virtual_commands(
-        &ctx,
-        &[VirtualInputCommand::MoveRight {
-            select: false,
-            word: true,
-        }],
-    );
-    assert_eq!(
-        harness.app.virtual_editor_state.cursor(),
-        harness.app.virtual_editor_buffer.line_col_to_char(0, 4)
     );
 }
 
@@ -752,7 +704,10 @@ fn word_delete_crosses_line_boundaries() {
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
     assert!(forward_result.changed);
-    assert_eq!(forward.app.virtual_editor_buffer.to_string(), "alpha gamma");
+    assert_eq!(
+        forward.app.virtual_editor_buffer.to_string(),
+        "alphabeta gamma"
+    );
 
     let mut backward = make_app();
     configure_virtual_editor_with_wrap(&mut backward.app, "alpha\nbeta gamma", 200.0);
@@ -767,6 +722,34 @@ fn word_delete_crosses_line_boundaries() {
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::Backspace { word: true }]);
     assert!(backward_result.changed);
     assert_eq!(backward.app.virtual_editor_buffer.to_string(), "beta gamma");
+}
+
+#[test]
+fn word_delete_forward_matches_word_navigation_boundaries() {
+    let ctx = egui::Context::default();
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "foo bar", 200.0);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(0, len);
+    let start_word = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
+    assert!(start_word.changed);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "bar");
+
+    harness.app.reset_virtual_editor("foo bar");
+    harness
+        .app
+        .virtual_layout
+        .rebuild(&harness.app.virtual_editor_buffer, 200.0, 1.0, 1.0);
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(3, len);
+    let separator = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
+    assert!(separator.changed);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "foobar");
 }
 
 #[test]
@@ -821,6 +804,7 @@ fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
         target.copied |= src.copied;
         target.cut |= src.cut;
         target.pasted |= src.pasted;
+        target.cursor_moved |= src.cursor_moved;
     }
 
     fn route_and_apply(
@@ -915,32 +899,27 @@ fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
 }
 
 #[test]
-fn virtual_click_counter_promotes_to_triple_and_resets() {
+fn virtual_click_counter_promotes_to_triple_and_resets_on_timeout_or_distance() {
     let now = Instant::now();
     let p = egui::pos2(100.0, 200.0);
-    let c1 = next_virtual_click_count(None, None, None, 0, 5, p, now);
+    let c1 = next_virtual_click_count(None, None, 0, p, now);
     assert_eq!(c1, 1);
-    let c2 = next_virtual_click_count(Some(now), Some(p), Some(5), c1, 5, p, now);
+    let c2 = next_virtual_click_count(Some(now), Some(p), c1, p, now);
     assert_eq!(c2, 2);
-    let c3 = next_virtual_click_count(Some(now), Some(p), Some(5), c2, 5, p, now);
+    let c3 = next_virtual_click_count(Some(now), Some(p), c2, p, now);
     assert_eq!(c3, 3);
-
-    let changed_line = next_virtual_click_count(Some(now), Some(p), Some(5), c3, 6, p, now);
-    assert_eq!(changed_line, 3);
 
     let expired = next_virtual_click_count(
         Some(now),
         Some(p),
-        Some(5),
         c3,
-        5,
         p,
         now + EDITOR_DOUBLE_CLICK_WINDOW + Duration::from_millis(1),
     );
     assert_eq!(expired, 1);
 
     let far = egui::pos2(100.0 + EDITOR_DOUBLE_CLICK_DISTANCE + 1.0, 200.0);
-    let distant = next_virtual_click_count(Some(now), Some(p), Some(5), c3, 5, far, now);
+    let distant = next_virtual_click_count(Some(now), Some(p), c3, far, now);
     assert_eq!(distant, 1);
 }
 

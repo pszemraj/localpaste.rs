@@ -10,19 +10,19 @@ on:
       source_mode:
         description: Source selection for this run
         required: false
-        default: release_tag
+        default: current_ref
         type: choice
         options:
           - release_tag
           - current_ref
       tag:
-        description: Existing tag to release in release_tag mode (for example vX.Y.Z)
+        description: Existing stable tag/version for release_tag mode (for example vX.Y.Z or X.Y.Z)
         required: false
         type: string
       dry_run:
         description: Build/test only (skip publish job)
         required: false
-        default: false
+        default: true
         type: boolean
 permissions:
   contents: read
@@ -43,50 +43,62 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          fetch-tags: true
       - name: Resolve source
         id: resolve
         shell: bash
+        env:
+          INPUT_SOURCE_MODE: ${{ github.event.inputs.source_mode }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
+
+          if [[ ! -d .git ]] || ! git rev-parse --git-dir >/dev/null 2>&1; then
+            echo "resolve_tag requires a checked-out repository (.git missing or invalid)" >&2
+            exit 1
+          fi
+
           MODE="release_tag"
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
             MODE="current_ref"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            MODE="${{ github.event.inputs.source_mode }}"
+            MODE="${INPUT_SOURCE_MODE:-}"
             if [[ -z "${MODE}" ]]; then
-              MODE="release_tag"
+              MODE="current_ref"
             fi
           fi
 
           case "${MODE}" in
             release_tag)
               if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-                TAG="${{ github.event.inputs.tag }}"
+                TAG_INPUT="${INPUT_TAG:-}"
               else
-                TAG="${GITHUB_REF_NAME}"
+                TAG_INPUT="${GITHUB_REF_NAME}"
               fi
 
-              if [[ -z "${TAG}" ]]; then
+              if [[ -z "$(printf '%s' "${TAG_INPUT}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" ]]; then
                 echo "release tag cannot be empty in release_tag mode" >&2
                 exit 1
               fi
 
-              if [[ "${TAG}" != v* ]]; then
-                echo "release tag must start with 'v' (got: ${TAG})" >&2
-                exit 1
-              fi
+              TAG="$(bash .github/scripts/normalize_release_tag.sh "${TAG_INPUT}")"
+
               if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                echo "release tag must match stable vX.Y.Z format (got: ${TAG})" >&2
+                echo "normalized tag contains unsafe characters: ${TAG}" >&2
                 exit 1
               fi
 
               git fetch --force --tags origin
-              git rev-parse "refs/tags/${TAG}" >/dev/null
-              SOURCE_REF="refs/tags/${TAG}"
+              if ! git show-ref --tags --verify --quiet "refs/tags/${TAG}"; then
+                echo "release tag does not exist: ${TAG}" >&2
+                exit 1
+              fi
+
+              SOURCE_REF="$(git rev-parse "refs/tags/${TAG}^{commit}")"
               ;;
             current_ref)
               WORKSPACE_VERSION="$(bash .github/scripts/workspace_version.sh)"
-              TAG="v${WORKSPACE_VERSION}"
+              TAG="$(python3 .github/scripts/normalize_packaging_tag.py "${WORKSPACE_VERSION}")"
               SOURCE_REF="${GITHUB_SHA}"
               {
                 echo "### current_ref mode"
@@ -109,6 +121,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          fetch-tags: true
           ref: ${{ steps.resolve.outputs.source_ref }}
       - name: Validate workspace version matches tag
         if: steps.resolve.outputs.source_mode == 'release_tag'
@@ -140,6 +153,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          fetch-tags: true
           ref: ${{ env.SOURCE_REF }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9  # master @ 2026-02-23
@@ -252,6 +266,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          fetch-tags: true
           ref: ${{ env.SOURCE_REF }}
       - name: Summarize build source
         shell: bash
@@ -697,6 +712,7 @@ jobs:
       - name: Publish release assets
         id: publish_release
         # Keep v2+ here: `overwrite_files` is not supported by older major tags.
+
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
         with:
           tag_name: ${{ needs.resolve_tag.outputs.resolved_tag }}
@@ -710,6 +726,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
         run: |
           set -euo pipefail
@@ -718,7 +735,7 @@ jobs:
           NOTE_P2='If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security'
           NOTE_P3='or run `xattr -cr /Applications/LocalPaste.app`.'
           NOTE="${NOTE_P1} ${NOTE_P2} ${NOTE_P3}"
-          CURRENT_BODY="$(gh release view "${RELEASE_TAG}" --json body --jq .body)"
+          CURRENT_BODY="$(gh release view "${RELEASE_TAG}" --repo "${GH_REPO}" --json body --jq .body)"
 
           if grep -Fq "${NOTE_PREFIX}" <<< "${CURRENT_BODY}"; then
             echo "macOS Gatekeeper note already present in release body"
@@ -732,4 +749,4 @@ jobs:
             printf "%s\n" "${NOTE}" > "${BODY_PATH}"
           fi
 
-          gh release edit "${RELEASE_TAG}" --notes-file "${BODY_PATH}"
+          gh release edit "${RELEASE_TAG}" --repo "${GH_REPO}" --notes-file "${BODY_PATH}"

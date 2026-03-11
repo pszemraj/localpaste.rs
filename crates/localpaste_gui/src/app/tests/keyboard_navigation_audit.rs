@@ -2,16 +2,11 @@
 
 use super::*;
 
-fn configure_virtual_editor_with_wrap(app: &mut LocalPasteApp, text: &str, wrap_width: f32) {
-    app.reset_virtual_editor(text);
-    app.virtual_layout
-        .rebuild(&app.virtual_editor_buffer, wrap_width, 1.0, 1.0);
-}
-
-fn set_cursor(app: &mut LocalPasteApp, line: usize, col: usize) {
-    let len = app.virtual_editor_buffer.len_chars();
-    let pos = app.virtual_editor_buffer.line_col_to_char(line, col);
-    app.virtual_editor_state.set_cursor(pos, len);
+fn assert_cursor_line_col(app: &LocalPasteApp, expected: (usize, usize)) {
+    let line_col = app
+        .virtual_editor_buffer
+        .char_to_line_col(app.virtual_editor_state.cursor());
+    assert_eq!(line_col, expected);
 }
 
 #[test]
@@ -27,9 +22,6 @@ fn shift_word_selection_extends_and_contracts_without_resetting_anchor() {
             word: true,
         }],
     );
-    #[cfg(target_os = "macos")]
-    let first_cursor = harness.app.virtual_editor_buffer.line_col_to_char(0, 3);
-    #[cfg(not(target_os = "macos"))]
     let first_cursor = harness.app.virtual_editor_buffer.line_col_to_char(0, 4);
     assert_eq!(harness.app.virtual_editor_state.cursor(), first_cursor);
     assert_eq!(
@@ -44,9 +36,6 @@ fn shift_word_selection_extends_and_contracts_without_resetting_anchor() {
             word: true,
         }],
     );
-    #[cfg(target_os = "macos")]
-    let second_cursor = harness.app.virtual_editor_buffer.line_col_to_char(0, 7);
-    #[cfg(not(target_os = "macos"))]
     let second_cursor = harness.app.virtual_editor_buffer.line_col_to_char(0, 8);
     assert_eq!(harness.app.virtual_editor_state.cursor(), second_cursor);
     assert_eq!(
@@ -124,7 +113,7 @@ fn word_navigation_crosses_lines_and_clamps_doc_boundaries() {
     configure_virtual_editor_with_wrap(&mut harness.app, "alpha\nbeta gamma\n", 400.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 1, 0);
+    set_virtual_cursor_at(&mut harness.app, 1, 0);
     let _ = harness.app.apply_virtual_commands(
         &ctx,
         &[VirtualInputCommand::MoveLeft {
@@ -224,7 +213,7 @@ fn word_left_handles_punctuation_and_spacing_matrix() {
 }
 
 #[test]
-fn word_right_skips_punctuation_and_whitespace_by_platform_semantics() {
+fn word_right_skips_punctuation_and_whitespace_to_next_word_start() {
     let mut harness = make_app();
     configure_virtual_editor_with_wrap(&mut harness.app, "foo.bar baz", 400.0);
     let ctx = egui::Context::default();
@@ -240,9 +229,6 @@ fn word_right_skips_punctuation_and_whitespace_by_platform_semantics() {
             word: true,
         }],
     );
-    #[cfg(target_os = "macos")]
-    let first_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 3);
-    #[cfg(not(target_os = "macos"))]
     let first_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 4);
     assert_eq!(harness.app.virtual_editor_state.cursor(), first_expected);
 
@@ -253,9 +239,6 @@ fn word_right_skips_punctuation_and_whitespace_by_platform_semantics() {
             word: true,
         }],
     );
-    #[cfg(target_os = "macos")]
-    let second_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 7);
-    #[cfg(not(target_os = "macos"))]
     let second_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 8);
     assert_eq!(harness.app.virtual_editor_state.cursor(), second_expected);
 }
@@ -266,24 +249,16 @@ fn vertical_column_affinity_restores_target_after_short_line_and_resets_after_ho
     configure_virtual_editor_with_wrap(&mut harness.app, "1234567890\nx\nabcdefghij\n", 400.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 0, 8);
+    set_virtual_cursor_at(&mut harness.app, 0, 8);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (1, 1));
+    assert_cursor_line_col(&harness.app, (1, 1));
 
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (2, 8));
+    assert_cursor_line_col(&harness.app, (2, 8));
 
     let _ = harness.app.apply_virtual_commands(
         &ctx,
@@ -298,87 +273,43 @@ fn vertical_column_affinity_restores_target_after_short_line_and_resets_after_ho
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 7));
+    assert_cursor_line_col(&harness.app, (0, 7));
 }
 
 #[test]
-fn wrapped_lines_move_by_visual_rows_and_home_end_use_visual_row_bounds() {
+fn wrapped_lines_move_by_visual_rows_and_line_home_end_ignore_wrap_bounds() {
     let mut harness = make_app();
     configure_virtual_editor_with_wrap(&mut harness.app, "abcdefghijkl\nz\n", 4.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 0, 2);
+    set_virtual_cursor_at(&mut harness.app, 0, 2);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 6));
+    assert_cursor_line_col(&harness.app, (0, 6));
 
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 10));
+    assert_cursor_line_col(&harness.app, (0, 10));
 
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (1, 1));
-
-    set_cursor(&mut harness.app, 0, 6);
-    let _ = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveHome { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 4));
-
-    set_cursor(&mut harness.app, 0, 6);
-    let _ = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveEnd { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 8));
+    assert_cursor_line_col(&harness.app, (1, 1));
 
     // Logical-line boundary commands should ignore soft-wrap row boundaries.
-    set_cursor(&mut harness.app, 0, 6);
+    set_virtual_cursor_at(&mut harness.app, 0, 6);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 0));
+    assert_cursor_line_col(&harness.app, (0, 0));
 
-    set_cursor(&mut harness.app, 0, 6);
+    set_virtual_cursor_at(&mut harness.app, 0, 6);
     let _ = harness
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
-    let (line, col) = harness
-        .app
-        .virtual_editor_buffer
-        .char_to_line_col(harness.app.virtual_editor_state.cursor());
-    assert_eq!((line, col), (0, 12));
+    assert_cursor_line_col(&harness.app, (0, 12));
 }
 
 #[test]
@@ -482,62 +413,87 @@ fn select_all_follow_on_behaviors_match_editor_conventions() {
 }
 
 #[test]
+fn document_boundary_selection_preserves_anchor_when_reversing_direction() {
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "alpha\nbeta\ngamma", 400.0);
+    let ctx = egui::Context::default();
+
+    set_virtual_cursor_at(&mut harness.app, 1, 2);
+    let anchor = harness.app.virtual_editor_state.cursor();
+    let doc_end = harness.app.virtual_editor_buffer.len_chars();
+
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDocHome { select: true }]);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..anchor)
+    );
+
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDocEnd { select: true }]);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), doc_end);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(anchor..doc_end)
+    );
+}
+
+#[test]
 fn word_navigation_matrix_matches_expected_token_boundaries() {
     struct Case {
         text: &'static str,
         left: &'static [usize],
-        right_non_mac: &'static [usize],
-        right_mac: &'static [usize],
+        right: &'static [usize],
     }
 
     let cases = [
         Case {
             text: "snake_case camelCase",
             left: &[11, 0],
-            right_non_mac: &[11, 20],
-            right_mac: &[10, 20],
+            right: &[11, 20],
         },
         Case {
             text: "foo.bar.baz",
             left: &[8, 4, 0],
-            right_non_mac: &[4, 8, 11],
-            right_mac: &[3, 7, 11],
+            right: &[4, 8, 11],
         },
         Case {
             text: "foo::bar",
             left: &[5, 0],
-            right_non_mac: &[5, 8],
-            right_mac: &[3, 8],
+            right: &[5, 8],
         },
         Case {
             text: "foo--bar",
             left: &[5, 0],
-            right_non_mac: &[5, 8],
-            right_mac: &[3, 8],
+            right: &[5, 8],
         },
         Case {
             text: "  leading  spaces",
             left: &[11, 2, 0],
-            right_non_mac: &[2, 11, 17],
-            right_mac: &[9, 17],
+            right: &[2, 11, 17],
         },
         Case {
             text: "trailing spaces   ",
             left: &[9, 0],
-            right_non_mac: &[9, 18],
-            right_mac: &[8, 15, 18],
+            right: &[9, 18],
         },
         Case {
             text: "foo...bar",
             left: &[6, 0],
-            right_non_mac: &[6, 9],
-            right_mac: &[3, 9],
+            right: &[6, 9],
         },
         Case {
             text: "foo___bar",
             left: &[0],
-            right_non_mac: &[9],
-            right_mac: &[9],
+            right: &[9],
+        },
+        Case {
+            text: "can't stop",
+            left: &[6, 0],
+            right: &[6, 10],
         },
     ];
     let ctx = egui::Context::default();
@@ -570,12 +526,7 @@ fn word_navigation_matrix_matches_expected_token_boundaries() {
             .app
             .virtual_editor_state
             .set_cursor(0, right_harness.app.virtual_editor_buffer.len_chars());
-        let expected_right = if cfg!(target_os = "macos") {
-            case.right_mac
-        } else {
-            case.right_non_mac
-        };
-        for expected in expected_right {
+        for expected in case.right {
             let _ = right_harness.app.apply_virtual_commands(
                 &ctx,
                 &[VirtualInputCommand::MoveRight {
@@ -600,7 +551,7 @@ fn shift_vertical_selection_preserves_anchor_when_reversing_direction() {
     configure_virtual_editor_with_wrap(&mut harness.app, "0123456789\nshort\nabcdefghij\n", 400.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 0, 6);
+    set_virtual_cursor_at(&mut harness.app, 0, 6);
     let anchor = harness.app.virtual_editor_state.cursor();
 
     let _ = harness
@@ -637,7 +588,7 @@ fn wrapped_line_shift_selection_tracks_visual_rows() {
     configure_virtual_editor_with_wrap(&mut harness.app, "abcdefghijkl\n", 4.0);
     let ctx = egui::Context::default();
 
-    set_cursor(&mut harness.app, 0, 2);
+    set_virtual_cursor_at(&mut harness.app, 0, 2);
     let anchor = harness.app.virtual_editor_state.cursor();
 
     let _ = harness
@@ -675,7 +626,7 @@ fn delete_to_line_boundaries_obey_selection_and_cursor_cases() {
 
     let mut line_start_case = make_app();
     configure_virtual_editor_with_wrap(&mut line_start_case.app, "abc def", 400.0);
-    set_cursor(&mut line_start_case.app, 0, 4);
+    set_virtual_cursor_at(&mut line_start_case.app, 0, 4);
     let _ = line_start_case
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteToLineStart]);
@@ -684,7 +635,7 @@ fn delete_to_line_boundaries_obey_selection_and_cursor_cases() {
 
     let mut line_end_case = make_app();
     configure_virtual_editor_with_wrap(&mut line_end_case.app, "abc def", 400.0);
-    set_cursor(&mut line_end_case.app, 0, 3);
+    set_virtual_cursor_at(&mut line_end_case.app, 0, 3);
     let _ = line_end_case
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteToLineEnd]);

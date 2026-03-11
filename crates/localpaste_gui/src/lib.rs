@@ -133,12 +133,43 @@ fn desktop_entry_is_managed(contents: &str) -> bool {
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn has_target_build_segment(path: &Path) -> bool {
+fn target_build_profile_index(path: &Path) -> Option<usize> {
     let components: Vec<_> = path.components().collect();
-    components.windows(2).any(|window| {
-        window[0].as_os_str() == "target"
-            && (window[1].as_os_str() == "debug" || window[1].as_os_str() == "release")
-    })
+    components
+        .windows(2)
+        .position(|window| {
+            window[0].as_os_str() == "target"
+                && (window[1].as_os_str() == "debug" || window[1].as_os_str() == "release")
+        })
+        .map(|idx| idx + 1)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn has_target_build_segment(path: &Path) -> bool {
+    target_build_profile_index(path).is_some()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_target_deps_binary(path: &Path) -> bool {
+    let components: Vec<_> = path.components().collect();
+    target_build_profile_index(path)
+        .and_then(|profile_index| components.get(profile_index.saturating_add(1)))
+        .is_some_and(|component| component.as_os_str() == "deps")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_dev_desktop_entry_allowed(exe_path: &Path) -> bool {
+    // Dev launches from workspace `target/{debug,release}` should still receive a
+    // managed user-level desktop entry so the Wayland app_id can resolve to the
+    // correct icon. Only skip the hashed `deps/` helper binaries.
+    has_target_build_segment(exe_path) && !is_target_deps_binary(exe_path)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_force_desktop_entry_write_enabled() -> bool {
+    std::env::var("LOCALPASTE_LINUX_DESKTOP_ENTRY")
+        .ok()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("force"))
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -239,7 +270,9 @@ fn ensure_linux_desktop_integration() -> std::io::Result<()> {
     };
 
     match decide_linux_desktop_entry_write(
-        linux_exe_path_looks_stable(exe_path.as_path()),
+        linux_exe_path_looks_stable(exe_path.as_path())
+            || linux_dev_desktop_entry_allowed(exe_path.as_path())
+            || linux_force_desktop_entry_write_enabled(),
         user_desktop_entry_contents.as_deref(),
         linux_system_desktop_entry_exists(),
     ) {
@@ -328,13 +361,20 @@ pub fn run() -> eframe::Result<()> {
 mod tests {
     use super::{
         decide_linux_desktop_entry_write, desktop_entry_is_managed,
-        linux_exe_path_looks_stable_with_home, LinuxDesktopEntryDecision,
+        linux_dev_desktop_entry_allowed, linux_exe_path_looks_stable_with_home,
+        linux_force_desktop_entry_write_enabled, LinuxDesktopEntryDecision,
     };
     use super::{load_desktop_icon, open_log_file, resolve_log_file_path};
     use localpaste_core::env::{env_lock, EnvGuard};
     use std::io::Write;
     use std::path::Path;
     use std::path::PathBuf;
+
+    fn with_cleared_env_var(name: &str, run: impl FnOnce()) {
+        let _lock = env_lock().lock().expect("env lock");
+        let _restore = EnvGuard::remove(name);
+        run();
+    }
 
     #[test]
     fn desktop_icon_asset_decodes() {
@@ -346,20 +386,19 @@ mod tests {
 
     #[test]
     fn resolve_log_file_path_env_matrix() {
-        let _lock = env_lock().lock().expect("env lock");
-        let _restore = EnvGuard::remove("LOCALPASTE_LOG_FILE");
-
-        assert!(resolve_log_file_path().is_none());
-
-        {
-            let _blank = EnvGuard::set("LOCALPASTE_LOG_FILE", "   ");
+        with_cleared_env_var("LOCALPASTE_LOG_FILE", || {
             assert!(resolve_log_file_path().is_none());
-        }
 
-        {
-            let _set = EnvGuard::set("LOCALPASTE_LOG_FILE", "logs/gui.log");
-            assert_eq!(resolve_log_file_path(), Some(PathBuf::from("logs/gui.log")));
-        }
+            {
+                let _blank = EnvGuard::set("LOCALPASTE_LOG_FILE", "   ");
+                assert!(resolve_log_file_path().is_none());
+            }
+
+            {
+                let _set = EnvGuard::set("LOCALPASTE_LOG_FILE", "logs/gui.log");
+                assert_eq!(resolve_log_file_path(), Some(PathBuf::from("logs/gui.log")));
+            }
+        });
     }
 
     #[test]
@@ -415,6 +454,41 @@ mod tests {
             Path::new("/usr/bin/localpaste-gui"),
             Some(home)
         ));
+    }
+
+    #[test]
+    fn linux_dev_desktop_entry_allow_matrix() {
+        assert!(linux_dev_desktop_entry_allowed(Path::new(
+            "/work/localpaste/target/debug/localpaste-gui"
+        )));
+        assert!(linux_dev_desktop_entry_allowed(Path::new(
+            "/work/localpaste/target/release/localpaste-gui"
+        )));
+        assert!(!linux_dev_desktop_entry_allowed(Path::new(
+            "/work/localpaste/target/debug/deps/localpaste_gui-1234"
+        )));
+        assert!(!linux_dev_desktop_entry_allowed(Path::new(
+            "/usr/bin/localpaste-gui"
+        )));
+    }
+
+    #[test]
+    fn linux_force_desktop_entry_write_flag_matrix() {
+        with_cleared_env_var("LOCALPASTE_LINUX_DESKTOP_ENTRY", || {
+            assert!(!linux_force_desktop_entry_write_enabled());
+            {
+                let _set = EnvGuard::set("LOCALPASTE_LINUX_DESKTOP_ENTRY", "force");
+                assert!(linux_force_desktop_entry_write_enabled());
+            }
+            {
+                let _set = EnvGuard::set("LOCALPASTE_LINUX_DESKTOP_ENTRY", " FORCE ");
+                assert!(linux_force_desktop_entry_write_enabled());
+            }
+            {
+                let _set = EnvGuard::set("LOCALPASTE_LINUX_DESKTOP_ENTRY", "true");
+                assert!(!linux_force_desktop_entry_write_enabled());
+            }
+        });
     }
 
     #[test]

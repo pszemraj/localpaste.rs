@@ -12,6 +12,7 @@ pub mod paste;
 pub mod tables;
 mod time_util;
 mod transactions;
+mod versioning;
 
 use crate::db::tables::REDB_FILE_NAME;
 use crate::error::AppError;
@@ -296,7 +297,7 @@ impl Database {
         Ok(shared_lock)
     }
 
-    fn from_shared_with_coordination(
+    fn build_shared_handle(
         db: Arc<RedbDatabase>,
         owner_lock_guard: Option<Arc<lock::OwnerLockGuard>>,
         folder_txn_lock: Arc<Mutex<()>>,
@@ -310,14 +311,36 @@ impl Database {
         })
     }
 
+    fn run_startup_repairs(&self) -> Result<(), AppError> {
+        self.folders.clear_delete_markers()?;
+        if let Err(err) = reconcile_folder_invariants(self) {
+            tracing::error!(
+                "Startup folder invariant reconcile failed; continuing in degraded mode: {}",
+                err
+            );
+        }
+        self.pastes.ensure_meta_index_current()?;
+        Ok(())
+    }
+
+    fn from_shared_with_coordination(
+        db: Arc<RedbDatabase>,
+        owner_lock_guard: Option<Arc<lock::OwnerLockGuard>>,
+        folder_txn_lock: Arc<Mutex<()>>,
+    ) -> Result<Self, AppError> {
+        let database = Self::build_shared_handle(db, owner_lock_guard, folder_txn_lock)?;
+        database.run_startup_repairs()?;
+        Ok(database)
+    }
+
     /// Build a database handle from an existing shared redb instance.
     ///
     /// # Returns
     /// A [`Database`] handle that shares the same underlying redb instance.
     ///
     /// # Errors
-    /// Returns an error when table accessors or coordination primitives cannot
-    /// be initialized.
+    /// Returns an error when table accessors, coordination primitives, or
+    /// startup repair passes cannot be initialized.
     pub fn from_shared(db: Arc<RedbDatabase>) -> Result<Self, AppError> {
         let folder_txn_lock = Self::shared_folder_txn_lock_for_db(&db)?;
         Self::from_shared_with_coordination(db, None, folder_txn_lock)
@@ -331,7 +354,7 @@ impl Database {
     /// # Errors
     /// Returns an error when accessor initialization fails.
     pub fn share(&self) -> Result<Self, AppError> {
-        Self::from_shared_with_coordination(
+        Self::build_shared_handle(
             self.db.clone(),
             self._owner_lock_guard.clone(),
             self.folder_txn_lock.clone(),
@@ -410,23 +433,7 @@ impl Database {
         };
 
         let folder_txn_lock = Self::shared_folder_txn_lock_for_db(&db)?;
-        let database = Self {
-            pastes: paste::PasteDb::new(db.clone())?,
-            folders: folder::FolderDb::new(db.clone())?,
-            db,
-            _owner_lock_guard: owner_lock_guard,
-            folder_txn_lock,
-        };
-
-        database.folders.clear_delete_markers()?;
-        if let Err(err) = reconcile_folder_invariants(&database) {
-            tracing::error!(
-                "Startup folder invariant reconcile failed; continuing in degraded mode: {}",
-                err
-            );
-        }
-
-        Ok(database)
+        Self::from_shared_with_coordination(db, owner_lock_guard, folder_txn_lock)
     }
 
     /// Compatibility no-op. redb durability is guaranteed on commit.

@@ -538,6 +538,27 @@ fn prepare_virtual_galley_cache(harness: &mut TestHarness, line_count: usize) {
     }
 }
 
+fn prepare_preview_galley_cache(harness: &mut TestHarness, line_count: usize) {
+    harness.app.editor_mode = EditorMode::VirtualPreview;
+    harness.app.virtual_galley_cache.prepare_frame(
+        line_count,
+        VirtualGalleyContext::new(
+            f32::INFINITY,
+            false,
+            &egui::FontId::monospace(14.0),
+            egui::Color32::WHITE,
+            1.0,
+        ),
+    );
+    for idx in 0..line_count {
+        harness.app.virtual_galley_cache.sync_line_rows(idx, 1);
+        harness
+            .app
+            .virtual_galley_cache
+            .insert(idx, 0, shaped_test_galley());
+    }
+}
+
 fn plain_lines(lengths: &[usize]) -> Vec<HighlightRenderLine> {
     lengths
         .iter()
@@ -778,6 +799,72 @@ fn chained_highlight_patches_union_galley_invalidation_ranges() {
     );
 
     assert_eq!(evicted, vec![true, false, true, false]);
+}
+
+#[test]
+fn virtual_preview_render_reuses_cached_galleys_across_idle_frames() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualPreview;
+    harness
+        .app
+        .selected_content
+        .reset("alpha\nbeta\ngamma\n".to_string());
+
+    egui::__run_test_ctx(|ctx| {
+        configure_virtual_editor_test_ctx(ctx);
+        run_editor_panel_once(&mut harness.app, ctx, egui::RawInput::default());
+        let first = harness
+            .app
+            .virtual_galley_cache
+            .get(0, 0)
+            .expect("preview render should populate cache");
+
+        run_editor_panel_once(&mut harness.app, ctx, egui::RawInput::default());
+        let second = harness
+            .app
+            .virtual_galley_cache
+            .get(0, 0)
+            .expect("idle preview frame should retain cache entry");
+
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "unchanged preview frames should reuse shaped row galleys"
+        );
+    });
+}
+
+#[test]
+fn apply_staged_highlight_patch_evicts_only_changed_virtual_preview_lines() {
+    let mut harness = make_app();
+    prepare_preview_galley_cache(&mut harness, 3);
+    harness.app.highlight_render = Some(HighlightRender {
+        paste_id: "alpha".to_string(),
+        revision: 4,
+        text_len: harness.app.selected_content.len(),
+        base_revision: None,
+        base_text_len: None,
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        changed_line_range: None,
+        lines: plain_lines(&[3, 4, 5]),
+    });
+    harness.app.queue_highlight_patch(HighlightPatch {
+        paste_id: "alpha".to_string(),
+        revision: 5,
+        text_len: harness.app.selected_content.len(),
+        base_revision: 4,
+        base_text_len: harness.app.selected_content.len(),
+        language_hint: "py".to_string(),
+        theme_key: "base16-mocha.dark".to_string(),
+        total_lines: 3,
+        line_range: 1..2,
+        lines: plain_lines(&[99]),
+    });
+    harness.app.apply_staged_highlight();
+
+    assert!(harness.app.virtual_galley_cache.get(0, 0).is_some());
+    assert!(harness.app.virtual_galley_cache.get(1, 0).is_none());
+    assert!(harness.app.virtual_galley_cache.get(2, 0).is_some());
 }
 
 #[test]

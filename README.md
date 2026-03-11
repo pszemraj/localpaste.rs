@@ -12,11 +12,6 @@ LocalPaste provides:
 - Headless API server (`localpaste`) for automation/integration
 - CLI client (`lpaste`) for terminal workflows
 
-Runtime contract references:
-
-- GUI-owned runtime topology + endpoint discovery: [`docs/architecture.md`](docs/architecture.md)
-- Single-writer `DB_PATH` and lock-file contract: [`docs/storage.md`](docs/storage.md)
-
 > [!WARNING]
 > Keep exactly one writer process per `DB_PATH` (`localpaste-gui` or standalone `localpaste`).
 
@@ -53,58 +48,27 @@ export LP_SERVER="http://127.0.0.1:38973"
 $env:LP_SERVER="http://127.0.0.1:38973"
 ```
 
-Magika feature defaults:
+Language detection and highlighting defaults:
 
 - `localpaste_gui` and `localpaste_server` enable `magika` by default.
-- `localpaste_cli` remains heuristic-only by default (no ORT payload).
-- To run GUI/server without Magika:
-
-```bash
-cargo run -p localpaste_gui --bin localpaste-gui --no-default-features
-cargo run -p localpaste_server --bin localpaste --no-default-features
-```
-
-Runtime/provider note:
-
-- `MAGIKA_FORCE_CPU=true` is the default (see `.env.example`), so Magika uses CPU execution provider even when GPU is available.
-
-Build/run/validation command matrices are maintained in:
-[`docs/dev/devlog.md`](docs/dev/devlog.md).
+- `localpaste_cli` stays heuristic-only by default.
+- Feature/runtime details: [`docs/language-detection.md`](docs/language-detection.md).
 
 ## Precompiled Binaries
 
 GitHub Releases publish GUI assets under `localpaste-*` filenames.
-
-Platform coverage:
-
-- Windows x64: `.msi` + `.zip`
-- Linux x64: `.AppImage` + `.tar.gz`
-- macOS arm64: `.dmg` + `.app.tar.gz` (may be unsigned/unnotarized when Apple signing secrets are unavailable)
-
-Release workflow behavior, naming contract, and macOS signing policy are defined in
+`lpaste` and the standalone `localpaste` server are source-built with Cargo.
+Artifact names, platform coverage, checksums, and macOS signing/notarization behavior are in
 [`docs/release-gui.md`](docs/release-gui.md).
-
-Checksum verification examples:
-
-```bash
-sha256sum -c checksums.sha256
-```
-
-```powershell
-Get-FileHash .\localpaste-v<tag>-windows-x86_64.msi -Algorithm SHA256
-```
 
 ## Configuration and Ops
 
-- System architecture walkthrough: [`docs/architecture.md`](docs/architecture.md)
-- Language detection + highlighting behavior: [`docs/language-detection.md`](docs/language-detection.md)
-- Storage/backend compatibility contract: [`docs/storage.md`](docs/storage.md)
-- Security and environment variables: [`docs/security.md`](docs/security.md)
-- Service/background operation: [`docs/deployment.md`](docs/deployment.md)
-- Locking semantics (_owner lock + paste edit locks_): [`docs/dev/locking-model.md`](docs/dev/locking-model.md)
-- GUI keyboard/navigation contract: [`docs/dev/gui-notes.md#keyboard-and-navigation-contract`](docs/dev/gui-notes.md#keyboard-and-navigation-contract)
+- Documentation map: [`docs/README.md`](docs/README.md)
+- Practical terminal workflows alongside the GUI: [`docs/cli-gui-workflows.md`](docs/cli-gui-workflows.md)
+- Detection, normalization, and highlighting: [`docs/language-detection.md`](docs/language-detection.md)
+- Build/run/validation workflow: [`docs/dev/devlog.md`](docs/dev/devlog.md)
+- Security, storage, and service operations: [`docs/security.md`](docs/security.md), [`docs/storage.md`](docs/storage.md), [`docs/deployment.md`](docs/deployment.md)
 - GUI release pipeline and artifact contract: [`docs/release-gui.md`](docs/release-gui.md)
-- Documentation index: [`docs/README.md`](docs/README.md)
 
 ## License
 

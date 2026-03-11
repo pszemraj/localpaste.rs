@@ -489,7 +489,6 @@ impl VisualRowLayoutCache {
     ///
     /// # Returns
     /// Global visual-row index where `line` begins.
-    #[cfg(test)]
     pub(crate) fn line_start_row(&self, line: usize) -> usize {
         if line > self.line_metrics.len() {
             return self.total_rows();

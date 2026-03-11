@@ -2,6 +2,7 @@
 
 use super::super::*;
 use eframe::egui;
+use localpaste_core::semantic::DerivedMeta;
 
 const AUTO_LANGUAGE: &str = "__auto__";
 
@@ -47,7 +48,7 @@ pub(super) fn apply_language_choice(
 ///
 /// # Returns
 /// User-facing text for the current language choice.
-pub(super) fn selected_language_choice_text(language_choice: &str, auto_label: &str) -> String {
+fn selected_language_choice_text(language_choice: &str, auto_label: &str) -> String {
     if language_choice == AUTO_LANGUAGE {
         return auto_label.to_string();
     }
@@ -69,8 +70,116 @@ pub(super) fn auto_language_choice_key() -> &'static str {
 /// # Returns
 /// Static `Auto` label so combo-box selected text always matches the selected
 /// option value when auto mode is active.
-pub(super) fn auto_language_status_label() -> String {
+fn auto_language_status_label() -> String {
     "Auto".to_string()
+}
+
+fn format_derived_terms(terms: &[String]) -> String {
+    if terms.is_empty() {
+        "None".to_string()
+    } else {
+        terms.join(", ")
+    }
+}
+
+fn render_derived_meta_section(ui: &mut egui::Ui, derived: &DerivedMeta) {
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new("Derived retrieval")
+            .small()
+            .color(COLOR_TEXT_MUTED),
+    );
+    ui.label(format!("Kind: {}", derived.kind.label()));
+    ui.label(format!(
+        "Handle: {}",
+        derived.handle.as_deref().unwrap_or("None")
+    ));
+    ui.label(format!("Terms: {}", format_derived_terms(&derived.terms)));
+}
+
+fn language_typeahead_target(letter: char) -> Option<&'static str> {
+    let mut normalized = letter.to_lowercase();
+    let letter = normalized.next()?;
+    if !letter.is_alphabetic() {
+        return None;
+    }
+    if letter == 'a' {
+        return Some(AUTO_LANGUAGE);
+    }
+    let prefix = letter.to_string();
+    localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
+        .iter()
+        .find(|option| {
+            option
+                .label
+                .to_ascii_lowercase()
+                .starts_with(prefix.as_str())
+        })
+        .map(|option| option.value)
+}
+
+fn apply_language_selector_typeahead(
+    language_choice: &mut String,
+    popup_open: bool,
+    typed_letter: Option<char>,
+) -> bool {
+    if !popup_open {
+        return false;
+    }
+    let Some(target) = typed_letter.and_then(language_typeahead_target) else {
+        return false;
+    };
+    if language_choice == target {
+        return false;
+    }
+    *language_choice = target.to_string();
+    true
+}
+
+fn typed_letter_from_events(events: &[egui::Event]) -> Option<char> {
+    events.iter().find_map(|event| match event {
+        egui::Event::Text(text) => text.chars().find(|ch| ch.is_alphabetic()),
+        _ => None,
+    })
+}
+
+/// Renders a language combo box with open-only letter-jump selection.
+///
+/// # Arguments
+/// - `ui`: Parent UI receiving the combo box.
+/// - `combo_id_salt`: Stable egui id salt for the combo instance.
+/// - `width`: Optional explicit combo width override.
+/// - `language_choice`: Mutable selected option value.
+pub(super) fn render_language_choice_combo(
+    ui: &mut egui::Ui,
+    combo_id_salt: &str,
+    width: Option<f32>,
+    language_choice: &mut String,
+) {
+    let typed_letter = ui.input(|input| typed_letter_from_events(&input.events));
+    let popup_open = egui::ComboBox::is_open(ui.ctx(), egui::Id::new(combo_id_salt));
+    let _changed = apply_language_selector_typeahead(language_choice, popup_open, typed_letter);
+
+    let auto_label = auto_language_status_label();
+    let selected_language_text =
+        selected_language_choice_text(language_choice.as_str(), auto_label.as_str());
+    let mut combo =
+        egui::ComboBox::from_id_salt(combo_id_salt).selected_text(selected_language_text);
+    if let Some(width) = width {
+        combo = combo.width(width);
+    }
+    combo.show_ui(ui, |ui| {
+        ui.selectable_value(
+            language_choice,
+            auto_language_choice_key().to_string(),
+            "Auto",
+        );
+        for option in localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS {
+            ui.selectable_value(language_choice, option.value.to_string(), option.label);
+        }
+    });
 }
 
 impl LocalPasteApp {
@@ -80,6 +189,9 @@ impl LocalPasteApp {
             return;
         }
 
+        let mutation_block_reason = self.mutation_shortcut_block_reason();
+        let save_blocked = self.save_block_reason().is_some();
+        let background_mutation_blocked = mutation_block_reason.is_some();
         let mut keep_open = true;
         egui::SidePanel::right("properties_drawer")
             .default_width(320.0)
@@ -104,89 +216,84 @@ impl LocalPasteApp {
                 }
                 ui.separator();
 
-                ui.label(RichText::new("Name").small().color(COLOR_TEXT_MUTED));
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut self.edit_name)
-                            .desired_width(f32::INFINITY),
-                    )
-                    .changed()
-                {
-                    self.metadata_dirty = true;
-                }
+                ui.add_enabled_ui(!background_mutation_blocked, |ui| {
+                    ui.label(RichText::new("Name").small().color(COLOR_TEXT_MUTED));
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.edit_name)
+                                .desired_width(f32::INFINITY),
+                        )
+                        .changed()
+                    {
+                        self.metadata_dirty = true;
+                    }
 
-                ui.add_space(6.0);
-                ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
-                let current_manual_value = self
-                    .edit_language
-                    .as_deref()
-                    .map(localpaste_core::detection::canonical::canonicalize)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| "text".to_string());
-                let mut language_choice = if self.edit_language_is_manual {
-                    current_manual_value.clone()
-                } else {
-                    AUTO_LANGUAGE.to_string()
-                };
-                let previous_language_choice = language_choice.clone();
-                let auto_label = auto_language_status_label();
-                let selected_language_text =
-                    selected_language_choice_text(language_choice.as_str(), auto_label.as_str());
-                egui::ComboBox::from_id_salt("drawer_language_select")
-                    .selected_text(selected_language_text)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut language_choice,
-                            auto_language_choice_key().to_string(),
-                            "Auto",
-                        );
-                        for option in localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
-                        {
-                            ui.selectable_value(
-                                &mut language_choice,
-                                option.value.to_string(),
-                                option.label,
-                            );
-                        }
-                    });
-                if language_choice != previous_language_choice {
-                    apply_language_choice(
-                        &mut self.edit_language_is_manual,
-                        &mut self.edit_language,
-                        &mut self.metadata_dirty,
-                        language_choice.as_str(),
-                        current_manual_value.as_str(),
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
+                    let current_manual_value = self
+                        .edit_language
+                        .as_deref()
+                        .map(localpaste_core::detection::canonical::canonicalize)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| "text".to_string());
+                    let mut language_choice = if self.edit_language_is_manual {
+                        current_manual_value.clone()
+                    } else {
+                        AUTO_LANGUAGE.to_string()
+                    };
+                    let previous_language_choice = language_choice.clone();
+                    render_language_choice_combo(
+                        ui,
+                        "drawer_language_select",
+                        None,
+                        &mut language_choice,
                     );
-                }
+                    if language_choice != previous_language_choice {
+                        apply_language_choice(
+                            &mut self.edit_language_is_manual,
+                            &mut self.edit_language,
+                            &mut self.metadata_dirty,
+                            language_choice.as_str(),
+                            current_manual_value.as_str(),
+                        );
+                    }
 
-                ui.add_space(6.0);
-                ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut self.edit_tags)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("comma,separated,tags"),
-                    )
-                    .changed()
-                {
-                    self.metadata_dirty = true;
-                }
-
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.edit_tags)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("comma,separated,tags"),
+                        )
+                        .changed()
+                    {
+                        self.metadata_dirty = true;
+                    }
+                });
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     if ui
                         .add_enabled(
-                            self.metadata_dirty && !self.metadata_save_in_flight,
+                            !save_blocked && self.metadata_dirty && !self.metadata_save_in_flight,
                             egui::Button::new("Save Metadata"),
                         )
                         .clicked()
                     {
                         self.save_metadata_now();
                     }
-                    if ui.button("Export").clicked() {
-                        self.export_selected_paste();
-                    }
                 });
+                if let Some(reason) = mutation_block_reason {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(reason).small().color(COLOR_TEXT_MUTED));
+                }
+                if let Some(summary) = self.selected_paste_summary() {
+                    render_derived_meta_section(ui, &summary.derived);
+                }
+                ui.add_space(10.0);
+                if ui.button("Export").clicked() {
+                    self.export_selected_paste();
+                }
             });
 
         if !keep_open {
@@ -197,7 +304,11 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_language_choice, auto_language_status_label, AUTO_LANGUAGE};
+    use super::{
+        apply_language_choice, apply_language_selector_typeahead, auto_language_status_label,
+        format_derived_terms, language_typeahead_target, typed_letter_from_events, AUTO_LANGUAGE,
+    };
+    use eframe::egui;
 
     #[test]
     fn apply_language_choice_transition_matrix() {
@@ -267,5 +378,53 @@ mod tests {
     #[test]
     fn auto_language_status_label_matrix() {
         assert_eq!(auto_language_status_label(), "Auto");
+    }
+
+    #[test]
+    fn language_typeahead_target_uses_first_matching_option_matrix() {
+        assert_eq!(language_typeahead_target('a'), Some(AUTO_LANGUAGE));
+        assert_eq!(language_typeahead_target('m'), Some("markdown"));
+        assert_eq!(language_typeahead_target('p'), Some("perl"));
+        assert_eq!(language_typeahead_target('L'), Some("latex"));
+        assert_eq!(language_typeahead_target('1'), None);
+        assert_eq!(language_typeahead_target('?'), None);
+    }
+
+    #[test]
+    fn apply_language_selector_typeahead_requires_open_popup() {
+        let mut language_choice = "lua".to_string();
+        assert!(!apply_language_selector_typeahead(
+            &mut language_choice,
+            false,
+            Some('m'),
+        ));
+        assert_eq!(language_choice, "lua");
+
+        assert!(apply_language_selector_typeahead(
+            &mut language_choice,
+            true,
+            Some('m'),
+        ));
+        assert_eq!(language_choice, "markdown");
+    }
+
+    #[test]
+    fn typed_letter_from_events_ignores_non_letters_and_uses_first_letter() {
+        let events = vec![
+            egui::Event::Text(" ".to_string()),
+            egui::Event::Text("3".to_string()),
+            egui::Event::Text("m".to_string()),
+            egui::Event::Text("p".to_string()),
+        ];
+        assert_eq!(typed_letter_from_events(&events), Some('m'));
+    }
+
+    #[test]
+    fn format_derived_terms_handles_empty_and_joined_lists() {
+        assert_eq!(format_derived_terms(&[]), "None");
+        assert_eq!(
+            format_derived_terms(&["fsdp2".to_string(), "cublaslt".to_string()]),
+            "fsdp2, cublaslt"
+        );
     }
 }

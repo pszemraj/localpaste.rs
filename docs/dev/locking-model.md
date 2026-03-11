@@ -1,7 +1,5 @@
 # Locking Model
 
-This document describes lock behavior in LocalPaste.
-
 ---
 
 - [Scope](#scope)

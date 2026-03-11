@@ -23,7 +23,7 @@ ropey = "1.6"
 unicode-segmentation = "1.11"
 unicode-width = "0.2"
 chrono = { workspace = true, features = ["serde"] }
-rfd = "0.14"
+rfd = "0.17.2"
 
 [features]
 default = ["magika"]
@@ -36,3 +36,4 @@ winresource = "0.1"
 tempfile.workspace = true
 reqwest = { workspace = true, features = ["json", "blocking"] }
 serde_json.workspace = true
+bincode = "1.3"

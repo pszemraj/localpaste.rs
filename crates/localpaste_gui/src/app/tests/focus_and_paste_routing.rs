@@ -93,6 +93,142 @@ fn virtual_editor_window_blur_clears_focus_state() {
 }
 
 #[test]
+fn focus_promotion_consumes_bare_arrows_before_sidebar_routing() {
+    let ctx = egui::Context::default();
+    let _ = ctx.run(
+        egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::ArrowDown,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            ..Default::default()
+        },
+        |ctx| {
+            consume_virtual_editor_focus_keys(ctx, true);
+            let sidebar_routed = ctx.input(|input| {
+                should_route_sidebar_arrows(false, input.modifiers, true, true, false, false, false)
+                    && input.key_pressed(egui::Key::ArrowDown)
+            });
+            assert!(!sidebar_routed);
+        },
+    );
+}
+
+#[test]
+fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha beta gamma");
+    harness.app.focus_editor_next = true;
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+
+    run_full_update(&mut harness.app, &ctx, Vec::new());
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+
+    #[cfg(target_os = "macos")]
+    let word_select_event = key_event(
+        egui::Key::ArrowRight,
+        egui::Modifiers {
+            alt: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    #[cfg(not(target_os = "macos"))]
+    let word_select_event = key_event(
+        egui::Key::ArrowRight,
+        egui::Modifiers {
+            ctrl: true,
+            command: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+
+    run_full_update(&mut harness.app, &ctx, vec![word_select_event.clone()]);
+    let first_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 6);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..first_expected)
+    );
+
+    run_full_update(&mut harness.app, &ctx, vec![word_select_event]);
+    let second_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 11);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..second_expected)
+    );
+}
+
+#[test]
+fn line_selection_shortcut_retains_focus_for_follow_up_delete() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha beta gamma");
+    harness.app.focus_editor_next = true;
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+
+    run_full_update(&mut harness.app, &ctx, Vec::new());
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    let cursor = harness.app.virtual_editor_buffer.line_col_to_char(0, 11);
+    harness.app.virtual_editor_state.set_cursor(cursor, len);
+
+    #[cfg(target_os = "macos")]
+    let select_to_line_start = key_event(
+        egui::Key::ArrowLeft,
+        egui::Modifiers {
+            command: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    #[cfg(not(target_os = "macos"))]
+    let select_to_line_start = key_event(
+        egui::Key::Home,
+        egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+    );
+
+    run_full_update(&mut harness.app, &ctx, vec![select_to_line_start]);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..cursor)
+    );
+
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Backspace, egui::Modifiers::default())],
+    );
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "gamma");
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+    assert!(harness.app.virtual_editor_state.selection_range().is_none());
+}
+
+#[test]
 fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
     let mut harness = make_app();
 
@@ -119,36 +255,22 @@ fn explicit_paste_as_new_pending_ttl_and_consumption_matrix() {
 }
 
 #[test]
-fn explicit_paste_as_new_preserves_tabbed_trailing_line_exactly() {
-    let mut harness = make_app();
-    harness.app.arm_paste_as_new_intent();
-    let payload = "def sample():\n\treturn foobar";
-    let mut clipboard = Some(payload.to_string());
+fn explicit_paste_as_new_payload_matrix_preserves_exact_content() {
+    let payloads = ["def sample():\n\treturn foobar", " \t\n  "];
 
-    assert!(harness
-        .app
-        .maybe_consume_explicit_paste_as_new(&mut clipboard));
-    assert!(clipboard.is_none());
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::CreatePaste { content } => assert_eq!(content, payload),
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
+    for payload in payloads {
+        let mut harness = make_app();
+        harness.app.arm_paste_as_new_intent();
+        let mut clipboard = Some(payload.to_string());
 
-#[test]
-fn explicit_paste_as_new_accepts_whitespace_only_payload() {
-    let mut harness = make_app();
-    harness.app.arm_paste_as_new_intent();
-    let payload = " \t\n  ";
-    let mut clipboard = Some(payload.to_string());
-
-    assert!(harness
-        .app
-        .maybe_consume_explicit_paste_as_new(&mut clipboard));
-    assert!(clipboard.is_none());
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::CreatePaste { content } => assert_eq!(content, payload),
-        other => panic!("unexpected command: {:?}", other),
+        assert!(harness
+            .app
+            .maybe_consume_explicit_paste_as_new(&mut clipboard));
+        assert!(clipboard.is_none());
+        match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::CreatePaste { content } => assert_eq!(content, payload),
+            other => panic!("unexpected command: {:?}", other),
+        }
     }
 }
 
@@ -457,7 +579,7 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
 }
 
 #[test]
-fn delete_shortcut_guard_blocks_when_text_input_virtual_focus_or_focus_promotion_active() {
+fn delete_shortcut_guard_preserves_editor_delete_ownership_and_global_unfocused_behavior() {
     struct Case {
         name: &'static str,
         wants_keyboard_input: bool,
@@ -509,4 +631,275 @@ fn delete_shortcut_guard_blocks_when_text_input_virtual_focus_or_focus_promotion
             .should_route_delete_selected_shortcut(focus_state);
         assert_eq!(actual, case.expected, "case '{}'", case.name);
     }
+}
+
+#[test]
+fn keyboard_overlay_open_excludes_properties_drawer_but_includes_modal_overlays() {
+    let mut harness = make_app();
+    assert!(!harness.app.keyboard_overlay_open());
+
+    harness.app.properties_drawer_open = true;
+    assert!(!harness.app.keyboard_overlay_open());
+    harness.app.properties_drawer_open = false;
+
+    harness.app.version_ui.history_modal_open = true;
+    assert!(harness.app.keyboard_overlay_open());
+    harness.app.version_ui.history_modal_open = false;
+
+    harness.app.version_ui.diff_modal_open = true;
+    assert!(harness.app.keyboard_overlay_open());
+    harness.app.version_ui.diff_modal_open = false;
+
+    harness.app.version_ui.history_reset_confirm_open = true;
+    assert!(harness.app.keyboard_overlay_open());
+    harness.app.version_ui.history_reset_confirm_open = false;
+
+    harness.app.command_palette_open = true;
+    assert!(harness.app.keyboard_overlay_open());
+}
+
+#[test]
+fn version_overlay_blocks_mutating_shortcuts_and_reports_reason() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_modal_open = true;
+
+    assert_eq!(
+        harness.app.mutation_shortcut_block_reason(),
+        Some("Close the open version window before mutating the selected paste.")
+    );
+    assert!(harness.app.save_block_reason().is_none());
+    harness.app.set_mutation_shortcut_blocked_status();
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Close the open version window before mutating the selected paste.")
+    );
+}
+
+#[test]
+fn version_overlay_blocks_background_destructive_dispatches() {
+    let mut harness = make_app();
+    harness.app.version_ui.diff_modal_open = true;
+    harness
+        .app
+        .create_new_paste_with_content("hello".to_string());
+    harness.app.delete_selected();
+    harness.app.send_palette_delete("alpha".to_string());
+
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Close the open version window before mutating the selected paste.")
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn version_overlay_blocks_selection_switches_and_auto_reselection() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_modal_open = true;
+
+    assert!(!harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Close the open version window before changing selection.")
+    );
+
+    harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)];
+    harness.app.ensure_selection_after_list_update();
+    assert_eq!(
+        harness.app.selected_id.as_deref(),
+        Some("alpha"),
+        "open version workflows should pin selection instead of auto-reselecting visible rows"
+    );
+}
+
+#[test]
+fn opening_version_overlay_cancels_pending_selection_switch_before_save_ack() {
+    let mut harness = make_app();
+    harness.app.selected_content.reset("dirty".to_string());
+    harness.app.save_status = SaveStatus::Dirty;
+
+    assert!(harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+    assert!(harness.app.save_in_flight);
+
+    harness.app.open_diff_modal();
+    assert!(harness.app.version_ui.diff_modal_open);
+    assert!(
+        harness.app.pending_selection_id.is_none(),
+        "opening a detached version workflow should cancel any queued subject switch"
+    );
+
+    let mut saved = Paste::new("dirty".to_string(), "Alpha".to_string());
+    saved.id = "alpha".to_string();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert_eq!(
+        harness.app.selected_id.as_deref(),
+        Some("alpha"),
+        "late save ack must not tear down an open version workflow by applying an old pending selection"
+    );
+}
+
+#[test]
+fn version_overlay_allows_content_and_metadata_persistence_dispatches() {
+    enum SaveCase {
+        Autosave,
+        ManualContent,
+        Metadata,
+    }
+
+    for case in [
+        SaveCase::Autosave,
+        SaveCase::ManualContent,
+        SaveCase::Metadata,
+    ] {
+        let mut harness = make_app();
+        harness.app.version_ui.history_modal_open = true;
+
+        match case {
+            SaveCase::Autosave => {
+                harness
+                    .app
+                    .selected_content
+                    .reset("dirty-autosave".to_string());
+                harness.app.save_status = SaveStatus::Dirty;
+                harness.app.last_edit_at =
+                    Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+                harness.app.maybe_autosave();
+                assert!(harness.app.save_in_flight);
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::UpdatePaste { id, content } => {
+                        assert_eq!(id, "alpha");
+                        assert_eq!(content, "dirty-autosave");
+                    }
+                    other => panic!("unexpected command: {:?}", other),
+                }
+            }
+            SaveCase::ManualContent => {
+                harness
+                    .app
+                    .selected_content
+                    .reset("dirty-manual".to_string());
+                harness.app.save_status = SaveStatus::Dirty;
+                harness.app.save_now();
+                assert!(harness.app.save_in_flight);
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::UpdatePaste { id, content } => {
+                        assert_eq!(id, "alpha");
+                        assert_eq!(content, "dirty-manual");
+                    }
+                    other => panic!("unexpected command: {:?}", other),
+                }
+            }
+            SaveCase::Metadata => {
+                harness.app.metadata_dirty = true;
+                harness.app.edit_name = "overlay-save".to_string();
+                harness.app.edit_language = Some("rust".to_string());
+                harness.app.edit_language_is_manual = true;
+                harness.app.edit_tags = "one, two".to_string();
+                harness.app.save_metadata_now();
+                assert!(harness.app.metadata_save_in_flight);
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::UpdatePasteMeta {
+                        id,
+                        name,
+                        language,
+                        language_is_manual,
+                        folder_id,
+                        tags,
+                    } => {
+                        assert_eq!(id, "alpha");
+                        assert_eq!(name.as_deref(), Some("overlay-save"));
+                        assert_eq!(language.as_deref(), Some("rust"));
+                        assert_eq!(language_is_manual, Some(true));
+                        assert!(folder_id.is_none());
+                        assert_eq!(tags, Some(vec!["one".to_string(), "two".to_string()]));
+                    }
+                    other => panic!("unexpected command: {:?}", other),
+                }
+            }
+        }
+
+        assert!(
+            harness.app.save_block_reason().is_none(),
+            "version overlays should not fence save dispatch"
+        );
+    }
+}
+
+#[test]
+fn explicit_paste_as_new_shortcut_is_rejected_while_version_overlay_is_open() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_modal_open = true;
+    let ctx = egui::Context::default();
+    let modifiers = egui::Modifiers {
+        command: true,
+        shift: true,
+        ..Default::default()
+    };
+
+    let mut armed = false;
+    let _ = ctx.run(
+        egui::RawInput {
+            events: vec![key_event(egui::Key::V, modifiers)],
+            ..Default::default()
+        },
+        |ctx| {
+            armed = harness.app.maybe_arm_paste_as_new_shortcut_intent(ctx);
+        },
+    );
+
+    assert!(!armed);
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Close the open version window before mutating the selected paste.")
+    );
+}
+
+#[test]
+fn version_overlay_cancels_pending_paste_as_new_and_blocks_implicit_clipboard_create() {
+    let mut harness = make_app();
+    harness.app.arm_paste_as_new_intent();
+    harness.app.version_ui.diff_modal_open = true;
+
+    let mut explicit_clipboard = Some("from clipboard".to_string());
+    assert!(!harness
+        .app
+        .maybe_consume_explicit_paste_as_new(&mut explicit_clipboard));
+    assert_eq!(explicit_clipboard.as_deref(), Some("from clipboard"));
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+    assert!(harness.cmd_rx.try_recv().is_err());
+
+    assert!(!harness.app.maybe_route_implicit_global_clipboard_create(
+        Some("from clipboard".to_string()),
+        false,
+        false,
+        false,
+    ));
+    assert!(harness.cmd_rx.try_recv().is_err());
 }

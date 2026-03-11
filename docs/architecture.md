@@ -1,7 +1,5 @@
 # LocalPaste Architecture
 
-This document is the system walkthrough for LocalPaste.rs.
-
 ---
 
 - [1) System At A Glance](#1-system-at-a-glance)
@@ -15,10 +13,6 @@ This document is the system walkthrough for LocalPaste.rs.
 - [9) GUI Save Pipeline](#9-gui-save-pipeline)
 - [10) Discovery And Trust](#10-discovery-and-trust)
 - [11) Validation Strategy](#11-validation-strategy)
-- [12) Active Follow-Ups](#12-active-follow-ups)
-
----
-
 ## 1) System At A Glance
 
 LocalPaste is a local-first paste manager with a shared core and multiple frontends:
@@ -127,6 +121,13 @@ Derived/index tables:
 
 - `pastes_meta`: metadata projection for list/search.
 - `pastes_by_updated`: recency ordering index keyed by `(reverse_millis, paste_id)`.
+- `paste_versions_meta`: newest-first historical snapshot metadata per paste.
+- `paste_versions_content`: historical snapshot content keyed by `(paste_id, version_id_ms)`.
+
+`pastes_meta` carries the search/list projection, including derived retrieval
+metadata (`kind`, compact `handle`, top `terms`). `pastes_meta_state` stores the
+projection schema version; startup rebuilds the projection from authoritative
+paste rows when that marker is missing or stale.
 
 Primary implementation:
 
@@ -171,9 +172,18 @@ Write surfaces:
 
 The project centralizes sensitive folder assignment/delete logic in shared core helpers so API and GUI backend paths enforce equivalent invariants.
 
+Version and diff surfaces:
+
+- `/api/paste/:id/versions*` supports list/get/reset-hard/duplicate for historical snapshots.
+- `/api/diff` compares head or historical paste references and rejects combined
+  diff sources above 1 MiB with `413 Payload Too Large`.
+- Content-changing writes may persist an older-head snapshot based on `LOCALPASTE_VERSION_INTERVAL_SECS`.
+
 Read behavior:
 
 - list/search use metadata/index projections backed by atomic write consistency,
+- metadata search ranks against `name`, derived handle/terms, tags, and
+  normalized language without deserializing full paste content in the hot path,
 - no stale-index authoritative-table fallback path is required.
 
 ## 6) Locking And Concurrency
@@ -272,8 +282,3 @@ Validation references:
 - [dev/devlog.md#runtime-smoke-test-server-cli](dev/devlog.md#runtime-smoke-test-server-cli)
 - [dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive](dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive)
 - [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md)
-
-## 12) Active Follow-Ups
-
-- Engineering backlog: [dev/backlog.md](dev/backlog.md)
-- GUI perf validation protocol: [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md)
