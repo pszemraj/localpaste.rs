@@ -151,3 +151,33 @@ fn diff_rejects_oversized_requests_before_rendering_response() {
         "expected payload-too-large diff error, got {err:?}"
     );
 }
+
+#[test]
+fn equal_rejects_oversized_requests_before_loading_compare_payloads() {
+    let (_db, paste_db, _dir) = setup_paste_db();
+    let oversized = "x".repeat((MAX_DIFF_INPUT_BYTES / 2) + 1);
+    let left = Paste::new(oversized.clone(), "left".to_string());
+    let right = Paste::new(oversized, "right".to_string());
+    let left_id = left.id.clone();
+    let right_id = right.id.clone();
+    paste_db.create(&left).expect("create left");
+    paste_db.create(&right).expect("create right");
+
+    let err = paste_db
+        .equal(&DiffRequest {
+            left: DiffRef {
+                paste_id: left_id,
+                version_id_ms: None,
+            },
+            right: DiffRef {
+                paste_id: right_id,
+                version_id_ms: None,
+            },
+        })
+        .expect_err("oversized equality check should be rejected");
+
+    assert!(
+        matches!(err, AppError::PayloadTooLarge(ref message) if message.contains("Combined diff input exceeds")),
+        "expected payload-too-large equality error, got {err:?}"
+    );
+}

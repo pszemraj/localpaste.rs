@@ -583,6 +583,23 @@ impl PasteDb {
         read_txn: &ReadTransaction,
         request: &DiffRequest,
     ) -> Result<Option<DiffResponse>, AppError> {
+        let Some((left, right)) = self.resolve_compare_inputs_in_txn(read_txn, request)? else {
+            return Ok(None);
+        };
+        let equal = left == right;
+        let unified = if equal {
+            Vec::new()
+        } else {
+            unified_diff_lines(left.as_str(), right.as_str())
+        };
+        Ok(Some(DiffResponse { equal, unified }))
+    }
+
+    fn resolve_compare_inputs_in_txn(
+        &self,
+        read_txn: &ReadTransaction,
+        request: &DiffRequest,
+    ) -> Result<Option<(String, String)>, AppError> {
         let Some(left_len) = self.resolve_diff_ref_len_in_txn(read_txn, &request.left)? else {
             return Ok(None);
         };
@@ -597,13 +614,7 @@ impl PasteDb {
         let Some(right) = self.resolve_diff_ref_content_in_txn(read_txn, &request.right)? else {
             return Ok(None);
         };
-        let equal = left == right;
-        let unified = if equal {
-            Vec::new()
-        } else {
-            unified_diff_lines(left.as_str(), right.as_str())
-        };
-        Ok(Some(DiffResponse { equal, unified }))
+        Ok(Some((left, right)))
     }
 
     fn equal_in_txn(
@@ -611,10 +622,7 @@ impl PasteDb {
         read_txn: &ReadTransaction,
         request: &DiffRequest,
     ) -> Result<Option<EqualResponse>, AppError> {
-        let Some(left) = self.resolve_diff_ref_content_in_txn(read_txn, &request.left)? else {
-            return Ok(None);
-        };
-        let Some(right) = self.resolve_diff_ref_content_in_txn(read_txn, &request.right)? else {
+        let Some((left, right)) = self.resolve_compare_inputs_in_txn(read_txn, request)? else {
             return Ok(None);
         };
         Ok(Some(EqualResponse {
