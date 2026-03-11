@@ -153,9 +153,6 @@ fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
     );
 
     run_full_update(&mut harness.app, &ctx, vec![word_select_event.clone()]);
-    #[cfg(target_os = "macos")]
-    let first_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 5);
-    #[cfg(not(target_os = "macos"))]
     let first_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 6);
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
     assert!(harness.app.virtual_editor_state.has_focus);
@@ -165,9 +162,6 @@ fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
     );
 
     run_full_update(&mut harness.app, &ctx, vec![word_select_event]);
-    #[cfg(target_os = "macos")]
-    let second_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 10);
-    #[cfg(not(target_os = "macos"))]
     let second_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 11);
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
     assert!(harness.app.virtual_editor_state.has_focus);
@@ -175,6 +169,63 @@ fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
         harness.app.virtual_editor_state.selection_range(),
         Some(0..second_expected)
     );
+}
+
+#[test]
+fn line_selection_shortcut_retains_focus_for_follow_up_delete() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha beta gamma");
+    harness.app.focus_editor_next = true;
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+
+    run_full_update(&mut harness.app, &ctx, Vec::new());
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    let cursor = harness.app.virtual_editor_buffer.line_col_to_char(0, 11);
+    harness.app.virtual_editor_state.set_cursor(cursor, len);
+
+    #[cfg(target_os = "macos")]
+    let select_to_line_start = key_event(
+        egui::Key::ArrowLeft,
+        egui::Modifiers {
+            command: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    #[cfg(not(target_os = "macos"))]
+    let select_to_line_start = key_event(
+        egui::Key::Home,
+        egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+    );
+
+    run_full_update(&mut harness.app, &ctx, vec![select_to_line_start]);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..cursor)
+    );
+
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Backspace, egui::Modifiers::default())],
+    );
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "gamma");
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+    assert!(harness.app.virtual_editor_state.selection_range().is_none());
 }
 
 #[test]

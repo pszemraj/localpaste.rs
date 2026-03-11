@@ -402,96 +402,26 @@ impl LocalPasteApp {
 
     /// Finds the next word boundary for word-right navigation.
     ///
-    /// Platform conventions differ:
-    /// - **Windows/Linux**: `Ctrl+Right` lands at the *start* of the next word.
-    /// - **macOS**: `Option+Right` lands at the *end* of the next word.
-    ///
-    /// We follow those conventions while keeping the underlying definition of
-    /// "word character" consistent (`is_editor_word_char`).
+    /// The editor always lands at the *start* of the next word/token run so
+    /// word movement, shift-selection, and word-delete-forward all share the
+    /// same boundary semantics.
     ///
     /// # Returns
-    /// Cursor index positioned at the next platform-appropriate word boundary.
+    /// Cursor index positioned at the next token-start boundary.
     pub(super) fn virtual_word_right(&self, cursor: usize) -> usize {
-        if cfg!(target_os = "macos") {
-            self.virtual_word_right_end(cursor)
-        } else {
-            self.virtual_word_right_start(cursor)
-        }
+        self.virtual_word_right_start(cursor)
     }
 
-    /// Returns the forward word-deletion boundary for the active platform.
+    /// Returns the forward word-deletion boundary.
     ///
-    /// macOS deletes to end-of-word (`Option+Delete`).
-    /// Windows/Linux generally delete current word plus trailing separators when
-    /// starting inside a word (`Ctrl+Delete`), and delete separator+next-word
-    /// runs when starting on separators.
+    /// Forward word deletion intentionally shares the same boundary helper as
+    /// word-right movement so navigation and deletion cannot disagree about
+    /// what constitutes the "next word".
     ///
     /// # Returns
     /// Global cursor index representing the forward deletion boundary.
     pub(super) fn virtual_word_delete_forward(&self, cursor: usize) -> usize {
-        if cfg!(target_os = "macos") {
-            return self.virtual_word_right_end(cursor);
-        }
-
-        let len = self.virtual_editor_buffer.len_chars();
-        let cursor = self.clamp_virtual_cursor_for_render(cursor).min(len);
-        if cursor >= len {
-            return len;
-        }
-
-        let ch = self.virtual_editor_buffer.rope().char(cursor);
-        if is_editor_word_char(ch) {
-            self.virtual_word_right_start(cursor)
-        } else {
-            self.virtual_word_right_end(cursor)
-        }
-    }
-
-    /// Returns the end-of-next-word boundary.
-    ///
-    /// Used by word-delete-forward and by macOS word-right movement semantics.
-    ///
-    /// # Returns
-    /// Cursor index positioned at the end of the next identifier-like token.
-    pub(super) fn virtual_word_right_end(&self, cursor: usize) -> usize {
-        let len = self.virtual_editor_buffer.len_chars();
-        let mut idx = self.clamp_virtual_cursor_for_render(cursor).min(len);
-        if idx >= len {
-            return len;
-        }
-
-        let (mut line_end, mut capped) = self.virtual_line_render_boundary(idx);
-
-        if is_editor_word_char(self.virtual_editor_buffer.rope().char(idx)) {
-            return self
-                .advance_virtual_word_right_while(
-                    &mut idx,
-                    len,
-                    &mut line_end,
-                    &mut capped,
-                    is_editor_word_char,
-                )
-                .unwrap_or(idx);
-        }
-
-        if let Some(boundary) =
-            self.advance_virtual_word_right_while(&mut idx, len, &mut line_end, &mut capped, |ch| {
-                !is_editor_word_char(ch)
-            })
-        {
-            return boundary;
-        }
-        if let Some(boundary) = self.advance_virtual_word_right_while(
-            &mut idx,
-            len,
-            &mut line_end,
-            &mut capped,
-            is_editor_word_char,
-        ) {
-            return boundary;
-        }
-
-        idx
+        self.virtual_word_right(cursor)
     }
 
     /// Computes the cursor target for vertical movement across wrapped rows/lines.

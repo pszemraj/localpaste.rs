@@ -75,6 +75,14 @@ impl VirtualInputCommand {
     pub(crate) fn requires_post_focus(&self) -> bool {
         matches!(self, Self::Cut | Self::Paste(_))
     }
+
+    /// Returns whether the command should keep keyboard ownership on the editor.
+    ///
+    /// # Returns
+    /// `true` when the command is part of native editor interaction flow.
+    pub(crate) fn should_retain_editor_focus(&self) -> bool {
+        !matches!(self, Self::InsertTab)
+    }
 }
 
 /// Coarse platform flavor used for keyboard shortcut mapping.
@@ -330,6 +338,19 @@ pub(crate) fn commands_from_events(
     focused: bool,
 ) -> Vec<VirtualInputCommand> {
     commands_from_events_for_platform(events, focused, PlatformFlavor::current())
+}
+
+/// Returns whether this frame contains editor-owned commands that should keep focus.
+///
+/// # Arguments
+/// - `events`: Raw egui events captured for the frame.
+///
+/// # Returns
+/// `true` when any event maps to a focus-retaining virtual-editor command.
+pub(crate) fn frame_contains_focus_retaining_editor_command(events: &[egui::Event]) -> bool {
+    commands_from_events_for_platform(events, true, PlatformFlavor::current())
+        .into_iter()
+        .any(|command| command.should_retain_editor_focus())
 }
 
 fn commands_from_events_for_platform(

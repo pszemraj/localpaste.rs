@@ -655,3 +655,30 @@ fn unfocused_key_navigation_and_delete_are_dropped() {
     let commands = commands_from_events_for_platform(&events, false, PlatformFlavor::Other);
     assert!(commands.is_empty());
 }
+
+#[test]
+fn tab_is_excluded_from_focus_retention_but_navigation_is_not() {
+    assert!(!VirtualInputCommand::InsertTab.should_retain_editor_focus());
+    assert!(VirtualInputCommand::MoveLineHome { select: true }.should_retain_editor_focus());
+    assert!(VirtualInputCommand::Backspace { word: true }.should_retain_editor_focus());
+}
+
+#[test]
+fn frame_focus_retention_command_detection_ignores_tab_only_frames() {
+    let tab_only = vec![key_event(egui::Key::Tab, egui::Modifiers::default())];
+    assert!(!frame_contains_focus_retaining_editor_command(
+        tab_only.as_slice()
+    ));
+
+    let selection = vec![key_event(
+        egui::Key::ArrowLeft,
+        egui::Modifiers {
+            command: cfg!(target_os = "macos"),
+            shift: true,
+            ..Default::default()
+        },
+    )];
+    assert!(frame_contains_focus_retaining_editor_command(
+        selection.as_slice()
+    ));
+}
