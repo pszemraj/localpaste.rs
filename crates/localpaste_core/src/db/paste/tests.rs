@@ -181,3 +181,39 @@ fn equal_rejects_oversized_requests_before_loading_compare_payloads() {
         "expected payload-too-large equality error, got {err:?}"
     );
 }
+
+#[test]
+fn identical_large_refs_bypass_combined_diff_size_gating() {
+    let (_db, paste_db, _dir) = setup_paste_db();
+    let oversized = "x".repeat((MAX_DIFF_INPUT_BYTES / 2) + 1);
+    let paste = Paste::new(oversized, "same-large".to_string());
+    let paste_id = paste.id.clone();
+    paste_db.create(&paste).expect("create paste");
+
+    let request = DiffRequest {
+        left: DiffRef {
+            paste_id: paste_id.clone(),
+            version_id_ms: None,
+        },
+        right: DiffRef {
+            paste_id,
+            version_id_ms: None,
+        },
+    };
+
+    let diff = paste_db
+        .diff(&request)
+        .expect("same-ref diff should not hit combined-size cap")
+        .expect("resolved same-ref diff");
+    assert!(diff.equal, "same-ref diff must report equality");
+    assert!(
+        diff.unified.is_empty(),
+        "same-ref diff must not synthesize diff output"
+    );
+
+    let equal = paste_db
+        .equal(&request)
+        .expect("same-ref equality should not hit combined-size cap")
+        .expect("resolved same-ref equality");
+    assert!(equal.equal, "same-ref equality must stay true");
+}
