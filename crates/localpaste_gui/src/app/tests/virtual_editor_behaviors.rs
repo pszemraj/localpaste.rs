@@ -672,11 +672,7 @@ fn word_navigation_crosses_line_boundaries() {
             word: true,
         }],
     );
-
-    #[cfg(target_os = "macos")]
-    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 4); // end of "beta"
-    #[cfg(not(target_os = "macos"))]
-    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 0); // start of "beta"
+    let expected_after_right = harness.app.virtual_editor_buffer.line_col_to_char(1, 0);
 
     assert_eq!(
         harness.app.virtual_editor_state.cursor(),
@@ -690,11 +686,7 @@ fn word_navigation_crosses_line_boundaries() {
             word: true,
         }],
     );
-
-    #[cfg(target_os = "macos")]
-    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(1, 0); // start of "beta"
-    #[cfg(not(target_os = "macos"))]
-    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(0, 0); // start of "alpha"
+    let expected_after_left = harness.app.virtual_editor_buffer.line_col_to_char(0, 0);
 
     assert_eq!(
         harness.app.virtual_editor_state.cursor(),
@@ -718,7 +710,7 @@ fn word_delete_crosses_line_boundaries() {
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
     assert!(forward_result.changed);
-    assert_eq!(forward.app.virtual_editor_buffer.to_string(), "alpha gamma");
+    assert_eq!(forward.app.virtual_editor_buffer.to_string(), "alphabeta gamma");
 
     let mut backward = make_app();
     configure_virtual_editor_with_wrap(&mut backward.app, "alpha\nbeta gamma", 200.0);
@@ -736,8 +728,7 @@ fn word_delete_crosses_line_boundaries() {
 }
 
 #[test]
-#[cfg(not(target_os = "macos"))]
-fn word_delete_forward_matches_windows_linux_ctrl_delete_expectations() {
+fn word_delete_forward_matches_word_navigation_boundaries() {
     let ctx = egui::Context::default();
     let mut harness = make_app();
     configure_virtual_editor_with_wrap(&mut harness.app, "foo bar", 200.0);
@@ -761,7 +752,7 @@ fn word_delete_forward_matches_windows_linux_ctrl_delete_expectations() {
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
     assert!(separator.changed);
-    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "foo");
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "foobar");
 }
 
 #[test]

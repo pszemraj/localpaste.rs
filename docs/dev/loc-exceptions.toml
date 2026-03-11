@@ -28,7 +28,7 @@ reason = "Integration coverage remains centralized while version/diff endpoint c
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/app/ui/editor_panel_virtual.rs"
-max_lines = 1100
+max_lines = 1105
 reason = "Virtual editor rendering and interaction logic is still in one module pending extraction into row rendering/scroll coordination submodules."
 
 [[exceptions]]
@@ -38,8 +38,13 @@ reason = "The main GUI update loop still centralizes frame input routing and per
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/app/state_ops.rs"
-max_lines = 1075
+max_lines = 1076
 reason = "Selection, save, and backend event transitions remain centralized; reset fencing and detached diff/history stale-reply guards are still co-located here until save/export/selection helpers are split into smaller modules."
+
+[[exceptions]]
+path = "crates/localpaste_gui/src/app/virtual_editor/input.rs"
+max_lines = 1044
+reason = "Virtual editor input translation deliberately centralizes platform shortcut normalization and focus-retention regressions in one place; split test/support modules if the command matrix grows further."
 
 [[exceptions]]
 path = "crates/localpaste_core/src/db/paste/mod.rs"

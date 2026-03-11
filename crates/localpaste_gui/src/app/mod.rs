@@ -51,9 +51,10 @@ use tracing::{info, warn};
 use util::{display_language_label, env_flag_enabled, word_range_at};
 use version_ui::VersionUiState;
 use virtual_editor::{
-    commands_from_events, map_primary_command_shortcut, RopeBuffer, VirtualCommandRoute,
-    VirtualEditorHistory, VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext,
-    VirtualInputCommand, WrapBoundaryAffinity, WrapLayoutCache,
+    commands_from_events, frame_contains_focus_retaining_editor_command,
+    map_primary_command_shortcut, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
+    VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext, VirtualInputCommand,
+    WrapBoundaryAffinity, WrapLayoutCache,
 };
 use virtual_view::{VirtualCursor, VirtualSelectionState};
 use window_bounds::enforce_window_bounds;

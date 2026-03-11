@@ -506,6 +506,8 @@ impl LocalPasteApp {
         );
         let mut focused = ui.memory(|m| m.has_focus(editor_id));
         let had_focus = focused || self.virtual_editor_state.has_focus;
+        let frame_contains_focus_retaining_command = had_focus
+            && ui.input(|input| frame_contains_focus_retaining_editor_command(&input.events));
         let mut editor_interacted = false;
         let mut pending_follow_scroll_offset_y: Option<f32> = None;
         let scroll_output =
@@ -955,7 +957,10 @@ impl LocalPasteApp {
         if explicit_blur {
             ui.memory_mut(|m| m.surrender_focus(editor_id));
             egui_focus = false;
-        } else if had_focus && !egui_focus && !ui.ctx().wants_keyboard_input() {
+        } else if had_focus
+            && !egui_focus
+            && (frame_contains_focus_retaining_command || !ui.ctx().wants_keyboard_input())
+        {
             ui.memory_mut(|m| m.request_focus(editor_id));
             egui_focus = true;
         }
