@@ -44,6 +44,33 @@ def workspace_tempdir():
         shutil.rmtree(resolved, ignore_errors=True)
 
 
+def create_packager_fixture(
+    root: Path,
+    platform: str,
+    target: str,
+) -> Path:
+    is_windows = platform == "windows"
+    binary_name = "localpaste-gui.exe" if is_windows else "localpaste-gui"
+    icon_name = "localpaste.ico" if is_windows else "icon.png"
+    formats = ["wix"] if is_windows else ["appimage"]
+
+    config_dir = root / "packaging" / platform
+    config_dir.mkdir(parents=True)
+
+    (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
+    target_dir = root / "target" / target / "release"
+    target_dir.mkdir(parents=True)
+    (target_dir / binary_name).write_text("binary\n", encoding="utf-8")
+
+    (config_dir / icon_name).write_text("icon\n", encoding="utf-8")
+    packager_config = config_dir / "packager.json"
+    packager_config.write_text(
+        json.dumps({"formats": formats, "icons": [icon_name]}),
+        encoding="utf-8",
+    )
+    return packager_config
+
+
 class ReleaseVersioningTests(unittest.TestCase):
     def test_normalize_packaging_version_accepts_prerelease(self) -> None:
         self.assertEqual(normalize_packaging_version("v0.5.0-beta.1"), "0.5.0-beta.1")
@@ -110,26 +137,8 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
 
     def test_prepare_accepts_prerelease_workspace_version(self) -> None:
         with workspace_tempdir() as root:
-            config_dir = root / "packaging" / "linux"
-            config_dir.mkdir(parents=True)
-
-            (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
-            target_dir = root / "target" / "x86_64-unknown-linux-gnu" / "release"
-            target_dir.mkdir(parents=True)
-            (target_dir / "localpaste-gui").write_text("binary\n", encoding="utf-8")
-
-            icon_path = config_dir / "icon.png"
-            icon_path.write_text("icon\n", encoding="utf-8")
-            packager_config = config_dir / "packager.json"
-            packager_config.write_text(
-                json.dumps(
-                    {
-                        "formats": ["appimage"],
-                        "icons": ["icon.png"],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            target = "x86_64-unknown-linux-gnu"
+            packager_config = create_packager_fixture(root, "linux", target)
 
             with working_directory(root):
                 argv = [
@@ -137,7 +146,7 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
                     "--tag",
                     "0.5.0-beta.1",
                     "--target",
-                    "x86_64-unknown-linux-gnu",
+                    target,
                     "--asset-suffix",
                     "linux-x86_64",
                     "--packager-config",
@@ -148,7 +157,7 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
                 with mock.patch("sys.argv", argv):
                     self.assertEqual(release_gui_prepare.main(), 0)
 
-            effective_config = config_dir / "packager.effective.json"
+            effective_config = packager_config.with_name("packager.effective.json")
             self.assertTrue(effective_config.is_file())
             self.assertEqual(
                 json.loads(effective_config.read_text(encoding="utf-8"))["version"],
@@ -158,26 +167,8 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
 
     def test_prepare_windows_uses_numeric_version_for_prerelease_workspace_version(self) -> None:
         with workspace_tempdir() as root:
-            config_dir = root / "packaging" / "windows"
-            config_dir.mkdir(parents=True)
-
-            (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
-            target_dir = root / "target" / "x86_64-pc-windows-msvc" / "release"
-            target_dir.mkdir(parents=True)
-            (target_dir / "localpaste-gui.exe").write_text("binary\n", encoding="utf-8")
-
-            icon_path = config_dir / "localpaste.ico"
-            icon_path.write_text("icon\n", encoding="utf-8")
-            packager_config = config_dir / "packager.json"
-            packager_config.write_text(
-                json.dumps(
-                    {
-                        "formats": ["wix"],
-                        "icons": ["localpaste.ico"],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            target = "x86_64-pc-windows-msvc"
+            packager_config = create_packager_fixture(root, "windows", target)
 
             with working_directory(root):
                 argv = [
@@ -185,7 +176,7 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
                     "--tag",
                     "0.5.0-beta.1",
                     "--target",
-                    "x86_64-pc-windows-msvc",
+                    target,
                     "--asset-suffix",
                     "windows-x86_64",
                     "--packager-config",
@@ -203,7 +194,7 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
                 ):
                     self.assertEqual(release_gui_prepare.main(), 0)
 
-            effective_config = config_dir / "packager.effective.json"
+            effective_config = packager_config.with_name("packager.effective.json")
             self.assertTrue(effective_config.is_file())
             self.assertEqual(
                 json.loads(effective_config.read_text(encoding="utf-8"))["version"],
