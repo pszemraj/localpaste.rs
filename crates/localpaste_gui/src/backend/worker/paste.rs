@@ -317,32 +317,37 @@ pub(super) fn handle_update_paste_meta(
 /// - `state`: Worker state containing db, locks, and event channel handles.
 /// - `id`: Paste id to delete.
 pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
-    let (folder_guard, _mutation_guard) =
-        match localpaste_server::locks::acquire_folder_scoped_mutation_guards(
-            &state.db,
-            state.locks.as_ref(),
-            id.as_str(),
-            "Paste is currently open for editing.",
-            Some(&state.lock_owner_id),
-        ) {
-            Ok(guards) => guards,
-            Err(err) => {
-                send_error(
-                    &state.evt_tx,
-                    CoreErrorSource::Other,
-                    format!("Delete failed: {}", err),
-                );
-                return;
-            }
-        };
+    let deleted = {
+        let (folder_guard, _mutation_guard) =
+            match localpaste_server::locks::acquire_folder_scoped_mutation_guards(
+                &state.db,
+                state.locks.as_ref(),
+                id.as_str(),
+                "Paste is currently open for editing.",
+                Some(&state.lock_owner_id),
+            ) {
+                Ok(guards) => guards,
+                Err(err) => {
+                    send_error(
+                        &state.evt_tx,
+                        CoreErrorSource::Other,
+                        format!("Delete failed: {}", err),
+                    );
+                    return;
+                }
+            };
 
-    let deleted = TransactionOps::delete_paste_with_folder_locked(&state.db, &folder_guard, &id);
+        TransactionOps::delete_paste_with_folder_bundle_locked(&state.db, &folder_guard, &id)
+    };
     match deleted {
-        Ok(true) => {
+        Ok(Some(bundle)) => {
             state.query_cache.invalidate();
-            let _ = state.evt_tx.send(CoreEvent::PasteDeleted { id });
+            let undo_token = state.register_deleted_paste_undo(bundle);
+            let _ = state
+                .evt_tx
+                .send(CoreEvent::PasteDeleted { id, undo_token });
         }
-        Ok(false) => {
+        Ok(None) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
         }
@@ -352,6 +357,37 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
                 &state.evt_tx,
                 CoreErrorSource::Other,
                 format!("Delete failed: {}", err),
+            );
+        }
+    }
+}
+
+/// Restores a recently deleted paste from the backend undo buffer.
+///
+/// # Arguments
+/// - `state`: Worker state containing db, undo buffer, and event channel handles.
+/// - `undo_token`: Token emitted by a prior delete event.
+pub(super) fn handle_restore_deleted_paste(state: &mut WorkerState, undo_token: String) {
+    let Some(bundle) = state.take_deleted_paste_undo(undo_token.as_str()) else {
+        send_error(
+            &state.evt_tx,
+            CoreErrorSource::Other,
+            "Undo delete expired.".to_string(),
+        );
+        return;
+    };
+
+    match TransactionOps::restore_deleted_paste(&state.db, bundle) {
+        Ok(paste) => {
+            state.query_cache.invalidate();
+            let _ = state.evt_tx.send(CoreEvent::PasteRestored { paste });
+        }
+        Err(err) => {
+            error!("backend restore deleted paste failed: {}", err);
+            send_error(
+                &state.evt_tx,
+                CoreErrorSource::Other,
+                format!("Undo delete failed: {}", err),
             );
         }
     }

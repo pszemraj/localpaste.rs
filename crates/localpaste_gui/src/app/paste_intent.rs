@@ -15,7 +15,6 @@ pub(super) enum PlainPasteFocusState {
 pub(super) enum DeleteShortcutFocusState {
     OtherInputFocused,
     EditorFocused,
-    EditorFocusPromotionPending,
     Unfocused,
 }
 
@@ -334,21 +333,16 @@ impl LocalPasteApp {
     /// # Arguments
     /// - `wants_keyboard_input`: Whether any text-input widget currently owns keyboard capture.
     /// - `virtual_editor_focus_active`: Whether virtual editor text focus is active.
-    /// - `focus_promotion_requested`: Whether editor focus is scheduled to promote this frame.
-    ///
     /// # Returns
     /// A [`DeleteShortcutFocusState`] used to guard global delete behavior.
     pub(super) fn delete_shortcut_focus_state(
         wants_keyboard_input: bool,
         virtual_editor_focus_active: bool,
-        focus_promotion_requested: bool,
     ) -> DeleteShortcutFocusState {
         if wants_keyboard_input {
             DeleteShortcutFocusState::OtherInputFocused
         } else if virtual_editor_focus_active {
             DeleteShortcutFocusState::EditorFocused
-        } else if focus_promotion_requested {
-            DeleteShortcutFocusState::EditorFocusPromotionPending
         } else {
             DeleteShortcutFocusState::Unfocused
         }

@@ -38,6 +38,38 @@ fn should_explicitly_blur_virtual_editor(
 ) -> bool {
     window_blurred || (clicked_outside_editor && !preserve_editor_focus)
 }
+fn consume_virtual_editor_owned_key_events(ctx: &egui::Context) {
+    let keys_to_consume = ctx.input(|input| {
+        input
+            .events
+            .iter()
+            .filter_map(|event| {
+                let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } = event
+                else {
+                    return None;
+                };
+                if commands_from_events(std::slice::from_ref(event), true).is_empty() {
+                    None
+                } else {
+                    Some((*modifiers, *key))
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+    if keys_to_consume.is_empty() {
+        return;
+    }
+    ctx.input_mut(|input| {
+        for (modifiers, key) in keys_to_consume {
+            input.consume_key(modifiers, key);
+        }
+    });
+}
 /// Rendering flags for the interactive rope-backed virtual editor surface.
 #[derive(Clone, Copy)]
 pub(super) struct VirtualEditorRenderOptions<'a> {
@@ -140,7 +172,8 @@ impl LocalPasteApp {
         self.editor_lines
             .ensure_for(self.selected_content.revision(), text);
         let line_count = self.editor_lines.line_count();
-        // Preview rows are unwrapped physical lines; cache them so idle large-buffer frames do not reshape every visible row on each repaint.
+        // Preview rows are unwrapped physical lines; cache them so idle
+        // large-buffer frames do not reshape every visible row on each repaint.
         self.virtual_galley_cache.prepare_frame(
             line_count,
             VirtualGalleyContext::new(
@@ -247,7 +280,8 @@ impl LocalPasteApp {
                                 3 => {
                                     pending_action = Some(RowAction::Triple {
                                         line_idx,
-                                        // Triple-click must target the full physical line, even when render truncation is active.
+                                        // Triple-click must target the full physical line,
+                                        // even when render truncation is active.
                                         line_chars: full_line_chars,
                                     });
                                 }
@@ -382,7 +416,6 @@ impl LocalPasteApp {
         self.last_virtual_click_at = last_virtual_click_at;
         self.last_virtual_click_pos = last_virtual_click_pos;
         self.last_virtual_click_count = last_virtual_click_count;
-        self.virtual_editor_active = false;
         if preview_render_capped_lines > 0 {
             let line_label = if preview_render_capped_lines == 1 {
                 "line"
@@ -429,13 +462,6 @@ impl LocalPasteApp {
         }
 
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-        if self.focus_editor_next {
-            ui.memory_mut(|m| m.request_focus(editor_id));
-            self.virtual_editor_state.has_focus = true;
-            self.reset_virtual_caret_blink();
-            self.focus_editor_next = false;
-        }
-
         let wrap_width = ui.available_width().max(1.0);
         let perf_enabled = self.perf_log_enabled;
         let frame_started = perf_enabled.then(Instant::now);
@@ -505,10 +531,8 @@ impl LocalPasteApp {
             ),
         );
         let mut focused = ui.memory(|m| m.has_focus(editor_id));
-        let had_focus = focused || self.virtual_editor_state.has_focus;
-        let frame_contains_focus_retaining_command = had_focus
-            && ui.input(|input| frame_contains_focus_retaining_editor_command(&input.events));
-        let mut editor_interacted = false;
+        let had_focus = focused;
+        let mut ime_cursor_rect: Option<egui::Rect> = None;
         let mut pending_follow_scroll_offset_y: Option<f32> = None;
         let scroll_output =
             scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
@@ -650,17 +674,14 @@ impl LocalPasteApp {
                             let global = segment_range.start.saturating_add(local_col);
                             if response.drag_started() {
                                 self.reset_virtual_click_streak();
-                                editor_interacted = true;
                                 pending_action = Some(RowAction::DragStart { global });
                             } else {
                                 let click_count = self.register_virtual_click(pointer_pos);
                                 match click_count {
                                     3 => {
-                                        editor_interacted = true;
                                         pending_action = Some(RowAction::Triple { line_idx });
                                     }
                                     2 => {
-                                        editor_interacted = true;
                                         pending_action = Some(RowAction::Double {
                                             line_idx,
                                             line_start,
@@ -670,7 +691,6 @@ impl LocalPasteApp {
                                         });
                                     }
                                     _ => {
-                                        editor_interacted = true;
                                         pending_action = Some(RowAction::Click { global });
                                     }
                                 }
@@ -693,8 +713,6 @@ impl LocalPasteApp {
                 if let Some(action) = pending_action {
                     ui.memory_mut(|m| m.request_focus(editor_id));
                     focused = true;
-                    self.virtual_editor_state.has_focus = true;
-                    editor_interacted = true;
                     match action {
                         RowAction::Click { global } => {
                             self.virtual_editor_state
@@ -766,7 +784,6 @@ impl LocalPasteApp {
                 });
                 let pointer_down = ui.input(|input| input.pointer.primary_down());
                 if pointer_down && self.virtual_drag_active {
-                    editor_interacted = true;
                     if let Some(pointer_pos) = pointer_pos {
                         let viewport_rect = ui.clip_rect();
                         let target_row = rows
@@ -859,7 +876,7 @@ impl LocalPasteApp {
                     ui.painter()
                         .galley(row.text_origin, galley.clone(), ui.visuals().text_color());
 
-                    if focused && caret_visible {
+                    if focused {
                         let cursor = clamped_caret_cursor;
                         let affinity = self.virtual_editor_state.wrap_boundary_affinity();
                         let segment_end = row.segment_start.saturating_add(row.segment_chars);
@@ -879,10 +896,17 @@ impl LocalPasteApp {
                             let x = (row.text_origin.x + caret_rect.min.x).max(row.text_origin.x);
                             let y_min = row.text_origin.y + caret_rect.min.y;
                             let y_max = row.text_origin.y + caret_rect.max.y;
-                            ui.painter().line_segment(
-                                [egui::pos2(x, y_min), egui::pos2(x, y_max)],
-                                Stroke::new(1.0, ui.visuals().text_color()),
+                            let global_caret_rect = egui::Rect::from_min_max(
+                                egui::pos2(x, y_min),
+                                egui::pos2(x, y_max),
                             );
+                            ime_cursor_rect = Some(global_caret_rect);
+                            if caret_visible {
+                                ui.painter().line_segment(
+                                    [egui::pos2(x, y_min), egui::pos2(x, y_max)],
+                                    Stroke::new(1.0, ui.visuals().text_color()),
+                                );
+                            }
                         }
                     }
                 }
@@ -957,22 +981,82 @@ impl LocalPasteApp {
         if explicit_blur {
             ui.memory_mut(|m| m.surrender_focus(editor_id));
             egui_focus = false;
-        } else if had_focus
-            && !egui_focus
-            && (frame_contains_focus_retaining_command || !ui.ctx().wants_keyboard_input())
-        {
-            ui.memory_mut(|m| m.request_focus(editor_id));
-            egui_focus = true;
         }
         if focus_response.gained_focus() || (egui_focus && !had_focus) {
             self.reset_virtual_caret_blink();
         }
         focused = egui_focus;
-        self.virtual_editor_state.has_focus = focused;
-        self.virtual_editor_active = focused
-            || self.virtual_editor_state.has_focus
-            || self.virtual_drag_active
-            || editor_interacted;
+        if focused {
+            ui.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    editor_id,
+                    egui::EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: false,
+                    },
+                );
+            });
+            if let Some(cursor_rect) = ime_cursor_rect {
+                let to_global = ui
+                    .ctx()
+                    .layer_transform_to_global(ui.layer_id())
+                    .unwrap_or_default();
+                ui.output_mut(|output| {
+                    output.ime = Some(egui::output::IMEOutput {
+                        rect: to_global * interaction_rect,
+                        cursor_rect: to_global * cursor_rect,
+                    });
+                });
+            }
+        }
+        if focused && !self.editor_shortcuts_blocked() {
+            let route_started = Instant::now();
+            let commands = ui.input(|input| {
+                commands_from_events(&input.events, true)
+                    .into_iter()
+                    .filter(|command| !self.should_skip_virtual_command_for_paste_as_new(command))
+                    .collect::<Vec<_>>()
+            });
+            let input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
+            consume_virtual_editor_owned_key_events(ui.ctx());
+            let apply_started = Instant::now();
+            let apply_result = self.apply_virtual_commands(ui.ctx(), &commands);
+            let apply_ms = apply_started.elapsed().as_secs_f32() * 1000.0;
+            if apply_result.pasted {
+                self.virtual_paste_applied_this_frame = true;
+            }
+            if apply_result.changed {
+                self.mark_dirty();
+            }
+            if apply_result.cursor_moved {
+                self.virtual_follow_cursor_next_frame = true;
+            }
+            let selection_chars = self
+                .virtual_editor_state
+                .selection_range()
+                .map(|range| range.end.saturating_sub(range.start))
+                .unwrap_or(0);
+            self.trace_input(InputTraceFrame {
+                focus_active_pre: focused,
+                focus_active_post: focused,
+                egui_focus_pre: had_focus,
+                egui_focus_post: focused,
+                copy_ready_post: focused || selection_chars > 0,
+                selection_chars,
+                commands: &commands,
+                apply_result,
+            });
+            self.trace_virtual_input_perf(
+                &commands,
+                VirtualInputPerfStats {
+                    input_route_ms,
+                    apply_ms,
+                    apply_result,
+                },
+            );
+        }
         if let Some(started) = frame_started {
             let total_ms = started.elapsed().as_secs_f32() * 1000.0;
             info!(

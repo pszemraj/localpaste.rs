@@ -19,8 +19,7 @@ impl LocalPasteApp {
             if let Some(id) = selected_meta {
                 let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
                 let editor_had_virtual_focus = self.editor_mode == EditorMode::VirtualEditor
-                    && (self.virtual_editor_state.has_focus
-                        || ctx.memory(|m| m.has_focus(editor_id)));
+                    && ctx.memory(|m| m.has_focus(editor_id));
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let visible_tags = compact_header_tags(self.edit_tags.as_str());
@@ -329,10 +328,6 @@ impl LocalPasteApp {
                         }
                     });
                 let row_height = ui.text_style_height(&editor_style);
-                if preserve_virtual_editor_focus {
-                    self.focus_editor_next = true;
-                }
-
                 let scroll = egui::ScrollArea::vertical()
                     .id_salt("editor_scroll")
                     .max_height(editor_height)
@@ -360,16 +355,13 @@ impl LocalPasteApp {
                     );
                 } else {
                     // Defensive fallback for impossible mode values.
-                    self.virtual_editor_active = false;
                     scroll.show(ui, |_| {});
                 }
                 self.highlight_render = highlight_render;
                 self.render_version_dialogs(ctx);
             } else if self.selected_id.is_some() {
-                self.virtual_editor_active = false;
                 ui.label(RichText::new("Loading paste...").color(COLOR_TEXT_MUTED));
             } else {
-                self.virtual_editor_active = false;
                 ui.label(RichText::new("Select a paste from the sidebar.").color(COLOR_TEXT_MUTED));
             }
         });

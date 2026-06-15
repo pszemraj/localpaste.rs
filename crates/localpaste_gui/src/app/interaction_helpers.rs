@@ -1,21 +1,12 @@
 //! Shared input/selection helpers extracted from `app::mod`.
 
 use super::{
-    VirtualCommandRoute, VirtualInputCommand, DRAG_AUTOSCROLL_EDGE_DISTANCE,
-    DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME, DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME,
-    EDITOR_DOUBLE_CLICK_DISTANCE, EDITOR_DOUBLE_CLICK_WINDOW,
+    DRAG_AUTOSCROLL_EDGE_DISTANCE, DRAG_AUTOSCROLL_MAX_LINES_PER_FRAME,
+    DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME, EDITOR_DOUBLE_CLICK_DISTANCE, EDITOR_DOUBLE_CLICK_WINDOW,
 };
 use eframe::egui;
 use std::ops::Range;
 use std::time::Instant;
-
-/// Routing bucket used for virtual-editor command deferral.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VirtualCommandBucket {
-    ImmediateFocus,
-    DeferredFocus,
-    DeferredCopy,
-}
 
 /// Returns whether bare arrow keys should drive sidebar selection navigation.
 ///
@@ -69,65 +60,6 @@ pub(crate) fn is_command_shift_shortcut(modifiers: egui::Modifiers) -> bool {
     modifiers.command && modifiers.shift && !modifiers.alt
 }
 
-/// Consume editor-owned navigation/editing keys so focus does not leak to sibling widgets.
-///
-/// # Arguments
-/// - `ctx`: Egui context for mutable input access.
-/// - `editor_claims_keyboard`: Whether the virtual editor should own
-///   navigation/editing keys for this frame, including same-frame focus promotion.
-pub(crate) fn consume_virtual_editor_focus_keys(ctx: &egui::Context, editor_claims_keyboard: bool) {
-    if !editor_claims_keyboard {
-        return;
-    }
-
-    let events = ctx.input(|input| input.events.clone());
-    let mut keys_to_consume: Vec<(egui::Modifiers, egui::Key)> = Vec::new();
-    for event in events {
-        let egui::Event::Key {
-            key,
-            pressed: true,
-            modifiers,
-            ..
-        } = event
-        else {
-            continue;
-        };
-
-        let should_consume = matches!(
-            key,
-            egui::Key::Tab
-                | egui::Key::Enter
-                | egui::Key::Backspace
-                | egui::Key::Delete
-                | egui::Key::ArrowLeft
-                | egui::Key::ArrowRight
-                | egui::Key::ArrowUp
-                | egui::Key::ArrowDown
-                | egui::Key::Home
-                | egui::Key::End
-                | egui::Key::PageUp
-                | egui::Key::PageDown
-        );
-        // Delete/backspace stay editor-owned here on purpose: the documented
-        // global Ctrl/Cmd+Delete shortcut only applies when no text input owns
-        // keyboard focus, while focused editor delete chords should remain
-        // native text-editing operations.
-        if should_consume {
-            keys_to_consume.push((modifiers, key));
-        }
-    }
-
-    if keys_to_consume.is_empty() {
-        return;
-    }
-
-    ctx.input_mut(|input| {
-        for (modifiers, key) in keys_to_consume.drain(..) {
-            input.consume_key(modifiers, key);
-        }
-    });
-}
-
 /// Returns a click sense that never enters egui's keyboard-focus ring.
 ///
 /// Use this for mouse-first command buttons in the editor chrome so arrow-key
@@ -139,30 +71,6 @@ pub(crate) fn non_focusable_click_sense() -> egui::Sense {
     let mut sense = egui::Sense::click();
     sense.remove(egui::Sense::focusable_noninteractive());
     sense
-}
-
-/// Returns whether virtual-editor key consumption should run this frame.
-///
-/// Overlay surfaces that intentionally own keyboard input must win over the
-/// background editor's focus-leak prevention.
-///
-/// # Arguments
-/// - `editor_claims_keyboard`: Whether the virtual editor would otherwise
-///   consume navigation/editing keys this frame.
-/// - `command_palette_open`: Whether the command palette currently owns input.
-/// - `modal_overlay_open`: Whether a modal keyboard-owning overlay is open.
-/// - `shortcut_help_open`: Whether shortcut help is open.
-///
-/// # Returns
-/// `true` when focus-leak prevention should consume editor-owned keys, `false`
-/// when an overlay should receive them instead.
-pub(crate) fn should_consume_virtual_editor_focus_keys(
-    editor_claims_keyboard: bool,
-    command_palette_open: bool,
-    modal_overlay_open: bool,
-    shortcut_help_open: bool,
-) -> bool {
-    editor_claims_keyboard && !(command_palette_open || modal_overlay_open || shortcut_help_open)
 }
 
 /// Returns whether a character should be treated as an editor "word" character.
@@ -263,30 +171,6 @@ pub(crate) fn drag_autoscroll_delta(
     }
 }
 
-/// Classifies a virtual-editor input command into immediate or deferred buckets.
-///
-/// # Arguments
-/// - `command`: Virtual input command to classify.
-/// - `focus_active_pre`: Whether virtual editor focus was active before routing.
-///
-/// # Returns
-/// Command bucket used by the main update loop.
-pub(crate) fn classify_virtual_command(
-    command: &VirtualInputCommand,
-    focus_active_pre: bool,
-) -> VirtualCommandBucket {
-    match command.route() {
-        VirtualCommandRoute::CopyOnly => VirtualCommandBucket::DeferredCopy,
-        VirtualCommandRoute::FocusRequired => {
-            if command.requires_post_focus() || !focus_active_pre {
-                VirtualCommandBucket::DeferredFocus
-            } else {
-                VirtualCommandBucket::ImmediateFocus
-            }
-        }
-    }
-}
-
 /// Paints a line-scoped selection overlay onto a rendered galley row.
 ///
 /// # Arguments
@@ -331,101 +215,10 @@ pub(crate) fn paint_virtual_selection_overlay(
 #[cfg(test)]
 mod tests {
     use super::{
-        consume_virtual_editor_focus_keys, is_command_shift_shortcut, is_plain_command_shortcut,
-        non_focusable_click_sense, should_consume_virtual_editor_focus_keys,
+        is_command_shift_shortcut, is_plain_command_shortcut, non_focusable_click_sense,
         should_route_sidebar_arrows,
     };
     use eframe::egui;
-
-    fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
-        egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers,
-        }
-    }
-
-    #[test]
-    fn virtual_editor_focus_key_consumption_matrix() {
-        struct Case {
-            key: egui::Key,
-            modifiers: egui::Modifiers,
-            editor_claims_keyboard: bool,
-            expected_consumed: bool,
-        }
-
-        let cases = [
-            Case {
-                key: egui::Key::ArrowRight,
-                modifiers: egui::Modifiers {
-                    command: true,
-                    shift: true,
-                    ..Default::default()
-                },
-                editor_claims_keyboard: true,
-                expected_consumed: true,
-            },
-            Case {
-                key: egui::Key::Delete,
-                modifiers: egui::Modifiers {
-                    ctrl: true,
-                    command: true,
-                    ..Default::default()
-                },
-                editor_claims_keyboard: false,
-                expected_consumed: false,
-            },
-            Case {
-                key: egui::Key::Delete,
-                modifiers: egui::Modifiers {
-                    ctrl: true,
-                    command: true,
-                    ..Default::default()
-                },
-                editor_claims_keyboard: true,
-                expected_consumed: true,
-            },
-        ];
-
-        for case in cases {
-            let ctx = egui::Context::default();
-            let _ = ctx.run(
-                egui::RawInput {
-                    events: vec![key_event(case.key, case.modifiers)],
-                    ..Default::default()
-                },
-                |ctx| {
-                    assert!(ctx.input(|input| input.key_pressed(case.key)));
-                    consume_virtual_editor_focus_keys(ctx, case.editor_claims_keyboard);
-                    assert_eq!(
-                        ctx.input(|input| input.key_pressed(case.key)),
-                        !case.expected_consumed
-                    );
-                },
-            );
-        }
-    }
-
-    #[test]
-    fn virtual_editor_focus_key_consumption_yields_to_keyboard_overlays() {
-        assert!(should_consume_virtual_editor_focus_keys(
-            true, false, false, false
-        ));
-        assert!(!should_consume_virtual_editor_focus_keys(
-            true, true, false, false
-        ));
-        assert!(!should_consume_virtual_editor_focus_keys(
-            true, false, true, false
-        ));
-        assert!(!should_consume_virtual_editor_focus_keys(
-            true, false, false, true
-        ));
-        assert!(!should_consume_virtual_editor_focus_keys(
-            false, false, false, false
-        ));
-    }
 
     #[test]
     fn sidebar_arrow_routing_guard_matrix() {

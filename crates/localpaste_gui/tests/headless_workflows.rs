@@ -2,7 +2,12 @@
 
 use crossbeam_channel::Receiver;
 use localpaste_core::{
-    db::TransactionOps, models::folder::Folder, models::paste::Paste, Config, Database,
+    db::TransactionOps,
+    models::{
+        folder::Folder,
+        paste::{Paste, UpdatePasteRequest},
+    },
+    Config, Database,
 };
 use localpaste_gui::backend::{
     spawn_backend, spawn_backend_with_locks, BackendHandle, CoreCmd, CoreErrorSource, CoreEvent,
@@ -141,6 +146,108 @@ fn backend_shutdown_drains_queued_update_and_persists_across_reopen() {
         .expect("read persisted paste")
         .expect("paste should exist");
     assert_eq!(persisted.content, "after-close");
+}
+
+#[test]
+fn backend_delete_undo_restores_content_and_version_history_headlessly() {
+    let env = TestEnv::new();
+    let seed = Paste::new("version-one".to_string(), "undo-versioned".to_string());
+    let paste_id = seed.id.clone();
+    env.db.pastes.create(&seed).expect("create seed paste");
+    env.db
+        .pastes
+        .update(
+            &paste_id,
+            UpdatePasteRequest {
+                content: Some("version-two".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: None,
+                tags: None,
+            },
+        )
+        .expect("update seed paste")
+        .expect("paste should exist for update");
+    let versions_before = env
+        .db
+        .pastes
+        .list_versions(&paste_id, Some(10))
+        .expect("list versions")
+        .expect("paste should exist for version list");
+    assert_eq!(
+        versions_before.len(),
+        1,
+        "setup should archive the outgoing head before delete"
+    );
+    let archived_version_id = versions_before[0].version_id_ms;
+
+    let backend = env.spawn_backend();
+    backend
+        .cmd_tx
+        .send(CoreCmd::DeletePaste {
+            id: paste_id.clone(),
+        })
+        .expect("send delete");
+    let undo_token = match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteDeleted { id, undo_token } => {
+            assert_eq!(id, paste_id);
+            undo_token
+        }
+        other => panic!("expected PasteDeleted event, got {:?}", other),
+    };
+    assert!(
+        env.db
+            .pastes
+            .get(&paste_id)
+            .expect("get after delete")
+            .is_none(),
+        "delete should remove the live paste before undo"
+    );
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::RestoreDeletedPaste { undo_token })
+        .expect("send restore");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteRestored { paste } => {
+            assert_eq!(paste.id, paste_id);
+            assert_eq!(paste.content, "version-two");
+        }
+        other => panic!("expected PasteRestored event, got {:?}", other),
+    }
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::ListPasteVersions {
+            id: paste_id.clone(),
+            limit: 10,
+        })
+        .expect("send version list");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteVersionsLoaded { id, items } => {
+            assert_eq!(id, paste_id);
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].version_id_ms, archived_version_id);
+        }
+        other => panic!("expected PasteVersionsLoaded event, got {:?}", other),
+    }
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::GetPasteVersion {
+            id: paste_id.clone(),
+            version_id_ms: archived_version_id,
+        })
+        .expect("send version fetch");
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteVersionLoaded { snapshot } => {
+            assert_eq!(snapshot.paste_id, paste_id);
+            assert_eq!(snapshot.version_id_ms, archived_version_id);
+            assert_eq!(snapshot.content, "version-one");
+        }
+        other => panic!("expected PasteVersionLoaded event, got {:?}", other),
+    }
 }
 
 #[test]

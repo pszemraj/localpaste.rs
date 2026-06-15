@@ -6,11 +6,15 @@ mod query;
 
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent};
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
-use localpaste_core::{config::env_flag_enabled, Database};
+use localpaste_core::{config::env_flag_enabled, models::paste::DeletedPasteBundle, Database};
 use localpaste_server::{LockOwnerId, PasteLockManager};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+const DELETE_UNDO_TTL: Duration = Duration::from_secs(10);
+const DELETE_UNDO_LIMIT: usize = 8;
 
 /// Handle for sending commands to, and receiving events from, the backend worker.
 pub struct BackendHandle {
@@ -128,6 +132,61 @@ struct WorkerState {
     lock_owner_id: LockOwnerId,
     perf_log_enabled: bool,
     query_cache: query::QueryCache,
+    delete_undo_seq: u64,
+    deleted_paste_order: VecDeque<String>,
+    deleted_paste_undo: HashMap<String, PendingDeletedPaste>,
+}
+
+struct PendingDeletedPaste {
+    bundle: DeletedPasteBundle,
+    expires_at: Instant,
+}
+
+impl WorkerState {
+    fn prune_deleted_paste_undo(&mut self) {
+        let now = Instant::now();
+        while let Some(token) = self.deleted_paste_order.front() {
+            let expired = self
+                .deleted_paste_undo
+                .get(token)
+                .map(|pending| pending.expires_at <= now)
+                .unwrap_or(true);
+            if !expired {
+                break;
+            }
+            if let Some(token) = self.deleted_paste_order.pop_front() {
+                self.deleted_paste_undo.remove(token.as_str());
+            }
+        }
+        while self.deleted_paste_order.len() > DELETE_UNDO_LIMIT {
+            if let Some(token) = self.deleted_paste_order.pop_front() {
+                self.deleted_paste_undo.remove(token.as_str());
+            }
+        }
+    }
+
+    fn register_deleted_paste_undo(&mut self, bundle: DeletedPasteBundle) -> String {
+        self.prune_deleted_paste_undo();
+        self.delete_undo_seq = self.delete_undo_seq.wrapping_add(1);
+        let token = format!("delete-{}", self.delete_undo_seq);
+        self.deleted_paste_order.push_back(token.clone());
+        self.deleted_paste_undo.insert(
+            token.clone(),
+            PendingDeletedPaste {
+                bundle,
+                expires_at: Instant::now() + DELETE_UNDO_TTL,
+            },
+        );
+        self.prune_deleted_paste_undo();
+        token
+    }
+
+    fn take_deleted_paste_undo(&mut self, token: &str) -> Option<DeletedPasteBundle> {
+        self.prune_deleted_paste_undo();
+        let pending = self.deleted_paste_undo.remove(token)?;
+        self.deleted_paste_order.retain(|item| item != token);
+        Some(pending.bundle)
+    }
 }
 
 fn send_error(evt_tx: &Sender<CoreEvent>, source: CoreErrorSource, message: String) {
@@ -217,6 +276,10 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
         }
         CoreCmd::DeletePaste { id } => {
             paste::handle_delete_paste(state, id);
+            true
+        }
+        CoreCmd::RestoreDeletedPaste { undo_token } => {
+            paste::handle_restore_deleted_paste(state, undo_token);
             true
         }
         CoreCmd::ListPasteVersions { id, limit } => {
@@ -358,6 +421,9 @@ pub fn spawn_backend_with_locks_and_owner(
                 lock_owner_id,
                 perf_log_enabled: env_flag_enabled("LOCALPASTE_BACKEND_PERF_LOG"),
                 query_cache: query::QueryCache::default(),
+                delete_undo_seq: 0,
+                deleted_paste_order: VecDeque::new(),
+                deleted_paste_undo: HashMap::new(),
             };
             for cmd in cmd_rx.iter() {
                 if !dispatch_command(&mut state, cmd) {

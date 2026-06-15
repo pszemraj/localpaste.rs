@@ -340,7 +340,8 @@ pub fn run() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size(app::DEFAULT_WINDOW_SIZE)
         .with_min_inner_size(app::MIN_WINDOW_SIZE)
-        .with_title("LocalPaste.rs");
+        .with_title("LocalPaste.rs")
+        .with_visible(false);
     #[cfg(target_os = "linux")]
     {
         viewport = viewport.with_app_id(LINUX_APP_ID);
@@ -351,10 +352,20 @@ pub fn run() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport,
+        persist_window: false,
         ..Default::default()
     };
 
-    eframe::run_native("LocalPaste.rs", options, Box::new(|_cc| Ok(Box::new(app))))
+    eframe::run_native(
+        "LocalPaste.rs",
+        options,
+        Box::new(move |cc| {
+            let mut app = app;
+            app.ensure_style(&cc.egui_ctx);
+            app.restore_gui_storage(cc.storage);
+            Ok(Box::new(app))
+        }),
+    )
 }
 
 #[cfg(test)]

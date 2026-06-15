@@ -5,7 +5,7 @@ mod filters;
 use super::util::format_fenced_code_block;
 use super::{
     ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
-    SidebarCollection, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
+    SidebarCollection, ToastAction, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Local, Utc};
@@ -126,7 +126,6 @@ impl LocalPasteApp {
                 if paste_visible && !has_unsaved_edits && !save_in_progress {
                     self.select_loaded_paste(paste);
                     self.pending_selection_id = None;
-                    self.focus_editor_next = true;
                     self.set_status("Created new paste.");
                     return;
                 }
@@ -178,6 +177,7 @@ impl LocalPasteApp {
                 if self.search_query.trim().is_empty() {
                     self.recompute_visible_pastes();
                 }
+                self.maybe_continue_queued_history_reset();
                 self.try_apply_pending_selection();
                 if self.search_query.trim().is_empty() {
                     self.ensure_selection_after_list_update();
@@ -203,6 +203,7 @@ impl LocalPasteApp {
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
                 self.ensure_selection_after_list_update();
+                self.maybe_continue_queued_history_reset();
                 self.try_apply_pending_selection();
             }
             CoreEvent::SearchResults {
@@ -249,7 +250,7 @@ impl LocalPasteApp {
                     self.palette_search_results.len(),
                 );
             }
-            CoreEvent::PasteDeleted { id } => {
+            CoreEvent::PasteDeleted { id, undo_token } => {
                 let deleted_index = self.pastes.iter().position(|paste| paste.id == id);
                 let was_selected = self.selected_id.as_deref() == Some(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
@@ -266,10 +267,39 @@ impl LocalPasteApp {
                     if let Some(adjacent_id) = adjacent_id {
                         let _ = self.select_paste(adjacent_id);
                     }
-                    self.set_status("Paste deleted.");
+                    self.set_status_with_action(
+                        "Paste deleted.",
+                        ToastAction::UndoDelete { undo_token },
+                    );
                 } else {
-                    self.set_status("Paste deleted; list refreshed.");
+                    self.set_status_with_action(
+                        "Paste deleted; list refreshed.",
+                        ToastAction::UndoDelete { undo_token },
+                    );
                 }
+                self.request_refresh();
+            }
+            CoreEvent::PasteRestored { paste } => {
+                let paste_id = paste.id.clone();
+                self.upsert_cached_paste_summary(&paste);
+                if !self.search_query.trim().is_empty() {
+                    self.search_last_sent.clear();
+                    self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+                } else {
+                    self.recompute_visible_pastes();
+                }
+                let can_select_restored = self.selection_transition_block_reason().is_none()
+                    && !self.save_in_flight
+                    && !self.metadata_save_in_flight
+                    && self.save_status == SaveStatus::Saved
+                    && !self.metadata_dirty;
+                if can_select_restored {
+                    self.select_loaded_paste(paste);
+                    self.pending_selection_id = None;
+                } else {
+                    self.queue_pending_selection(paste_id);
+                }
+                self.set_status("Restored deleted paste.");
                 self.request_refresh();
             }
             CoreEvent::PasteMissing { id } => {
@@ -324,6 +354,7 @@ impl LocalPasteApp {
                 // unrelated metadata/content saves that are still awaiting an ack.
                 match source {
                     CoreErrorSource::SaveMetadata if self.metadata_save_in_flight => {
+                        self.cancel_queued_history_reset();
                         self.metadata_dirty = true;
                         self.metadata_save_in_flight = false;
                         self.metadata_save_request = None;
@@ -337,6 +368,7 @@ impl LocalPasteApp {
                         }
                     }
                     CoreErrorSource::SaveContent if self.save_in_flight => {
+                        self.cancel_queued_history_reset();
                         if self.save_status == SaveStatus::Saving {
                             self.save_status = SaveStatus::Dirty;
                         }
@@ -757,11 +789,28 @@ impl LocalPasteApp {
         }
     }
 
+    /// Requests restoration of a recently deleted paste from an undo token.
+    pub(super) fn restore_deleted_paste(&mut self, undo_token: String) {
+        self.toasts.retain(|toast| {
+            !matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
+            )
+        });
+        let sent = self.send_backend_cmd_or_status(
+            CoreCmd::RestoreDeletedPaste { undo_token },
+            "Undo delete failed: backend unavailable.",
+        );
+        if sent {
+            self.set_status("Restoring deleted paste...");
+        }
+    }
+
     /// Marks current editor content dirty and arms autosave timing.
     pub(super) fn mark_dirty(&mut self) {
         // Reset is authoritative once queued; the selected paste must stop accepting
         // local dirty-state transitions until the backend replies.
-        if self.reset_transition_active() {
+        if self.reset_transition_active() || self.history_reset_flush_active() {
             return;
         }
         if self.selected_id.is_some() {
@@ -987,6 +1036,18 @@ impl LocalPasteApp {
     pub(super) fn ensure_selection_after_list_update(&mut self) {
         if self.selection_transition_block_reason().is_some() {
             return;
+        }
+        if let Some(pending) = self.pending_selection_id.clone() {
+            if self.pastes.iter().any(|paste| paste.id == pending) {
+                self.try_apply_pending_selection();
+                if self.selected_id.as_deref() == Some(pending.as_str())
+                    || self.pending_selection_id.is_none()
+                {
+                    return;
+                }
+            } else if self.selected_id.is_none() {
+                self.pending_selection_id = None;
+            }
         }
         let selection_valid = self
             .selected_id

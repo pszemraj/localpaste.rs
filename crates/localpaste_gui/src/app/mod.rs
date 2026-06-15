@@ -11,6 +11,7 @@ mod state_accessors;
 mod state_cache;
 mod state_feedback;
 mod state_ops;
+mod state_persistence;
 mod style;
 mod text_coords;
 mod ui;
@@ -32,10 +33,9 @@ use highlight::{
     HighlightRequestText, HighlightWorker, HighlightWorkerResult, VirtualEditHint,
 };
 pub(super) use interaction_helpers::{
-    classify_virtual_command, consume_virtual_editor_focus_keys, drag_autoscroll_delta,
-    is_command_shift_shortcut, is_editor_word_char, is_plain_command_shortcut,
-    next_virtual_click_count, non_focusable_click_sense, paint_virtual_selection_overlay,
-    should_consume_virtual_editor_focus_keys, should_route_sidebar_arrows, VirtualCommandBucket,
+    drag_autoscroll_delta, is_command_shift_shortcut, is_editor_word_char,
+    is_plain_command_shortcut, next_virtual_click_count, non_focusable_click_sense,
+    paint_virtual_selection_overlay, should_route_sidebar_arrows,
 };
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
@@ -51,10 +51,8 @@ use tracing::{info, warn};
 use util::{display_language_label, env_flag_enabled, word_range_at};
 use version_ui::VersionUiState;
 use virtual_editor::{
-    commands_from_events, frame_contains_focus_retaining_editor_command,
-    map_primary_command_shortcut, RopeBuffer, VirtualCommandRoute, VirtualEditorHistory,
-    VirtualEditorState, VirtualGalleyCache, VirtualGalleyContext, VirtualInputCommand,
-    WrapBoundaryAffinity, WrapLayoutCache,
+    commands_from_events, RopeBuffer, VirtualEditorHistory, VirtualEditorState, VirtualGalleyCache,
+    VirtualGalleyContext, VirtualInputCommand, WrapBoundaryAffinity, WrapLayoutCache,
 };
 use virtual_view::{VirtualCursor, VirtualSelectionState};
 use window_bounds::enforce_window_bounds;
@@ -110,6 +108,7 @@ pub(crate) struct LocalPasteApp {
     virtual_wrap_width: f32,
     virtual_pending_scroll_offset_y: Option<f32>,
     virtual_follow_cursor_next_frame: bool,
+    virtual_paste_applied_this_frame: bool,
     version_ui: VersionUiState,
     highlight_worker: HighlightWorker,
     highlight_pending: Option<HighlightRequestMeta>,
@@ -122,7 +121,6 @@ pub(crate) struct LocalPasteApp {
     last_virtual_click_at: Option<Instant>,
     last_virtual_click_pos: Option<egui::Pos2>,
     last_virtual_click_count: u8,
-    virtual_editor_active: bool,
     paste_as_new_pending_frames: u8,
     paste_as_new_clipboard_requested_at: Option<Instant>,
     db_path: String,
@@ -140,8 +138,8 @@ pub(crate) struct LocalPasteApp {
     save_request_revision: Option<u64>,
     autosave_delay: Duration,
     shortcut_help_open: bool,
-    focus_editor_next: bool,
     style_applied: bool,
+    window_shown_once: bool,
     window_checked: bool,
     last_refresh_at: Instant,
     query_perf: QueryPerfCounters,
@@ -178,15 +176,47 @@ enum SidebarCollection {
     Links,
 }
 
+impl SidebarCollection {
+    fn storage_value(&self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Today => "today",
+            Self::Week => "week",
+            Self::Recent => "recent",
+            Self::Unfiled => "unfiled",
+            Self::Code => "code",
+            Self::Config => "config",
+            Self::Logs => "logs",
+            Self::Links => "links",
+        }
+    }
+
+    fn from_storage_value(value: &str) -> Option<Self> {
+        match value {
+            "all" => Some(Self::All),
+            "today" => Some(Self::Today),
+            "week" => Some(Self::Week),
+            "recent" => Some(Self::Recent),
+            "unfiled" => Some(Self::Unfiled),
+            "code" => Some(Self::Code),
+            "config" => Some(Self::Config),
+            "logs" => Some(Self::Logs),
+            "links" => Some(Self::Links),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum PaletteCopyAction {
     Raw(String),
     Fenced(String),
 }
 
-const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+const EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const STATUS_TTL: Duration = Duration::from_secs(5);
 const TOAST_TTL: Duration = Duration::from_secs(4);
+const UNDO_DELETE_TOAST_TTL: Duration = Duration::from_secs(10);
 const TOAST_LIMIT: usize = 4;
 #[doc = "Default initial window size for native GUI startup."]
 pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 720.0];
@@ -213,6 +243,9 @@ const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
+const STORAGE_SELECTED_ID_KEY: &str = "localpaste.selected_id";
+const STORAGE_ACTIVE_COLLECTION_KEY: &str = "localpaste.active_collection";
+const STORAGE_ACTIVE_LANGUAGE_KEY: &str = "localpaste.active_language_filter";
 const PERF_LOG_INTERVAL: Duration = Duration::from_secs(2);
 const PERF_SAMPLE_CAP: usize = 240;
 const PASTE_AS_NEW_PENDING_TTL_FRAMES: u8 = 3;
@@ -226,6 +259,12 @@ struct StatusMessage {
 struct ToastMessage {
     text: String,
     expires_at: Instant,
+    action: Option<ToastAction>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ToastAction {
+    UndoDelete { undo_token: String },
 }
 
 struct ExportCompletion {
@@ -273,9 +312,7 @@ struct InputTraceFrame<'a> {
     egui_focus_post: bool,
     copy_ready_post: bool,
     selection_chars: usize,
-    immediate_focus_commands: &'a [VirtualInputCommand],
-    deferred_focus_commands: &'a [VirtualInputCommand],
-    deferred_copy_commands: &'a [VirtualInputCommand],
+    commands: &'a [VirtualInputCommand],
     apply_result: VirtualApplyResult,
 }
 
@@ -360,12 +397,12 @@ impl LocalPasteApp {
             virtual_line_scratch: String::new(),
             virtual_caret_phase_start: Instant::now(),
             virtual_drag_active: false,
-            virtual_editor_active: false,
             virtual_viewport_height: 0.0,
             virtual_line_height: 1.0,
             virtual_wrap_width: 0.0,
             virtual_pending_scroll_offset_y: None,
             virtual_follow_cursor_next_frame: false,
+            virtual_paste_applied_this_frame: false,
             version_ui: VersionUiState::default(),
             highlight_worker,
             highlight_pending: None,
@@ -389,8 +426,8 @@ impl LocalPasteApp {
             save_request_revision: None,
             autosave_delay,
             shortcut_help_open: false,
-            focus_editor_next: false,
             style_applied: false,
+            window_shown_once: false,
             window_checked: false,
             last_refresh_at: Instant::now(),
             query_perf: QueryPerfCounters::default(),
@@ -505,9 +542,13 @@ impl LocalPasteApp {
 }
 
 impl eframe::App for LocalPasteApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.save_gui_storage(storage);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.ensure_style(ctx);
         self.track_frame_metrics();
+        self.virtual_paste_applied_this_frame = false;
         let min_size = egui::vec2(MIN_WINDOW_SIZE[0], MIN_WINDOW_SIZE[1]);
         enforce_window_bounds(ctx, _frame, &mut self.window_checked, min_size);
 
@@ -542,112 +583,22 @@ impl eframe::App for LocalPasteApp {
             }
         }
 
-        if !self.is_virtual_editor_mode() {
-            self.virtual_editor_active = false;
-        }
-
         let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
         let has_virtual_selection_pre = self.virtual_editor_state.selection_range().is_some();
-        let focus_active_pre = self.is_virtual_editor_mode()
-            && (self.virtual_editor_state.has_focus || egui_focus_pre);
-        let copy_ready_pre = focus_active_pre || has_virtual_selection_pre;
-        let explicit_paste_as_new_shortcut_pressed =
-            self.maybe_arm_paste_as_new_shortcut_intent(ctx);
-        let mut saw_virtual_select_all = false;
-        let mut saw_virtual_copy = false;
-        let mut saw_virtual_cut = false;
-        let mut saw_virtual_undo = false;
-        let mut saw_virtual_redo = false;
-        let mut saw_virtual_paste = false;
-        let mut immediate_focus_commands: Vec<VirtualInputCommand> = Vec::new();
-        let mut deferred_focus_commands: Vec<VirtualInputCommand> = Vec::new();
-        let mut deferred_copy_commands: Vec<VirtualInputCommand> = Vec::new();
-        let mut immediate_apply_result = VirtualApplyResult::default();
-        let mut input_route_ms = 0.0f32;
-        let mut immediate_apply_ms = 0.0f32;
-        let mut deferred_focus_apply_ms = 0.0f32;
-        let mut deferred_copy_apply_ms = 0.0f32;
+        let virtual_editor_focus_active_pre = self.is_virtual_editor_mode() && egui_focus_pre;
         let version_overlay_open = self.version_overlay_open();
         let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
-        let focus_promotion_requested =
-            self.editor_mode == EditorMode::VirtualEditor && self.focus_editor_next;
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
-        let virtual_editor_focus_active_pre = focus_active_pre
-            || (self.editor_mode == EditorMode::VirtualEditor && self.virtual_editor_active);
-        // Treat same-frame focus promotion as editor-owned keyboard navigation so
-        // arrows/home/end/etc. cannot leak to sidebar/default widget traversal
-        // before the hidden focus widget is finalized during panel render.
-        let virtual_editor_keyboard_claim_pre =
-            virtual_editor_focus_active_pre || focus_promotion_requested;
-        let virtual_editor_events_allowed = virtual_editor_keyboard_claim_pre
-            || (self.editor_mode == EditorMode::VirtualEditor && !wants_keyboard_input_before);
-        if self.is_virtual_editor_mode() && !editor_shortcuts_blocked_pre {
-            let route_started = Instant::now();
-            let commands = ctx
-                .input(|input| commands_from_events(&input.events, virtual_editor_events_allowed));
-            input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
-            for command in commands {
-                if self.should_skip_virtual_command_for_paste_as_new(&command) {
-                    continue;
-                }
-                // Same-frame focus promotion should stop keys leaking elsewhere, but
-                // command application still defers until the hidden focus widget has
-                // been rendered and egui focus is finalized.
-                match classify_virtual_command(&command, focus_active_pre) {
-                    VirtualCommandBucket::DeferredCopy => {
-                        saw_virtual_copy = true;
-                        deferred_copy_commands.push(command);
-                    }
-                    VirtualCommandBucket::DeferredFocus => {
-                        match &command {
-                            VirtualInputCommand::SelectAll => saw_virtual_select_all = true,
-                            VirtualInputCommand::Cut => saw_virtual_cut = true,
-                            VirtualInputCommand::Paste(_) => saw_virtual_paste = true,
-                            VirtualInputCommand::Undo => saw_virtual_undo = true,
-                            VirtualInputCommand::Redo => saw_virtual_redo = true,
-                            _ => {}
-                        }
-                        deferred_focus_commands.push(command);
-                    }
-                    VirtualCommandBucket::ImmediateFocus => {
-                        match &command {
-                            VirtualInputCommand::SelectAll => saw_virtual_select_all = true,
-                            VirtualInputCommand::Undo => saw_virtual_undo = true,
-                            VirtualInputCommand::Redo => saw_virtual_redo = true,
-                            _ => {}
-                        }
-                        immediate_focus_commands.push(command);
-                    }
-                }
-            }
-            let immediate_started = Instant::now();
-            immediate_apply_result = self.apply_virtual_commands(ctx, &immediate_focus_commands);
-            immediate_apply_ms += immediate_started.elapsed().as_secs_f32() * 1000.0;
-            if immediate_apply_result.changed {
-                self.mark_dirty();
-            }
-        }
-        consume_virtual_editor_focus_keys(
-            ctx,
-            should_consume_virtual_editor_focus_keys(
-                virtual_editor_keyboard_claim_pre,
-                self.command_palette_open,
-                version_overlay_open,
-                self.shortcut_help_open,
-            ),
-        );
-
+        let explicit_paste_as_new_shortcut_pressed =
+            self.maybe_arm_paste_as_new_shortcut_intent(ctx);
         let mut copy_virtual_preview = false;
-        let mut fallback_virtual_select_all = false;
-        let mut fallback_virtual_copy = false;
-        let mut fallback_virtual_cut = false;
-        let mut fallback_virtual_undo = false;
-        let mut fallback_virtual_redo = false;
+        let mut copy_virtual_unfocused = false;
         let mut request_virtual_paste = false;
         let mut request_paste_as_new = explicit_paste_as_new_shortcut_pressed;
         let mut plain_paste_shortcut_pressed = false;
+        let mut delete_selected_shortcut_pressed = false;
         let mut pasted_text: Option<String> = None;
         let mut sidebar_direction: i32 = 0;
         ctx.input(|input| {
@@ -664,19 +615,8 @@ impl eframe::App for LocalPasteApp {
                     self.create_new_paste();
                 }
             }
-            if plain_command
-                && input.key_pressed(egui::Key::Delete)
-                && self.should_route_delete_selected_shortcut(Self::delete_shortcut_focus_state(
-                    wants_keyboard_input_before,
-                    virtual_editor_focus_active_pre,
-                    focus_promotion_requested,
-                ))
-            {
-                if mutation_shortcut_blocked.is_some() {
-                    self.set_mutation_shortcut_blocked_status();
-                } else {
-                    self.delete_selected();
-                }
+            if plain_command && input.key_pressed(egui::Key::Delete) {
+                delete_selected_shortcut_pressed = true;
             }
             if plain_command && input.key_pressed(egui::Key::S) {
                 self.save_now();
@@ -727,37 +667,12 @@ impl eframe::App for LocalPasteApp {
                 match self.editor_mode {
                     EditorMode::VirtualPreview => copy_virtual_preview = true,
                     EditorMode::VirtualEditor => {
-                        if virtual_editor_events_allowed && copy_ready_pre && !saw_virtual_copy {
-                            fallback_virtual_copy = true;
+                        if !virtual_editor_focus_active_pre
+                            && has_virtual_selection_pre
+                            && !wants_keyboard_input_before
+                        {
+                            copy_virtual_unfocused = true;
                         }
-                    }
-                }
-            }
-            if self.editor_mode == EditorMode::VirtualEditor
-                && input.modifiers.command
-                && !editor_shortcuts_blocked_pre
-            {
-                for key in [egui::Key::A, egui::Key::X, egui::Key::Z, egui::Key::Y] {
-                    if !focus_active_pre || !input.key_pressed(key) {
-                        continue;
-                    }
-                    let Some(command) = map_primary_command_shortcut(key, input.modifiers) else {
-                        continue;
-                    };
-                    match command {
-                        VirtualInputCommand::SelectAll if !saw_virtual_select_all => {
-                            fallback_virtual_select_all = true;
-                        }
-                        VirtualInputCommand::Cut if !saw_virtual_cut => {
-                            fallback_virtual_cut = true;
-                        }
-                        VirtualInputCommand::Undo if !saw_virtual_undo => {
-                            fallback_virtual_undo = true;
-                        }
-                        VirtualInputCommand::Redo if !saw_virtual_redo => {
-                            fallback_virtual_redo = true;
-                        }
-                        _ => {}
                     }
                 }
             }
@@ -770,7 +685,7 @@ impl eframe::App for LocalPasteApp {
                 wants_keyboard_input_before,
                 input.modifiers,
                 !self.pastes.is_empty(),
-                virtual_editor_keyboard_claim_pre,
+                virtual_editor_focus_active_pre,
                 self.command_palette_open,
                 version_overlay_open,
                 self.shortcut_help_open,
@@ -790,46 +705,37 @@ impl eframe::App for LocalPasteApp {
                 ctx.send_cmd(egui::OutputCommand::CopyText(selection));
             }
         }
-        if self.editor_mode == EditorMode::VirtualEditor && !editor_shortcuts_blocked_pre {
-            let mut fallback_commands = Vec::new();
-            if fallback_virtual_select_all {
-                fallback_commands.push(VirtualInputCommand::SelectAll);
+        if copy_virtual_unfocused && !ctx.wants_keyboard_input() {
+            if let Some(selection) = self.virtual_selected_text() {
+                ctx.send_cmd(egui::OutputCommand::CopyText(selection));
             }
-            if fallback_virtual_copy {
-                deferred_copy_commands.push(VirtualInputCommand::Copy);
-            }
-            if fallback_virtual_cut {
-                deferred_focus_commands.push(VirtualInputCommand::Cut);
-            }
-            if fallback_virtual_undo {
-                fallback_commands.push(VirtualInputCommand::Undo);
-            }
-            if fallback_virtual_redo {
-                fallback_commands.push(VirtualInputCommand::Redo);
-            }
-            if !fallback_commands.is_empty() {
-                let fallback_started = Instant::now();
-                let fallback_result = self.apply_virtual_commands(ctx, &fallback_commands);
-                immediate_apply_ms += fallback_started.elapsed().as_secs_f32() * 1000.0;
-                immediate_apply_result.changed |= fallback_result.changed;
-                immediate_apply_result.copied |= fallback_result.copied;
-                immediate_apply_result.cut |= fallback_result.cut;
-                immediate_apply_result.pasted |= fallback_result.pasted;
-                immediate_apply_result.cursor_moved |= fallback_result.cursor_moved;
-                if fallback_result.changed {
-                    self.mark_dirty();
-                }
-            }
-        }
-        if immediate_apply_result.cursor_moved {
-            self.virtual_follow_cursor_next_frame = true;
         }
 
         if self.highlight_staged.is_some() {
             self.maybe_apply_staged_highlight(Instant::now());
         }
 
-        if sidebar_direction != 0 {
+        self.render_top_bar(ctx);
+        self.render_sidebar(ctx);
+        self.render_properties_drawer(ctx);
+        self.render_editor_panel(ctx);
+        self.render_command_palette(ctx);
+        self.render_shortcut_help(ctx);
+
+        let virtual_editor_focus_post =
+            self.editor_mode == EditorMode::VirtualEditor && ctx.memory(|m| m.has_focus(focus_id));
+        let editor_focus_for_plain_paste_post = if self.editor_mode == EditorMode::VirtualEditor {
+            virtual_editor_focus_post
+        } else {
+            false
+        };
+        let editor_focus_post = if self.editor_mode == EditorMode::VirtualEditor {
+            virtual_editor_focus_post
+        } else {
+            false
+        };
+        let wants_keyboard_input_after = ctx.wants_keyboard_input();
+        if sidebar_direction != 0 && !virtual_editor_focus_post && !wants_keyboard_input_after {
             let current = self.selected_index().unwrap_or(0) as i32;
             let max_index = (self.pastes.len().saturating_sub(1)) as i32;
             let next = (current + sidebar_direction).clamp(0, max_index) as usize;
@@ -838,42 +744,26 @@ impl eframe::App for LocalPasteApp {
                 self.select_paste(next_id);
             }
         }
-        self.render_top_bar(ctx);
-        self.render_sidebar(ctx);
-        self.render_properties_drawer(ctx);
-        self.render_editor_panel(ctx);
-        self.render_command_palette(ctx);
-        self.render_shortcut_help(ctx);
-
-        let mut deferred_focus_apply_result = VirtualApplyResult::default();
-        let mut deferred_copy_apply_result = VirtualApplyResult::default();
-        let has_virtual_selection_post = self.virtual_editor_state.selection_range().is_some();
-        let focus_active_post = self.editor_mode == EditorMode::VirtualEditor
-            && (self.virtual_editor_active
-                || self.virtual_editor_state.has_focus
-                || ctx.memory(|m| m.has_focus(focus_id)));
-        let virtual_editor_focus_post = self.editor_mode == EditorMode::VirtualEditor
-            && (self.virtual_editor_state.has_focus || ctx.memory(|m| m.has_focus(focus_id)));
-        let editor_focus_for_plain_paste_post = if self.editor_mode == EditorMode::VirtualEditor {
-            virtual_editor_focus_post
-        } else {
-            false
-        };
-        let editor_focus_post = if self.editor_mode == EditorMode::VirtualEditor {
-            focus_active_post
-        } else {
-            false
-        };
-        let wants_keyboard_input_after = ctx.wants_keyboard_input();
+        if delete_selected_shortcut_pressed
+            && self.should_route_delete_selected_shortcut(Self::delete_shortcut_focus_state(
+                wants_keyboard_input_after,
+                virtual_editor_focus_post,
+            ))
+        {
+            if mutation_shortcut_blocked.is_some() {
+                self.set_mutation_shortcut_blocked_status();
+            } else {
+                self.delete_selected();
+            }
+        }
         let plain_paste_focus_state = Self::plain_paste_focus_state(
             editor_focus_for_plain_paste_post,
             wants_keyboard_input_after,
         );
-        let editor_shortcuts_blocked_post = self.editor_shortcuts_blocked();
         let (plain_request_virtual, plain_request_new) = self.resolve_plain_paste_shortcut_request(
             plain_paste_shortcut_pressed,
             plain_paste_focus_state,
-            saw_virtual_paste,
+            self.virtual_paste_applied_this_frame,
         );
         request_virtual_paste |= plain_request_virtual;
         request_paste_as_new |= plain_request_new;
@@ -884,99 +774,32 @@ impl eframe::App for LocalPasteApp {
         {
             self.request_paste_as_new(ctx);
         }
-        let copy_ready_post = focus_active_post || has_virtual_selection_post;
-        if (focus_active_post || focus_promotion_requested) && !editor_shortcuts_blocked_post {
-            let deferred_started = Instant::now();
-            deferred_focus_apply_result =
-                self.apply_virtual_commands(ctx, &deferred_focus_commands);
-            deferred_focus_apply_ms = deferred_started.elapsed().as_secs_f32() * 1000.0;
-            if deferred_focus_apply_result.changed {
-                self.mark_dirty();
-            }
-            if deferred_focus_apply_result.cursor_moved {
-                self.virtual_follow_cursor_next_frame = true;
-            }
-        }
-        if copy_ready_post && !editor_shortcuts_blocked_post {
-            let deferred_started = Instant::now();
-            deferred_copy_apply_result = self.apply_virtual_commands(ctx, &deferred_copy_commands);
-            deferred_copy_apply_ms = deferred_started.elapsed().as_secs_f32() * 1000.0;
-            if deferred_copy_apply_result.changed {
-                self.mark_dirty();
-            }
-            if deferred_copy_apply_result.cursor_moved {
-                self.virtual_follow_cursor_next_frame = true;
-            }
-        }
-        let virtual_paste_consumed = immediate_apply_result.pasted
-            || deferred_focus_apply_result.pasted
-            || deferred_copy_apply_result.pasted;
         let paste_as_new_consumed = self.maybe_consume_explicit_paste_as_new(&mut pasted_text);
         let _implicit_clipboard_created = self.maybe_route_implicit_global_clipboard_create(
             pasted_text,
             editor_focus_post,
             ctx.wants_keyboard_input(),
-            virtual_paste_consumed,
+            false,
         );
-        let combined_apply = VirtualApplyResult {
-            changed: immediate_apply_result.changed
-                || deferred_focus_apply_result.changed
-                || deferred_copy_apply_result.changed,
-            copied: immediate_apply_result.copied
-                || deferred_focus_apply_result.copied
-                || deferred_copy_apply_result.copied,
-            cut: immediate_apply_result.cut
-                || deferred_focus_apply_result.cut
-                || deferred_copy_apply_result.cut,
-            pasted: virtual_paste_consumed || paste_as_new_consumed,
-            cursor_moved: immediate_apply_result.cursor_moved
-                || deferred_focus_apply_result.cursor_moved
-                || deferred_copy_apply_result.cursor_moved,
-        };
-        let selection_chars = self
-            .virtual_editor_state
-            .selection_range()
-            .map(|range| range.end.saturating_sub(range.start))
-            .unwrap_or(0);
-        let egui_focus_post = ctx.memory(|m| m.has_focus(focus_id));
-        self.trace_input(InputTraceFrame {
-            focus_active_pre,
-            focus_active_post,
-            egui_focus_pre,
-            egui_focus_post,
-            copy_ready_post,
-            selection_chars,
-            immediate_focus_commands: &immediate_focus_commands,
-            deferred_focus_commands: &deferred_focus_commands,
-            deferred_copy_commands: &deferred_copy_commands,
-            apply_result: combined_apply,
-        });
-        self.trace_virtual_input_perf(
-            &immediate_focus_commands,
-            &deferred_focus_commands,
-            &deferred_copy_commands,
-            VirtualInputPerfStats {
-                input_route_ms,
-                immediate_apply_ms,
-                deferred_focus_apply_ms,
-                deferred_copy_apply_ms,
-                apply_result: combined_apply,
-            },
-        );
+        let _ = paste_as_new_consumed;
 
         self.render_status_bar(ctx);
         self.render_toasts(ctx);
+        if !self.window_shown_once {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            self.window_shown_once = true;
+        }
 
         self.maybe_dispatch_palette_search();
         self.maybe_dispatch_search();
         self.maybe_autosave();
-        if self.last_refresh_at.elapsed() >= AUTO_REFRESH_INTERVAL {
+        if self.last_refresh_at.elapsed() >= EXTERNAL_REFRESH_INTERVAL {
             self.request_refresh();
         }
         let mut repaint_after = if self.save_status == SaveStatus::Dirty {
-            self.autosave_delay.min(AUTO_REFRESH_INTERVAL)
+            self.autosave_delay.min(EXTERNAL_REFRESH_INTERVAL)
         } else {
-            AUTO_REFRESH_INTERVAL
+            EXTERNAL_REFRESH_INTERVAL
         };
         if let Some(status) = &self.status {
             let until = status.expires_at.saturating_duration_since(Instant::now());
@@ -986,11 +809,7 @@ impl eframe::App for LocalPasteApp {
             let until = toast.expires_at.saturating_duration_since(Instant::now());
             repaint_after = repaint_after.min(until);
         }
-        if self.editor_mode == EditorMode::VirtualEditor
-            && (self.virtual_editor_active
-                || self.virtual_editor_state.has_focus
-                || ctx.memory(|m| m.has_focus(focus_id)))
-        {
+        if self.editor_mode == EditorMode::VirtualEditor && ctx.memory(|m| m.has_focus(focus_id)) {
             let elapsed = Instant::now().saturating_duration_since(self.virtual_caret_phase_start);
             let interval_ms = CARET_BLINK_INTERVAL.as_millis().max(1);
             let remainder_ms = interval_ms - (elapsed.as_millis() % interval_ms);

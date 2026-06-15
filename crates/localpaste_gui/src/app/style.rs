@@ -89,7 +89,7 @@ pub(super) fn with_muted_modal_chrome<R>(ctx: &egui::Context, render: impl FnOnc
 
 impl LocalPasteApp {
     /// Applies LocalPaste UI theme/fonts once per app lifetime.
-    pub(super) fn ensure_style(&mut self, ctx: &egui::Context) {
+    pub(crate) fn ensure_style(&mut self, ctx: &egui::Context) {
         if self.style_applied {
             return;
         }

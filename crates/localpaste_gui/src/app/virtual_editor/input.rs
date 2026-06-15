@@ -49,42 +49,6 @@ pub(crate) enum VirtualInputCommand {
     ImeDisabled,
 }
 
-/// Routing bucket for virtual editor input handling.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum VirtualCommandRoute {
-    CopyOnly,
-    FocusRequired,
-}
-
-impl VirtualInputCommand {
-    /// Returns the routing bucket used by app-level input gating.
-    ///
-    /// # Returns
-    /// Which execution path the command should take in the app loop.
-    pub(crate) fn route(&self) -> VirtualCommandRoute {
-        match self {
-            Self::Copy => VirtualCommandRoute::CopyOnly,
-            _ => VirtualCommandRoute::FocusRequired,
-        }
-    }
-
-    /// Returns true when the command should only run after post-UI focus is finalized.
-    ///
-    /// # Returns
-    /// `true` for commands that depend on finalized widget focus state.
-    pub(crate) fn requires_post_focus(&self) -> bool {
-        matches!(self, Self::Cut | Self::Paste(_))
-    }
-
-    /// Returns whether the command should keep keyboard ownership on the editor.
-    ///
-    /// # Returns
-    /// `true` when the command is part of native editor interaction flow.
-    pub(crate) fn should_retain_editor_focus(&self) -> bool {
-        !matches!(self, Self::InsertTab)
-    }
-}
-
 /// Coarse platform flavor used for keyboard shortcut mapping.
 ///
 /// We keep this extremely small so the translation logic stays auditable.
@@ -163,13 +127,6 @@ fn is_primary_command_base(platform: PlatformFlavor, modifiers: egui::Modifiers)
 /// # Returns
 /// `Some(VirtualInputCommand)` when the chord maps to a primary editor
 /// shortcut, otherwise `None`.
-pub(crate) fn map_primary_command_shortcut(
-    key: egui::Key,
-    modifiers: egui::Modifiers,
-) -> Option<VirtualInputCommand> {
-    map_primary_command_shortcut_for_platform(PlatformFlavor::current(), key, modifiers)
-}
-
 fn map_primary_command_shortcut_for_platform(
     platform: PlatformFlavor,
     key: egui::Key,
@@ -322,7 +279,7 @@ fn map_navigation_key(
 }
 
 fn should_emit_when_unfocused(command: &VirtualInputCommand) -> bool {
-    matches!(command.route(), VirtualCommandRoute::CopyOnly)
+    matches!(command, VirtualInputCommand::Copy)
 }
 
 /// Convert egui input events into virtual-editor commands.
@@ -338,19 +295,6 @@ pub(crate) fn commands_from_events(
     focused: bool,
 ) -> Vec<VirtualInputCommand> {
     commands_from_events_for_platform(events, focused, PlatformFlavor::current())
-}
-
-/// Returns whether this frame contains editor-owned commands that should keep focus.
-///
-/// # Arguments
-/// - `events`: Raw egui events captured for the frame.
-///
-/// # Returns
-/// `true` when any event maps to a focus-retaining virtual-editor command.
-pub(crate) fn frame_contains_focus_retaining_editor_command(events: &[egui::Event]) -> bool {
-    commands_from_events_for_platform(events, true, PlatformFlavor::current())
-        .into_iter()
-        .any(|command| command.should_retain_editor_focus())
 }
 
 fn commands_from_events_for_platform(

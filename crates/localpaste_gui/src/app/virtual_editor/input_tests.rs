@@ -471,44 +471,6 @@ fn copy_is_emitted_only_with_focus() {
 }
 
 #[test]
-fn routes_copy_as_copy_only() {
-    assert_eq!(
-        VirtualInputCommand::Copy.route(),
-        VirtualCommandRoute::CopyOnly
-    );
-}
-
-#[test]
-fn routes_mutating_commands_as_focus_required() {
-    let commands = [
-        VirtualInputCommand::InsertText("x".to_string()),
-        VirtualInputCommand::InsertNewline,
-        VirtualInputCommand::MoveLeft {
-            select: false,
-            word: false,
-        },
-        VirtualInputCommand::MoveLineHome { select: false },
-        VirtualInputCommand::MoveDocHome { select: false },
-        VirtualInputCommand::DeleteToLineStart,
-        VirtualInputCommand::Cut,
-        VirtualInputCommand::Paste("x".to_string()),
-        VirtualInputCommand::Undo,
-        VirtualInputCommand::ImeCommit("x".to_string()),
-    ];
-    for command in commands {
-        assert_eq!(command.route(), VirtualCommandRoute::FocusRequired);
-    }
-}
-
-#[test]
-fn marks_cut_and_paste_as_post_focus_only() {
-    assert!(VirtualInputCommand::Cut.requires_post_focus());
-    assert!(VirtualInputCommand::Paste("x".to_string()).requires_post_focus());
-    assert!(!VirtualInputCommand::Copy.requires_post_focus());
-    assert!(!VirtualInputCommand::InsertText("x".to_string()).requires_post_focus());
-}
-
-#[test]
 fn dedupes_copy_and_cut_from_key_and_event_streams() {
     let events = vec![
         key_event(
@@ -654,31 +616,4 @@ fn unfocused_key_navigation_and_delete_are_dropped() {
     ];
     let commands = commands_from_events_for_platform(&events, false, PlatformFlavor::Other);
     assert!(commands.is_empty());
-}
-
-#[test]
-fn tab_is_excluded_from_focus_retention_but_navigation_is_not() {
-    assert!(!VirtualInputCommand::InsertTab.should_retain_editor_focus());
-    assert!(VirtualInputCommand::MoveLineHome { select: true }.should_retain_editor_focus());
-    assert!(VirtualInputCommand::Backspace { word: true }.should_retain_editor_focus());
-}
-
-#[test]
-fn frame_focus_retention_command_detection_ignores_tab_only_frames() {
-    let tab_only = vec![key_event(egui::Key::Tab, egui::Modifiers::default())];
-    assert!(!frame_contains_focus_retaining_editor_command(
-        tab_only.as_slice()
-    ));
-
-    let selection = vec![key_event(
-        egui::Key::ArrowLeft,
-        egui::Modifiers {
-            command: cfg!(target_os = "macos"),
-            shift: true,
-            ..Default::default()
-        },
-    )];
-    assert!(frame_contains_focus_retaining_editor_command(
-        selection.as_slice()
-    ));
 }

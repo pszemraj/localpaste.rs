@@ -7,9 +7,7 @@ use tracing::info;
 /// Timing/counter snapshot for one virtual-editor input frame.
 pub(super) struct VirtualInputPerfStats {
     pub(super) input_route_ms: f32,
-    pub(super) immediate_apply_ms: f32,
-    pub(super) deferred_focus_apply_ms: f32,
-    pub(super) deferred_copy_apply_ms: f32,
+    pub(super) apply_ms: f32,
     pub(super) apply_result: VirtualApplyResult,
 }
 
@@ -22,19 +20,14 @@ impl LocalPasteApp {
         info!(
             target: "localpaste_gui::input",
             mode = ?self.editor_mode,
-            editor_active = self.virtual_editor_active,
             focus_active_pre = frame.focus_active_pre,
             focus_active_post = frame.focus_active_post,
             egui_focus_pre = frame.egui_focus_pre,
             egui_focus_post = frame.egui_focus_post,
             copy_ready_post = frame.copy_ready_post,
             selection_chars = frame.selection_chars,
-            immediate_focus_count = frame.immediate_focus_commands.len(),
-            deferred_focus_count = frame.deferred_focus_commands.len(),
-            deferred_copy_count = frame.deferred_copy_commands.len(),
-            immediate_focus = ?frame.immediate_focus_commands,
-            deferred_focus = ?frame.deferred_focus_commands,
-            deferred_copy = ?frame.deferred_copy_commands,
+            command_count = frame.commands.len(),
+            commands = ?frame.commands,
             changed = frame.apply_result.changed,
             copied = frame.apply_result.copied,
             cut = frame.apply_result.cut,
@@ -46,15 +39,11 @@ impl LocalPasteApp {
     /// Emits virtual-editor input performance metrics for observability logs.
     ///
     /// # Arguments
-    /// - `immediate_focus_commands`: Commands applied before general UI handling.
-    /// - `deferred_focus_commands`: Commands deferred until editor focus is confirmed.
-    /// - `deferred_copy_commands`: Copy/cut commands deferred until selection is available.
+    /// - `commands`: Commands extracted and applied by the focused editor widget.
     /// - `stats`: Timing snapshot and aggregate apply results.
     pub(super) fn trace_virtual_input_perf(
         &self,
-        immediate_focus_commands: &[VirtualInputCommand],
-        deferred_focus_commands: &[VirtualInputCommand],
-        deferred_copy_commands: &[VirtualInputCommand],
+        commands: &[VirtualInputCommand],
         stats: VirtualInputPerfStats,
     ) {
         if !self.perf_log_enabled || self.editor_mode != EditorMode::VirtualEditor {
@@ -63,18 +52,14 @@ impl LocalPasteApp {
         info!(
             target: "localpaste_gui::perf",
             event = "virtual_input_frame",
-            immediate_focus_commands = immediate_focus_commands.len(),
-            deferred_focus_commands = deferred_focus_commands.len(),
-            deferred_copy_commands = deferred_copy_commands.len(),
+            commands = commands.len(),
             input_route_ms = stats.input_route_ms,
-            immediate_apply_ms = stats.immediate_apply_ms,
-            deferred_focus_apply_ms = stats.deferred_focus_apply_ms,
-            deferred_copy_apply_ms = stats.deferred_copy_apply_ms,
+            apply_ms = stats.apply_ms,
             changed = stats.apply_result.changed,
             copied = stats.apply_result.copied,
             cut = stats.apply_result.cut,
             pasted = stats.apply_result.pasted,
-            "virtual editor input routing + apply timings"
+            "virtual editor input ownership + apply timings"
         );
     }
 }

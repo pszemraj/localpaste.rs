@@ -10,9 +10,10 @@ impl LocalPasteApp {
             return;
         }
 
+        let mut restore_undo_token: Option<String> = None;
         egui::Area::new(egui::Id::new("toast_area"))
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
-            .interactable(false)
+            .interactable(true)
             .show(ctx, |ui| {
                 ui.set_max_width(360.0);
                 ui.vertical(|ui| {
@@ -21,14 +22,26 @@ impl LocalPasteApp {
                             .fill(COLOR_BG_SECONDARY)
                             .stroke(egui::Stroke::new(1.0, COLOR_BORDER))
                             .show(ui, |ui| {
-                                ui.label(
-                                    egui::RichText::new(&toast.text)
-                                        .small()
-                                        .color(COLOR_TEXT_PRIMARY),
-                                );
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(&toast.text)
+                                            .small()
+                                            .color(COLOR_TEXT_PRIMARY),
+                                    );
+                                    if let Some(ToastAction::UndoDelete { undo_token }) =
+                                        &toast.action
+                                    {
+                                        if ui.small_button("Undo").clicked() {
+                                            restore_undo_token = Some(undo_token.clone());
+                                        }
+                                    }
+                                });
                             });
                     }
                 });
             });
+        if let Some(undo_token) = restore_undo_token {
+            self.restore_deleted_paste(undo_token);
+        }
     }
 }

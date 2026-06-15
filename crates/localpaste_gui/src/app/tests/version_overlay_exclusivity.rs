@@ -52,10 +52,10 @@ fn version_overlays_block_virtual_editor_fallback_shortcuts() {
         for shortcut in [ShortcutCase::Cut, ShortcutCase::Undo] {
             let mut harness = make_app();
             let ctx = egui::Context::default();
+            let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
             harness.app.editor_mode = EditorMode::VirtualEditor;
             harness.app.reset_virtual_editor("abcdef");
-            harness.app.virtual_editor_active = true;
-            harness.app.virtual_editor_state.has_focus = true;
+            ctx.memory_mut(|m| m.request_focus(editor_id));
 
             let before_text = match shortcut {
                 ShortcutCase::Cut => {

@@ -249,12 +249,12 @@ fn make_app() -> TestHarness {
         virtual_line_scratch: String::new(),
         virtual_caret_phase_start: Instant::now(),
         virtual_drag_active: false,
-        virtual_editor_active: false,
         virtual_viewport_height: 0.0,
         virtual_line_height: 1.0,
         virtual_wrap_width: 0.0,
         virtual_pending_scroll_offset_y: None,
         virtual_follow_cursor_next_frame: false,
+        virtual_paste_applied_this_frame: false,
         version_ui: super::version_ui::VersionUiState::default(),
         highlight_worker: spawn_highlight_worker(),
         highlight_pending: None,
@@ -278,8 +278,8 @@ fn make_app() -> TestHarness {
         save_request_revision: None,
         autosave_delay: Duration::from_millis(2000),
         shortcut_help_open: false,
-        focus_editor_next: false,
         style_applied: false,
+        window_shown_once: false,
         window_checked: false,
         last_refresh_at: Instant::now(),
         query_perf: QueryPerfCounters::default(),
@@ -330,6 +330,7 @@ mod creation_and_projection;
 mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod keyboard_navigation_audit;
+mod persistence;
 mod save_and_metadata;
 mod shutdown_behavior;
 mod state_basics;

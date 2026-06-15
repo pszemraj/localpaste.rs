@@ -175,6 +175,15 @@ fn pressed_key(key: eframe::egui::Key) -> eframe::egui::Event {
     }
 }
 
+fn output_has_visible_true(output: &eframe::egui::FullOutput) -> bool {
+    output.viewport_output.values().any(|viewport| {
+        viewport
+            .commands
+            .iter()
+            .any(|command| matches!(command, eframe::egui::ViewportCommand::Visible(true)))
+    })
+}
+
 #[test]
 fn shortcut_help_closes_on_escape() {
     let mut harness = make_app();
@@ -198,6 +207,33 @@ fn shortcut_help_closes_on_escape() {
 }
 
 #[test]
+fn first_full_update_reveals_hidden_window_once() {
+    let mut harness = make_app();
+    let ctx = eframe::egui::Context::default();
+    harness.app.ensure_style(&ctx);
+
+    let mut frame = eframe::Frame::_new_kittest();
+    let first_output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
+        eframe::App::update(&mut harness.app, ctx, &mut frame);
+    });
+
+    assert!(harness.app.window_shown_once);
+    assert!(
+        output_has_visible_true(&first_output),
+        "first update should reveal the initially hidden native window"
+    );
+
+    let second_output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
+        eframe::App::update(&mut harness.app, ctx, &mut frame);
+    });
+
+    assert!(
+        !output_has_visible_true(&second_output),
+        "subsequent updates should not keep emitting viewport reveal commands"
+    );
+}
+
+#[test]
 fn history_modal_closes_on_escape() {
     let mut harness = make_app();
     harness.app.version_ui.history_modal_open = true;
@@ -216,6 +252,58 @@ fn history_modal_closes_on_escape() {
     assert!(
         !harness.app.version_ui.history_modal_open,
         "history modal should dismiss on Escape"
+    );
+}
+
+#[test]
+fn history_modal_headless_render_handles_long_inline_snapshot_band() {
+    let mut harness = make_app();
+    let long_snapshot = (0..180)
+        .map(|idx| format!("line {idx}: long inline history preview"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let now = chrono::Utc::now();
+    harness.app.version_ui.history_modal_open = true;
+    harness.app.version_ui.history_versions = vec![localpaste_core::models::paste::VersionMeta {
+        version_id_ms: 42,
+        created_at: now,
+        content_hash: "history-hash".to_string(),
+        len: long_snapshot.len(),
+        language: Some("text".to_string()),
+        language_is_manual: false,
+    }];
+    harness.app.version_ui.history_selected_index = 1;
+    harness.app.version_ui.history_snapshot =
+        Some(localpaste_core::models::paste::VersionSnapshot {
+            paste_id: "alpha".to_string(),
+            version_id_ms: 42,
+            created_at: now,
+            content_hash: "history-hash".to_string(),
+            len: long_snapshot.len(),
+            language: Some("text".to_string()),
+            language_is_manual: false,
+            content: long_snapshot.clone(),
+        });
+
+    let ctx = eframe::egui::Context::default();
+    let output = ctx.run(
+        eframe::egui::RawInput {
+            screen_rect: Some(eframe::egui::Rect::from_min_size(
+                eframe::egui::Pos2::ZERO,
+                eframe::egui::Vec2::new(640.0, 360.0),
+            )),
+            ..Default::default()
+        },
+        |ctx| {
+            harness.app.render_history_modal(ctx);
+        },
+    );
+
+    assert!(harness.app.version_ui.history_modal_open);
+    assert_eq!(harness.app.version_ui.history_preview_text, long_snapshot);
+    assert!(
+        !output.shapes.is_empty(),
+        "headless modal render should produce paint output for the long inline snapshot"
     );
 }
 
@@ -266,6 +354,7 @@ fn delete_actions_keep_lock_until_delete_event_matrix() {
 
         harness.app.apply_event(CoreEvent::PasteDeleted {
             id: "alpha".to_string(),
+            undo_token: "undo-alpha".to_string(),
         });
         assert!(!harness.app.locks.is_locked("alpha").expect("is_locked"));
     }
@@ -278,9 +367,125 @@ fn paste_deleted_clears_pending_copy_action_for_deleted_id() {
 
     harness.app.apply_event(CoreEvent::PasteDeleted {
         id: "alpha".to_string(),
+        undo_token: "undo-alpha".to_string(),
     });
 
     assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
+fn paste_deleted_toast_carries_undo_action_for_restore_window() {
+    let mut harness = make_app();
+    let before = Instant::now();
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".to_string(),
+        undo_token: "undo-alpha".to_string(),
+    });
+
+    let toast = harness.app.toasts.back().expect("undo toast");
+    assert_eq!(
+        toast.action,
+        Some(ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string()
+        })
+    );
+    assert!(
+        toast.expires_at.saturating_duration_since(before) >= UNDO_DELETE_TOAST_TTL,
+        "undo toast should stay visible for the backend restore window"
+    );
+}
+
+#[test]
+fn undo_delete_action_dispatches_restore_and_removes_matching_toast() {
+    let mut harness = make_app();
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        },
+    );
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-beta".to_string(),
+        },
+    );
+
+    harness.app.restore_deleted_paste("undo-alpha".to_string());
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::RestoreDeletedPaste { undo_token } => assert_eq!(undo_token, "undo-alpha"),
+        other => panic!("expected RestoreDeletedPaste command, got {:?}", other),
+    }
+    assert!(
+        harness.app.toasts.iter().all(|toast| {
+            !matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
+            )
+        }),
+        "undo action should remove only the consumed restore toast"
+    );
+    assert!(
+        harness.app.toasts.iter().any(|toast| {
+            matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-beta"
+            )
+        }),
+        "other undo toasts should remain actionable"
+    );
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Restoring deleted paste...")
+    );
+}
+
+#[test]
+fn paste_restored_selects_restored_paste_and_refreshes_list() {
+    let mut harness = make_app();
+    let mut restored = Paste::new("restored content".to_string(), "Restored".to_string());
+    restored.id = "restored-id".to_string();
+
+    harness
+        .app
+        .apply_event(CoreEvent::PasteRestored { paste: restored });
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("restored-id"));
+    assert_eq!(
+        harness
+            .app
+            .selected_paste
+            .as_ref()
+            .map(|paste| paste.content.as_str()),
+        Some("restored content")
+    );
+    assert!(harness
+        .app
+        .all_pastes
+        .iter()
+        .any(|paste| paste.id == "restored-id"));
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Restored deleted paste.")
+    );
+    match harness
+        .cmd_rx
+        .recv_timeout(Duration::from_millis(200))
+        .expect("expected refresh command")
+    {
+        CoreCmd::ListPastes { .. } => {}
+        other => panic!("expected ListPastes refresh, got {:?}", other),
+    }
 }
 
 #[test]
@@ -313,6 +518,7 @@ fn paste_deleted_selects_visible_neighbor_matrix() {
 
         harness.app.apply_event(CoreEvent::PasteDeleted {
             id: "b".to_string(),
+            undo_token: "undo-b".to_string(),
         });
         assert_eq!(
             harness.app.selected_id.as_deref(),
@@ -666,7 +872,7 @@ fn history_reset_confirm_keeps_original_target_after_selection_changes() {
 }
 
 #[test]
-fn history_reset_is_blocked_while_local_changes_are_unsaved_or_saving_matrix() {
+fn history_reset_flushes_local_changes_before_reset_matrix() {
     #[derive(Clone, Copy)]
     enum ResetBlockCase {
         ContentDirty,
@@ -712,27 +918,63 @@ fn history_reset_is_blocked_while_local_changes_are_unsaved_or_saving_matrix() {
 
         harness.app.reset_selected_history_version();
 
+        assert!(harness.app.history_reset_flush_active());
         assert!(harness
             .app
             .version_ui
-            .history_reset_in_flight_paste_id
+            .history_reset_confirm_target
             .is_none());
-        assert_eq!(
-            harness.app.version_ui.history_reset_confirm_target,
-            Some(42)
-        );
         assert_eq!(
             harness
                 .app
                 .status
                 .as_ref()
                 .map(|status| status.text.as_str()),
-            Some("Reset is unavailable while local changes are unsaved or saving.")
+            Some("Saving current paste before reset...")
         );
-        assert!(matches!(
-            harness.cmd_rx.try_recv(),
-            Err(TryRecvError::Empty)
-        ));
+
+        match case {
+            ResetBlockCase::ContentDirty => match recv_cmd(&harness.cmd_rx) {
+                CoreCmd::UpdatePaste { id, content } => {
+                    assert_eq!(id, "alpha");
+                    assert_eq!(content, "content");
+                }
+                other => panic!("expected content save before reset, got {:?}", other),
+            },
+            ResetBlockCase::MetadataDirty => match recv_cmd(&harness.cmd_rx) {
+                CoreCmd::UpdatePasteMeta { id, .. } => assert_eq!(id, "alpha"),
+                other => panic!("expected metadata save before reset, got {:?}", other),
+            },
+            ResetBlockCase::ContentSaving | ResetBlockCase::MetadataSaving => {
+                assert!(matches!(
+                    harness.cmd_rx.try_recv(),
+                    Err(TryRecvError::Empty)
+                ));
+            }
+        }
+
+        harness.app.save_status = SaveStatus::Saved;
+        harness.app.save_in_flight = false;
+        harness.app.metadata_dirty = false;
+        harness.app.metadata_save_in_flight = false;
+        harness.app.metadata_save_request = None;
+        harness.app.maybe_continue_queued_history_reset();
+
+        match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::ResetPasteHardToVersion { id, version_id_ms } => {
+                assert_eq!(id, "alpha");
+                assert_eq!(version_id_ms, 42);
+            }
+            other => panic!("expected ResetPasteHardToVersion command, got {:?}", other),
+        }
+        assert_eq!(
+            harness
+                .app
+                .version_ui
+                .history_reset_in_flight_paste_id
+                .as_deref(),
+            Some("alpha")
+        );
     }
 }
 

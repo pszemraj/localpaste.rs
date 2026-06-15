@@ -9,23 +9,7 @@ fn run_virtual_editor_frame(
 ) -> bool {
     let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
     let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
-    let focus_active_pre =
-        app.is_virtual_editor_mode() && (app.virtual_editor_state.has_focus || egui_focus_pre);
-
-    let mut immediate_focus_commands = Vec::new();
-    let mut deferred_focus_commands = Vec::new();
-    let mut deferred_copy_commands = Vec::new();
-    for command in commands_from_events(events.as_slice(), true) {
-        match classify_virtual_command(&command, focus_active_pre) {
-            VirtualCommandBucket::ImmediateFocus => immediate_focus_commands.push(command),
-            VirtualCommandBucket::DeferredFocus => deferred_focus_commands.push(command),
-            VirtualCommandBucket::DeferredCopy => deferred_copy_commands.push(command),
-        }
-    }
-    let focus_promotion_requested =
-        app.editor_mode == EditorMode::VirtualEditor && app.focus_editor_next;
-
-    let _ = app.apply_virtual_commands(ctx, &immediate_focus_commands);
+    let focus_active_pre = app.is_virtual_editor_mode() && egui_focus_pre;
 
     let raw_input = egui::RawInput {
         events,
@@ -34,20 +18,6 @@ fn run_virtual_editor_frame(
     let _ = ctx.run(raw_input, |ctx| {
         app.render_editor_panel(ctx);
     });
-
-    let has_virtual_selection_post = app.virtual_editor_state.selection_range().is_some();
-    let focus_active_post = app.editor_mode == EditorMode::VirtualEditor
-        && (app.virtual_editor_active
-            || app.virtual_editor_state.has_focus
-            || ctx.memory(|m| m.has_focus(focus_id)));
-    let copy_ready_post = focus_active_post || has_virtual_selection_post;
-
-    if focus_active_post || focus_promotion_requested {
-        let _ = app.apply_virtual_commands(ctx, &deferred_focus_commands);
-    }
-    if copy_ready_post {
-        let _ = app.apply_virtual_commands(ctx, &deferred_copy_commands);
-    }
 
     focus_active_pre
 }
@@ -191,99 +161,6 @@ fn empty_preedit_clears_composition_and_allows_insert_text() {
 }
 
 #[test]
-fn virtual_command_classification_respects_focus_policy() {
-    assert_eq!(
-        classify_virtual_command(&VirtualInputCommand::Copy, false),
-        VirtualCommandBucket::DeferredCopy
-    );
-    assert_eq!(
-        classify_virtual_command(&VirtualInputCommand::InsertText("x".to_string()), false),
-        VirtualCommandBucket::DeferredFocus
-    );
-    assert_eq!(
-        classify_virtual_command(&VirtualInputCommand::InsertText("x".to_string()), true),
-        VirtualCommandBucket::ImmediateFocus
-    );
-    assert_eq!(
-        classify_virtual_command(&VirtualInputCommand::Cut, true),
-        VirtualCommandBucket::DeferredFocus
-    );
-    assert_eq!(
-        classify_virtual_command(&VirtualInputCommand::Paste("x".to_string()), true),
-        VirtualCommandBucket::DeferredFocus
-    );
-}
-
-#[test]
-fn virtual_editor_focus_transition_matrix() {
-    struct FocusCase {
-        name: &'static str,
-        focus_editor_next: bool,
-        state_has_focus: bool,
-        frames: Vec<Vec<egui::Event>>,
-        expect_focus: bool,
-    }
-
-    let cases = [
-        FocusCase {
-            name: "focus-editor-next promotes focus",
-            focus_editor_next: true,
-            state_has_focus: false,
-            frames: vec![Vec::new(), Vec::new()],
-            expect_focus: true,
-        },
-        FocusCase {
-            name: "state focus heals idle frame",
-            focus_editor_next: false,
-            state_has_focus: true,
-            frames: vec![Vec::new()],
-            expect_focus: true,
-        },
-        FocusCase {
-            name: "state focus survives tab key frame",
-            focus_editor_next: false,
-            state_has_focus: true,
-            frames: vec![vec![key_event(egui::Key::Tab, egui::Modifiers::default())]],
-            expect_focus: false,
-        },
-    ];
-
-    for case in cases {
-        let mut harness = make_app();
-        harness.app.editor_mode = EditorMode::VirtualEditor;
-        harness.app.reset_virtual_editor("line one\nline two\n");
-        harness.app.focus_editor_next = case.focus_editor_next;
-        harness.app.virtual_editor_state.has_focus = case.state_has_focus;
-
-        let ctx = egui::Context::default();
-        configure_virtual_editor_test_ctx(&ctx);
-        for events in case.frames {
-            run_editor_panel_once(
-                &mut harness.app,
-                &ctx,
-                egui::RawInput {
-                    events,
-                    ..Default::default()
-                },
-            );
-        }
-
-        let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-        assert_eq!(
-            ctx.memory(|m| m.has_focus(editor_id)),
-            case.expect_focus,
-            "focus mismatch for case: {}",
-            case.name
-        );
-        assert_eq!(
-            harness.app.virtual_editor_state.has_focus, case.expect_focus,
-            "state mismatch for case: {}",
-            case.name
-        );
-    }
-}
-
-#[test]
 fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;
@@ -324,7 +201,70 @@ fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
     );
 
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+}
+
+#[test]
+fn same_frame_editor_click_and_arrow_moves_cursor_once() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha\n");
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
+    let click_pos = egui::pos2(240.0, 700.0);
+    run_editor_panel_once(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            events: vec![
+                egui::Event::PointerMoved(click_pos),
+                egui::Event::PointerButton {
+                    pos: click_pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::default(),
+                },
+                key_event(egui::Key::ArrowRight, egui::Modifiers::default()),
+            ],
+            ..Default::default()
+        },
+    );
+
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 1);
+    assert!(harness.app.virtual_editor_state.selection_range().is_none());
+}
+
+#[test]
+fn stale_virtual_focus_does_not_steal_arrow_from_other_focus_owner() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha\n");
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let other_focus_id = egui::Id::new("title_like_text_input");
+    ctx.memory_mut(|m| m.request_focus(other_focus_id));
+    let mut title_text = "title".to_string();
+    let _ = ctx.run(
+        egui::RawInput {
+            events: vec![key_event(egui::Key::ArrowRight, egui::Modifiers::default())],
+            ..Default::default()
+        },
+        |ctx| {
+            egui::TopBottomPanel::top("title_like_panel").show(ctx, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut title_text).id(other_focus_id));
+            });
+            harness.app.render_editor_panel(ctx);
+        },
+    );
+
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
     assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
 }
 
@@ -352,21 +292,19 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\n// beta\n");
-    harness.app.focus_editor_next = true;
 
     let ctx = egui::Context::default();
     configure_virtual_editor_test_ctx(&ctx);
     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
 
     let _ = run_virtual_editor_frame(&mut harness.app, &ctx, Vec::new());
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
 
     for _ in 0..6 {
         let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, Vec::new());
         assert!(focus_active_pre);
         assert!(ctx.memory(|m| m.has_focus(editor_id)));
-        assert!(harness.app.virtual_editor_state.has_focus);
     }
 
     let len = harness.app.virtual_editor_buffer.len_chars();
@@ -397,18 +335,19 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
 }
 
 #[test]
-fn virtual_editor_enter_in_first_focus_handoff_frame_inserts_top_newline() {
+fn virtual_editor_enter_in_focused_frame_inserts_top_newline() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\nbeta\n");
-    harness.app.focus_editor_next = true;
 
     let ctx = egui::Context::default();
     configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
     let enter_event = key_event(egui::Key::Enter, egui::Modifiers::default());
     let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![enter_event]);
 
-    assert!(!focus_active_pre);
+    assert!(focus_active_pre);
     assert_eq!(
         harness.app.virtual_editor_buffer.to_string(),
         "\nalpha\nbeta\n"
@@ -417,14 +356,15 @@ fn virtual_editor_enter_in_first_focus_handoff_frame_inserts_top_newline() {
 }
 
 #[test]
-fn virtual_editor_shift_arrow_in_first_focus_handoff_frame_extends_selection() {
+fn virtual_editor_shift_arrow_in_focused_frame_extends_selection() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\n");
-    harness.app.focus_editor_next = true;
 
     let ctx = egui::Context::default();
     configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
     let shift_right = key_event(
         egui::Key::ArrowRight,
         egui::Modifiers {
@@ -434,7 +374,7 @@ fn virtual_editor_shift_arrow_in_first_focus_handoff_frame_extends_selection() {
     );
     let focus_active_pre = run_virtual_editor_frame(&mut harness.app, &ctx, vec![shift_right]);
 
-    assert!(!focus_active_pre);
+    assert!(focus_active_pre);
     assert_eq!(harness.app.virtual_editor_state.cursor(), 1);
     assert_eq!(
         harness.app.virtual_editor_state.selection_range(),
@@ -792,110 +732,22 @@ fn undo_restores_full_cursor_for_long_lines() {
 
 #[test]
 fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
-    fn setup_selection(app: &mut LocalPasteApp) {
-        app.reset_virtual_editor("abcdef");
-        let len = app.virtual_editor_buffer.len_chars();
-        app.virtual_editor_state.set_cursor(1, len);
-        app.virtual_editor_state.move_cursor(4, len, true);
-    }
-
-    fn merge_apply(target: &mut VirtualApplyResult, src: VirtualApplyResult) {
-        target.changed |= src.changed;
-        target.copied |= src.copied;
-        target.cut |= src.cut;
-        target.pasted |= src.pasted;
-        target.cursor_moved |= src.cursor_moved;
-    }
-
-    fn route_and_apply(
-        app: &mut LocalPasteApp,
-        ctx: &egui::Context,
-        command: VirtualInputCommand,
-        focus_active_pre: bool,
-        focus_active_post: bool,
-        copy_ready_post: bool,
-    ) -> VirtualApplyResult {
-        let mut immediate = Vec::new();
-        let mut deferred_focus = Vec::new();
-        let mut deferred_copy = Vec::new();
-        match classify_virtual_command(&command, focus_active_pre) {
-            VirtualCommandBucket::ImmediateFocus => immediate.push(command),
-            VirtualCommandBucket::DeferredFocus => deferred_focus.push(command),
-            VirtualCommandBucket::DeferredCopy => deferred_copy.push(command),
-        }
-
-        let mut result = app.apply_virtual_commands(ctx, &immediate);
-        if focus_active_post {
-            merge_apply(
-                &mut result,
-                app.apply_virtual_commands(ctx, &deferred_focus),
-            );
-        }
-        if copy_ready_post {
-            merge_apply(&mut result, app.apply_virtual_commands(ctx, &deferred_copy));
-        }
-        result
-    }
-
-    let mut harness = make_app();
-    let ctx = egui::Context::default();
-    let blocked_commands = [
-        VirtualInputCommand::InsertText("X".to_string()),
-        VirtualInputCommand::Backspace { word: false },
-        VirtualInputCommand::DeleteForward { word: false },
-        VirtualInputCommand::Cut,
-        VirtualInputCommand::Paste("ZZ".to_string()),
-        VirtualInputCommand::ImeEnabled,
-        VirtualInputCommand::ImePreedit("Z".to_string()),
-        VirtualInputCommand::ImeCommit("Z".to_string()),
-        VirtualInputCommand::ImeDisabled,
-        VirtualInputCommand::MoveLeft {
-            select: false,
-            word: false,
-        },
-        VirtualInputCommand::SelectAll,
+    let mut command_modifiers = primary_command_modifiers();
+    command_modifiers.shift = false;
+    let events = vec![
+        egui::Event::Text("X".to_string()),
+        egui::Event::Paste("ZZ".to_string()),
+        egui::Event::Copy,
+        egui::Event::Cut,
+        egui::Event::Ime(egui::ImeEvent::Enabled),
+        egui::Event::Ime(egui::ImeEvent::Preedit("Z".to_string())),
+        egui::Event::Ime(egui::ImeEvent::Commit("Z".to_string())),
+        egui::Event::Ime(egui::ImeEvent::Disabled),
+        key_event(egui::Key::Delete, egui::Modifiers::default()),
+        key_event(egui::Key::A, command_modifiers),
     ];
 
-    for command in blocked_commands {
-        setup_selection(&mut harness.app);
-        let before_text = harness.app.virtual_editor_buffer.to_string();
-        let before_cursor = harness.app.virtual_editor_state.cursor();
-        let before_selection = harness.app.virtual_editor_state.selection_range();
-        let before_ime = harness.app.virtual_editor_state.ime.clone();
-        let result = route_and_apply(
-            &mut harness.app,
-            &ctx,
-            command,
-            false,
-            false,
-            true, // copy-ready because selection exists
-        );
-
-        assert_eq!(harness.app.virtual_editor_buffer.to_string(), before_text);
-        assert_eq!(harness.app.virtual_editor_state.cursor(), before_cursor);
-        assert_eq!(
-            harness.app.virtual_editor_state.selection_range(),
-            before_selection
-        );
-        assert_eq!(harness.app.virtual_editor_state.ime, before_ime);
-        assert!(!result.changed);
-        assert!(!result.cut);
-        assert!(!result.pasted);
-    }
-
-    setup_selection(&mut harness.app);
-    let before_text = harness.app.virtual_editor_buffer.to_string();
-    let result = route_and_apply(
-        &mut harness.app,
-        &ctx,
-        VirtualInputCommand::Copy,
-        false,
-        false,
-        true,
-    );
-    assert_eq!(harness.app.virtual_editor_buffer.to_string(), before_text);
-    assert!(!result.changed);
-    assert!(result.copied);
+    assert!(commands_from_events(&events, false).is_empty());
 }
 
 #[test]

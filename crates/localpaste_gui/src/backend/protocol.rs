@@ -52,6 +52,8 @@ pub enum CoreCmd {
     },
     /// Delete a paste by id.
     DeletePaste { id: String },
+    /// Restore a recently deleted paste from an undo token.
+    RestoreDeletedPaste { undo_token: String },
     /// List historical versions for a paste.
     ListPasteVersions { id: String, limit: usize },
     /// Load one historical version snapshot.
@@ -135,7 +137,9 @@ pub enum CoreEvent {
     /// Response confirming a paste's metadata was updated.
     PasteMetaSaved { paste: Paste },
     /// Response confirming a paste was deleted.
-    PasteDeleted { id: String },
+    PasteDeleted { id: String, undo_token: String },
+    /// Response confirming a paste was restored from delete undo.
+    PasteRestored { paste: Paste },
     /// Response containing historical version metadata rows for a paste.
     PasteVersionsLoaded { id: String, items: Vec<VersionMeta> },
     /// Response containing a historical version snapshot.

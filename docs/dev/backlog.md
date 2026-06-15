@@ -27,9 +27,19 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Add a muted second sidebar metadata line when a derived handle exists, now that persisted semantic retrieval metadata and hover/details surfaces are in place.
 - [ ] Split history-reset worker failures out from generic `CoreErrorSource::SaveContent` so reset-specific UI transitions and error reporting do not rely on shared save-content handling.
 - [ ] Evaluate code-editor-style smart Home behavior for the virtual editor (first non-whitespace <-> column 0) without regressing platform-native line/document key bindings.
+- [ ] Define the virtual editor accessibility contract and decide whether to publish a
+  read-only AccessKit text node with caret/selection metadata, or document bespoke
+  editor screen-reader support as out of scope for the current local-tool UX.
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
-- [ ] Work through the remaining `check-ast-dupes --include-tests` heuristic findings: either tighten visibility for `localpaste_core::db::versioning::{content_hash_hex, version_meta_for_content}` or document why `pub(crate)` stays, and decide whether the current near-miss pairs in `localpaste_server/tests/manual_language_create.rs` and `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` should be de-duplicated or kept as intentionally distinct coverage.
+- [ ] Work through the remaining `check-ast-dupes --include-tests` heuristic findings:
+  either tighten visibility for `localpaste_core::db::versioning::{content_hash_hex, version_meta_for_content}`
+  or document why `pub(crate)` stays, decide whether the duplicate oversized-diff/equal
+  test pairs in `crates/localpaste_core/src/db/paste/tests.rs` and
+  `crates/localpaste_server/tests/api_compare.rs` should share fixtures, and decide
+  whether the current near-miss pairs in `localpaste_server/tests/manual_language_create.rs`
+  and `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` should be de-duplicated
+  or kept as intentionally distinct coverage.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
 - [ ] Expand `verify-gui-packaging.yml` beyond macOS (at least Linux x64) so packaging script regressions are caught before release-tag runs.
 - [ ] Revisit `TransactionOps` create/delete/move wrapper consolidation with a lock-safe transaction template only if we can preserve operation-specific invariants and error semantics without reducing readability.

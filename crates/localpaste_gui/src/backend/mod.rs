@@ -357,8 +357,25 @@ mod tests {
             })
             .expect("send delete");
 
+        let undo_token = match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteDeleted { id, undo_token } => {
+                assert_eq!(id, created_id);
+                assert!(!undo_token.is_empty());
+                undo_token
+            }
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        backend
+            .cmd_tx
+            .send(CoreCmd::RestoreDeletedPaste { undo_token })
+            .expect("send restore");
+
         match recv_event(&backend.evt_rx) {
-            CoreEvent::PasteDeleted { id } => assert_eq!(id, created_id),
+            CoreEvent::PasteRestored { paste } => {
+                assert_eq!(paste.id, created_id);
+                assert_eq!(paste.content, "updated");
+            }
             other => panic!("unexpected event: {:?}", other),
         }
     }
@@ -565,7 +582,10 @@ mod tests {
             })
             .expect("send delete paste");
         match recv_event(&backend.evt_rx) {
-            CoreEvent::PasteDeleted { id } => assert_eq!(id, paste_id),
+            CoreEvent::PasteDeleted { id, undo_token } => {
+                assert_eq!(id, paste_id);
+                assert!(!undo_token.is_empty());
+            }
             other => panic!("unexpected event: {:?}", other),
         }
 

@@ -1,4 +1,4 @@
-//! Selection, caret, focus, and IME state for the virtual editor.
+//! Selection, caret, and IME state for the virtual editor.
 
 use std::ops::Range;
 
@@ -27,7 +27,6 @@ pub(crate) struct VirtualEditorState {
     anchor: Option<usize>,
     preferred_column: Option<usize>,
     wrap_boundary_affinity: WrapBoundaryAffinity,
-    pub(crate) has_focus: bool,
     pub(crate) ime: ImeState,
 }
 

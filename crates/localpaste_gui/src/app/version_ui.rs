@@ -17,6 +17,8 @@ use std::time::Instant;
 
 const MAX_DIFF_CANDIDATES: usize = 40;
 const RESET_TRANSITION_BLOCKED_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
+const RESET_FLUSH_BLOCKED_STATUS: &str =
+    "Saving current paste before reset; editor is temporarily read-only.";
 const VERSION_OVERLAY_MUTATION_BLOCKED_STATUS: &str =
     "Close the open version window before mutating the selected paste.";
 const VERSION_OVERLAY_SELECTION_BLOCKED_STATUS: &str =
@@ -47,6 +49,12 @@ struct DiffPreviewCacheKey {
     rhs_content_hash: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingHistoryReset {
+    paste_id: String,
+    version_id_ms: u64,
+}
+
 /// UI state for detached diff/history modals.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct VersionUiState {
@@ -57,6 +65,7 @@ pub(crate) struct VersionUiState {
     pub(super) history_loading_snapshot_id: Option<u64>,
     pub(super) history_reset_confirm_open: bool,
     pub(super) history_reset_confirm_target: Option<u64>,
+    history_reset_queued: Option<PendingHistoryReset>,
     pub(super) history_reset_in_flight_paste_id: Option<String>,
     active_snapshot_cache_key: Option<ActiveSnapshotCacheKey>,
     pub(super) active_snapshot_cache_text: String,
@@ -104,8 +113,32 @@ impl VersionUiState {
         self.history_reset_in_flight_paste_id = Some(paste_id);
     }
 
+    fn queue_history_reset_after_save(&mut self, paste_id: String, version_id_ms: u64) {
+        self.history_reset_queued = Some(PendingHistoryReset {
+            paste_id,
+            version_id_ms,
+        });
+    }
+
+    fn clear_history_reset_queue(&mut self) {
+        self.history_reset_queued = None;
+    }
+
     fn clear_history_reset_transition(&mut self) {
         self.history_reset_in_flight_paste_id = None;
+    }
+
+    fn history_reset_queued(&self) -> bool {
+        self.history_reset_queued.is_some()
+    }
+
+    fn history_reset_queued_for(&self, paste_id: Option<&str>) -> bool {
+        paste_id.is_some()
+            && self
+                .history_reset_queued
+                .as_ref()
+                .map(|pending| pending.paste_id.as_str())
+                == paste_id
     }
 
     fn history_reset_in_flight(&self) -> bool {
@@ -146,6 +179,7 @@ impl VersionUiState {
         self.history_modal_open = false;
         self.diff_modal_open = false;
         self.clear_history_selection();
+        self.clear_history_reset_queue();
         self.clear_diff_selection();
         self.clear_active_snapshot_cache();
     }
@@ -214,7 +248,9 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when modal ownership or reset fencing must block editor shortcuts.
     pub(super) fn editor_shortcuts_blocked(&self) -> bool {
-        self.reset_transition_active() || self.keyboard_overlay_open()
+        self.reset_transition_active()
+            || self.history_reset_flush_active()
+            || self.keyboard_overlay_open()
     }
 
     /// Reconciles deferred selection and visible selection after version ownership ends.
@@ -525,6 +561,15 @@ impl LocalPasteApp {
             .history_reset_in_flight_for(self.selected_id.as_deref())
     }
 
+    /// Returns whether a confirmed reset is waiting for dirty state to flush first.
+    ///
+    /// # Returns
+    /// `true` while the currently selected paste is saving before reset dispatch.
+    pub(super) fn history_reset_flush_active(&self) -> bool {
+        self.version_ui
+            .history_reset_queued_for(self.selected_id.as_deref())
+    }
+
     /// Returns whether `paste_id` is still awaiting a reset ack/error.
     ///
     /// # Returns
@@ -561,6 +606,8 @@ impl LocalPasteApp {
     pub(super) fn selection_transition_block_reason(&self) -> Option<&'static str> {
         if self.reset_transition_active() {
             Some(RESET_TRANSITION_BLOCKED_STATUS)
+        } else if self.history_reset_flush_active() {
+            Some(RESET_FLUSH_BLOCKED_STATUS)
         } else if self.version_overlay_open() {
             Some(VERSION_OVERLAY_SELECTION_BLOCKED_STATUS)
         } else {
@@ -580,6 +627,8 @@ impl LocalPasteApp {
     pub(super) fn mutation_shortcut_block_reason(&self) -> Option<&'static str> {
         if let Some(reason) = self.save_block_reason() {
             Some(reason)
+        } else if self.history_reset_flush_active() {
+            Some(RESET_FLUSH_BLOCKED_STATUS)
         } else if self.version_overlay_open() {
             Some(VERSION_OVERLAY_MUTATION_BLOCKED_STATUS)
         } else {
@@ -592,17 +641,21 @@ impl LocalPasteApp {
     /// # Returns
     /// `Some(reason)` when another reset is pending or local save state is not clean.
     pub(super) fn history_reset_queue_block_reason(&self) -> Option<&'static str> {
-        if self.version_ui.history_reset_in_flight() {
+        if self.version_ui.history_reset_in_flight() || self.version_ui.history_reset_queued() {
             return Some("Reset is unavailable while another history reset is still in progress.");
         }
-        if self.save_status != SaveStatus::Saved
+        None
+    }
+
+    /// Reports whether reset must first flush content or metadata state.
+    ///
+    /// # Returns
+    /// `true` when reset should queue behind dirty or in-flight local saves.
+    pub(super) fn history_reset_flush_needed(&self) -> bool {
+        self.save_status != SaveStatus::Saved
             || self.save_in_flight
             || self.metadata_dirty
             || self.metadata_save_in_flight
-        {
-            return Some("Reset is unavailable while local changes are unsaved or saving.");
-        }
-        None
     }
 
     /// Reports the shared read-only status used while reset temporarily fences mutations.
@@ -656,6 +709,14 @@ impl LocalPasteApp {
         let Some(id) = self.selected_id.clone() else {
             return;
         };
+        if self.history_reset_flush_needed() {
+            self.version_ui
+                .queue_history_reset_after_save(id, version_id_ms);
+            self.version_ui.clear_history_reset_confirm();
+            self.dispatch_history_reset_flush_saves();
+            return;
+        }
+
         if self
             .backend
             .cmd_tx
@@ -670,6 +731,67 @@ impl LocalPasteApp {
         }
         self.version_ui.begin_history_reset_for(id);
         self.version_ui.clear_history_reset_confirm();
+        self.set_status("Resetting paste to selected version...");
+    }
+
+    fn dispatch_history_reset_flush_saves(&mut self) {
+        let content_save_needed = self.save_status == SaveStatus::Dirty;
+        let metadata_save_needed = self.metadata_dirty;
+        if content_save_needed {
+            self.save_now();
+        }
+        if metadata_save_needed {
+            self.save_metadata_now();
+        }
+
+        let content_dispatch_failed =
+            content_save_needed && !self.save_in_flight && self.save_status == SaveStatus::Dirty;
+        let metadata_dispatch_failed =
+            metadata_save_needed && !self.metadata_save_in_flight && self.metadata_dirty;
+        if content_dispatch_failed || metadata_dispatch_failed {
+            self.version_ui.clear_history_reset_queue();
+            return;
+        }
+
+        self.set_status("Saving current paste before reset...");
+        self.maybe_continue_queued_history_reset();
+    }
+
+    /// Clears a queued save-then-reset request after a matching save failure.
+    pub(super) fn cancel_queued_history_reset(&mut self) {
+        if self.version_ui.history_reset_queued() {
+            self.version_ui.clear_history_reset_queue();
+        }
+    }
+
+    /// Continues a queued history reset once dirty content and metadata are saved.
+    pub(super) fn maybe_continue_queued_history_reset(&mut self) {
+        let Some(pending) = self.version_ui.history_reset_queued.clone() else {
+            return;
+        };
+        if self.selected_id.as_deref() != Some(pending.paste_id.as_str()) {
+            self.version_ui.clear_history_reset_queue();
+            self.set_status("Reset cancelled because the selected paste changed.");
+            return;
+        }
+        if self.history_reset_flush_needed() {
+            return;
+        }
+        if self
+            .backend
+            .cmd_tx
+            .send(CoreCmd::ResetPasteHardToVersion {
+                id: pending.paste_id.clone(),
+                version_id_ms: pending.version_id_ms,
+            })
+            .is_err()
+        {
+            self.version_ui.clear_history_reset_queue();
+            self.set_status("Reset hard failed: backend unavailable.");
+            return;
+        }
+        self.version_ui.clear_history_reset_queue();
+        self.version_ui.begin_history_reset_for(pending.paste_id);
         self.set_status("Resetting paste to selected version...");
     }
 
