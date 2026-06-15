@@ -16,7 +16,7 @@ fn version_id_from_millis(ms: i64) -> u64 {
 ///
 /// # Returns
 /// Lowercase BLAKE3 hex digest.
-pub(crate) fn content_hash_hex(content: &str) -> String {
+fn content_hash_hex(content: &str) -> String {
     blake3::hash(content.as_bytes()).to_hex().to_string()
 }
 
@@ -28,7 +28,7 @@ pub(crate) fn content_hash_hex(content: &str) -> String {
 ///
 /// # Returns
 /// A [`VersionMeta`] row for `content`.
-pub(crate) fn version_meta_for_content(
+fn version_meta_for_content(
     content: &str,
     language: Option<&str>,
     language_is_manual: bool,

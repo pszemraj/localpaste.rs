@@ -5,6 +5,7 @@ use super::editor_panel_virtual::VirtualEditorRenderOptions;
 use super::properties_drawer::{
     apply_language_choice, auto_language_choice_key, render_language_choice_combo,
 };
+use crate::app::util::parse_tags_csv;
 use eframe::egui;
 
 impl LocalPasteApp {
@@ -22,7 +23,10 @@ impl LocalPasteApp {
                     && ctx.memory(|m| m.has_focus(editor_id));
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
-                let visible_tags = compact_header_tags(self.edit_tags.as_str());
+                let visible_tags = parse_tags_csv(self.edit_tags.as_str())
+                    .into_iter()
+                    .take(4)
+                    .collect::<Vec<_>>();
                 let mutation_block_reason = self.mutation_shortcut_block_reason();
                 let save_blocked = self.save_block_reason().is_some();
                 let background_mutation_blocked = mutation_block_reason.is_some();
@@ -377,27 +381,6 @@ fn non_focusable_small_toolbar_button(
     label: impl Into<egui::WidgetText>,
 ) -> egui::Response {
     ui.add(toolbar_button(label).small())
-}
-
-fn compact_header_tags(input: &str) -> Vec<String> {
-    let mut tags = Vec::new();
-    for tag in input.split(',') {
-        let trimmed = tag.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if tags
-            .iter()
-            .any(|existing: &String| existing.eq_ignore_ascii_case(trimmed))
-        {
-            continue;
-        }
-        tags.push(trimmed.to_string());
-        if tags.len() >= 4 {
-            break;
-        }
-    }
-    tags
 }
 
 fn apply_compact_meta_row_style(ui: &mut egui::Ui) {

@@ -140,28 +140,6 @@ const COMMAND_NAME_PREFIXES: &[&str] = &[
     "torchrun ",
 ];
 
-/// Parses comma-separated tags, trimming whitespace and removing case-insensitive duplicates.
-///
-/// # Returns
-/// Ordered unique tag list preserving first-seen casing.
-pub(super) fn parse_tags_csv(input: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for tag in input.split(',') {
-        let trimmed = tag.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if out
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(trimmed))
-        {
-            continue;
-        }
-        out.push(trimmed.to_string());
-    }
-    out
-}
-
 fn language_in_set(language: Option<&str>, values: &[&str]) -> bool {
     let Some(language) = language.map(str::trim).filter(|value| !value.is_empty()) else {
         return false;
@@ -356,12 +334,6 @@ pub(super) fn sanitize_filename(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_tags_csv_trims_and_dedupes_case_insensitively() {
-        let parsed = parse_tags_csv(" rust,CLI, rust , cli ,");
-        assert_eq!(parsed, vec!["rust".to_string(), "CLI".to_string()]);
-    }
 
     #[test]
     fn language_extension_maps_known_and_unknown_languages() {

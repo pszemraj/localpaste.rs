@@ -123,18 +123,31 @@ fn diff_resolution_uses_one_read_snapshot_for_both_refs() {
 }
 
 #[test]
-fn diff_rejects_oversized_requests_before_rendering_response() {
-    let (_db, paste_db, _dir) = setup_paste_db();
-    let oversized = "x".repeat((MAX_DIFF_INPUT_BYTES / 2) + 1);
-    let left = Paste::new(oversized.clone(), "left".to_string());
-    let right = Paste::new(oversized, "right".to_string());
-    let left_id = left.id.clone();
-    let right_id = right.id.clone();
-    paste_db.create(&left).expect("create left");
-    paste_db.create(&right).expect("create right");
+fn compare_rejects_oversized_requests_before_loading_payloads() {
+    enum ComparePath {
+        Diff,
+        Equal,
+    }
 
-    let err = paste_db
-        .diff(&DiffRequest {
+    let cases = [
+        (ComparePath::Diff, "oversized diff should be rejected"),
+        (
+            ComparePath::Equal,
+            "oversized equality check should be rejected",
+        ),
+    ];
+
+    for (path, expectation) in cases {
+        let (_db, paste_db, _dir) = setup_paste_db();
+        let oversized = "x".repeat((MAX_DIFF_INPUT_BYTES / 2) + 1);
+        let left = Paste::new(oversized.clone(), "left".to_string());
+        let right = Paste::new(oversized, "right".to_string());
+        let left_id = left.id.clone();
+        let right_id = right.id.clone();
+        paste_db.create(&left).expect("create left");
+        paste_db.create(&right).expect("create right");
+
+        let request = DiffRequest {
             left: DiffRef {
                 paste_id: left_id,
                 version_id_ms: None,
@@ -143,43 +156,17 @@ fn diff_rejects_oversized_requests_before_rendering_response() {
                 paste_id: right_id,
                 version_id_ms: None,
             },
-        })
-        .expect_err("oversized diff should be rejected");
+        };
+        let err = match path {
+            ComparePath::Diff => paste_db.diff(&request).expect_err(expectation),
+            ComparePath::Equal => paste_db.equal(&request).expect_err(expectation),
+        };
 
-    assert!(
-        matches!(err, AppError::PayloadTooLarge(ref message) if message.contains("Combined diff input exceeds")),
-        "expected payload-too-large diff error, got {err:?}"
-    );
-}
-
-#[test]
-fn equal_rejects_oversized_requests_before_loading_compare_payloads() {
-    let (_db, paste_db, _dir) = setup_paste_db();
-    let oversized = "x".repeat((MAX_DIFF_INPUT_BYTES / 2) + 1);
-    let left = Paste::new(oversized.clone(), "left".to_string());
-    let right = Paste::new(oversized, "right".to_string());
-    let left_id = left.id.clone();
-    let right_id = right.id.clone();
-    paste_db.create(&left).expect("create left");
-    paste_db.create(&right).expect("create right");
-
-    let err = paste_db
-        .equal(&DiffRequest {
-            left: DiffRef {
-                paste_id: left_id,
-                version_id_ms: None,
-            },
-            right: DiffRef {
-                paste_id: right_id,
-                version_id_ms: None,
-            },
-        })
-        .expect_err("oversized equality check should be rejected");
-
-    assert!(
-        matches!(err, AppError::PayloadTooLarge(ref message) if message.contains("Combined diff input exceeds")),
-        "expected payload-too-large equality error, got {err:?}"
-    );
+        assert!(
+            matches!(err, AppError::PayloadTooLarge(ref message) if message.contains("Combined diff input exceeds")),
+            "expected payload-too-large compare error, got {err:?}"
+        );
+    }
 }
 
 #[test]

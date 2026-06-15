@@ -2,7 +2,7 @@
 
 mod filters;
 
-use super::util::format_fenced_code_block;
+use super::util::{format_fenced_code_block, parse_tags_csv};
 use super::{
     ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
     SidebarCollection, ToastAction, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
@@ -18,7 +18,7 @@ use tracing::warn;
 
 use self::filters::{
     language_extension, matches_semantic_collection, normalize_language_filter_value,
-    parse_tags_csv, sanitize_filename,
+    sanitize_filename,
 };
 
 impl LocalPasteApp {

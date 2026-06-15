@@ -226,7 +226,9 @@ pub fn derive_name_from_content(content: &str, language: Option<&str>) -> Option
             continue;
         }
 
-        if let Some(name) = extract_definition_name(candidate, &lang) {
+        if let Some(name) =
+            crate::semantic::extract_definition_handle_from_line(candidate, Some(lang.as_str()))
+        {
             return Some(truncate_name(name.as_str(), 48));
         }
 
@@ -252,30 +254,6 @@ fn truncate_name(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect::<String>()
 }
 
-fn extract_definition_name(line: &str, language: &str) -> Option<String> {
-    let patterns: &[&str] = match language {
-        "rust" => &["fn ", "struct ", "enum ", "trait ", "impl "],
-        "python" => &["def ", "class ", "async def "],
-        "javascript" | "typescript" => &["function ", "class ", "const ", "export "],
-        "go" => &["func ", "type ", "package "],
-        _ => return None,
-    };
-
-    for pattern in patterns {
-        if let Some(rest) = line.strip_prefix(pattern) {
-            let ident: String = rest
-                .chars()
-                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-                .collect();
-            if !ident.is_empty() {
-                return Some(format!("{} {}", pattern.trim(), ident));
-            }
-        }
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +266,11 @@ mod tests {
                 "fn handle_request(req: Request) -> Response {}",
                 Some("rust"),
                 Some("fn handle_request"),
+            ),
+            (
+                "export function renderPanel() {}",
+                Some("typescript"),
+                Some("export function renderPanel"),
             ),
         ];
         for (content, language, expected) in cases {

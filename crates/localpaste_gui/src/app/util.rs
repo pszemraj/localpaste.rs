@@ -60,6 +60,28 @@ pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) ->
     format!("```{}\n{}\n```", lang, content)
 }
 
+/// Parses comma-separated tags, trimming whitespace and removing case-insensitive duplicates.
+///
+/// # Returns
+/// Ordered unique tag list preserving first-seen casing.
+pub(super) fn parse_tags_csv(input: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tag in input.split(',') {
+        let trimmed = tag.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if out
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(trimmed))
+        {
+            continue;
+        }
+        out.push(trimmed.to_string());
+    }
+    out
+}
+
 /// Builds a copyable API URL for the selected paste.
 ///
 /// Unspecified bind addresses (0.0.0.0 / ::) are rewritten to loopback so the
@@ -161,7 +183,8 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
 #[cfg(test)]
 mod tests {
     use super::{
-        api_paste_link_for_copy, display_language_label, format_fenced_code_block, word_range_at,
+        api_paste_link_for_copy, display_language_label, format_fenced_code_block, parse_tags_csv,
+        word_range_at,
     };
 
     #[test]
@@ -198,6 +221,12 @@ mod tests {
         assert_eq!(display_language_label(Some("txt"), false, false), "plain");
         assert_eq!(display_language_label(Some("rust"), false, false), "rust");
         assert_eq!(display_language_label(Some("rust"), false, true), "plain");
+    }
+
+    #[test]
+    fn parse_tags_csv_trims_and_dedupes_case_insensitively() {
+        let parsed = parse_tags_csv(" rust,CLI, rust , cli ,");
+        assert_eq!(parsed, vec!["rust".to_string(), "CLI".to_string()]);
     }
 
     fn selected(text: &str, range: (usize, usize)) -> String {
