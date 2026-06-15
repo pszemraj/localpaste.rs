@@ -1,29 +1,19 @@
 # LocalPaste.rs
 
-Your local scratch layer for technical text that should be easy to save,
-search, edit, diff, and recover.
+Your local scratch layer for technical text that should be easy to save, search, edit, diff, and recover.
 
 ![LocalPaste Screenshot](assets/ui.jpg)
 
-LocalPaste is for the text that lives between your clipboard, a repo, and a
-formal document: code snippets, logs, stack traces, config fragments, prompts,
-queries, links, notes, and half-formed fixes you do not want to lose.
+LocalPaste is for the text that lives between your clipboard, a repo, and a formal document: code snippets, logs, stack traces, config fragments, prompts, queries, links, notes, and half-formed fixes you do not want to lose.
 
-It is local-first by design. The desktop app is the main workspace, backed by an
-embedded database on your machine. A localhost API and the `lpaste` CLI can use
-the same store, so terminal capture, scripts, and the GUI can fit into one
-workflow without sending sensitive material to a cloud pastebin.
+It is local-first by design. The desktop app is the main workspace, backed by an embedded database on your machine. A localhost API and the `lpaste` CLI can use the same store, so terminal capture, scripts, and the GUI can fit into one workflow without sending sensitive material to a cloud pastebin.
 
 > [!WARNING]
-> Keep exactly one writer process per `DB_PATH` (`localpaste-gui` or standalone
-> `localpaste`). If the GUI is open, use its embedded localhost API instead of
-> starting a second standalone server on the same database.
+> Keep exactly one writer process per `DB_PATH` (`localpaste-gui` or standalone `localpaste`). If the GUI is open, use its embedded localhost API instead of starting a second standalone server on the same database.
 
 ## Why It Exists
 
-Clipboard history is too transient. A repo is too heavy for every useful
-fragment. Cloud pastebins are the wrong default for secrets, logs, client data,
-and work-in-progress.
+Clipboard history is too transient. A repo is too heavy for every useful fragment. Cloud pastebins are the wrong default for secrets, logs, client data, and work-in-progress.
 
 LocalPaste gives those scraps a durable home:
 
@@ -35,22 +25,13 @@ LocalPaste gives those scraps a durable home:
 
 ## Highlights
 
-- **Fast capture**: paste into the app, or pipe text from the terminal. In the
-  GUI, paste shortcuts outside the editor can create a new paste directly.
-- **Technical-text editor**: syntax highlighting, language detection with
-  Magika plus heuristic fallback, manual language overrides, large-buffer
-  behavior, undo/redo, and keyboard-focused editing.
-- **Searchable library**: recent items, smart collections, tags, language
-  filters, metadata search, and full-content search help old fragments stay
-  findable.
-- **Version history**: content edits are snapshotted. You can inspect history,
-  diff versions, duplicate an older snapshot, or hard-reset a paste.
-- **Recovery paths**: destructive GUI delete flows use an undo window, and
-  version history preserves earlier content until retention pruning applies.
-- **Three interfaces, one local store**: native GUI (`localpaste-gui`),
-  headless server (`localpaste`), and CLI (`lpaste`) share the same data model.
-- **Local by default**: loopback binding, on-disk storage, no account, and no
-  network dependency for day-to-day use.
+- **Fast capture**: paste into the app, or pipe text from the terminal. In the GUI, paste shortcuts outside the editor can create a new paste directly.
+- **Technical-text editor**: syntax highlighting, language detection with Magika plus heuristic fallback, manual language overrides, large-buffer behavior, undo/redo, and keyboard-focused editing.
+- **Searchable library**: recent items, smart collections, tags, language filters, metadata search, and full-content search help old fragments stay findable.
+- **Version history**: content edits are snapshotted. You can inspect history, diff versions, duplicate an older snapshot, or hard-reset a paste.
+- **Recovery paths**: destructive GUI delete flows use an undo window, and version history preserves earlier content until retention pruning applies.
+- **Three interfaces, one local store**: native GUI (`localpaste-gui`), headless server (`localpaste`), and CLI (`lpaste`) share the same data model.
+- **Local by default**: loopback binding, on-disk storage, no account, and no network dependency for day-to-day use.
 
 ## Quick Start
 
@@ -77,8 +58,7 @@ echo "hello from quickstart" | cargo run -p localpaste_cli --bin lpaste -- new -
 cargo run -p localpaste_cli --bin lpaste -- list --limit 5
 ```
 
-If the server is not on the default endpoint, pass `--server` or set
-`LP_SERVER`:
+If the server is not on the default endpoint, pass `--server` or set `LP_SERVER`:
 
 ```bash
 export LP_SERVER="http://127.0.0.1:38973"
@@ -88,8 +68,7 @@ export LP_SERVER="http://127.0.0.1:38973"
 $env:LP_SERVER = "http://127.0.0.1:38973"
 ```
 
-When the GUI is already running, `lpaste` can usually discover the GUI's
-embedded API for the same `DB_PATH`:
+When the GUI is already running, `lpaste` can usually discover the GUI's embedded API for the same `DB_PATH`:
 
 ```bash
 lpaste list --limit 20
@@ -99,23 +78,16 @@ lpaste get <paste-id>
 
 ## Configuration Notes
 
-- `localpaste_gui` and `localpaste_server` enable Magika-backed language
-  detection by default.
+- `localpaste_gui` and `localpaste_server` enable Magika-backed language detection by default.
 - `localpaste_cli` stays heuristic-only by default.
-- Version snapshots default to a five-minute archive interval and a retention
-  cap of 200 stored snapshots per paste.
-- Server exposure, CORS behavior, size limits, backup settings, and version
-  history environment variables are documented in
-  [`docs/security.md`](docs/security.md).
+- Version snapshots default to a five-minute archive interval and a retention cap of 200 stored snapshots per paste.
+- Server exposure, CORS behavior, size limits, backup settings, and version history environment variables are documented in [`docs/security.md`](docs/security.md).
 
 ## Releases
 
-GitHub Releases publish desktop GUI assets under `localpaste-*` filenames.
-The CLI (`lpaste`) and standalone server (`localpaste`) are source-built with
-Cargo.
+GitHub Releases publish desktop GUI assets under `localpaste-*` filenames. The CLI (`lpaste`) and standalone server (`localpaste`) are source-built with Cargo.
 
-Artifact names, platform coverage, checksums, and macOS signing/notarization
-behavior are documented in [`docs/release-gui.md`](docs/release-gui.md).
+Artifact names, platform coverage, checksums, and macOS signing/notarization behavior are documented in [`docs/release-gui.md`](docs/release-gui.md).
 
 ## Documentation
 
