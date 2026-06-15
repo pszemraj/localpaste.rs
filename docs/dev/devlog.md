@@ -96,8 +96,11 @@ cargo check --workspace --all-targets --all-features
 # 4) LoC policy check
 cargo run -p localpaste_tools --bin check-loc -- --max-lines 1000 --warn-lines 900
 
-# 5) duplicate/dead-symbol audit (required on refactors)
+# 5) duplicate/dead-symbol audit
 cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
+
+# For broad refactors or test-suite consolidation, include tests in the audit.
+cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates --include-tests
 
 # 6) targeted tests for touched areas
 # cargo test -p <crate>

@@ -107,27 +107,7 @@ sequenceDiagram
 
 ## 3) Storage Design
 
-Storage contract and compatibility policy are defined in
-[storage.md](storage.md).
-Architecture summary:
-
-Primary tables:
-
-- `pastes`: authoritative full paste rows.
-- `folders`: authoritative folder rows.
-- `folders_deleting`: in-progress delete markers for folder-tree operations.
-
-Derived/index tables:
-
-- `pastes_meta`: metadata projection for list/search.
-- `pastes_by_updated`: recency ordering index keyed by `(reverse_millis, paste_id)`.
-- `paste_versions_meta`: newest-first historical snapshot metadata per paste.
-- `paste_versions_content`: historical snapshot content keyed by `(paste_id, version_id_ms)`.
-
-`pastes_meta` carries the search/list projection, including derived retrieval
-metadata (`kind`, compact `handle`, top `terms`). `pastes_meta_state` stores the
-projection schema version; startup rebuilds the projection from authoritative
-paste rows when that marker is missing or stale.
+Storage layout, projection tables, version-history storage, durability, and compatibility policy are defined in [storage.md](storage.md).
 
 Primary implementation:
 
@@ -177,10 +157,7 @@ Version and diff surfaces:
 - `/api/paste/:id/versions*` supports list/get/reset-hard/duplicate for historical snapshots.
 - `/api/diff` compares head or historical paste references and rejects combined
   diff sources above 1 MiB with `413 Payload Too Large`.
-- Content-changing writes may persist an older-head snapshot based on `LOCALPASTE_VERSION_INTERVAL_SECS`.
-- Version retention keeps the newest `LOCALPASTE_VERSION_RETENTION_LIMIT`
-  historical snapshots per paste and prunes older snapshot content in the same
-  transaction that records a new version.
+- Content-changing writes may persist an older-head snapshot. Snapshot interval and retention behavior are defined in [storage.md#version-history-storage](storage.md#version-history-storage).
 
 Read behavior:
 

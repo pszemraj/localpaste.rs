@@ -1,16 +1,33 @@
 # Storage Contract
 
-## Backend and File Layout
+## Backend And File Layout
 
 - Storage backend: `redb` 3.x.
 - Database file: `DB_PATH/data.redb`.
 - Writer coordination lock file: `DB_PATH/db.owner.lock`.
 - Embedded GUI endpoint discovery file (GUI runtime only): `DB_PATH/.api-addr`.
-- `pastes_meta` is a derived projection used for list/search/filter work,
-  including derived retrieval metadata (`kind`, compact `handle`, top `terms`).
-- `pastes_meta_state` stores the projection schema version; startup rebuilds
-  `pastes_meta` from authoritative paste rows only when that marker is missing
-  or stale.
+
+## Tables And Projections
+
+Authoritative tables:
+
+- `pastes`: full paste rows.
+- `folders`: folder rows.
+- `folders_deleting`: in-progress delete markers for folder-tree operations.
+
+Derived/index tables:
+
+- `pastes_meta`: list/search/filter projection, including derived retrieval metadata (`kind`, compact `handle`, top `terms`).
+- `pastes_meta_state`: projection schema marker; startup rebuilds `pastes_meta` from authoritative paste rows when the marker is missing or stale.
+- `pastes_by_updated`: recency index keyed by `(reverse_millis, paste_id)`.
+- `paste_versions_meta`: newest-first historical snapshot metadata per paste.
+- `paste_versions_content`: historical snapshot content keyed by `(paste_id, version_id_ms)`.
+
+## Version History Storage
+
+Content-changing writes may archive the outgoing head content as a historical snapshot. Snapshot interval and retention settings are listed in [security.md#environment-variables](security.md#environment-variables).
+
+Retention pruning keeps the newest configured snapshot metadata rows and removes older matching `paste_versions_content` rows in the same write transaction that records a new version.
 
 ## Compatibility Policy
 
