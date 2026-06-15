@@ -439,22 +439,6 @@ impl PasteDb {
         Ok(deleted)
     }
 
-    /// Delete a paste and return the deleted canonical row.
-    ///
-    /// This preserves the legacy caller contract while
-    /// [`Self::delete_and_return_bundle`] is used by undo-capable paths.
-    ///
-    /// # Returns
-    /// `Ok(Some(paste))` when deleted, `Ok(None)` when missing.
-    ///
-    /// # Errors
-    /// Returns an error when storage access or deserialization fails.
-    pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
-        Ok(self
-            .delete_and_return_bundle(id)?
-            .map(|bundle| bundle.paste))
-    }
-
     /// Delete a paste by id.
     ///
     /// # Returns
@@ -463,7 +447,7 @@ impl PasteDb {
     /// # Errors
     /// Returns an error when storage or deserialization fails.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
-        Ok(self.delete_and_return(id)?.is_some())
+        Ok(self.delete_and_return_bundle(id)?.is_some())
     }
 
     fn normalized_version_limit(limit: Option<usize>) -> usize {
