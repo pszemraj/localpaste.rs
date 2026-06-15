@@ -33,17 +33,18 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 
 ### Network Configuration
 
-| Variable              | Default           | Description                                                           |
-| --------------------- | ----------------- | --------------------------------------------------------------------- |
-| `PORT`                | `38411`           | Listener port used when `BIND` is unset                               |
-| `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback requires `ALLOW_PUBLIC_ACCESS=1`)   |
-| `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind               |
-| `MAX_PASTE_SIZE`      | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend) |
-| `AUTO_BACKUP`         | disabled          | Create DB backup on startup when existing DB is present               |
-| `LOCALPASTE_VERSION_INTERVAL_SECS` | `300` | Minimum seconds between persisted historical snapshots (`>= 1`) |
-| `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` | unset | Legacy fallback key for `LOCALPASTE_VERSION_INTERVAL_SECS` |
+| Variable                                      | Default           | Description                                                           |
+| --------------------------------------------- | ----------------- | --------------------------------------------------------------------- |
+| `PORT`                                        | `38411`           | Listener port used when `BIND` is unset                               |
+| `BIND`                                        | `127.0.0.1:38411` | Server bind address (non-loopback requires `ALLOW_PUBLIC_ACCESS=1`)   |
+| `ALLOW_PUBLIC_ACCESS`                         | disabled          | Enable CORS for all origins and allow non-loopback bind               |
+| `MAX_PASTE_SIZE`                              | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend) |
+| `AUTO_BACKUP`                                 | disabled          | Create DB backup on startup when existing DB is present               |
+| `LOCALPASTE_VERSION_INTERVAL_SECS`            | `300`             | Minimum seconds between persisted historical snapshots (`>= 1`)       |
+| `LOCALPASTE_VERSION_RETENTION_LIMIT`          | `200`             | Maximum historical snapshots retained per paste (`>= 1`)              |
+| `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS`      | unset             | Legacy fallback key for `LOCALPASTE_VERSION_INTERVAL_SECS`            |
 
-`localpaste` startup fails fast on malformed `BIND`/`PORT`/size/boolean/snapshot-interval env values so invalid deployment configuration is explicit.
+`localpaste` startup fails fast on malformed `BIND`/`PORT`/size/boolean/snapshot env values so invalid deployment configuration is explicit.
 Reference defaults/examples: [`.env.example`](../.env.example).
 
 ### Security Headers

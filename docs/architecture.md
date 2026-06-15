@@ -178,6 +178,9 @@ Version and diff surfaces:
 - `/api/diff` compares head or historical paste references and rejects combined
   diff sources above 1 MiB with `413 Payload Too Large`.
 - Content-changing writes may persist an older-head snapshot based on `LOCALPASTE_VERSION_INTERVAL_SECS`.
+- Version retention keeps the newest `LOCALPASTE_VERSION_RETENTION_LIMIT`
+  historical snapshots per paste and prunes older snapshot content in the same
+  transaction that records a new version.
 
 Read behavior:
 

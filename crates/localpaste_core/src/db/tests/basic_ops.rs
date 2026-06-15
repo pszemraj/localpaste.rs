@@ -90,19 +90,36 @@ fn from_shared_reuses_folder_transaction_lock_for_same_shared_db() {
 }
 
 #[test]
-fn database_new_uses_default_version_interval_on_invalid_env_in_permissive_callers() {
+fn database_new_uses_default_version_settings_on_invalid_env_in_permissive_callers() {
     let _lock = env_lock().lock().expect("env lock");
-    let (db, _temp_dir) = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "invalid");
-        let temp_dir = tempfile::TempDir::new().expect("temp dir");
-        let db_path = temp_dir.path().join("db");
-        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
-        (db, temp_dir)
-    });
-    assert_eq!(
-        db.pastes.version_interval_secs(),
-        crate::constants::DEFAULT_PASTE_VERSION_INTERVAL_SECS
-    );
+
+    {
+        let (db, _temp_dir) = with_db_init_test_lock(|| {
+            let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "invalid");
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let db_path = temp_dir.path().join("db");
+            let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+            (db, temp_dir)
+        });
+        assert_eq!(
+            db.pastes.version_interval_secs(),
+            crate::constants::DEFAULT_PASTE_VERSION_INTERVAL_SECS
+        );
+    }
+
+    {
+        let (db, _temp_dir) = with_db_init_test_lock(|| {
+            let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "invalid");
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let db_path = temp_dir.path().join("db");
+            let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+            (db, temp_dir)
+        });
+        assert_eq!(
+            db.pastes.version_retention_limit(),
+            crate::constants::DEFAULT_PASTE_VERSION_RETENTION_LIMIT
+        );
+    }
 }
 
 #[test]
@@ -254,6 +271,79 @@ fn content_update_archives_middle_version_after_wait_since_last_archive() {
         .expect("oldest version exists");
     assert_eq!(newest.content, "v2");
     assert_eq!(oldest.content, "v1");
+}
+
+#[test]
+fn content_update_prunes_versions_past_retention_limit() {
+    let _lock = env_lock().lock().expect("env lock");
+    let (db, _temp) = with_db_init_test_lock(|| {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+        (db, temp_dir)
+    });
+
+    let paste = Paste::new("v1".to_string(), "retention-direct".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v2"), None, None, None),
+        "update to v2",
+    );
+    let pruned_version_id = db
+        .pastes
+        .list_versions(&paste_id, Some(1))
+        .expect("list versions after first update")
+        .expect("paste exists")[0]
+        .version_id_ms;
+
+    std::thread::sleep(Duration::from_millis(1100));
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v3"), None, None, None),
+        "update to v3",
+    );
+
+    std::thread::sleep(Duration::from_millis(1100));
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v4"), None, None, None),
+        "update to v4",
+    );
+
+    let versions = db
+        .pastes
+        .list_versions(&paste_id, Some(10))
+        .expect("list versions")
+        .expect("paste exists");
+    assert_eq!(versions.len(), 2);
+
+    let newest = db
+        .pastes
+        .get_version(&paste_id, versions[0].version_id_ms)
+        .expect("load newest version")
+        .expect("newest version exists");
+    let older_retained = db
+        .pastes
+        .get_version(&paste_id, versions[1].version_id_ms)
+        .expect("load older retained version")
+        .expect("older retained version exists");
+    assert_eq!(newest.content, "v3");
+    assert_eq!(older_retained.content, "v2");
+    assert!(
+        db.pastes
+            .get_version(&paste_id, pruned_version_id)
+            .expect("load pruned version")
+            .is_none(),
+        "pruned metadata/content should no longer be addressable"
+    );
 }
 
 #[test]

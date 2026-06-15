@@ -107,6 +107,29 @@ pub(crate) fn encode_version_meta_list(items: &[VersionMeta]) -> Result<Vec<u8>,
     Ok(bincode::serialize(items)?)
 }
 
+/// Keep the newest `limit` metadata rows and return pruned older rows.
+///
+/// Version metadata is stored newest-first, so pruning is a tail split. Callers
+/// must remove matching rows from `PASTE_VERSIONS_CONTENT` in the same write
+/// transaction before persisting the truncated metadata list.
+///
+/// # Arguments
+/// - `items`: Newest-first version metadata list to truncate in place.
+/// - `limit`: Maximum number of rows to retain.
+///
+/// # Returns
+/// Metadata rows removed from the retained list.
+pub(crate) fn prune_version_meta_to_limit(
+    items: &mut Vec<VersionMeta>,
+    limit: usize,
+) -> Vec<VersionMeta> {
+    if items.len() <= limit {
+        Vec::new()
+    } else {
+        items.split_off(limit)
+    }
+}
+
 /// Returns whether a new version should be persisted.
 ///
 /// # Arguments

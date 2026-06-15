@@ -292,6 +292,126 @@ fn content_change_during_folder_moves_archives_middle_version_after_wait() {
 }
 
 #[test]
+fn content_change_during_folder_moves_prunes_versions_past_retention_limit() {
+    let _lock = env_lock().lock().expect("env lock");
+    let fixture = with_db_init_test_lock(|| {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+
+        let old_folder = Folder::new("old-folder".to_string());
+        let old_folder_id = old_folder.id.clone();
+        db.folders.create(&old_folder).expect("create old");
+
+        let new_folder = Folder::new("new-folder".to_string());
+        let new_folder_id = new_folder.id.clone();
+        db.folders.create(&new_folder).expect("create new");
+
+        let mut paste = Paste::new("v1".to_string(), "name".to_string());
+        paste.folder_id = Some(old_folder_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &old_folder_id).expect("create");
+
+        FolderMoveFixture {
+            _temp: temp_dir,
+            db,
+            old_folder_id,
+            new_folder_id,
+            paste_id,
+        }
+    });
+    let db = &fixture.db;
+
+    let first_move = UpdatePasteRequest {
+        content: Some("v2".to_string()),
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(fixture.new_folder_id.clone()),
+        tags: None,
+    };
+    TransactionOps::move_paste_between_folders(
+        db,
+        &fixture.paste_id,
+        Some(fixture.new_folder_id.as_str()),
+        first_move,
+    )
+    .expect("first move")
+    .expect("paste exists");
+    let pruned_version_id = db
+        .pastes
+        .list_versions(&fixture.paste_id, Some(1))
+        .expect("list versions after first move")
+        .expect("paste exists")[0]
+        .version_id_ms;
+
+    std::thread::sleep(Duration::from_millis(1100));
+    let second_move = UpdatePasteRequest {
+        content: Some("v3".to_string()),
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(fixture.old_folder_id.clone()),
+        tags: None,
+    };
+    TransactionOps::move_paste_between_folders(
+        db,
+        &fixture.paste_id,
+        Some(fixture.old_folder_id.as_str()),
+        second_move,
+    )
+    .expect("second move")
+    .expect("paste exists");
+
+    std::thread::sleep(Duration::from_millis(1100));
+    let third_move = UpdatePasteRequest {
+        content: Some("v4".to_string()),
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(fixture.new_folder_id.clone()),
+        tags: None,
+    };
+    TransactionOps::move_paste_between_folders(
+        db,
+        &fixture.paste_id,
+        Some(fixture.new_folder_id.as_str()),
+        third_move,
+    )
+    .expect("third move")
+    .expect("paste exists");
+
+    let versions = db
+        .pastes
+        .list_versions(&fixture.paste_id, Some(10))
+        .expect("list versions")
+        .expect("paste exists");
+    assert_eq!(versions.len(), 2);
+
+    let newest = db
+        .pastes
+        .get_version(&fixture.paste_id, versions[0].version_id_ms)
+        .expect("load newest version")
+        .expect("newest version exists");
+    let older_retained = db
+        .pastes
+        .get_version(&fixture.paste_id, versions[1].version_id_ms)
+        .expect("load older retained version")
+        .expect("older retained version exists");
+    assert_eq!(newest.content, "v3");
+    assert_eq!(older_retained.content, "v2");
+    assert!(
+        db.pastes
+            .get_version(&fixture.paste_id, pruned_version_id)
+            .expect("load pruned version")
+            .is_none(),
+        "pruned folder-move version should no longer be addressable"
+    );
+}
+
+#[test]
 fn move_missing_paste_returns_none_without_count_drift() {
     let (db, _temp) = setup_test_db();
 
@@ -401,6 +521,95 @@ fn delete_uses_folder_from_deleted_record_not_stale_context() {
         .expect("row");
     assert_eq!(old_after.paste_count, 0);
     assert_eq!(new_after.paste_count, 0);
+}
+
+#[test]
+fn delete_bundle_restore_preserves_folder_and_versions() {
+    let fixture = setup_folder_move_fixture();
+    let db = &fixture.db;
+
+    let update = UpdatePasteRequest {
+        content: Some("updated".to_string()),
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(fixture.old_folder_id.clone()),
+        tags: None,
+    };
+    TransactionOps::move_paste_between_folders(
+        db,
+        &fixture.paste_id,
+        Some(fixture.old_folder_id.as_str()),
+        update,
+    )
+    .expect("update")
+    .expect("paste exists");
+
+    let bundle = TransactionOps::delete_paste_with_folder_bundle(db, &fixture.paste_id)
+        .expect("delete bundle")
+        .expect("paste deleted");
+    assert_eq!(bundle.versions.len(), 1);
+    assert!(
+        db.pastes
+            .get(&fixture.paste_id)
+            .expect("lookup after delete")
+            .is_none(),
+        "delete should remove live row before undo"
+    );
+
+    let restored =
+        TransactionOps::restore_deleted_paste(db, bundle).expect("restore deleted paste");
+    assert_eq!(restored.id, fixture.paste_id);
+    assert_eq!(restored.content, "updated");
+    assert_eq!(
+        restored.folder_id.as_deref(),
+        Some(fixture.old_folder_id.as_str())
+    );
+    let folder_after = db
+        .folders
+        .get(&fixture.old_folder_id)
+        .expect("folder")
+        .expect("row");
+    assert_eq!(folder_after.paste_count, 1);
+
+    let versions = db
+        .pastes
+        .list_versions(&fixture.paste_id, None)
+        .expect("list versions")
+        .expect("versions exist");
+    assert_eq!(versions.len(), 1);
+    let snapshot = db
+        .pastes
+        .get_version(&fixture.paste_id, versions[0].version_id_ms)
+        .expect("get restored version")
+        .expect("version exists");
+    assert_eq!(snapshot.content, "content");
+}
+
+#[test]
+fn restore_deleted_paste_clears_missing_original_folder() {
+    let fixture = setup_folder_move_fixture();
+    let db = &fixture.db;
+    let bundle = TransactionOps::delete_paste_with_folder_bundle(db, &fixture.paste_id)
+        .expect("delete bundle")
+        .expect("paste deleted");
+    assert!(db
+        .folders
+        .delete(&fixture.old_folder_id)
+        .expect("delete source folder"));
+
+    let restored =
+        TransactionOps::restore_deleted_paste(db, bundle).expect("restore deleted paste");
+    assert_eq!(restored.id, fixture.paste_id);
+    assert_eq!(restored.folder_id, None);
+    assert_eq!(
+        db.pastes
+            .get(&fixture.paste_id)
+            .expect("restored lookup")
+            .expect("restored row")
+            .folder_id,
+        None
+    );
 }
 
 #[test]

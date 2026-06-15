@@ -107,6 +107,20 @@ pub struct VersionSnapshot {
     pub content: String,
 }
 
+/// One historical snapshot captured as part of a reversible paste delete.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedPasteVersion {
+    pub meta: VersionMeta,
+    pub content: String,
+}
+
+/// Canonical paste row and historical snapshots needed to undo a delete.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedPasteBundle {
+    pub paste: Paste,
+    pub versions: Vec<DeletedPasteVersion>,
+}
+
 /// Query parameters for listing paste versions.
 #[derive(Debug, Deserialize)]
 pub struct VersionListQuery {

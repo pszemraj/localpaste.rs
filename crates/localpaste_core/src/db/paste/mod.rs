@@ -4,12 +4,15 @@ mod compare;
 mod helpers;
 
 use crate::{
-    config::paste_version_interval_secs_from_env_or_default,
+    config::{
+        paste_version_interval_secs_from_env_or_default,
+        paste_version_retention_limit_from_env_or_default,
+    },
     db::{
         tables::*,
         versioning::{
             decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
-            should_record_version,
+            prune_version_meta_to_limit, should_record_version,
         },
     },
     error::AppError,
@@ -32,6 +35,7 @@ pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_
 pub struct PasteDb {
     db: Arc<redb::Database>,
     version_interval_secs: u64,
+    version_retention_limit: usize,
 }
 
 const DEFAULT_VERSION_LIST_LIMIT: usize = 50;
@@ -80,6 +84,7 @@ impl PasteDb {
         // init. GUI/tool callers intentionally use permissive config loading, so
         // PasteDb follows the same fallback-to-default behavior here.
         let version_interval_secs = paste_version_interval_secs_from_env_or_default();
+        let version_retention_limit = paste_version_retention_limit_from_env_or_default();
         let write_txn = db.begin_write()?;
         write_txn.open_table(PASTES)?;
         write_txn.open_table(PASTES_META)?;
@@ -91,6 +96,7 @@ impl PasteDb {
         Ok(Self {
             db,
             version_interval_secs,
+            version_retention_limit,
         })
     }
 
@@ -100,6 +106,14 @@ impl PasteDb {
     /// Minimum elapsed seconds required between persisted snapshots.
     pub(crate) fn version_interval_secs(&self) -> u64 {
         self.version_interval_secs
+    }
+
+    /// Effective maximum number of historical snapshots retained per paste.
+    ///
+    /// # Returns
+    /// Newest-first snapshot retention cap.
+    pub(crate) fn version_retention_limit(&self) -> usize {
+        self.version_retention_limit
     }
 
     /// Rebuild the persisted metadata projection from canonical paste rows.
@@ -330,6 +344,12 @@ impl PasteDb {
                     versions_content
                         .insert((id, next.version_id_ms), encoded_content.as_slice())?;
                     version_items.insert(0, next);
+                    for pruned in prune_version_meta_to_limit(
+                        &mut version_items,
+                        self.version_retention_limit(),
+                    ) {
+                        let _ = versions_content.remove((id, pruned.version_id_ms))?;
+                    }
                     let encoded_versions = encode_version_meta_list(&version_items)?;
                     versions_meta.insert(id, encoded_versions.as_slice())?;
                 }
@@ -354,17 +374,20 @@ impl PasteDb {
         Ok(updated_paste)
     }
 
-    /// Delete a paste and return the deleted canonical row.
+    /// Delete a paste and return the deleted canonical row plus version rows.
     ///
     /// This API only supports unfiled deletes. Use
     /// [`crate::db::TransactionOps::delete_paste_with_folder`] for foldered rows.
     ///
     /// # Returns
-    /// `Ok(Some(paste))` when deleted, `Ok(None)` when missing.
+    /// `Ok(Some(bundle))` when deleted, `Ok(None)` when missing.
     ///
     /// # Errors
     /// Returns an error when storage access or deserialization fails.
-    pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
+    pub fn delete_and_return_bundle(
+        &self,
+        id: &str,
+    ) -> Result<Option<DeletedPasteBundle>, AppError> {
         let write_txn = self.db.begin_write()?;
         let deleted = {
             let mut pastes = write_txn.open_table(PASTES)?;
@@ -379,7 +402,8 @@ impl PasteDb {
             let paste = deserialize_paste(old_guard.value())?;
             Self::reject_direct_folder_operation(
                 paste.folder_id.is_some(),
-                "Direct deletion of foldered pastes via PasteDb::delete is not allowed; use TransactionOps::delete_paste_with_folder",
+                "Direct deletion of foldered pastes via PasteDb::delete is not allowed; \
+                 use TransactionOps::delete_paste_with_folder",
             )?;
             let recency_key = reverse_timestamp_key(paste.updated_at);
             drop(old_guard);
@@ -390,15 +414,45 @@ impl PasteDb {
             let version_items = decode_version_meta_list(
                 versions_meta.get(id)?.as_ref().map(|value| value.value()),
             )?;
+            let mut versions = Vec::with_capacity(version_items.len());
             for version in version_items {
-                let _ = versions_content.remove((id, version.version_id_ms))?;
+                let content = versions_content
+                    .remove((id, version.version_id_ms))?
+                    .map(|guard| bincode::deserialize::<String>(guard.value()))
+                    .transpose()?
+                    .ok_or_else(|| {
+                        AppError::StorageMessage(format!(
+                            "Missing version content for paste '{}' version {}",
+                            id, version.version_id_ms
+                        ))
+                    })?;
+                versions.push(DeletedPasteVersion {
+                    meta: version,
+                    content,
+                });
             }
             let _ = versions_meta.remove(id)?;
-            Some(paste)
+            Some(DeletedPasteBundle { paste, versions })
         };
 
         write_txn.commit()?;
         Ok(deleted)
+    }
+
+    /// Delete a paste and return the deleted canonical row.
+    ///
+    /// This preserves the legacy caller contract while
+    /// [`Self::delete_and_return_bundle`] is used by undo-capable paths.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when deleted, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
+        Ok(self
+            .delete_and_return_bundle(id)?
+            .map(|bundle| bundle.paste))
     }
 
     /// Delete a paste by id.

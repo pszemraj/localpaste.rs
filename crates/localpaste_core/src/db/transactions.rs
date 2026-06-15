@@ -8,11 +8,13 @@ use super::Database;
 use crate::db::paste::{apply_update_request, deserialize_paste, reverse_timestamp_key};
 use crate::db::versioning::{
     decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
-    should_record_version,
+    prune_version_meta_to_limit, should_record_version,
 };
 use crate::error::AppError;
 use crate::models::folder::Folder;
-use crate::models::paste::{Paste, PasteMeta, UpdatePasteRequest};
+use crate::models::paste::{
+    DeletedPasteBundle, DeletedPasteVersion, Paste, PasteMeta, UpdatePasteRequest,
+};
 use redb::ReadableTable;
 use std::sync::MutexGuard;
 
@@ -239,6 +241,25 @@ impl TransactionOps {
         Self::delete_paste_with_folder_locked(db, &guard, paste_id)
     }
 
+    /// Atomically delete a paste, decrementing folder count and returning undo data.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `paste_id`: Paste id to remove.
+    ///
+    /// # Returns
+    /// `Ok(Some(bundle))` when a paste was removed, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access, deserialization, or version bundle assembly fails.
+    pub fn delete_paste_with_folder_bundle(
+        db: &Database,
+        paste_id: &str,
+    ) -> Result<Option<DeletedPasteBundle>, AppError> {
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::delete_paste_with_folder_bundle_locked(db, &guard, paste_id)
+    }
+
     /// Delete a paste while holding a folder transaction guard.
     ///
     /// # Arguments
@@ -256,6 +277,26 @@ impl TransactionOps {
         _folder_guard: &FolderTxnGuard<'_>,
         paste_id: &str,
     ) -> Result<bool, AppError> {
+        Ok(Self::delete_paste_with_folder_bundle_locked(db, _folder_guard, paste_id)?.is_some())
+    }
+
+    /// Delete a paste while holding a folder transaction guard, returning undo data.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `_folder_guard`: Active folder transaction guard for this critical section.
+    /// - `paste_id`: Paste id to remove.
+    ///
+    /// # Returns
+    /// `Ok(Some(bundle))` when a paste was removed, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn delete_paste_with_folder_bundle_locked(
+        db: &Database,
+        _folder_guard: &FolderTxnGuard<'_>,
+        paste_id: &str,
+    ) -> Result<Option<DeletedPasteBundle>, AppError> {
         let write_txn = db.db.begin_write()?;
         let deleted = {
             let mut pastes = write_txn.open_table(PASTES)?;
@@ -266,11 +307,11 @@ impl TransactionOps {
             let mut folders = write_txn.open_table(FOLDERS)?;
 
             let Some(old_guard) = pastes.get(paste_id)? else {
-                return Ok(false);
+                return Ok(None);
             };
             let paste = deserialize_paste(old_guard.value())?;
             let old_recency_key = reverse_timestamp_key(paste.updated_at);
-            let old_folder_id = paste.folder_id;
+            let old_folder_id = paste.folder_id.clone();
             drop(old_guard);
 
             let _ = updated.remove((old_recency_key, paste_id))?;
@@ -282,17 +323,131 @@ impl TransactionOps {
                     .as_ref()
                     .map(|value| value.value()),
             )?;
+            let mut versions = Vec::with_capacity(version_items.len());
             for version in version_items {
-                let _ = versions_content.remove((paste_id, version.version_id_ms))?;
+                let content = versions_content
+                    .remove((paste_id, version.version_id_ms))?
+                    .map(|guard| bincode::deserialize::<String>(guard.value()))
+                    .transpose()?
+                    .ok_or_else(|| {
+                        AppError::StorageMessage(format!(
+                            "Missing version content for paste '{}' version {}",
+                            paste_id, version.version_id_ms
+                        ))
+                    })?;
+                versions.push(DeletedPasteVersion {
+                    meta: version,
+                    content,
+                });
             }
             let _ = versions_meta.remove(paste_id)?;
 
             apply_folder_count_transition(&mut folders, old_folder_id.as_deref(), None)?;
-            true
+            Some(DeletedPasteBundle { paste, versions })
         };
 
         write_txn.commit()?;
         Ok(deleted)
+    }
+
+    /// Restore a previously deleted paste bundle.
+    ///
+    /// If the original folder no longer exists or is being deleted, the paste is
+    /// restored unfiled while preserving all other paste fields and version rows.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `bundle`: Previously deleted paste plus version snapshots to restore.
+    ///
+    /// # Returns
+    /// The restored paste row, with `folder_id` possibly cleared.
+    ///
+    /// # Errors
+    /// Returns an error when storage access fails or the paste id already exists.
+    pub fn restore_deleted_paste(
+        db: &Database,
+        bundle: DeletedPasteBundle,
+    ) -> Result<Paste, AppError> {
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::restore_deleted_paste_locked(db, &guard, bundle)
+    }
+
+    /// Restore a deleted paste while holding the folder transaction guard.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `_folder_guard`: Active folder transaction guard for this critical section.
+    /// - `bundle`: Previously deleted paste plus version snapshots to restore.
+    ///
+    /// # Returns
+    /// The restored paste row, with `folder_id` possibly cleared.
+    ///
+    /// # Errors
+    /// Returns an error when storage access fails or the paste id already exists.
+    pub fn restore_deleted_paste_locked(
+        db: &Database,
+        _folder_guard: &FolderTxnGuard<'_>,
+        bundle: DeletedPasteBundle,
+    ) -> Result<Paste, AppError> {
+        let write_txn = db.db.begin_write()?;
+        let restored = {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
+            let mut folders = write_txn.open_table(FOLDERS)?;
+            let deleting = write_txn.open_table(FOLDERS_DELETING)?;
+
+            let mut paste = bundle.paste;
+            if pastes.get(paste.id.as_str())?.is_some() {
+                return Err(AppError::BadRequest(format!(
+                    "Paste '{}' already exists",
+                    paste.id
+                )));
+            }
+
+            let restore_folder = match paste.folder_id.as_deref() {
+                Some(folder_id)
+                    if folders.get(folder_id)?.is_some() && deleting.get(folder_id)?.is_none() =>
+                {
+                    paste.folder_id.clone()
+                }
+                Some(_) => None,
+                None => None,
+            };
+            paste.folder_id = restore_folder;
+
+            let encoded_paste = bincode::serialize(&paste)?;
+            let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
+            pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
+            metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
+            updated.insert(
+                (reverse_timestamp_key(paste.updated_at), paste.id.as_str()),
+                (),
+            )?;
+
+            let version_metas = bundle
+                .versions
+                .iter()
+                .map(|version| version.meta.clone())
+                .collect::<Vec<_>>();
+            let encoded_versions = encode_version_meta_list(&version_metas)?;
+            versions_meta.insert(paste.id.as_str(), encoded_versions.as_slice())?;
+            for version in bundle.versions {
+                let encoded_content = bincode::serialize(&version.content)?;
+                versions_content.insert(
+                    (paste.id.as_str(), version.meta.version_id_ms),
+                    encoded_content.as_slice(),
+                )?;
+            }
+
+            apply_folder_count_transition(&mut folders, None, paste.folder_id.as_deref())?;
+            paste
+        };
+
+        write_txn.commit()?;
+        Ok(restored)
     }
 
     /// Atomically move a paste between folders while applying additional updates.
@@ -355,6 +510,7 @@ impl TransactionOps {
         update_req: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
         let version_interval_secs = db.pastes.version_interval_secs();
+        let version_retention_limit = db.pastes.version_retention_limit();
         let write_txn = db.db.begin_write()?;
         let updated_paste = {
             let mut pastes = write_txn.open_table(PASTES)?;
@@ -410,6 +566,11 @@ impl TransactionOps {
                     versions_content
                         .insert((paste_id, next.version_id_ms), encoded_content.as_slice())?;
                     version_items.insert(0, next);
+                    for pruned in
+                        prune_version_meta_to_limit(&mut version_items, version_retention_limit)
+                    {
+                        let _ = versions_content.remove((paste_id, pruned.version_id_ms))?;
+                    }
                     let encoded_versions = encode_version_meta_list(&version_items)?;
                     versions_meta.insert(paste_id, encoded_versions.as_slice())?;
                 }
