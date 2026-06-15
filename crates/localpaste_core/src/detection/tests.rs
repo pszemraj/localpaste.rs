@@ -23,8 +23,8 @@ fn heuristic_detects_existing_language_matrix() {
         ("const x = () => console.log('hi');", Some("javascript")),
         ("#!/bin/bash\necho hello", Some("shell")),
         ("name: app\nservices:\n  - web", Some("yaml")),
-        ("name: app", Some("yaml")),
-        ("display name: app\nport: 8080", Some("yaml")),
+        ("name: app", None),
+        ("display name: app\nport: 8080", None),
         ("services: [web]\nversion: 3", Some("yaml")),
         (
             "jobs:\n  build:\n    runs-on: ubuntu-latest\n",
@@ -40,17 +40,26 @@ fn heuristic_detects_existing_language_matrix() {
 #[test]
 fn yaml_shape_helper_handles_flow_values_and_single_list_guard() {
     assert!(looks_like_yaml("root: {child: value}\n"));
-    assert!(looks_like_yaml("display name: api\nport: 8080\n"));
+    assert!(!looks_like_yaml("display name: api\nport: 8080\n"));
     assert!(looks_like_yaml("services: [web]\nversion: 3\n"));
     assert!(looks_like_yaml(
         "jobs:\n  build:\n    runs-on: ubuntu-latest\n"
     ));
+    assert!(looks_like_yaml("script: |\n  echo hi\n"));
+    assert!(looks_like_yaml("defaults: &defaults\n  timeout: 30\n"));
+    assert!(looks_like_yaml("- name: web\n- name: worker\n"));
     assert!(!looks_like_yaml("- item\n"));
 }
 
 #[test]
 fn yaml_shape_helper_keeps_single_line_spaced_key_guardrail() {
     assert!(!looks_like_yaml("status report: done\n"));
+    assert!(!looks_like_yaml("name: app\n"));
+    assert!(!looks_like_yaml("From: jane@example.com\nSubject: demo\n"));
+    assert!(!looks_like_yaml(
+        "ERROR: connection refused\nWARN: retrying\n"
+    ));
+    assert!(!looks_like_yaml("Author: Jane\nStatus: draft\n"));
 }
 
 #[test]
@@ -221,17 +230,14 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         refine_magika_label("yaml", "---\nname: app\n"),
         Some("yaml".to_string())
     );
-    assert_eq!(
-        refine_magika_label("yaml", "name: app"),
-        Some("yaml".to_string())
-    );
+    assert_eq!(refine_magika_label("yaml", "name: app"), None);
     assert_eq!(
         refine_magika_label("yaml", "name: app\nservices:\n  - web\n"),
         Some("yaml".to_string())
     );
     assert_eq!(
         refine_magika_label("yaml", "display name: api\nport: 8080\n"),
-        Some("yaml".to_string())
+        None
     );
     assert_eq!(
         refine_magika_label("yaml", "services:\n  web:\n    image: nginx\n"),

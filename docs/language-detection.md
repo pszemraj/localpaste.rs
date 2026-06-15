@@ -147,7 +147,10 @@ Reference: [`../.env.example`](../.env.example)
 
 ## YAML Refinement Guardrail
 
-YAML auto-detection keeps single-line mappings valid (for example, `key: value`) while still rejecting obvious non-YAML noise when refining model output.
+YAML auto-detection requires YAML-distinctive structure before accepting a mapping-heavy sample.
+Plain flat mappings like `Key: value` remain ambiguous because they also match notes, logs,
+and email or HTTP headers. YAML is accepted when the sample has a document marker,
+nested indentation, flow collections, block scalars, anchors, or structured sequence items.
 
 Primary implementation:
 

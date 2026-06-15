@@ -127,12 +127,14 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
 /// # Returns
 /// `true` when line-level patterns strongly indicate YAML.
 pub(crate) fn looks_like_yaml(content: &str) -> bool {
-    let mut yaml_pairs = 0usize;
+    let mut mapping_pairs = 0usize;
+    let mut sequence_items = 0usize;
+    let mut sequence_mapping_items = 0usize;
     let mut bare_sequence_items = 0usize;
-    let mut content_lines = 0usize;
-    let mut first_content_line: Option<&str> = None;
     let mut has_doc_start = false;
     let mut first_meaningful_seen = false;
+    let mut strong_structure = false;
+    let mut open_mapping_head_indent: Option<usize> = None;
 
     for line in content.lines().take(512) {
         let trimmed = line.trim();
@@ -146,40 +148,46 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
                 continue;
             }
         }
-        content_lines = content_lines.saturating_add(1);
-        if first_content_line.is_none() {
-            first_content_line = Some(trimmed);
-        }
+        let indent = line.len().saturating_sub(line.trim_start().len());
         if let Some(sequence_item) = trimmed.strip_prefix("- ") {
+            sequence_items = sequence_items.saturating_add(1);
+            if open_mapping_head_indent.is_some_and(|head_indent| indent > head_indent) {
+                strong_structure = true;
+            }
             if looks_like_yaml_sequence_item(sequence_item) {
-                yaml_pairs = yaml_pairs.saturating_add(1);
+                sequence_mapping_items = sequence_mapping_items.saturating_add(1);
+                if yaml_sequence_item_has_distinctive_structure(sequence_item) {
+                    strong_structure = true;
+                }
             } else {
                 bare_sequence_items = bare_sequence_items.saturating_add(1);
             }
+            open_mapping_head_indent = None;
             continue;
         }
-        if trimmed.contains(':') && looks_like_single_line_yaml_mapping(trimmed, true) {
+        if let Some(value) = yaml_mapping_value(trimmed, true) {
             // Block-style mapping heads like `jobs:` and `build:` are still
             // YAML pairs even when the nested value appears on later lines.
-            yaml_pairs = yaml_pairs.saturating_add(1);
+            mapping_pairs = mapping_pairs.saturating_add(1);
+            if open_mapping_head_indent.is_some_and(|head_indent| indent > head_indent) {
+                strong_structure = true;
+            }
+            if yaml_value_has_distinctive_structure(value) {
+                strong_structure = true;
+            }
+            open_mapping_head_indent = value.is_empty().then_some(indent);
+        } else {
+            open_mapping_head_indent = None;
         }
-    }
-
-    if yaml_pairs >= 2 {
-        return true;
-    }
-
-    if yaml_pairs == 1 && content_lines == 1 {
-        return first_content_line
-            .map(|line| !line.starts_with("- ") && looks_like_single_line_yaml_mapping(line, false))
-            .unwrap_or(false);
     }
 
     if has_doc_start {
-        return yaml_pairs >= 1 || bare_sequence_items >= 2;
+        return mapping_pairs >= 1 || sequence_items >= 2;
     }
 
-    false
+    strong_structure && (mapping_pairs >= 1 || sequence_items >= 1)
+        || sequence_mapping_items >= 2
+        || (bare_sequence_items == 0 && sequence_items >= 2 && sequence_mapping_items >= 1)
 }
 
 fn looks_like_yaml_sequence_item(item: &str) -> bool {
@@ -194,6 +202,38 @@ fn looks_like_yaml_sequence_item(item: &str) -> bool {
         return looks_like_yaml_flow_mapping(trimmed);
     }
     if trimmed.starts_with('[') || trimmed.ends_with(']') {
+        return looks_like_yaml_flow_sequence(trimmed);
+    }
+    false
+}
+
+fn yaml_sequence_item_has_distinctive_structure(item: &str) -> bool {
+    let trimmed = item.trim();
+    if let Some(value) = yaml_mapping_value(trimmed, true) {
+        return yaml_value_has_distinctive_structure(value);
+    }
+    yaml_value_has_distinctive_structure(trimmed)
+}
+
+fn yaml_mapping_value(line: &str, allow_unquoted_space_keys: bool) -> Option<&str> {
+    if !looks_like_single_line_yaml_mapping(line, allow_unquoted_space_keys) {
+        return None;
+    }
+    line.split_once(':').map(|(_, value)| value.trim())
+}
+
+fn yaml_value_has_distinctive_structure(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if matches!(trimmed.chars().next(), Some('|' | '>' | '&' | '*')) {
+        return true;
+    }
+    if trimmed.contains('{') || trimmed.contains('}') {
+        return looks_like_yaml_flow_mapping(trimmed);
+    }
+    if trimmed.contains('[') || trimmed.contains(']') {
         return looks_like_yaml_flow_sequence(trimmed);
     }
     false
