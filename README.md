@@ -78,10 +78,9 @@ lpaste get <paste-id>
 
 ## Configuration Notes
 
-- `localpaste_gui` and `localpaste_server` enable Magika-backed language detection by default.
-- `localpaste_cli` stays heuristic-only by default.
-- Version snapshots default to a five-minute archive interval and a retention cap of 200 stored snapshots per paste.
-- Server exposure, CORS behavior, size limits, backup settings, and version history environment variables are documented in [`docs/security.md`](docs/security.md).
+- Language detection defaults: [`docs/language-detection.md#feature-topology`](docs/language-detection.md#feature-topology).
+- Version history, server exposure, CORS, size limits, and backup settings: [`docs/security.md#environment-variables`](docs/security.md#environment-variables).
+- Storage and single-writer rules: [`docs/storage.md`](docs/storage.md).
 
 ## Releases
 

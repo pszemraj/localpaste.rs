@@ -10,7 +10,7 @@ These instructions apply to the headless `localpaste` server. The desktop GUI (`
 - [macOS (launchd)](#macos-launchd)
 - [Windows](#windows)
 - [Common Patterns](#common-patterns)
-- [Embedded API Address Discovery (.api-addr)](#embedded-api-address-discovery-api-addr)
+- [Embedded API Discovery](#embedded-api-discovery)
 
 ---
 ## Quick Start
@@ -200,14 +200,9 @@ With cron:
 curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "Service down"
 ```
 
-## Embedded API Address Discovery (.api-addr)
-
-Operator guidance:
+## Embedded API Discovery
 
 - Prefer explicit `--server`/`LP_SERVER` for deterministic automation.
 - Use `lpaste --no-discovery ...` to disable `.api-addr` discovery.
-
-Discovery behavior details (trust checks, fallback rules, and header verification):
-
-- [architecture.md](architecture.md#10-discovery-and-trust)
+- Trust checks, fallback rules, and header verification: [architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust)
 - [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)

@@ -1,8 +1,8 @@
 # GUI Notes
 
 GUI runtime flags and interaction contracts.
-Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md).
-Perf validation steps and gates: [docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
+Detection/normalization/highlight behavior: [language-detection.md](../language-detection.md).
+Perf validation steps and gates: [gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Runtime Flags
 
@@ -45,7 +45,7 @@ Navigation/selection contract:
 - Command palette is action-first (`Commands` section first; `Pastes` section is secondary search/open context).
 - Large buffers (`>= 256KB`) intentionally use plain-text rendering.
 - Virtual-editor highlight debounce/staging policy is defined in
-  [docs/language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
+  [language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
 - Language display behavior is explicit: auto + unset -> `auto`; manual + unset -> `plain`.
 - Rename/title edits commit on `Enter` and on title-field blur.
 - Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
@@ -90,7 +90,7 @@ Run this checklist when touching detection/highlight/filter code.
    - Set active language filter to `cs`; verify both `csharp` and `cs` pastes remain visible.
    - Set active language filter to `shell`; verify `bash`/`sh` labeled content matches.
 8. Validate syntax resolver behavior against the matrix in
-   [docs/language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
+   [language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.
 9. Validate large-buffer guardrail:
@@ -105,8 +105,8 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
 
 ### Preflight Commands
 
-- Build/run commands: [docs/dev/devlog.md](devlog.md).
-- Perf-oriented dataset + trace runbook: [docs/dev/gui-perf-protocol.md#runbook](gui-perf-protocol.md#runbook).
+- Build/run commands: [devlog.md](devlog.md).
+- Perf-oriented dataset + trace runbook: [gui-perf-protocol.md#runbook](gui-perf-protocol.md#runbook).
 - Virtual editor mode is the default editable path; no separate kill-switch flag is supported.
 
 ### Manual Checklist

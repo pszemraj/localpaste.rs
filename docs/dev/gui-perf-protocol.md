@@ -7,8 +7,8 @@ Release-gate evidence and regression checks for GUI perf.
 - English-first editor workflows only.
 - Runtime topology for this protocol: the GUI owns the DB lock and runs the embedded API endpoint in-process.
 - Keep exactly one writer process per `DB_PATH` during perf runs
-  (storage contract: [docs/storage.md](../storage.md)).
-- Detection/highlight behavior definitions (including virtual-editor async debounce/staging policy) are maintained in [docs/language-detection.md](../language-detection.md).
+  (storage contract: [storage.md](../storage.md)).
+- Detection/highlight behavior definitions, including virtual-editor async debounce/staging policy: [language-detection.md](../language-detection.md).
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
   - average FPS `>= 45`
@@ -88,6 +88,6 @@ Perf gating in this protocol is based on the checks below:
 ## Related Docs
 
 - Editor flags and trace env vars: [gui-notes.md](gui-notes.md)
-- Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md)
+- Detection/normalization/highlight behavior: [language-detection.md](../language-detection.md)
 - Open perf follow-ups: [backlog.md](backlog.md)
-- System architecture context: [docs/architecture.md](../architecture.md)
+- System architecture context: [architecture.md](../architecture.md)

@@ -1,11 +1,5 @@
 # Security Configuration
 
-Security defaults, exposure policy, and security-relevant environment settings.
-Storage compatibility lives in [storage.md](storage.md), service operations in
-[deployment.md](deployment.md), runtime-provider toggles in
-[language-detection.md](language-detection.md), and build/run commands in
-[dev/devlog.md](dev/devlog.md).
-
 ---
 
 - [Default Security Settings](#default-security-settings)
@@ -26,8 +20,6 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 - **CORS restrictions**: In strict mode, only accepts loopback origins that match the active listener port
 - **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options
 - **Request size limits**: Enforced at transport layer (default: 10MB)
-- **Storage durability**: defined in [storage.md](storage.md)
-- **Single-writer owner lock**: semantics in [dev/locking-model.md](dev/locking-model.md)
 
 ## Environment Variables
 
@@ -57,7 +49,7 @@ The following headers are automatically set:
 
 To add a referrer policy, configure your reverse proxy or extend the Axum middleware layer.
 
-### Lock Management Policy
+### Lock Management
 
 Operational recovery is documented in [deployment.md](deployment.md).
 Lock semantics are documented in [dev/locking-model.md](dev/locking-model.md).
@@ -136,8 +128,7 @@ server {
 2. **Monitoring**: Watch logs for unusual activity
    Use the service/logging patterns in [deployment.md](deployment.md).
 
-3. **Backups**: Regular database backups
-   Use the backup and retention procedures in [deployment.md](deployment.md).
+3. **Backups**: Use `AUTO_BACKUP=true` for startup snapshots or back up `DB_PATH` with external tooling. LocalPaste does not run scheduled backups.
 
 4. **Access Control**: Use firewall rules
 

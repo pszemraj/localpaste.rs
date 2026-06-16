@@ -109,8 +109,6 @@ sequenceDiagram
 
 Storage layout, projection tables, version-history storage, durability, and compatibility policy are defined in [storage.md](storage.md).
 
-Primary implementation:
-
 - [`../crates/localpaste_core/src/db/mod.rs`](../crates/localpaste_core/src/db/mod.rs)
 - [`../crates/localpaste_core/src/db/paste/mod.rs`](../crates/localpaste_core/src/db/paste/mod.rs)
 - [`../crates/localpaste_core/src/db/folder.rs`](../crates/localpaste_core/src/db/folder.rs)
@@ -197,16 +195,7 @@ Current boundary rules:
 
 ## 8) Language Detection And Highlighting
 
-Detection/highlight behavior is defined in
-[language-detection.md](language-detection.md).
-Architecture-level summary:
-
-- Detection is centralized in `localpaste_core::detection`.
-- `localpaste_core` keeps `magika` opt-in; GUI/server enable it by default, CLI remains heuristic-only by default.
-- Auto-detect flow is `Magika -> heuristic fallback`, with label normalization before persistence/filtering.
-- Manual language mode bypasses auto re-detection on content edits.
-- GUI highlighting resolves syntaxes via a multi-step resolver and falls back to plain text when no safe grammar match exists.
-- Virtual-editor async highlight debounce/staging/patch behavior is defined in [language-detection.md](language-detection.md#virtual-editor-async-highlight-flow).
+Detection, normalization, manual-language behavior, syntax resolution, and virtual-editor highlight staging are defined in [language-detection.md](language-detection.md).
 
 ## 9) GUI Save Pipeline
 
@@ -255,8 +244,6 @@ Relevant code:
 - [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)
 
 ## 11) Validation Strategy
-
-Validation references:
 
 - [dev/devlog.md#validation-loop](dev/devlog.md#validation-loop)
 - [dev/devlog.md#runtime-smoke-test-server-cli](dev/devlog.md#runtime-smoke-test-server-cli)

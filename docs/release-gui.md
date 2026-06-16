@@ -41,7 +41,7 @@ not accept prerelease/build metadata.
 - tag format/existence validation,
 - workspace version == tag version,
 - server+CLI smoke test including restart persistence
-  ([docs/dev/devlog.md#runtime-smoke-test-server-cli](dev/devlog.md#runtime-smoke-test-server-cli)),
+  ([devlog smoke runbook](dev/devlog.md#runtime-smoke-test-server-cli)),
 - packaging/build jobs check out the resolved source ref directly (full-tree tag fidelity in `release_tag` mode).
 
 ## Artifact Contract
