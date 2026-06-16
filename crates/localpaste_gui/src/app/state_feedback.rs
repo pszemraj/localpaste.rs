@@ -47,8 +47,28 @@ impl LocalPasteApp {
             expires_at: now + ttl,
             action,
         });
+        self.prune_toast_overflow();
+    }
+
+    /// Removes every toast whose expiration has passed.
+    pub(super) fn prune_expired_toasts(&mut self, now: Instant) {
+        self.toasts.retain(|toast| now < toast.expires_at);
+    }
+
+    /// Returns the next toast expiration time, regardless of queue order.
+    ///
+    /// # Returns
+    /// Earliest toast expiration, or `None` when no toasts are queued.
+    pub(super) fn next_toast_expiration(&self) -> Option<Instant> {
+        self.toasts.iter().map(|toast| toast.expires_at).min()
+    }
+
+    fn prune_toast_overflow(&mut self) {
         while self.toasts.len() > TOAST_LIMIT {
-            self.toasts.pop_front();
+            let Some(index) = self.toasts.iter().position(|toast| toast.action.is_none()) else {
+                break;
+            };
+            self.toasts.remove(index);
         }
     }
 

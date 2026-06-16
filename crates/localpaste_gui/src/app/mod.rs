@@ -216,7 +216,7 @@ enum PaletteCopyAction {
 const EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const STATUS_TTL: Duration = Duration::from_secs(5);
 const TOAST_TTL: Duration = Duration::from_secs(4);
-const UNDO_DELETE_TOAST_TTL: Duration = Duration::from_secs(10);
+const UNDO_DELETE_TOAST_TTL: Duration = Duration::from_secs(8);
 const TOAST_LIMIT: usize = 4;
 #[doc = "Default initial window size for native GUI startup."]
 pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 720.0];
@@ -558,14 +558,7 @@ impl eframe::App for LocalPasteApp {
                 self.status = None;
             }
         }
-        while self
-            .toasts
-            .front()
-            .map(|toast| now >= toast.expires_at)
-            .unwrap_or(false)
-        {
-            self.toasts.pop_front();
-        }
+        self.prune_expired_toasts(now);
 
         while let Ok(event) = self.backend.evt_rx.try_recv() {
             self.apply_event(event);
@@ -805,8 +798,8 @@ impl eframe::App for LocalPasteApp {
             let until = status.expires_at.saturating_duration_since(Instant::now());
             repaint_after = repaint_after.min(until);
         }
-        if let Some(toast) = self.toasts.front() {
-            let until = toast.expires_at.saturating_duration_since(Instant::now());
+        if let Some(expires_at) = self.next_toast_expiration() {
+            let until = expires_at.saturating_duration_since(Instant::now());
             repaint_after = repaint_after.min(until);
         }
         if self.editor_mode == EditorMode::VirtualEditor && ctx.memory(|m| m.has_focus(focus_id)) {

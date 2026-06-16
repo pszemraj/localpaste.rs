@@ -439,3 +439,81 @@ pub fn spawn_backend_with_locks_and_owner(
         worker_join: Some(worker_join),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use localpaste_core::models::paste::{DeletedPasteBundle, Paste};
+    use tempfile::TempDir;
+
+    struct TestWorkerState {
+        _dir: TempDir,
+        state: WorkerState,
+    }
+
+    fn make_state() -> TestWorkerState {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+        let (evt_tx, _evt_rx) = unbounded();
+        TestWorkerState {
+            _dir: dir,
+            state: WorkerState {
+                db,
+                evt_tx,
+                max_paste_size: 10 * 1024 * 1024,
+                locks: Arc::new(PasteLockManager::default()),
+                lock_owner_id: LockOwnerId::new("test-worker".to_string()),
+                perf_log_enabled: false,
+                query_cache: query::QueryCache::default(),
+                delete_undo_seq: 0,
+                deleted_paste_order: VecDeque::new(),
+                deleted_paste_undo: HashMap::new(),
+            },
+        }
+    }
+
+    fn deleted_bundle(id: &str) -> DeletedPasteBundle {
+        let mut paste = Paste::new("deleted".to_string(), "content".to_string());
+        paste.id = id.to_string();
+        DeletedPasteBundle {
+            paste,
+            versions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn deleted_paste_undo_token_is_single_use() {
+        let mut worker = make_state();
+        let token = worker
+            .state
+            .register_deleted_paste_undo(deleted_bundle("alpha"));
+
+        assert!(worker.state.take_deleted_paste_undo(&token).is_some());
+        assert!(
+            worker.state.take_deleted_paste_undo(&token).is_none(),
+            "a consumed undo token must not restore the same bundle twice"
+        );
+    }
+
+    #[test]
+    fn deleted_paste_undo_rejects_expired_token() {
+        let mut worker = make_state();
+        let token = worker
+            .state
+            .register_deleted_paste_undo(deleted_bundle("alpha"));
+        worker
+            .state
+            .deleted_paste_undo
+            .get_mut(token.as_str())
+            .expect("registered undo")
+            .expires_at = Instant::now() - Duration::from_secs(1);
+
+        assert!(
+            worker.state.take_deleted_paste_undo(&token).is_none(),
+            "expired undo token should be pruned before restore"
+        );
+        assert!(!worker.state.deleted_paste_undo.contains_key(&token));
+        assert!(!worker.state.deleted_paste_order.contains(&token));
+    }
+}

@@ -360,6 +360,7 @@ mod persistence;
 mod save_and_metadata;
 mod shutdown_behavior;
 mod state_basics;
+mod state_toasts;
 mod version_async_status;
 mod version_modal_caching;
 mod version_overlay_exclusivity;

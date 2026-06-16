@@ -138,33 +138,6 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
     }
 }
 
-#[test]
-fn set_status_pushes_toast_feedback() {
-    let mut harness = make_app();
-    harness.app.set_status("Saved metadata.");
-
-    assert!(harness.app.status.is_some());
-    assert_eq!(harness.app.toasts.len(), 1);
-    assert_eq!(
-        harness.app.toasts.back().map(|toast| toast.text.as_str()),
-        Some("Saved metadata.")
-    );
-}
-
-#[test]
-fn toast_queue_dedupes_tail_and_caps_length() {
-    let mut harness = make_app();
-
-    harness.app.set_status("Repeated");
-    harness.app.set_status("Repeated");
-    assert_eq!(harness.app.toasts.len(), 1);
-
-    for idx in 0..(TOAST_LIMIT + 2) {
-        harness.app.set_status(format!("Toast {}", idx));
-    }
-    assert_eq!(harness.app.toasts.len(), TOAST_LIMIT);
-}
-
 fn pressed_key(key: eframe::egui::Key) -> eframe::egui::Event {
     eframe::egui::Event::Key {
         key,
@@ -371,79 +344,6 @@ fn paste_deleted_clears_pending_copy_action_for_deleted_id() {
     });
 
     assert!(harness.app.pending_copy_action.is_none());
-}
-
-#[test]
-fn paste_deleted_toast_carries_undo_action_for_restore_window() {
-    let mut harness = make_app();
-    let before = Instant::now();
-
-    harness.app.apply_event(CoreEvent::PasteDeleted {
-        id: "alpha".to_string(),
-        undo_token: "undo-alpha".to_string(),
-    });
-
-    let toast = harness.app.toasts.back().expect("undo toast");
-    assert_eq!(
-        toast.action,
-        Some(ToastAction::UndoDelete {
-            undo_token: "undo-alpha".to_string()
-        })
-    );
-    assert!(
-        toast.expires_at.saturating_duration_since(before) >= UNDO_DELETE_TOAST_TTL,
-        "undo toast should stay visible for the backend restore window"
-    );
-}
-
-#[test]
-fn undo_delete_action_dispatches_restore_and_removes_matching_toast() {
-    let mut harness = make_app();
-    harness.app.set_status_with_action(
-        "Paste deleted.",
-        ToastAction::UndoDelete {
-            undo_token: "undo-alpha".to_string(),
-        },
-    );
-    harness.app.set_status_with_action(
-        "Paste deleted.",
-        ToastAction::UndoDelete {
-            undo_token: "undo-beta".to_string(),
-        },
-    );
-
-    harness.app.restore_deleted_paste("undo-alpha".to_string());
-
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::RestoreDeletedPaste { undo_token } => assert_eq!(undo_token, "undo-alpha"),
-        other => panic!("expected RestoreDeletedPaste command, got {:?}", other),
-    }
-    assert!(
-        harness.app.toasts.iter().all(|toast| {
-            !matches!(
-                &toast.action,
-                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
-            )
-        }),
-        "undo action should remove only the consumed restore toast"
-    );
-    assert!(
-        harness.app.toasts.iter().any(|toast| {
-            matches!(
-                &toast.action,
-                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-beta"
-            )
-        }),
-        "other undo toasts should remain actionable"
-    );
-    assert_eq!(
-        harness
-            .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Restoring deleted paste...")
-    );
 }
 
 #[test]

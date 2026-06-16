@@ -1,0 +1,230 @@
+//! State/event flow tests for status and toast behavior.
+
+use super::*;
+
+#[test]
+fn set_status_pushes_toast_feedback() {
+    let mut harness = make_app();
+    harness.app.set_status("Saved metadata.");
+
+    assert!(harness.app.status.is_some());
+    assert_eq!(harness.app.toasts.len(), 1);
+    assert_eq!(
+        harness.app.toasts.back().map(|toast| toast.text.as_str()),
+        Some("Saved metadata.")
+    );
+}
+
+#[test]
+fn toast_queue_dedupes_tail_and_caps_length() {
+    let mut harness = make_app();
+
+    harness.app.set_status("Repeated");
+    harness.app.set_status("Repeated");
+    assert_eq!(harness.app.toasts.len(), 1);
+
+    for idx in 0..(TOAST_LIMIT + 2) {
+        harness.app.set_status(format!("Toast {}", idx));
+    }
+    assert_eq!(harness.app.toasts.len(), TOAST_LIMIT);
+}
+
+#[test]
+fn toast_queue_preserves_undo_actions_under_status_pressure() {
+    let mut harness = make_app();
+
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        },
+    );
+    for idx in 0..(TOAST_LIMIT + 2) {
+        harness.app.set_status(format!("Status {idx}"));
+    }
+
+    assert!(
+        harness.app.toasts.iter().any(|toast| {
+            matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
+            )
+        }),
+        "ordinary status toasts must not evict the only undo affordance"
+    );
+    assert_eq!(
+        harness
+            .app
+            .toasts
+            .iter()
+            .filter(|toast| toast.action.is_none())
+            .count(),
+        TOAST_LIMIT - 1,
+        "actionless toasts should absorb overflow before actionable toasts"
+    );
+}
+
+#[test]
+fn prune_expired_toasts_removes_all_expired_entries() {
+    let mut harness = make_app();
+    let now = Instant::now();
+
+    harness.app.toasts.push_back(ToastMessage {
+        text: "undo".to_string(),
+        expires_at: now + Duration::from_secs(5),
+        action: Some(ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        }),
+    });
+    harness.app.toasts.push_back(ToastMessage {
+        text: "expired middle".to_string(),
+        expires_at: now - Duration::from_secs(1),
+        action: None,
+    });
+    harness.app.toasts.push_back(ToastMessage {
+        text: "expired tail".to_string(),
+        expires_at: now - Duration::from_secs(1),
+        action: None,
+    });
+
+    harness.app.prune_expired_toasts(now);
+
+    assert_eq!(harness.app.toasts.len(), 1);
+    assert_eq!(
+        harness.app.toasts.front().map(|toast| toast.text.as_str()),
+        Some("undo")
+    );
+}
+
+#[test]
+fn next_toast_expiration_uses_earliest_toast_not_queue_front() {
+    let mut harness = make_app();
+    let now = Instant::now();
+
+    harness.app.toasts.push_back(ToastMessage {
+        text: "long undo".to_string(),
+        expires_at: now + Duration::from_secs(8),
+        action: Some(ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        }),
+    });
+    harness.app.toasts.push_back(ToastMessage {
+        text: "short status".to_string(),
+        expires_at: now + Duration::from_secs(1),
+        action: None,
+    });
+
+    assert_eq!(
+        harness.app.next_toast_expiration(),
+        Some(now + Duration::from_secs(1))
+    );
+}
+
+#[test]
+fn paste_deleted_toast_carries_undo_action_for_restore_window() {
+    let mut harness = make_app();
+    let before = Instant::now();
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".to_string(),
+        undo_token: "undo-alpha".to_string(),
+    });
+
+    let toast = harness.app.toasts.back().expect("undo toast");
+    assert_eq!(
+        toast.action,
+        Some(ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string()
+        })
+    );
+    assert!(
+        toast.expires_at.saturating_duration_since(before) >= UNDO_DELETE_TOAST_TTL,
+        "undo toast should stay visible for the GUI restore window"
+    );
+    assert!(
+        toast.expires_at.saturating_duration_since(before) < Duration::from_secs(10),
+        "GUI undo affordance should expire before the backend undo token"
+    );
+}
+
+#[test]
+fn undo_delete_action_dispatches_restore_and_removes_matching_toast() {
+    let mut harness = make_app();
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        },
+    );
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-beta".to_string(),
+        },
+    );
+
+    harness.app.restore_deleted_paste("undo-alpha".to_string());
+
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::RestoreDeletedPaste { undo_token } => assert_eq!(undo_token, "undo-alpha"),
+        other => panic!("expected RestoreDeletedPaste command, got {:?}", other),
+    }
+    assert!(
+        harness.app.toasts.iter().all(|toast| {
+            !matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
+            )
+        }),
+        "undo action should remove only the consumed restore toast"
+    );
+    assert!(
+        harness.app.toasts.iter().any(|toast| {
+            matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-beta"
+            )
+        }),
+        "other undo toasts should remain actionable"
+    );
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Restoring deleted paste...")
+    );
+}
+
+#[test]
+fn undo_delete_send_failure_keeps_retryable_toast() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        },
+    );
+    drop(cmd_rx);
+
+    app.restore_deleted_paste("undo-alpha".to_string());
+
+    assert!(
+        app.toasts.iter().any(|toast| {
+            matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
+            )
+        }),
+        "failed dispatch must leave the undo action available for retry"
+    );
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Undo delete failed: backend unavailable.")
+    );
+}
