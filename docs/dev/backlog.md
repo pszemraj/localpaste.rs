@@ -29,6 +29,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Add a muted second sidebar metadata line when a derived handle exists, now that persisted semantic retrieval metadata and hover/details surfaces are in place.
 - [ ] Split history-reset worker failures out from generic `CoreErrorSource::SaveContent` so reset-specific UI transitions and error reporting do not rely on shared save-content handling.
 - [ ] Evaluate code-editor-style smart Home behavior for the virtual editor (first non-whitespace <-> column 0) without regressing platform-native line/document key bindings.
+- [ ] Decide whether sidebar recency grouping should keep the current rolling seven-day “This Week” behavior, switch to local-calendar week semantics, or rename the bucket to “Last 7 Days.”
 - [ ] Define the virtual editor accessibility contract and decide whether to publish a
   read-only AccessKit text node with caret/selection metadata, or document bespoke
   editor screen-reader support as out of scope for the current local-tool UX.

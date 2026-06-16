@@ -65,7 +65,7 @@ fn toast_queue_preserves_undo_actions_under_status_pressure() {
 }
 
 #[test]
-fn prune_expired_toasts_removes_all_expired_entries() {
+fn toast_expiration_prunes_all_expired_entries_and_uses_earliest_live_deadline() {
     let mut harness = make_app();
     let now = Instant::now();
 
@@ -94,20 +94,6 @@ fn prune_expired_toasts_removes_all_expired_entries() {
         harness.app.toasts.front().map(|toast| toast.text.as_str()),
         Some("undo")
     );
-}
-
-#[test]
-fn next_toast_expiration_uses_earliest_toast_not_queue_front() {
-    let mut harness = make_app();
-    let now = Instant::now();
-
-    harness.app.toasts.push_back(ToastMessage {
-        text: "long undo".to_string(),
-        expires_at: now + Duration::from_secs(8),
-        action: Some(ToastAction::UndoDelete {
-            undo_token: "undo-alpha".to_string(),
-        }),
-    });
     harness.app.toasts.push_back(ToastMessage {
         text: "short status".to_string(),
         expires_at: now + Duration::from_secs(1),

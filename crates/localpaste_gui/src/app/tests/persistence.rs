@@ -62,3 +62,26 @@ fn pending_restored_selection_applies_after_visible_list_refresh() {
         other => panic!("expected GetPaste command, got {other:?}"),
     }
 }
+
+#[test]
+fn pending_restored_selection_loads_even_when_current_filters_hide_it() {
+    let mut harness = make_app();
+    harness.app.selected_id = None;
+    harness.app.selected_paste = None;
+    harness.app.pending_selection_id = Some("beta".to_string());
+    harness.app.active_collection = SidebarCollection::Code;
+    harness.app.pastes = vec![test_summary("alpha", "Alpha", Some("rust"), 7)];
+    harness.app.all_pastes = vec![
+        test_summary("alpha", "Alpha", Some("rust"), 7),
+        test_summary("beta", "Beta", None, 4),
+    ];
+
+    harness.app.ensure_selection_after_list_update();
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    assert!(harness.app.pending_selection_id.is_none());
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        other => panic!("expected GetPaste command, got {other:?}"),
+    }
+}

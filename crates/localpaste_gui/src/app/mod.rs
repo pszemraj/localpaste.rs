@@ -1,5 +1,6 @@
 //! Native egui app skeleton for the LocalPaste rewrite.
 
+mod deferred_saves;
 mod editor;
 mod highlight;
 mod highlight_flow;

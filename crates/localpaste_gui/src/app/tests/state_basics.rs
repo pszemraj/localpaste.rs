@@ -879,6 +879,91 @@ fn history_reset_flushes_local_changes_before_reset_matrix() {
 }
 
 #[test]
+fn history_reset_flush_dispatch_failure_cancels_queue_with_status() {
+    let TestHarness {
+        _dir: _guard,
+        mut app,
+        cmd_rx,
+    } = make_app();
+    app.version_ui.history_reset_confirm_target = Some(42);
+    app.save_status = SaveStatus::Dirty;
+    app.last_edit_at = Some(Instant::now());
+    app.metadata_dirty = true;
+    drop(cmd_rx);
+
+    app.reset_selected_history_version();
+
+    assert!(!app.history_reset_flush_active());
+    assert_eq!(
+        app.status.as_ref().map(|status| status.text.as_str()),
+        Some("Reset cancelled because current paste could not be saved.")
+    );
+}
+
+#[test]
+fn queued_history_reset_cancels_when_selection_changes_before_flush_finishes() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_reset_confirm_target = Some(42);
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.last_edit_at = Some(Instant::now());
+
+    harness.app.reset_selected_history_version();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePaste { id, .. } | CoreCmd::UpdatePasteVirtual { id, .. } => {
+            assert_eq!(id, "alpha")
+        }
+        other => panic!("expected content save before reset, got {:?}", other),
+    }
+    assert!(harness.app.history_reset_flush_active());
+
+    harness.app.selected_id = Some("beta".to_string());
+    harness.app.save_status = SaveStatus::Saved;
+    harness.app.save_in_flight = false;
+    harness.app.maybe_continue_queued_history_reset();
+
+    assert!(!harness.app.history_reset_flush_active());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Reset cancelled because the selected paste changed.")
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn deferred_save_rollback_restores_dirty_flags_after_partial_dispatch() {
+    let mut harness = make_app();
+    harness.app.save_in_flight = true;
+    harness.app.save_status = SaveStatus::Saving;
+    harness.app.save_request_revision = Some(7);
+    harness.app.last_edit_at = None;
+    harness.app.metadata_save_in_flight = true;
+    harness.app.metadata_dirty = false;
+    harness.app.metadata_save_request = Some(MetadataDraftSnapshot {
+        name: "Alpha".to_string(),
+        language: None,
+        language_is_manual: false,
+        tags_csv: String::new(),
+    });
+
+    crate::app::deferred_saves::rollback_deferred_save_dispatches(&mut harness.app, true, true);
+
+    assert!(!harness.app.save_in_flight);
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(harness.app.save_request_revision.is_none());
+    assert!(harness.app.last_edit_at.is_some());
+    assert!(!harness.app.metadata_save_in_flight);
+    assert!(harness.app.metadata_dirty);
+    assert!(harness.app.metadata_save_request.is_none());
+}
+
+#[test]
 fn history_reset_in_flight_blocks_selection_switches_until_matching_ack() {
     let mut harness = make_app();
     harness.app.all_pastes = vec![

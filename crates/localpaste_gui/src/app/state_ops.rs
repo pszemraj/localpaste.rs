@@ -2,6 +2,7 @@
 
 mod filters;
 
+use super::deferred_saves::rollback_deferred_save_dispatches;
 use super::util::{format_fenced_code_block, parse_tags_csv};
 use super::{
     ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
@@ -599,21 +600,7 @@ impl LocalPasteApp {
             let content_save_dispatched = !content_save_needed || self.save_in_flight;
             let metadata_save_dispatched = !metadata_save_needed || self.metadata_save_in_flight;
             if !content_save_dispatched || !metadata_save_dispatched {
-                // If one save dispatch succeeded and the next failed, treat the whole
-                // deferred switch attempt as failed and roll back save in-flight flags.
-                if content_save_needed && self.save_in_flight {
-                    self.save_in_flight = false;
-                    self.save_status = SaveStatus::Dirty;
-                    self.save_request_revision = None;
-                    if self.last_edit_at.is_none() {
-                        self.last_edit_at = Some(Instant::now());
-                    }
-                }
-                if metadata_save_needed && self.metadata_save_in_flight {
-                    self.metadata_save_in_flight = false;
-                    self.metadata_dirty = true;
-                    self.metadata_save_request = None;
-                }
+                rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
                 if let Some(pending) = self.pending_selection_id.take() {
                     self.clear_pending_copy_for(pending.as_str());
                 }
@@ -1049,6 +1036,8 @@ impl LocalPasteApp {
                 }
             } else if self.selected_id.is_none() {
                 self.pending_selection_id = None;
+                let _ = self.apply_selection_now(pending);
+                return;
             }
         }
         let selection_valid = self

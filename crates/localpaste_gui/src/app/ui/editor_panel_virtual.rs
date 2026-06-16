@@ -38,7 +38,12 @@ fn should_explicitly_blur_virtual_editor(
 ) -> bool {
     window_blurred || (clicked_outside_editor && !preserve_editor_focus)
 }
-fn consume_virtual_editor_owned_key_events(ctx: &egui::Context) {
+fn consume_virtual_editor_owned_key_events(
+    ctx: &egui::Context,
+    applied_commands: &[VirtualInputCommand],
+) {
+    // Non-key events are routed by focused ownership; `consume_key` only
+    // models keys whose commands survived the editor's route filters.
     let keys_to_consume = ctx.input(|input| {
         input
             .events
@@ -53,7 +58,11 @@ fn consume_virtual_editor_owned_key_events(ctx: &egui::Context) {
                 else {
                     return None;
                 };
-                if commands_from_events(std::slice::from_ref(event), true).is_empty() {
+                let event_commands = commands_from_events(std::slice::from_ref(event), true);
+                if !event_commands
+                    .iter()
+                    .any(|command| applied_commands.contains(command))
+                {
                     None
                 } else {
                     Some((*modifiers, *key))
@@ -471,6 +480,7 @@ impl LocalPasteApp {
         let mut galley_misses = 0usize;
         let mut galley_build_ms = 0.0f32;
         let mut paint_ms = 0.0f32;
+        let mut visible_row_range: Option<std::ops::Range<usize>> = None;
         self.virtual_line_height = row_height.max(1.0);
         let line_number_font = line_number_font_for_row_height(self.virtual_line_height);
         let editor_char_width = ui.fonts_mut(|f| {
@@ -538,6 +548,7 @@ impl LocalPasteApp {
             scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
                 ui.set_min_width(wrap_width);
                 visible_rows = range.len();
+                visible_row_range = Some(range.clone());
                 struct RowRender {
                     line_idx: usize,
                     segment_start: usize,
@@ -1001,7 +1012,33 @@ impl LocalPasteApp {
                     },
                 );
             });
-            if let Some(cursor_rect) = ime_cursor_rect {
+            let cursor_rect = ime_cursor_rect.or_else(|| {
+                let range = visible_row_range.as_ref()?;
+                let cursor_row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
+                let row_offset = if cursor_row < range.start {
+                    0
+                } else if cursor_row >= range.end {
+                    range.len().saturating_sub(1)
+                } else {
+                    cursor_row.saturating_sub(range.start)
+                };
+                let y_min = (interaction_rect.min.y + row_offset as f32 * self.virtual_line_height)
+                    .clamp(
+                        interaction_rect.min.y,
+                        (interaction_rect.max.y - self.virtual_line_height)
+                            .max(interaction_rect.min.y),
+                    );
+                let y_max = (y_min + self.virtual_line_height.max(1.0))
+                    .min(interaction_rect.max.y)
+                    .max(y_min + 1.0);
+                let x = (interaction_rect.min.x + line_number_gutter + VIRTUAL_EDITOR_TEXT_INSET)
+                    .clamp(interaction_rect.min.x, interaction_rect.max.x);
+                Some(egui::Rect::from_min_max(
+                    egui::pos2(x, y_min),
+                    egui::pos2(x, y_max),
+                ))
+            });
+            if let Some(cursor_rect) = cursor_rect {
                 let to_global = ui
                     .ctx()
                     .layer_transform_to_global(ui.layer_id())
@@ -1023,7 +1060,7 @@ impl LocalPasteApp {
                     .collect::<Vec<_>>()
             });
             let input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
-            consume_virtual_editor_owned_key_events(ui.ctx());
+            consume_virtual_editor_owned_key_events(ui.ctx(), &commands);
             let apply_started = Instant::now();
             let apply_result = self.apply_virtual_commands(ui.ctx(), &commands);
             let apply_ms = apply_started.elapsed().as_secs_f32() * 1000.0;

@@ -313,6 +313,47 @@ fn focused_virtual_editor_publishes_ime_cursor_rect() {
 }
 
 #[test]
+fn focused_virtual_editor_publishes_ime_cursor_rect_when_caret_is_offscreen() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    let content = (0..180)
+        .map(|idx| format!("line {idx}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    harness.app.reset_virtual_editor(content.as_str());
+    set_virtual_cursor_at(&mut harness.app, 150, 2);
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
+
+    let output = run_editor_panel_once_output(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(900.0, 260.0),
+            )),
+            ..Default::default()
+        },
+    );
+
+    let ime = output
+        .platform_output
+        .ime
+        .expect("focused virtual editor should publish IME output even when caret row is hidden");
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(ime.cursor_rect.min.y.is_finite());
+    assert!(ime.cursor_rect.height() > 0.0);
+    assert!(
+        ime.rect.contains(ime.cursor_rect.center()),
+        "offscreen caret fallback should stay clamped inside the editor"
+    );
+}
+
+#[test]
 fn focused_virtual_editor_owns_tab_without_focus_traversal() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;

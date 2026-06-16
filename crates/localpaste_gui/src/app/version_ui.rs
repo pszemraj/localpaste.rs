@@ -1,5 +1,6 @@
 //! Version-history and diff modal state/helpers for the editor panel.
 
+use super::deferred_saves::rollback_deferred_save_dispatches;
 use super::ui::diff_modal::{
     inline_diff_preview_from_response, InlineDiffPreview, MAX_INLINE_DIFF_BYTES,
 };
@@ -749,7 +750,9 @@ impl LocalPasteApp {
         let metadata_dispatch_failed =
             metadata_save_needed && !self.metadata_save_in_flight && self.metadata_dirty;
         if content_dispatch_failed || metadata_dispatch_failed {
+            rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
             self.version_ui.clear_history_reset_queue();
+            self.set_status("Reset cancelled because current paste could not be saved.");
             return;
         }
 
