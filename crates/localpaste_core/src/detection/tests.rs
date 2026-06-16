@@ -2,6 +2,7 @@
 
 use super::canonical::canonicalize;
 use super::detect_language;
+use super::looks_like_magika_flat_yaml;
 use super::looks_like_yaml;
 use super::refine_magika_label;
 
@@ -274,6 +275,21 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         refine_magika_label("yaml", "```json\n{\"k\":1}\n```\n"),
         Some("markdown".to_string())
     );
+}
+
+#[test]
+fn magika_flat_yaml_rescue_accepts_config_shaped_flat_mappings_only() {
+    assert!(looks_like_magika_flat_yaml(
+        "name: app\nversion: 1\nport: 8080\n"
+    ));
+    assert!(looks_like_magika_flat_yaml("apiVersion: v1\nkind: Pod\n"));
+    assert!(!looks_like_magika_flat_yaml(
+        "display name: api\nport: 8080\n"
+    ));
+    assert!(!looks_like_magika_flat_yaml(
+        "Author: Jane\nStatus: draft\n"
+    ));
+    assert!(!looks_like_magika_flat_yaml("name: app\n"));
 }
 
 #[test]

@@ -248,15 +248,27 @@ fn parse_retention_limit_strict(name: &str, default: usize) -> Result<usize, Str
 }
 
 fn parse_retention_limit_permissive(name: &str, default: usize) -> usize {
-    let value = parse_nonzero_number_permissive(name, default);
-    if value > MAX_PASTE_VERSION_RETENTION_LIMIT {
+    let Ok(raw_value) = env::var(name) else {
+        return default;
+    };
+    let trimmed = raw_value.trim();
+    if trimmed.is_empty() {
         warn!(
-            "Invalid value for {}='{}': expected integer <= {}. Using default {}",
-            name, value, MAX_PASTE_VERSION_RETENTION_LIMIT, default
+            "Environment variable {} is empty; using default {}",
+            name, default
         );
         return default;
     }
-    value
+    match trimmed.parse::<usize>() {
+        Ok(value) if (1..=MAX_PASTE_VERSION_RETENTION_LIMIT).contains(&value) => value,
+        _ => {
+            warn!(
+                "Invalid value for {}='{}': expected integer between 1 and {}. Using default {}",
+                name, raw_value, MAX_PASTE_VERSION_RETENTION_LIMIT, default
+            );
+            default
+        }
+    }
 }
 
 enum IntervalParseMode {

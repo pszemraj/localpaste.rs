@@ -36,15 +36,15 @@ fn format_history_size(len: usize) -> String {
 }
 
 fn format_history_relative_time(now: DateTime<Utc>, created_at: DateTime<Utc>) -> String {
-    let elapsed = now.signed_duration_since(created_at);
-    if elapsed.num_seconds() < 60 {
+    let elapsed_secs = now.signed_duration_since(created_at).num_seconds().max(0);
+    if elapsed_secs < 60 {
         "just now".to_string()
-    } else if elapsed.num_minutes() < 60 {
-        format!("{} min ago", elapsed.num_minutes())
-    } else if elapsed.num_hours() < 24 {
-        format!("{} hr ago", elapsed.num_hours())
-    } else if elapsed.num_days() < 7 {
-        format!("{} d ago", elapsed.num_days())
+    } else if elapsed_secs < 60 * 60 {
+        format!("{} min ago", elapsed_secs / 60)
+    } else if elapsed_secs < 24 * 60 * 60 {
+        format!("{} hr ago", elapsed_secs / (60 * 60))
+    } else if elapsed_secs < 7 * 24 * 60 * 60 {
+        format!("{} d ago", elapsed_secs / (24 * 60 * 60))
     } else {
         created_at
             .with_timezone(&Local)
@@ -222,7 +222,6 @@ impl LocalPasteApp {
                 .open(&mut keep_open)
                 .default_width(1080.0)
                 .default_height(760.0)
-                .vscroll(true)
                 .show(ctx, |ui| {
                     let reset_transition_active = self.reset_transition_active();
                     let can_go_newer = self.version_ui.history_selected_index > 0;
@@ -527,9 +526,9 @@ impl LocalPasteApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_history_row_label, history_index_after_arrow_key, history_preview_render_mode,
-        history_snapshot_action_state, HistoryActionHelper, HistoryPreviewRenderMode,
-        MAX_INLINE_HISTORY_TEXTEDIT_BYTES,
+        format_history_relative_time, format_history_row_label, history_index_after_arrow_key,
+        history_preview_render_mode, history_snapshot_action_state, HistoryActionHelper,
+        HistoryPreviewRenderMode, MAX_INLINE_HISTORY_TEXTEDIT_BYTES,
     };
     use chrono::{Duration, TimeZone, Utc};
     use eframe::egui;
@@ -592,6 +591,16 @@ mod tests {
         assert_eq!(
             format_history_row_label(now, &meta),
             "14 min ago | 1.2 KB | rust"
+        );
+    }
+
+    #[test]
+    fn history_relative_time_clamps_future_timestamps_to_just_now() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
+
+        assert_eq!(
+            format_history_relative_time(now, now + Duration::minutes(5)),
+            "just now"
         );
     }
 

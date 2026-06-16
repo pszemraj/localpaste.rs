@@ -5,88 +5,10 @@ use crate::app::text_coords::prefix_by_chars;
 use eframe::egui;
 use tracing::info;
 
-const VIRTUAL_EDITOR_TEXT_INSET: f32 = 6.0;
-const VIRTUAL_EDITOR_LINE_NUMBER_PADDING: f32 = 8.0;
+mod support;
 
-fn line_number_font_for_row_height(row_height: f32) -> egui::FontId {
-    egui::FontId::monospace((row_height * 0.72).clamp(10.0, 14.0))
-}
-fn line_number_gutter_width(line_count: usize, line_number_char_width: f32) -> f32 {
-    let line_number_digits = line_count.max(1).to_string().len();
-    (line_number_digits as f32 * line_number_char_width.max(1.0))
-        + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0
-}
-fn virtual_row_hit_test_sense() -> egui::Sense {
-    let mut sense = egui::Sense::click_and_drag();
-    sense.remove(egui::Sense::focusable_noninteractive());
-    sense
-}
-fn virtual_editor_focus_lock_filter(editor_shortcuts_available: bool) -> egui::EventFilter {
-    egui::EventFilter {
-        tab: editor_shortcuts_available,
-        horizontal_arrows: editor_shortcuts_available,
-        vertical_arrows: editor_shortcuts_available,
-        escape: false,
-    }
-}
-fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rect {
-    let scrollbar_gutter = (wrap_width - inner_rect.width()).max(0.0);
-    if scrollbar_gutter <= 0.0 {
-        return inner_rect;
-    }
-    egui::Rect::from_min_max(
-        inner_rect.min,
-        egui::pos2(inner_rect.max.x + scrollbar_gutter, inner_rect.max.y),
-    )
-}
-fn should_explicitly_blur_virtual_editor(
-    clicked_outside_editor: bool,
-    window_blurred: bool,
-    preserve_editor_focus: bool,
-) -> bool {
-    window_blurred || (clicked_outside_editor && !preserve_editor_focus)
-}
-fn consume_virtual_editor_owned_key_events(
-    ctx: &egui::Context,
-    applied_commands: &[VirtualInputCommand],
-) {
-    // Non-key events are routed by focused ownership; `consume_key` only
-    // models keys whose commands survived the editor's route filters.
-    let keys_to_consume = ctx.input(|input| {
-        input
-            .events
-            .iter()
-            .filter_map(|event| {
-                let egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } = event
-                else {
-                    return None;
-                };
-                let event_commands = commands_from_events(std::slice::from_ref(event), true);
-                if !event_commands
-                    .iter()
-                    .any(|command| applied_commands.contains(command))
-                {
-                    None
-                } else {
-                    Some((*modifiers, *key))
-                }
-            })
-            .collect::<Vec<_>>()
-    });
-    if keys_to_consume.is_empty() {
-        return;
-    }
-    ctx.input_mut(|input| {
-        for (modifiers, key) in keys_to_consume {
-            input.consume_key(modifiers, key);
-        }
-    });
-}
+use support::*;
+
 /// Rendering flags for the interactive rope-backed virtual editor surface.
 #[derive(Clone, Copy)]
 pub(super) struct VirtualEditorRenderOptions<'a> {
@@ -97,67 +19,7 @@ pub(super) struct VirtualEditorRenderOptions<'a> {
     /// Whether same-frame editor-chrome actions should preserve editor focus.
     pub(super) preserve_focus_from_editor_chrome: bool,
 }
-fn preview_triple_click_selection_bounds(
-    line_idx: usize,
-    line_count: usize,
-    line_chars: usize,
-) -> (VirtualCursor, VirtualCursor) {
-    let start = VirtualCursor {
-        line: line_idx,
-        column: 0,
-    };
-    let end = if line_idx + 1 < line_count {
-        VirtualCursor {
-            line: line_idx + 1,
-            column: 0,
-        }
-    } else {
-        VirtualCursor {
-            line: line_idx,
-            column: line_chars,
-        }
-    };
-    (start, end)
-}
-fn virtual_editor_double_click_selection_bounds<F>(
-    line_start: usize,
-    column_in_line: usize,
-    line: &str,
-    clamp_global: F,
-) -> Option<(usize, usize)>
-where
-    F: Fn(usize) -> usize,
-{
-    let (start, end) = word_range_at(line, column_in_line)?;
-    Some((
-        clamp_global(line_start.saturating_add(start)),
-        clamp_global(line_start.saturating_add(end)),
-    ))
-}
-fn follow_cursor_scroll_offset_y(
-    follow_requested: bool,
-    cursor_row: usize,
-    visible_row_range: std::ops::Range<usize>,
-    viewport_rows: usize,
-    line_height: f32,
-) -> Option<f32> {
-    if !follow_requested || viewport_rows == 0 {
-        return None;
-    }
-    let scrolloff_rows = 2usize.min(viewport_rows.saturating_sub(1));
-    if cursor_row.saturating_add(scrolloff_rows) >= visible_row_range.end {
-        let desired_top = cursor_row
-            .saturating_add(1)
-            .saturating_add(scrolloff_rows)
-            .saturating_sub(viewport_rows);
-        return Some(desired_top as f32 * line_height);
-    }
-    if cursor_row < visible_row_range.start.saturating_add(scrolloff_rows) {
-        let desired_top = cursor_row.saturating_sub(scrolloff_rows);
-        return Some(desired_top as f32 * line_height);
-    }
-    None
-}
+
 impl LocalPasteApp {
     /// Renders the read-only virtual preview panel for large text payloads.
     ///
@@ -1010,6 +872,8 @@ impl LocalPasteApp {
         focused = egui_focus;
         let editor_shortcuts_available = focused && !self.editor_shortcuts_blocked();
         if focused {
+            // egui owns this filter and replaces it on focus changes; setting
+            // it only while focused avoids stale ownership after blur.
             ui.memory_mut(|m| {
                 m.set_focus_lock_filter(
                     editor_id,
@@ -1116,133 +980,5 @@ impl LocalPasteApp {
                 "virtual editor frame breakdown"
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        editor_interaction_rect, follow_cursor_scroll_offset_y, line_number_font_for_row_height,
-        line_number_gutter_width, preview_triple_click_selection_bounds,
-        should_explicitly_blur_virtual_editor, virtual_editor_double_click_selection_bounds,
-        virtual_editor_focus_lock_filter, virtual_row_hit_test_sense,
-    };
-    use crate::app::MAX_RENDER_CHARS_PER_LINE;
-    use eframe::egui;
-
-    #[test]
-    fn interaction_rect_handles_scrollbar_gutter_matrix() {
-        struct Case {
-            total_width: f32,
-            expected_extra_right: f32,
-        }
-
-        let inner = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(180.0, 60.0));
-        let cases = [
-            Case {
-                total_width: 180.0,
-                expected_extra_right: 0.0,
-            },
-            Case {
-                total_width: 194.0,
-                expected_extra_right: 14.0,
-            },
-        ];
-
-        for case in cases {
-            let rect = editor_interaction_rect(inner, case.total_width);
-            assert_eq!(rect.min, inner.min);
-            assert_eq!(rect.max.y, inner.max.y);
-            assert_eq!(rect.max.x, inner.max.x + case.expected_extra_right);
-        }
-    }
-
-    #[test]
-    fn follow_cursor_scroll_offset_only_applies_when_requested() {
-        let hidden_cursor_offset = follow_cursor_scroll_offset_y(false, 100, 0..20, 20, 12.0);
-        assert_eq!(hidden_cursor_offset, None);
-
-        let requested_offset = follow_cursor_scroll_offset_y(true, 100, 0..20, 20, 12.0);
-        assert!(
-            requested_offset.is_some(),
-            "requested follow should produce a scroll offset when caret is out of view"
-        );
-    }
-
-    #[test]
-    fn preview_triple_click_terminal_line_uses_full_line_len() {
-        let full_line_chars = MAX_RENDER_CHARS_PER_LINE.saturating_add(64);
-
-        let (start, end) = preview_triple_click_selection_bounds(2, 3, full_line_chars);
-
-        assert_eq!((start.line, start.column), (2, 0));
-        assert_eq!((end.line, end.column), (2, full_line_chars));
-    }
-
-    #[test]
-    fn virtual_editor_double_click_selection_respects_clamp_callback() {
-        let line_start = 17usize;
-        let clamp_end = line_start.saturating_add(32);
-        let line = "a".repeat(96);
-
-        let bounds =
-            virtual_editor_double_click_selection_bounds(line_start, 31, line.as_str(), |global| {
-                global.min(clamp_end)
-            })
-            .expect("expected word bounds");
-
-        assert_eq!(bounds, (line_start, clamp_end));
-    }
-
-    #[test]
-    fn line_number_font_size_is_clamped() {
-        assert_eq!(line_number_font_for_row_height(1.0).size, 10.0);
-        assert_eq!(line_number_font_for_row_height(100.0).size, 14.0);
-        let mid = line_number_font_for_row_height(16.0).size;
-        assert!(mid > 10.0 && mid < 14.0);
-    }
-
-    #[test]
-    fn line_number_gutter_width_scales_with_digits_and_char_width() {
-        let single_digit = line_number_gutter_width(9, 5.0);
-        let two_digits = line_number_gutter_width(10, 5.0);
-        let wider_chars = line_number_gutter_width(10, 7.0);
-        assert!(two_digits > single_digit);
-        assert!(wider_chars > two_digits);
-
-        let clamped = line_number_gutter_width(999, 0.0);
-        let expected = (3.0 * 1.0) + super::VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
-        assert!((clamped - expected).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn virtual_row_hit_test_sense_is_non_focusable_click_and_drag() {
-        let sense = virtual_row_hit_test_sense();
-        assert!(sense.senses_click());
-        assert!(sense.senses_drag());
-        assert!(!sense.is_focusable());
-    }
-
-    #[test]
-    fn focus_lock_filter_releases_navigation_when_shortcuts_are_blocked() {
-        let available = virtual_editor_focus_lock_filter(true);
-        assert!(available.tab);
-        assert!(available.horizontal_arrows);
-        assert!(available.vertical_arrows);
-        assert!(!available.escape);
-
-        let blocked = virtual_editor_focus_lock_filter(false);
-        assert!(!blocked.tab);
-        assert!(!blocked.horizontal_arrows);
-        assert!(!blocked.vertical_arrows);
-        assert!(!blocked.escape);
-    }
-
-    #[test]
-    fn explicit_blur_policy_preserves_editor_focus_for_editor_chrome_actions() {
-        assert!(should_explicitly_blur_virtual_editor(true, false, false));
-        assert!(!should_explicitly_blur_virtual_editor(true, false, true));
-        assert!(should_explicitly_blur_virtual_editor(false, true, true));
-        assert!(!should_explicitly_blur_virtual_editor(false, false, false));
     }
 }

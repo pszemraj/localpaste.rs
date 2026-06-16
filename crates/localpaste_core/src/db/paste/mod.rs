@@ -29,6 +29,7 @@ use self::helpers::{
     score_paste_match,
 };
 
+pub(crate) use self::helpers::remove_paste_versions_for_delete;
 pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_timestamp_key};
 
 /// Accessor for paste-related redb tables.
@@ -411,27 +412,8 @@ impl PasteDb {
             let _ = updated.remove((recency_key, id))?;
             let _ = pastes.remove(id)?;
             let _ = metas.remove(id)?;
-            let version_items = decode_version_meta_list(
-                versions_meta.get(id)?.as_ref().map(|value| value.value()),
-            )?;
-            let mut versions = Vec::with_capacity(version_items.len());
-            for version in version_items {
-                let content = versions_content
-                    .remove((id, version.version_id_ms))?
-                    .map(|guard| bincode::deserialize::<String>(guard.value()))
-                    .transpose()?
-                    .ok_or_else(|| {
-                        AppError::StorageMessage(format!(
-                            "Missing version content for paste '{}' version {}",
-                            id, version.version_id_ms
-                        ))
-                    })?;
-                versions.push(DeletedPasteVersion {
-                    meta: version,
-                    content,
-                });
-            }
-            let _ = versions_meta.remove(id)?;
+            let versions =
+                remove_paste_versions_for_delete(&mut versions_meta, &mut versions_content, id)?;
             Some(DeletedPasteBundle { paste, versions })
         };
 

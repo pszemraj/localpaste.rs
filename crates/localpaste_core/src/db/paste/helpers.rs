@@ -1,8 +1,11 @@
 //! Helper functions shared by paste storage operations.
 
+use crate::db::versioning::decode_version_meta_list;
+use crate::error::AppError;
 use crate::models::paste::*;
 use crate::semantic::{DerivedMeta, PasteKind};
 use chrono::{DateTime, Utc};
+use redb::ReadableTable;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +19,51 @@ pub(crate) fn reverse_timestamp_key(updated_at: DateTime<Utc>) -> u64 {
     // expected runtime data while avoiding negative->u64 underflow.
     let millis = updated_at.timestamp_millis().max(0) as u64;
     u64::MAX.saturating_sub(millis)
+}
+
+/// Removes all historical version rows for a paste and returns undo payloads.
+///
+/// # Arguments
+/// - `versions_meta`: Open mutable version metadata table.
+/// - `versions_content`: Open mutable version content table.
+/// - `paste_id`: Paste id whose version rows should be removed.
+///
+/// # Returns
+/// Deleted version metadata/content pairs in stored metadata order.
+///
+/// # Errors
+/// Returns an error when storage access, metadata decoding, content decoding, or
+/// content/meta consistency checks fail.
+pub(crate) fn remove_paste_versions_for_delete(
+    versions_meta: &mut redb::Table<&str, &[u8]>,
+    versions_content: &mut redb::Table<(&str, u64), &[u8]>,
+    paste_id: &str,
+) -> Result<Vec<DeletedPasteVersion>, AppError> {
+    let version_items = decode_version_meta_list(
+        versions_meta
+            .get(paste_id)?
+            .as_ref()
+            .map(|value| value.value()),
+    )?;
+    let mut versions = Vec::with_capacity(version_items.len());
+    for version in version_items {
+        let content = versions_content
+            .remove((paste_id, version.version_id_ms))?
+            .map(|guard| bincode::deserialize::<String>(guard.value()))
+            .transpose()?
+            .ok_or_else(|| {
+                AppError::StorageMessage(format!(
+                    "Missing version content for paste '{}' version {}",
+                    paste_id, version.version_id_ms
+                ))
+            })?;
+        versions.push(DeletedPasteVersion {
+            meta: version,
+            content,
+        });
+    }
+    let _ = versions_meta.remove(paste_id)?;
+    Ok(versions)
 }
 
 /// Applies an [`UpdatePasteRequest`] onto an existing [`Paste`] in place.

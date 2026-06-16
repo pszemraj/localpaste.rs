@@ -5,16 +5,17 @@ use super::tables::{
     PASTE_VERSIONS_META,
 };
 use super::Database;
-use crate::db::paste::{apply_update_request, deserialize_paste, reverse_timestamp_key};
+use crate::db::paste::{
+    apply_update_request, deserialize_paste, remove_paste_versions_for_delete,
+    reverse_timestamp_key,
+};
 use crate::db::versioning::{
     decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
     prune_version_meta_to_limit, should_record_version,
 };
 use crate::error::AppError;
 use crate::models::folder::Folder;
-use crate::models::paste::{
-    DeletedPasteBundle, DeletedPasteVersion, Paste, PasteMeta, UpdatePasteRequest,
-};
+use crate::models::paste::{DeletedPasteBundle, Paste, PasteMeta, UpdatePasteRequest};
 use redb::ReadableTable;
 use std::sync::MutexGuard;
 
@@ -252,7 +253,8 @@ impl TransactionOps {
     ///
     /// # Errors
     /// Returns an error when storage access, deserialization, or version bundle assembly fails.
-    pub fn delete_paste_with_folder_bundle(
+    #[cfg(test)]
+    pub(crate) fn delete_paste_with_folder_bundle(
         db: &Database,
         paste_id: &str,
     ) -> Result<Option<DeletedPasteBundle>, AppError> {
@@ -317,30 +319,11 @@ impl TransactionOps {
             let _ = updated.remove((old_recency_key, paste_id))?;
             let _ = pastes.remove(paste_id)?;
             let _ = metas.remove(paste_id)?;
-            let version_items = decode_version_meta_list(
-                versions_meta
-                    .get(paste_id)?
-                    .as_ref()
-                    .map(|value| value.value()),
+            let versions = remove_paste_versions_for_delete(
+                &mut versions_meta,
+                &mut versions_content,
+                paste_id,
             )?;
-            let mut versions = Vec::with_capacity(version_items.len());
-            for version in version_items {
-                let content = versions_content
-                    .remove((paste_id, version.version_id_ms))?
-                    .map(|guard| bincode::deserialize::<String>(guard.value()))
-                    .transpose()?
-                    .ok_or_else(|| {
-                        AppError::StorageMessage(format!(
-                            "Missing version content for paste '{}' version {}",
-                            paste_id, version.version_id_ms
-                        ))
-                    })?;
-                versions.push(DeletedPasteVersion {
-                    meta: version,
-                    content,
-                });
-            }
-            let _ = versions_meta.remove(paste_id)?;
 
             apply_folder_count_transition(&mut folders, old_folder_id.as_deref(), None)?;
             Some(DeletedPasteBundle { paste, versions })

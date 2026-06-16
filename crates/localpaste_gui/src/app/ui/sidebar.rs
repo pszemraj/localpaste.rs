@@ -492,6 +492,21 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_time_bucket_keeps_exact_seven_day_boundary_in_this_week() {
+        let now = Local.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
+        let boundary = now - Duration::days(7);
+
+        assert_eq!(
+            sidebar_time_bucket(boundary.with_timezone(&Utc), now),
+            SidebarTimeBucket::ThisWeek
+        );
+        assert_eq!(
+            sidebar_time_bucket((boundary - Duration::seconds(1)).with_timezone(&Utc), now),
+            SidebarTimeBucket::Earlier
+        );
+    }
+
+    #[test]
     fn sidebar_list_items_matrix_covers_headers_and_search_density() {
         let now = Local.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
         let pastes = vec![

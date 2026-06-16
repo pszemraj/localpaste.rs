@@ -129,7 +129,7 @@ fn paste_deleted_toast_carries_undo_action_for_restore_window() {
     );
     assert!(
         toast.expires_at.saturating_duration_since(before) < Duration::from_secs(10),
-        "GUI undo affordance should expire before the backend undo token"
+        "GUI undo affordance should expire within the local bundle restore window"
     );
 }
 
