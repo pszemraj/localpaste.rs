@@ -202,7 +202,7 @@ fn move_within_same_folder_updates_paste_without_count_drift() {
 fn content_change_during_folder_moves_archives_middle_version_after_wait() {
     let _lock = env_lock().lock().expect("env lock");
     let fixture = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");
         let db = Database::new(db_path.to_str().expect("db path")).expect("db");
@@ -295,7 +295,7 @@ fn content_change_during_folder_moves_archives_middle_version_after_wait() {
 fn content_change_during_folder_moves_prunes_versions_past_retention_limit() {
     let _lock = env_lock().lock().expect("env lock");
     let fixture = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
         let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");

@@ -111,7 +111,7 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return Some("markdown".to_string());
     }
 
-    if label == "yaml" && !looks_like_yaml(content) {
+    if label == "yaml" && !looks_like_yaml(content) && !looks_like_magika_flat_yaml(content) {
         return None;
     }
 
@@ -135,6 +135,7 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
     let mut first_meaningful_seen = false;
     let mut strong_structure = false;
     let mut open_mapping_head_indent: Option<usize> = None;
+    let mut block_scalar_head_indent: Option<usize> = None;
 
     for line in content.lines().take(512) {
         let trimmed = line.trim();
@@ -149,6 +150,12 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
             }
         }
         let indent = line.len().saturating_sub(line.trim_start().len());
+        if block_scalar_head_indent.is_some_and(|head_indent| indent > head_indent) {
+            strong_structure = true;
+            block_scalar_head_indent = None;
+            continue;
+        }
+        block_scalar_head_indent = None;
         if let Some(sequence_item) = trimmed.strip_prefix("- ") {
             sequence_items = sequence_items.saturating_add(1);
             if open_mapping_head_indent.is_some_and(|head_indent| indent > head_indent) {
@@ -172,10 +179,13 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
             if open_mapping_head_indent.is_some_and(|head_indent| indent > head_indent) {
                 strong_structure = true;
             }
-            if yaml_value_has_distinctive_structure(value) {
+            let block_scalar_header = yaml_value_is_block_scalar_header(value);
+            if !block_scalar_header && yaml_value_has_distinctive_structure(value) {
                 strong_structure = true;
             }
-            open_mapping_head_indent = value.is_empty().then_some(indent);
+            block_scalar_head_indent = block_scalar_header.then_some(indent);
+            open_mapping_head_indent =
+                (value.is_empty() || yaml_value_is_anchor_header(value)).then_some(indent);
         } else {
             open_mapping_head_indent = None;
         }
@@ -207,6 +217,48 @@ fn looks_like_yaml_sequence_item(item: &str) -> bool {
     false
 }
 
+#[cfg(any(feature = "magika", test))]
+fn looks_like_magika_flat_yaml(content: &str) -> bool {
+    let mut mapping_pairs = 0usize;
+    let mut meaningful_lines = 0usize;
+
+    for line in content.lines().take(512) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "---" {
+            continue;
+        }
+        meaningful_lines = meaningful_lines.saturating_add(1);
+        let Some((key, _value)) = trimmed.split_once(':') else {
+            return false;
+        };
+        let key = key.trim();
+        if !looks_like_single_line_yaml_mapping(trimmed, false)
+            || !yaml_mapping_key_has_config_shape(key)
+        {
+            return false;
+        }
+        mapping_pairs = mapping_pairs.saturating_add(1);
+    }
+
+    meaningful_lines >= 2 && mapping_pairs >= 2
+}
+
+#[cfg(any(feature = "magika", test))]
+fn yaml_mapping_key_has_config_shape(key: &str) -> bool {
+    let unquoted = key
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            key.strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+        .unwrap_or(key);
+    unquoted
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_lowercase() || ch == '_' || ch == '-')
+}
+
 fn yaml_sequence_item_has_distinctive_structure(item: &str) -> bool {
     let trimmed = item.trim();
     if let Some(value) = yaml_mapping_value(trimmed, true) {
@@ -227,9 +279,6 @@ fn yaml_value_has_distinctive_structure(value: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    if matches!(trimmed.chars().next(), Some('|' | '>' | '&' | '*')) {
-        return true;
-    }
     if trimmed.contains('{') || trimmed.contains('}') {
         return looks_like_yaml_flow_mapping(trimmed);
     }
@@ -237,6 +286,31 @@ fn yaml_value_has_distinctive_structure(value: &str) -> bool {
         return looks_like_yaml_flow_sequence(trimmed);
     }
     false
+}
+
+fn yaml_value_is_block_scalar_header(value: &str) -> bool {
+    let trimmed = value.trim();
+    let Some(indicator) = trimmed.chars().next() else {
+        return false;
+    };
+    if indicator != '|' && indicator != '>' {
+        return false;
+    }
+    trimmed
+        .chars()
+        .skip(1)
+        .all(|ch| matches!(ch, '+' | '-' | '0'..='9'))
+}
+
+fn yaml_value_is_anchor_header(value: &str) -> bool {
+    let trimmed = value.trim();
+    let Some(rest) = trimmed.strip_prefix('&') else {
+        return false;
+    };
+    !rest.is_empty()
+        && rest
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
 }
 
 fn looks_like_single_line_yaml_mapping(line: &str, allow_unquoted_space_keys: bool) -> bool {

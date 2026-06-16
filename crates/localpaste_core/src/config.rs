@@ -9,6 +9,7 @@ use tracing::warn;
 use crate::constants::{
     API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE,
     DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PASTE_VERSION_RETENTION_LIMIT, DEFAULT_PORT,
+    MAX_PASTE_VERSION_RETENTION_LIMIT,
 };
 
 /// Runtime configuration for LocalPaste.
@@ -235,6 +236,29 @@ where
     }
 }
 
+fn parse_retention_limit_strict(name: &str, default: usize) -> Result<usize, String> {
+    let value = parse_nonzero_number_strict(name, default)?;
+    if value > MAX_PASTE_VERSION_RETENTION_LIMIT {
+        return Err(format!(
+            "Invalid value for {}='{}': expected integer between 1 and {}",
+            name, value, MAX_PASTE_VERSION_RETENTION_LIMIT
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_retention_limit_permissive(name: &str, default: usize) -> usize {
+    let value = parse_nonzero_number_permissive(name, default);
+    if value > MAX_PASTE_VERSION_RETENTION_LIMIT {
+        warn!(
+            "Invalid value for {}='{}': expected integer <= {}. Using default {}",
+            name, value, MAX_PASTE_VERSION_RETENTION_LIMIT, default
+        );
+        return default;
+    }
+    value
+}
+
 enum IntervalParseMode {
     Permissive,
     Strict,
@@ -302,14 +326,15 @@ pub fn paste_version_interval_secs_from_env() -> Result<u64, String> {
 /// permissive env/default semantics.
 ///
 /// # Returns
-/// Retention limit (minimum `1`), sourced from
+/// Retention limit (between `1` and
+/// [`MAX_PASTE_VERSION_RETENTION_LIMIT`]), sourced from
 /// `LOCALPASTE_VERSION_RETENTION_LIMIT` when set.
 ///
 /// Malformed or zero values emit a warning and fall back to the default limit
 /// instead of failing startup. Strict entrypoints should validate the same key
 /// via [`paste_version_retention_limit_from_env`].
 pub fn paste_version_retention_limit_from_env_or_default() -> usize {
-    parse_nonzero_number_permissive(
+    parse_retention_limit_permissive(
         "LOCALPASTE_VERSION_RETENTION_LIMIT",
         DEFAULT_PASTE_VERSION_RETENTION_LIMIT,
     )
@@ -318,13 +343,15 @@ pub fn paste_version_retention_limit_from_env_or_default() -> usize {
 /// Resolve the maximum number of persisted snapshots retained per paste.
 ///
 /// # Returns
-/// Retention limit (minimum `1`), sourced from
+/// Retention limit (between `1` and
+/// [`MAX_PASTE_VERSION_RETENTION_LIMIT`]), sourced from
 /// `LOCALPASTE_VERSION_RETENTION_LIMIT` when set.
 ///
 /// # Errors
-/// Returns an error when an explicitly provided limit is malformed or less than `1`.
+/// Returns an error when an explicitly provided limit is malformed, less than
+/// `1`, or greater than [`MAX_PASTE_VERSION_RETENTION_LIMIT`].
 pub fn paste_version_retention_limit_from_env() -> Result<usize, String> {
-    parse_nonzero_number_strict(
+    parse_retention_limit_strict(
         "LOCALPASTE_VERSION_RETENTION_LIMIT",
         DEFAULT_PASTE_VERSION_RETENTION_LIMIT,
     )
@@ -520,6 +547,7 @@ mod tests {
     use crate::constants::{
         API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE,
         DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PASTE_VERSION_RETENTION_LIMIT, DEFAULT_PORT,
+        MAX_PASTE_VERSION_RETENTION_LIMIT,
     };
     use crate::env::{env_lock, EnvGuard};
     use std::path::PathBuf;
@@ -759,10 +787,30 @@ mod tests {
         assert_eq!(paste_version_retention_limit_from_env_or_default(), 25);
         drop(_limit);
 
+        let _limit = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "1");
+        assert_eq!(
+            paste_version_retention_limit_from_env().expect("strict minimum retention"),
+            1
+        );
+        assert_eq!(paste_version_retention_limit_from_env_or_default(), 1);
+        drop(_limit);
+
         let _limit = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "0");
         let err = paste_version_retention_limit_from_env()
             .expect_err("strict zero retention should fail");
         assert!(err.contains("LOCALPASTE_VERSION_RETENTION_LIMIT"));
+        assert_eq!(
+            paste_version_retention_limit_from_env_or_default(),
+            DEFAULT_PASTE_VERSION_RETENTION_LIMIT
+        );
+        drop(_limit);
+
+        let over_max = (MAX_PASTE_VERSION_RETENTION_LIMIT + 1).to_string();
+        let _limit = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", over_max.as_str());
+        let err = paste_version_retention_limit_from_env()
+            .expect_err("strict over-max retention should fail");
+        assert!(err.contains("LOCALPASTE_VERSION_RETENTION_LIMIT"));
+        assert!(err.contains(&MAX_PASTE_VERSION_RETENTION_LIMIT.to_string()));
         assert_eq!(
             paste_version_retention_limit_from_env_or_default(),
             DEFAULT_PASTE_VERSION_RETENTION_LIMIT

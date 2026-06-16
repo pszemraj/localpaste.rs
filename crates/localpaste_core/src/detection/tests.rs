@@ -52,6 +52,16 @@ fn yaml_shape_helper_handles_flow_values_and_single_list_guard() {
 }
 
 #[test]
+fn yaml_shape_helper_requires_supporting_structure_for_marker_values() {
+    assert!(!looks_like_yaml("pattern: *.glob\nmode: strict\n"));
+    assert!(!looks_like_yaml("cmd: &background\nmode: async\n"));
+    assert!(!looks_like_yaml("rule: >threshold\nstatus: active\n"));
+    assert!(!looks_like_yaml("script: |\nstatus: active\n"));
+    assert!(looks_like_yaml("script: |-\n  echo hi\n"));
+    assert!(looks_like_yaml("defaults: &defaults\n  timeout: 30\n"));
+}
+
+#[test]
 fn yaml_shape_helper_keeps_single_line_spaced_key_guardrail() {
     assert!(!looks_like_yaml("status report: done\n"));
     assert!(!looks_like_yaml("name: app\n"));
@@ -231,6 +241,14 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         Some("yaml".to_string())
     );
     assert_eq!(refine_magika_label("yaml", "name: app"), None);
+    assert_eq!(
+        refine_magika_label("yaml", "name: app\nversion: 1\nport: 8080\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "apiVersion: v1\nkind: Pod\n"),
+        Some("yaml".to_string())
+    );
     assert_eq!(
         refine_magika_label("yaml", "name: app\nservices:\n  - web\n"),
         Some("yaml".to_string())

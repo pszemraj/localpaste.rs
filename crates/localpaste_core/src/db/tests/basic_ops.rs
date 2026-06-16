@@ -6,34 +6,6 @@ use crate::env::{env_lock, EnvGuard};
 use redb::ReadableDatabase;
 use std::time::Duration;
 
-fn update_request(
-    content: Option<&str>,
-    name: Option<&str>,
-    language: Option<&str>,
-    language_is_manual: Option<bool>,
-) -> UpdatePasteRequest {
-    UpdatePasteRequest {
-        content: content.map(ToString::to_string),
-        name: name.map(ToString::to_string),
-        language: language.map(ToString::to_string),
-        language_is_manual,
-        folder_id: None,
-        tags: None,
-    }
-}
-
-fn update_existing_paste(
-    db: &Database,
-    paste_id: &str,
-    request: UpdatePasteRequest,
-    context: &str,
-) -> Paste {
-    db.pastes
-        .update(paste_id, request)
-        .expect(context)
-        .expect("paste exists")
-}
-
 fn create_source_with_manual_language_snapshot(
     db: &Database,
     initial_content: &str,
@@ -169,7 +141,7 @@ fn create_starts_without_stored_version_snapshots() {
 fn content_update_respects_version_interval_and_hash_dedupe() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "3600");
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "3600");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");
         let db = Database::new(db_path.to_str().expect("db path")).expect("db");
@@ -221,7 +193,7 @@ fn content_update_respects_version_interval_and_hash_dedupe() {
 fn content_update_archives_middle_version_after_wait_since_last_archive() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");
         let db = Database::new(db_path.to_str().expect("db path")).expect("db");
@@ -277,7 +249,7 @@ fn content_update_archives_middle_version_after_wait_since_last_archive() {
 fn content_update_prunes_versions_past_retention_limit() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
         let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");
@@ -350,7 +322,7 @@ fn content_update_prunes_versions_past_retention_limit() {
 fn reset_hard_prunes_newer_versions() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");
         let db = Database::new(db_path.to_str().expect("db path")).expect("db");
