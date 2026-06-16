@@ -368,13 +368,19 @@ mod tests {
 
         backend
             .cmd_tx
-            .send(CoreCmd::RestoreDeletedPaste { undo_token })
+            .send(CoreCmd::RestoreDeletedPaste {
+                undo_token: undo_token.clone(),
+            })
             .expect("send restore");
 
         match recv_event(&backend.evt_rx) {
-            CoreEvent::PasteRestored { paste } => {
+            CoreEvent::PasteRestored {
+                paste,
+                undo_token: restored_token,
+            } => {
                 assert_eq!(paste.id, created_id);
                 assert_eq!(paste.content, "updated");
+                assert_eq!(restored_token, undo_token);
             }
             other => panic!("unexpected event: {:?}", other),
         }

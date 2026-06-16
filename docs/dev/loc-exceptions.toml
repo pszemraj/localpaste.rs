@@ -28,7 +28,7 @@ reason = "Integration coverage remains centralized while version/diff endpoint c
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/app/ui/editor_panel_virtual.rs"
-max_lines = 1230
+max_lines = 1260
 reason = "Virtual editor rendering and focus/input ownership remain together pending module extraction."
 
 [[exceptions]]

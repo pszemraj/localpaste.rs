@@ -352,9 +352,10 @@ fn paste_restored_selects_restored_paste_and_refreshes_list() {
     let mut restored = Paste::new("restored content".to_string(), "Restored".to_string());
     restored.id = "restored-id".to_string();
 
-    harness
-        .app
-        .apply_event(CoreEvent::PasteRestored { paste: restored });
+    harness.app.apply_event(CoreEvent::PasteRestored {
+        paste: restored,
+        undo_token: "undo-restored".to_string(),
+    });
 
     assert_eq!(harness.app.selected_id.as_deref(), Some("restored-id"));
     assert_eq!(

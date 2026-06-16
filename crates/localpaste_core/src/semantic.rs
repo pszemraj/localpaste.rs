@@ -209,7 +209,14 @@ pub(crate) fn extract_definition_handle_from_line(
     let patterns: &[&str] = match lang.as_str() {
         "rust" => &["fn ", "struct ", "enum ", "trait ", "impl "],
         "python" => &["def ", "class ", "async def "],
-        "javascript" | "typescript" => &["function ", "class ", "const ", "export function "],
+        "javascript" | "typescript" => &[
+            "function ",
+            "class ",
+            "const ",
+            "export function ",
+            "export class ",
+            "export const ",
+        ],
         "go" => &["func ", "type ", "package "],
         _ => return None,
     };
@@ -467,7 +474,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive, PasteKind};
+    use super::{derive, extract_definition_handle_from_line, PasteKind};
 
     #[test]
     fn derive_matrix_covers_code_config_log_link_and_other() {
@@ -508,5 +515,29 @@ mod tests {
         assert!(derived.terms.iter().any(|term| term == "fsdp2"));
         assert!(derived.terms.iter().any(|term| term == "validation"));
         assert!(derived.terms.iter().any(|term| term == "cublaslt"));
+    }
+
+    #[test]
+    fn definition_handle_extracts_exported_js_ts_declarations() {
+        let cases = [
+            (
+                "export const renderPanel = () => {};",
+                Some("typescript"),
+                Some("export const renderPanel"),
+            ),
+            (
+                "export class WorkspacePanel {}",
+                Some("javascript"),
+                Some("export class WorkspacePanel"),
+            ),
+        ];
+
+        for (line, language, expected) in cases {
+            assert_eq!(
+                extract_definition_handle_from_line(line, language).as_deref(),
+                expected,
+                "line: {line}"
+            );
+        }
     }
 }

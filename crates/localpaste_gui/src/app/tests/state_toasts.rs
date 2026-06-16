@@ -134,7 +134,7 @@ fn paste_deleted_toast_carries_undo_action_for_restore_window() {
 }
 
 #[test]
-fn undo_delete_action_dispatches_restore_and_removes_matching_toast() {
+fn undo_delete_action_dispatches_restore_and_keeps_toast_until_ack() {
     let mut harness = make_app();
     harness.app.set_status_with_action(
         "Paste deleted.",
@@ -156,13 +156,13 @@ fn undo_delete_action_dispatches_restore_and_removes_matching_toast() {
         other => panic!("expected RestoreDeletedPaste command, got {:?}", other),
     }
     assert!(
-        harness.app.toasts.iter().all(|toast| {
-            !matches!(
+        harness.app.toasts.iter().any(|toast| {
+            matches!(
                 &toast.action,
                 Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
             )
         }),
-        "undo action should remove only the consumed restore toast"
+        "dispatched restore should keep the undo toast until backend ack"
     );
     assert!(
         harness.app.toasts.iter().any(|toast| {
@@ -180,6 +180,49 @@ fn undo_delete_action_dispatches_restore_and_removes_matching_toast() {
             .as_ref()
             .map(|status| status.text.as_str()),
         Some("Restoring deleted paste...")
+    );
+}
+
+#[test]
+fn paste_restored_ack_removes_matching_undo_toast() {
+    let mut harness = make_app();
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        },
+    );
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-beta".to_string(),
+        },
+    );
+    let mut restored = Paste::new("restored content".to_string(), "Restored".to_string());
+    restored.id = "restored-id".to_string();
+
+    harness.app.apply_event(CoreEvent::PasteRestored {
+        paste: restored,
+        undo_token: "undo-alpha".to_string(),
+    });
+
+    assert!(
+        harness.app.toasts.iter().all(|toast| {
+            !matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
+            )
+        }),
+        "restore ack should remove only the confirmed undo toast"
+    );
+    assert!(
+        harness.app.toasts.iter().any(|toast| {
+            matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-beta"
+            )
+        }),
+        "other undo toasts should remain actionable"
     );
 }
 

@@ -73,6 +73,7 @@ Runtime contract references:
 Day-to-day rule:
 
 - Keep exactly one writer process per `DB_PATH` during local development and validation.
+- The GUI polls for out-of-process DB writes every 30 seconds; app-owned mutations refresh immediately.
 
 For editor-mode flags and tracing env vars, see
 [docs/dev/gui-notes.md](gui-notes.md).

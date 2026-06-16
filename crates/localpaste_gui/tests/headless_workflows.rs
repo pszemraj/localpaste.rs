@@ -207,12 +207,18 @@ fn backend_delete_undo_restores_content_and_version_history_headlessly() {
 
     backend
         .cmd_tx
-        .send(CoreCmd::RestoreDeletedPaste { undo_token })
+        .send(CoreCmd::RestoreDeletedPaste {
+            undo_token: undo_token.clone(),
+        })
         .expect("send restore");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteRestored { paste } => {
+        CoreEvent::PasteRestored {
+            paste,
+            undo_token: restored_token,
+        } => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.content, "version-two");
+            assert_eq!(restored_token, undo_token);
         }
         other => panic!("expected PasteRestored event, got {:?}", other),
     }

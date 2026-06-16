@@ -21,6 +21,14 @@ fn virtual_row_hit_test_sense() -> egui::Sense {
     sense.remove(egui::Sense::focusable_noninteractive());
     sense
 }
+fn virtual_editor_focus_lock_filter(editor_shortcuts_available: bool) -> egui::EventFilter {
+    egui::EventFilter {
+        tab: editor_shortcuts_available,
+        horizontal_arrows: editor_shortcuts_available,
+        vertical_arrows: editor_shortcuts_available,
+        escape: false,
+    }
+}
 fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rect {
     let scrollbar_gutter = (wrap_width - inner_rect.width()).max(0.0);
     if scrollbar_gutter <= 0.0 {
@@ -1000,16 +1008,12 @@ impl LocalPasteApp {
             self.reset_virtual_caret_blink();
         }
         focused = egui_focus;
+        let editor_shortcuts_available = focused && !self.editor_shortcuts_blocked();
         if focused {
             ui.memory_mut(|m| {
                 m.set_focus_lock_filter(
                     editor_id,
-                    egui::EventFilter {
-                        tab: true,
-                        horizontal_arrows: true,
-                        vertical_arrows: true,
-                        escape: false,
-                    },
+                    virtual_editor_focus_lock_filter(editor_shortcuts_available),
                 );
             });
             let cursor_rect = ime_cursor_rect.or_else(|| {
@@ -1051,7 +1055,7 @@ impl LocalPasteApp {
                 });
             }
         }
-        if focused && !self.editor_shortcuts_blocked() {
+        if editor_shortcuts_available {
             let route_started = Instant::now();
             let commands = ui.input(|input| {
                 commands_from_events(&input.events, true)
@@ -1079,7 +1083,7 @@ impl LocalPasteApp {
                 .map(|range| range.end.saturating_sub(range.start))
                 .unwrap_or(0);
             self.trace_input(InputTraceFrame {
-                focus_active_pre: focused,
+                focus_active_pre: had_focus,
                 focus_active_post: focused,
                 egui_focus_pre: had_focus,
                 egui_focus_post: focused,
@@ -1121,7 +1125,7 @@ mod tests {
         editor_interaction_rect, follow_cursor_scroll_offset_y, line_number_font_for_row_height,
         line_number_gutter_width, preview_triple_click_selection_bounds,
         should_explicitly_blur_virtual_editor, virtual_editor_double_click_selection_bounds,
-        virtual_row_hit_test_sense,
+        virtual_editor_focus_lock_filter, virtual_row_hit_test_sense,
     };
     use crate::app::MAX_RENDER_CHARS_PER_LINE;
     use eframe::egui;
@@ -1217,6 +1221,21 @@ mod tests {
         assert!(sense.senses_click());
         assert!(sense.senses_drag());
         assert!(!sense.is_focusable());
+    }
+
+    #[test]
+    fn focus_lock_filter_releases_navigation_when_shortcuts_are_blocked() {
+        let available = virtual_editor_focus_lock_filter(true);
+        assert!(available.tab);
+        assert!(available.horizontal_arrows);
+        assert!(available.vertical_arrows);
+        assert!(!available.escape);
+
+        let blocked = virtual_editor_focus_lock_filter(false);
+        assert!(!blocked.tab);
+        assert!(!blocked.horizontal_arrows);
+        assert!(!blocked.vertical_arrows);
+        assert!(!blocked.escape);
     }
 
     #[test]

@@ -272,6 +272,16 @@ mod tests {
                 Some("typescript"),
                 Some("export function renderPanel"),
             ),
+            (
+                "export const renderPanel = () => {}",
+                Some("typescript"),
+                Some("export const renderPanel"),
+            ),
+            (
+                "export class WorkspacePanel {}",
+                Some("javascript"),
+                Some("export class WorkspacePanel"),
+            ),
         ];
         for (content, language, expected) in cases {
             let derived = derive_name_from_content(content, language);

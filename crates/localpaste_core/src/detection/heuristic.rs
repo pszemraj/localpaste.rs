@@ -138,6 +138,8 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("sql".to_string());
     }
 
+    // Keep the heuristic YAML path structural: flat `key: value` mappings are
+    // accepted only when Magika first classifies the sample as YAML.
     let yaml_like = looks_like_yaml(sample);
 
     if is_markdown_content(sample) && !yaml_like {

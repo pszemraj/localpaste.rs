@@ -280,8 +280,14 @@ impl LocalPasteApp {
                 }
                 self.request_refresh();
             }
-            CoreEvent::PasteRestored { paste } => {
+            CoreEvent::PasteRestored { paste, undo_token } => {
                 let paste_id = paste.id.clone();
+                self.toasts.retain(|toast| {
+                    !matches!(
+                        &toast.action,
+                        Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
+                    )
+                });
                 self.upsert_cached_paste_summary(&paste);
                 if !self.search_query.trim().is_empty() {
                     self.search_last_sent.clear();
@@ -785,12 +791,6 @@ impl LocalPasteApp {
             "Undo delete failed: backend unavailable.",
         );
         if sent {
-            self.toasts.retain(|toast| {
-                !matches!(
-                    &toast.action,
-                    Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
-                )
-            });
             self.set_status("Restoring deleted paste...");
         }
     }

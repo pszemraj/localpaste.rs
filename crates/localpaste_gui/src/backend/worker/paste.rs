@@ -368,7 +368,7 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
 /// - `state`: Worker state containing db, undo buffer, and event channel handles.
 /// - `undo_token`: Token emitted by a prior delete event.
 pub(super) fn handle_restore_deleted_paste(state: &mut WorkerState, undo_token: String) {
-    let Some(bundle) = state.take_deleted_paste_undo(undo_token.as_str()) else {
+    let Some(bundle) = state.pending_deleted_paste_bundle(undo_token.as_str()) else {
         send_error(
             &state.evt_tx,
             CoreErrorSource::Other,
@@ -380,7 +380,10 @@ pub(super) fn handle_restore_deleted_paste(state: &mut WorkerState, undo_token: 
     match TransactionOps::restore_deleted_paste(&state.db, bundle) {
         Ok(paste) => {
             state.query_cache.invalidate();
-            let _ = state.evt_tx.send(CoreEvent::PasteRestored { paste });
+            state.discard_deleted_paste_undo(undo_token.as_str());
+            let _ = state
+                .evt_tx
+                .send(CoreEvent::PasteRestored { paste, undo_token });
         }
         Err(err) => {
             error!("backend restore deleted paste failed: {}", err);

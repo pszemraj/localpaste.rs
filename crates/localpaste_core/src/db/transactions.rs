@@ -413,8 +413,7 @@ impl TransactionOps {
                 {
                     paste.folder_id.clone()
                 }
-                Some(_) => None,
-                None => None,
+                _ => None,
             };
             paste.folder_id = restore_folder;
 

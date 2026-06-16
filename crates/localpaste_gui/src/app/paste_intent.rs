@@ -339,10 +339,10 @@ impl LocalPasteApp {
         wants_keyboard_input: bool,
         virtual_editor_focus_active: bool,
     ) -> DeleteShortcutFocusState {
-        if wants_keyboard_input {
-            DeleteShortcutFocusState::OtherInputFocused
-        } else if virtual_editor_focus_active {
+        if virtual_editor_focus_active {
             DeleteShortcutFocusState::EditorFocused
+        } else if wants_keyboard_input {
+            DeleteShortcutFocusState::OtherInputFocused
         } else {
             DeleteShortcutFocusState::Unfocused
         }

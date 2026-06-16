@@ -181,11 +181,16 @@ impl WorkerState {
         token
     }
 
-    fn take_deleted_paste_undo(&mut self, token: &str) -> Option<DeletedPasteBundle> {
+    fn pending_deleted_paste_bundle(&mut self, token: &str) -> Option<DeletedPasteBundle> {
         self.prune_deleted_paste_undo();
-        let pending = self.deleted_paste_undo.remove(token)?;
+        self.deleted_paste_undo
+            .get(token)
+            .map(|pending| pending.bundle.clone())
+    }
+
+    fn discard_deleted_paste_undo(&mut self, token: &str) {
+        self.deleted_paste_undo.remove(token);
         self.deleted_paste_order.retain(|item| item != token);
-        Some(pending.bundle)
     }
 }
 
@@ -449,13 +454,14 @@ mod tests {
     struct TestWorkerState {
         _dir: TempDir,
         state: WorkerState,
+        evt_rx: Receiver<CoreEvent>,
     }
 
     fn make_state() -> TestWorkerState {
         let dir = TempDir::new().expect("temp dir");
         let db_path = dir.path().join("db");
         let db = Database::new(db_path.to_str().expect("db path")).expect("db");
-        let (evt_tx, _evt_rx) = unbounded();
+        let (evt_tx, evt_rx) = unbounded();
         TestWorkerState {
             _dir: dir,
             state: WorkerState {
@@ -470,6 +476,7 @@ mod tests {
                 deleted_paste_order: VecDeque::new(),
                 deleted_paste_undo: HashMap::new(),
             },
+            evt_rx,
         }
     }
 
@@ -483,15 +490,16 @@ mod tests {
     }
 
     #[test]
-    fn deleted_paste_undo_token_is_single_use() {
+    fn deleted_paste_undo_token_is_consumed_after_success() {
         let mut worker = make_state();
         let token = worker
             .state
             .register_deleted_paste_undo(deleted_bundle("alpha"));
 
-        assert!(worker.state.take_deleted_paste_undo(&token).is_some());
+        assert!(worker.state.pending_deleted_paste_bundle(&token).is_some());
+        worker.state.discard_deleted_paste_undo(&token);
         assert!(
-            worker.state.take_deleted_paste_undo(&token).is_none(),
+            worker.state.pending_deleted_paste_bundle(&token).is_none(),
             "a consumed undo token must not restore the same bundle twice"
         );
     }
@@ -510,10 +518,45 @@ mod tests {
             .expires_at = Instant::now() - Duration::from_secs(1);
 
         assert!(
-            worker.state.take_deleted_paste_undo(&token).is_none(),
+            worker.state.pending_deleted_paste_bundle(&token).is_none(),
             "expired undo token should be pruned before restore"
         );
         assert!(!worker.state.deleted_paste_undo.contains_key(&token));
         assert!(!worker.state.deleted_paste_order.contains(&token));
+    }
+
+    #[test]
+    fn failed_restore_keeps_deleted_paste_undo_retryable() {
+        let mut worker = make_state();
+        let mut existing = Paste::new("live content".to_string(), "live".to_string());
+        existing.id = "alpha".to_string();
+        worker
+            .state
+            .db
+            .pastes
+            .create(&existing)
+            .expect("seed conflicting paste");
+        let token = worker
+            .state
+            .register_deleted_paste_undo(deleted_bundle("alpha"));
+
+        paste::handle_restore_deleted_paste(&mut worker.state, token.clone());
+
+        match worker
+            .evt_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("restore error event")
+        {
+            CoreEvent::Error { message, .. } => assert!(
+                message.contains("already exists"),
+                "expected collision error, got: {}",
+                message
+            ),
+            other => panic!("expected restore error event, got {:?}", other),
+        }
+        assert!(
+            worker.state.pending_deleted_paste_bundle(&token).is_some(),
+            "failed restore must preserve the undo bundle for retry"
+        );
     }
 }
