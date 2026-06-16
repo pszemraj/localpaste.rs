@@ -941,6 +941,9 @@ impl LocalPasteApp {
             if apply_result.cursor_moved {
                 self.virtual_follow_cursor_next_frame = true;
             }
+            if apply_result.changed || apply_result.cursor_moved {
+                ui.ctx().request_repaint();
+            }
             let selection_chars = self
                 .virtual_editor_state
                 .selection_range()

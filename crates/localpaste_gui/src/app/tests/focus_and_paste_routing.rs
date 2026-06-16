@@ -12,6 +12,41 @@ fn output_has_request_paste(output: &egui::FullOutput) -> bool {
 }
 
 #[test]
+fn focused_virtual_editor_requests_repaint_after_text_input() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha");
+    set_virtual_cursor_at(&mut harness.app, 0, 5);
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
+
+    let output = run_editor_panel_once_output(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1200.0, 900.0),
+            )),
+            events: vec![egui::Event::Text("!".to_string())],
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "alpha!");
+    assert!(
+        output
+            .viewport_output
+            .values()
+            .any(|viewport| viewport.repaint_delay == Duration::ZERO),
+        "post-paint editor input must schedule an immediate repaint"
+    );
+}
+
+#[test]
 fn click_outside_editor_viewport_blurs_focus() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;
