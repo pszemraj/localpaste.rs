@@ -15,8 +15,10 @@ Status uses the same checklist markers as other dev docs:
 - [~] Avoid full `Vec<HighlightRenderLine>` clone during patch merge (`queue_highlight_patch`) for very large files; one redundant `base.lines.clone()` was removed, but fallback-path `HighlightRender` cloning still needs structural refactor (e.g., base lookup plus move/patch without full render clone).
 - [ ] Investigate worker-side highlight diffing that avoids full line-hash scans for every request (especially tiny edits), while preserving patch correctness and stale-result dropping semantics.
 - [ ] Revisit backend query-cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
+- [ ] Replace the GUI's unconditional external-refresh poll with worker-driven invalidation for app-owned writes, keeping a low-frequency fallback only for genuine external writers sharing `DB_PATH`.
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or retired now that owner-lock probing is the preferred path.
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR`).
+- [ ] Plan egui/eframe `0.34+` as a standalone migration with text-layout regression coverage and real Windows cold-start smoke testing; this PR intentionally stops at the `0.33.3` patch line.
 - [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](gui-perf-protocol.md)), capture refreshed perf evidence in release notes, and decide gate flip from `p95 <= 25 ms` to `p95 <= 16 ms`.
 - [ ] Enforce key/value identity checks for authoritative paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
 - [ ] Narrow `PasteDb` mutation API so folder assignment changes cannot bypass folder-count transaction paths.

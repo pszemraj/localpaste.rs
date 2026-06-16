@@ -278,10 +278,6 @@ fn map_navigation_key(
     }
 }
 
-fn should_emit_when_unfocused(command: &VirtualInputCommand) -> bool {
-    matches!(command, VirtualInputCommand::Copy)
-}
-
 /// Convert egui input events into virtual-editor commands.
 ///
 /// # Arguments
@@ -391,8 +387,8 @@ fn commands_from_events_for_platform(
                     }
                 }
 
-                if let Some(cmd) = map_navigation_key(platform, *key, *modifiers) {
-                    if focused || should_emit_when_unfocused(&cmd) {
+                if focused {
+                    if let Some(cmd) = map_navigation_key(platform, *key, *modifiers) {
                         out.push(cmd);
                     }
                 }

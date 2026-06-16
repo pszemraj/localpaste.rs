@@ -895,7 +895,10 @@ impl LocalPasteApp {
                             let caret_rect = galley.pos_from_cursor(CCursor::new(local_col));
                             let x = (row.text_origin.x + caret_rect.min.x).max(row.text_origin.x);
                             let y_min = row.text_origin.y + caret_rect.min.y;
-                            let y_max = row.text_origin.y + caret_rect.max.y;
+                            let mut y_max = row.text_origin.y + caret_rect.max.y;
+                            if y_max <= y_min {
+                                y_max = y_min + self.virtual_line_height.max(1.0);
+                            }
                             let global_caret_rect = egui::Rect::from_min_max(
                                 egui::pos2(x, y_min),
                                 egui::pos2(x, y_max),

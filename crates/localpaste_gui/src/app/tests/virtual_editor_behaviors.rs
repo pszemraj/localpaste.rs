@@ -269,6 +269,140 @@ fn stale_virtual_focus_does_not_steal_arrow_from_other_focus_owner() {
 }
 
 #[test]
+fn focused_virtual_editor_publishes_ime_cursor_rect() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha\nbeta\n");
+    set_virtual_cursor_at(&mut harness.app, 0, 2);
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
+
+    let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
+    let output = run_editor_panel_once_output(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            ..Default::default()
+        },
+    );
+
+    let ime = output
+        .platform_output
+        .ime
+        .expect("focused virtual editor should publish IME output");
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(ime.rect.min.x.is_finite());
+    assert!(ime.rect.min.y.is_finite());
+    assert!(ime.rect.max.x.is_finite());
+    assert!(ime.rect.max.y.is_finite());
+    assert!(ime.cursor_rect.min.x.is_finite());
+    assert!(ime.cursor_rect.min.y.is_finite());
+    assert!(ime.cursor_rect.max.x.is_finite());
+    assert!(ime.cursor_rect.max.y.is_finite());
+    assert!(ime.rect.width() > 0.0);
+    assert!(ime.rect.height() > 0.0);
+    assert!(ime.cursor_rect.height() > 0.0);
+    assert!(
+        ime.rect.contains(ime.cursor_rect.center()),
+        "IME cursor should stay inside the focused editor interaction rect"
+    );
+}
+
+#[test]
+fn focused_virtual_editor_owns_tab_without_focus_traversal() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha");
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    let other_focus_id = egui::Id::new("tab_traversal_target");
+    ctx.memory_mut(|m| m.request_focus(editor_id));
+
+    let mut other_text = "other".to_string();
+    let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
+    let mut render_with_neighbor = |events| {
+        ctx.run(
+            egui::RawInput {
+                events,
+                screen_rect: Some(screen_rect),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::TopBottomPanel::top("tab_traversal_neighbor").show(ctx, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut other_text).id(other_focus_id));
+                });
+                harness.app.render_editor_panel(ctx);
+            },
+        )
+    };
+
+    let _ = render_with_neighbor(Vec::new());
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+
+    let _ = render_with_neighbor(vec![key_event(egui::Key::Tab, egui::Modifiers::default())]);
+
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(!ctx.memory(|m| m.has_focus(other_focus_id)));
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "    alpha");
+    assert_eq!(other_text, "other");
+}
+
+#[test]
+fn focused_editor_delete_chord_edits_text_without_dispatching_paste_delete() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness.app.reset_virtual_editor("alpha beta");
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(0, len);
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
+    run_full_update(&mut harness.app, &ctx, Vec::new());
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+
+    #[cfg(target_os = "macos")]
+    let (delete_event, expected_text) = (
+        key_event(
+            egui::Key::Delete,
+            egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+        ),
+        "",
+    );
+    #[cfg(not(target_os = "macos"))]
+    let (delete_event, expected_text) = (
+        key_event(
+            egui::Key::Delete,
+            egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            },
+        ),
+        "beta",
+    );
+
+    run_full_update(&mut harness.app, &ctx, vec![delete_event]);
+
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), expected_text);
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
 fn virtual_editor_frame_consumes_pending_follow_scroll_offset() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;

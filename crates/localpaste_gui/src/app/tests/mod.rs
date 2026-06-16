@@ -156,10 +156,18 @@ pub(super) fn command_key_event(key: egui::Key) -> egui::Event {
     key_event(key, primary_command_modifiers())
 }
 
-fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
-    let _ = ctx.run(input, |ctx| {
+fn run_editor_panel_once_output(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    input: egui::RawInput,
+) -> egui::FullOutput {
+    ctx.run(input, |ctx| {
         app.render_editor_panel(ctx);
-    });
+    })
+}
+
+fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
+    let _ = run_editor_panel_once_output(app, ctx, input);
 }
 
 /// Runs a full app update pass with the supplied raw egui events.
