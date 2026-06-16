@@ -613,6 +613,32 @@ fn restore_deleted_paste_clears_missing_original_folder() {
 }
 
 #[test]
+fn restore_deleted_paste_clears_original_folder_marked_for_delete() {
+    let fixture = setup_folder_move_fixture();
+    let db = &fixture.db;
+    let bundle = TransactionOps::delete_paste_with_folder_bundle(db, &fixture.paste_id)
+        .expect("delete bundle")
+        .expect("paste deleted");
+    db.folders
+        .mark_deleting(std::slice::from_ref(&fixture.old_folder_id))
+        .expect("mark folder deleting");
+
+    let restored =
+        TransactionOps::restore_deleted_paste(db, bundle).expect("restore deleted paste");
+    assert_eq!(restored.id, fixture.paste_id);
+    assert_eq!(restored.folder_id, None);
+    let folder_after = db
+        .folders
+        .get(&fixture.old_folder_id)
+        .expect("folder lookup")
+        .expect("folder still exists while deleting");
+    assert_eq!(
+        folder_after.paste_count, 0,
+        "restore should not increment a folder already in the delete marker table"
+    );
+}
+
+#[test]
 fn direct_folder_affecting_paste_ops_are_rejected() {
     let (db, _temp) = setup_test_db();
 
