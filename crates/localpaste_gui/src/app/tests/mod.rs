@@ -181,17 +181,35 @@ pub(super) fn run_full_update(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) {
-    app.ensure_style(ctx);
-    let mut frame = eframe::Frame::_new_kittest();
-    let _ = ctx.run(
+    let _ = run_full_update_with_input(
+        app,
+        ctx,
         egui::RawInput {
             events,
             ..Default::default()
         },
-        |ctx| {
-            app.update(ctx, &mut frame);
-        },
     );
+}
+
+/// Runs a full app update pass with explicit raw egui input.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `ctx`: egui context used for the frame.
+/// - `input`: Raw input to deliver during the frame.
+///
+/// # Returns
+/// Full egui frame output produced by the update pass.
+pub(super) fn run_full_update_with_input(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    input: egui::RawInput,
+) -> egui::FullOutput {
+    app.ensure_style(ctx);
+    let mut frame = eframe::Frame::_new_kittest();
+    ctx.run(input, |ctx| {
+        app.update(ctx, &mut frame);
+    })
 }
 
 fn make_app() -> TestHarness {

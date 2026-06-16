@@ -403,6 +403,86 @@ fn focused_editor_delete_chord_edits_text_without_dispatching_paste_delete() {
 }
 
 #[test]
+fn focused_editor_keeps_command_arrow_focus_inside_real_app_chrome() {
+    let mut harness = make_app();
+    harness.app.editor_mode = EditorMode::VirtualEditor;
+    harness
+        .app
+        .reset_virtual_editor("alpha\nbeta gamma\ndelta\n");
+    set_virtual_cursor_at(&mut harness.app, 1, 4);
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    let search_id = egui::Id::new(SEARCH_INPUT_ID);
+    let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
+
+    ctx.memory_mut(|m| m.request_focus(editor_id));
+    let _ = run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            ..Default::default()
+        },
+    );
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+
+    let command_only = egui::Modifiers {
+        command: true,
+        ..Default::default()
+    };
+    let command_shift = egui::Modifiers {
+        command: true,
+        shift: true,
+        ..Default::default()
+    };
+    let cases = [
+        ("command-left", egui::Key::ArrowLeft, command_only),
+        ("command-up", egui::Key::ArrowUp, command_only),
+        ("command-right", egui::Key::ArrowRight, command_only),
+        ("command-down", egui::Key::ArrowDown, command_only),
+        ("command-shift-left", egui::Key::ArrowLeft, command_shift),
+        ("command-shift-up", egui::Key::ArrowUp, command_shift),
+    ];
+
+    for (name, key, modifiers) in cases {
+        let _ = run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(screen_rect),
+                events: vec![key_event(key, modifiers)],
+                modifiers,
+                ..Default::default()
+            },
+        );
+
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        let cursor = harness.app.virtual_editor_state.cursor();
+        assert!(
+            ctx.memory(|m| m.has_focus(editor_id)),
+            "{name} should leave keyboard focus on the virtual editor"
+        );
+        assert!(
+            !ctx.memory(|m| m.has_focus(search_id)),
+            "{name} should not move focus to sidebar search"
+        );
+        assert!(
+            cursor <= len,
+            "{name} left cursor {cursor} outside buffer length {len}"
+        );
+        if let Some(range) = harness.app.virtual_editor_state.selection_range() {
+            assert!(
+                range.start <= range.end && range.end <= len,
+                "{name} left selection {:?} outside buffer length {len}",
+                range
+            );
+        }
+    }
+}
+
+#[test]
 fn virtual_editor_frame_consumes_pending_follow_scroll_offset() {
     let mut harness = make_app();
     harness.app.editor_mode = EditorMode::VirtualEditor;
