@@ -6,8 +6,8 @@ use super::tables::{
 };
 use super::Database;
 use crate::db::paste::{
-    apply_update_request, deserialize_paste, remove_paste_versions_for_delete,
-    reverse_timestamp_key,
+    apply_update_request, deserialize_paste, discard_paste_versions_for_delete,
+    remove_paste_versions_for_delete, reverse_timestamp_key,
 };
 use crate::db::versioning::{
     decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
@@ -279,7 +279,34 @@ impl TransactionOps {
         _folder_guard: &FolderTxnGuard<'_>,
         paste_id: &str,
     ) -> Result<bool, AppError> {
-        Ok(Self::delete_paste_with_folder_bundle_locked(db, _folder_guard, paste_id)?.is_some())
+        let write_txn = db.db.begin_write()?;
+        let deleted = {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
+            let mut folders = write_txn.open_table(FOLDERS)?;
+
+            let Some(old_guard) = pastes.get(paste_id)? else {
+                return Ok(false);
+            };
+            let paste = deserialize_paste(old_guard.value())?;
+            let old_recency_key = reverse_timestamp_key(paste.updated_at);
+            let old_folder_id = paste.folder_id.clone();
+            drop(old_guard);
+
+            let _ = updated.remove((old_recency_key, paste_id))?;
+            let _ = pastes.remove(paste_id)?;
+            let _ = metas.remove(paste_id)?;
+            discard_paste_versions_for_delete(&mut versions_meta, &mut versions_content, paste_id)?;
+
+            apply_folder_count_transition(&mut folders, old_folder_id.as_deref(), None)?;
+            true
+        };
+
+        write_txn.commit()?;
+        Ok(deleted)
     }
 
     /// Delete a paste while holding a folder transaction guard, returning undo data.

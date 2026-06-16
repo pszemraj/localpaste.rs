@@ -431,6 +431,59 @@ fn delete_removes_version_rows() {
 }
 
 #[test]
+fn delete_does_not_require_version_content_payloads() {
+    let (db, _temp) = setup_test_db();
+    let paste = Paste::new(
+        "delete-me".to_string(),
+        "delete-missing-version-content".to_string(),
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("delete-me-updated"), None, None, None),
+        "create snapshot before delete",
+    );
+
+    let version_id = db
+        .pastes
+        .list_versions(&paste_id, Some(1))
+        .expect("list versions")
+        .expect("paste exists")[0]
+        .version_id_ms;
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut versions_content = write_txn
+            .open_table(PASTE_VERSIONS_CONTENT)
+            .expect("open versions content");
+        let removed = versions_content
+            .remove((paste_id.as_str(), version_id))
+            .expect("remove version content");
+        assert!(removed.is_some());
+    }
+    write_txn.commit().expect("commit missing content row");
+
+    assert!(db.pastes.delete(&paste_id).expect("delete"));
+    assert!(
+        db.pastes
+            .list_versions(&paste_id, None)
+            .expect("list versions after delete")
+            .is_none(),
+        "deleted paste should have no version listing"
+    );
+
+    let read_txn = db.db.begin_read().expect("begin read");
+    let versions_meta = read_txn
+        .open_table(PASTE_VERSIONS_META)
+        .expect("open versions meta");
+    assert!(versions_meta
+        .get(paste_id.as_str())
+        .expect("get versions meta")
+        .is_none());
+}
+
+#[test]
 fn duplicate_from_version_creates_new_paste_with_snapshot_content() {
     let (db, _temp) = setup_test_db();
     let (source_id, version_id) =

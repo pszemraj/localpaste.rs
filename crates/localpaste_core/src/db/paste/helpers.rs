@@ -66,6 +66,39 @@ pub(crate) fn remove_paste_versions_for_delete(
     Ok(versions)
 }
 
+/// Removes all historical version rows for a paste without loading contents.
+///
+/// This is the non-undo delete path. It only needs the metadata row to discover
+/// version ids, then removes matching content rows opportunistically.
+///
+/// # Arguments
+/// - `versions_meta`: Open mutable version metadata table.
+/// - `versions_content`: Open mutable version content table.
+/// - `paste_id`: Paste id whose version rows should be removed.
+///
+/// # Returns
+/// `Ok(())` when all reachable version rows have been removed.
+///
+/// # Errors
+/// Returns an error when storage access or metadata decoding fails.
+pub(crate) fn discard_paste_versions_for_delete(
+    versions_meta: &mut redb::Table<&str, &[u8]>,
+    versions_content: &mut redb::Table<(&str, u64), &[u8]>,
+    paste_id: &str,
+) -> Result<(), AppError> {
+    let version_items = decode_version_meta_list(
+        versions_meta
+            .get(paste_id)?
+            .as_ref()
+            .map(|value| value.value()),
+    )?;
+    for version in version_items {
+        let _ = versions_content.remove((paste_id, version.version_id_ms))?;
+    }
+    let _ = versions_meta.remove(paste_id)?;
+    Ok(())
+}
+
 /// Applies an [`UpdatePasteRequest`] onto an existing [`Paste`] in place.
 ///
 /// This helper centralizes update semantics so server and GUI write paths keep

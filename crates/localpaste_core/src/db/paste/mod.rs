@@ -29,8 +29,10 @@ use self::helpers::{
     score_paste_match,
 };
 
-pub(crate) use self::helpers::remove_paste_versions_for_delete;
 pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_timestamp_key};
+pub(crate) use self::helpers::{
+    discard_paste_versions_for_delete, remove_paste_versions_for_delete,
+};
 
 /// Accessor for paste-related redb tables.
 pub struct PasteDb {
@@ -429,7 +431,35 @@ impl PasteDb {
     /// # Errors
     /// Returns an error when storage or deserialization fails.
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
-        Ok(self.delete_and_return_bundle(id)?.is_some())
+        let write_txn = self.db.begin_write()?;
+        let deleted = {
+            let mut pastes = write_txn.open_table(PASTES)?;
+            let mut metas = write_txn.open_table(PASTES_META)?;
+            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
+            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
+            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
+
+            let Some(old_guard) = pastes.get(id)? else {
+                return Ok(false);
+            };
+            let paste = deserialize_paste(old_guard.value())?;
+            Self::reject_direct_folder_operation(
+                paste.folder_id.is_some(),
+                "Direct deletion of foldered pastes via PasteDb::delete is not allowed; \
+                 use TransactionOps::delete_paste_with_folder",
+            )?;
+            let recency_key = reverse_timestamp_key(paste.updated_at);
+            drop(old_guard);
+
+            let _ = updated.remove((recency_key, id))?;
+            let _ = pastes.remove(id)?;
+            let _ = metas.remove(id)?;
+            discard_paste_versions_for_delete(&mut versions_meta, &mut versions_content, id)?;
+            true
+        };
+
+        write_txn.commit()?;
+        Ok(deleted)
     }
 
     fn normalized_version_limit(limit: Option<usize>) -> usize {

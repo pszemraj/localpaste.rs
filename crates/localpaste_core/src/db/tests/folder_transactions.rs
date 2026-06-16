@@ -1,7 +1,9 @@
 //! Folder transaction behavior tests.
 
 use super::*;
+use crate::db::tables::{PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META};
 use crate::env::{env_lock, EnvGuard};
+use redb::ReadableDatabase;
 use std::time::Duration;
 
 struct FolderMoveFixture {
@@ -521,6 +523,71 @@ fn delete_uses_folder_from_deleted_record_not_stale_context() {
         .expect("row");
     assert_eq!(old_after.paste_count, 0);
     assert_eq!(new_after.paste_count, 0);
+}
+
+#[test]
+fn delete_with_folder_does_not_require_version_content_payloads() {
+    let fixture = setup_folder_move_fixture();
+    let db = &fixture.db;
+
+    let update = UpdatePasteRequest {
+        content: Some("updated".to_string()),
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(fixture.old_folder_id.clone()),
+        tags: None,
+    };
+    TransactionOps::move_paste_between_folders(
+        db,
+        &fixture.paste_id,
+        Some(fixture.old_folder_id.as_str()),
+        update,
+    )
+    .expect("update")
+    .expect("paste exists");
+
+    let version_id = db
+        .pastes
+        .list_versions(&fixture.paste_id, Some(1))
+        .expect("list versions")
+        .expect("paste exists")[0]
+        .version_id_ms;
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut versions_content = write_txn
+            .open_table(PASTE_VERSIONS_CONTENT)
+            .expect("open versions content");
+        let removed = versions_content
+            .remove((fixture.paste_id.as_str(), version_id))
+            .expect("remove version content");
+        assert!(removed.is_some());
+    }
+    write_txn.commit().expect("commit missing content row");
+
+    let deleted = TransactionOps::delete_paste_with_folder(db, &fixture.paste_id).expect("delete");
+    assert!(deleted);
+    assert!(db
+        .pastes
+        .get(&fixture.paste_id)
+        .expect("lookup after delete")
+        .is_none());
+
+    let folder_after = db
+        .folders
+        .get(&fixture.old_folder_id)
+        .expect("folder")
+        .expect("row");
+    assert_eq!(folder_after.paste_count, 0);
+
+    let read_txn = db.db.begin_read().expect("begin read");
+    let versions_meta = read_txn
+        .open_table(PASTE_VERSIONS_META)
+        .expect("open versions meta");
+    assert!(versions_meta
+        .get(fixture.paste_id.as_str())
+        .expect("get versions meta")
+        .is_none());
 }
 
 #[test]

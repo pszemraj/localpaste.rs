@@ -192,6 +192,14 @@ impl WorkerState {
         self.deleted_paste_undo.remove(token);
         self.deleted_paste_order.retain(|item| item != token);
     }
+
+    fn next_deleted_paste_undo_timeout(&mut self) -> Option<Duration> {
+        self.prune_deleted_paste_undo();
+        let token = self.deleted_paste_order.front()?;
+        self.deleted_paste_undo
+            .get(token)
+            .map(|pending| pending.expires_at.saturating_duration_since(Instant::now()))
+    }
 }
 
 fn send_error(evt_tx: &Sender<CoreEvent>, source: CoreErrorSource, message: String) {
@@ -349,6 +357,26 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
     }
 }
 
+fn recv_command_or_prune_deleted_paste_undo(
+    cmd_rx: &Receiver<CoreCmd>,
+    state: &mut WorkerState,
+) -> Result<Option<CoreCmd>, RecvTimeoutError> {
+    match state.next_deleted_paste_undo_timeout() {
+        Some(timeout) => match cmd_rx.recv_timeout(timeout) {
+            Ok(cmd) => Ok(Some(cmd)),
+            Err(RecvTimeoutError::Timeout) => {
+                state.prune_deleted_paste_undo();
+                Ok(None)
+            }
+            Err(RecvTimeoutError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+        },
+        None => cmd_rx
+            .recv()
+            .map(Some)
+            .map_err(|_| RecvTimeoutError::Disconnected),
+    }
+}
+
 /// Spawn the backend worker thread that performs blocking database access.
 ///
 /// All I/O stays off the UI thread; the worker replies with [`CoreEvent`] values
@@ -430,9 +458,16 @@ pub fn spawn_backend_with_locks_and_owner(
                 deleted_paste_order: VecDeque::new(),
                 deleted_paste_undo: HashMap::new(),
             };
-            for cmd in cmd_rx.iter() {
-                if !dispatch_command(&mut state, cmd) {
-                    break;
+            loop {
+                match recv_command_or_prune_deleted_paste_undo(&cmd_rx, &mut state) {
+                    Ok(Some(cmd)) => {
+                        if !dispatch_command(&mut state, cmd) {
+                            break;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
+                    Err(RecvTimeoutError::Timeout) => {}
                 }
             }
         })
@@ -520,6 +555,31 @@ mod tests {
         assert!(
             worker.state.pending_deleted_paste_bundle(&token).is_none(),
             "expired undo token should be pruned before restore"
+        );
+        assert!(!worker.state.deleted_paste_undo.contains_key(&token));
+        assert!(!worker.state.deleted_paste_order.contains(&token));
+    }
+
+    #[test]
+    fn deleted_paste_undo_is_pruned_after_idle_timeout() {
+        let mut worker = make_state();
+        let token = worker
+            .state
+            .register_deleted_paste_undo(deleted_bundle("alpha"));
+        worker
+            .state
+            .deleted_paste_undo
+            .get_mut(token.as_str())
+            .expect("registered undo")
+            .expires_at = Instant::now() + Duration::from_millis(10);
+
+        let (_cmd_tx, cmd_rx) = unbounded();
+        let result = recv_command_or_prune_deleted_paste_undo(&cmd_rx, &mut worker.state)
+            .expect("idle timeout should prune instead of disconnecting");
+
+        assert!(
+            result.is_none(),
+            "idle timeout should not synthesize a backend command"
         );
         assert!(!worker.state.deleted_paste_undo.contains_key(&token));
         assert!(!worker.state.deleted_paste_order.contains(&token));
