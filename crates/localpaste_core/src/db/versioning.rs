@@ -130,6 +130,43 @@ pub(crate) fn prune_version_meta_to_limit(
     }
 }
 
+/// Keep the newest `limit` metadata rows while preserving one explicit row.
+///
+/// This is used by save-before-reset flows where the reset target must survive
+/// a content save that can otherwise push it past the retention tail.
+///
+/// # Arguments
+/// - `items`: Newest-first version metadata list to truncate in place.
+/// - `limit`: Maximum number of newest rows to retain under normal retention.
+/// - `protected_version_id_ms`: Version id that must remain available.
+///
+/// # Returns
+/// Metadata rows removed from the retained list.
+pub(crate) fn prune_version_meta_to_limit_preserving(
+    items: &mut Vec<VersionMeta>,
+    limit: usize,
+    protected_version_id_ms: Option<u64>,
+) -> Vec<VersionMeta> {
+    let Some(protected_version_id_ms) = protected_version_id_ms else {
+        return prune_version_meta_to_limit(items, limit);
+    };
+    if items.len() <= limit {
+        return Vec::new();
+    }
+
+    let mut retained = Vec::with_capacity(items.len().min(limit.saturating_add(1)));
+    let mut pruned = Vec::new();
+    for (index, item) in items.drain(..).enumerate() {
+        if index < limit || item.version_id_ms == protected_version_id_ms {
+            retained.push(item);
+        } else {
+            pruned.push(item);
+        }
+    }
+    *items = retained;
+    pruned
+}
+
 /// Returns whether a new version should be persisted.
 ///
 /// # Arguments

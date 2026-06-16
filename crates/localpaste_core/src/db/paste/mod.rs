@@ -12,7 +12,7 @@ use crate::{
         tables::*,
         versioning::{
             decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
-            prune_version_meta_to_limit, should_record_version,
+            prune_version_meta_to_limit_preserving, should_record_version,
         },
     },
     error::AppError,
@@ -32,6 +32,7 @@ use self::helpers::{
 pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_timestamp_key};
 pub(crate) use self::helpers::{
     discard_paste_versions_for_delete, remove_paste_versions_for_delete,
+    remove_paste_versions_for_delete_capped,
 };
 
 /// Accessor for paste-related redb tables.
@@ -265,7 +266,32 @@ impl PasteDb {
     /// # Errors
     /// Returns an error when storage access or serialization fails.
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
-        self.update_inner(id, None, update)
+        self.update_inner(id, None, update, None)
+    }
+
+    /// Update a paste while preserving one historical version during retention pruning.
+    ///
+    /// Normal updates should call [`Self::update`]. This opt-in path exists for
+    /// save-before-reset workflows where the user already confirmed a reset
+    /// target and the current save may otherwise prune that target first.
+    ///
+    /// # Arguments
+    /// - `id`: Paste id to update.
+    /// - `update`: Update payload.
+    /// - `protected_version_id_ms`: Historical version id that must survive this update.
+    ///
+    /// # Returns
+    /// `Ok(Some(paste))` when updated, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or serialization fails.
+    pub fn update_preserving_version(
+        &self,
+        id: &str,
+        update: UpdatePasteRequest,
+        protected_version_id_ms: u64,
+    ) -> Result<Option<Paste>, AppError> {
+        self.update_inner(id, None, update, Some(protected_version_id_ms))
     }
 
     /// Update a paste only when current folder id matches `expected_folder_id`.
@@ -286,7 +312,7 @@ impl PasteDb {
         expected_folder_id: Option<&str>,
         update: UpdatePasteRequest,
     ) -> Result<Option<Paste>, AppError> {
-        self.update_inner(id, Some(expected_folder_id), update)
+        self.update_inner(id, Some(expected_folder_id), update, None)
     }
 
     fn update_inner(
@@ -294,6 +320,7 @@ impl PasteDb {
         id: &str,
         expected_folder: Option<Option<&str>>,
         update: UpdatePasteRequest,
+        protected_version_id_ms: Option<u64>,
     ) -> Result<Option<Paste>, AppError> {
         Self::reject_direct_folder_operation(
             update.folder_id.is_some(),
@@ -347,9 +374,10 @@ impl PasteDb {
                     versions_content
                         .insert((id, next.version_id_ms), encoded_content.as_slice())?;
                     version_items.insert(0, next);
-                    for pruned in prune_version_meta_to_limit(
+                    for pruned in prune_version_meta_to_limit_preserving(
                         &mut version_items,
                         self.version_retention_limit(),
+                        protected_version_id_ms,
                     ) {
                         let _ = versions_content.remove((id, pruned.version_id_ms))?;
                     }

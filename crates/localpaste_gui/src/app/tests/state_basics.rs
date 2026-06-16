@@ -327,7 +327,7 @@ fn delete_actions_keep_lock_until_delete_event_matrix() {
 
         harness.app.apply_event(CoreEvent::PasteDeleted {
             id: "alpha".to_string(),
-            undo_token: "undo-alpha".to_string(),
+            undo_token: Some("undo-alpha".to_string()),
         });
         assert!(!harness.app.locks.is_locked("alpha").expect("is_locked"));
     }
@@ -340,7 +340,7 @@ fn paste_deleted_clears_pending_copy_action_for_deleted_id() {
 
     harness.app.apply_event(CoreEvent::PasteDeleted {
         id: "alpha".to_string(),
-        undo_token: "undo-alpha".to_string(),
+        undo_token: Some("undo-alpha".to_string()),
     });
 
     assert!(harness.app.pending_copy_action.is_none());
@@ -419,7 +419,7 @@ fn paste_deleted_selects_visible_neighbor_matrix() {
 
         harness.app.apply_event(CoreEvent::PasteDeleted {
             id: "b".to_string(),
-            undo_token: "undo-b".to_string(),
+            undo_token: Some("undo-b".to_string()),
         });
         assert_eq!(
             harness.app.selected_id.as_deref(),
@@ -836,9 +836,14 @@ fn history_reset_flushes_local_changes_before_reset_matrix() {
 
         match case {
             ResetBlockCase::ContentDirty => match recv_cmd(&harness.cmd_rx) {
-                CoreCmd::UpdatePaste { id, content } => {
+                CoreCmd::UpdatePaste {
+                    id,
+                    content,
+                    protected_version_id_ms,
+                } => {
                     assert_eq!(id, "alpha");
                     assert_eq!(content, "content");
+                    assert_eq!(protected_version_id_ms, Some(42));
                 }
                 other => panic!("expected content save before reset, got {:?}", other),
             },

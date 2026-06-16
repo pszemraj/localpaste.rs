@@ -7,7 +7,7 @@ use super::tables::{
 use super::Database;
 use crate::db::paste::{
     apply_update_request, deserialize_paste, discard_paste_versions_for_delete,
-    remove_paste_versions_for_delete, reverse_timestamp_key,
+    remove_paste_versions_for_delete_capped, reverse_timestamp_key,
 };
 use crate::db::versioning::{
     decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
@@ -25,6 +25,12 @@ pub struct TransactionOps;
 /// Guard that proves the caller holds the global folder transaction lock.
 pub struct FolderTxnGuard<'a> {
     _guard: MutexGuard<'a, ()>,
+}
+
+/// Result for a delete that may or may not keep an in-memory undo bundle.
+pub struct DeletePasteUndoResult {
+    /// Restorable deleted paste bundle, or `None` when the configured cap was exceeded.
+    pub undo_bundle: Option<DeletedPasteBundle>,
 }
 
 fn ensure_folder_assignable_in_txn(
@@ -262,6 +268,32 @@ impl TransactionOps {
         Self::delete_paste_with_folder_bundle_locked(db, &guard, paste_id)
     }
 
+    /// Atomically delete a paste, returning undo data only when it fits a cap.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `paste_id`: Paste id to remove.
+    /// - `max_undo_version_payload_bytes`: Optional cap for serialized version content bytes.
+    ///
+    /// # Returns
+    /// `Ok(Some(result))` when a paste was removed, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn delete_paste_with_folder_undo_limited(
+        db: &Database,
+        paste_id: &str,
+        max_undo_version_payload_bytes: Option<usize>,
+    ) -> Result<Option<DeletePasteUndoResult>, AppError> {
+        let guard = Self::acquire_folder_txn_guard(db)?;
+        Self::delete_paste_with_folder_undo_limited_locked(
+            db,
+            &guard,
+            paste_id,
+            max_undo_version_payload_bytes,
+        )
+    }
+
     /// Delete a paste while holding a folder transaction guard.
     ///
     /// # Arguments
@@ -326,6 +358,37 @@ impl TransactionOps {
         _folder_guard: &FolderTxnGuard<'_>,
         paste_id: &str,
     ) -> Result<Option<DeletedPasteBundle>, AppError> {
+        let Some(result) =
+            Self::delete_paste_with_folder_undo_limited_locked(db, _folder_guard, paste_id, None)?
+        else {
+            return Ok(None);
+        };
+        Ok(result.undo_bundle)
+    }
+
+    /// Delete a paste while holding a folder transaction guard, returning capped undo data.
+    ///
+    /// When historical version contents exceed `max_undo_version_payload_bytes`,
+    /// the paste is still deleted atomically but `undo_bundle` is `None`; callers
+    /// should not expose an undo action in that case.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    /// - `_folder_guard`: Active folder transaction guard for this critical section.
+    /// - `paste_id`: Paste id to remove.
+    /// - `max_undo_version_payload_bytes`: Optional cap for serialized version content bytes.
+    ///
+    /// # Returns
+    /// `Ok(Some(result))` when a paste was removed, `Ok(None)` when missing.
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn delete_paste_with_folder_undo_limited_locked(
+        db: &Database,
+        _folder_guard: &FolderTxnGuard<'_>,
+        paste_id: &str,
+        max_undo_version_payload_bytes: Option<usize>,
+    ) -> Result<Option<DeletePasteUndoResult>, AppError> {
         let write_txn = db.db.begin_write()?;
         let deleted = {
             let mut pastes = write_txn.open_table(PASTES)?;
@@ -346,14 +409,25 @@ impl TransactionOps {
             let _ = updated.remove((old_recency_key, paste_id))?;
             let _ = pastes.remove(paste_id)?;
             let _ = metas.remove(paste_id)?;
-            let versions = remove_paste_versions_for_delete(
+            let versions = remove_paste_versions_for_delete_capped(
                 &mut versions_meta,
                 &mut versions_content,
                 paste_id,
+                max_undo_version_payload_bytes,
             )?;
 
             apply_folder_count_transition(&mut folders, old_folder_id.as_deref(), None)?;
-            Some(DeletedPasteBundle { paste, versions })
+            let undo_bundle = if let Some(versions) = versions {
+                Some(DeletedPasteBundle { paste, versions })
+            } else {
+                discard_paste_versions_for_delete(
+                    &mut versions_meta,
+                    &mut versions_content,
+                    paste_id,
+                )?;
+                None
+            };
+            Some(DeletePasteUndoResult { undo_bundle })
         };
 
         write_txn.commit()?;

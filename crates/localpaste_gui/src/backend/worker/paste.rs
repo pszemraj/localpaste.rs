@@ -1,6 +1,9 @@
 //! Paste CRUD command handlers for the GUI backend worker.
 
-use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerState};
+use super::{
+    send_error, validate_paste_size, validate_paste_size_bytes, WorkerState,
+    DELETE_UNDO_VERSION_PAYLOAD_LIMIT_BYTES,
+};
 use crate::backend::{CoreErrorSource, CoreEvent, VERSION_WORKFLOW_LIST_LIMIT};
 use localpaste_core::{
     db::TransactionOps,
@@ -105,7 +108,13 @@ pub(super) fn handle_create_paste(state: &mut WorkerState, content: String) {
     }
 }
 
-fn apply_content_update(state: &mut WorkerState, id: String, content: String, log_label: &str) {
+fn apply_content_update(
+    state: &mut WorkerState,
+    id: String,
+    content: String,
+    protected_version_id_ms: Option<u64>,
+    log_label: &str,
+) {
     if let Err(message) = validate_paste_size(content.as_str(), state.max_paste_size) {
         send_error(&state.evt_tx, CoreErrorSource::SaveContent, message);
         return;
@@ -134,7 +143,15 @@ fn apply_content_update(state: &mut WorkerState, id: String, content: String, lo
             return;
         }
     };
-    match state.db.pastes.update(&id, update) {
+    let update_result = if let Some(protected_version_id_ms) = protected_version_id_ms {
+        state
+            .db
+            .pastes
+            .update_preserving_version(&id, update, protected_version_id_ms)
+    } else {
+        state.db.pastes.update(&id, update)
+    };
+    match update_result {
         Ok(Some(paste)) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::PasteSaved { paste });
@@ -160,8 +177,19 @@ fn apply_content_update(state: &mut WorkerState, id: String, content: String, lo
 /// - `state`: Worker state containing db, locks, and event channel handles.
 /// - `id`: Target paste id.
 /// - `content`: Replacement content payload.
-pub(super) fn handle_update_paste(state: &mut WorkerState, id: String, content: String) {
-    apply_content_update(state, id, content, "backend update failed");
+pub(super) fn handle_update_paste(
+    state: &mut WorkerState,
+    id: String,
+    content: String,
+    protected_version_id_ms: Option<u64>,
+) {
+    apply_content_update(
+        state,
+        id,
+        content,
+        protected_version_id_ms,
+        "backend update failed",
+    );
 }
 
 /// Saves updated paste content from the virtual-editor rope buffer.
@@ -170,7 +198,12 @@ pub(super) fn handle_update_paste(state: &mut WorkerState, id: String, content: 
 /// - `state`: Worker state containing db, locks, and event channel handles.
 /// - `id`: Target paste id.
 /// - `content`: Replacement content stored as a rope buffer.
-pub(super) fn handle_update_paste_virtual(state: &mut WorkerState, id: String, content: Rope) {
+pub(super) fn handle_update_paste_virtual(
+    state: &mut WorkerState,
+    id: String,
+    content: Rope,
+    protected_version_id_ms: Option<u64>,
+) {
     if let Err(message) = validate_paste_size_bytes(content.len_bytes(), state.max_paste_size) {
         send_error(&state.evt_tx, CoreErrorSource::SaveContent, message);
         return;
@@ -179,6 +212,7 @@ pub(super) fn handle_update_paste_virtual(state: &mut WorkerState, id: String, c
         state,
         id,
         content.to_string(),
+        protected_version_id_ms,
         "backend virtual update failed",
     );
 }
@@ -337,12 +371,19 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
                 }
             };
 
-        TransactionOps::delete_paste_with_folder_bundle_locked(&state.db, &folder_guard, &id)
+        TransactionOps::delete_paste_with_folder_undo_limited_locked(
+            &state.db,
+            &folder_guard,
+            &id,
+            Some(DELETE_UNDO_VERSION_PAYLOAD_LIMIT_BYTES),
+        )
     };
     match deleted {
-        Ok(Some(bundle)) => {
+        Ok(Some(result)) => {
             state.query_cache.invalidate();
-            let undo_token = state.register_deleted_paste_undo(bundle);
+            let undo_token = result
+                .undo_bundle
+                .map(|bundle| state.register_deleted_paste_undo(bundle));
             let _ = state
                 .evt_tx
                 .send(CoreEvent::PasteDeleted { id, undo_token });

@@ -325,7 +325,6 @@ mod tests {
                 content: "hello".to_string(),
             })
             .expect("send create");
-
         let created_id = match recv_event(&backend.evt_rx) {
             CoreEvent::PasteCreated { paste } => {
                 assert_eq!(paste.content, "hello");
@@ -333,15 +332,14 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         };
-
         backend
             .cmd_tx
             .send(CoreCmd::UpdatePaste {
                 id: created_id.clone(),
                 content: "updated".to_string(),
+                protected_version_id_ms: None,
             })
             .expect("send update");
-
         match recv_event(&backend.evt_rx) {
             CoreEvent::PasteSaved { paste } => {
                 assert_eq!(paste.id, created_id);
@@ -349,7 +347,6 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         }
-
         backend
             .cmd_tx
             .send(CoreCmd::DeletePaste {
@@ -360,6 +357,7 @@ mod tests {
         let undo_token = match recv_event(&backend.evt_rx) {
             CoreEvent::PasteDeleted { id, undo_token } => {
                 assert_eq!(id, created_id);
+                let undo_token = undo_token.expect("delete should include undo token");
                 assert!(!undo_token.is_empty());
                 undo_token
             }
@@ -431,6 +429,7 @@ mod tests {
             .send(CoreCmd::UpdatePasteVirtual {
                 id: created_id.clone(),
                 content: Rope::from_str("virtual-updated"),
+                protected_version_id_ms: None,
             })
             .expect("send virtual update");
         match recv_event(&backend.evt_rx) {
@@ -480,6 +479,7 @@ mod tests {
             .send(CoreCmd::UpdatePaste {
                 id: created_id.clone(),
                 content: "123456789".to_string(),
+                protected_version_id_ms: None,
             })
             .expect("send oversize update");
         match recv_event(&backend.evt_rx) {
@@ -495,6 +495,7 @@ mod tests {
             .send(CoreCmd::UpdatePasteVirtual {
                 id: created_id.clone(),
                 content: Rope::from_str("123456789"),
+                protected_version_id_ms: None,
             })
             .expect("send oversize virtual update");
         match recv_event(&backend.evt_rx) {
@@ -590,7 +591,9 @@ mod tests {
         match recv_event(&backend.evt_rx) {
             CoreEvent::PasteDeleted { id, undo_token } => {
                 assert_eq!(id, paste_id);
-                assert!(!undo_token.is_empty());
+                assert!(!undo_token
+                    .expect("delete should include undo token")
+                    .is_empty());
             }
             other => panic!("unexpected event: {:?}", other),
         }

@@ -36,11 +36,19 @@ pub enum CoreCmd {
     /// Create a new paste with the provided content.
     CreatePaste { content: String },
     /// Persist updated content for an existing paste.
-    UpdatePaste { id: String, content: String },
+    UpdatePaste {
+        id: String,
+        content: String,
+        protected_version_id_ms: Option<u64>,
+    },
     /// Persist updated content for an existing paste using a rope snapshot.
     ///
     /// This keeps rope->string materialization off the UI thread.
-    UpdatePasteVirtual { id: String, content: Rope },
+    UpdatePasteVirtual {
+        id: String,
+        content: Rope,
+        protected_version_id_ms: Option<u64>,
+    },
     /// Persist metadata changes for an existing paste.
     UpdatePasteMeta {
         id: String,
@@ -137,7 +145,10 @@ pub enum CoreEvent {
     /// Response confirming a paste's metadata was updated.
     PasteMetaSaved { paste: Paste },
     /// Response confirming a paste was deleted.
-    PasteDeleted { id: String, undo_token: String },
+    PasteDeleted {
+        id: String,
+        undo_token: Option<String>,
+    },
     /// Response confirming a paste was restored from delete undo.
     PasteRestored { paste: Paste, undo_token: String },
     /// Response containing historical version metadata rows for a paste.

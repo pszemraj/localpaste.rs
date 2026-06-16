@@ -654,6 +654,52 @@ fn delete_bundle_restore_preserves_folder_and_versions() {
 }
 
 #[test]
+fn capped_delete_undo_discards_versions_without_bundle_when_payload_exceeds_limit() {
+    let fixture = setup_folder_move_fixture();
+    let db = &fixture.db;
+
+    let update = UpdatePasteRequest {
+        content: Some("updated".to_string()),
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(fixture.old_folder_id.clone()),
+        tags: None,
+    };
+    TransactionOps::move_paste_between_folders(
+        db,
+        &fixture.paste_id,
+        Some(fixture.old_folder_id.as_str()),
+        update,
+    )
+    .expect("update")
+    .expect("paste exists");
+
+    let result =
+        TransactionOps::delete_paste_with_folder_undo_limited(db, &fixture.paste_id, Some(0))
+            .expect("delete with capped undo")
+            .expect("paste deleted");
+    assert!(
+        result.undo_bundle.is_none(),
+        "payload over the cap should delete without retaining an undo bundle"
+    );
+    assert!(db
+        .pastes
+        .get(&fixture.paste_id)
+        .expect("lookup after delete")
+        .is_none());
+
+    let read_txn = db.db.begin_read().expect("begin read");
+    let versions_meta = read_txn
+        .open_table(PASTE_VERSIONS_META)
+        .expect("open versions meta");
+    assert!(versions_meta
+        .get(fixture.paste_id.as_str())
+        .expect("get versions meta")
+        .is_none());
+}
+
+#[test]
 fn restore_deleted_paste_clears_missing_original_folder() {
     let fixture = setup_folder_move_fixture();
     let db = &fixture.db;

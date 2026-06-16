@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 const DELETE_UNDO_TTL: Duration = Duration::from_secs(10);
 const DELETE_UNDO_LIMIT: usize = 8;
+const DELETE_UNDO_VERSION_PAYLOAD_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Handle for sending commands to, and receiving events from, the backend worker.
 pub struct BackendHandle {
@@ -260,12 +261,20 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             paste::handle_create_paste(state, content);
             true
         }
-        CoreCmd::UpdatePaste { id, content } => {
-            paste::handle_update_paste(state, id, content);
+        CoreCmd::UpdatePaste {
+            id,
+            content,
+            protected_version_id_ms,
+        } => {
+            paste::handle_update_paste(state, id, content, protected_version_id_ms);
             true
         }
-        CoreCmd::UpdatePasteVirtual { id, content } => {
-            paste::handle_update_paste_virtual(state, id, content);
+        CoreCmd::UpdatePasteVirtual {
+            id,
+            content,
+            protected_version_id_ms,
+        } => {
+            paste::handle_update_paste_virtual(state, id, content, protected_version_id_ms);
             true
         }
         CoreCmd::UpdatePasteMeta {

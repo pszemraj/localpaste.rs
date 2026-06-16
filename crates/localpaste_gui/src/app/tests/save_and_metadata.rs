@@ -336,7 +336,7 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
     assert!(matches!(harness.app.save_status, SaveStatus::Saving));
     assert!(harness.app.save_in_flight);
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePaste { id, content } => {
+        CoreCmd::UpdatePaste { id, content, .. } => {
             assert_eq!(id, "alpha");
             assert_eq!(content, "manual-save");
         }
@@ -357,7 +357,7 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
         Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
     harness.app.maybe_autosave();
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePaste { id, content } => {
+        CoreCmd::UpdatePaste { id, content, .. } => {
             assert_eq!(id, "alpha");
             assert_eq!(content, "auto-save");
         }
@@ -398,7 +398,7 @@ fn virtual_editor_autosave_dispatches_rope_snapshot_command() {
     assert!(matches!(harness.app.save_status, SaveStatus::Saving));
     assert!(harness.app.save_in_flight);
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePasteVirtual { id, content } => {
+        CoreCmd::UpdatePasteVirtual { id, content, .. } => {
             assert_eq!(id, "alpha");
             assert_eq!(content.to_string(), "virtual-content");
         }
@@ -510,7 +510,7 @@ fn select_paste_dirty_or_metadata_dirty_defers_switch_until_save_ack() {
         assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
 
         match (kind, recv_cmd(&harness.cmd_rx)) {
-            (DeferredKind::Content, CoreCmd::UpdatePaste { id, content }) => {
+            (DeferredKind::Content, CoreCmd::UpdatePaste { id, content, .. }) => {
                 assert_eq!(id, "alpha");
                 assert_eq!(content, "edited");
             }
@@ -655,7 +655,7 @@ fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() 
     assert!(harness.app.save_in_flight);
 
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePaste { id, content } => {
+        CoreCmd::UpdatePaste { id, content, .. } => {
             assert_eq!(id, "alpha");
             assert_eq!(content, "edited-old");
         }

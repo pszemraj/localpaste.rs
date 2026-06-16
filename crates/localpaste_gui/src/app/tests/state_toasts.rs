@@ -113,7 +113,7 @@ fn paste_deleted_toast_carries_undo_action_for_restore_window() {
 
     harness.app.apply_event(CoreEvent::PasteDeleted {
         id: "alpha".to_string(),
-        undo_token: "undo-alpha".to_string(),
+        undo_token: Some("undo-alpha".to_string()),
     });
 
     let toast = harness.app.toasts.back().expect("undo toast");
@@ -130,6 +130,23 @@ fn paste_deleted_toast_carries_undo_action_for_restore_window() {
     assert!(
         toast.expires_at.saturating_duration_since(before) < Duration::from_secs(10),
         "GUI undo affordance should expire within the local bundle restore window"
+    );
+}
+
+#[test]
+fn paste_deleted_without_undo_token_has_no_undo_action() {
+    let mut harness = make_app();
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".to_string(),
+        undo_token: None,
+    });
+
+    let toast = harness.app.toasts.back().expect("delete toast");
+    assert!(toast.action.is_none());
+    assert_eq!(
+        toast.text.as_str(),
+        "Paste deleted. Undo unavailable for large history."
     );
 }
 

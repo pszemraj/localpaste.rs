@@ -130,6 +130,7 @@ fn backend_shutdown_drains_queued_update_and_persists_across_reopen() {
         .send(CoreCmd::UpdatePaste {
             id: paste_id.clone(),
             content: "after-close".to_string(),
+            protected_version_id_ms: None,
         })
         .expect("send update before shutdown");
 
@@ -192,7 +193,7 @@ fn backend_delete_undo_restores_content_and_version_history_headlessly() {
     let undo_token = match recv_event(&backend.evt_rx) {
         CoreEvent::PasteDeleted { id, undo_token } => {
             assert_eq!(id, paste_id);
-            undo_token
+            undo_token.expect("delete should include undo token")
         }
         other => panic!("expected PasteDeleted event, got {:?}", other),
     };
@@ -392,6 +393,7 @@ fn backend_update_paths_reject_foreign_lock_holder_and_preserve_paste() {
         .send(CoreCmd::UpdatePaste {
             id: paste_id.clone(),
             content: "mutated-body".to_string(),
+            protected_version_id_ms: None,
         })
         .expect("send content update");
     match recv_event(&backend.evt_rx) {
@@ -725,6 +727,7 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
         .send(CoreCmd::UpdatePasteVirtual {
             id: paste_id.clone(),
             content: Rope::from_str("race-virtual-update"),
+            protected_version_id_ms: None,
         })
         .expect("send virtual update");
 

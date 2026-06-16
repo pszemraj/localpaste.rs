@@ -142,6 +142,13 @@ impl VersionUiState {
                 == paste_id
     }
 
+    fn protected_history_reset_version_for(&self, paste_id: &str) -> Option<u64> {
+        self.history_reset_queued
+            .as_ref()
+            .filter(|pending| pending.paste_id == paste_id)
+            .map(|pending| pending.version_id_ms)
+    }
+
     fn history_reset_in_flight(&self) -> bool {
         self.history_reset_in_flight_paste_id.is_some()
     }
@@ -577,6 +584,15 @@ impl LocalPasteApp {
     /// `true` when reset is pending for that specific paste id.
     pub(super) fn history_reset_pending_for(&self, paste_id: &str) -> bool {
         self.version_ui.history_reset_in_flight_for(Some(paste_id))
+    }
+
+    /// Returns the reset target that a pre-reset content save must preserve.
+    ///
+    /// # Returns
+    /// `Some(version_id_ms)` only while `paste_id` has a queued save-then-reset.
+    pub(super) fn protected_history_reset_version_for(&self, paste_id: &str) -> Option<u64> {
+        self.version_ui
+            .protected_history_reset_version_for(paste_id)
     }
 
     /// Reports why persisting the current dirty draft should be blocked right now.

@@ -47,16 +47,19 @@ impl LocalPasteApp {
         self.save_request_revision = Some(self.active_revision());
         self.save_in_flight = true;
         self.save_status = SaveStatus::Saving;
+        let protected_version_id_ms = self.protected_history_reset_version_for(id.as_str());
 
         let command = if self.is_virtual_editor_mode() {
             CoreCmd::UpdatePasteVirtual {
                 id,
                 content: self.virtual_editor_buffer.rope().clone(),
+                protected_version_id_ms,
             }
         } else {
             CoreCmd::UpdatePaste {
                 id,
                 content: self.selected_content.to_string(),
+                protected_version_id_ms,
             }
         };
 
@@ -268,14 +271,22 @@ impl LocalPasteApp {
                     if let Some(adjacent_id) = adjacent_id {
                         let _ = self.select_paste(adjacent_id);
                     }
-                    self.set_status_with_action(
-                        "Paste deleted.",
-                        ToastAction::UndoDelete { undo_token },
-                    );
-                } else {
+                    if let Some(undo_token) = undo_token {
+                        self.set_status_with_action(
+                            "Paste deleted.",
+                            ToastAction::UndoDelete { undo_token },
+                        );
+                    } else {
+                        self.set_status("Paste deleted. Undo unavailable for large history.");
+                    }
+                } else if let Some(undo_token) = undo_token {
                     self.set_status_with_action(
                         "Paste deleted; list refreshed.",
                         ToastAction::UndoDelete { undo_token },
+                    );
+                } else {
+                    self.set_status(
+                        "Paste deleted; list refreshed. Undo unavailable for large history.",
                     );
                 }
                 self.request_refresh();

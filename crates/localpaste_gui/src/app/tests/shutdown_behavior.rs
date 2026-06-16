@@ -27,7 +27,7 @@ fn on_exit_dispatches_dirty_content_and_metadata_save_and_drop_releases_selected
     eframe::App::on_exit(&mut app, None);
 
     match recv_cmd(&cmd_rx) {
-        CoreCmd::UpdatePaste { id, content } => {
+        CoreCmd::UpdatePaste { id, content, .. } => {
             assert_eq!(id, "alpha");
             assert_eq!(content, "exit-save-content");
         }
@@ -95,7 +95,7 @@ fn on_exit_dispatches_dirty_saves_even_with_version_overlay_open() {
 
         for cmd in [first, second] {
             match cmd {
-                CoreCmd::UpdatePaste { id, content } => {
+                CoreCmd::UpdatePaste { id, content, .. } => {
                     assert_eq!(id, "alpha");
                     assert_eq!(content, "overlay-exit-content");
                     saw_content = true;
@@ -173,7 +173,7 @@ fn on_exit_requeues_dirty_tails_after_stale_in_flight_acks() {
 
     for cmd in [first, second] {
         match cmd {
-            CoreCmd::UpdatePaste { id, content } => {
+            CoreCmd::UpdatePaste { id, content, .. } => {
                 assert_eq!(id, "alpha");
                 assert_eq!(content, "exit-newer-content");
                 saw_content = true;
@@ -241,7 +241,7 @@ fn on_exit_forces_final_dirty_snapshots_even_when_acks_never_arrive() {
 
     for cmd in [first, second] {
         match cmd {
-            CoreCmd::UpdatePaste { id, content } => {
+            CoreCmd::UpdatePaste { id, content, .. } => {
                 assert_eq!(id, "alpha");
                 assert_eq!(content, "shutdown-final-content");
                 saw_content = true;

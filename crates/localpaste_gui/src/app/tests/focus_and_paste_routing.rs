@@ -865,7 +865,7 @@ fn version_overlay_allows_content_and_metadata_persistence_dispatches() {
                 harness.app.maybe_autosave();
                 assert!(harness.app.save_in_flight);
                 match recv_cmd(&harness.cmd_rx) {
-                    CoreCmd::UpdatePaste { id, content } => {
+                    CoreCmd::UpdatePaste { id, content, .. } => {
                         assert_eq!(id, "alpha");
                         assert_eq!(content, "dirty-autosave");
                     }
@@ -881,7 +881,7 @@ fn version_overlay_allows_content_and_metadata_persistence_dispatches() {
                 harness.app.save_now();
                 assert!(harness.app.save_in_flight);
                 match recv_cmd(&harness.cmd_rx) {
-                    CoreCmd::UpdatePaste { id, content } => {
+                    CoreCmd::UpdatePaste { id, content, .. } => {
                         assert_eq!(id, "alpha");
                         assert_eq!(content, "dirty-manual");
                     }
