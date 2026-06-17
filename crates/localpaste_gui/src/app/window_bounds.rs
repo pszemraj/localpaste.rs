@@ -55,18 +55,47 @@ fn clamped_size_for_texture_limit(
     Some(clamped)
 }
 
-/// Enforces viewport minimum size and GPU texture-size bounds.
+fn clamped_size_for_window_limit(
+    current_points: egui::Vec2,
+    min_points: egui::Vec2,
+    max_points: egui::Vec2,
+) -> Option<egui::Vec2> {
+    if !max_points.x.is_finite()
+        || !max_points.y.is_finite()
+        || max_points.x <= 0.0
+        || max_points.y <= 0.0
+    {
+        return None;
+    }
+    if current_points.x <= max_points.x && current_points.y <= max_points.y {
+        return None;
+    }
+
+    let max_points = egui::vec2(max_points.x.max(1.0), max_points.y.max(1.0));
+    let min_clamp = egui::vec2(
+        min_points.x.min(max_points.x),
+        min_points.y.min(max_points.y),
+    );
+    Some(egui::vec2(
+        current_points.x.clamp(min_clamp.x, max_points.x),
+        current_points.y.clamp(min_clamp.y, max_points.y),
+    ))
+}
+
+/// Enforces viewport minimum size, monitor-sane maximum size, and GPU texture-size bounds.
 ///
 /// # Arguments
 /// - `ctx`: Active egui context.
 /// - `frame`: Current eframe frame handle (for wgpu limits).
 /// - `window_checked`: One-shot initialization guard for min-size clamp.
 /// - `min_points`: Minimum window size in logical points.
+/// - `max_points`: Maximum window size in logical points.
 pub(super) fn enforce_window_bounds(
     ctx: &egui::Context,
     frame: &eframe::Frame,
     window_checked: &mut bool,
     min_points: egui::Vec2,
+    max_points: egui::Vec2,
 ) {
     let current_points = viewport_inner_size(ctx, min_points);
     if !*window_checked {
@@ -74,6 +103,12 @@ pub(super) fn enforce_window_bounds(
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(min_points));
         }
         *window_checked = true;
+    }
+
+    if let Some(clamped_points) =
+        clamped_size_for_window_limit(current_points, min_points, max_points)
+    {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(clamped_points));
     }
 
     let pixels_per_point = ctx.pixels_per_point().max(1.0);
@@ -90,7 +125,7 @@ pub(super) fn enforce_window_bounds(
 
 #[cfg(test)]
 mod tests {
-    use super::clamped_size_for_texture_limit;
+    use super::{clamped_size_for_texture_limit, clamped_size_for_window_limit};
     use eframe::egui;
 
     fn assert_clamp_case(
@@ -126,5 +161,19 @@ mod tests {
         for (current, pixels_per_point, expected) in cases {
             assert_clamp_case(current, pixels_per_point, min, 8192.0, expected);
         }
+    }
+
+    #[test]
+    fn clamps_against_window_bounds_before_texture_bounds() {
+        let min = egui::vec2(900.0, 600.0);
+        let max = egui::vec2(7680.0, 4320.0);
+        assert_eq!(
+            clamped_size_for_window_limit(egui::vec2(8000.0, 5120.0), min, max),
+            Some(egui::vec2(7680.0, 4320.0))
+        );
+        assert_eq!(
+            clamped_size_for_window_limit(egui::vec2(5120.0, 2880.0), min, max),
+            None
+        );
     }
 }

@@ -340,6 +340,7 @@ pub fn run() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size(app::DEFAULT_WINDOW_SIZE)
         .with_min_inner_size(app::MIN_WINDOW_SIZE)
+        .with_max_inner_size(app::MAX_WINDOW_SIZE)
         .with_title("LocalPaste.rs")
         .with_visible(false);
     #[cfg(target_os = "linux")]

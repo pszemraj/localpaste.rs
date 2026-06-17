@@ -219,6 +219,8 @@ const TOAST_LIMIT: usize = 4;
 pub(crate) const DEFAULT_WINDOW_SIZE: [f32; 2] = [1100.0, 720.0];
 #[doc = "Minimum enforced window size to keep sidebar/editor controls usable."]
 pub(crate) const MIN_WINDOW_SIZE: [f32; 2] = [900.0, 600.0];
+#[doc = "Maximum enforced native window size in logical points."]
+pub(crate) const MAX_WINDOW_SIZE: [f32; 2] = [7680.0, 4320.0];
 const HIGHLIGHT_PLAIN_THRESHOLD: usize = 256 * 1024;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
 const PALETTE_SEARCH_LIMIT: usize = 40;
@@ -544,7 +546,8 @@ impl eframe::App for LocalPasteApp {
         self.track_frame_metrics();
         self.virtual_paste_applied_this_frame = false;
         let min_size = egui::vec2(MIN_WINDOW_SIZE[0], MIN_WINDOW_SIZE[1]);
-        enforce_window_bounds(ctx, _frame, &mut self.window_checked, min_size);
+        let max_size = egui::vec2(MAX_WINDOW_SIZE[0], MAX_WINDOW_SIZE[1]);
+        enforce_window_bounds(ctx, _frame, &mut self.window_checked, min_size, max_size);
 
         let now = Instant::now();
         if let Some(status) = &self.status {
