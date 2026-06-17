@@ -2,7 +2,7 @@
 
 use super::canonical::canonicalize;
 use super::detect_language;
-use super::looks_like_magika_flat_yaml;
+use super::looks_like_flat_config_yaml;
 use super::looks_like_yaml;
 use super::refine_magika_label;
 
@@ -24,6 +24,7 @@ fn heuristic_detects_existing_language_matrix() {
         ("const x = () => console.log('hi');", Some("javascript")),
         ("#!/bin/bash\necho hello", Some("shell")),
         ("name: app\nservices:\n  - web", Some("yaml")),
+        ("name: app\nversion: 1\nport: 8080\n", Some("yaml")),
         ("name: app", None),
         ("display name: app\nport: 8080", None),
         ("services: [web]\nversion: 3", Some("yaml")),
@@ -232,6 +233,15 @@ fn magika_detects_high_signal_code_snippets() {
     }
 }
 
+#[cfg(feature = "magika")]
+#[test]
+fn magika_and_fallback_agree_on_flat_config_yaml() {
+    assert_eq!(
+        detect_language("name: app\nversion: 1\nport: 8080\n").as_deref(),
+        Some("yaml")
+    );
+}
+
 #[test]
 fn magika_refinement_rejects_weak_yaml_shape() {
     assert_eq!(refine_magika_label("yaml", "status report:\ndone\n"), None);
@@ -278,18 +288,18 @@ fn magika_refinement_rejects_weak_yaml_shape() {
 }
 
 #[test]
-fn magika_flat_yaml_rescue_accepts_config_shaped_flat_mappings_only() {
-    assert!(looks_like_magika_flat_yaml(
+fn flat_config_yaml_helper_accepts_config_shaped_flat_mappings_only() {
+    assert!(looks_like_flat_config_yaml(
         "name: app\nversion: 1\nport: 8080\n"
     ));
-    assert!(looks_like_magika_flat_yaml("apiVersion: v1\nkind: Pod\n"));
-    assert!(!looks_like_magika_flat_yaml(
+    assert!(looks_like_flat_config_yaml("apiVersion: v1\nkind: Pod\n"));
+    assert!(!looks_like_flat_config_yaml(
         "display name: api\nport: 8080\n"
     ));
-    assert!(!looks_like_magika_flat_yaml(
+    assert!(!looks_like_flat_config_yaml(
         "Author: Jane\nStatus: draft\n"
     ));
-    assert!(!looks_like_magika_flat_yaml("name: app\n"));
+    assert!(!looks_like_flat_config_yaml("name: app\n"));
 }
 
 #[test]

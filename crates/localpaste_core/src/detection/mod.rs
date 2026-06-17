@@ -111,7 +111,7 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return Some("markdown".to_string());
     }
 
-    if label == "yaml" && !looks_like_yaml(content) && !looks_like_magika_flat_yaml(content) {
+    if label == "yaml" && !looks_like_yaml(content) && !looks_like_flat_config_yaml(content) {
         return None;
     }
 
@@ -217,8 +217,7 @@ fn looks_like_yaml_sequence_item(item: &str) -> bool {
     false
 }
 
-#[cfg(any(feature = "magika", test))]
-fn looks_like_magika_flat_yaml(content: &str) -> bool {
+pub(crate) fn looks_like_flat_config_yaml(content: &str) -> bool {
     let mut mapping_pairs = 0usize;
     let mut meaningful_lines = 0usize;
 
@@ -243,7 +242,6 @@ fn looks_like_magika_flat_yaml(content: &str) -> bool {
     meaningful_lines >= 2 && mapping_pairs >= 2
 }
 
-#[cfg(any(feature = "magika", test))]
 fn yaml_mapping_key_has_config_shape(key: &str) -> bool {
     let unquoted = key
         .strip_prefix('"')

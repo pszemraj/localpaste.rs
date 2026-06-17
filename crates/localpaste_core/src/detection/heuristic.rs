@@ -1,6 +1,6 @@
 //! Heuristic language detection fallback for text content.
 
-use super::looks_like_yaml;
+use super::{looks_like_flat_config_yaml, looks_like_yaml};
 use crate::models::paste::is_markdown_content;
 
 /// Best-effort language detection based on simple heuristics.
@@ -138,9 +138,9 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("sql".to_string());
     }
 
-    // Keep the heuristic YAML path structural: flat `key: value` mappings are
-    // accepted only when Magika first classifies the sample as YAML.
-    let yaml_like = looks_like_yaml(sample);
+    // Keep the heuristic YAML path conservative, while accepting multi-line
+    // config-shaped flat mappings consistently across Magika and fallback-only builds.
+    let yaml_like = looks_like_yaml(sample) || looks_like_flat_config_yaml(sample);
 
     if is_markdown_content(sample) && !yaml_like {
         return Some("markdown".to_string());

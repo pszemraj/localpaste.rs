@@ -148,9 +148,10 @@ Reference: [`../.env.example`](../.env.example)
 ## YAML Refinement Guardrail
 
 YAML auto-detection requires YAML-distinctive structure before accepting a mapping-heavy sample.
-Plain flat mappings like `Key: value` remain ambiguous because they also match notes, logs,
-and email or HTTP headers. YAML is accepted when the sample has a document marker,
-nested indentation, flow collections, block scalars, anchors, or structured sequence items.
+Single-line and prose-like flat mappings remain ambiguous because they also match notes,
+logs, and email or HTTP headers. YAML is accepted when the sample has a document marker,
+nested indentation, flow collections, block scalars, anchors, structured sequence items,
+or multiple config-shaped flat mapping lines.
 
 Primary implementation:
 
