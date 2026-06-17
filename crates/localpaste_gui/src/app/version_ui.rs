@@ -5,8 +5,8 @@ use super::ui::diff_modal::{
     inline_diff_preview_from_response, InlineDiffPreview, MAX_INLINE_DIFF_BYTES,
 };
 use super::{
-    highlight::hash_bytes, non_focusable_click_sense, EditorLineIndex, LocalPasteApp, SaveStatus,
-    SEARCH_DEBOUNCE,
+    editor::EditorLineIndex, highlight::hash_bytes, non_focusable_click_sense, LocalPasteApp,
+    SaveStatus, SEARCH_DEBOUNCE,
 };
 use crate::backend::{
     CoreCmd, CoreErrorSource, CoreEvent, PasteSummary, VERSION_WORKFLOW_LIST_LIMIT,

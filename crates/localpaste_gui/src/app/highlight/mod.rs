@@ -418,38 +418,6 @@ impl EditorLayoutCache {
     }
 }
 
-/// Builds a layout job for a single rendered line in the virtual preview.
-///
-/// # Arguments
-/// - `ui`: UI context used for default text styling.
-/// - `line`: Line text to shape.
-/// - `editor_font`: Font id used by editor rendering.
-/// - `render_line`: Optional highlight spans for this line.
-/// - `use_plain`: When `true`, bypass highlight spans.
-///
-/// # Returns
-/// Layout job representing one unwrapped virtual line.
-pub(super) fn build_virtual_line_job(
-    ui: &egui::Ui,
-    line: impl Into<String>,
-    editor_font: &FontId,
-    render_line: Option<&HighlightRenderLine>,
-    use_plain: bool,
-) -> LayoutJob {
-    build_virtual_line_job_with_mapper(
-        ui,
-        line.into(),
-        editor_font,
-        render_line,
-        use_plain,
-        |span_range, line_len| {
-            let start = span_range.start.min(line_len);
-            let end = span_range.end.min(line_len);
-            (start < end).then_some(start..end)
-        },
-    )
-}
-
 /// Builds a layout job for a wrapped visual-row segment from a physical line.
 ///
 /// `line_byte_range` is relative to the original physical line bytes and is used
@@ -912,7 +880,6 @@ pub(super) struct HighlightRequest {
 /// Snapshot payload transported to the highlight worker.
 #[derive(Clone)]
 pub(super) enum HighlightRequestText {
-    Owned(String),
     Rope(Rope),
 }
 
@@ -923,7 +890,6 @@ impl HighlightRequestText {
     /// UTF-8 byte length of owned string or rope payload.
     pub(super) fn len_bytes(&self) -> usize {
         match self {
-            Self::Owned(text) => text.len(),
             Self::Rope(rope) => rope.len_bytes(),
         }
     }
@@ -934,7 +900,6 @@ impl HighlightRequestText {
     /// Owned string representation of this request payload.
     pub(super) fn into_string(self) -> String {
         match self {
-            Self::Owned(text) => text,
             Self::Rope(rope) => rope.to_string(),
         }
     }

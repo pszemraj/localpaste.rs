@@ -9,7 +9,7 @@ fn run_virtual_editor_frame(
 ) -> bool {
     let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
     let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
-    let focus_active_pre = app.is_virtual_editor_mode() && egui_focus_pre;
+    let focus_active_pre = egui_focus_pre;
 
     let raw_input = egui::RawInput {
         events,
@@ -163,7 +163,6 @@ fn empty_preedit_clears_composition_and_allows_insert_text() {
 #[test]
 fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("line one\n");
 
     let ctx = egui::Context::default();
@@ -207,7 +206,6 @@ fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
 #[test]
 fn same_frame_editor_click_and_arrow_moves_cursor_once() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\n");
 
     let ctx = egui::Context::default();
@@ -242,7 +240,6 @@ fn same_frame_editor_click_and_arrow_moves_cursor_once() {
 #[test]
 fn stale_virtual_focus_does_not_steal_arrow_from_other_focus_owner() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\n");
 
     let ctx = egui::Context::default();
@@ -271,7 +268,6 @@ fn stale_virtual_focus_does_not_steal_arrow_from_other_focus_owner() {
 #[test]
 fn focused_virtual_editor_publishes_ime_cursor_rect() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\nbeta\n");
     set_virtual_cursor_at(&mut harness.app, 0, 2);
 
@@ -315,7 +311,6 @@ fn focused_virtual_editor_publishes_ime_cursor_rect() {
 #[test]
 fn focused_virtual_editor_publishes_ime_cursor_rect_when_caret_is_offscreen() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     let content = (0..180)
         .map(|idx| format!("line {idx}"))
         .collect::<Vec<_>>()
@@ -356,7 +351,6 @@ fn focused_virtual_editor_publishes_ime_cursor_rect_when_caret_is_offscreen() {
 #[test]
 fn focused_virtual_editor_owns_tab_without_focus_traversal() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha");
 
     let ctx = egui::Context::default();
@@ -397,7 +391,6 @@ fn focused_virtual_editor_owns_tab_without_focus_traversal() {
 #[test]
 fn focused_editor_delete_chord_edits_text_without_dispatching_paste_delete() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha beta");
     let len = harness.app.virtual_editor_buffer.len_chars();
     harness.app.virtual_editor_state.set_cursor(0, len);
@@ -446,7 +439,6 @@ fn focused_editor_delete_chord_edits_text_without_dispatching_paste_delete() {
 #[test]
 fn focused_editor_keeps_command_arrow_focus_inside_real_app_chrome() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness
         .app
         .reset_virtual_editor("alpha\nbeta gamma\ndelta\n");
@@ -526,7 +518,6 @@ fn focused_editor_keeps_command_arrow_focus_inside_real_app_chrome() {
 #[test]
 fn virtual_editor_frame_consumes_pending_follow_scroll_offset() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness
         .app
         .reset_virtual_editor("line one\nline two\nline three\n");
@@ -545,7 +536,6 @@ fn virtual_editor_frame_consumes_pending_follow_scroll_offset() {
 #[test]
 fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\n// beta\n");
 
     let ctx = egui::Context::default();
@@ -592,7 +582,6 @@ fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
 #[test]
 fn virtual_editor_enter_in_focused_frame_inserts_top_newline() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\nbeta\n");
 
     let ctx = egui::Context::default();
@@ -613,7 +602,6 @@ fn virtual_editor_enter_in_focused_frame_inserts_top_newline() {
 #[test]
 fn virtual_editor_shift_arrow_in_focused_frame_extends_selection() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\n");
 
     let ctx = egui::Context::default();
@@ -1083,7 +1071,6 @@ fn caret_blink_reset_behavior_depends_on_cursor_or_text_change() {
     for (commands, expected) in cases {
         let mut harness = make_app();
         harness.app.reset_virtual_editor("ab");
-        harness.app.editor_mode = EditorMode::VirtualEditor;
         let before = Instant::now() - Duration::from_secs(3);
         harness.app.virtual_caret_phase_start = before;
 

@@ -177,53 +177,6 @@ impl LocalPasteApp {
         }
     }
 
-    /// Returns the preview selection as text using line-aware slicing semantics.
-    ///
-    /// # Returns
-    /// Selected text joined with `\n`, or `None` when selection is empty.
-    ///
-    /// # Panics
-    /// Panics only if internal cursor/line indices become inconsistent with `selected_content`.
-    pub(super) fn virtual_selection_text(&mut self) -> Option<String> {
-        let (start, end) = self.virtual_selection.selection_bounds()?;
-        let text = self.selected_content.as_str();
-        self.editor_lines
-            .ensure_for(self.selected_content.revision(), text);
-        let mut out = String::new();
-        for line_idx in start.line..=end.line {
-            let line = self.editor_lines.line_without_newline(text, line_idx);
-            let line_chars = line.chars().count();
-            let start_char = if line_idx == start.line {
-                start.column.min(line_chars)
-            } else {
-                0
-            };
-            let end_char = if line_idx == end.line {
-                end.column.min(line_chars)
-            } else {
-                line_chars
-            };
-            if start_char < end_char {
-                let start_byte =
-                    egui::text_selection::text_cursor_state::byte_index_from_char_index(
-                        line, start_char,
-                    );
-                let end_byte = egui::text_selection::text_cursor_state::byte_index_from_char_index(
-                    line, end_char,
-                );
-                out.push_str(&line[start_byte..end_byte]);
-            }
-            if line_idx < end.line {
-                out.push('\n');
-            }
-        }
-        if out.is_empty() {
-            None
-        } else {
-            Some(out)
-        }
-    }
-
     /// Resets virtual editor buffer/state/caches to match a fresh text snapshot.
     pub(super) fn reset_virtual_editor(&mut self, text: &str) {
         self.virtual_editor_buffer.reset(text);
@@ -245,14 +198,14 @@ impl LocalPasteApp {
         self.virtual_caret_phase_start = Instant::now();
     }
 
-    /// Clears virtual preview click streak tracking.
+    /// Clears virtual editor click streak tracking.
     pub(super) fn reset_virtual_click_streak(&mut self) {
         self.last_virtual_click_at = None;
         self.last_virtual_click_pos = None;
         self.last_virtual_click_count = 0;
     }
 
-    /// Records a click in the virtual preview and returns the updated streak count.
+    /// Records a click in the virtual editor and returns the updated streak count.
     ///
     /// # Arguments
     /// - `pointer_pos`: Pointer position in viewport coordinates.

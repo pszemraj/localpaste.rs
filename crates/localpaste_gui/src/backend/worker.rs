@@ -260,14 +260,6 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             paste::handle_create_paste(state, content);
             true
         }
-        CoreCmd::UpdatePaste {
-            id,
-            content,
-            protected_version_id_ms,
-        } => {
-            paste::handle_update_paste(state, id, content, protected_version_id_ms);
-            true
-        }
         CoreCmd::UpdatePasteVirtual {
             id,
             content,

@@ -61,18 +61,10 @@ impl LocalPasteApp {
         self.save_status = SaveStatus::Saving;
         let protected_version_id_ms = self.protected_history_reset_version_for(id.as_str());
 
-        let command = if self.is_virtual_editor_mode() {
-            CoreCmd::UpdatePasteVirtual {
-                id,
-                content: self.virtual_editor_buffer.rope().clone(),
-                protected_version_id_ms,
-            }
-        } else {
-            CoreCmd::UpdatePaste {
-                id,
-                content: self.selected_content.to_string(),
-                protected_version_id_ms,
-            }
+        let command = CoreCmd::UpdatePasteVirtual {
+            id,
+            content: self.virtual_editor_buffer.rope().clone(),
+            protected_version_id_ms,
         };
 
         self.send_update_paste_or_mark_failed(command, mode)
@@ -165,16 +157,12 @@ impl LocalPasteApp {
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
                 if self.selected_id.as_deref() == Some(paste_id.as_str()) {
-                    let has_newer_local_edits = if self.is_virtual_editor_mode() {
-                        // `save_request_revision` can be cleared after a partial deferred-switch
-                        // failure even when a content-save command was already dispatched.
-                        // Use snapshot comparison as a safe fallback for late save acks.
-                        requested_revision
-                            .map(|revision| self.active_revision() != revision)
-                            .unwrap_or_else(|| self.active_snapshot() != paste.content)
-                    } else {
-                        self.selected_content.as_str() != paste.content
-                    };
+                    // `save_request_revision` can be cleared after a partial deferred-switch
+                    // failure even when a content-save command was already dispatched.
+                    // Use snapshot comparison as a safe fallback for late save acks.
+                    let has_newer_local_edits = requested_revision
+                        .map(|revision| self.active_revision() != revision)
+                        .unwrap_or_else(|| self.active_snapshot() != paste.content);
                     if !self.metadata_dirty && !self.metadata_save_in_flight {
                         self.sync_editor_metadata(&paste);
                     }
@@ -679,10 +667,7 @@ impl LocalPasteApp {
         }
         self.sync_editor_metadata(&paste);
         self.bump_active_buffer_epoch();
-        self.selected_content.reset(paste.content.clone());
         self.reset_virtual_editor(paste.content.as_str());
-        self.editor_lines.reset();
-        self.virtual_selection.clear();
         self.clear_highlight_state();
         self.selected_paste = Some(paste);
         self.try_complete_pending_copy();
@@ -705,10 +690,7 @@ impl LocalPasteApp {
         self.metadata_save_in_flight = false;
         self.metadata_save_request = None;
         self.bump_active_buffer_epoch();
-        self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
-        self.editor_lines.reset();
-        self.virtual_selection.clear();
         self.clear_highlight_state();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
@@ -816,9 +798,6 @@ impl LocalPasteApp {
         if self.selected_id.is_some() {
             self.save_status = SaveStatus::Dirty;
             self.last_edit_at = Some(Instant::now());
-            if !self.is_virtual_editor_mode() {
-                self.highlight_edit_hint = None;
-            }
         }
     }
 

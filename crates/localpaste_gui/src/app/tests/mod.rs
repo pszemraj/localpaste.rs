@@ -5,7 +5,6 @@ use super::*;
 use crate::backend::{BackendHandle, CoreCmd, CoreEvent};
 use chrono::Utc;
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
-use eframe::egui::TextBuffer;
 use eframe::App as _;
 use localpaste_server::LockOwnerId;
 use syntect::util::LinesWithEndings;
@@ -101,6 +100,26 @@ pub(super) fn set_virtual_cursor_at(app: &mut LocalPasteApp, line: usize, col: u
     let len = app.virtual_editor_buffer.len_chars();
     let pos = app.virtual_editor_buffer.line_col_to_char(line, col);
     app.virtual_editor_state.set_cursor(pos, len);
+}
+
+/// Replaces the active editor buffer through the live rope-backed path.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `text`: Replacement buffer text.
+pub(super) fn set_active_content(app: &mut LocalPasteApp, text: &str) {
+    app.reset_virtual_editor(text);
+}
+
+/// Inserts text into the active editor buffer at a character index.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `text`: Text to insert.
+/// - `char_index`: Global character insertion position.
+pub(super) fn insert_active_text(app: &mut LocalPasteApp, text: &str, char_index: usize) {
+    let idx = char_index.min(app.virtual_editor_buffer.len_chars());
+    let _ = app.virtual_editor_buffer.replace_char_range(idx..idx, text);
 }
 
 /// Builds a pressed key event with the provided modifier state.
@@ -263,10 +282,6 @@ fn make_app() -> TestHarness {
         pending_selection_id: None,
         clipboard_outgoing: None,
         active_buffer_epoch: 0,
-        selected_content: EditorBuffer::new("content".to_string()),
-        editor_lines: EditorLineIndex::default(),
-        editor_mode: EditorMode::VirtualPreview,
-        virtual_selection: VirtualSelectionState::default(),
         virtual_editor_buffer: RopeBuffer::new("content"),
         virtual_editor_state: VirtualEditorState::default(),
         virtual_editor_history: VirtualEditorHistory::default(),

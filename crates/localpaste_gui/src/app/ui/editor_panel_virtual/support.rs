@@ -144,38 +144,6 @@ pub(super) fn consume_virtual_editor_owned_key_events(
     });
 }
 
-/// Returns preview selection bounds for a triple-clicked physical line.
-///
-/// # Arguments
-/// - `line_idx`: Zero-based line index that was clicked.
-/// - `line_count`: Total physical line count.
-/// - `line_chars`: Character length of the clicked line.
-///
-/// # Returns
-/// Start/end cursors for the whole-line preview selection.
-pub(super) fn preview_triple_click_selection_bounds(
-    line_idx: usize,
-    line_count: usize,
-    line_chars: usize,
-) -> (VirtualCursor, VirtualCursor) {
-    let start = VirtualCursor {
-        line: line_idx,
-        column: 0,
-    };
-    let end = if line_idx + 1 < line_count {
-        VirtualCursor {
-            line: line_idx + 1,
-            column: 0,
-        }
-    } else {
-        VirtualCursor {
-            line: line_idx,
-            column: line_chars,
-        }
-    };
-    (start, end)
-}
-
 /// Returns global character bounds for a double-click word selection.
 ///
 /// # Arguments
@@ -241,7 +209,6 @@ pub(super) fn follow_cursor_scroll_offset_y(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::MAX_RENDER_CHARS_PER_LINE;
 
     #[test]
     fn interaction_rect_handles_scrollbar_gutter_matrix() {
@@ -280,16 +247,6 @@ mod tests {
             requested_offset.is_some(),
             "requested follow should produce a scroll offset when caret is out of view"
         );
-    }
-
-    #[test]
-    fn preview_triple_click_terminal_line_uses_full_line_len() {
-        let full_line_chars = MAX_RENDER_CHARS_PER_LINE.saturating_add(64);
-
-        let (start, end) = preview_triple_click_selection_bounds(2, 3, full_line_chars);
-
-        assert_eq!((start.line, start.column), (2, 0));
-        assert_eq!((end.line, end.column), (2, full_line_chars));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Input/perf tracing helpers extracted from `app::mod` to keep core app file under LoC limits.
 
-use super::{EditorMode, InputTraceFrame, LocalPasteApp, VirtualApplyResult, VirtualInputCommand};
+use super::{InputTraceFrame, LocalPasteApp, VirtualApplyResult, VirtualInputCommand};
 use tracing::info;
 
 #[derive(Debug, Clone, Copy)]
@@ -19,7 +19,6 @@ impl LocalPasteApp {
         }
         info!(
             target: "localpaste_gui::input",
-            mode = ?self.editor_mode,
             focus_active_pre = frame.focus_active_pre,
             focus_active_post = frame.focus_active_post,
             egui_focus_pre = frame.egui_focus_pre,
@@ -46,7 +45,7 @@ impl LocalPasteApp {
         commands: &[VirtualInputCommand],
         stats: VirtualInputPerfStats,
     ) {
-        if !self.perf_log_enabled || self.editor_mode != EditorMode::VirtualEditor {
+        if !self.perf_log_enabled {
             return;
         }
         info!(

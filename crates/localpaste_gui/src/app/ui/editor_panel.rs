@@ -1,4 +1,4 @@
-//! Central editor panel rendering for virtual preview and virtual editor modes.
+//! Central editor panel rendering for the virtual editor.
 
 use super::super::*;
 use super::editor_panel_virtual::VirtualEditorRenderOptions;
@@ -19,8 +19,7 @@ impl LocalPasteApp {
 
             if let Some(id) = selected_meta {
                 let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-                let editor_had_virtual_focus = self.editor_mode == EditorMode::VirtualEditor
-                    && ctx.memory(|m| m.has_focus(editor_id));
+                let editor_had_virtual_focus = ctx.memory(|m| m.has_focus(editor_id));
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let visible_tags = parse_tags_csv(self.edit_tags.as_str())
@@ -216,9 +215,7 @@ impl LocalPasteApp {
                     // staged/current highlight state so large buffers stay plain.
                     self.clear_highlight_state();
                 }
-                let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
-                let use_virtual_editor = self.editor_mode == EditorMode::VirtualEditor;
-                let needs_worker_render = use_virtual_preview || use_virtual_editor;
+                let needs_worker_render = true;
                 let async_mode =
                     !is_large && (text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES || needs_worker_render);
                 let debounce_window = self.highlight_debounce_window(text_len, async_mode);
@@ -234,11 +231,8 @@ impl LocalPasteApp {
                         id.as_str(),
                     );
                 if should_request {
-                    let request_text = if self.is_virtual_editor_mode() {
-                        HighlightRequestText::Rope(self.virtual_editor_buffer.rope().clone())
-                    } else {
-                        HighlightRequestText::Owned(self.selected_content.to_string())
-                    };
+                    let request_text =
+                        HighlightRequestText::Rope(self.virtual_editor_buffer.rope().clone());
                     self.dispatch_highlight_request(
                         revision,
                         request_text,
@@ -332,35 +326,17 @@ impl LocalPasteApp {
                         }
                     });
                 let row_height = ui.text_style_height(&editor_style);
-                let scroll = egui::ScrollArea::vertical()
-                    .id_salt("editor_scroll")
-                    .max_height(editor_height)
-                    .auto_shrink([false; 2]);
-                if use_virtual_preview {
-                    self.render_virtual_preview_panel(
-                        ui,
-                        row_height,
-                        editor_height,
-                        &editor_font,
+                self.render_virtual_editor_panel(
+                    ui,
+                    row_height,
+                    editor_height,
+                    &editor_font,
+                    VirtualEditorRenderOptions {
                         highlight_render_match,
                         use_plain,
-                    );
-                } else if use_virtual_editor {
-                    self.render_virtual_editor_panel(
-                        ui,
-                        row_height,
-                        editor_height,
-                        &editor_font,
-                        VirtualEditorRenderOptions {
-                            highlight_render_match,
-                            use_plain,
-                            preserve_focus_from_editor_chrome: preserve_virtual_editor_focus,
-                        },
-                    );
-                } else {
-                    // Defensive fallback for impossible mode values.
-                    scroll.show(ui, |_| {});
-                }
+                        preserve_focus_from_editor_chrome: preserve_virtual_editor_focus,
+                    },
+                );
                 self.highlight_render = highlight_render;
                 self.render_version_dialogs(ctx);
             } else if self.selected_id.is_some() {

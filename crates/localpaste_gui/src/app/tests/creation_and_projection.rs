@@ -5,7 +5,6 @@ use super::*;
 #[test]
 fn paste_created_clean_visible_focuses_virtual_editor_on_next_render() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
 
     let mut created = Paste::new("new-content".to_string(), "new-note".to_string());
     created.id = "new-id".to_string();

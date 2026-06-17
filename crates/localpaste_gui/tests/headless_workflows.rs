@@ -127,9 +127,9 @@ fn backend_shutdown_drains_queued_update_and_persists_across_reopen() {
     let mut backend = spawn_backend(db.share().expect("share db"), TEST_MAX_PASTE_SIZE);
     backend
         .cmd_tx
-        .send(CoreCmd::UpdatePaste {
+        .send(CoreCmd::UpdatePasteVirtual {
             id: paste_id.clone(),
-            content: "after-close".to_string(),
+            content: Rope::from_str("after-close"),
             protected_version_id_ms: None,
         })
         .expect("send update before shutdown");
@@ -390,9 +390,9 @@ fn backend_update_paths_reject_foreign_lock_holder_and_preserve_paste() {
 
     backend
         .cmd_tx
-        .send(CoreCmd::UpdatePaste {
+        .send(CoreCmd::UpdatePasteVirtual {
             id: paste_id.clone(),
-            content: "mutated-body".to_string(),
+            content: Rope::from_str("mutated-body"),
             protected_version_id_ms: None,
         })
         .expect("send content update");

@@ -1,6 +1,7 @@
 //! Detached version-history modal rendering.
 
 use super::super::*;
+use crate::app::editor::EditorLineIndex;
 use crate::app::text_coords::prefix_by_chars;
 use chrono::{DateTime, Local, Utc};
 use eframe::egui::{self, RichText};

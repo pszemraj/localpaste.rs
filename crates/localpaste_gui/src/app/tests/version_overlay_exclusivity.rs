@@ -53,7 +53,6 @@ fn version_overlays_block_virtual_editor_fallback_shortcuts() {
             let mut harness = make_app();
             let ctx = egui::Context::default();
             let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-            harness.app.editor_mode = EditorMode::VirtualEditor;
             harness.app.reset_virtual_editor("abcdef");
             ctx.memory_mut(|m| m.request_focus(editor_id));
 
@@ -201,7 +200,7 @@ fn paste_created_during_version_overlay_defers_selection_until_overlay_closes() 
     let mut harness = make_app();
     harness.app.version_ui.history_modal_open = true;
     harness.app.version_ui.history_selected_index = 1;
-    let initial_content = harness.app.selected_content.as_str().to_string();
+    let initial_content = harness.app.active_snapshot();
 
     let mut created = Paste::new("new-content".to_string(), "new-note".to_string());
     created.id = "new-id".to_string();
@@ -212,7 +211,7 @@ fn paste_created_during_version_overlay_defers_selection_until_overlay_closes() 
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
     assert!(harness.app.version_ui.history_modal_open);
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("new-id"));
-    assert_eq!(harness.app.selected_content.as_str(), initial_content);
+    assert_eq!(harness.app.active_snapshot(), initial_content);
     assert_eq!(
         harness
             .app

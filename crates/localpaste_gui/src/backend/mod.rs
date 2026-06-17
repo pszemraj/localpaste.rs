@@ -334,9 +334,9 @@ mod tests {
         };
         backend
             .cmd_tx
-            .send(CoreCmd::UpdatePaste {
+            .send(CoreCmd::UpdatePasteVirtual {
                 id: created_id.clone(),
-                content: "updated".to_string(),
+                content: Rope::from_str("updated"),
                 protected_version_id_ms: None,
             })
             .expect("send update");
@@ -476,9 +476,9 @@ mod tests {
 
         backend
             .cmd_tx
-            .send(CoreCmd::UpdatePaste {
+            .send(CoreCmd::UpdatePasteVirtual {
                 id: created_id.clone(),
-                content: "123456789".to_string(),
+                content: Rope::from_str("123456789"),
                 protected_version_id_ms: None,
             })
             .expect("send oversize update");

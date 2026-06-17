@@ -14,7 +14,6 @@ fn output_has_request_paste(output: &egui::FullOutput) -> bool {
 #[test]
 fn focused_virtual_editor_requests_repaint_after_text_input() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha");
     set_virtual_cursor_at(&mut harness.app, 0, 5);
 
@@ -49,7 +48,6 @@ fn focused_virtual_editor_requests_repaint_after_text_input() {
 #[test]
 fn click_outside_editor_viewport_blurs_focus() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("line one\nline two\n");
 
     let ctx = egui::Context::default();
@@ -101,7 +99,6 @@ fn click_outside_editor_viewport_blurs_focus() {
 #[test]
 fn virtual_editor_window_blur_clears_focus_state() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("line one\nline two\n");
 
     let ctx = egui::Context::default();
@@ -135,7 +132,6 @@ fn virtual_editor_window_blur_clears_focus_state() {
 #[test]
 fn focused_plain_paste_with_payload_does_not_request_second_paste() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha");
     let end = harness.app.virtual_editor_buffer.len_chars();
     harness.app.virtual_editor_state.set_cursor(end, end);
@@ -176,7 +172,6 @@ fn focused_plain_paste_with_payload_does_not_request_second_paste() {
 #[test]
 fn same_frame_editor_click_and_sidebar_arrow_does_not_change_selection() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha\nbeta\n");
     harness.app.pastes = vec![
         test_summary("alpha", "Alpha", None, 7),
@@ -217,7 +212,6 @@ fn same_frame_editor_click_and_sidebar_arrow_does_not_change_selection() {
 #[test]
 fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha beta gamma");
 
     let ctx = egui::Context::default();
@@ -268,7 +262,6 @@ fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
 #[test]
 fn line_selection_shortcut_retains_focus_for_follow_up_delete() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha beta gamma");
 
     let ctx = egui::Context::default();
@@ -647,8 +640,7 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
 
 #[test]
 fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
-    let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
+    let harness = make_app();
 
     // Regression guard: when focus is acquired in the same frame as Ctrl/Cmd+V,
     // plain paste should stay in the editor instead of creating a new paste.
@@ -810,7 +802,7 @@ fn version_overlay_blocks_selection_switches_and_auto_reselection() {
 #[test]
 fn opening_version_overlay_cancels_pending_selection_switch_before_save_ack() {
     let mut harness = make_app();
-    harness.app.selected_content.reset("dirty".to_string());
+    set_active_content(&mut harness.app, "dirty");
     harness.app.save_status = SaveStatus::Dirty;
 
     assert!(harness.app.select_paste("beta".to_string()));
@@ -855,35 +847,29 @@ fn version_overlay_allows_content_and_metadata_persistence_dispatches() {
 
         match case {
             SaveCase::Autosave => {
-                harness
-                    .app
-                    .selected_content
-                    .reset("dirty-autosave".to_string());
+                harness.app.reset_virtual_editor("dirty-autosave");
                 harness.app.save_status = SaveStatus::Dirty;
                 harness.app.last_edit_at =
                     Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
                 harness.app.maybe_autosave();
                 assert!(harness.app.save_in_flight);
                 match recv_cmd(&harness.cmd_rx) {
-                    CoreCmd::UpdatePaste { id, content, .. } => {
+                    CoreCmd::UpdatePasteVirtual { id, content, .. } => {
                         assert_eq!(id, "alpha");
-                        assert_eq!(content, "dirty-autosave");
+                        assert_eq!(content.to_string(), "dirty-autosave");
                     }
                     other => panic!("unexpected command: {:?}", other),
                 }
             }
             SaveCase::ManualContent => {
-                harness
-                    .app
-                    .selected_content
-                    .reset("dirty-manual".to_string());
+                harness.app.reset_virtual_editor("dirty-manual");
                 harness.app.save_status = SaveStatus::Dirty;
                 harness.app.save_now();
                 assert!(harness.app.save_in_flight);
                 match recv_cmd(&harness.cmd_rx) {
-                    CoreCmd::UpdatePaste { id, content, .. } => {
+                    CoreCmd::UpdatePasteVirtual { id, content, .. } => {
                         assert_eq!(id, "alpha");
-                        assert_eq!(content, "dirty-manual");
+                        assert_eq!(content.to_string(), "dirty-manual");
                     }
                     other => panic!("unexpected command: {:?}", other),
                 }

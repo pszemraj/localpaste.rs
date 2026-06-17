@@ -54,7 +54,7 @@ fn assert_sections_use_char_boundaries(job: &LayoutJob) {
 }
 
 #[test]
-fn virtual_line_job_fills_gaps_for_partial_stale_spans() {
+fn virtual_line_segment_job_fills_gaps_for_partial_stale_spans() {
     egui::__run_test_ctx(|ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             let font = egui::FontId::monospace(14.0);
@@ -62,7 +62,14 @@ fn virtual_line_job_fills_gaps_for_partial_stale_spans() {
                 len: 6,
                 spans: vec![test_span(0..2), test_span(4..5)],
             };
-            let job = build_virtual_line_job(ui, "abcdef", &font, Some(&render_line), false);
+            let job = build_virtual_line_segment_job_owned(
+                ui,
+                "abcdef".to_string(),
+                &font,
+                Some(&render_line),
+                false,
+                0..6,
+            );
 
             assert_sections_cover(&job, 6);
             assert_has_section(&job, 2..4);

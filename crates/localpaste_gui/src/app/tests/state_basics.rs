@@ -42,7 +42,7 @@ fn paste_missing_updates_selection_and_list_matrix() {
                 assert!(harness.app.pastes.is_empty());
                 assert!(harness.app.selected_id.is_none());
                 assert!(harness.app.selected_paste.is_none());
-                assert_eq!(harness.app.selected_content.len(), 0);
+                assert_eq!(harness.app.active_text_chars(), 0);
                 assert!(harness.app.status.is_some());
             }
             MissingCase::NonSelected => {
@@ -281,24 +281,6 @@ fn history_modal_headless_render_handles_long_inline_snapshot_band() {
 }
 
 #[test]
-fn editor_buffer_tracks_char_len() {
-    let mut buffer = EditorBuffer::new("ab".to_string());
-    assert_eq!(buffer.chars_len(), 2);
-
-    buffer.insert_text("\u{00E9}", 1);
-    assert_eq!(buffer.chars_len(), 3);
-
-    buffer.delete_char_range(1..2);
-    assert_eq!(buffer.chars_len(), 2);
-
-    buffer.replace_with("xyz");
-    assert_eq!(buffer.chars_len(), 3);
-
-    buffer.clear();
-    assert_eq!(buffer.chars_len(), 0);
-}
-
-#[test]
 fn delete_actions_keep_lock_until_delete_event_matrix() {
     enum DeleteAction {
         Selected,
@@ -503,7 +485,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
     struct PaletteCopyCase {
         fenced: bool,
         saved_content: &'static str,
-        selected_content: &'static str,
+        active_content: &'static str,
         paste_language: Option<&'static str>,
         edit_language: Option<&'static str>,
         expected_clipboard: &'static str,
@@ -513,7 +495,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
         PaletteCopyCase {
             fenced: false,
             saved_content: "content",
-            selected_content: "content",
+            active_content: "content",
             paste_language: None,
             edit_language: None,
             expected_clipboard: "content",
@@ -521,7 +503,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
         PaletteCopyCase {
             fenced: true,
             saved_content: "content",
-            selected_content: "content",
+            active_content: "content",
             paste_language: Some("rust"),
             edit_language: None,
             expected_clipboard: "```rust\ncontent\n```",
@@ -529,7 +511,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
         PaletteCopyCase {
             fenced: false,
             saved_content: "saved",
-            selected_content: "unsaved",
+            active_content: "unsaved",
             paste_language: Some("rust"),
             edit_language: None,
             expected_clipboard: "unsaved",
@@ -537,7 +519,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
         PaletteCopyCase {
             fenced: true,
             saved_content: "saved",
-            selected_content: "unsaved",
+            active_content: "unsaved",
             paste_language: Some("rust"),
             edit_language: Some("python"),
             expected_clipboard: "```python\nunsaved\n```",
@@ -551,10 +533,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
             paste.content = case.saved_content.to_string();
             paste.language = case.paste_language.map(str::to_string);
         }
-        harness
-            .app
-            .selected_content
-            .reset(case.selected_content.to_string());
+        set_active_content(&mut harness.app, case.active_content);
         harness.app.edit_language = case.edit_language.map(str::to_string);
         harness.app.pending_copy_action = None;
 
@@ -830,13 +809,13 @@ fn history_reset_flushes_local_changes_before_reset_matrix() {
 
         match case {
             ResetBlockCase::ContentDirty => match recv_cmd(&harness.cmd_rx) {
-                CoreCmd::UpdatePaste {
+                CoreCmd::UpdatePasteVirtual {
                     id,
                     content,
                     protected_version_id_ms,
                 } => {
                     assert_eq!(id, "alpha");
-                    assert_eq!(content, "content");
+                    assert_eq!(content.to_string(), "content");
                     assert_eq!(protected_version_id_ms, Some(42));
                 }
                 other => panic!("expected content save before reset, got {:?}", other),
@@ -947,7 +926,7 @@ fn queued_history_reset_cancels_when_selection_changes_before_flush_finishes() {
 
     harness.app.reset_selected_history_version();
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePaste { id, .. } | CoreCmd::UpdatePasteVirtual { id, .. } => {
+        CoreCmd::UpdatePasteVirtual { id, .. } => {
             assert_eq!(id, "alpha")
         }
         other => panic!("expected content save before reset, got {:?}", other),
@@ -1165,7 +1144,7 @@ fn history_reset_in_flight_blocks_dirtying_and_save_dispatches() {
     assert!(matches!(harness.app.save_status, SaveStatus::Saved));
     assert!(harness.app.last_edit_at.is_none());
 
-    harness.app.selected_content.reset("auto-save".to_string());
+    set_active_content(&mut harness.app, "auto-save");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.last_edit_at =
         Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));

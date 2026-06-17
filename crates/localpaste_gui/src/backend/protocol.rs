@@ -40,12 +40,6 @@ pub enum CoreCmd {
     GetDiffTargetPaste { id: String },
     /// Create a new paste with the provided content.
     CreatePaste { content: String },
-    /// Persist updated content for an existing paste.
-    UpdatePaste {
-        id: String,
-        content: String,
-        protected_version_id_ms: Option<u64>,
-    },
     /// Persist updated content for an existing paste using a rope snapshot.
     ///
     /// This keeps rope->string materialization off the UI thread.

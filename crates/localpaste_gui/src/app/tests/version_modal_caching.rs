@@ -5,10 +5,7 @@ use super::*;
 #[test]
 fn active_snapshot_cache_reuses_snapshot_until_editor_revision_changes() {
     let mut harness = make_app();
-    harness
-        .app
-        .selected_content
-        .reset("first\nsecond".to_string());
+    set_active_content(&mut harness.app, "first\nsecond");
 
     assert!(harness.app.sync_active_snapshot_cache());
     assert_eq!(
@@ -28,10 +25,8 @@ fn active_snapshot_cache_reuses_snapshot_until_editor_revision_changes() {
         "repeated cache sync should be a no-op when active buffer identity is unchanged"
     );
 
-    harness
-        .app
-        .selected_content
-        .insert_text("!", harness.app.selected_content.len());
+    let end = harness.app.active_text_chars();
+    insert_active_text(&mut harness.app, "!", end);
 
     assert!(harness.app.sync_active_snapshot_cache());
     assert_eq!(
@@ -143,10 +138,8 @@ fn diff_preview_cache_queues_worker_request_and_reuses_it_until_inputs_change() 
         "same current snapshot + target paste should reuse the completed worker preview"
     );
 
-    harness
-        .app
-        .selected_content
-        .insert_text("!", harness.app.selected_content.len());
+    let end = harness.app.active_text_chars();
+    insert_active_text(&mut harness.app, "!", end);
 
     assert!(harness.app.sync_diff_preview_cache());
     match recv_cmd(&harness.cmd_rx) {
@@ -176,10 +169,8 @@ fn diff_preview_cache_waits_for_in_flight_worker_before_queueing_latest_revision
         other => panic!("unexpected command: {:?}", other),
     };
 
-    harness
-        .app
-        .selected_content
-        .insert_text("!", harness.app.selected_content.len());
+    let end = harness.app.active_text_chars();
+    insert_active_text(&mut harness.app, "!", end);
     assert!(
         !harness.app.sync_diff_preview_cache(),
         "a new revision should wait until the current worker request resolves"
@@ -266,7 +257,6 @@ fn diff_preview_cache_invalidates_when_rhs_content_changes_without_metadata_chan
 #[test]
 fn diff_preview_cache_short_circuits_large_payloads_before_snapshot_clone() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness
         .app
         .reset_virtual_editor(&"x".repeat(crate::app::ui::diff_modal::MAX_INLINE_DIFF_BYTES));

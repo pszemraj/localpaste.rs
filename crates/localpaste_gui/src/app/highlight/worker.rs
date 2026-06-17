@@ -427,13 +427,14 @@ mod resolver_tests {
         SyntectSettings,
     };
     use crate::app::highlight::worker::HighlightWorkerCache;
+    use ropey::Rope;
 
     fn render_for_label(settings: &SyntectSettings, label: &str, text: &str) -> HighlightRender {
         let mut cache = HighlightWorkerCache::default();
         let req = HighlightRequest {
             paste_id: "test".to_string(),
             revision: 1,
-            text: HighlightRequestText::Owned(text.to_string()),
+            text: HighlightRequestText::Rope(Rope::from_str(text)),
             language_hint: label.to_string(),
             theme_key: "base16-mocha.dark".to_string(),
             edit_hint: None,
@@ -472,7 +473,7 @@ mod resolver_tests {
         HighlightRequest {
             paste_id: "test".to_string(),
             revision,
-            text: HighlightRequestText::Owned(text.to_string()),
+            text: HighlightRequestText::Rope(Rope::from_str(text)),
             language_hint: "rust".to_string(),
             theme_key: "base16-mocha.dark".to_string(),
             edit_hint: None,

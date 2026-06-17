@@ -171,27 +171,6 @@ fn apply_content_update(
     }
 }
 
-/// Saves updated paste content using the standard string update path.
-///
-/// # Arguments
-/// - `state`: Worker state containing db, locks, and event channel handles.
-/// - `id`: Target paste id.
-/// - `content`: Replacement content payload.
-pub(super) fn handle_update_paste(
-    state: &mut WorkerState,
-    id: String,
-    content: String,
-    protected_version_id_ms: Option<u64>,
-) {
-    apply_content_update(
-        state,
-        id,
-        content,
-        protected_version_id_ms,
-        "backend update failed",
-    );
-}
-
 /// Saves updated paste content from the virtual-editor rope buffer.
 ///
 /// # Arguments
