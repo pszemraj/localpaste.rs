@@ -55,12 +55,11 @@ def find_first_any(
     if not patterns:
         fail("find_first_any requires at least one pattern")
 
-    errors: list[str] = []
     for pattern in patterns:
         try:
             return find_first(root, pattern, directories=directories)
-        except SystemExit as exc:
-            errors.append(str(exc))
+        except SystemExit:
+            pass
 
     joined = "\n".join(f"- {pattern}" for pattern in patterns)
     fail(

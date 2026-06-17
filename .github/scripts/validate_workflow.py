@@ -368,18 +368,6 @@ def has_uses_step(job: dict[str, Any], action_prefix: str) -> bool:
     return False
 
 
-def has_named_step(job: dict[str, Any], step_name: str) -> bool:
-    steps = job.get("steps")
-    if not isinstance(steps, list):
-        return False
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        if step.get("name") == step_name:
-            return True
-    return False
-
-
 def find_step(job: dict[str, Any], *, step_id: str | None = None, step_name: str | None = None) -> dict[str, Any] | None:
     steps = job.get("steps")
     if not isinstance(steps, list):
