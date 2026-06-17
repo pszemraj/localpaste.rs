@@ -22,7 +22,7 @@ jobs:
       PACKAGER_CONFIG: packaging/macos/packager.json
     steps:
       - name: Checkout workflow ref
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
       - name: Resolve verify tag
@@ -46,16 +46,16 @@ jobs:
             echo "Using ${SOURCE_LABEL}: ${VERIFY_TAG}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9  # master @ 2026-02-23
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master @ 2026-02-23
         with:
           toolchain: 1.89.0
           targets: ${{ env.TARGET }}
       - name: Cache Rust build artifacts
-        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330  # v2.7.8
+        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           key: verify-gui-packaging-${{ env.TARGET }}
       - name: Workspace check
@@ -154,12 +154,8 @@ jobs:
             --asset-suffix "${ASSET_SUFFIX}"
             --packager-config "${PACKAGER_CONFIG}"
             --runner-os "macOS"
+            --expected-wix-major 3
           )
-          if python .github/scripts/release_gui_prepare.py --help 2>&1 | grep -q -- "--expected-wix-major"; then
-            prepare_args+=(--expected-wix-major 3)
-          else
-            echo "release_gui_prepare.py does not support --expected-wix-major; skipping explicit WiX major assertion"
-          fi
           python .github/scripts/release_gui_prepare.py "${prepare_args[@]}"
       - name: Build installer packages
         run: python -c "import os, subprocess; subprocess.run(['cargo', 'packager', '--config', os.environ['PACKAGER_CONFIG_PATH']], check=True)"
@@ -262,7 +258,7 @@ jobs:
             --asset-suffix "${ASSET_SUFFIX}" \
             --runner-os "macOS"
       - name: Upload macOS verify artifacts
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1  # v4.6.1
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: verify-gui-packaging-${{ env.ASSET_SUFFIX }}-${{ github.run_id }}
           path: dist/release/${{ env.ASSET_SUFFIX }}/*
