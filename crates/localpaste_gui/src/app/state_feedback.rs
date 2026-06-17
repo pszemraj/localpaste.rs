@@ -4,6 +4,7 @@ use super::{
     LocalPasteApp, StatusMessage, ToastAction, ToastMessage, DELETE_UNDO_LIMIT, STATUS_TTL,
     TOAST_LIMIT, TOAST_TTL, UNDO_DELETE_TOAST_TTL,
 };
+use crate::backend::CoreCmd;
 use std::time::Instant;
 
 impl LocalPasteApp {
@@ -90,6 +91,36 @@ impl LocalPasteApp {
         self.toasts
             .iter()
             .position(|toast| matches!(&toast.action, Some(ToastAction::UndoDelete { .. })))
+    }
+
+    /// Requests restoration of a recently deleted paste from an undo token.
+    pub(super) fn restore_deleted_paste(&mut self, undo_token: String) {
+        let toast_is_live = self.toasts.iter().any(|toast| {
+            matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
+            )
+        });
+        if !toast_is_live {
+            return;
+        }
+        let sent = self.send_backend_cmd_or_status(
+            CoreCmd::RestoreDeletedPaste {
+                undo_token: undo_token.clone(),
+            },
+            "Undo delete failed: backend unavailable.",
+        );
+        if sent {
+            // Consume the visible affordance on dispatch so rapid repeat clicks cannot
+            // enqueue a duplicate restore before the backend ack arrives.
+            self.toasts.retain(|toast| {
+                !matches!(
+                    &toast.action,
+                    Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
+                )
+            });
+            self.set_status("Restoring deleted paste...");
+        }
     }
 
     /// Polls asynchronous export completion and reports success/failure to status.
