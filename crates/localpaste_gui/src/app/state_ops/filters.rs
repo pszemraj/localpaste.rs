@@ -231,10 +231,7 @@ fn summary_matches_kind_pattern_and_name(
 /// # Returns
 /// `true` when derived kind or legacy summary heuristics match the requested
 /// semantic collection bucket.
-pub(super) fn matches_semantic_collection(
-    item: &PasteSummary,
-    collection: SidebarCollection,
-) -> bool {
+fn matches_semantic_collection(item: &PasteSummary, collection: SidebarCollection) -> bool {
     match collection {
         SidebarCollection::Code => summary_matches_kind_pattern_and_name(
             item,
