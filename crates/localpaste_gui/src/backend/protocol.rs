@@ -66,6 +66,9 @@ pub enum CoreCmd {
     /// Load one historical version snapshot.
     GetPasteVersion { id: String, version_id_ms: u64 },
     /// Reset current paste content to a historical version.
+    ///
+    /// `preserve_current_head` archives the outgoing head as a recovery snapshot
+    /// before the selected historical version becomes current.
     ResetPasteHardToVersion {
         id: String,
         version_id_ms: u64,

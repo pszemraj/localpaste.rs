@@ -60,7 +60,7 @@ fn queued_history_reset_redispatches_dirty_metadata_after_stale_ack() {
         } => {
             assert_eq!(id, "alpha");
             assert_eq!(version_id_ms, 42);
-            assert!(!preserve_current_head);
+            assert!(preserve_current_head);
         }
         other => panic!("expected reset after fresh metadata ack, got {:?}", other),
     }

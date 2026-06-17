@@ -737,7 +737,7 @@ fn history_reset_confirm_keeps_original_target_after_selection_changes() {
         } => {
             assert_eq!(id, "alpha");
             assert_eq!(version_id_ms, 41);
-            assert!(!preserve_current_head);
+            assert!(preserve_current_head);
         }
         other => panic!("expected ResetPasteHardToVersion command, got {:?}", other),
     }
@@ -852,10 +852,7 @@ fn history_reset_flushes_local_changes_before_reset_matrix() {
             } => {
                 assert_eq!(id, "alpha");
                 assert_eq!(version_id_ms, 42);
-                assert_eq!(
-                    preserve_current_head,
-                    matches!(case, ResetBlockCase::ContentDirty)
-                );
+                assert!(preserve_current_head);
             }
             other => panic!("expected ResetPasteHardToVersion command, got {:?}", other),
         }

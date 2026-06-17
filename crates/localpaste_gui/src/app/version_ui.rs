@@ -736,12 +736,8 @@ impl LocalPasteApp {
             return;
         };
         if self.history_reset_flush_needed() {
-            let preserve_current_head = self.save_status == SaveStatus::Dirty;
-            self.version_ui.queue_history_reset_after_save(
-                id,
-                version_id_ms,
-                preserve_current_head,
-            );
+            self.version_ui
+                .queue_history_reset_after_save(id, version_id_ms, true);
             self.version_ui.clear_history_reset_confirm();
             self.dispatch_history_reset_flush_saves();
             return;
@@ -753,7 +749,7 @@ impl LocalPasteApp {
             .send(CoreCmd::ResetPasteHardToVersion {
                 id: id.clone(),
                 version_id_ms,
-                preserve_current_head: false,
+                preserve_current_head: true,
             })
             .is_err()
         {

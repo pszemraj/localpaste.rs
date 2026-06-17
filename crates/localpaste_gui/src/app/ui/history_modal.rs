@@ -450,7 +450,7 @@ impl LocalPasteApp {
                     .open(&mut confirm_open)
                     .show(ctx, |ui| {
                         ui.label(
-                            "Reset current paste to this snapshot? This discards newer history.",
+                            "Reset current paste to this snapshot? The outgoing head stays in history as a recovery snapshot.",
                         );
                         if let Some(reason) = self.history_reset_queue_block_reason() {
                             ui.add_space(6.0);
@@ -473,7 +473,7 @@ impl LocalPasteApp {
                             let reset_button_label = if self.history_reset_flush_needed() {
                                 "Save and Reset"
                             } else {
-                                "Reset --hard"
+                                "Reset Current Paste"
                             };
                             if ui
                                 .add_enabled(
