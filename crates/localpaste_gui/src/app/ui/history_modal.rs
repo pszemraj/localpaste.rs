@@ -102,12 +102,12 @@ fn history_snapshot_action_state(
 ) -> HistorySnapshotActionState {
     let helper = if can_act_on_snapshot && reset_transition_active {
         Some(HistoryActionHelper::ResetInProgress)
-    } else if can_act_on_snapshot && flush_needed {
-        Some(HistoryActionHelper::SaveBeforeReset)
-    } else {
+    } else if can_act_on_snapshot {
         block_reason
-            .filter(|_| can_act_on_snapshot)
             .map(HistoryActionHelper::Blocked)
+            .or_else(|| flush_needed.then_some(HistoryActionHelper::SaveBeforeReset))
+    } else {
+        None
     };
 
     HistorySnapshotActionState {
@@ -561,6 +561,14 @@ mod tests {
         );
         assert!(!blocked.can_open_reset_confirm);
         assert_eq!(blocked.helper, Some(HistoryActionHelper::Blocked("busy")));
+
+        let blocked_while_flush_needed =
+            history_snapshot_action_state(true, false, false, true, Some("save in progress"));
+        assert_eq!(
+            blocked_while_flush_needed.helper,
+            Some(HistoryActionHelper::Blocked("save in progress")),
+            "a hard block should not be described as a queued save-before-reset"
+        );
 
         let in_flight = history_snapshot_action_state(true, true, false, false, None);
         assert!(!in_flight.can_duplicate);

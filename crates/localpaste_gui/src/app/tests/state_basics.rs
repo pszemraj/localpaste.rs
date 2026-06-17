@@ -777,14 +777,12 @@ fn history_reset_flushes_local_changes_before_reset_matrix() {
     #[derive(Clone, Copy)]
     enum ResetBlockCase {
         ContentDirty,
-        ContentSaving,
         MetadataDirty,
         MetadataSaving,
     }
 
     for case in [
         ResetBlockCase::ContentDirty,
-        ResetBlockCase::ContentSaving,
         ResetBlockCase::MetadataDirty,
         ResetBlockCase::MetadataSaving,
     ] {
@@ -804,10 +802,6 @@ fn history_reset_flushes_local_changes_before_reset_matrix() {
         match case {
             ResetBlockCase::ContentDirty => {
                 harness.app.save_status = SaveStatus::Dirty;
-            }
-            ResetBlockCase::ContentSaving => {
-                harness.app.save_status = SaveStatus::Saving;
-                harness.app.save_in_flight = true;
             }
             ResetBlockCase::MetadataDirty => {
                 harness.app.metadata_dirty = true;
@@ -851,7 +845,7 @@ fn history_reset_flushes_local_changes_before_reset_matrix() {
                 CoreCmd::UpdatePasteMeta { id, .. } => assert_eq!(id, "alpha"),
                 other => panic!("expected metadata save before reset, got {:?}", other),
             },
-            ResetBlockCase::ContentSaving | ResetBlockCase::MetadataSaving => {
+            ResetBlockCase::MetadataSaving => {
                 assert!(matches!(
                     harness.cmd_rx.try_recv(),
                     Err(TryRecvError::Empty)
@@ -882,6 +876,44 @@ fn history_reset_flushes_local_changes_before_reset_matrix() {
             Some("alpha")
         );
     }
+}
+
+#[test]
+fn history_reset_rejects_preexisting_content_save_without_queue() {
+    let mut harness = make_app();
+    harness.app.version_ui.history_versions = vec![localpaste_core::models::paste::VersionMeta {
+        version_id_ms: 42,
+        created_at: chrono::Utc::now(),
+        content_hash: "hash".to_string(),
+        len: 4,
+        language: None,
+        language_is_manual: false,
+    }];
+    harness.app.version_ui.history_selected_index = 1;
+    harness.app.open_history_reset_confirm();
+    harness.app.save_status = SaveStatus::Saving;
+    harness.app.save_in_flight = true;
+
+    harness.app.reset_selected_history_version();
+
+    assert!(!harness.app.history_reset_flush_active());
+    assert!(harness
+        .app
+        .version_ui
+        .history_reset_confirm_target
+        .is_some());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Wait for the current content save to finish before resetting history.")
+    );
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
 }
 
 #[test]

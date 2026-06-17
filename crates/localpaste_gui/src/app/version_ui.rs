@@ -654,12 +654,14 @@ impl LocalPasteApp {
     }
 
     /// Reports why a new hard reset cannot be queued right now.
-    ///
     /// # Returns
     /// `Some(reason)` when another reset is pending or local save state is not clean.
     pub(super) fn history_reset_queue_block_reason(&self) -> Option<&'static str> {
         if self.version_ui.history_reset_in_flight() || self.version_ui.history_reset_queued() {
             return Some("Reset is unavailable while another history reset is still in progress.");
+        }
+        if self.save_in_flight || self.save_status == SaveStatus::Saving {
+            return Some("Wait for the current content save to finish before resetting history.");
         }
         None
     }
