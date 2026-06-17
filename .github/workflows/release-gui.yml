@@ -475,8 +475,17 @@ jobs:
             --asset-suffix "${{ matrix.asset_suffix }}"
             --packager-config "${{ matrix.packager_config }}"
             --runner-os "${{ runner.os }}"
-            --expected-wix-major 3
           )
+          prepare_help="$(
+            python .github/scripts/release_gui_prepare.py --help
+          )"
+          wix_major_flag="--expected-wix-major"
+          if grep -q -- "${wix_major_flag}" <<<"${prepare_help}"; then
+            prepare_args+=("${wix_major_flag}" 3)
+          else
+            echo "release_gui_prepare.py lacks ${wix_major_flag};" \
+              "skipping WiX assertion for checked-out source."
+          fi
           python .github/scripts/release_gui_prepare.py "${prepare_args[@]}"
       - name: Build installer packages
         run: python -c "import os, subprocess; subprocess.run(['cargo', 'packager', '--config', os.environ['PACKAGER_CONFIG_PATH']], check=True)"
