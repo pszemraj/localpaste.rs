@@ -524,7 +524,7 @@ mod tests {
     }
 
     fn deleted_bundle(id: &str) -> DeletedPasteBundle {
-        let mut paste = Paste::new("deleted".to_string(), "content".to_string());
+        let mut paste = Paste::new("content".to_string(), "deleted".to_string());
         paste.id = id.to_string();
         DeletedPasteBundle {
             paste,

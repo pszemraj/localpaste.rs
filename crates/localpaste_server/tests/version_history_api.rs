@@ -12,7 +12,7 @@ use tempfile::TempDir;
 #[allow(clippy::await_holding_lock)]
 async fn test_duplicate_version_accepts_empty_body_and_uses_generated_name() {
     let _env_lock = env_lock().lock().expect("env lock");
-    let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
     let (server, _temp, _locks) = setup_test_server();
 
     let create_response = server

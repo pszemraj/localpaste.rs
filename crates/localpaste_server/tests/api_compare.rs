@@ -11,7 +11,7 @@ use support::setup_test_server;
 #[allow(clippy::await_holding_lock)]
 async fn test_version_and_diff_endpoints_roundtrip() {
     let _env_lock = env_lock().lock().expect("env lock");
-    let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
     let (server, _temp, _locks) = setup_test_server();
 
     let create_response = server

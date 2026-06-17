@@ -31,8 +31,7 @@ use self::helpers::{
 
 pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_timestamp_key};
 pub(crate) use self::helpers::{
-    discard_paste_versions_for_delete, remove_paste_versions_for_delete,
-    remove_paste_versions_for_delete_capped,
+    discard_paste_versions_for_delete, remove_paste_versions_for_delete_capped,
 };
 
 /// Accessor for paste-related redb tables.
@@ -403,52 +402,6 @@ impl PasteDb {
 
         write_txn.commit()?;
         Ok(updated_paste)
-    }
-
-    /// Delete a paste and return the deleted canonical row plus version rows.
-    ///
-    /// This API only supports unfiled deletes. Use
-    /// [`crate::db::TransactionOps::delete_paste_with_folder`] for foldered rows.
-    ///
-    /// # Returns
-    /// `Ok(Some(bundle))` when deleted, `Ok(None)` when missing.
-    ///
-    /// # Errors
-    /// Returns an error when storage access or deserialization fails.
-    pub fn delete_and_return_bundle(
-        &self,
-        id: &str,
-    ) -> Result<Option<DeletedPasteBundle>, AppError> {
-        let write_txn = self.db.begin_write()?;
-        let deleted = {
-            let mut pastes = write_txn.open_table(PASTES)?;
-            let mut metas = write_txn.open_table(PASTES_META)?;
-            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
-            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
-            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
-
-            let Some(old_guard) = pastes.get(id)? else {
-                return Ok(None);
-            };
-            let paste = deserialize_paste(old_guard.value())?;
-            Self::reject_direct_folder_operation(
-                paste.folder_id.is_some(),
-                "Direct deletion of foldered pastes via PasteDb::delete is not allowed; \
-                 use TransactionOps::delete_paste_with_folder",
-            )?;
-            let recency_key = reverse_timestamp_key(paste.updated_at);
-            drop(old_guard);
-
-            let _ = updated.remove((recency_key, id))?;
-            let _ = pastes.remove(id)?;
-            let _ = metas.remove(id)?;
-            let versions =
-                remove_paste_versions_for_delete(&mut versions_meta, &mut versions_content, id)?;
-            Some(DeletedPasteBundle { paste, versions })
-        };
-
-        write_txn.commit()?;
-        Ok(deleted)
     }
 
     /// Delete a paste by id.

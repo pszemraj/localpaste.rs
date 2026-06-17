@@ -45,4 +45,6 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Revisit Markdown-vs-YAML bias for top-level `- key: value` bullet-note content (no `---` doc start, no nesting) and decide whether product UX should prefer Markdown over YAML in that narrow shape.
 - [ ] Evaluate a shared test bootstrap utility for temporary DB + backend event receive flows across GUI/server/core tests while keeping unit-vs-integration boundaries explicit (avoid forcing production API exposure only for tests).
 - [ ] Re-evaluate whether `LocalPasteApp::{active_text_len_bytes, active_text_chars, active_revision, active_snapshot}` should remain separate explicit helpers or move behind a single active-buffer abstraction; keep separate until a clear readability/perf win is demonstrated.
+- [ ] Replace real `sleep(1100ms)` version-history/retention test waits with an injectable clock or deterministic snapshot timestamp hook across core and server tests.
+- [ ] Extract focused helpers from `crates/localpaste_gui/src/app/state_ops.rs` and `crates/localpaste_gui/src/app/version_ui.rs` before adding more GUI workflows so both files move away from their temporary LoC exception ceilings.
 - [x] Add explicit `Paste as new paste` UX (`Ctrl/Cmd+Shift+V` + command palette action) so new-paste clipboard flow does not depend on editor blur/focus heuristics.

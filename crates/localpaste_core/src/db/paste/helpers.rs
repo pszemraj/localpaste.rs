@@ -21,34 +21,6 @@ pub(crate) fn reverse_timestamp_key(updated_at: DateTime<Utc>) -> u64 {
     u64::MAX.saturating_sub(millis)
 }
 
-/// Removes all historical version rows for a paste and returns undo payloads.
-///
-/// # Arguments
-/// - `versions_meta`: Open mutable version metadata table.
-/// - `versions_content`: Open mutable version content table.
-/// - `paste_id`: Paste id whose version rows should be removed.
-///
-/// # Returns
-/// Deleted version metadata/content pairs in stored metadata order.
-///
-/// # Errors
-/// Returns an error when storage access, metadata decoding, content decoding, or
-/// content/meta consistency checks fail.
-pub(crate) fn remove_paste_versions_for_delete(
-    versions_meta: &mut redb::Table<&str, &[u8]>,
-    versions_content: &mut redb::Table<(&str, u64), &[u8]>,
-    paste_id: &str,
-) -> Result<Vec<DeletedPasteVersion>, AppError> {
-    let Some(versions) =
-        remove_paste_versions_for_delete_capped(versions_meta, versions_content, paste_id, None)?
-    else {
-        return Err(AppError::StorageMessage(
-            "uncapped delete undo was capped".to_string(),
-        ));
-    };
-    Ok(versions)
-}
-
 /// Removes all historical version rows for a paste when undo payloads fit a cap.
 ///
 /// This preflights serialized content sizes before removing rows, so callers can

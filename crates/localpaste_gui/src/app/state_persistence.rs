@@ -32,6 +32,8 @@ impl LocalPasteApp {
             .as_deref()
             .and_then(SidebarCollection::from_storage_value)
         {
+            // Unknown collection tags are ignored so older/newer persisted UI state
+            // falls back to the constructor default instead of an invalid value.
             self.active_collection = collection;
         }
         self.active_language_filter =
