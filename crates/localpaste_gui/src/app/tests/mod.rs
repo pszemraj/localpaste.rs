@@ -371,6 +371,7 @@ mod collections_and_search;
 mod creation_and_projection;
 mod focus_and_paste_routing;
 mod highlight_behaviors;
+mod history_reset;
 mod keyboard_navigation_audit;
 mod persistence;
 mod save_and_metadata;

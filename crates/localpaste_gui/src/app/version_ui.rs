@@ -808,6 +808,11 @@ impl LocalPasteApp {
             return;
         }
         if self.history_reset_flush_needed() {
+            if (self.save_status == SaveStatus::Dirty && !self.save_in_flight)
+                || (self.metadata_dirty && !self.metadata_save_in_flight)
+            {
+                self.dispatch_history_reset_flush_saves();
+            }
             return;
         }
         if self
