@@ -54,6 +54,7 @@ struct DiffPreviewCacheKey {
 struct PendingHistoryReset {
     paste_id: String,
     version_id_ms: u64,
+    preserve_current_head: bool,
 }
 
 /// UI state for detached diff/history modals.
@@ -114,10 +115,16 @@ impl VersionUiState {
         self.history_reset_in_flight_paste_id = Some(paste_id);
     }
 
-    fn queue_history_reset_after_save(&mut self, paste_id: String, version_id_ms: u64) {
+    fn queue_history_reset_after_save(
+        &mut self,
+        paste_id: String,
+        version_id_ms: u64,
+        preserve_current_head: bool,
+    ) {
         self.history_reset_queued = Some(PendingHistoryReset {
             paste_id,
             version_id_ms,
+            preserve_current_head,
         });
     }
 
@@ -729,8 +736,12 @@ impl LocalPasteApp {
             return;
         };
         if self.history_reset_flush_needed() {
-            self.version_ui
-                .queue_history_reset_after_save(id, version_id_ms);
+            let preserve_current_head = self.save_status == SaveStatus::Dirty;
+            self.version_ui.queue_history_reset_after_save(
+                id,
+                version_id_ms,
+                preserve_current_head,
+            );
             self.version_ui.clear_history_reset_confirm();
             self.dispatch_history_reset_flush_saves();
             return;
@@ -742,6 +753,7 @@ impl LocalPasteApp {
             .send(CoreCmd::ResetPasteHardToVersion {
                 id: id.clone(),
                 version_id_ms,
+                preserve_current_head: false,
             })
             .is_err()
         {
@@ -804,6 +816,7 @@ impl LocalPasteApp {
             .send(CoreCmd::ResetPasteHardToVersion {
                 id: pending.paste_id.clone(),
                 version_id_ms: pending.version_id_ms,
+                preserve_current_head: pending.preserve_current_head,
             })
             .is_err()
         {

@@ -294,6 +294,7 @@ mod tests {
             .send(CoreCmd::ResetPasteHardToVersion {
                 id: paste_id.clone(),
                 version_id_ms,
+                preserve_current_head: false,
             })
             .expect("send reset");
 

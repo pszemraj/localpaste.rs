@@ -2,6 +2,7 @@
 
 mod compare;
 mod helpers;
+mod version_reset;
 
 use crate::{
     config::{
@@ -547,102 +548,6 @@ impl PasteDb {
             language_is_manual: meta.language_is_manual,
             content,
         }))
-    }
-
-    /// Reset current paste content to a historical version and prune newer snapshots.
-    ///
-    /// # Arguments
-    /// - `paste_id`: Canonical paste id.
-    /// - `version_id_ms`: Target historical version id.
-    /// - `max_paste_size`: Maximum allowed content size for the restored head row.
-    ///
-    /// # Returns
-    /// `Ok(Some(updated))` when reset succeeds, `Ok(None)` when paste/version is missing.
-    ///
-    /// # Errors
-    /// Returns an error when storage access or serialization fails.
-    pub fn reset_hard_to_version(
-        &self,
-        paste_id: &str,
-        version_id_ms: u64,
-        max_paste_size: usize,
-    ) -> Result<Option<Paste>, AppError> {
-        let write_txn = self.db.begin_write()?;
-        let updated_paste = {
-            let mut pastes = write_txn.open_table(PASTES)?;
-            let mut metas = write_txn.open_table(PASTES_META)?;
-            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
-            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
-            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
-
-            let Some(paste_guard) = pastes.get(paste_id)? else {
-                return Ok(None);
-            };
-            let mut paste = deserialize_paste(paste_guard.value())?;
-            let old_recency_key = reverse_timestamp_key(paste.updated_at);
-            drop(paste_guard);
-
-            let mut version_items = decode_version_meta_list(
-                versions_meta
-                    .get(paste_id)?
-                    .as_ref()
-                    .map(|value| value.value()),
-            )?;
-            let Some(target_meta) = version_items
-                .iter()
-                .find(|item| item.version_id_ms == version_id_ms)
-                .cloned()
-            else {
-                return Ok(None);
-            };
-
-            let Some(content_guard) = versions_content.get((paste_id, version_id_ms))? else {
-                return Ok(None);
-            };
-            let target_content: String = bincode::deserialize(content_guard.value())?;
-            drop(content_guard);
-            Self::ensure_content_within_size_limit(&target_content, max_paste_size)?;
-
-            // Reset must restore the exact stored snapshot semantics. Reusing
-            // `apply_update_request` here is incorrect because it can re-run
-            // auto-detection and silently mutate `language` / `language_is_manual`
-            // instead of replaying the persisted historical state.
-            paste.content = target_content;
-            paste.is_markdown = is_markdown_content(&paste.content);
-            paste.language = target_meta.language.clone();
-            paste.language_is_manual = target_meta.language_is_manual;
-            paste.updated_at = Utc::now();
-
-            let encoded_paste = bincode::serialize(&paste)?;
-            let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
-            let new_recency_key = reverse_timestamp_key(paste.updated_at);
-            pastes.insert(paste_id, encoded_paste.as_slice())?;
-            metas.insert(paste_id, encoded_meta.as_slice())?;
-            let _ = updated.remove((old_recency_key, paste_id))?;
-            updated.insert((new_recency_key, paste_id), ())?;
-
-            let mut removed_versions = Vec::new();
-            version_items.retain(|item| {
-                // Historical table stores only snapshots older than current head.
-                // After reset, the target snapshot becomes the new head, so drop it
-                // and everything newer.
-                let keep = item.version_id_ms < version_id_ms;
-                if !keep {
-                    removed_versions.push(item.version_id_ms);
-                }
-                keep
-            });
-            for removed in removed_versions {
-                let _ = versions_content.remove((paste_id, removed))?;
-            }
-            let encoded_versions = encode_version_meta_list(&version_items)?;
-            versions_meta.insert(paste_id, encoded_versions.as_slice())?;
-
-            Some(paste)
-        };
-
-        write_txn.commit()?;
-        Ok(updated_paste)
     }
 
     /// Create a new paste from a historical version snapshot.

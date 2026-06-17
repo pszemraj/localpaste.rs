@@ -303,8 +303,17 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             paste::handle_get_paste_version(state, id, version_id_ms);
             true
         }
-        CoreCmd::ResetPasteHardToVersion { id, version_id_ms } => {
-            paste::handle_reset_paste_hard_to_version(state, id, version_id_ms);
+        CoreCmd::ResetPasteHardToVersion {
+            id,
+            version_id_ms,
+            preserve_current_head,
+        } => {
+            paste::handle_reset_paste_hard_to_version(
+                state,
+                id,
+                version_id_ms,
+                preserve_current_head,
+            );
             true
         }
         CoreCmd::DuplicatePasteVersion {

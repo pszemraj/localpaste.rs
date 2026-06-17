@@ -497,6 +497,7 @@ pub(super) fn handle_reset_paste_hard_to_version(
     state: &mut WorkerState,
     id: String,
     version_id_ms: u64,
+    preserve_current_head: bool,
 ) {
     let reset_result = {
         let _mutation_guard = match localpaste_server::locks::acquire_paste_mutation_guard(
@@ -515,10 +516,21 @@ pub(super) fn handle_reset_paste_hard_to_version(
                 return;
             }
         };
-        state
-            .db
-            .pastes
-            .reset_hard_to_version(id.as_str(), version_id_ms, state.max_paste_size)
+        if preserve_current_head {
+            state
+                .db
+                .pastes
+                .reset_hard_to_version_preserving_current_head(
+                    id.as_str(),
+                    version_id_ms,
+                    state.max_paste_size,
+                )
+        } else {
+            state
+                .db
+                .pastes
+                .reset_hard_to_version(id.as_str(), version_id_ms, state.max_paste_size)
+        }
     };
 
     match reset_result {

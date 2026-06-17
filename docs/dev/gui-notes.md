@@ -61,8 +61,9 @@ Navigation/selection contract:
   - loading a comparison target does not change current selection or paste locks.
 - History is detached and read-only:
   - `Current working copy` is index `0`,
-  - stored snapshots are older-only entries,
+  - stored snapshots are normally older-only entries,
   - reset restores the selected snapshot and then prunes that snapshot and newer entries from stored history.
+  - dirty save-and-reset archives the just-saved outgoing head as a recoverable snapshot before reset.
 - History, Diff, and reset-confirm windows fence background mutations:
   - create/delete/paste-as-new and other destructive workflow shortcuts are blocked while a version window is open,
   - autosave and explicit save still persist already-dirty content/metadata while a version window is open,

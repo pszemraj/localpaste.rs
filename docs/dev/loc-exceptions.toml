@@ -63,5 +63,5 @@ reason = "Headless backend/API workflows share one harness while undo history an
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/app/version_ui.rs"
-max_lines = 1080
-reason = "Version history state, dirty-reset flushing, and reset confirmation stay together pending extraction."
+max_lines = 1100
+reason = "Version history state, dirty-reset flushing, reset confirmation, and recovery-snapshot intent stay together pending extraction."
