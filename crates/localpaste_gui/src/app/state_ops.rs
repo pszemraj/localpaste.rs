@@ -1,6 +1,7 @@
 //! State transitions for backend events, selection, and autosave flow.
 
-mod filters;
+/// Filter helpers for sidebar collections, languages, and export filenames.
+pub(super) mod filters;
 
 use super::deferred_saves::rollback_deferred_save_dispatches;
 use super::util::{format_fenced_code_block, parse_tags_csv};
@@ -18,11 +19,18 @@ use std::time::Instant;
 use tracing::warn;
 
 use self::filters::{
-    language_extension, matches_semantic_collection, normalize_language_filter_value,
-    sanitize_filename,
+    language_extension, matches_active_filters, normalize_language_filter_value, sanitize_filename,
 };
 
 impl LocalPasteApp {
+    /// Sends a backend command and reports a status message if dispatch fails.
+    ///
+    /// # Arguments
+    /// - `command`: Backend command to queue.
+    /// - `error_message`: Status text used when the backend channel is closed.
+    ///
+    /// # Returns
+    /// `true` when the command was queued, otherwise `false`.
     pub(super) fn send_backend_cmd_or_status(
         &mut self,
         command: CoreCmd,
@@ -937,44 +945,6 @@ impl LocalPasteApp {
         (None, self.active_language_filter.clone())
     }
 
-    pub(super) fn matches_active_filters(
-        item: &PasteSummary,
-        active_collection: &SidebarCollection,
-        active_language_filter: Option<&str>,
-        today_local: chrono::NaiveDate,
-        week_cutoff_day: chrono::NaiveDate,
-        recent_cutoff: chrono::DateTime<Utc>,
-    ) -> bool {
-        let updated_local_day = item.updated_at.with_timezone(&Local).date_naive();
-        let collection_match = match active_collection {
-            SidebarCollection::All => true,
-            SidebarCollection::Today => updated_local_day == today_local,
-            SidebarCollection::Week => updated_local_day >= week_cutoff_day,
-            SidebarCollection::Recent => item.updated_at >= recent_cutoff,
-            SidebarCollection::Unfiled => item.folder_id.is_none(),
-            SidebarCollection::Code
-            | SidebarCollection::Config
-            | SidebarCollection::Logs
-            | SidebarCollection::Links => {
-                matches_semantic_collection(item, active_collection.clone())
-            }
-        };
-        if !collection_match {
-            return false;
-        }
-        match active_language_filter {
-            None => true,
-            Some(lang) => {
-                let canonical_filter = localpaste_core::detection::canonical::canonicalize(lang);
-                item.language
-                    .as_deref()
-                    .map(localpaste_core::detection::canonical::canonicalize)
-                    .map(|value| value == canonical_filter)
-                    .unwrap_or(false)
-            }
-        }
-    }
-
     /// Filters sidebar summaries through the active collection/language state.
     /// # Returns
     /// Visible sidebar rows preserving the input ordering of `items`.
@@ -988,7 +958,7 @@ impl LocalPasteApp {
         items
             .iter()
             .filter(|item| {
-                Self::matches_active_filters(
+                matches_active_filters(
                     item,
                     &self.active_collection,
                     active_language_filter,
@@ -1010,7 +980,7 @@ impl LocalPasteApp {
         let active_collection = self.active_collection.clone();
         let active_language_filter = self.active_language_filter.clone();
         self.pastes.retain(|item| {
-            Self::matches_active_filters(
+            matches_active_filters(
                 item,
                 &active_collection,
                 active_language_filter.as_deref(),

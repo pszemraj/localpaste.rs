@@ -217,6 +217,10 @@ fn looks_like_yaml_sequence_item(item: &str) -> bool {
     false
 }
 
+/// Heuristically checks whether content is a flat, config-shaped YAML mapping.
+///
+/// # Returns
+/// `true` when at least two meaningful mapping lines use compact config keys.
 pub(crate) fn looks_like_flat_config_yaml(content: &str) -> bool {
     let mut mapping_pairs = 0usize;
     let mut meaningful_lines = 0usize;

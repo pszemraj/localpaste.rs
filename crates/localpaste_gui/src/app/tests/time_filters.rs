@@ -1,6 +1,7 @@
 //! Time-sensitive sidebar collection filter tests.
 
 use super::*;
+use crate::app::state_ops::filters::matches_active_filters;
 use chrono::TimeZone;
 
 #[test]
@@ -27,7 +28,7 @@ fn week_collection_uses_local_calendar_cutoff_day() {
         derived: Default::default(),
     };
 
-    assert!(LocalPasteApp::matches_active_filters(
+    assert!(matches_active_filters(
         &item("cutoff", cutoff_day),
         &SidebarCollection::Week,
         None,
@@ -35,7 +36,7 @@ fn week_collection_uses_local_calendar_cutoff_day() {
         week_cutoff_day,
         recent_cutoff,
     ));
-    assert!(!LocalPasteApp::matches_active_filters(
+    assert!(!matches_active_filters(
         &item("before-cutoff", before_cutoff_day),
         &SidebarCollection::Week,
         None,

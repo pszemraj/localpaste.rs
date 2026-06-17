@@ -2,6 +2,7 @@
 
 use crate::app::SidebarCollection;
 use crate::backend::PasteSummary;
+use chrono::{DateTime, Local, Utc};
 use localpaste_core::semantic::PasteKind;
 
 struct SummaryPattern {
@@ -261,6 +262,54 @@ pub(super) fn matches_semantic_collection(
             looks_like_url_name(item.name.as_str()),
         ),
         _ => false,
+    }
+}
+
+/// Tests one sidebar summary against active collection and language filters.
+///
+/// # Arguments
+/// - `item`: Sidebar summary to test.
+/// - `active_collection`: Active smart collection filter.
+/// - `active_language_filter`: Optional active language filter.
+/// - `today_local`: Current local calendar day.
+/// - `week_cutoff_day`: Oldest local calendar day included in `This Week`.
+/// - `recent_cutoff`: Oldest UTC instant included in `Recent`.
+///
+/// # Returns
+/// `true` when the item should remain visible under the provided filters.
+pub(in crate::app) fn matches_active_filters(
+    item: &PasteSummary,
+    active_collection: &SidebarCollection,
+    active_language_filter: Option<&str>,
+    today_local: chrono::NaiveDate,
+    week_cutoff_day: chrono::NaiveDate,
+    recent_cutoff: DateTime<Utc>,
+) -> bool {
+    let updated_local_day = item.updated_at.with_timezone(&Local).date_naive();
+    let collection_match = match active_collection {
+        SidebarCollection::All => true,
+        SidebarCollection::Today => updated_local_day == today_local,
+        SidebarCollection::Week => updated_local_day >= week_cutoff_day,
+        SidebarCollection::Recent => item.updated_at >= recent_cutoff,
+        SidebarCollection::Unfiled => item.folder_id.is_none(),
+        SidebarCollection::Code
+        | SidebarCollection::Config
+        | SidebarCollection::Logs
+        | SidebarCollection::Links => matches_semantic_collection(item, active_collection.clone()),
+    };
+    if !collection_match {
+        return false;
+    }
+    match active_language_filter {
+        None => true,
+        Some(lang) => {
+            let canonical_filter = localpaste_core::detection::canonical::canonicalize(lang);
+            item.language
+                .as_deref()
+                .map(localpaste_core::detection::canonical::canonicalize)
+                .map(|value| value == canonical_filter)
+                .unwrap_or(false)
+        }
     }
 }
 
