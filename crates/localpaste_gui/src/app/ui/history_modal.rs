@@ -169,6 +169,30 @@ fn render_large_history_preview(ui: &mut egui::Ui, text: &str, lines: &EditorLin
         });
 }
 
+fn render_inline_history_preview(ui: &mut egui::Ui, text: &mut String) {
+    egui::ScrollArea::vertical()
+        .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(text)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(30)
+                    .interactive(false),
+            );
+        });
+}
+
+fn render_history_preview(ui: &mut egui::Ui, text: &mut String, lines: &EditorLineIndex) {
+    match history_preview_render_mode(text.len()) {
+        HistoryPreviewRenderMode::InlineTextEdit => render_inline_history_preview(ui, text),
+        HistoryPreviewRenderMode::FastRows => {
+            render_large_history_preview(ui, text.as_str(), lines)
+        }
+    }
+}
+
 impl LocalPasteApp {
     /// Renders the detached history modal for read-only snapshot navigation.
     ///
@@ -379,63 +403,17 @@ impl LocalPasteApp {
                         }
 
                         if self.version_ui.history_selected_index == 0 {
-                            let mode = history_preview_render_mode(
-                                self.version_ui.active_snapshot_cache_text.len(),
+                            render_history_preview(
+                                right,
+                                &mut self.version_ui.active_snapshot_cache_text,
+                                &self.version_ui.active_snapshot_preview_lines,
                             );
-                            match mode {
-                                HistoryPreviewRenderMode::InlineTextEdit => {
-                                    egui::ScrollArea::vertical()
-                                        .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
-                                        .auto_shrink([false, false])
-                                        .show(right, |ui| {
-                                            ui.add(
-                                                egui::TextEdit::multiline(
-                                                    &mut self.version_ui.active_snapshot_cache_text,
-                                                )
-                                                .font(egui::TextStyle::Monospace)
-                                                .desired_width(f32::INFINITY)
-                                                .desired_rows(30)
-                                                .interactive(false),
-                                            );
-                                        });
-                                }
-                                HistoryPreviewRenderMode::FastRows => {
-                                    render_large_history_preview(
-                                        right,
-                                        self.version_ui.active_snapshot_cache_text.as_str(),
-                                        &self.version_ui.active_snapshot_preview_lines,
-                                    );
-                                }
-                            }
                         } else {
-                            let mode = history_preview_render_mode(
-                                self.version_ui.history_preview_text.len(),
+                            render_history_preview(
+                                right,
+                                &mut self.version_ui.history_preview_text,
+                                &self.version_ui.history_preview_lines,
                             );
-                            match mode {
-                                HistoryPreviewRenderMode::InlineTextEdit => {
-                                    egui::ScrollArea::vertical()
-                                        .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
-                                        .auto_shrink([false, false])
-                                        .show(right, |ui| {
-                                            ui.add(
-                                                egui::TextEdit::multiline(
-                                                    &mut self.version_ui.history_preview_text,
-                                                )
-                                                .font(egui::TextStyle::Monospace)
-                                                .desired_width(f32::INFINITY)
-                                                .desired_rows(30)
-                                                .interactive(false),
-                                            );
-                                        });
-                                }
-                                HistoryPreviewRenderMode::FastRows => {
-                                    render_large_history_preview(
-                                        right,
-                                        self.version_ui.history_preview_text.as_str(),
-                                        &self.version_ui.history_preview_lines,
-                                    );
-                                }
-                            }
                         }
                     });
                 });
