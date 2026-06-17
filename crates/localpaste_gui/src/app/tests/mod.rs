@@ -304,6 +304,7 @@ fn make_app() -> TestHarness {
         save_request_revision: None,
         autosave_delay: Duration::from_millis(2000),
         shortcut_help_open: false,
+        focus_editor_next: false,
         style_applied: false,
         window_shown_once: false,
         window_checked: false,

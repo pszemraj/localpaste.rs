@@ -142,6 +142,7 @@ impl LocalPasteApp {
                 if paste_visible && !has_unsaved_edits && !save_in_progress {
                     self.select_loaded_paste(paste);
                     self.pending_selection_id = None;
+                    self.focus_editor_next = true;
                     self.set_status("Created new paste.");
                     return;
                 }

@@ -141,6 +141,7 @@ pub(crate) struct LocalPasteApp {
     save_request_revision: Option<u64>,
     autosave_delay: Duration,
     shortcut_help_open: bool,
+    focus_editor_next: bool,
     style_applied: bool,
     window_shown_once: bool,
     window_checked: bool,
@@ -429,6 +430,7 @@ impl LocalPasteApp {
             save_request_revision: None,
             autosave_delay,
             shortcut_help_open: false,
+            focus_editor_next: false,
             style_applied: false,
             window_shown_once: false,
             window_checked: false,
@@ -582,7 +584,8 @@ impl eframe::App for LocalPasteApp {
         let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
         let has_virtual_selection_pre = self.virtual_editor_state.selection_range().is_some();
-        let virtual_editor_focus_active_pre = self.is_virtual_editor_mode() && egui_focus_pre;
+        let virtual_editor_focus_active_pre =
+            self.is_virtual_editor_mode() && (egui_focus_pre || self.focus_editor_next);
         let version_overlay_open = self.version_overlay_open();
         let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();

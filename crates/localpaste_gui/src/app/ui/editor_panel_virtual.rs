@@ -341,6 +341,11 @@ impl LocalPasteApp {
         }
 
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+        if self.focus_editor_next {
+            ui.memory_mut(|m| m.request_focus(editor_id));
+            self.reset_virtual_caret_blink();
+            self.focus_editor_next = false;
+        }
         let wrap_width = ui.available_width().max(1.0);
         let perf_enabled = self.perf_log_enabled;
         let frame_started = perf_enabled.then(Instant::now);
