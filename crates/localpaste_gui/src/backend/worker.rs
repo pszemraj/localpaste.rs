@@ -4,7 +4,7 @@ mod folder;
 mod paste;
 mod query;
 
-use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent};
+use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, DELETE_UNDO_LIMIT};
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use localpaste_core::{config::env_flag_enabled, models::paste::DeletedPasteBundle, Database};
 use localpaste_server::{LockOwnerId, PasteLockManager};
@@ -14,7 +14,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const DELETE_UNDO_TTL: Duration = Duration::from_secs(10);
-const DELETE_UNDO_LIMIT: usize = 8;
 const DELETE_UNDO_VERSION_PAYLOAD_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Handle for sending commands to, and receiving events from, the backend worker.

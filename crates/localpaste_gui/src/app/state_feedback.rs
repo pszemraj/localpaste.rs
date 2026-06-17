@@ -1,8 +1,8 @@
 //! UI-facing feedback helpers for status, toasts, and export completion.
 
 use super::{
-    LocalPasteApp, StatusMessage, ToastAction, ToastMessage, STATUS_TTL, TOAST_LIMIT, TOAST_TTL,
-    UNDO_DELETE_TOAST_TTL,
+    LocalPasteApp, StatusMessage, ToastAction, ToastMessage, DELETE_UNDO_LIMIT, STATUS_TTL,
+    TOAST_LIMIT, TOAST_TTL, UNDO_DELETE_TOAST_TTL,
 };
 use std::time::Instant;
 
@@ -64,12 +64,32 @@ impl LocalPasteApp {
     }
 
     fn prune_toast_overflow(&mut self) {
+        while self.undo_delete_toast_count() > DELETE_UNDO_LIMIT {
+            let Some(index) = self.oldest_undo_delete_toast_index() else {
+                break;
+            };
+            self.toasts.remove(index);
+        }
+
         while self.toasts.len() > TOAST_LIMIT {
             let Some(index) = self.toasts.iter().position(|toast| toast.action.is_none()) else {
                 break;
             };
             self.toasts.remove(index);
         }
+    }
+
+    fn undo_delete_toast_count(&self) -> usize {
+        self.toasts
+            .iter()
+            .filter(|toast| matches!(&toast.action, Some(ToastAction::UndoDelete { .. })))
+            .count()
+    }
+
+    fn oldest_undo_delete_toast_index(&self) -> Option<usize> {
+        self.toasts
+            .iter()
+            .position(|toast| matches!(&toast.action, Some(ToastAction::UndoDelete { .. })))
     }
 
     /// Polls asynchronous export completion and reports success/failure to status.

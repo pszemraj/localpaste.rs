@@ -6,8 +6,8 @@
 mod protocol;
 mod worker;
 
-pub(crate) use protocol::VERSION_WORKFLOW_LIST_LIMIT;
 pub use protocol::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
+pub(crate) use protocol::{DELETE_UNDO_LIMIT, VERSION_WORKFLOW_LIST_LIMIT};
 pub use worker::{
     spawn_backend, spawn_backend_with_locks, spawn_backend_with_locks_and_owner, BackendHandle,
 };

@@ -65,6 +65,36 @@ fn toast_queue_preserves_undo_actions_under_status_pressure() {
 }
 
 #[test]
+fn toast_queue_caps_undo_actions_to_backend_limit() {
+    let mut harness = make_app();
+
+    for idx in 0..(DELETE_UNDO_LIMIT + 3) {
+        harness.app.set_status_with_action(
+            format!("Paste deleted {idx}."),
+            ToastAction::UndoDelete {
+                undo_token: format!("undo-{idx}"),
+            },
+        );
+    }
+
+    let undo_tokens = harness
+        .app
+        .toasts
+        .iter()
+        .filter_map(|toast| {
+            toast
+                .action
+                .as_ref()
+                .map(|ToastAction::UndoDelete { undo_token }| undo_token.as_str())
+        })
+        .collect::<Vec<_>>();
+    let expected_last = format!("undo-{}", DELETE_UNDO_LIMIT + 2);
+    assert_eq!(undo_tokens.len(), DELETE_UNDO_LIMIT);
+    assert_eq!(undo_tokens.first().copied(), Some("undo-3"));
+    assert_eq!(undo_tokens.last().copied(), Some(expected_last.as_str()));
+}
+
+#[test]
 fn toast_expiration_prunes_all_expired_entries_and_uses_earliest_live_deadline() {
     let mut harness = make_app();
     let now = Instant::now();

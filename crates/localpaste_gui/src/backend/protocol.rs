@@ -11,6 +11,11 @@ use ropey::Rope;
 
 /// Version row count requested by detached history workflows.
 pub(crate) const VERSION_WORKFLOW_LIST_LIMIT: usize = 200;
+/// Maximum number of deleted-paste undo bundles the backend keeps live.
+///
+/// UI undo affordances must not exceed this count, otherwise visible undo
+/// buttons can outlive the backend tokens they reference.
+pub(crate) const DELETE_UNDO_LIMIT: usize = 8;
 
 /// Commands issued by the UI thread for the backend worker to execute.
 #[derive(Debug)]

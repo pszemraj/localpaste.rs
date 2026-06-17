@@ -24,7 +24,9 @@ mod virtual_ops_apply;
 mod virtual_view;
 mod window_bounds;
 
-use crate::backend::{spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary};
+use crate::backend::{
+    spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary, DELETE_UNDO_LIMIT,
+};
 use editor::{EditorBuffer, EditorLineIndex, EditorMode};
 use eframe::egui::{self, text::CCursor, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
