@@ -50,7 +50,7 @@ $env:LOCALPASTE_BACKEND_PERF_LOG = "1"
 $env:LOCALPASTE_EDITOR_INPUT_TRACE = "1"
 $env:LOCALPASTE_HIGHLIGHT_TRACE = "1"
 
-cargo run -p localpaste_tools --bin generate-test-data -- --clear --count 10000 --folders 50
+cargo run -p localpaste_tools --bin generate-test-data -- --clear --yes --count 10000 --folders 50
 cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
