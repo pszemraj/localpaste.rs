@@ -946,20 +946,19 @@ impl LocalPasteApp {
         (None, self.active_language_filter.clone())
     }
 
-    fn matches_active_filters(
+    pub(super) fn matches_active_filters(
         item: &PasteSummary,
         active_collection: &SidebarCollection,
         active_language_filter: Option<&str>,
         today_local: chrono::NaiveDate,
-        week_cutoff: chrono::DateTime<Utc>,
+        week_cutoff_day: chrono::NaiveDate,
         recent_cutoff: chrono::DateTime<Utc>,
     ) -> bool {
+        let updated_local_day = item.updated_at.with_timezone(&Local).date_naive();
         let collection_match = match active_collection {
             SidebarCollection::All => true,
-            SidebarCollection::Today => {
-                item.updated_at.with_timezone(&Local).date_naive() == today_local
-            }
-            SidebarCollection::Week => item.updated_at >= week_cutoff,
+            SidebarCollection::Today => updated_local_day == today_local,
+            SidebarCollection::Week => updated_local_day >= week_cutoff_day,
             SidebarCollection::Recent => item.updated_at >= recent_cutoff,
             SidebarCollection::Unfiled => item.folder_id.is_none(),
             SidebarCollection::Code
@@ -989,9 +988,10 @@ impl LocalPasteApp {
     /// # Returns
     /// Visible sidebar rows preserving the input ordering of `items`.
     pub(super) fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
-        let now = Utc::now();
-        let today_local = Local::now().date_naive();
-        let week_cutoff = now - ChronoDuration::days(7);
+        let local_now = Local::now();
+        let now = local_now.with_timezone(&Utc);
+        let today_local = local_now.date_naive();
+        let week_cutoff_day = today_local - ChronoDuration::days(7);
         let recent_cutoff = now - ChronoDuration::days(30);
         let active_language_filter = self.active_language_filter.as_deref();
         items
@@ -1002,7 +1002,7 @@ impl LocalPasteApp {
                     &self.active_collection,
                     active_language_filter,
                     today_local,
-                    week_cutoff,
+                    week_cutoff_day,
                     recent_cutoff,
                 )
             })
@@ -1011,9 +1011,10 @@ impl LocalPasteApp {
     }
 
     fn retain_search_results_for_active_filters(&mut self) {
-        let now = Utc::now();
-        let today_local = Local::now().date_naive();
-        let week_cutoff = now - ChronoDuration::days(7);
+        let local_now = Local::now();
+        let now = local_now.with_timezone(&Utc);
+        let today_local = local_now.date_naive();
+        let week_cutoff_day = today_local - ChronoDuration::days(7);
         let recent_cutoff = now - ChronoDuration::days(30);
         let active_collection = self.active_collection.clone();
         let active_language_filter = self.active_language_filter.clone();
@@ -1023,7 +1024,7 @@ impl LocalPasteApp {
                 &active_collection,
                 active_language_filter.as_deref(),
                 today_local,
-                week_cutoff,
+                week_cutoff_day,
                 recent_cutoff,
             )
         });

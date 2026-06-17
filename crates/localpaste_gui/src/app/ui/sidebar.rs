@@ -1,7 +1,7 @@
 //! Top bar and sidebar rendering for paste navigation and quick actions.
 
 use super::super::*;
-use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Local, TimeZone, Utc};
 use eframe::egui::{self, RichText};
 
 const APP_VERSION_LABEL: &str = concat!("- v", env!("CARGO_PKG_VERSION"));
@@ -64,16 +64,20 @@ fn sidebar_row_text_rects(
     (title_rect, lang_rect)
 }
 
-fn sidebar_time_bucket(updated_at: DateTime<Utc>, now: DateTime<Local>) -> SidebarTimeBucket {
-    let updated_local = updated_at.with_timezone(&Local);
+fn sidebar_time_bucket<Tz: TimeZone>(
+    updated_at: DateTime<Utc>,
+    now: DateTime<Tz>,
+) -> SidebarTimeBucket {
+    let timezone = now.timezone();
+    let updated_day = updated_at.with_timezone(&timezone).date_naive();
     let today = now.date_naive();
-    if updated_local.date_naive() == today {
+    if updated_day == today {
         return SidebarTimeBucket::Today;
     }
-    if updated_local.date_naive() == today - ChronoDuration::days(1) {
+    if updated_day == today - ChronoDuration::days(1) {
         return SidebarTimeBucket::Yesterday;
     }
-    if updated_at >= now.with_timezone(&Utc) - ChronoDuration::days(7) {
+    if updated_day >= today - ChronoDuration::days(7) {
         SidebarTimeBucket::ThisWeek
     } else {
         SidebarTimeBucket::Earlier
@@ -425,7 +429,7 @@ mod tests {
         build_sidebar_list_items, sidebar_hover_text, sidebar_row_text_rects, sidebar_time_bucket,
         SidebarListItem, SidebarTimeBucket,
     };
-    use chrono::{Duration, Local, TimeZone, Utc};
+    use chrono::{Duration, FixedOffset, Local, TimeZone, Utc};
     use eframe::egui;
 
     fn summary(id: &str, updated_at: chrono::DateTime<Utc>) -> crate::backend::PasteSummary {
@@ -492,17 +496,31 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_time_bucket_keeps_exact_seven_day_boundary_in_this_week() {
-        let now = Local.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
-        let boundary = now - Duration::days(7);
+    fn sidebar_time_bucket_uses_local_calendar_cutoff_for_this_week() {
+        let tz = FixedOffset::east_opt(14 * 60 * 60).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
+        let cutoff_day = tz.with_ymd_and_hms(2026, 6, 8, 0, 1, 0).unwrap();
+        let before_cutoff_day = tz.with_ymd_and_hms(2026, 6, 7, 23, 59, 59).unwrap();
 
         assert_eq!(
-            sidebar_time_bucket(boundary.with_timezone(&Utc), now),
+            sidebar_time_bucket(cutoff_day.with_timezone(&Utc), now),
             SidebarTimeBucket::ThisWeek
         );
         assert_eq!(
-            sidebar_time_bucket((boundary - Duration::seconds(1)).with_timezone(&Utc), now),
+            sidebar_time_bucket(before_cutoff_day.with_timezone(&Utc), now),
             SidebarTimeBucket::Earlier
+        );
+    }
+
+    #[test]
+    fn sidebar_time_bucket_uses_local_day_for_yesterday() {
+        let tz = FixedOffset::west_opt(10 * 60 * 60).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 6, 15, 0, 30, 0).unwrap();
+        let previous_local_day = tz.with_ymd_and_hms(2026, 6, 14, 23, 59, 0).unwrap();
+
+        assert_eq!(
+            sidebar_time_bucket(previous_local_day.with_timezone(&Utc), now),
+            SidebarTimeBucket::Yesterday
         );
     }
 
