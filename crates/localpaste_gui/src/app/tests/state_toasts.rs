@@ -181,7 +181,7 @@ fn paste_deleted_without_undo_token_has_no_undo_action() {
 }
 
 #[test]
-fn undo_delete_action_dispatches_restore_and_keeps_toast_until_ack() {
+fn undo_delete_action_dispatches_restore_once_and_consumes_toast() {
     let mut harness = make_app();
     harness.app.set_status_with_action(
         "Paste deleted.",
@@ -203,13 +203,13 @@ fn undo_delete_action_dispatches_restore_and_keeps_toast_until_ack() {
         other => panic!("expected RestoreDeletedPaste command, got {:?}", other),
     }
     assert!(
-        harness.app.toasts.iter().any(|toast| {
-            matches!(
+        harness.app.toasts.iter().all(|toast| {
+            !matches!(
                 &toast.action,
                 Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
             )
         }),
-        "dispatched restore should keep the undo toast until backend ack"
+        "dispatched restore should consume the matching undo toast"
     );
     assert!(
         harness.app.toasts.iter().any(|toast| {
@@ -227,6 +227,12 @@ fn undo_delete_action_dispatches_restore_and_keeps_toast_until_ack() {
             .as_ref()
             .map(|status| status.text.as_str()),
         Some("Restoring deleted paste...")
+    );
+
+    harness.app.restore_deleted_paste("undo-alpha".to_string());
+    assert!(
+        matches!(harness.cmd_rx.try_recv(), Err(TryRecvError::Empty)),
+        "a consumed undo toast must not dispatch a duplicate restore"
     );
 }
 
