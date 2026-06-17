@@ -148,7 +148,7 @@ Write surfaces:
 - GUI backend worker (`localpaste_gui`),
 - tooling (`localpaste_tools`).
 
-The project centralizes sensitive folder assignment/delete logic in shared core helpers so API and GUI backend paths enforce equivalent invariants.
+Folder API pathways remain for compatibility and emit deprecation headers; the GUI organizes pastes through smart filters and search. Folder assignment/delete invariants stay in shared core helpers so API and GUI backend paths enforce equivalent behavior.
 
 Version and diff surfaces:
 
@@ -186,12 +186,7 @@ Axum router and middleware live in:
 
 - [`../crates/localpaste_server/src/lib.rs`](../crates/localpaste_server/src/lib.rs)
 
-Current boundary rules:
-
-- strict mode binds loopback unless public access is explicitly enabled,
-- strict CORS is loopback + listener-port scoped (not any loopback origin),
-- security headers are always set (`CSP`, `X-Frame-Options`, `X-Content-Type-Options`),
-- server identity header (`x-localpaste-server: 1`) is set for trust checks.
+Security defaults, public-bind policy, CORS behavior, request-size limits, and browser security headers are defined in [security.md](security.md).
 
 ## 8) Language Detection And Highlighting
 

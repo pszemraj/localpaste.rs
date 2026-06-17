@@ -27,9 +27,6 @@ nohup "$HOME/.cargo/bin/localpaste" > ~/.cache/localpaste/server.log 2>&1 &
 echo $! > ~/.cache/localpaste/localpaste.pid
 ```
 
-Writer/lock contract and `DB_PATH` safety rules are documented in:
-[storage.md](storage.md) and [dev/locking-model.md](dev/locking-model.md).
-
 ## Process Management
 
 ### Stopping LocalPaste Safely
