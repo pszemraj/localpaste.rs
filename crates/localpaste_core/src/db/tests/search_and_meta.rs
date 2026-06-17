@@ -480,6 +480,82 @@ fn database_new_rebuilds_markerless_current_meta_rows() {
 }
 
 #[test]
+fn database_new_rebuilds_stale_schema_meta_rows_for_semantic_handle_changes() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let db_path_str = db_path.to_str().expect("db path").to_string();
+
+    let db = open_test_database(&db_path_str);
+    let paste = Paste::new_with_language(
+        "export const renderPanel = () => {};\n".to_string(),
+        "stale-semantic-meta".to_string(),
+        Some("typescript".to_string()),
+        true,
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let mut stale_meta = PasteMeta::from(&paste);
+    stale_meta.derived = crate::semantic::DerivedMeta {
+        kind: crate::semantic::PasteKind::Code,
+        handle: Some("renderpanel".to_string()),
+        terms: vec!["renderpanel".to_string()],
+    };
+    let encoded_meta = bincode::serialize(&stale_meta).expect("serialize meta");
+    let old_schema_version = bincode::serialize(&1u64).expect("serialize old schema version");
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
+        let mut meta_state = write_txn
+            .open_table(PASTES_META_STATE)
+            .expect("open meta state");
+        metas
+            .insert(paste_id.as_str(), encoded_meta.as_slice())
+            .expect("overwrite stale meta");
+        meta_state
+            .insert(META_SCHEMA_VERSION_KEY, old_schema_version.as_slice())
+            .expect("stamp old schema version");
+    }
+    write_txn.commit().expect("commit");
+    drop(db);
+
+    let reopened = open_test_database(&db_path_str);
+    let meta = reopened
+        .pastes
+        .list_meta(10, None)
+        .expect("list")
+        .into_iter()
+        .find(|meta| meta.id == paste_id)
+        .expect("meta row");
+    assert_eq!(
+        meta.derived.handle.as_deref(),
+        Some("export const renderPanel"),
+        "stale schema marker must force derived JS/TS handles to rebuild"
+    );
+
+    let search_results = reopened
+        .pastes
+        .search_meta("export const renderPanel", 10, None, None)
+        .expect("search rebuilt handle");
+    assert_eq!(
+        search_results.first().map(|meta| meta.id.as_str()),
+        Some(paste_id.as_str())
+    );
+
+    let read_txn = reopened.db.begin_read().expect("begin read");
+    let meta_state = read_txn
+        .open_table(PASTES_META_STATE)
+        .expect("open meta state");
+    let stored_version = meta_state
+        .get(META_SCHEMA_VERSION_KEY)
+        .expect("schema lookup")
+        .expect("schema row");
+    let stored_version: u64 =
+        bincode::deserialize(stored_version.value()).expect("decode schema version");
+    assert_eq!(stored_version, CURRENT_PASTES_META_SCHEMA_VERSION);
+}
+
+#[test]
 fn database_from_shared_rebuilds_markerless_current_meta_rows() {
     let (db, _temp) = setup_test_db();
     let paste = Paste::new(

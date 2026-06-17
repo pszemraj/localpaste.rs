@@ -51,7 +51,7 @@ pub(crate) const META_SCHEMA_VERSION_KEY: &str = "__schema_version";
 ///
 /// Bump this whenever the persisted `PasteMeta` projection contract changes,
 /// including semantic-derived fields produced by [`PasteMeta::from`].
-pub(crate) const CURRENT_PASTES_META_SCHEMA_VERSION: u64 = 1;
+pub(crate) const CURRENT_PASTES_META_SCHEMA_VERSION: u64 = 2;
 
 impl PasteDb {
     fn reject_direct_folder_operation(
