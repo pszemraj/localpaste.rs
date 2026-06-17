@@ -707,9 +707,9 @@ impl eframe::App for LocalPasteApp {
             }
         }
         if delete_selected_shortcut_pressed
-            && self.should_route_delete_selected_shortcut(Self::delete_shortcut_focus_state(
-                wants_keyboard_input_after,
+            && self.should_route_delete_selected_shortcut(Self::keyboard_focus_state(
                 virtual_editor_focus_post,
+                wants_keyboard_input_after,
             ))
         {
             if mutation_shortcut_blocked.is_some() {
@@ -718,13 +718,13 @@ impl eframe::App for LocalPasteApp {
                 self.delete_selected();
             }
         }
-        let plain_paste_focus_state = Self::plain_paste_focus_state(
+        let keyboard_focus_state = Self::keyboard_focus_state(
             editor_focus_for_plain_paste_post,
             wants_keyboard_input_after,
         );
         let (plain_request_virtual, plain_request_new) = self.resolve_plain_paste_shortcut_request(
             plain_paste_shortcut_pressed,
-            plain_paste_focus_state,
+            keyboard_focus_state,
             self.virtual_paste_applied_this_frame,
         );
         request_virtual_paste |= plain_request_virtual;

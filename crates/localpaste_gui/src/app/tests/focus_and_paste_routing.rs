@@ -618,7 +618,7 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
 
     for case in cases {
         let harness = make_app();
-        let focus_state = LocalPasteApp::plain_paste_focus_state(
+        let focus_state = LocalPasteApp::keyboard_focus_state(
             case.editor_focus_pre,
             case.wants_keyboard_input_before,
         );
@@ -646,7 +646,7 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
     // plain paste should stay in the editor instead of creating a new paste.
     let (request_virtual, request_new) = harness.app.resolve_plain_paste_shortcut_request(
         true,
-        LocalPasteApp::plain_paste_focus_state(true, true),
+        LocalPasteApp::keyboard_focus_state(true, true),
         false,
     );
     assert!(request_virtual);
@@ -654,7 +654,7 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
 
     let (request_virtual, request_new) = harness.app.resolve_plain_paste_shortcut_request(
         false,
-        LocalPasteApp::plain_paste_focus_state(false, false),
+        LocalPasteApp::keyboard_focus_state(false, false),
         false,
     );
     assert!(!request_virtual);
@@ -693,9 +693,9 @@ fn delete_shortcut_guard_preserves_editor_delete_ownership_and_global_unfocused_
 
     for case in cases {
         let harness = make_app();
-        let focus_state = LocalPasteApp::delete_shortcut_focus_state(
-            case.wants_keyboard_input,
+        let focus_state = LocalPasteApp::keyboard_focus_state(
             case.virtual_editor_focus_active,
+            case.wants_keyboard_input,
         );
         let actual = harness
             .app

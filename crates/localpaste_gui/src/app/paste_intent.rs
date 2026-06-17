@@ -2,19 +2,11 @@
 
 use super::*;
 
-/// Keyboard ownership state used to route plain paste shortcuts.
+/// Keyboard ownership state used to route global shortcuts around text inputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum PlainPasteFocusState {
+pub(super) enum KeyboardFocusState {
     EditorFocused,
     OtherInputFocused,
-    Unfocused,
-}
-
-/// Focus context used to decide whether the global delete shortcut is safe.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum DeleteShortcutFocusState {
-    OtherInputFocused,
-    EditorFocused,
     Unfocused,
 }
 
@@ -258,14 +250,14 @@ impl LocalPasteApp {
     /// Tuple of `(request_virtual_paste, request_new_paste)`.
     pub(super) fn route_plain_paste_shortcut(
         &self,
-        focus_state: PlainPasteFocusState,
+        focus_state: KeyboardFocusState,
         saw_virtual_paste: bool,
     ) -> (bool, bool) {
         match focus_state {
-            PlainPasteFocusState::EditorFocused => (!saw_virtual_paste, false),
+            KeyboardFocusState::EditorFocused => (!saw_virtual_paste, false),
             // Respect focused non-editor text inputs (search, palette query, metadata fields).
-            PlainPasteFocusState::OtherInputFocused => (false, false),
-            PlainPasteFocusState::Unfocused => (false, true),
+            KeyboardFocusState::OtherInputFocused => (false, false),
+            KeyboardFocusState::Unfocused => (false, true),
         }
     }
 
@@ -281,7 +273,7 @@ impl LocalPasteApp {
     pub(super) fn resolve_plain_paste_shortcut_request(
         &self,
         shortcut_pressed: bool,
-        focus_state: PlainPasteFocusState,
+        focus_state: KeyboardFocusState,
         saw_virtual_paste: bool,
     ) -> (bool, bool) {
         if !shortcut_pressed {
@@ -290,24 +282,24 @@ impl LocalPasteApp {
         self.route_plain_paste_shortcut(focus_state, saw_virtual_paste)
     }
 
-    /// Derives plain-paste keyboard ownership state from editor and egui focus snapshots.
+    /// Derives keyboard ownership state from editor and egui focus snapshots.
     ///
     /// # Arguments
     /// - `editor_focus_active`: Whether the virtual editor currently owns focus.
     /// - `wants_keyboard_input`: Whether egui reports focused keyboard input elsewhere.
     ///
     /// # Returns
-    /// A [`PlainPasteFocusState`] used by plain shortcut routing.
-    pub(super) fn plain_paste_focus_state(
+    /// A [`KeyboardFocusState`] used by global shortcut routing.
+    pub(super) fn keyboard_focus_state(
         editor_focus_active: bool,
         wants_keyboard_input: bool,
-    ) -> PlainPasteFocusState {
+    ) -> KeyboardFocusState {
         if editor_focus_active {
-            PlainPasteFocusState::EditorFocused
+            KeyboardFocusState::EditorFocused
         } else if wants_keyboard_input {
-            PlainPasteFocusState::OtherInputFocused
+            KeyboardFocusState::OtherInputFocused
         } else {
-            PlainPasteFocusState::Unfocused
+            KeyboardFocusState::Unfocused
         }
     }
 
@@ -323,28 +315,8 @@ impl LocalPasteApp {
     /// `true` only when no text-input context owns keyboard input.
     pub(super) fn should_route_delete_selected_shortcut(
         &self,
-        focus_state: DeleteShortcutFocusState,
+        focus_state: KeyboardFocusState,
     ) -> bool {
-        matches!(focus_state, DeleteShortcutFocusState::Unfocused)
-    }
-
-    /// Derives delete-shortcut focus context from input/focus state snapshots.
-    ///
-    /// # Arguments
-    /// - `wants_keyboard_input`: Whether any text-input widget currently owns keyboard capture.
-    /// - `virtual_editor_focus_active`: Whether virtual editor text focus is active.
-    /// # Returns
-    /// A [`DeleteShortcutFocusState`] used to guard global delete behavior.
-    pub(super) fn delete_shortcut_focus_state(
-        wants_keyboard_input: bool,
-        virtual_editor_focus_active: bool,
-    ) -> DeleteShortcutFocusState {
-        if virtual_editor_focus_active {
-            DeleteShortcutFocusState::EditorFocused
-        } else if wants_keyboard_input {
-            DeleteShortcutFocusState::OtherInputFocused
-        } else {
-            DeleteShortcutFocusState::Unfocused
-        }
+        matches!(focus_state, KeyboardFocusState::Unfocused)
     }
 }
