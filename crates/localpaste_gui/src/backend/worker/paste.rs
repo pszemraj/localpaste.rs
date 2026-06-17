@@ -1,9 +1,6 @@
 //! Paste CRUD command handlers for the GUI backend worker.
 
-use super::{
-    send_error, validate_paste_size, validate_paste_size_bytes, WorkerState,
-    DELETE_UNDO_VERSION_PAYLOAD_LIMIT_BYTES,
-};
+use super::{send_error, WorkerState, DELETE_UNDO_VERSION_PAYLOAD_LIMIT_BYTES};
 use crate::backend::{CoreErrorSource, CoreEvent, VERSION_WORKFLOW_LIST_LIMIT};
 use localpaste_core::{
     db::TransactionOps,
@@ -11,6 +8,7 @@ use localpaste_core::{
     folder_ops::map_missing_folder_for_optional_request,
     models::paste::{self, UpdatePasteRequest},
     naming,
+    validation::paste_content_size_error,
 };
 use ropey::Rope;
 use tracing::error;
@@ -84,7 +82,7 @@ fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteL
 /// - `state`: Worker state containing db and event channel handles.
 /// - `content`: Paste body content.
 pub(super) fn handle_create_paste(state: &mut WorkerState, content: String) {
-    if let Err(message) = validate_paste_size(content.as_str(), state.max_paste_size) {
+    if let Some(message) = paste_content_size_error(content.len(), state.max_paste_size) {
         send_error(&state.evt_tx, CoreErrorSource::Other, message);
         return;
     }
@@ -115,7 +113,7 @@ fn apply_content_update(
     protected_version_id_ms: Option<u64>,
     log_label: &str,
 ) {
-    if let Err(message) = validate_paste_size(content.as_str(), state.max_paste_size) {
+    if let Some(message) = paste_content_size_error(content.len(), state.max_paste_size) {
         send_error(&state.evt_tx, CoreErrorSource::SaveContent, message);
         return;
     }
@@ -183,7 +181,7 @@ pub(super) fn handle_update_paste_virtual(
     content: Rope,
     protected_version_id_ms: Option<u64>,
 ) {
-    if let Err(message) = validate_paste_size_bytes(content.len_bytes(), state.max_paste_size) {
+    if let Some(message) = paste_content_size_error(content.len_bytes(), state.max_paste_size) {
         send_error(&state.evt_tx, CoreErrorSource::SaveContent, message);
         return;
     }

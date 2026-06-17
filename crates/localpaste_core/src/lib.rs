@@ -27,6 +27,8 @@ pub mod semantic;
 pub(crate) mod test_support;
 /// Shared string and host normalization helpers.
 pub mod text;
+/// Shared validation helpers for paste-domain invariants.
+pub mod validation;
 
 pub use config::Config;
 pub use constants::{

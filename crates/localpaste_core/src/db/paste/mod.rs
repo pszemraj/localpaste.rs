@@ -19,6 +19,7 @@ use crate::{
     error::AppError,
     models::paste::*,
     naming,
+    validation::ensure_paste_content_size,
 };
 use chrono::{DateTime, Utc};
 use redb::{ReadTransaction, ReadableDatabase, ReadableTable};
@@ -53,19 +54,6 @@ pub(crate) const META_SCHEMA_VERSION_KEY: &str = "__schema_version";
 pub(crate) const CURRENT_PASTES_META_SCHEMA_VERSION: u64 = 1;
 
 impl PasteDb {
-    fn ensure_content_within_size_limit(
-        content: &str,
-        max_paste_size: usize,
-    ) -> Result<(), AppError> {
-        if content.len() > max_paste_size {
-            return Err(AppError::BadRequest(format!(
-                "Paste size exceeds maximum of {} bytes",
-                max_paste_size
-            )));
-        }
-        Ok(())
-    }
-
     fn reject_direct_folder_operation(
         violates: bool,
         message: &'static str,
@@ -573,7 +561,7 @@ impl PasteDb {
         let Some(snapshot) = self.get_version(paste_id, version_id_ms)? else {
             return Ok(None);
         };
-        Self::ensure_content_within_size_limit(&snapshot.content, max_paste_size)?;
+        ensure_paste_content_size(&snapshot.content, max_paste_size)?;
         let duplicate_name = name
             .as_deref()
             .map(str::trim)

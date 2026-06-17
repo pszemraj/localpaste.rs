@@ -10,6 +10,7 @@ use crate::{
     },
     error::AppError,
     models::paste::{is_markdown_content, Paste, PasteMeta},
+    validation::ensure_paste_content_size,
 };
 use chrono::Utc;
 use redb::ReadableTable;
@@ -105,7 +106,7 @@ impl PasteDb {
             };
             let target_content: String = bincode::deserialize(content_guard.value())?;
             drop(content_guard);
-            Self::ensure_content_within_size_limit(&target_content, max_paste_size)?;
+            ensure_paste_content_size(&target_content, max_paste_size)?;
 
             let reset_at = Utc::now();
             let preserved_current_head_version_id =

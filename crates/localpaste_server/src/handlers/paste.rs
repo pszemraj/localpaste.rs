@@ -11,6 +11,7 @@ use axum::{
 };
 use localpaste_core::diff::{DiffRequest, DiffResponse, EqualResponse};
 use localpaste_core::folder_ops::map_missing_folder_for_optional_request;
+use localpaste_core::validation::ensure_paste_content_size;
 
 const RESPONSE_SHAPE_HEADER: &str = "x-localpaste-response-shape";
 const META_RESPONSE_SHAPE: &str = "meta-only";
@@ -209,14 +210,7 @@ pub async fn create_paste(
     } = req;
     let normalized_folder_id = normalize_optional_for_create(folder_id);
 
-    // Check paste size limit
-    if content.len() > state.config.max_paste_size {
-        return Err(AppError::BadRequest(format!(
-            "Paste size exceeds maximum of {} bytes",
-            state.config.max_paste_size
-        ))
-        .into());
-    }
+    ensure_paste_content_size(&content, state.config.max_paste_size)?;
 
     let name = name.unwrap_or_else(naming::generate_name);
     let mut paste = build_paste_for_create(content, name, language, language_is_manual);
@@ -437,15 +431,8 @@ pub async fn update_paste(
     let folder_field_used = req.folder_id.is_some();
     req.folder_id = normalize_optional_for_update(req.folder_id);
 
-    // Check size limit if content is being updated
     if let Some(ref content) = req.content {
-        if content.len() > state.config.max_paste_size {
-            return Err(AppError::BadRequest(format!(
-                "Paste size exceeds maximum of {} bytes",
-                state.config.max_paste_size
-            ))
-            .into());
-        }
+        ensure_paste_content_size(content, state.config.max_paste_size)?;
     }
 
     let updated = if req.folder_id.is_some() {

@@ -201,10 +201,7 @@ fn extract_definition_handle(sample: &str, language: Option<&str>) -> Option<Str
 /// # Returns
 /// A code-facing handle such as `fn run` or `export function render`, when the
 /// line starts with a supported definition pattern for `language`.
-pub(crate) fn extract_definition_handle_from_line(
-    line: &str,
-    language: Option<&str>,
-) -> Option<String> {
+fn extract_definition_handle_from_line(line: &str, language: Option<&str>) -> Option<String> {
     let lang = canonicalize(language.unwrap_or_default().trim());
     let patterns: &[&str] = match lang.as_str() {
         "rust" => &["fn ", "struct ", "enum ", "trait ", "impl "],
