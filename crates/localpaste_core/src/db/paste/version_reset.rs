@@ -109,8 +109,11 @@ impl PasteDb {
             ensure_paste_content_size(&target_content, max_paste_size)?;
 
             let reset_at = Utc::now();
+            let current_head_matches_target = old_content == target_content
+                && old_language.as_deref() == target_meta.language.as_deref()
+                && old_language_is_manual == target_meta.language_is_manual;
             let preserved_current_head_version_id =
-                if preserve_current_head && old_content != target_content {
+                if preserve_current_head && !current_head_matches_target {
                     let latest = version_items.first();
                     let current_head_meta = next_version_meta_for_content(
                         old_content.as_str(),

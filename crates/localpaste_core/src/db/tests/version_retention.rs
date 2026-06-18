@@ -223,6 +223,77 @@ fn reset_preserving_current_head_keeps_clean_head_recoverable() {
 }
 
 #[test]
+fn reset_preserving_current_head_keeps_language_only_head_recoverable() {
+    let _lock = env_lock().lock().expect("env lock");
+    let (db, _temp) = with_db_init_test_lock(|| {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "3600");
+        let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "10");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+        (db, temp_dir)
+    });
+
+    let paste = Paste::new_with_language(
+        "same text".to_string(),
+        "language-only-reset".to_string(),
+        Some("python".to_string()),
+        true,
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("temporary text"), None, None, None),
+        "create reset target snapshot",
+    );
+    let reset_target = db
+        .pastes
+        .list_versions(&paste_id, Some(1))
+        .expect("list versions")
+        .expect("paste exists")[0]
+        .version_id_ms;
+
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("same text"), None, Some("rust"), Some(true)),
+        "cycle content back with different language state",
+    );
+
+    let reset = db
+        .pastes
+        .reset_hard_to_version_preserving_current_head(&paste_id, reset_target, usize::MAX)
+        .expect("reset hard preserving current head")
+        .expect("paste exists");
+    assert_eq!(reset.content, "same text");
+    assert_eq!(reset.language.as_deref(), Some("python"));
+    assert!(reset.language_is_manual);
+
+    let versions_after_reset = db
+        .pastes
+        .list_versions(&paste_id, Some(10))
+        .expect("list versions after reset")
+        .expect("paste exists");
+    assert_eq!(
+        versions_after_reset.len(),
+        1,
+        "language-only outgoing head should remain recoverable after reset"
+    );
+
+    let preserved_head = db
+        .pastes
+        .get_version(&paste_id, versions_after_reset[0].version_id_ms)
+        .expect("load preserved language-only head")
+        .expect("preserved language-only head exists");
+    assert_eq!(preserved_head.content, "same text");
+    assert_eq!(preserved_head.language.as_deref(), Some("rust"));
+    assert!(preserved_head.language_is_manual);
+}
+
+#[test]
 fn primary_version_interval_env_wins_over_legacy_alias_at_db_init() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {
