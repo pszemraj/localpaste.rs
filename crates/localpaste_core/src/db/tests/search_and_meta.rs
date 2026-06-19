@@ -200,6 +200,135 @@ fn paste_search_meta_uses_persisted_metadata_and_derived_terms() {
 }
 
 #[test]
+fn paste_search_meta_case_sensitive_keeps_exact_language_matches() {
+    let (db, _temp) = setup_test_db();
+    let mut language_only = Paste::new("plain body".to_string(), "language-only".to_string());
+    language_only.language = Some("rust".to_string());
+    language_only.language_is_manual = true;
+    language_only.tags = Vec::new();
+
+    db.pastes.create(&language_only).expect("create language");
+
+    let exact_results = db
+        .pastes
+        .search_meta_with_options(
+            "rust",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive language search");
+    assert_eq!(exact_results.len(), 1);
+    assert_eq!(exact_results[0].id, language_only.id);
+
+    let mismatched_results = db
+        .pastes
+        .search_meta_with_options(
+            "Rust",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive language search");
+    assert!(
+        mismatched_results.is_empty(),
+        "case-sensitive metadata search should not fold language case"
+    );
+}
+
+#[test]
+fn paste_search_meta_case_sensitive_keeps_exact_derived_metadata_matches() {
+    let (db, _temp) = setup_test_db();
+    let handle = Paste::new_with_language(
+        "fn RenderPanel() {}\n".to_string(),
+        "handler".to_string(),
+        Some("rust".to_string()),
+        true,
+    );
+    let terms = Paste::new(
+        "FSDP2 validation failed after CUBLASLT retry\nFSDP2 validation repeated\n".to_string(),
+        "trainer".to_string(),
+    );
+    let kind = Paste::new_with_language(
+        "fn main() {}\n".to_string(),
+        "kind-note".to_string(),
+        Some("rust".to_string()),
+        true,
+    );
+
+    db.pastes.create(&handle).expect("create handle");
+    db.pastes.create(&terms).expect("create terms");
+    db.pastes.create(&kind).expect("create kind");
+
+    let handle_results = db
+        .pastes
+        .search_meta_with_options(
+            "RenderPanel",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive handle search");
+    assert!(handle_results.iter().any(|meta| meta.id == handle.id));
+
+    let term_results = db
+        .pastes
+        .search_meta_with_options(
+            "fsdp2",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive derived term search");
+    assert!(term_results.iter().any(|meta| meta.id == terms.id));
+
+    let mismatched_term_results = db
+        .pastes
+        .search_meta_with_options(
+            "FSDP2",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive derived term search");
+    assert!(
+        mismatched_term_results
+            .iter()
+            .all(|meta| meta.id != terms.id),
+        "case-sensitive metadata search should compare derived terms as stored"
+    );
+
+    let kind_results = db
+        .pastes
+        .search_meta_with_options(
+            "Code",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive kind search");
+    assert!(kind_results.iter().any(|meta| meta.id == kind.id));
+}
+
+#[test]
 fn paste_search_meta_multi_term_queries_rank_combined_metadata_hits() {
     let (db, _temp) = setup_test_db();
 

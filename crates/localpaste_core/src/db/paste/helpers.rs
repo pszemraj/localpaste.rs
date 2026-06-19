@@ -274,64 +274,82 @@ fn score_meta_match_with_options(
     } else {
         meta.name.to_lowercase()
     };
-    let handle_lower = if include_derived {
+    let handle_for_match = if include_derived {
         meta.derived
             .handle
             .as_deref()
             .unwrap_or_default()
-            .to_ascii_lowercase()
+            .to_string()
     } else {
         String::new()
     };
-    let term_lowers: Vec<String> = if include_derived {
+    let derived_terms_for_match: Vec<String> = if include_derived {
         meta.derived
             .terms
             .iter()
-            .map(|term| term.to_ascii_lowercase())
+            .map(|term| {
+                if case_sensitive {
+                    term.clone()
+                } else {
+                    term.to_ascii_lowercase()
+                }
+            })
             .collect()
     } else {
         Vec::new()
     };
-    let tag_lowers: Vec<String> = meta.tags.iter().map(|tag| tag.to_lowercase()).collect();
-    let query_terms = split_meta_query_terms(query_lower.as_str());
+    let handle_for_match = if case_sensitive {
+        handle_for_match
+    } else {
+        handle_for_match.to_ascii_lowercase()
+    };
+    let tag_candidates: Vec<String> = meta
+        .tags
+        .iter()
+        .map(|tag| {
+            if case_sensitive {
+                tag.clone()
+            } else {
+                tag.to_lowercase()
+            }
+        })
+        .collect();
+    let query_terms = if case_sensitive {
+        split_meta_query_terms(query)
+    } else {
+        split_meta_query_terms(query_lower.as_str())
+    };
     let mut matched_query_terms = 0;
 
     if name_for_match.contains(query_for_match) {
         score += 12;
     }
-    if include_derived
-        && !case_sensitive
-        && !handle_lower.is_empty()
-        && handle_lower.contains(query_for_match)
+    if include_derived && !handle_for_match.is_empty() && handle_for_match.contains(query_for_match)
     {
         score += 10;
     }
     if include_derived
-        && !case_sensitive
-        && term_lowers
+        && derived_terms_for_match
             .iter()
-            .any(|term_lower| term_lower.contains(query_for_match))
+            .any(|term| term.contains(query_for_match))
     {
         score += 8;
     }
-    if meta
-        .tags
+    if tag_candidates
         .iter()
-        .any(|tag| contains_search(tag, query_for_match, case_sensitive))
+        .any(|tag| tag.contains(query_for_match))
     {
         score += 5;
     }
-    if !case_sensitive
-        && language_matches_query(
-            meta.language.as_deref(),
-            query_for_match,
-            canonical_query.as_str(),
-        )
-    {
+    if language_matches_query(
+        meta.language.as_deref(),
+        query_for_match,
+        canonical_query.as_str(),
+        case_sensitive,
+    ) {
         score += 2;
     }
-    if include_derived && !case_sensitive && kind_matches_query(meta.derived.kind, query_for_match)
-    {
+    if include_derived && kind_matches_query(meta.derived.kind, query_for_match, case_sensitive) {
         score += 3;
     }
 
@@ -340,36 +358,31 @@ fn score_meta_match_with_options(
     for term in &query_terms {
         let mut term_matched = false;
 
-        if !case_sensitive && name_for_match.contains(*term) {
+        if name_for_match.contains(*term) {
             score += 3;
             term_matched = true;
         }
-        if include_derived
-            && !case_sensitive
-            && !handle_lower.is_empty()
-            && handle_lower.contains(*term)
-        {
+        if include_derived && !handle_for_match.is_empty() && handle_for_match.contains(*term) {
             score += 4;
             term_matched = true;
         }
         if include_derived
-            && !case_sensitive
-            && term_lowers
+            && derived_terms_for_match
                 .iter()
                 .any(|candidate| candidate.contains(*term))
         {
             score += 3;
             term_matched = true;
         }
-        if !case_sensitive && tag_lowers.iter().any(|tag_lower| tag_lower.contains(*term)) {
+        if tag_candidates.iter().any(|tag| tag.contains(*term)) {
             score += 2;
             term_matched = true;
         }
-        if include_derived && !case_sensitive && kind_matches_query(meta.derived.kind, term) {
+        if include_derived && kind_matches_query(meta.derived.kind, term, case_sensitive) {
             score += 1;
             term_matched = true;
         }
-        if !case_sensitive && language_matches_query(meta.language.as_deref(), term, term) {
+        if language_matches_query(meta.language.as_deref(), term, term, case_sensitive) {
             score += 1;
             term_matched = true;
         }
@@ -403,27 +416,35 @@ fn split_meta_query_terms(query_lower: &str) -> Vec<&str> {
 
 fn language_matches_query(
     language: Option<&str>,
-    query_lower: &str,
+    query: &str,
     canonical_query: &str,
+    case_sensitive: bool,
 ) -> bool {
     language
         .map(|lang| {
+            if case_sensitive {
+                return lang.contains(query);
+            }
             let language_lower = lang.to_lowercase();
             let canonical_language = crate::detection::canonical::canonicalize(lang);
-            language_lower.contains(query_lower)
-                || canonical_language.contains(query_lower)
+            language_lower.contains(query)
+                || canonical_language.contains(query)
                 || (!canonical_query.is_empty()
                     && (language_lower == canonical_query || canonical_language == canonical_query))
         })
         .unwrap_or(false)
 }
 
-fn kind_matches_query(kind: PasteKind, query_lower: &str) -> bool {
-    kind != PasteKind::Other
-        && kind
-            .label()
-            .to_ascii_lowercase()
-            .contains(query_lower.trim())
+fn kind_matches_query(kind: PasteKind, query: &str, case_sensitive: bool) -> bool {
+    if kind == PasteKind::Other {
+        return false;
+    }
+    let query = query.trim();
+    if case_sensitive {
+        kind.label().contains(query)
+    } else {
+        kind.label().to_ascii_lowercase().contains(query)
+    }
 }
 
 /// Scores a full paste row for search ranking.
@@ -458,9 +479,10 @@ pub(super) fn score_paste_match(
         query_lower.as_str()
     };
     let content_matches = contains_search(&paste.content, query_for_match, case_sensitive);
-    let meta_score = if content_matches {
+    let meta_score = if content_matches || case_sensitive {
         // Avoid counting the same body hit as both raw content and derived
-        // content terms. Literal metadata still boosts content matches.
+        // content terms. Case-sensitive full-content search also avoids
+        // normalized body-derived terms when the raw body did not match.
         score_literal_meta_match(meta, query, case_sensitive)
     } else {
         score_meta_match(meta, query, case_sensitive)
