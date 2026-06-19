@@ -157,6 +157,12 @@ pub enum CoreEvent {
     },
     /// Response confirming a paste was restored from delete undo.
     PasteRestored { paste: Paste, undo_token: String },
+    /// Restoring a deleted paste from an undo token failed.
+    PasteRestoreFailed {
+        undo_token: String,
+        message: String,
+        retryable: bool,
+    },
     /// Response containing historical version metadata rows for a paste.
     PasteVersionsLoaded { id: String, items: Vec<VersionMeta> },
     /// Response containing a historical version snapshot.

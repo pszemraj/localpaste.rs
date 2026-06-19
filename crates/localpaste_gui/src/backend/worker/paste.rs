@@ -387,11 +387,11 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
 /// - `undo_token`: Token emitted by a prior delete event.
 pub(super) fn handle_restore_deleted_paste(state: &mut WorkerState, undo_token: String) {
     let Some(bundle) = state.pending_deleted_paste_bundle(undo_token.as_str()) else {
-        send_error(
-            &state.evt_tx,
-            CoreErrorSource::Other,
-            "Undo delete expired.".to_string(),
-        );
+        let _ = state.evt_tx.send(CoreEvent::PasteRestoreFailed {
+            undo_token,
+            message: "Undo delete expired.".to_string(),
+            retryable: false,
+        });
         return;
     };
 
@@ -405,11 +405,11 @@ pub(super) fn handle_restore_deleted_paste(state: &mut WorkerState, undo_token: 
         }
         Err(err) => {
             error!("backend restore deleted paste failed: {}", err);
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Undo delete failed: {}", err),
-            );
+            let _ = state.evt_tx.send(CoreEvent::PasteRestoreFailed {
+                undo_token,
+                message: format!("Undo delete failed: {}", err),
+                retryable: true,
+            });
         }
     }
 }

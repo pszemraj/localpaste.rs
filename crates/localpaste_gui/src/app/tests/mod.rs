@@ -313,6 +313,7 @@ fn make_app() -> TestHarness {
         server_used_fallback,
         status: None,
         toasts: VecDeque::with_capacity(TOAST_LIMIT),
+        pending_undo_restore_tokens: HashSet::new(),
         export_result_rx: None,
         save_status: SaveStatus::Saved,
         last_edit_at: None,

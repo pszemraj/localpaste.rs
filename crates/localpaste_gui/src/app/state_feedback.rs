@@ -104,6 +104,9 @@ impl LocalPasteApp {
         if !toast_is_live {
             return;
         }
+        if self.pending_undo_restore_tokens.contains(&undo_token) {
+            return;
+        }
         let sent = self.send_backend_cmd_or_status(
             CoreCmd::RestoreDeletedPaste {
                 undo_token: undo_token.clone(),
@@ -111,14 +114,7 @@ impl LocalPasteApp {
             "Undo delete failed: backend unavailable.",
         );
         if sent {
-            // Consume the visible affordance on dispatch so rapid repeat clicks cannot
-            // enqueue a duplicate restore before the backend ack arrives.
-            self.toasts.retain(|toast| {
-                !matches!(
-                    &toast.action,
-                    Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
-                )
-            });
+            self.pending_undo_restore_tokens.insert(undo_token);
             self.set_status("Restoring deleted paste...");
         }
     }

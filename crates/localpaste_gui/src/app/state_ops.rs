@@ -294,6 +294,7 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteRestored { paste, undo_token } => {
                 let paste_id = paste.id.clone();
+                self.pending_undo_restore_tokens.remove(&undo_token);
                 self.toasts.retain(|toast| {
                     !matches!(
                         &toast.action,
@@ -320,6 +321,22 @@ impl LocalPasteApp {
                 }
                 self.set_status("Restored deleted paste.");
                 self.request_refresh();
+            }
+            CoreEvent::PasteRestoreFailed {
+                undo_token,
+                message,
+                retryable,
+            } => {
+                self.pending_undo_restore_tokens.remove(&undo_token);
+                if !retryable {
+                    self.toasts.retain(|toast| {
+                        !matches!(
+                            &toast.action,
+                            Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
+                        )
+                    });
+                }
+                self.set_status(message);
             }
             CoreEvent::PasteMissing { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);

@@ -558,6 +558,40 @@ mod tests {
     }
 
     #[test]
+    fn expired_restore_emits_nonretryable_restore_failure() {
+        let mut worker = make_state();
+        let token = worker
+            .state
+            .register_deleted_paste_undo(deleted_bundle("alpha"));
+        worker
+            .state
+            .deleted_paste_undo
+            .get_mut(token.as_str())
+            .expect("registered undo")
+            .expires_at = Instant::now() - Duration::from_secs(1);
+
+        paste::handle_restore_deleted_paste(&mut worker.state, token.clone());
+
+        match worker
+            .evt_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("restore failure event")
+        {
+            CoreEvent::PasteRestoreFailed {
+                undo_token,
+                message,
+                retryable,
+            } => {
+                assert_eq!(undo_token, token);
+                assert_eq!(message, "Undo delete expired.");
+                assert!(!retryable);
+            }
+            other => panic!("expected restore failure event, got {:?}", other),
+        }
+        assert!(!worker.state.deleted_paste_undo.contains_key(&token));
+    }
+
+    #[test]
     fn deleted_paste_undo_is_pruned_after_idle_timeout() {
         let mut worker = make_state();
         let token = worker
@@ -604,11 +638,19 @@ mod tests {
             .recv_timeout(Duration::from_millis(200))
             .expect("restore error event")
         {
-            CoreEvent::Error { message, .. } => assert!(
-                message.contains("already exists"),
-                "expected collision error, got: {}",
-                message
-            ),
+            CoreEvent::PasteRestoreFailed {
+                undo_token,
+                message,
+                retryable,
+            } => {
+                assert_eq!(undo_token, token);
+                assert!(retryable);
+                assert!(
+                    message.contains("already exists"),
+                    "expected collision error, got: {}",
+                    message
+                );
+            }
             other => panic!("expected restore error event, got {:?}", other),
         }
         assert!(

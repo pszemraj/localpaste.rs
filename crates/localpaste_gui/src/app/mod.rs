@@ -42,7 +42,7 @@ use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
 use perf_trace::VirtualInputPerfStats;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::ops::Range;
 use std::sync::{mpsc, Arc};
@@ -127,6 +127,7 @@ pub(crate) struct LocalPasteApp {
     server_used_fallback: bool,
     status: Option<StatusMessage>,
     toasts: VecDeque<ToastMessage>,
+    pending_undo_restore_tokens: HashSet<String>,
     export_result_rx: Option<mpsc::Receiver<ExportCompletion>>,
     save_status: SaveStatus,
     last_edit_at: Option<Instant>,
@@ -414,6 +415,7 @@ impl LocalPasteApp {
             server_used_fallback,
             status: None,
             toasts: VecDeque::with_capacity(TOAST_LIMIT),
+            pending_undo_restore_tokens: HashSet::new(),
             export_result_rx: None,
             save_status: SaveStatus::Saved,
             last_edit_at: None,
