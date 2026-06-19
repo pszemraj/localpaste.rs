@@ -243,6 +243,19 @@ pub(super) fn meta_matches_filters(
 /// # Returns
 /// A non-negative score used for top-k ordering.
 pub(super) fn score_meta_match(meta: &PasteMeta, query: &str, case_sensitive: bool) -> i32 {
+    score_meta_match_with_options(meta, query, case_sensitive, true)
+}
+
+fn score_literal_meta_match(meta: &PasteMeta, query: &str, case_sensitive: bool) -> i32 {
+    score_meta_match_with_options(meta, query, case_sensitive, false)
+}
+
+fn score_meta_match_with_options(
+    meta: &PasteMeta,
+    query: &str,
+    case_sensitive: bool,
+    include_derived: bool,
+) -> i32 {
     let query = query.trim();
     if query.is_empty() {
         return 0;
@@ -261,18 +274,24 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query: &str, case_sensitive: bo
     } else {
         meta.name.to_lowercase()
     };
-    let handle_lower = meta
-        .derived
-        .handle
-        .as_deref()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let term_lowers: Vec<String> = meta
-        .derived
-        .terms
-        .iter()
-        .map(|term| term.to_ascii_lowercase())
-        .collect();
+    let handle_lower = if include_derived {
+        meta.derived
+            .handle
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    } else {
+        String::new()
+    };
+    let term_lowers: Vec<String> = if include_derived {
+        meta.derived
+            .terms
+            .iter()
+            .map(|term| term.to_ascii_lowercase())
+            .collect()
+    } else {
+        Vec::new()
+    };
     let tag_lowers: Vec<String> = meta.tags.iter().map(|tag| tag.to_lowercase()).collect();
     let query_terms = split_meta_query_terms(query_lower.as_str());
     let mut matched_query_terms = 0;
@@ -280,10 +299,15 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query: &str, case_sensitive: bo
     if name_for_match.contains(query_for_match) {
         score += 12;
     }
-    if !case_sensitive && !handle_lower.is_empty() && handle_lower.contains(query_for_match) {
+    if include_derived
+        && !case_sensitive
+        && !handle_lower.is_empty()
+        && handle_lower.contains(query_for_match)
+    {
         score += 10;
     }
-    if !case_sensitive
+    if include_derived
+        && !case_sensitive
         && term_lowers
             .iter()
             .any(|term_lower| term_lower.contains(query_for_match))
@@ -306,7 +330,8 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query: &str, case_sensitive: bo
     {
         score += 2;
     }
-    if !case_sensitive && kind_matches_query(meta.derived.kind, query_for_match) {
+    if include_derived && !case_sensitive && kind_matches_query(meta.derived.kind, query_for_match)
+    {
         score += 3;
     }
 
@@ -319,11 +344,16 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query: &str, case_sensitive: bo
             score += 3;
             term_matched = true;
         }
-        if !case_sensitive && !handle_lower.is_empty() && handle_lower.contains(*term) {
+        if include_derived
+            && !case_sensitive
+            && !handle_lower.is_empty()
+            && handle_lower.contains(*term)
+        {
             score += 4;
             term_matched = true;
         }
-        if !case_sensitive
+        if include_derived
+            && !case_sensitive
             && term_lowers
                 .iter()
                 .any(|candidate| candidate.contains(*term))
@@ -335,7 +365,7 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query: &str, case_sensitive: bo
             score += 2;
             term_matched = true;
         }
-        if !case_sensitive && kind_matches_query(meta.derived.kind, term) {
+        if include_derived && !case_sensitive && kind_matches_query(meta.derived.kind, term) {
             score += 1;
             term_matched = true;
         }
@@ -398,16 +428,24 @@ fn kind_matches_query(kind: PasteKind, query_lower: &str) -> bool {
 
 /// Scores a full paste row for search ranking.
 ///
-/// Name and tag matches are weighted above content matches.
+/// Metadata-derived matches are weighted above full-content matches so canonical
+/// search keeps the same retrieval surface as metadata search while adding body
+/// substring hits.
 ///
 /// # Arguments
 /// - `paste`: Paste row to score.
+/// - `meta`: Metadata projection for the same paste.
 /// - `query`: Search query.
 /// - `case_sensitive`: Whether string matching must preserve case.
 ///
 /// # Returns
 /// A non-negative score used for top-k ordering.
-pub(super) fn score_paste_match(paste: &Paste, query: &str, case_sensitive: bool) -> i32 {
+pub(super) fn score_paste_match(
+    paste: &Paste,
+    meta: &PasteMeta,
+    query: &str,
+    case_sensitive: bool,
+) -> i32 {
     let query = query.trim();
     if query.is_empty() {
         return 0;
@@ -419,18 +457,16 @@ pub(super) fn score_paste_match(paste: &Paste, query: &str, case_sensitive: bool
         query_lower = query.to_lowercase();
         query_lower.as_str()
     };
-    let mut score = 0;
-    if contains_search(&paste.name, query_for_match, case_sensitive) {
-        score += 10;
-    }
-    if paste
-        .tags
-        .iter()
-        .any(|tag| contains_search(tag, query_for_match, case_sensitive))
-    {
-        score += 5;
-    }
-    if contains_search(&paste.content, query_for_match, case_sensitive) {
+    let content_matches = contains_search(&paste.content, query_for_match, case_sensitive);
+    let meta_score = if content_matches {
+        // Avoid counting the same body hit as both raw content and derived
+        // content terms. Literal metadata still boosts content matches.
+        score_literal_meta_match(meta, query, case_sensitive)
+    } else {
+        score_meta_match(meta, query, case_sensitive)
+    };
+    let mut score = meta_score.saturating_mul(10);
+    if content_matches {
         score += 1;
     }
     score

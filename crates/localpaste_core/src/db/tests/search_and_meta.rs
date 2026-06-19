@@ -129,6 +129,47 @@ fn paste_search_matches_content_case_insensitively_by_default_and_case_sensitive
 }
 
 #[test]
+fn paste_search_combines_full_content_and_metadata_derived_matches() {
+    let (db, _temp) = setup_test_db();
+    let content_only = Paste::new(
+        "plain exact full body marker only in content".to_string(),
+        "plain-title".to_string(),
+    );
+    let derived_terms = Paste::new(
+        "fsdp2 validation failed after cublaslt retry\nfsdp2 validation repeated\n".to_string(),
+        "silent-forest".to_string(),
+    );
+    let mut language_only = Paste::new("hello world".to_string(), "language-note".to_string());
+    language_only.language = Some("python".to_string());
+    language_only.language_is_manual = true;
+
+    db.pastes.create(&content_only).expect("create content");
+    db.pastes.create(&derived_terms).expect("create derived");
+    db.pastes.create(&language_only).expect("create language");
+
+    let content_results = db
+        .pastes
+        .search("exact full body marker", 10, None, None)
+        .expect("content search");
+    assert_eq!(content_results.len(), 1);
+    assert_eq!(content_results[0].id, content_only.id);
+
+    let derived_results = db
+        .pastes
+        .search("fsdp2 cublaslt", 10, None, None)
+        .expect("derived search");
+    assert_eq!(derived_results.len(), 1);
+    assert_eq!(derived_results[0].id, derived_terms.id);
+
+    let language_results = db
+        .pastes
+        .search("python", 10, None, None)
+        .expect("language search");
+    assert_eq!(language_results.len(), 1);
+    assert_eq!(language_results[0].id, language_only.id);
+}
+
+#[test]
 fn paste_search_meta_uses_persisted_metadata_and_derived_terms() {
     let (db, _temp) = setup_test_db();
 

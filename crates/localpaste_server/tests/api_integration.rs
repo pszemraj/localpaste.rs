@@ -381,6 +381,15 @@ async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
         .await;
     assert_eq!(tagged_response.status_code(), StatusCode::OK);
 
+    let derived_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "fsdp2 validation failed after cublaslt retry\nfsdp2 validation repeated\n",
+            "name": "derived-terms"
+        }))
+        .await;
+    assert_eq!(derived_response.status_code(), StatusCode::OK);
+
     let list_meta_response = server.get("/api/pastes/meta?limit=10").await;
     assert_eq!(list_meta_response.status_code(), StatusCode::OK);
     let list_meta: Vec<serde_json::Value> = list_meta_response.json();
@@ -398,6 +407,13 @@ async fn test_metadata_endpoints_return_meta_and_preserve_search_semantics() {
     assert!(full_results
         .iter()
         .all(|item| item.get("content").is_none() && item.get("content_len").is_some()));
+
+    let derived_search_response = server.get("/api/search?q=fsdp2%20cublaslt").await;
+    assert_eq!(derived_search_response.status_code(), StatusCode::OK);
+    let derived_results: Vec<serde_json::Value> = derived_search_response.json();
+    assert_eq!(derived_results.len(), 1);
+    assert_eq!(derived_results[0]["name"], "derived-terms");
+    assert!(derived_results[0].get("content").is_none());
 
     let meta_search_response = server.get("/api/search/meta?q=needle").await;
     assert_eq!(meta_search_response.status_code(), StatusCode::OK);

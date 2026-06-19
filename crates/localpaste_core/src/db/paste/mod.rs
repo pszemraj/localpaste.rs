@@ -800,9 +800,9 @@ impl PasteDb {
                 continue;
             }
 
-            let score = score_paste_match(&paste, query, options.case_sensitive);
+            let meta = PasteMeta::from(&paste);
+            let score = score_paste_match(&paste, &meta, query, options.case_sensitive);
             if score > 0 {
-                let meta = PasteMeta::from(&paste);
                 push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }
         }

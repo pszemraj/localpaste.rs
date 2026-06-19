@@ -627,15 +627,19 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
 }
 
 #[test]
-fn backend_search_matches_full_content_substrings_without_metadata_match() {
+fn backend_search_matches_full_content_and_derived_metadata() {
     let env = TestEnv::new();
 
     let content_only = Paste::new(
-        "docker postgres exact substring only in content".to_string(),
+        "searchable exact substring only in content".to_string(),
         "plain-title".to_string(),
     );
     let mut metadata_only = Paste::new("plain body".to_string(), "docker compose".to_string());
     metadata_only.tags = vec!["postgres".to_string()];
+    let derived_terms = Paste::new(
+        "fsdp2 validation failed after cublaslt retry\nfsdp2 validation repeated\n".to_string(),
+        "derived-terms".to_string(),
+    );
 
     env.db
         .pastes
@@ -645,12 +649,16 @@ fn backend_search_matches_full_content_substrings_without_metadata_match() {
         .pastes
         .create(&metadata_only)
         .expect("create metadata-only");
+    env.db
+        .pastes
+        .create(&derived_terms)
+        .expect("create derived-terms");
 
     let backend = env.spawn_backend();
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
-            query: "POSTGRES EXACT SUBSTRING".to_string(),
+            query: "SEARCHABLE EXACT SUBSTRING".to_string(),
             limit: 10,
             folder_id: None,
             language: None,
@@ -660,8 +668,27 @@ fn backend_search_matches_full_content_substrings_without_metadata_match() {
     match recv_event(&backend.evt_rx) {
         CoreEvent::SearchResults { query, items, .. } => {
             let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
-            assert_eq!(query, "POSTGRES EXACT SUBSTRING");
+            assert_eq!(query, "SEARCHABLE EXACT SUBSTRING");
             assert_eq!(ids, vec![content_only.id.as_str()]);
+        }
+        other => panic!("unexpected event: {:?}", other),
+    }
+
+    backend
+        .cmd_tx
+        .send(CoreCmd::SearchPastes {
+            query: "fsdp2 cublaslt".to_string(),
+            limit: 10,
+            folder_id: None,
+            language: None,
+        })
+        .expect("send derived search");
+
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::SearchResults { query, items, .. } => {
+            let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+            assert_eq!(query, "fsdp2 cublaslt");
+            assert_eq!(ids, vec![derived_terms.id.as_str()]);
         }
         other => panic!("unexpected event: {:?}", other),
     }
