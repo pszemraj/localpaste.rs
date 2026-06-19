@@ -23,6 +23,7 @@ pub(crate) fn test_config_for_db_path(db_path: &Path) -> Config {
         max_paste_size: 10_000_000,
         auto_save_interval: 2000,
         auto_backup: false,
+        search_case_sensitive: false,
     }
 }
 

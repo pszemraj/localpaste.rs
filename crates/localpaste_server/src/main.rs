@@ -155,6 +155,9 @@ fn print_help() {
     println!(
         "  AUTO_BACKUP       Create backup at startup when DB already exists (1/0/true/false)"
     );
+    println!(
+        "  LOCALPASTE_SEARCH_CASE_SENSITIVE  Preserve case when matching default search queries (1/0/true/false)"
+    );
     println!("  ALLOW_PUBLIC_ACCESS  Allow CORS from any origin");
     println!(
         "  BIND              Override bind address (e.g. 0.0.0.0:{})",
@@ -276,6 +279,7 @@ mod tests {
             max_paste_size: 1024 * 1024,
             auto_save_interval: 500,
             auto_backup: false,
+            search_case_sensitive: false,
         };
 
         run_backup(&config).expect("backup mode should succeed when db file is missing");
@@ -308,6 +312,7 @@ mod tests {
             max_paste_size: 1024 * 1024,
             auto_save_interval: 500,
             auto_backup: false,
+            search_case_sensitive: false,
         };
 
         let err = run_backup(&config).expect_err("legacy layout should fail in backup mode");

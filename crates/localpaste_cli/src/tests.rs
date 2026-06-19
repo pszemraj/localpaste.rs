@@ -331,8 +331,30 @@ fn cli_parses_search_meta_subcommand() {
     let cli = Cli::try_parse_from(["lpaste", "search-meta", "needle"])
         .expect("cli should parse search-meta");
     match cli.command {
-        Commands::SearchMeta { query } => assert_eq!(query, "needle"),
+        Commands::SearchMeta {
+            query,
+            case_sensitive,
+        } => {
+            assert_eq!(query, "needle");
+            assert!(!case_sensitive);
+        }
         _ => panic!("expected search-meta command"),
+    }
+}
+
+#[test]
+fn cli_parses_case_sensitive_search_flags() {
+    let cli = Cli::try_parse_from(["lpaste", "search", "--case-sensitive", "Needle"])
+        .expect("cli should parse case-sensitive search");
+    match cli.command {
+        Commands::Search {
+            query,
+            case_sensitive,
+        } => {
+            assert_eq!(query, "Needle");
+            assert!(case_sensitive);
+        }
+        _ => panic!("expected search command"),
     }
 }
 

@@ -148,20 +148,29 @@ fn search_meta_response(
 ) -> Result<Response, HttpError> {
     let (limit, normalized_folder_id, normalized_language, folder_filter_used) =
         normalize_search_filters_for_query(&query);
+    let options = SearchOptions {
+        case_sensitive: query
+            .case_sensitive
+            .unwrap_or(state.config.search_case_sensitive),
+    };
     let items = match mode {
         SearchMode::Canonical => {
             // Preserve content-match semantics from canonical search while returning
             // metadata rows to avoid large full-content responses.
-            state
-                .db
-                .pastes
-                .search(&query.q, limit, normalized_folder_id, normalized_language)?
+            state.db.pastes.search_with_options(
+                &query.q,
+                limit,
+                normalized_folder_id,
+                normalized_language,
+                options,
+            )?
         }
-        SearchMode::MetaOnly => state.db.pastes.search_meta(
+        SearchMode::MetaOnly => state.db.pastes.search_meta_with_options(
             &query.q,
             limit,
             normalized_folder_id,
             normalized_language,
+            options,
         )?,
     };
     let response =
@@ -630,6 +639,7 @@ mod tests {
                 max_paste_size: 1024 * 1024,
                 auto_save_interval: 500,
                 auto_backup: false,
+                search_case_sensitive: false,
             },
             db,
         );

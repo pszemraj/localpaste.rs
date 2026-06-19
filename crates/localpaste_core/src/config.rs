@@ -20,6 +20,8 @@ pub struct Config {
     pub max_paste_size: usize,
     pub auto_save_interval: u64,
     pub auto_backup: bool,
+    #[serde(default)]
+    pub search_case_sensitive: bool,
 }
 
 /// Expand tilde (~) in paths to the user's home directory
@@ -514,6 +516,7 @@ impl Config {
                 DEFAULT_AUTO_SAVE_INTERVAL_MS,
             ), // 2 seconds
             auto_backup: env_flag_enabled("AUTO_BACKUP"), // Default to false - backups should be explicit
+            search_case_sensitive: env_flag_enabled("LOCALPASTE_SEARCH_CASE_SENSITIVE"),
         }
     }
 
@@ -543,6 +546,10 @@ impl Config {
                 DEFAULT_AUTO_SAVE_INTERVAL_MS,
             )?,
             auto_backup: parse_bool_env_strict("AUTO_BACKUP", false)?,
+            search_case_sensitive: parse_bool_env_strict(
+                "LOCALPASTE_SEARCH_CASE_SENSITIVE",
+                false,
+            )?,
         })
     }
 }
@@ -724,6 +731,25 @@ mod tests {
             let _flag = EnvGuard::set(backup_key, value);
             let config = Config::from_env();
             assert_eq!(config.auto_backup, expected, "value: {value}");
+        }
+    }
+
+    #[test]
+    fn config_search_case_sensitive_obeys_bool_matrix_values() {
+        let _lock = env_lock().lock().expect("env lock");
+        let search_key = "LOCALPASTE_SEARCH_CASE_SENSITIVE";
+        let values = [
+            ("1", true),
+            ("0", false),
+            ("true", true),
+            ("false", false),
+            ("", false),
+        ];
+
+        for (value, expected) in values {
+            let _flag = EnvGuard::set(search_key, value);
+            let config = Config::from_env();
+            assert_eq!(config.search_case_sensitive, expected, "value: {value}");
         }
     }
 

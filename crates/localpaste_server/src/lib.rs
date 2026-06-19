@@ -419,6 +419,7 @@ mod tests {
             max_paste_size: 1024,
             auto_save_interval: 2000,
             auto_backup: false,
+            search_case_sensitive: false,
         };
         let _bind = EnvGuard::set("BIND", "0.0.0.0:4040");
         let resolved = resolve_bind_address(&config, false);
@@ -435,6 +436,7 @@ mod tests {
             max_paste_size: 1024,
             auto_save_interval: 2000,
             auto_backup: false,
+            search_case_sensitive: false,
         };
         let loopback = resolve_bind_address(&config, false);
         assert_eq!(loopback, SocketAddr::from(([127, 0, 0, 1], 4041)));

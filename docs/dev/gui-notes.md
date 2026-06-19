@@ -41,7 +41,7 @@ Navigation/selection contract:
 - Collections scope controls are rendered as smart filters in the sidebar (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) with compact chips and overflow under `...`.
 - Language filtering is rendered in the sidebar under smart filters and always includes an explicit `All languages` clear option.
 - Language filtering stacks with the active smart collection instead of replacing it.
-- Sidebar list refresh and sidebar search run on metadata projections (`name/tags/language/folder`) and do not deserialize full paste content.
+- Sidebar list refresh runs on metadata projections (`name/tags/language/folder`); sidebar search and command-palette paste discovery run full-content substring search and return metadata summaries.
 - Command palette is action-first (`Commands` section first; `Pastes` section is secondary search/open context).
 - Large buffers (`>= 256KB`) intentionally use plain-text rendering.
 - Virtual-editor highlight debounce/staging policy is defined in

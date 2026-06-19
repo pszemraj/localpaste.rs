@@ -65,7 +65,7 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 - 10k pastes by default (configurable with `--count`)
 - weighted content-size distribution (small/medium/large/very large)
 - language-diverse snippets plus folder/tag metadata
-- GUI sidebar list/search path reads metadata/index projections (content loads only on paste open)
+- GUI sidebar list reads metadata/index projections; sidebar search and command-palette paste discovery scan full paste content and return metadata summaries.
 - Sidebar list window is capped by `DEFAULT_LIST_PASTES_LIMIT` (`512`); command palette and search are the global discovery paths.
 
 ## Manual Verification Checklist

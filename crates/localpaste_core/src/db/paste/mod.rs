@@ -752,12 +752,36 @@ impl PasteDb {
         folder_id: Option<String>,
         language: Option<String>,
     ) -> Result<Vec<PasteMeta>, AppError> {
+        self.search_with_options(query, limit, folder_id, language, SearchOptions::default())
+    }
+
+    /// Search canonical paste data with explicit search behavior flags.
+    ///
+    /// # Arguments
+    /// - `query`: Search query string.
+    /// - `limit`: Maximum rows to return.
+    /// - `folder_id`: Optional folder filter.
+    /// - `language`: Optional language filter.
+    /// - `options`: Search behavior flags.
+    ///
+    /// # Returns
+    /// Ranked metadata matches (name/tags/content scoring).
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn search_with_options(
+        &self,
+        query: &str,
+        limit: usize,
+        folder_id: Option<String>,
+        language: Option<String>,
+        options: SearchOptions,
+    ) -> Result<Vec<PasteMeta>, AppError> {
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
 
-        let query_lower = query.to_lowercase();
         let language_filter = normalize_language_filter(language.as_deref());
         let read_txn = self.db.begin_read()?;
         let pastes_table = read_txn.open_table(PASTES)?;
@@ -776,7 +800,7 @@ impl PasteDb {
                 continue;
             }
 
-            let score = score_paste_match(&paste, &query_lower);
+            let score = score_paste_match(&paste, query, options.case_sensitive);
             if score > 0 {
                 let meta = PasteMeta::from(&paste);
                 push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
@@ -806,12 +830,36 @@ impl PasteDb {
         folder_id: Option<String>,
         language: Option<String>,
     ) -> Result<Vec<PasteMeta>, AppError> {
+        self.search_meta_with_options(query, limit, folder_id, language, SearchOptions::default())
+    }
+
+    /// Search metadata-only fields with explicit search behavior flags.
+    ///
+    /// # Arguments
+    /// - `query`: Search query string.
+    /// - `limit`: Maximum rows to return.
+    /// - `folder_id`: Optional folder filter.
+    /// - `language`: Optional language filter.
+    /// - `options`: Search behavior flags.
+    ///
+    /// # Returns
+    /// Ranked metadata matches (name/tags/language scoring).
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn search_meta_with_options(
+        &self,
+        query: &str,
+        limit: usize,
+        folder_id: Option<String>,
+        language: Option<String>,
+        options: SearchOptions,
+    ) -> Result<Vec<PasteMeta>, AppError> {
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
 
-        let query_lower = query.to_lowercase();
         let language_filter = normalize_language_filter(language.as_deref());
         let read_txn = self.db.begin_read()?;
         let meta_table = read_txn.open_table(PASTES_META)?;
@@ -823,7 +871,7 @@ impl PasteDb {
             if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref()) {
                 continue;
             }
-            let score = score_meta_match(&meta, &query_lower);
+            let score = score_meta_match(&meta, query, options.case_sensitive);
             if score > 0 {
                 push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }

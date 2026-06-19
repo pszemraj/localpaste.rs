@@ -151,8 +151,8 @@ impl LocalPasteApp {
                 let requested_revision = self.save_request_revision.take();
                 self.upsert_cached_paste_summary(&paste);
                 if !self.search_query.trim().is_empty() {
-                    // Content saves can update metadata used by metadata-only search
-                    // (language auto-detect, recency ordering), so force redispatch.
+                    // Content saves can update full-content search matches and summary
+                    // metadata, so force redispatch.
                     self.search_last_sent.clear();
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }

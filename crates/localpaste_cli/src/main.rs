@@ -73,11 +73,17 @@ enum Commands {
     },
     /// Search pastes by full content.
     Search {
+        /// Preserve case while matching the search query.
+        #[arg(long)]
+        case_sensitive: bool,
         /// Search query text.
         query: String,
     },
     /// Search persisted metadata only (name, tags, language, derived terms).
     SearchMeta {
+        /// Preserve case while matching the search query.
+        #[arg(long)]
+        case_sensitive: bool,
         /// Search query text.
         query: String,
     },
@@ -162,9 +168,11 @@ enum ApiCommand {
     },
     Search {
         query: String,
+        case_sensitive: bool,
     },
     SearchMeta {
         query: String,
+        case_sensitive: bool,
     },
     Delete {
         id: String,
@@ -206,8 +214,20 @@ fn classify_command(command: Commands) -> Result<ApiCommand, Shell> {
         Commands::New { file, name } => Ok(ApiCommand::New { file, name }),
         Commands::Get { id } => Ok(ApiCommand::Get { id }),
         Commands::List { limit } => Ok(ApiCommand::List { limit }),
-        Commands::Search { query } => Ok(ApiCommand::Search { query }),
-        Commands::SearchMeta { query } => Ok(ApiCommand::SearchMeta { query }),
+        Commands::Search {
+            query,
+            case_sensitive,
+        } => Ok(ApiCommand::Search {
+            query,
+            case_sensitive,
+        }),
+        Commands::SearchMeta {
+            query,
+            case_sensitive,
+        } => Ok(ApiCommand::SearchMeta {
+            query,
+            case_sensitive,
+        }),
         Commands::Delete { id } => Ok(ApiCommand::Delete { id }),
         Commands::Versions { id, limit } => Ok(ApiCommand::Versions { id, limit }),
         Commands::GetVersion { id, version_id_ms } => {
@@ -838,16 +858,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", output);
             }
         }
-        ApiCommand::Search { query } => {
+        ApiCommand::Search {
+            query,
+            case_sensitive,
+        } => {
             let endpoint = api_url_or_exit(&server, "Search", &["api", "search"]);
+            let mut request = client.get(endpoint).query(&[("q", query.as_str())]);
+            if case_sensitive {
+                request = request.query(&[("case_sensitive", "true")]);
+            }
             let request_start = Instant::now();
-            let res = send_or_exit(
-                client.get(endpoint).query(&[("q", query.as_str())]),
-                "Search",
-                source,
-                server.as_str(),
-            )
-            .await;
+            let res = send_or_exit(request, "Search", source, server.as_str()).await;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "Search").await;
 
@@ -867,16 +888,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", output);
             }
         }
-        ApiCommand::SearchMeta { query } => {
+        ApiCommand::SearchMeta {
+            query,
+            case_sensitive,
+        } => {
             let endpoint = api_url_or_exit(&server, "Search metadata", &["api", "search", "meta"]);
+            let mut request = client.get(endpoint).query(&[("q", query.as_str())]);
+            if case_sensitive {
+                request = request.query(&[("case_sensitive", "true")]);
+            }
             let request_start = Instant::now();
-            let res = send_or_exit(
-                client.get(endpoint).query(&[("q", query.as_str())]),
-                "Search metadata",
-                source,
-                server.as_str(),
-            )
-            .await;
+            let res = send_or_exit(request, "Search metadata", source, server.as_str()).await;
             let request_elapsed = request_start.elapsed();
             let res = ensure_success_or_exit(res, "Search metadata").await;
 

@@ -1,7 +1,8 @@
-//! Metadata list/search command handlers and short-lived cache for the GUI backend worker.
+//! Metadata list and full-content search command handlers for the GUI backend worker.
 
 use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent, PasteSummary};
+use localpaste_core::models::paste::SearchOptions;
 use std::time::{Duration, Instant};
 use tracing::{error, info};
 
@@ -17,6 +18,7 @@ struct SearchCacheKey {
     limit: usize,
     folder_id: Option<String>,
     language: Option<String>,
+    case_sensitive: bool,
 }
 
 #[derive(Debug, Default)]
@@ -198,10 +200,14 @@ fn handle_search_variant<E>(
         limit,
         folder_id: folder_id.clone(),
         language: language.clone(),
+        case_sensitive: state.search_case_sensitive,
     };
     let query_for_fetch = query.clone();
     let folder_for_fetch = folder_id.clone();
     let language_for_fetch = language.clone();
+    let options = SearchOptions {
+        case_sensitive: state.search_case_sensitive,
+    };
     run_cached_search(
         state,
         key,
@@ -211,11 +217,12 @@ fn handle_search_variant<E>(
             worker
                 .db
                 .pastes
-                .search_meta(
+                .search_with_options(
                     &query_for_fetch,
                     limit,
                     folder_for_fetch,
                     language_for_fetch,
+                    options,
                 )
                 .map(|metas| metas.iter().map(PasteSummary::from_meta).collect())
                 .map_err(|err| err.to_string())
@@ -294,7 +301,7 @@ pub(super) fn handle_list_pastes(state: &mut WorkerState, limit: usize, folder_i
     }
 }
 
-/// Runs a metadata search and emits standard or palette search result events.
+/// Runs full-content search and emits standard or palette search result events.
 ///
 /// # Arguments
 /// - `state`: Worker state containing db/cache/event handles.

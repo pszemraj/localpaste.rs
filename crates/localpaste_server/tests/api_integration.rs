@@ -238,12 +238,13 @@ async fn test_paste_with_folder() {
 async fn test_paste_search() {
     let (server, _temp, _locks) = setup_test_server();
 
-    // Create multiple pastes
+    // Create multiple pastes. The first query only appears in content so this
+    // fails if canonical search regresses to metadata-only matching.
     server
         .post("/api/paste")
         .json(&json!({
             "content": "Rust is awesome",
-            "name": "rust-paste"
+            "name": "language-note"
         }))
         .await;
 
@@ -263,15 +264,25 @@ async fn test_paste_search() {
         }))
         .await;
 
-    // Search for "rust"
     let search_response = server.get("/api/search?q=rust").await;
 
     assert_eq!(search_response.status_code(), StatusCode::OK);
     assert_meta_only_shape_header(&search_response);
     let results: Vec<serde_json::Value> = search_response.json();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0]["name"], "rust-paste");
+    assert_eq!(results[0]["name"], "language-note");
     assert!(results[0].get("content").is_none());
+
+    let case_sensitive_mismatch = server.get("/api/search?q=rust&case_sensitive=true").await;
+    assert_eq!(case_sensitive_mismatch.status_code(), StatusCode::OK);
+    let case_sensitive_mismatch_results: Vec<serde_json::Value> = case_sensitive_mismatch.json();
+    assert!(case_sensitive_mismatch_results.is_empty());
+
+    let case_sensitive_match = server.get("/api/search?q=Rust&case_sensitive=true").await;
+    assert_eq!(case_sensitive_match.status_code(), StatusCode::OK);
+    let case_sensitive_match_results: Vec<serde_json::Value> = case_sensitive_match.json();
+    assert_eq!(case_sensitive_match_results.len(), 1);
+    assert_eq!(case_sensitive_match_results[0]["name"], "language-note");
 }
 
 #[tokio::test]
@@ -499,6 +510,7 @@ async fn test_max_paste_size_allows_exact_content_limit_with_json_overhead() {
         max_paste_size: 20_000,
         auto_save_interval: 2000,
         auto_backup: false,
+        search_case_sensitive: false,
     };
     let (server, _locks) = test_server_for_config(config);
 

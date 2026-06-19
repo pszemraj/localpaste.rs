@@ -237,19 +237,30 @@ pub(super) fn meta_matches_filters(
 ///
 /// # Arguments
 /// - `meta`: Metadata row to score.
-/// - `query_lower`: Lowercased search query.
+/// - `query`: Search query.
+/// - `case_sensitive`: Whether string matching must preserve case.
 ///
 /// # Returns
 /// A non-negative score used for top-k ordering.
-pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
-    let query_lower = query_lower.trim();
-    if query_lower.is_empty() {
+pub(super) fn score_meta_match(meta: &PasteMeta, query: &str, case_sensitive: bool) -> i32 {
+    let query = query.trim();
+    if query.is_empty() {
         return 0;
     }
 
     let mut score = 0;
-    let canonical_query = crate::detection::canonical::canonicalize(query_lower);
-    let name_lower = meta.name.to_lowercase();
+    let query_lower = query.to_lowercase();
+    let query_for_match = if case_sensitive {
+        query
+    } else {
+        query_lower.as_str()
+    };
+    let canonical_query = crate::detection::canonical::canonicalize(query_lower.as_str());
+    let name_for_match = if case_sensitive {
+        meta.name.as_str().to_string()
+    } else {
+        meta.name.to_lowercase()
+    };
     let handle_lower = meta
         .derived
         .handle
@@ -263,67 +274,72 @@ pub(super) fn score_meta_match(meta: &PasteMeta, query_lower: &str) -> i32 {
         .map(|term| term.to_ascii_lowercase())
         .collect();
     let tag_lowers: Vec<String> = meta.tags.iter().map(|tag| tag.to_lowercase()).collect();
-    let query_terms = split_meta_query_terms(query_lower);
+    let query_terms = split_meta_query_terms(query_lower.as_str());
     let mut matched_query_terms = 0;
 
-    if name_lower.contains(query_lower) {
+    if name_for_match.contains(query_for_match) {
         score += 12;
     }
-    if !handle_lower.is_empty() && handle_lower.contains(query_lower) {
+    if !case_sensitive && !handle_lower.is_empty() && handle_lower.contains(query_for_match) {
         score += 10;
     }
-    if term_lowers
-        .iter()
-        .any(|term_lower| term_lower.contains(query_lower))
+    if !case_sensitive
+        && term_lowers
+            .iter()
+            .any(|term_lower| term_lower.contains(query_for_match))
     {
         score += 8;
     }
-    if tag_lowers
+    if meta
+        .tags
         .iter()
-        .any(|tag_lower| tag_lower.contains(query_lower))
+        .any(|tag| contains_search(tag, query_for_match, case_sensitive))
     {
         score += 5;
     }
-    if language_matches_query(
-        meta.language.as_deref(),
-        query_lower,
-        canonical_query.as_str(),
-    ) {
+    if !case_sensitive
+        && language_matches_query(
+            meta.language.as_deref(),
+            query_for_match,
+            canonical_query.as_str(),
+        )
+    {
         score += 2;
     }
-    if kind_matches_query(meta.derived.kind, query_lower) {
+    if !case_sensitive && kind_matches_query(meta.derived.kind, query_for_match) {
         score += 3;
     }
 
-    // Search stays metadata-only, but persisted derived semantic hints make
-    // multi-term retrieval useful without scanning full content in hot paths.
+    // Metadata search still uses derived semantic hints so multi-term retrieval
+    // stays useful without scanning full content in hot paths.
     for term in &query_terms {
         let mut term_matched = false;
 
-        if name_lower.contains(*term) {
+        if !case_sensitive && name_for_match.contains(*term) {
             score += 3;
             term_matched = true;
         }
-        if !handle_lower.is_empty() && handle_lower.contains(*term) {
+        if !case_sensitive && !handle_lower.is_empty() && handle_lower.contains(*term) {
             score += 4;
             term_matched = true;
         }
-        if term_lowers
-            .iter()
-            .any(|candidate| candidate.contains(*term))
+        if !case_sensitive
+            && term_lowers
+                .iter()
+                .any(|candidate| candidate.contains(*term))
         {
             score += 3;
             term_matched = true;
         }
-        if tag_lowers.iter().any(|tag_lower| tag_lower.contains(*term)) {
+        if !case_sensitive && tag_lowers.iter().any(|tag_lower| tag_lower.contains(*term)) {
             score += 2;
             term_matched = true;
         }
-        if kind_matches_query(meta.derived.kind, term) {
+        if !case_sensitive && kind_matches_query(meta.derived.kind, term) {
             score += 1;
             term_matched = true;
         }
-        if language_matches_query(meta.language.as_deref(), term, term) {
+        if !case_sensitive && language_matches_query(meta.language.as_deref(), term, term) {
             score += 1;
             term_matched = true;
         }
@@ -386,23 +402,35 @@ fn kind_matches_query(kind: PasteKind, query_lower: &str) -> bool {
 ///
 /// # Arguments
 /// - `paste`: Paste row to score.
-/// - `query_lower`: Lowercased search query.
+/// - `query`: Search query.
+/// - `case_sensitive`: Whether string matching must preserve case.
 ///
 /// # Returns
 /// A non-negative score used for top-k ordering.
-pub(super) fn score_paste_match(paste: &Paste, query_lower: &str) -> i32 {
+pub(super) fn score_paste_match(paste: &Paste, query: &str, case_sensitive: bool) -> i32 {
+    let query = query.trim();
+    if query.is_empty() {
+        return 0;
+    }
+    let query_lower;
+    let query_for_match = if case_sensitive {
+        query
+    } else {
+        query_lower = query.to_lowercase();
+        query_lower.as_str()
+    };
     let mut score = 0;
-    if contains_case_insensitive(&paste.name, query_lower) {
+    if contains_search(&paste.name, query_for_match, case_sensitive) {
         score += 10;
     }
     if paste
         .tags
         .iter()
-        .any(|tag| contains_case_insensitive(tag, query_lower))
+        .any(|tag| contains_search(tag, query_for_match, case_sensitive))
     {
         score += 5;
     }
-    if contains_case_insensitive(&paste.content, query_lower) {
+    if contains_search(&paste.content, query_for_match, case_sensitive) {
         score += 1;
     }
     score
@@ -493,6 +521,14 @@ fn contains_case_insensitive(haystack: &str, query_lower: &str) -> bool {
         return false;
     }
     haystack.to_lowercase().contains(query_lower)
+}
+
+fn contains_search(haystack: &str, query: &str, case_sensitive: bool) -> bool {
+    if case_sensitive {
+        haystack.contains(query)
+    } else {
+        contains_case_insensitive(haystack, query)
+    }
 }
 
 /// Returns `true` when a paste's current folder assignment matches expectation.
@@ -746,9 +782,9 @@ mod tests {
             ..base
         };
 
-        assert_eq!(score_meta_match(&cs_meta, "csharp"), 2);
-        assert_eq!(score_meta_match(&csharp_meta, "cs"), 3);
-        assert_eq!(score_meta_match(&css_meta, "csharp"), 0);
+        assert_eq!(score_meta_match(&cs_meta, "csharp", false), 2);
+        assert_eq!(score_meta_match(&csharp_meta, "cs", false), 3);
+        assert_eq!(score_meta_match(&css_meta, "csharp", false), 0);
     }
 
     #[test]
@@ -790,10 +826,10 @@ mod tests {
             ..base
         };
 
-        let handle_score = score_meta_match(&by_handle, "cargo test");
-        let term_score = score_meta_match(&by_terms, "cargo test");
-        let tag_score = score_meta_match(&by_tag, "cargo test");
-        let language_score = score_meta_match(&by_language, "test");
+        let handle_score = score_meta_match(&by_handle, "cargo test", false);
+        let term_score = score_meta_match(&by_terms, "cargo test", false);
+        let tag_score = score_meta_match(&by_tag, "cargo test", false);
+        let language_score = score_meta_match(&by_language, "test", false);
 
         assert!(handle_score > term_score);
         assert!(term_score > tag_score);

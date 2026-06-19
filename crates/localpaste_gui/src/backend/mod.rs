@@ -616,20 +616,19 @@ mod tests {
     }
 
     #[test]
-    fn backend_searches_metadata_and_lists_folders() {
+    fn backend_searches_full_content_and_lists_folders() {
         let TestDb { _dir: _guard, db } = setup_db();
         let root = localpaste_core::models::folder::Folder::new("Root".to_string());
         db.folders.create(&root).expect("create folder");
 
-        // GUI backend search is metadata-only (name/tags/language), not full content.
-        let paste = Paste::new("alpha beta".to_string(), "rust-alpha".to_string());
+        let paste = Paste::new("alpha beta searchable body".into(), "plain-title".into());
         db.pastes.create(&paste).expect("create paste");
 
         let backend = spawn_backend(db, 10 * 1024 * 1024);
         backend
             .cmd_tx
             .send(CoreCmd::SearchPastes {
-                query: "rust".to_string(),
+                query: "SEARCHABLE BODY".to_string(),
                 limit: 10,
                 folder_id: None,
                 language: None,
@@ -638,8 +637,9 @@ mod tests {
 
         match recv_event(&backend.evt_rx) {
             CoreEvent::SearchResults { query, items, .. } => {
-                assert_eq!(query, "rust");
+                assert_eq!(query, "SEARCHABLE BODY");
                 assert_eq!(items.len(), 1);
+                assert_eq!(items[0].name, "plain-title");
             }
             other => panic!("unexpected event: {:?}", other),
         }
@@ -659,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn backend_palette_search_returns_metadata_matches() {
+    fn backend_palette_search_returns_content_matches() {
         let TestDb { _dir: _guard, db } = setup_db();
         db.pastes
             .create(&Paste::new(
@@ -678,16 +678,16 @@ mod tests {
         backend
             .cmd_tx
             .send(CoreCmd::SearchPalette {
-                query: "alpha".to_string(),
+                query: "println!".to_string(),
                 limit: 10,
             })
             .expect("send palette search");
 
         match recv_event(&backend.evt_rx) {
             CoreEvent::PaletteSearchResults { query, items } => {
-                assert_eq!(query, "alpha");
+                assert_eq!(query, "println!");
                 assert_eq!(items.len(), 1);
-                assert_eq!(items[0].name, "alpha-entry");
+                assert_eq!(items[0].name, "beta-entry");
             }
             other => panic!("unexpected event: {:?}", other),
         }

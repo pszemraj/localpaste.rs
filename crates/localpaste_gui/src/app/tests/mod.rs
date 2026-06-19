@@ -246,6 +246,7 @@ fn make_app() -> TestHarness {
         max_paste_size: 10 * 1024 * 1024,
         auto_save_interval: 2000,
         auto_backup: false,
+        search_case_sensitive: false,
     };
     let state = AppState::with_locks(config, server_db, locks.clone());
     let server = EmbeddedServer::start(state, false).expect("server");

@@ -34,6 +34,7 @@ fn test_config(db_path: &str) -> Config {
         max_paste_size: TEST_MAX_PASTE_SIZE,
         auto_save_interval: 2000,
         auto_backup: false,
+        search_case_sensitive: false,
     }
 }
 
@@ -626,42 +627,30 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
 }
 
 #[test]
-fn backend_metadata_search_surfaces_persisted_derived_retrieval_hints() {
+fn backend_search_matches_full_content_substrings_without_metadata_match() {
     let env = TestEnv::new();
 
-    let mut combined = Paste::new("plain body".to_string(), "docker compose".to_string());
-    combined.language = Some("yaml".to_string());
-    combined.language_is_manual = true;
-    combined.tags = vec!["postgres".to_string()];
-
-    let mut partial = Paste::new("plain body".to_string(), "docker".to_string());
-    partial.language = Some("yaml".to_string());
-    partial.language_is_manual = true;
-    partial.tags = vec!["misc".to_string()];
-
-    let mut weak = Paste::new("plain body".to_string(), "plain".to_string());
-    weak.language = Some("yaml".to_string());
-    weak.language_is_manual = true;
-    weak.tags = vec!["postgres".to_string()];
-
-    let derived_only = Paste::new(
-        "docker postgres only in content".to_string(),
-        "plain".to_string(),
+    let content_only = Paste::new(
+        "docker postgres exact substring only in content".to_string(),
+        "plain-title".to_string(),
     );
+    let mut metadata_only = Paste::new("plain body".to_string(), "docker compose".to_string());
+    metadata_only.tags = vec!["postgres".to_string()];
 
-    env.db.pastes.create(&combined).expect("create combined");
-    env.db.pastes.create(&partial).expect("create partial");
-    env.db.pastes.create(&weak).expect("create weak");
     env.db
         .pastes
-        .create(&derived_only)
-        .expect("create derived-only");
+        .create(&content_only)
+        .expect("create content-only");
+    env.db
+        .pastes
+        .create(&metadata_only)
+        .expect("create metadata-only");
 
     let backend = env.spawn_backend();
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
-            query: "docker postgres".to_string(),
+            query: "POSTGRES EXACT SUBSTRING".to_string(),
             limit: 10,
             folder_id: None,
             language: None,
@@ -671,20 +660,8 @@ fn backend_metadata_search_surfaces_persisted_derived_retrieval_hints() {
     match recv_event(&backend.evt_rx) {
         CoreEvent::SearchResults { query, items, .. } => {
             let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
-            assert_eq!(query, "docker postgres");
-            assert_eq!(ids.first().copied(), Some(derived_only.id.as_str()));
-            assert!(
-                ids.iter().position(|id| *id == combined.id.as_str())
-                    < ids.iter().position(|id| *id == partial.id.as_str())
-            );
-            assert!(
-                ids.iter().position(|id| *id == partial.id.as_str())
-                    < ids.iter().position(|id| *id == weak.id.as_str())
-            );
-            assert!(
-                ids.contains(&derived_only.id.as_str()),
-                "backend metadata search should surface persisted derived handle/term matches"
-            );
+            assert_eq!(query, "POSTGRES EXACT SUBSTRING");
+            assert_eq!(ids, vec![content_only.id.as_str()]);
         }
         other => panic!("unexpected event: {:?}", other),
     }

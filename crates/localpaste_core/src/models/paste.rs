@@ -72,6 +72,13 @@ pub struct SearchQuery {
     pub folder_id: Option<String>,
     pub language: Option<String>,
     pub limit: Option<usize>,
+    pub case_sensitive: Option<bool>,
+}
+
+/// Search behavior flags shared by full-content and metadata-only search.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SearchOptions {
+    pub case_sensitive: bool,
 }
 
 /// Query parameters for listing pastes.

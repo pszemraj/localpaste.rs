@@ -82,6 +82,53 @@ fn paste_search_respects_exact_match_and_top_k_ranking() {
 }
 
 #[test]
+fn paste_search_matches_content_case_insensitively_by_default_and_case_sensitively_when_requested()
+{
+    let (db, _temp) = setup_test_db();
+    let paste = Paste::new(
+        "The Basic Substring Needle lives only in content.".to_string(),
+        "plain-title".to_string(),
+    );
+    db.pastes.create(&paste).expect("create");
+
+    let default_results = db
+        .pastes
+        .search("basic substring needle", 10, None, None)
+        .expect("default search");
+    assert_eq!(default_results.len(), 1);
+    assert_eq!(default_results[0].id, paste.id);
+
+    let mismatched_case_results = db
+        .pastes
+        .search_with_options(
+            "basic substring needle",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive search");
+    assert!(mismatched_case_results.is_empty());
+
+    let exact_case_results = db
+        .pastes
+        .search_with_options(
+            "Basic Substring Needle",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive search");
+    assert_eq!(exact_case_results.len(), 1);
+    assert_eq!(exact_case_results[0].id, paste.id);
+}
+
+#[test]
 fn paste_search_meta_uses_persisted_metadata_and_derived_terms() {
     let (db, _temp) = setup_test_db();
 
