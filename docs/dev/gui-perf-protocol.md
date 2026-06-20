@@ -6,8 +6,7 @@ Release-gate evidence and regression checks for GUI perf.
 
 - English-first editor workflows only.
 - Runtime topology for this protocol: the GUI owns the DB lock and runs the embedded API endpoint in-process.
-- Keep exactly one writer process per `DB_PATH` during perf runs
-  (storage contract: [storage.md](../storage.md)).
+- DB ownership rules: [storage.md#operational-expectations](../storage.md#operational-expectations).
 - Detection/highlight behavior definitions, including virtual-editor async debounce/staging policy: [language-detection.md](../language-detection.md).
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
@@ -18,8 +17,7 @@ Release-gate evidence and regression checks for GUI perf.
   - p95 frame time `<= 16 ms` once post-change measurements are captured and reviewed.
   - Until that measurement evidence is captured, keep the current `<= 25 ms` release gate.
 
-> [!IMPORTANT]
-> Reuse of a shared `DB_PATH` with another writer invalidates perf results and can introduce lock contention artifacts.
+Perf runs require an isolated `DB_PATH`; shared writers invalidate the measurements.
 
 ## Automated Test Budget (CI/Headless)
 

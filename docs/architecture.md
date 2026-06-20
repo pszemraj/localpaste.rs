@@ -73,12 +73,7 @@ CLI behavior in this mode:
 3. Binds HTTP listener (`BIND` or loopback default).
 4. Serves API requests until shutdown.
 
-Important invariant:
-
-- Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` concurrently.
-
-> [!IMPORTANT]
-> LocalPaste enforces a single writer per `DB_PATH`. Run GUI and standalone server on separate DB paths when both are needed.
+DB ownership rules for both topologies are in [storage.md#operational-expectations](storage.md#operational-expectations).
 
 ```mermaid
 sequenceDiagram
@@ -115,7 +110,7 @@ Storage layout, projection tables, version-history storage, durability, and comp
 
 ## 4) Consistency Model
 
-redb write transactions are atomic across all opened tables, so LocalPaste now uses:
+redb write transactions are atomic across all opened tables, so LocalPaste uses:
 
 - single-write-transaction mutations for paste/meta/index/folder updates,
 - no metadata fault markers or reconcile state machine,
@@ -231,7 +226,7 @@ Embedded server discovery path:
 - CLI may consume it only when no explicit endpoint override is set.
 - CLI validates:
   - scheme/loopback constraints,
-  - LocalPaste response fingerprint (including `x-localpaste-server` header).
+  - LocalPaste response fingerprint (`x-localpaste-server: 1`).
 
 Relevant code:
 

@@ -18,7 +18,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Replace the GUI's unconditional external-refresh poll with worker-driven invalidation for app-owned writes, keeping a low-frequency fallback only for genuine external writers sharing `DB_PATH`.
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or retired now that owner-lock probing is the preferred path.
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR`).
-- [ ] Plan egui/eframe `0.34+` as a standalone migration with text-layout regression coverage and real Windows cold-start smoke testing; this PR intentionally stops at the `0.33.3` patch line.
+- [ ] Plan egui/eframe `0.34+` as a standalone migration with text-layout regression coverage and real Windows cold-start smoke testing; keep the current dependency line at `0.33.3` until that migration lands.
 - [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](gui-perf-protocol.md)), capture refreshed perf evidence in release notes, and decide gate flip from `p95 <= 25 ms` to `p95 <= 16 ms`.
 - [ ] Enforce key/value identity checks for authoritative paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
 - [ ] Narrow `PasteDb` mutation API so folder assignment changes cannot bypass folder-count transaction paths.
@@ -30,9 +30,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Split history-reset worker failures out from generic `CoreErrorSource::SaveContent` so reset-specific UI transitions and error reporting do not rely on shared save-content handling.
 - [ ] Evaluate code-editor-style smart Home behavior for the virtual editor (first non-whitespace <-> column 0) without regressing platform-native line/document key bindings.
 - [ ] Decide whether sidebar recency grouping should keep the current rolling seven-day `This Week` behavior, switch to local-calendar week semantics, or rename the bucket to `Last 7 Days`.
-- [ ] Define the virtual editor accessibility contract and decide whether to publish a
-  read-only AccessKit text node with caret/selection metadata, or document bespoke
-  editor screen-reader support as out of scope for the current local-tool UX.
+- [ ] Define the virtual editor accessibility contract and decide whether to publish a read-only AccessKit text node with caret/selection metadata, or document bespoke editor screen-reader support as out of scope for the current local-tool UX.
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
 - [ ] Audit current `check-ast-dupes --root crates` likely-dead and visibility-tighten findings, especially core test-support helpers and tooling CLI parser helpers, and either tighten visibility, adjust the heuristic, or document intentional test-only usage.

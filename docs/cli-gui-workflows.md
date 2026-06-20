@@ -37,7 +37,7 @@ $env:LP_SERVER = "http://127.0.0.1:38411"
 lpaste list --limit 20
 ```
 
-Do not run the standalone `localpaste` server and the GUI against the same `DB_PATH` at the same time. Use the GUI's embedded API when you want terminal access to the same local store.
+For terminal access to a GUI-owned store, follow [storage operational expectations](storage.md#operational-expectations).
 
 ## Useful complementary workflows
 

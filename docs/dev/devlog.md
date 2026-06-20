@@ -70,9 +70,9 @@ Runtime contract references:
 - Lock semantics and API `423 Locked` behavior:
   [locking-model.md](locking-model.md)
 
-Day-to-day rule:
+Day-to-day runtime details:
 
-- Keep exactly one writer process per `DB_PATH` during local development and validation.
+- DB ownership rules: [storage.md#operational-expectations](../storage.md#operational-expectations)
 - The GUI polls for out-of-process DB writes every 30 seconds; app-owned mutations refresh immediately.
 
 For editor-mode flags and tracing env vars, see
@@ -245,9 +245,4 @@ used in automation/CI contracts.
 
 ## GUI Release Pipeline
 
-Packaging/release behavior lives in [../release-gui.md](../release-gui.md).
-
-Current workflow-helper regression coverage includes prerelease workspace
-version handling for `release-gui.yml` `current_ref` runs and for
-`verify-gui-packaging.yml` when packaging metadata is derived from
-`[workspace.package].version`.
+Packaging/release behavior: [../release-gui.md](../release-gui.md).

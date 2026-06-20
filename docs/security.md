@@ -32,7 +32,7 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 | `ALLOW_PUBLIC_ACCESS`                         | disabled          | Enable CORS for all origins and allow non-loopback bind               |
 | `MAX_PASTE_SIZE`                              | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend) |
 | `AUTO_BACKUP`                                 | disabled          | Create DB backup on startup when existing DB is present               |
-| `LOCALPASTE_SEARCH_CASE_SENSITIVE`            | disabled          | Preserve case when matching default full-content search queries       |
+| `LOCALPASTE_SEARCH_CASE_SENSITIVE`            | disabled          | Default case-sensitive matching for search endpoints when the request omits `case_sensitive` |
 | `LOCALPASTE_VERSION_INTERVAL_SECS`            | `300`             | Minimum seconds between persisted historical snapshots (`>= 1`)       |
 | `LOCALPASTE_VERSION_RETENTION_LIMIT`          | `200`             | Maximum historical snapshots retained per paste (`1..=100000`)        |
 | `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS`      | unset             | Legacy fallback key for `LOCALPASTE_VERSION_INTERVAL_SECS`            |

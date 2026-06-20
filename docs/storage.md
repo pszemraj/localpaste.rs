@@ -52,4 +52,5 @@ Retention pruning keeps the newest configured snapshot metadata rows and removes
 
 - One writer process per `DB_PATH` at a time.
 - Do not run `localpaste-gui` and standalone `localpaste` concurrently on the same `DB_PATH`.
+- If the GUI owns a DB, use its embedded API for CLI/automation access instead of starting standalone `localpaste` on that path.
 - For isolated local testing, use distinct `DB_PATH` directories.

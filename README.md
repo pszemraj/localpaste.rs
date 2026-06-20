@@ -9,7 +9,7 @@ LocalPaste is for the text that lives between your clipboard, a repo, and a form
 It is local-first by design. The desktop app is the main workspace, backed by an embedded database on your machine. A localhost API and the `lpaste` CLI can use the same store, so terminal capture, scripts, and the GUI can fit into one workflow without sending sensitive material to a cloud pastebin.
 
 > [!WARNING]
-> Keep exactly one writer process per `DB_PATH` (`localpaste-gui` or standalone `localpaste`). If the GUI is open, use its embedded localhost API instead of starting a second standalone server on the same database.
+> Follow the [storage operational expectations](docs/storage.md#operational-expectations) when combining GUI, server, and CLI workflows.
 
 ## Why It Exists
 
