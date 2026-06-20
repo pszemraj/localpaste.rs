@@ -3,11 +3,9 @@
 use crate::db::versioning::decode_version_meta_list;
 use crate::error::AppError;
 use crate::models::paste::*;
-use crate::semantic::{DerivedMeta, PasteKind};
+use crate::semantic::PasteKind;
 use chrono::{DateTime, Utc};
 use redb::ReadableTable;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 
 /// Converts a timestamp into a reverse-sorted key for newest-first indexes.
 ///
@@ -604,16 +602,15 @@ pub(super) fn folder_matches_expected(
     current_folder_id == expected_folder_id
 }
 
-/// Deserializes a [`Paste`] row, with compatibility for legacy serialized rows.
+/// Deserializes a [`Paste`] row from storage bytes.
 ///
 /// # Returns
 /// A decoded [`Paste`] value.
 ///
 /// # Errors
-/// Returns the primary deserialization error when neither current nor legacy
-/// wire formats can be decoded.
+/// Returns a bincode error when the row bytes are malformed or incompatible.
 pub(crate) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
-    deserialize_current_or_legacy::<Paste, LegacyPaste>(bytes, Paste::from)
+    bincode::deserialize(bytes)
 }
 
 /// Deserializes a [`PasteMeta`] row from storage bytes.
@@ -624,174 +621,15 @@ pub(crate) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
 /// # Errors
 /// Returns a bincode error when the row bytes are malformed or incompatible.
 pub(super) fn deserialize_meta(bytes: &[u8]) -> Result<PasteMeta, bincode::Error> {
-    deserialize_current_or_legacy::<PasteMeta, LegacyPasteMeta>(bytes, PasteMeta::from)
-}
-
-fn deserialize_current_or_legacy<T, L>(
-    bytes: &[u8],
-    upgrade_legacy: impl FnOnce(L) -> T,
-) -> Result<T, bincode::Error>
-where
-    T: DeserializeOwned,
-    L: DeserializeOwned,
-{
-    bincode::deserialize::<T>(bytes).or_else(|err| {
-        bincode::deserialize::<L>(bytes)
-            .map(upgrade_legacy)
-            .map_err(|_| err)
-    })
-}
-
-#[derive(Serialize, Deserialize)]
-struct LegacyPaste {
-    id: String,
-    name: String,
-    content: String,
-    language: Option<String>,
-    folder_id: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    tags: Vec<String>,
-    is_markdown: bool,
-}
-
-#[derive(Serialize, Deserialize)]
-struct LegacyPasteMeta {
-    id: String,
-    name: String,
-    language: Option<String>,
-    folder_id: Option<String>,
-    updated_at: DateTime<Utc>,
-    tags: Vec<String>,
-    content_len: usize,
-    is_markdown: bool,
-}
-
-impl From<LegacyPaste> for Paste {
-    fn from(old: LegacyPaste) -> Self {
-        let LegacyPaste {
-            id,
-            name,
-            content,
-            language,
-            folder_id,
-            created_at,
-            updated_at,
-            tags,
-            is_markdown,
-        } = old;
-        Self {
-            id,
-            name,
-            content,
-            language,
-            // Legacy rows predate persisted manual intent. Keep migration deterministic
-            // and cheap by defaulting to auto-detect mode instead of re-running detector
-            // logic during deserialization.
-            language_is_manual: false,
-            folder_id,
-            created_at,
-            updated_at,
-            tags,
-            is_markdown,
-        }
-    }
-}
-
-impl From<LegacyPasteMeta> for PasteMeta {
-    fn from(old: LegacyPasteMeta) -> Self {
-        let LegacyPasteMeta {
-            id,
-            name,
-            language,
-            folder_id,
-            updated_at,
-            tags,
-            content_len,
-            is_markdown,
-        } = old;
-        Self {
-            id,
-            name,
-            language,
-            folder_id,
-            updated_at,
-            tags,
-            content_len,
-            is_markdown,
-            derived: DerivedMeta::default(),
-        }
-    }
+    bincode::deserialize(bytes)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_update_request, reverse_timestamp_key, score_meta_match, split_meta_query_terms,
-        DerivedMeta, LegacyPaste, LegacyPasteMeta, Paste, PasteKind,
-    };
-    use crate::models::paste::{PasteMeta, UpdatePasteRequest};
+    use super::{reverse_timestamp_key, score_meta_match, split_meta_query_terms};
+    use crate::models::paste::PasteMeta;
+    use crate::semantic::{DerivedMeta, PasteKind};
     use chrono::{TimeZone, Utc};
-
-    #[test]
-    fn legacy_language_manual_flag_migrates_in_auto_mode() {
-        let legacy_cases = [
-            (
-                "legacy-id",
-                "legacy",
-                "pub fn main() {\n    let x = 1;\n    println!(\"hello\");\n}",
-                Some("rust"),
-            ),
-            ("legacy-id-2", "legacy-2", "fn main() {}", Some("python")),
-        ];
-
-        for (id, name, content, language) in legacy_cases {
-            let legacy = LegacyPaste {
-                id: id.to_string(),
-                name: name.to_string(),
-                content: content.to_string(),
-                language: language.map(str::to_string),
-                folder_id: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                tags: Vec::new(),
-                is_markdown: false,
-            };
-            let migrated: Paste = legacy.into();
-            assert!(!migrated.language_is_manual);
-        }
-    }
-
-    #[test]
-    fn legacy_migrated_language_reclassified_on_first_content_edit() {
-        let legacy = LegacyPaste {
-            id: "legacy-id".to_string(),
-            name: "legacy".to_string(),
-            content: "print('hello')\n".to_string(),
-            language: Some("python".to_string()),
-            folder_id: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            tags: Vec::new(),
-            is_markdown: false,
-        };
-        let mut migrated: Paste = legacy.into();
-        assert!(!migrated.language_is_manual);
-        assert_eq!(migrated.language.as_deref(), Some("python"));
-
-        let update = UpdatePasteRequest {
-            content: Some("fn main() { println!(\"hello\"); }\n".to_string()),
-            name: None,
-            language: None,
-            language_is_manual: None,
-            folder_id: None,
-            tags: None,
-        };
-        apply_update_request(&mut migrated, &update);
-
-        assert_eq!(migrated.language.as_deref(), Some("rust"));
-        assert!(migrated.language_is_manual);
-    }
 
     #[test]
     fn reverse_timestamp_key_clamps_pre_epoch_values() {
@@ -892,24 +730,6 @@ mod tests {
         assert!(handle_score > term_score);
         assert!(term_score > tag_score);
         assert!(tag_score > language_score);
-    }
-
-    #[test]
-    fn deserialize_meta_accepts_legacy_rows_without_derived_fields() {
-        let legacy = LegacyPasteMeta {
-            id: "id".to_string(),
-            name: "legacy".to_string(),
-            language: Some("python".to_string()),
-            folder_id: None,
-            updated_at: Utc::now(),
-            tags: vec!["tag".to_string()],
-            content_len: 8,
-            is_markdown: false,
-        };
-        let encoded = bincode::serialize(&legacy).expect("serialize");
-        let decoded = super::deserialize_meta(&encoded).expect("decode");
-        assert_eq!(decoded.name, "legacy");
-        assert_eq!(decoded.derived, DerivedMeta::default());
     }
 
     #[test]

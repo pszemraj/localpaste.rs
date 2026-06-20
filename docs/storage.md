@@ -34,6 +34,7 @@ Retention pruning keeps the newest configured snapshot metadata rows and removes
 ## Compatibility Policy
 
 - Until stable release, backward compatibility is not required.
+- Pre-stable redb row-shape changes are not migrated; current builds expect current bincode row schemas and may reject older `data.redb` files created by earlier pre-stable builds.
 - This project does not provide a sled-to-redb migration path.
 - Existing sled-era artifacts are considered incompatible with current runtime.
 - If `data.redb` is missing and legacy sled artifacts are present, startup fails with an explicit incompatible-storage error.

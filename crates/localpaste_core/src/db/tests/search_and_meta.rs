@@ -5,7 +5,6 @@ use crate::db::paste::{CURRENT_PASTES_META_SCHEMA_VERSION, META_SCHEMA_VERSION_K
 use crate::db::tables::{PASTES_META, PASTES_META_STATE};
 use chrono::Duration;
 use redb::ReadableDatabase;
-use serde::{Deserialize, Serialize};
 
 #[test]
 fn paste_list_and_list_meta_order_by_updated_and_honor_limit() {
@@ -539,71 +538,6 @@ fn meta_indexes_stay_consistent_after_update_and_delete() {
     db.pastes.delete(&paste_id).expect("delete");
     let metas_after_delete = db.pastes.list_meta(10, None).expect("list");
     assert!(!metas_after_delete.into_iter().any(|m| m.id == paste_id));
-}
-
-#[derive(Serialize, Deserialize)]
-struct LegacyPasteMetaWire {
-    id: String,
-    name: String,
-    language: Option<String>,
-    folder_id: Option<String>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-    tags: Vec<String>,
-    content_len: usize,
-    is_markdown: bool,
-}
-
-#[test]
-fn database_new_rebuilds_legacy_meta_rows_with_derived_fields() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let db_path = temp_dir.path().join("db");
-    let db_path_str = db_path.to_str().expect("db path").to_string();
-
-    let db = open_test_database(&db_path_str);
-    let paste = Paste::new(
-        "cargo test --package trainer\n".to_string(),
-        "legacy-meta".to_string(),
-    );
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).expect("create");
-
-    let legacy_meta = LegacyPasteMetaWire {
-        id: paste_id.clone(),
-        name: paste.name.clone(),
-        language: paste.language.clone(),
-        folder_id: None,
-        updated_at: paste.updated_at,
-        tags: Vec::new(),
-        content_len: paste.content.len(),
-        is_markdown: paste.is_markdown,
-    };
-    let encoded = bincode::serialize(&legacy_meta).expect("serialize");
-    let write_txn = db.db.begin_write().expect("begin write");
-    {
-        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
-        let mut meta_state = write_txn
-            .open_table(PASTES_META_STATE)
-            .expect("open meta state");
-        metas
-            .insert(paste_id.as_str(), encoded.as_slice())
-            .expect("overwrite legacy meta");
-        let _ = meta_state
-            .remove(META_SCHEMA_VERSION_KEY)
-            .expect("remove schema marker");
-    }
-    write_txn.commit().expect("commit");
-    drop(db);
-
-    let reopened = open_test_database(&db_path_str);
-    let meta = reopened
-        .pastes
-        .list_meta(10, None)
-        .expect("list")
-        .into_iter()
-        .find(|meta| meta.id == paste_id)
-        .expect("meta row");
-    assert_eq!(meta.derived.kind, crate::semantic::PasteKind::Code);
-    assert_eq!(meta.derived.handle.as_deref(), Some("cargo test"));
 }
 
 #[test]
