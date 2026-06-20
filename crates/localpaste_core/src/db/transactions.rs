@@ -9,11 +9,12 @@ use super::Database;
 use crate::db::paste::remove_paste_versions_for_delete_capped;
 use crate::db::paste::{
     apply_update_request, deserialize_paste, discard_paste_versions_for_delete,
-    reverse_timestamp_key,
+    prune_and_persist_version_meta, reverse_timestamp_key,
 };
+#[cfg(test)]
+use crate::db::versioning::encode_version_meta_list;
 use crate::db::versioning::{
-    decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
-    prune_version_meta_to_limit, should_record_version,
+    decode_version_meta_list, next_version_meta_for_content, should_record_version,
 };
 use crate::error::AppError;
 use crate::models::folder::Folder;
@@ -626,6 +627,7 @@ impl TransactionOps {
                     .as_ref()
                     .map(|value| value.value()),
             )?;
+            let mut version_meta_dirty = false;
             apply_update_request(&mut paste, &update_req);
             paste.folder_id = new_folder_id.map(ToString::to_string);
             let content_changed = paste.content != old_content;
@@ -646,14 +648,21 @@ impl TransactionOps {
                     versions_content
                         .insert((paste_id, next.version_id_ms), encoded_content.as_slice())?;
                     version_items.insert(0, next);
-                    for pruned in
-                        prune_version_meta_to_limit(&mut version_items, version_retention_limit)
-                    {
-                        let _ = versions_content.remove((paste_id, pruned.version_id_ms))?;
-                    }
-                    let encoded_versions = encode_version_meta_list(&version_items)?;
-                    versions_meta.insert(paste_id, encoded_versions.as_slice())?;
+                    version_meta_dirty = true;
                 }
+            }
+            if version_items.len() > version_retention_limit {
+                version_meta_dirty = true;
+            }
+            if version_meta_dirty {
+                prune_and_persist_version_meta(
+                    &mut versions_meta,
+                    &mut versions_content,
+                    paste_id,
+                    &mut version_items,
+                    version_retention_limit,
+                    None,
+                )?;
             }
 
             persist_paste_with_indexes_and_folder_counts(

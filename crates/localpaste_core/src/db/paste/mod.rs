@@ -12,8 +12,7 @@ use crate::{
     db::{
         tables::*,
         versioning::{
-            decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
-            prune_version_meta_to_limit_preserving, should_record_version,
+            decode_version_meta_list, next_version_meta_for_content, should_record_version,
         },
     },
     error::AppError,
@@ -32,6 +31,7 @@ use self::helpers::{
 };
 
 pub(crate) use self::helpers::discard_paste_versions_for_delete;
+pub(crate) use self::helpers::prune_and_persist_version_meta;
 #[cfg(test)]
 pub(crate) use self::helpers::remove_paste_versions_for_delete_capped;
 pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_timestamp_key};
@@ -346,6 +346,7 @@ impl PasteDb {
             let mut version_items = decode_version_meta_list(
                 versions_meta.get(id)?.as_ref().map(|value| value.value()),
             )?;
+            let mut version_meta_dirty = false;
             apply_update_request(&mut paste, &update);
             let content_changed = paste.content != old_content;
 
@@ -365,16 +366,21 @@ impl PasteDb {
                     versions_content
                         .insert((id, next.version_id_ms), encoded_content.as_slice())?;
                     version_items.insert(0, next);
-                    for pruned in prune_version_meta_to_limit_preserving(
-                        &mut version_items,
-                        self.version_retention_limit(),
-                        protected_version_id_ms,
-                    ) {
-                        let _ = versions_content.remove((id, pruned.version_id_ms))?;
-                    }
-                    let encoded_versions = encode_version_meta_list(&version_items)?;
-                    versions_meta.insert(id, encoded_versions.as_slice())?;
+                    version_meta_dirty = true;
                 }
+            }
+            if version_items.len() > self.version_retention_limit() {
+                version_meta_dirty = true;
+            }
+            if version_meta_dirty {
+                prune_and_persist_version_meta(
+                    &mut versions_meta,
+                    &mut versions_content,
+                    id,
+                    &mut version_items,
+                    self.version_retention_limit(),
+                    protected_version_id_ms,
+                )?;
             }
 
             let encoded_paste = bincode::serialize(&paste)?;

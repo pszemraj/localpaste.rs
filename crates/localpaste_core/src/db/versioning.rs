@@ -114,10 +114,7 @@ pub(crate) fn encode_version_meta_list(items: &[VersionMeta]) -> Result<Vec<u8>,
 ///
 /// # Returns
 /// Metadata rows removed from the retained list.
-pub(crate) fn prune_version_meta_to_limit(
-    items: &mut Vec<VersionMeta>,
-    limit: usize,
-) -> Vec<VersionMeta> {
+fn prune_version_meta_to_limit(items: &mut Vec<VersionMeta>, limit: usize) -> Vec<VersionMeta> {
     if items.len() <= limit {
         Vec::new()
     } else {

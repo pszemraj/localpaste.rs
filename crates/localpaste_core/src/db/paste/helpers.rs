@@ -1,6 +1,8 @@
 //! Helper functions shared by paste storage operations.
 
-use crate::db::versioning::decode_version_meta_list;
+use crate::db::versioning::{
+    decode_version_meta_list, encode_version_meta_list, prune_version_meta_to_limit_preserving,
+};
 use crate::error::AppError;
 use crate::models::paste::*;
 use crate::semantic::PasteKind;
@@ -117,6 +119,41 @@ pub(crate) fn discard_paste_versions_for_delete(
         let _ = versions_content.remove((paste_id, version.version_id_ms))?;
     }
     let _ = versions_meta.remove(paste_id)?;
+    Ok(())
+}
+
+/// Prune version metadata/content rows to the configured retention limit and persist metadata.
+///
+/// # Arguments
+/// - `versions_meta`: Open mutable version metadata table.
+/// - `versions_content`: Open mutable version content table.
+/// - `paste_id`: Paste id whose version rows should be pruned.
+/// - `version_items`: Newest-first version metadata rows to prune in place.
+/// - `retention_limit`: Maximum number of newest snapshots to retain.
+/// - `protected_version_id_ms`: Optional version id that must survive pruning.
+///
+/// # Returns
+/// `Ok(())` after pruned content rows are removed and metadata is persisted.
+///
+/// # Errors
+/// Returns an error when content removal, metadata encoding, or metadata persistence fails.
+pub(crate) fn prune_and_persist_version_meta(
+    versions_meta: &mut redb::Table<&str, &[u8]>,
+    versions_content: &mut redb::Table<(&str, u64), &[u8]>,
+    paste_id: &str,
+    version_items: &mut Vec<VersionMeta>,
+    retention_limit: usize,
+    protected_version_id_ms: Option<u64>,
+) -> Result<(), AppError> {
+    for pruned in prune_version_meta_to_limit_preserving(
+        version_items,
+        retention_limit,
+        protected_version_id_ms,
+    ) {
+        let _ = versions_content.remove((paste_id, pruned.version_id_ms))?;
+    }
+    let encoded_versions = encode_version_meta_list(version_items)?;
+    versions_meta.insert(paste_id, encoded_versions.as_slice())?;
     Ok(())
 }
 

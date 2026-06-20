@@ -14,8 +14,8 @@ pub const DEFAULT_AUTO_SAVE_INTERVAL_MS: u64 = 2_000;
 pub const DEFAULT_PASTE_VERSION_INTERVAL_SECS: u64 = 300;
 /// Default maximum historical snapshots retained per paste.
 pub const DEFAULT_PASTE_VERSION_RETENTION_LIMIT: usize = 200;
-/// Maximum accepted value for historical snapshots retained per paste.
-pub const MAX_PASTE_VERSION_RETENTION_LIMIT: usize = 100_000;
+/// Maximum accepted value for historical snapshots retained per paste under the serialized metadata model.
+pub const MAX_PASTE_VERSION_RETENTION_LIMIT: usize = 1_000;
 
 /// Default list and search limits used by GUI list pagination.
 pub const DEFAULT_LIST_PASTES_LIMIT: usize = 512;

@@ -110,6 +110,223 @@ fn protected_content_update_preserves_reset_target_past_retention_limit() {
 }
 
 #[test]
+fn lowered_retention_limit_prunes_existing_history_on_next_write_without_new_snapshot() {
+    let _lock = env_lock().lock().expect("env lock");
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let db_path_str = db_path.to_str().expect("db path");
+    let paste_id = {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
+        let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "10");
+        let db = with_db_init_test_lock(|| Database::new(db_path_str).expect("db"));
+        let paste = Paste::new("v1".to_string(), "retention-lowered".to_string());
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).expect("create");
+        update_existing_paste(
+            &db,
+            &paste_id,
+            update_request(Some("v2"), None, None, None),
+            "update to v2",
+        );
+        std::thread::sleep(Duration::from_millis(1100));
+        update_existing_paste(
+            &db,
+            &paste_id,
+            update_request(Some("v3"), None, None, None),
+            "update to v3",
+        );
+        std::thread::sleep(Duration::from_millis(1100));
+        update_existing_paste(
+            &db,
+            &paste_id,
+            update_request(Some("v4"), None, None, None),
+            "update to v4",
+        );
+        let versions = db
+            .pastes
+            .list_versions(&paste_id, Some(10))
+            .expect("list seeded versions")
+            .expect("paste exists");
+        assert_eq!(versions.len(), 3);
+        paste_id
+    };
+
+    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "3600");
+    let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
+    let db = with_db_init_test_lock(|| Database::new(db_path_str).expect("reopen db"));
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v5"), None, None, None),
+        "update below interval after lowered limit",
+    );
+
+    let current = db
+        .pastes
+        .get(&paste_id)
+        .expect("load current")
+        .expect("paste exists");
+    assert_eq!(current.content, "v5");
+    let versions = db
+        .pastes
+        .list_versions(&paste_id, Some(10))
+        .expect("list pruned versions")
+        .expect("paste exists");
+    assert_eq!(
+        versions.len(),
+        2,
+        "lowered retention should prune even when no new snapshot is recorded"
+    );
+    let newest = db
+        .pastes
+        .get_version(&paste_id, versions[0].version_id_ms)
+        .expect("load newest retained")
+        .expect("newest retained exists");
+    assert_eq!(newest.content, "v3");
+}
+
+#[test]
+fn lowered_retention_limit_prunes_folder_move_history_without_new_snapshot() {
+    let _lock = env_lock().lock().expect("env lock");
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let db_path_str = db_path.to_str().expect("db path");
+    let (paste_id, old_folder_id, new_folder_id) = {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
+        let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "10");
+        let db = with_db_init_test_lock(|| Database::new(db_path_str).expect("db"));
+
+        let old_folder = Folder::new("old-folder".to_string());
+        let old_folder_id = old_folder.id.clone();
+        db.folders.create(&old_folder).expect("create old");
+
+        let new_folder = Folder::new("new-folder".to_string());
+        let new_folder_id = new_folder.id.clone();
+        db.folders.create(&new_folder).expect("create new");
+
+        let mut paste = Paste::new("v1".to_string(), "name".to_string());
+        paste.folder_id = Some(old_folder_id.clone());
+        let paste_id = paste.id.clone();
+        TransactionOps::create_paste_with_folder(&db, &paste, &old_folder_id).expect("create");
+
+        TransactionOps::move_paste_between_folders(
+            &db,
+            &paste_id,
+            Some(new_folder_id.as_str()),
+            UpdatePasteRequest {
+                content: Some("v2".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(new_folder_id.clone()),
+                tags: None,
+            },
+        )
+        .expect("first move")
+        .expect("paste exists");
+        std::thread::sleep(Duration::from_millis(1100));
+        TransactionOps::move_paste_between_folders(
+            &db,
+            &paste_id,
+            Some(old_folder_id.as_str()),
+            UpdatePasteRequest {
+                content: Some("v3".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(old_folder_id.clone()),
+                tags: None,
+            },
+        )
+        .expect("second move")
+        .expect("paste exists");
+        std::thread::sleep(Duration::from_millis(1100));
+        TransactionOps::move_paste_between_folders(
+            &db,
+            &paste_id,
+            Some(new_folder_id.as_str()),
+            UpdatePasteRequest {
+                content: Some("v4".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: Some(new_folder_id.clone()),
+                tags: None,
+            },
+        )
+        .expect("third move")
+        .expect("paste exists");
+        assert_eq!(
+            db.pastes
+                .list_versions(&paste_id, Some(10))
+                .expect("list seeded versions")
+                .expect("paste exists")
+                .len(),
+            3
+        );
+        (paste_id, old_folder_id, new_folder_id)
+    };
+
+    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "3600");
+    let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
+    let db = with_db_init_test_lock(|| Database::new(db_path_str).expect("reopen db"));
+    TransactionOps::move_paste_between_folders(
+        &db,
+        &paste_id,
+        Some(old_folder_id.as_str()),
+        UpdatePasteRequest {
+            content: Some("v5".to_string()),
+            name: None,
+            language: None,
+            language_is_manual: None,
+            folder_id: Some(old_folder_id.clone()),
+            tags: None,
+        },
+    )
+    .expect("move below interval after lowered limit")
+    .expect("paste exists");
+
+    let versions = db
+        .pastes
+        .list_versions(&paste_id, Some(10))
+        .expect("list pruned versions")
+        .expect("paste exists");
+    assert_eq!(
+        versions.len(),
+        2,
+        "lowered retention should prune during folder moves even when no new snapshot is recorded"
+    );
+    let paste = db
+        .pastes
+        .get(&paste_id)
+        .expect("load current")
+        .expect("paste exists");
+    assert_eq!(paste.content, "v5");
+    assert_eq!(paste.folder_id.as_deref(), Some(old_folder_id.as_str()));
+    assert_eq!(
+        db.folders
+            .get(&old_folder_id)
+            .expect("old folder")
+            .expect("old folder exists")
+            .paste_count,
+        1
+    );
+    assert_eq!(
+        db.folders
+            .get(&new_folder_id)
+            .expect("new folder")
+            .expect("new folder exists")
+            .paste_count,
+        0
+    );
+}
+
+#[test]
+fn retention_max_matches_serialized_metadata_model() {
+    assert_eq!(crate::constants::MAX_PASTE_VERSION_RETENTION_LIMIT, 1_000);
+}
+
+#[test]
 fn save_and_reset_preserves_just_saved_dirty_head_as_recoverable_version() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {

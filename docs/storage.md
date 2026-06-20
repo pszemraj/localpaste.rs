@@ -32,7 +32,7 @@ Content-changing writes may archive the outgoing head content as a historical sn
 
 History reset workflows may temporarily preserve one confirmed reset target in addition to the normal retention limit while saving the current head before the reset. This prevents the selected rollback target from being pruned between user confirmation and the backend reset transaction. GUI reset transactions archive the outgoing head as a recovery snapshot before restoring the selected historical version.
 
-Retention pruning keeps the newest configured snapshot metadata rows and removes older matching `paste_versions_content` rows in the same write transaction that records a new version.
+Retention pruning keeps the newest configured snapshot metadata rows and removes older matching `paste_versions_content` rows in the same write transaction. Writes also prune existing over-limit histories when the configured retention limit was lowered, even when the write does not record a new snapshot.
 
 GUI delete undo moves the paste row and its version rows into `deleted_*` staging tables inside the same write transaction that removes the active rows and updates folder projections. Undo restore moves those rows back into the active tables by token. Expired or overflowed undo tokens are discarded by the GUI backend worker.
 
