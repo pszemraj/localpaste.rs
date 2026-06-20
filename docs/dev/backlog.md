@@ -18,6 +18,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Replace the GUI's unconditional external-refresh poll with worker-driven invalidation for app-owned writes, keeping a low-frequency fallback only for genuine external writers sharing `DB_PATH`.
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or retired now that owner-lock probing is the preferred path.
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR`).
+- [ ] Run native macOS and Linux GUI smoke before merging phase-two UX hardening; cover keyboard ownership, IME `cursor_rect` placement, and cold-start visibility because headless tests stop at the rendering boundary.
 - [ ] Plan egui/eframe `0.34+` as a standalone migration with text-layout regression coverage and real Windows cold-start smoke testing; keep the current dependency line at `0.33.3` until that migration lands.
 - [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](gui-perf-protocol.md)), capture refreshed perf evidence in release notes, and decide gate flip from `p95 <= 25 ms` to `p95 <= 16 ms`.
 - [ ] Enforce key/value identity checks for authoritative paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
