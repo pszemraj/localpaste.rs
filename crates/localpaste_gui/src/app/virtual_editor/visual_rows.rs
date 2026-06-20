@@ -124,9 +124,8 @@ pub(crate) struct VisualRowLayoutCache {
     char_width_bits: u32,
     wrap_cols: usize,
     line_metrics: Vec<LineWrapMetrics>,
-    // Optional per-line row boundaries (`row_start_char` for each visual row +
-    // trailing sentinel end). ASCII-only lines use O(1) arithmetic and store `None`.
-    line_row_boundaries: Vec<Option<Box<[usize]>>>,
+    // Per-line row boundaries (`row_start_char` for each visual row + trailing sentinel end).
+    line_row_boundaries: Vec<Box<[usize]>>,
     row_index: RowFenwick,
     #[cfg(test)]
     row_index_rebuilds: u64,
@@ -537,11 +536,7 @@ impl VisualRowLayoutCache {
                 visual_rows: 1,
                 ascii_only: false,
             });
-        let local_range = if let Some(row_boundaries) = self
-            .line_row_boundaries
-            .get(line)
-            .and_then(|boundaries| boundaries.as_ref())
-        {
+        let local_range = if let Some(row_boundaries) = self.line_row_boundaries.get(line) {
             let max_row = row_boundaries.len().saturating_sub(2);
             let row = row_in_line.min(max_row);
             let start = row_boundaries.get(row).copied().unwrap_or(metrics.chars);
@@ -550,11 +545,6 @@ impl VisualRowLayoutCache {
                 .copied()
                 .unwrap_or(metrics.chars)
                 .max(start);
-            start..end
-        } else if metrics.ascii_only {
-            let cols = self.wrap_cols.max(1);
-            let start = row_in_line.saturating_mul(cols).min(metrics.chars);
-            let end = start.saturating_add(cols).min(metrics.chars);
             start..end
         } else {
             line_row_char_range(
@@ -614,18 +604,11 @@ where
     vec.len() == new_len
 }
 
-fn measure_line(
-    buffer: &RopeBuffer,
-    line: usize,
-    cols: usize,
-) -> (LineWrapMetrics, Option<Box<[usize]>>) {
+fn measure_line(buffer: &RopeBuffer, line: usize, cols: usize) -> (LineWrapMetrics, Box<[usize]>) {
     let chars = buffer.line_len_chars(line);
     let (columns, ascii_only) = measure_line_columns(buffer, line, chars);
     let row_boundaries = measure_line_row_boundaries(buffer, line, chars, cols.max(1));
-    let visual_rows = row_boundaries
-        .as_ref()
-        .map(|boundaries| boundaries.len().saturating_sub(1).max(1))
-        .unwrap_or_else(|| measure_line_visual_rows(buffer, line, chars, cols.max(1)));
+    let visual_rows = row_boundaries.len().saturating_sub(1).max(1);
     (
         LineWrapMetrics {
             chars,
@@ -642,7 +625,7 @@ fn measure_line_row_boundaries(
     line: usize,
     chars: usize,
     cols: usize,
-) -> Option<Box<[usize]>> {
+) -> Box<[usize]> {
     fn is_wrap_break_char(ch: char) -> bool {
         ch.is_whitespace()
             || matches!(
@@ -659,7 +642,7 @@ fn measure_line_row_boundaries(
     }
 
     if chars == 0 {
-        return Some(vec![0usize, 0usize].into_boxed_slice());
+        return vec![0usize, 0usize].into_boxed_slice();
     }
 
     let cols = cols.max(1);
@@ -698,17 +681,7 @@ fn measure_line_row_boundaries(
         }
     }
     row_starts.push(chars);
-    Some(row_starts.into_boxed_slice())
-}
-
-fn measure_line_visual_rows(buffer: &RopeBuffer, line: usize, chars: usize, cols: usize) -> usize {
-    if chars == 0 {
-        return 1;
-    }
-
-    let row_boundaries = measure_line_row_boundaries(buffer, line, chars, cols)
-        .unwrap_or_else(|| vec![0usize, chars].into_boxed_slice());
-    row_boundaries.len().saturating_sub(1).max(1)
+    row_starts.into_boxed_slice()
 }
 
 fn measure_line_columns(buffer: &RopeBuffer, idx: usize, chars: usize) -> (usize, bool) {

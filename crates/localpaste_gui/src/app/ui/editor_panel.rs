@@ -215,9 +215,7 @@ impl LocalPasteApp {
                     // staged/current highlight state so large buffers stay plain.
                     self.clear_highlight_state();
                 }
-                let needs_worker_render = true;
-                let async_mode =
-                    !is_large && (text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES || needs_worker_render);
+                let async_mode = !is_large;
                 let debounce_window = self.highlight_debounce_window(text_len, async_mode);
                 let debounce_active = self
                     .last_edit_at
@@ -277,16 +275,9 @@ impl LocalPasteApp {
                     .as_ref()
                     .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
                     .is_some();
-                // `is_large` and `should_request_highlight` share the same
-                // threshold guard; once large, we force plain rendering and do
-                // not allow context-only highlight fallback.
-                let use_plain = if is_large {
-                    true
-                } else if async_mode {
-                    !(has_context_render || has_staged_context)
-                } else {
-                    debounce_active && !has_render
-                };
+                // Once large, force plain rendering and do not allow
+                // context-only highlight fallback.
+                let use_plain = is_large || !(has_context_render || has_staged_context);
                 if self.highlight_trace_enabled {
                     self.trace_highlight(
                         "frame",
@@ -317,7 +308,7 @@ impl LocalPasteApp {
                         )
                     })
                     .or_else(|| {
-                        if async_mode && !is_large {
+                        if async_mode {
                             highlight_render.as_ref().filter(|render| {
                                 render.matches_context(id.as_str(), &language_hint, theme_key)
                             })

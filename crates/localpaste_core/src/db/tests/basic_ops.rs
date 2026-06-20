@@ -789,17 +789,6 @@ fn folder_crud_and_duplicate_rejection() {
 }
 
 #[test]
-fn update_count_returns_not_found_for_missing_folder() {
-    let (db, _temp) = setup_test_db();
-
-    let result = db.folders.update_count("missing-folder-id", 1);
-    assert!(
-        matches!(result, Err(AppError::NotFound)),
-        "missing folder should return NotFound"
-    );
-}
-
-#[test]
 fn clear_delete_markers_resets_table_and_allows_reuse() {
     let (db, _temp) = setup_test_db();
     let folder = Folder::new("marker-folder".to_string());

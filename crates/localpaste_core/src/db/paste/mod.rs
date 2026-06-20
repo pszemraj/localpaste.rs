@@ -285,27 +285,6 @@ impl PasteDb {
         self.update_inner(id, None, update, Some(protected_version_id_ms))
     }
 
-    /// Update a paste only when current folder id matches `expected_folder_id`.
-    ///
-    /// # Arguments
-    /// - `id`: Paste id to update.
-    /// - `expected_folder_id`: Expected current folder id.
-    /// - `update`: Update payload.
-    ///
-    /// # Returns
-    /// `Ok(Some(paste))` when updated, `Ok(None)` when missing or folder does not match.
-    ///
-    /// # Errors
-    /// Returns an error when storage access or serialization fails.
-    pub fn update_if_folder_matches(
-        &self,
-        id: &str,
-        expected_folder_id: Option<&str>,
-        update: UpdatePasteRequest,
-    ) -> Result<Option<Paste>, AppError> {
-        self.update_inner(id, Some(expected_folder_id), update, None)
-    }
-
     fn update_inner(
         &self,
         id: &str,

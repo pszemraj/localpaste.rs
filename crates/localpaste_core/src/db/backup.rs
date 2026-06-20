@@ -94,10 +94,8 @@ impl BackupManager {
         destination: &redb::WriteTransaction,
         table: redb::TableDefinition<&str, &[u8]>,
     ) -> Result<(), AppError> {
-        let source_table = match source.open_table(table) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
-            Err(err) => return Err(err.into()),
+        let Some(source_table) = Self::open_source_table(source, table)? else {
+            return Ok(());
         };
         let mut destination_table = destination.open_table(table)?;
 
@@ -116,10 +114,8 @@ impl BackupManager {
         destination: &redb::WriteTransaction,
         table: redb::TableDefinition<&str, ()>,
     ) -> Result<(), AppError> {
-        let source_table = match source.open_table(table) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
-            Err(err) => return Err(err.into()),
+        let Some(source_table) = Self::open_source_table(source, table)? else {
+            return Ok(());
         };
         let mut destination_table = destination.open_table(table)?;
 
@@ -136,10 +132,8 @@ impl BackupManager {
         source: &redb::ReadTransaction,
         destination: &redb::WriteTransaction,
     ) -> Result<(), AppError> {
-        let source_table = match source.open_table(PASTES_BY_UPDATED) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
-            Err(err) => return Err(err.into()),
+        let Some(source_table) = Self::open_source_table(source, PASTES_BY_UPDATED)? else {
+            return Ok(());
         };
         let mut destination_table = destination.open_table(PASTES_BY_UPDATED)?;
 
@@ -158,10 +152,8 @@ impl BackupManager {
         destination: &redb::WriteTransaction,
         table: redb::TableDefinition<(&str, u64), &[u8]>,
     ) -> Result<(), AppError> {
-        let source_table = match source.open_table(table) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
-            Err(err) => return Err(err.into()),
+        let Some(source_table) = Self::open_source_table(source, table)? else {
+            return Ok(());
         };
         let mut destination_table = destination.open_table(table)?;
 
@@ -177,6 +169,21 @@ impl BackupManager {
         }
 
         Ok(())
+    }
+
+    fn open_source_table<K, V>(
+        source: &redb::ReadTransaction,
+        table: redb::TableDefinition<K, V>,
+    ) -> Result<Option<redb::ReadOnlyTable<K, V>>, AppError>
+    where
+        K: redb::Key + 'static,
+        V: redb::Value + 'static,
+    {
+        match source.open_table(table) {
+            Ok(table) => Ok(Some(table)),
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
     }
 }
 

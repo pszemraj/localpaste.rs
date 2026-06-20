@@ -234,7 +234,6 @@ const HIGHLIGHT_DEBOUNCE_LARGE: Duration = Duration::from_millis(50);
 const HIGHLIGHT_DEBOUNCE_TINY: Duration = Duration::from_millis(15);
 const HIGHLIGHT_DEBOUNCE_LARGE_BYTES: usize = 64 * 1024;
 const HIGHLIGHT_TINY_EDIT_MAX_CHARS: usize = 4;
-const HIGHLIGHT_DEBOUNCE_MIN_BYTES: usize = 64 * 1024;
 const HIGHLIGHT_APPLY_IDLE: Duration = Duration::from_millis(200);
 const EDITOR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(300);
 const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 8.0;
