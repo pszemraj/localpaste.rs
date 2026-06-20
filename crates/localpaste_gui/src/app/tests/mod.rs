@@ -30,15 +30,38 @@ fn aligned_names(aligned: &[Option<FakeHighlightLine>]) -> Vec<Option<&'static s
 }
 
 fn test_summary(id: &str, name: &str, language: Option<&str>, content_len: usize) -> PasteSummary {
+    test_summary_at(id, name, language, content_len, Utc::now())
+}
+
+fn test_summary_at(
+    id: &str,
+    name: &str,
+    language: Option<&str>,
+    content_len: usize,
+    updated_at: chrono::DateTime<Utc>,
+) -> PasteSummary {
     PasteSummary {
         id: id.to_string(),
         name: name.to_string(),
         language: language.map(ToString::to_string),
         content_len,
-        updated_at: Utc::now(),
+        updated_at,
         folder_id: None,
         tags: Vec::new(),
         derived: Default::default(),
+    }
+}
+
+fn test_summary_with_folder(
+    id: &str,
+    name: &str,
+    language: Option<&str>,
+    content_len: usize,
+    folder_id: &str,
+) -> PasteSummary {
+    PasteSummary {
+        folder_id: Some(folder_id.to_string()),
+        ..test_summary(id, name, language, content_len)
     }
 }
 

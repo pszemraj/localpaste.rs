@@ -6,29 +6,10 @@ use crate::backend::CoreErrorSource;
 #[test]
 fn paste_meta_saved_refilters_when_selected_paste_leaves_active_scope() {
     let mut harness = make_app();
-    let now = Utc::now();
     harness.app.apply_event(CoreEvent::PasteList {
         items: vec![
-            PasteSummary {
-                id: "alpha".to_string(),
-                name: "Alpha".to_string(),
-                language: Some("rust".to_string()),
-                content_len: 7,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
-            PasteSummary {
-                id: "beta".to_string(),
-                name: "Beta".to_string(),
-                language: Some("rust".to_string()),
-                content_len: 7,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
+            test_summary("alpha", "Alpha", Some("rust"), 7),
+            test_summary("beta", "Beta", Some("rust"), 7),
         ],
     });
     harness
@@ -232,16 +213,7 @@ fn metadata_save_ack_updates_visible_search_row_before_backend_redispatch() {
     let mut harness = make_app();
     harness.app.search_query = "alpha".to_string();
     harness.app.search_last_sent = "alpha".to_string();
-    harness.app.pastes = vec![PasteSummary {
-        id: "alpha".to_string(),
-        name: "Alpha".to_string(),
-        language: Some("rust".to_string()),
-        content_len: 7,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    }];
+    harness.app.pastes = vec![test_summary("alpha", "Alpha", Some("rust"), 7)];
     harness.app.all_pastes = harness.app.pastes.clone();
 
     let mut saved = Paste::new("updated body".to_string(), "Alpha-renamed".to_string());

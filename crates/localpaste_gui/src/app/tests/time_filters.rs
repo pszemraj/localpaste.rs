@@ -17,16 +17,7 @@ fn week_collection_uses_local_calendar_cutoff_day() {
         .with_ymd_and_hms(2026, 6, 7, 23, 59, 59)
         .unwrap()
         .with_timezone(&chrono::Utc);
-    let item = |id: &str, updated_at| PasteSummary {
-        id: id.to_string(),
-        name: id.to_string(),
-        language: None,
-        content_len: 0,
-        updated_at,
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
+    let item = |id: &str, updated_at| test_summary_at(id, id, None, 0, updated_at);
 
     assert!(matches_active_filters(
         &item("cutoff", cutoff_day),

@@ -32,27 +32,8 @@ fn search_results_respect_collection_filter() {
     harness.app.set_search_query("rust".to_string());
     harness.app.search_last_sent = "rust".to_string();
 
-    let now = Utc::now();
-    let with_folder = PasteSummary {
-        id: "a".to_string(),
-        name: "with-folder".to_string(),
-        language: Some("rust".to_string()),
-        content_len: 10,
-        updated_at: now,
-        folder_id: Some("folder-1".to_string()),
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
-    let unfiled = PasteSummary {
-        id: "b".to_string(),
-        name: "unfiled".to_string(),
-        language: Some("rust".to_string()),
-        content_len: 10,
-        updated_at: now,
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
+    let with_folder = test_summary_with_folder("a", "with-folder", Some("rust"), 10, "folder-1");
+    let unfiled = test_summary("b", "unfiled", Some("rust"), 10);
 
     harness.app.apply_event(CoreEvent::SearchResults {
         query: "rust".to_string(),
@@ -64,16 +45,7 @@ fn search_results_respect_collection_filter() {
     assert_eq!(harness.app.pastes.len(), 1);
     assert_eq!(harness.app.pastes[0].id, unfiled.id);
 
-    let stale = PasteSummary {
-        id: "stale".to_string(),
-        name: "stale-result".to_string(),
-        language: Some("rust".to_string()),
-        content_len: 2,
-        updated_at: now,
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
+    let stale = test_summary("stale", "stale-result", Some("rust"), 2);
     harness.app.set_search_query(String::new());
     harness.app.apply_event(CoreEvent::SearchResults {
         query: "rust".to_string(),
@@ -105,16 +77,7 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
         other => panic!("unexpected command: {:?}", other),
     }
 
-    let stale = PasteSummary {
-        id: "stale".to_string(),
-        name: "stale-python".to_string(),
-        language: Some("python".to_string()),
-        content_len: 10,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
+    let stale = test_summary("stale", "stale-python", Some("python"), 10);
     harness.app.apply_event(CoreEvent::SearchResults {
         query: "term".to_string(),
         folder_id: None,
@@ -131,16 +94,7 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
         "stale result set must not be applied"
     );
 
-    let fresh = PasteSummary {
-        id: "fresh".to_string(),
-        name: "fresh-rust".to_string(),
-        language: Some("rust".to_string()),
-        content_len: 12,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
+    let fresh = test_summary("fresh", "fresh-rust", Some("rust"), 12);
     harness.app.apply_event(CoreEvent::SearchResults {
         query: "term".to_string(),
         folder_id: None,
@@ -158,33 +112,19 @@ fn selected_paste_summary_prefers_visible_search_result_over_stale_cache() {
     let mut harness = make_app();
     let now = Utc::now();
     harness.app.selected_id = Some("alpha".to_string());
-    harness.app.all_pastes = vec![PasteSummary {
-        id: "alpha".to_string(),
-        name: "Stale".to_string(),
-        language: Some("text".to_string()),
-        content_len: 5,
-        updated_at: now,
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    }];
+    harness.app.all_pastes = vec![test_summary_at("alpha", "Stale", Some("text"), 5, now)];
     harness.app.pastes = harness.app.all_pastes.clone();
     harness.app.set_search_query("alpha".to_string());
     harness.app.search_last_sent = "alpha".to_string();
 
     let fresh = PasteSummary {
-        id: "alpha".to_string(),
-        name: "Fresh".to_string(),
-        language: Some("rust".to_string()),
-        content_len: 9,
-        updated_at: now,
-        folder_id: None,
         tags: vec!["tag".to_string()],
         derived: localpaste_core::semantic::DerivedMeta {
             kind: localpaste_core::semantic::PasteKind::Code,
             handle: Some("cargo test".to_string()),
             terms: vec!["cargo".to_string(), "test".to_string()],
         },
+        ..test_summary_at("alpha", "Fresh", Some("rust"), 9, now)
     };
     harness.app.apply_event(CoreEvent::SearchResults {
         query: "alpha".to_string(),
@@ -206,26 +146,14 @@ fn selected_paste_summary_prefers_visible_search_result_over_stale_cache() {
 fn paste_list_filters_recent_collection() {
     let mut harness = make_app();
     harness.app.set_active_collection(SidebarCollection::Recent);
-    let old = PasteSummary {
-        id: "old".to_string(),
-        name: "old".to_string(),
-        language: None,
-        content_len: 3,
-        updated_at: Utc::now() - chrono::Duration::days(30),
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
-    let fresh = PasteSummary {
-        id: "fresh".to_string(),
-        name: "fresh".to_string(),
-        language: None,
-        content_len: 5,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
+    let old = test_summary_at(
+        "old",
+        "old",
+        None,
+        3,
+        Utc::now() - chrono::Duration::days(30),
+    );
+    let fresh = test_summary("fresh", "fresh", None, 5);
 
     harness.app.apply_event(CoreEvent::PasteList {
         items: vec![old, fresh.clone()],
@@ -237,29 +165,10 @@ fn paste_list_filters_recent_collection() {
 #[test]
 fn paste_saved_reprojects_non_search_results_for_active_language_filter() {
     let mut harness = make_app();
-    let now = Utc::now();
     harness.app.apply_event(CoreEvent::PasteList {
         items: vec![
-            PasteSummary {
-                id: "alpha".to_string(),
-                name: "Alpha".to_string(),
-                language: Some("rust".to_string()),
-                content_len: 7,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
-            PasteSummary {
-                id: "beta".to_string(),
-                name: "Beta".to_string(),
-                language: Some("rust".to_string()),
-                content_len: 7,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
+            test_summary("alpha", "Alpha", Some("rust"), 7),
+            test_summary("beta", "Beta", Some("rust"), 7),
         ],
     });
     harness
@@ -290,44 +199,17 @@ fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
     let mut harness = make_app();
     harness.app.command_palette_open = true;
     harness.app.set_command_palette_query("legacy".to_string());
-    harness.app.all_pastes = vec![PasteSummary {
-        id: "alpha".to_string(),
-        name: "Alpha".to_string(),
-        language: None,
-        content_len: 7,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    }];
+    harness.app.all_pastes = vec![test_summary("alpha", "Alpha", None, 7)];
 
     harness.app.apply_event(CoreEvent::PaletteSearchResults {
         query: "other".to_string(),
-        items: vec![PasteSummary {
-            id: "stale".to_string(),
-            name: "Stale".to_string(),
-            language: None,
-            content_len: 1,
-            updated_at: Utc::now(),
-            folder_id: None,
-            tags: Vec::new(),
-            derived: Default::default(),
-        }],
+        items: vec![test_summary("stale", "Stale", None, 1)],
     });
     assert!(harness.app.palette_search_results.is_empty());
 
     harness.app.apply_event(CoreEvent::PaletteSearchResults {
         query: "legacy".to_string(),
-        items: vec![PasteSummary {
-            id: "old-id".to_string(),
-            name: "Legacy note".to_string(),
-            language: None,
-            content_len: 8,
-            updated_at: Utc::now(),
-            folder_id: None,
-            tags: Vec::new(),
-            derived: Default::default(),
-        }],
+        items: vec![test_summary("old-id", "Legacy note", None, 8)],
     });
 
     assert_eq!(harness.app.palette_search_results.len(), 1);
@@ -554,29 +436,10 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
                     Err(TryRecvError::Empty)
                 ));
 
-                let now = Utc::now();
                 harness.app.apply_event(CoreEvent::PasteList {
                     items: vec![
-                        PasteSummary {
-                            id: "alpha".to_string(),
-                            name: "Alpha".to_string(),
-                            language: None,
-                            content_len: 7,
-                            updated_at: now,
-                            folder_id: None,
-                            tags: Vec::new(),
-                            derived: Default::default(),
-                        },
-                        PasteSummary {
-                            id: "beta".to_string(),
-                            name: "Beta".to_string(),
-                            language: Some("rust".to_string()),
-                            content_len: 4,
-                            updated_at: now,
-                            folder_id: None,
-                            tags: Vec::new(),
-                            derived: Default::default(),
-                        },
+                        test_summary("alpha", "Alpha", None, 7),
+                        test_summary("beta", "Beta", Some("rust"), 4),
                     ],
                 });
                 assert!(
@@ -660,37 +523,16 @@ fn clearing_search_restores_list_even_after_cached_query_was_invalidated() {
     let mut harness = make_app();
     let now = Utc::now();
     harness.app.all_pastes = vec![
-        PasteSummary {
-            id: "alpha".to_string(),
-            name: "Alpha".to_string(),
-            language: Some("rust".to_string()),
-            content_len: 7,
-            updated_at: now,
-            folder_id: None,
-            tags: Vec::new(),
-            derived: Default::default(),
-        },
-        PasteSummary {
-            id: "beta".to_string(),
-            name: "Beta".to_string(),
-            language: Some("rust".to_string()),
-            content_len: 4,
-            updated_at: now,
-            folder_id: None,
-            tags: Vec::new(),
-            derived: Default::default(),
-        },
+        test_summary_at("alpha", "Alpha", Some("rust"), 7, now),
+        test_summary_at("beta", "Beta", Some("rust"), 4, now),
     ];
-    harness.app.pastes = vec![PasteSummary {
-        id: "search-only".to_string(),
-        name: "Search only".to_string(),
-        language: Some("rust".to_string()),
-        content_len: 3,
-        updated_at: now,
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    }];
+    harness.app.pastes = vec![test_summary_at(
+        "search-only",
+        "Search only",
+        Some("rust"),
+        3,
+        now,
+    )];
     harness.app.search_query = "rust".to_string();
     harness.app.search_last_sent.clear();
 
@@ -705,47 +547,10 @@ fn clearing_search_restores_list_even_after_cached_query_was_invalidated() {
 #[test]
 fn language_filter_stacks_with_primary_collection() {
     let mut harness = make_app();
-    let now = Utc::now();
-    let code_rust = PasteSummary {
-        id: "code-rust".to_string(),
-        name: "perf.rs".to_string(),
-        language: Some("rust".to_string()),
-        content_len: 12,
-        updated_at: now,
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
-    let code_python = PasteSummary {
-        id: "code-python".to_string(),
-        name: "script.py".to_string(),
-        language: Some("python".to_string()),
-        content_len: 12,
-        updated_at: now,
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
-    let config_rust = PasteSummary {
-        id: "config-rust".to_string(),
-        name: "config.toml".to_string(),
-        language: Some("toml".to_string()),
-        content_len: 12,
-        updated_at: now,
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
-    let config_yaml = PasteSummary {
-        id: "config-yaml".to_string(),
-        name: "deploy.yaml".to_string(),
-        language: Some("yaml".to_string()),
-        content_len: 12,
-        updated_at: now,
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    };
+    let code_rust = test_summary("code-rust", "perf.rs", Some("rust"), 12);
+    let code_python = test_summary("code-python", "script.py", Some("python"), 12);
+    let config_rust = test_summary("config-rust", "config.toml", Some("toml"), 12);
+    let config_yaml = test_summary("config-yaml", "deploy.yaml", Some("yaml"), 12);
     harness.app.apply_event(CoreEvent::PasteList {
         items: vec![
             code_rust.clone(),
@@ -795,39 +600,11 @@ fn language_filter_input_is_normalized_before_search_dispatch() {
 #[test]
 fn language_filter_options_dedupe_case_variants() {
     let mut harness = make_app();
-    let now = Utc::now();
     harness.app.apply_event(CoreEvent::PasteList {
         items: vec![
-            PasteSummary {
-                id: "a".to_string(),
-                name: "one".to_string(),
-                language: Some("python".to_string()),
-                content_len: 10,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
-            PasteSummary {
-                id: "b".to_string(),
-                name: "two".to_string(),
-                language: Some("Python".to_string()),
-                content_len: 10,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
-            PasteSummary {
-                id: "c".to_string(),
-                name: "three".to_string(),
-                language: Some("  PYTHON  ".to_string()),
-                content_len: 10,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
+            test_summary("a", "one", Some("python"), 10),
+            test_summary("b", "two", Some("Python"), 10),
+            test_summary("c", "three", Some("  PYTHON  "), 10),
         ],
     });
 
@@ -840,29 +617,10 @@ fn language_filter_options_dedupe_case_variants() {
 #[test]
 fn language_filter_aliases_match_in_client_projection() {
     let mut harness = make_app();
-    let now = Utc::now();
     harness.app.apply_event(CoreEvent::PasteList {
         items: vec![
-            PasteSummary {
-                id: "legacy-csharp".to_string(),
-                name: "legacy".to_string(),
-                language: Some("csharp".to_string()),
-                content_len: 10,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
-            PasteSummary {
-                id: "new-cs".to_string(),
-                name: "new".to_string(),
-                language: Some("cs".to_string()),
-                content_len: 10,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
+            test_summary("legacy-csharp", "legacy", Some("csharp"), 10),
+            test_summary("new-cs", "new", Some("cs"), 10),
         ],
     });
 
@@ -880,75 +638,39 @@ fn smart_collections_cover_time_and_heuristic_facets() {
         &mut harness,
         vec![
             PasteSummary {
-                id: "today-log".to_string(),
-                name: "service.log".to_string(),
-                language: Some("text".to_string()),
-                content_len: 15,
-                updated_at: now,
-                folder_id: None,
                 tags: vec!["log".to_string()],
-                derived: Default::default(),
+                ..test_summary_at("today-log", "service.log", Some("text"), 15, now)
             },
             PasteSummary {
-                id: "week-link".to_string(),
-                name: "https://example.com".to_string(),
-                language: None,
-                content_len: 20,
-                updated_at: now - chrono::Duration::days(2),
-                folder_id: None,
                 tags: vec!["bookmark".to_string()],
-                derived: Default::default(),
+                ..test_summary_at(
+                    "week-link",
+                    "https://example.com",
+                    None,
+                    20,
+                    now - chrono::Duration::days(2),
+                )
             },
             PasteSummary {
-                id: "old-config".to_string(),
-                name: "service.toml".to_string(),
-                language: Some("toml".to_string()),
-                content_len: 10,
-                updated_at: now - chrono::Duration::days(40),
-                folder_id: None,
                 tags: vec!["config".to_string()],
-                derived: Default::default(),
+                ..test_summary_at(
+                    "old-config",
+                    "service.toml",
+                    Some("toml"),
+                    10,
+                    now - chrono::Duration::days(40),
+                )
             },
-            PasteSummary {
-                id: "code-command".to_string(),
-                name: "cargo test --workspace".to_string(),
-                language: None,
-                content_len: 30,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
-            PasteSummary {
-                id: "config-compose".to_string(),
-                name: "docker-compose.override.yml".to_string(),
-                language: None,
-                content_len: 30,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
-            PasteSummary {
-                id: "log-stderr".to_string(),
-                name: "panic.stderr".to_string(),
-                language: None,
-                content_len: 30,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
-            PasteSummary {
-                id: "link-url".to_string(),
-                name: "https://example.com/docs".to_string(),
-                language: None,
-                content_len: 30,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
+            test_summary_at("code-command", "cargo test --workspace", None, 30, now),
+            test_summary_at(
+                "config-compose",
+                "docker-compose.override.yml",
+                None,
+                30,
+                now,
+            ),
+            test_summary_at("log-stderr", "panic.stderr", None, 30, now),
+            test_summary_at("link-url", "https://example.com/docs", None, 30, now),
         ],
     );
 

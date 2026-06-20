@@ -297,21 +297,39 @@ fn paste_restored_ack_removes_matching_undo_toast() {
     );
 }
 
-#[test]
-fn undo_delete_retryable_restore_failure_keeps_toast_and_allows_retry() {
+fn undo_toast_exists(app: &LocalPasteApp, token: &str) -> bool {
+    app.toasts.iter().any(|toast| {
+        matches!(
+            &toast.action,
+            Some(ToastAction::UndoDelete { undo_token }) if undo_token == token
+        )
+    })
+}
+
+fn assert_restore_deleted_command(rx: &Receiver<CoreCmd>, expected_token: &str) {
+    match recv_cmd(rx) {
+        CoreCmd::RestoreDeletedPaste { undo_token } => assert_eq!(undo_token, expected_token),
+        other => panic!("expected RestoreDeletedPaste command, got {:?}", other),
+    }
+}
+
+fn app_with_restore_in_flight(token: &str) -> TestHarness {
     let mut harness = make_app();
     harness.app.set_status_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
-            undo_token: "undo-alpha".to_string(),
+            undo_token: token.to_string(),
         },
     );
 
-    harness.app.restore_deleted_paste("undo-alpha".to_string());
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::RestoreDeletedPaste { undo_token } => assert_eq!(undo_token, "undo-alpha"),
-        other => panic!("expected RestoreDeletedPaste command, got {:?}", other),
-    }
+    harness.app.restore_deleted_paste(token.to_string());
+    assert_restore_deleted_command(&harness.cmd_rx, token);
+    harness
+}
+
+#[test]
+fn undo_delete_retryable_restore_failure_keeps_toast_and_allows_retry() {
+    let mut harness = app_with_restore_in_flight("undo-alpha");
 
     harness.app.apply_event(CoreEvent::PasteRestoreFailed {
         undo_token: "undo-alpha".to_string(),
@@ -320,12 +338,7 @@ fn undo_delete_retryable_restore_failure_keeps_toast_and_allows_retry() {
     });
 
     assert!(
-        harness.app.toasts.iter().any(|toast| {
-            matches!(
-                &toast.action,
-                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
-            )
-        }),
+        undo_toast_exists(&harness.app, "undo-alpha"),
         "retryable restore failure should leave the undo affordance available"
     );
     assert!(
@@ -345,30 +358,12 @@ fn undo_delete_retryable_restore_failure_keeps_toast_and_allows_retry() {
     );
 
     harness.app.restore_deleted_paste("undo-alpha".to_string());
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::RestoreDeletedPaste { undo_token } => assert_eq!(undo_token, "undo-alpha"),
-        other => panic!(
-            "expected retry RestoreDeletedPaste command, got {:?}",
-            other
-        ),
-    }
+    assert_restore_deleted_command(&harness.cmd_rx, "undo-alpha");
 }
 
 #[test]
 fn undo_delete_nonretryable_restore_failure_removes_toast() {
-    let mut harness = make_app();
-    harness.app.set_status_with_action(
-        "Paste deleted.",
-        ToastAction::UndoDelete {
-            undo_token: "undo-alpha".to_string(),
-        },
-    );
-
-    harness.app.restore_deleted_paste("undo-alpha".to_string());
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::RestoreDeletedPaste { undo_token } => assert_eq!(undo_token, "undo-alpha"),
-        other => panic!("expected RestoreDeletedPaste command, got {:?}", other),
-    }
+    let mut harness = app_with_restore_in_flight("undo-alpha");
 
     harness.app.apply_event(CoreEvent::PasteRestoreFailed {
         undo_token: "undo-alpha".to_string(),
@@ -377,12 +372,7 @@ fn undo_delete_nonretryable_restore_failure_removes_toast() {
     });
 
     assert!(
-        harness.app.toasts.iter().all(|toast| {
-            !matches!(
-                &toast.action,
-                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
-            )
-        }),
+        !undo_toast_exists(&harness.app, "undo-alpha"),
         "non-retryable restore failure should remove the stale undo affordance"
     );
     harness.app.restore_deleted_paste("undo-alpha".to_string());
@@ -410,12 +400,7 @@ fn undo_delete_send_failure_keeps_retryable_toast() {
     app.restore_deleted_paste("undo-alpha".to_string());
 
     assert!(
-        app.toasts.iter().any(|toast| {
-            matches!(
-                &toast.action,
-                Some(ToastAction::UndoDelete { undo_token }) if undo_token == "undo-alpha"
-            )
-        }),
+        undo_toast_exists(&app, "undo-alpha"),
         "failed dispatch must leave the undo action available for retry"
     );
     assert_eq!(
