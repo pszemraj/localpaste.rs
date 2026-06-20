@@ -11,7 +11,6 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Extract the virtual input-routing/control-flow block from `LocalPasteApp::update` into a dedicated per-frame input pipeline API.
 - [ ] Add CI-friendly perf microbench coverage (list-from-metadata and highlight/layout paths) to catch regressions earlier than manual perf runs.
 - [~] Keep reducing highlight request payload churn: virtual-editor requests now send `Rope` snapshots with worker-side materialization; debounce tuning should be revisited with fresh perf traces.
-- [ ] Evaluate whether `VisualRowLayoutCache::prefix_rows` should move to a tree/indexed structure (Fenwick/segment-like) if million-line workloads become a target; current tail rebuild (`O(lines-after-edit)`) is intentional for simplicity.
 - [~] Avoid full `Vec<HighlightRenderLine>` clone during patch merge (`queue_highlight_patch`) for very large files; one redundant `base.lines.clone()` was removed, but fallback-path `HighlightRender` cloning still needs structural refactor (e.g., base lookup plus move/patch without full render clone).
 - [ ] Investigate worker-side highlight diffing that avoids full line-hash scans for every request (especially tiny edits), while preserving patch correctness and stale-result dropping semantics.
 - [ ] Revisit backend query-cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
@@ -34,7 +33,6 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Define the virtual editor accessibility contract and decide whether to publish a read-only AccessKit text node with caret/selection metadata, or document bespoke editor screen-reader support as out of scope for the current local-tool UX.
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
-- [ ] Audit current `check-ast-dupes --root crates` likely-dead and visibility-tighten findings, especially core test-support helpers and tooling CLI parser helpers, and either tighten visibility, adjust the heuristic, or document intentional test-only usage.
 - [ ] Revisit the remaining `check-ast-dupes --include-tests` near-miss pairs only if a measured cleanup reduces LOC or clarifies behavior: sidebar time-bucket tests cover local-day cutoffs, `localpaste_server/tests/manual_language_create.rs` covers different language-state transitions, and `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` covers distinct cursor semantics.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
 - [ ] Expand `verify-gui-packaging.yml` beyond macOS (at least Linux x64) so packaging script regressions are caught before release-tag runs.

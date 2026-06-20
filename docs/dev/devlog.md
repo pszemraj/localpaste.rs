@@ -50,7 +50,7 @@ cargo build -p localpaste_tools --bin check-ast-dupes --release
 ## Run Matrix
 
 ```bash
-# Rewrite GUI
+# GUI
 cargo run -p localpaste_gui --bin localpaste-gui
 
 # Server

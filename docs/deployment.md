@@ -201,5 +201,4 @@ curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "S
 
 - Prefer explicit `--server`/`LP_SERVER` for deterministic automation.
 - Use `lpaste --no-discovery ...` to disable `.api-addr` discovery.
-- Trust checks, fallback rules, and header verification: [architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust)
-- [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)
+- Discovery trust checks and fallback rules: [architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust)

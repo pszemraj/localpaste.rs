@@ -126,7 +126,6 @@ Current policy constants (virtual editor):
   - tiny edits (`<=4` changed chars, `<=2` touched lines): `15ms`
   - medium edits: `35ms`
   - larger supported buffers (`>=64KB`): `50ms`
-  - async highlighting disabled: `0ms` (synchronous/no debounce path)
 - plain rendering guardrail: `>=256KB` content
 
 Primary implementation:

@@ -43,7 +43,6 @@ Navigation/selection contract:
 - Language filtering stacks with the active smart collection instead of replacing it.
 - Sidebar list refresh runs on metadata projections (`name/tags/language/folder`); sidebar search and command-palette paste discovery run full-content substring search and return metadata summaries.
 - Command palette is action-first (`Commands` section first; `Pastes` section is secondary search/open context).
-- Large buffers (`>= 256KB`) intentionally use plain-text rendering.
 - Virtual-editor highlight debounce/staging policy is defined in
   [language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
 - Language display behavior is explicit: auto + unset -> `auto`; manual + unset -> `plain`.
