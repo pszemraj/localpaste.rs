@@ -1,10 +1,10 @@
 //! Lightweight locally-derived semantic metadata for retrieval.
 
 use crate::detection::canonical::canonicalize;
+use crate::text::{utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-const SAMPLE_MAX_BYTES: usize = 64 * 1024;
 const SAMPLE_MAX_LINES: usize = 256;
 const MAX_TERMS: usize = 4;
 const MAX_HANDLE_CHARS: usize = 48;
@@ -81,11 +81,7 @@ fn sample_prefix(content: &str) -> &str {
         return trimmed;
     }
 
-    let mut end = trimmed.len().min(SAMPLE_MAX_BYTES);
-    while end > 0 && !trimmed.is_char_boundary(end) {
-        end -= 1;
-    }
-    let prefix = &trimmed[..end];
+    let prefix = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
 
     let mut line_end = prefix.len();
     let mut seen = 0usize;
