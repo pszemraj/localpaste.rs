@@ -31,10 +31,10 @@ use self::helpers::{
     score_paste_match,
 };
 
+pub(crate) use self::helpers::discard_paste_versions_for_delete;
+#[cfg(test)]
+pub(crate) use self::helpers::remove_paste_versions_for_delete_capped;
 pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_timestamp_key};
-pub(crate) use self::helpers::{
-    discard_paste_versions_for_delete, remove_paste_versions_for_delete_capped,
-};
 
 /// Accessor for paste-related redb tables.
 pub struct PasteDb {
@@ -84,6 +84,9 @@ impl PasteDb {
         write_txn.open_table(PASTES_BY_UPDATED)?;
         write_txn.open_table(PASTE_VERSIONS_META)?;
         write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
+        write_txn.open_table(DELETED_PASTES)?;
+        write_txn.open_table(DELETED_PASTE_VERSIONS_META)?;
+        write_txn.open_table(DELETED_PASTE_VERSIONS_CONTENT)?;
         write_txn.commit()?;
         Ok(Self {
             db,

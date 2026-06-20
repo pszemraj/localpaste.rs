@@ -5,16 +5,17 @@ mod paste;
 mod query;
 
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, DELETE_UNDO_LIMIT};
+use chrono::Utc;
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
-use localpaste_core::{config::env_flag_enabled, models::paste::DeletedPasteBundle, Database};
+use localpaste_core::{config::env_flag_enabled, db::TransactionOps, Database};
 use localpaste_server::{LockOwnerId, PasteLockManager};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use tracing::warn;
 
 const DELETE_UNDO_TTL: Duration = Duration::from_secs(10);
-const DELETE_UNDO_VERSION_PAYLOAD_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Handle for sending commands to, and receiving events from, the backend worker.
 pub struct BackendHandle {
@@ -139,12 +140,23 @@ struct WorkerState {
 }
 
 struct PendingDeletedPaste {
-    bundle: DeletedPasteBundle,
     expires_at: Instant,
 }
 
 impl WorkerState {
     fn prune_deleted_paste_undo(&mut self) {
+        match TransactionOps::prune_expired_deleted_paste_undo(
+            &self.db,
+            Utc::now().timestamp_millis(),
+        ) {
+            Ok(tokens) => {
+                for token in tokens {
+                    self.deleted_paste_undo.remove(token.as_str());
+                    self.deleted_paste_order.retain(|item| item != &token);
+                }
+            }
+            Err(err) => warn!("failed to prune expired delete undo tombstones: {}", err),
+        }
         let now = Instant::now();
         while let Some(token) = self.deleted_paste_order.front() {
             let expired = self
@@ -157,41 +169,49 @@ impl WorkerState {
             }
             if let Some(token) = self.deleted_paste_order.pop_front() {
                 self.deleted_paste_undo.remove(token.as_str());
+                if let Err(err) = TransactionOps::discard_deleted_paste_undo(&self.db, &token) {
+                    warn!("failed to discard expired delete undo token: {}", err);
+                }
             }
         }
         while self.deleted_paste_order.len() > DELETE_UNDO_LIMIT {
             if let Some(token) = self.deleted_paste_order.pop_front() {
                 self.deleted_paste_undo.remove(token.as_str());
+                if let Err(err) = TransactionOps::discard_deleted_paste_undo(&self.db, &token) {
+                    warn!("failed to discard overflow delete undo token: {}", err);
+                }
             }
         }
     }
 
-    fn register_deleted_paste_undo(&mut self, bundle: DeletedPasteBundle) -> String {
-        self.prune_deleted_paste_undo();
+    fn next_deleted_paste_undo_token(&mut self) -> String {
         self.delete_undo_seq = self.delete_undo_seq.wrapping_add(1);
-        let token = format!("delete-{}", self.delete_undo_seq);
-        self.deleted_paste_order.push_back(token.clone());
-        self.deleted_paste_undo.insert(
-            token.clone(),
-            PendingDeletedPaste {
-                bundle,
-                expires_at: Instant::now() + DELETE_UNDO_TTL,
-            },
-        );
-        self.prune_deleted_paste_undo();
-        token
+        format!(
+            "delete-{}-{}",
+            Utc::now().timestamp_millis(),
+            self.delete_undo_seq
+        )
     }
 
-    fn pending_deleted_paste_bundle(&mut self, token: &str) -> Option<DeletedPasteBundle> {
+    fn register_deleted_paste_undo(&mut self, token: String, expires_at: Instant) {
         self.prune_deleted_paste_undo();
+        self.deleted_paste_order.push_back(token.clone());
         self.deleted_paste_undo
-            .get(token)
-            .map(|pending| pending.bundle.clone())
+            .insert(token, PendingDeletedPaste { expires_at });
+        self.prune_deleted_paste_undo();
+    }
+
+    fn pending_deleted_paste_token(&mut self, token: &str) -> bool {
+        self.prune_deleted_paste_undo();
+        self.deleted_paste_undo.contains_key(token)
     }
 
     fn discard_deleted_paste_undo(&mut self, token: &str) {
         self.deleted_paste_undo.remove(token);
         self.deleted_paste_order.retain(|item| item != token);
+        if let Err(err) = TransactionOps::discard_deleted_paste_undo(&self.db, token) {
+            warn!("failed to discard delete undo token: {}", err);
+        }
     }
 
     fn next_deleted_paste_undo_timeout(&mut self) -> Option<Duration> {
@@ -479,7 +499,7 @@ pub fn spawn_backend_with_locks_and_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use localpaste_core::models::paste::{DeletedPasteBundle, Paste};
+    use localpaste_core::models::paste::Paste;
     use tempfile::TempDir;
 
     struct TestWorkerState {
@@ -512,36 +532,53 @@ mod tests {
         }
     }
 
-    fn deleted_bundle(id: &str) -> DeletedPasteBundle {
+    fn stage_deleted_paste(worker: &mut TestWorkerState, id: &str) -> String {
         let mut paste = Paste::new("content".to_string(), "deleted".to_string());
         paste.id = id.to_string();
-        DeletedPasteBundle {
-            paste,
-            versions: Vec::new(),
+        worker
+            .state
+            .db
+            .pastes
+            .create(&paste)
+            .expect("seed deleted paste");
+        let token = worker.state.next_deleted_paste_undo_token();
+        let expires_at = Instant::now() + DELETE_UNDO_TTL;
+        let expires_at_ms = Utc::now().timestamp_millis() + DELETE_UNDO_TTL.as_millis() as i64;
+        {
+            let guard = TransactionOps::acquire_folder_txn_guard(&worker.state.db).expect("guard");
+            let deleted = TransactionOps::delete_paste_with_folder_staged_undo_locked(
+                &worker.state.db,
+                &guard,
+                id,
+                token.as_str(),
+                expires_at_ms,
+            )
+            .expect("stage deleted paste");
+            assert!(deleted, "paste should exist");
         }
+        worker
+            .state
+            .register_deleted_paste_undo(token.clone(), expires_at);
+        token
     }
 
     #[test]
     fn deleted_paste_undo_token_is_consumed_after_success() {
         let mut worker = make_state();
-        let token = worker
-            .state
-            .register_deleted_paste_undo(deleted_bundle("alpha"));
+        let token = stage_deleted_paste(&mut worker, "alpha");
 
-        assert!(worker.state.pending_deleted_paste_bundle(&token).is_some());
+        assert!(worker.state.pending_deleted_paste_token(&token));
         worker.state.discard_deleted_paste_undo(&token);
         assert!(
-            worker.state.pending_deleted_paste_bundle(&token).is_none(),
-            "a consumed undo token must not restore the same bundle twice"
+            !worker.state.pending_deleted_paste_token(&token),
+            "a consumed undo token must not restore the same tombstone twice"
         );
     }
 
     #[test]
     fn deleted_paste_undo_rejects_expired_token() {
         let mut worker = make_state();
-        let token = worker
-            .state
-            .register_deleted_paste_undo(deleted_bundle("alpha"));
+        let token = stage_deleted_paste(&mut worker, "alpha");
         worker
             .state
             .deleted_paste_undo
@@ -550,19 +587,23 @@ mod tests {
             .expires_at = Instant::now() - Duration::from_secs(1);
 
         assert!(
-            worker.state.pending_deleted_paste_bundle(&token).is_none(),
+            !worker.state.pending_deleted_paste_token(&token),
             "expired undo token should be pruned before restore"
         );
         assert!(!worker.state.deleted_paste_undo.contains_key(&token));
         assert!(!worker.state.deleted_paste_order.contains(&token));
+        assert!(
+            TransactionOps::restore_deleted_paste_by_token(&worker.state.db, &token)
+                .expect("restore lookup")
+                .is_none(),
+            "expired memory token should discard the staged tombstone"
+        );
     }
 
     #[test]
     fn expired_restore_emits_nonretryable_restore_failure() {
         let mut worker = make_state();
-        let token = worker
-            .state
-            .register_deleted_paste_undo(deleted_bundle("alpha"));
+        let token = stage_deleted_paste(&mut worker, "alpha");
         worker
             .state
             .deleted_paste_undo
@@ -594,9 +635,7 @@ mod tests {
     #[test]
     fn deleted_paste_undo_is_pruned_after_idle_timeout() {
         let mut worker = make_state();
-        let token = worker
-            .state
-            .register_deleted_paste_undo(deleted_bundle("alpha"));
+        let token = stage_deleted_paste(&mut worker, "alpha");
         worker
             .state
             .deleted_paste_undo
@@ -614,11 +653,18 @@ mod tests {
         );
         assert!(!worker.state.deleted_paste_undo.contains_key(&token));
         assert!(!worker.state.deleted_paste_order.contains(&token));
+        assert!(
+            TransactionOps::restore_deleted_paste_by_token(&worker.state.db, &token)
+                .expect("restore lookup")
+                .is_none(),
+            "idle pruning should discard the staged tombstone"
+        );
     }
 
     #[test]
     fn failed_restore_keeps_deleted_paste_undo_retryable() {
         let mut worker = make_state();
+        let token = stage_deleted_paste(&mut worker, "alpha");
         let mut existing = Paste::new("live content".to_string(), "live".to_string());
         existing.id = "alpha".to_string();
         worker
@@ -627,9 +673,6 @@ mod tests {
             .pastes
             .create(&existing)
             .expect("seed conflicting paste");
-        let token = worker
-            .state
-            .register_deleted_paste_undo(deleted_bundle("alpha"));
 
         paste::handle_restore_deleted_paste(&mut worker.state, token.clone());
 
@@ -654,8 +697,8 @@ mod tests {
             other => panic!("expected restore error event, got {:?}", other),
         }
         assert!(
-            worker.state.pending_deleted_paste_bundle(&token).is_some(),
-            "failed restore must preserve the undo bundle for retry"
+            worker.state.pending_deleted_paste_token(&token),
+            "failed restore must preserve the undo token for retry"
         );
     }
 }

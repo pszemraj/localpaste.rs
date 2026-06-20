@@ -174,10 +174,7 @@ fn paste_deleted_without_undo_token_has_no_undo_action() {
 
     let toast = harness.app.toasts.back().expect("delete toast");
     assert!(toast.action.is_none());
-    assert_eq!(
-        toast.text.as_str(),
-        "Paste deleted. Undo unavailable for large history."
-    );
+    assert_eq!(toast.text.as_str(), "Paste deleted. Undo unavailable.");
 }
 
 #[test]

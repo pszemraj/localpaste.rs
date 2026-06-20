@@ -20,6 +20,14 @@ pub const PASTE_VERSIONS_META: TableDefinition<&str, &[u8]> =
 /// Per-version snapshot content (`String`, bincode-encoded).
 pub const PASTE_VERSIONS_CONTENT: TableDefinition<(&str, u64), &[u8]> =
     TableDefinition::new("paste_versions_content");
+/// Deleted-paste undo records (`DeletedPasteRecord`, bincode-encoded).
+pub const DELETED_PASTES: TableDefinition<&str, &[u8]> = TableDefinition::new("deleted_pastes");
+/// Deleted-paste version metadata (`Vec<VersionMeta>`, bincode-encoded).
+pub const DELETED_PASTE_VERSIONS_META: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("deleted_paste_versions_meta");
+/// Deleted-paste version content (`String`, bincode-encoded).
+pub const DELETED_PASTE_VERSIONS_CONTENT: TableDefinition<(&str, u64), &[u8]> =
+    TableDefinition::new("deleted_paste_versions_content");
 
 /// Recency index ordered by reverse-millis then id.
 pub const PASTES_BY_UPDATED: TableDefinition<(u64, &str), ()> =

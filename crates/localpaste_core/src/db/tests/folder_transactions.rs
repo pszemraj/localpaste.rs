@@ -654,7 +654,7 @@ fn delete_bundle_restore_preserves_folder_and_versions() {
 }
 
 #[test]
-fn capped_delete_undo_discards_versions_without_bundle_when_payload_exceeds_limit() {
+fn staged_delete_undo_preserves_versions_without_payload_cap() {
     let fixture = setup_folder_move_fixture();
     let db = &fixture.db;
 
@@ -675,13 +675,16 @@ fn capped_delete_undo_discards_versions_without_bundle_when_payload_exceeds_limi
     .expect("update")
     .expect("paste exists");
 
-    let result =
-        TransactionOps::delete_paste_with_folder_undo_limited(db, &fixture.paste_id, Some(0))
-            .expect("delete with capped undo")
-            .expect("paste deleted");
+    let token = "undo-token-alpha";
     assert!(
-        result.undo_bundle.is_none(),
-        "payload over the cap should delete without retaining an undo bundle"
+        TransactionOps::delete_paste_with_folder_staged_undo(
+            db,
+            &fixture.paste_id,
+            token,
+            i64::MAX
+        )
+        .expect("delete with staged undo"),
+        "paste should be staged for undo"
     );
     assert!(db
         .pastes
@@ -697,10 +700,31 @@ fn capped_delete_undo_discards_versions_without_bundle_when_payload_exceeds_limi
         .get(fixture.paste_id.as_str())
         .expect("get versions meta")
         .is_none());
+    drop(versions_meta);
+    drop(read_txn);
+
+    let restored = TransactionOps::restore_deleted_paste_by_token(db, token)
+        .expect("restore staged paste")
+        .expect("staged token exists");
+    assert_eq!(restored.id, fixture.paste_id);
+    assert_eq!(restored.content, "updated");
+
+    let versions = db
+        .pastes
+        .list_versions(&fixture.paste_id, None)
+        .expect("list versions")
+        .expect("versions exist");
+    assert_eq!(versions.len(), 1);
+    let snapshot = db
+        .pastes
+        .get_version(&fixture.paste_id, versions[0].version_id_ms)
+        .expect("get restored version")
+        .expect("version exists");
+    assert_eq!(snapshot.content, "content");
 }
 
 #[test]
-fn capped_delete_undo_discards_incomplete_version_rows_without_bundle() {
+fn staged_delete_undo_fails_atomically_when_version_content_is_missing() {
     let fixture = setup_folder_move_fixture();
     let db = &fixture.db;
 
@@ -739,29 +763,30 @@ fn capped_delete_undo_discards_incomplete_version_rows_without_bundle() {
     }
     write_txn.commit().expect("commit missing content row");
 
-    let result = TransactionOps::delete_paste_with_folder_undo_limited(
+    let err = TransactionOps::delete_paste_with_folder_staged_undo(
         db,
         &fixture.paste_id,
-        Some(usize::MAX),
+        "undo-token-missing-content",
+        i64::MAX,
     )
-    .expect("delete with capped undo")
-    .expect("paste deleted");
+    .expect_err("missing historical content should abort staged delete");
     assert!(
-        result.undo_bundle.is_none(),
-        "incomplete historical content should delete without retaining an undo bundle"
+        err.to_string().contains("Missing version content"),
+        "unexpected staged delete error: {}",
+        err
     );
     assert!(db
         .pastes
         .get(&fixture.paste_id)
         .expect("lookup after delete")
-        .is_none());
+        .is_some());
 
     let folder_after = db
         .folders
         .get(&fixture.old_folder_id)
         .expect("folder")
         .expect("row");
-    assert_eq!(folder_after.paste_count, 0);
+    assert_eq!(folder_after.paste_count, 1);
 
     let read_txn = db.db.begin_read().expect("begin read");
     let versions_meta = read_txn
@@ -770,7 +795,7 @@ fn capped_delete_undo_discards_incomplete_version_rows_without_bundle() {
     assert!(versions_meta
         .get(fixture.paste_id.as_str())
         .expect("get versions meta")
-        .is_none());
+        .is_some());
 }
 
 #[test]

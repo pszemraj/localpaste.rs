@@ -1,4 +1,4 @@
-//! Focused GUI backend tests for bounded delete-undo payloads.
+//! Focused GUI backend tests for durable delete undo staging.
 
 use crossbeam_channel::Receiver;
 use localpaste_core::{
@@ -18,7 +18,7 @@ fn recv_event(rx: &Receiver<CoreEvent>) -> CoreEvent {
 }
 
 #[test]
-fn backend_delete_skips_undo_when_version_history_payload_exceeds_cap() {
+fn backend_delete_returns_undo_when_version_history_payload_exceeds_old_cap() {
     let dir = TempDir::new().expect("temp dir");
     let db_path = dir.path().join("db");
     let db = Database::new(db_path.to_str().expect("db path")).expect("db");
@@ -50,19 +50,42 @@ fn backend_delete_skips_undo_when_version_history_payload_exceeds_cap() {
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteDeleted { id, undo_token } => {
             assert_eq!(id, paste_id);
-            assert!(undo_token.is_none());
+            let undo_token = undo_token.expect("large history delete should remain undoable");
+            assert!(db
+                .pastes
+                .get(&paste_id)
+                .expect("get after delete")
+                .is_none());
+            backend
+                .cmd_tx
+                .send(CoreCmd::RestoreDeletedPaste { undo_token })
+                .expect("send restore");
         }
         other => panic!("expected PasteDeleted event, got {:?}", other),
     }
-    assert!(db
+    match recv_event(&backend.evt_rx) {
+        CoreEvent::PasteRestored { paste, .. } => {
+            assert_eq!(paste.id, paste_id);
+            assert_eq!(paste.content, "small-current-head");
+        }
+        other => panic!("expected PasteRestored event, got {:?}", other),
+    }
+    let versions = db
         .pastes
-        .get(&paste_id)
-        .expect("get after delete")
-        .is_none());
+        .list_versions(&paste_id, Some(10))
+        .expect("list restored versions")
+        .expect("paste exists");
+    assert_eq!(versions.len(), 1);
+    let restored_version = db
+        .pastes
+        .get_version(&paste_id, versions[0].version_id_ms)
+        .expect("get restored version")
+        .expect("version exists");
+    assert_eq!(restored_version.content.len(), 17 * 1024 * 1024);
 }
 
 #[test]
-fn backend_delete_skips_undo_when_version_history_content_is_missing() {
+fn backend_delete_fails_without_removing_paste_when_version_history_content_is_missing() {
     let dir = TempDir::new().expect("temp dir");
     let db_path = dir.path().join("db");
     let db = Database::new(db_path.to_str().expect("db path")).expect("db");
@@ -110,15 +133,19 @@ fn backend_delete_skips_undo_when_version_history_content_is_missing() {
         })
         .expect("send delete");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteDeleted { id, undo_token } => {
-            assert_eq!(id, paste_id);
-            assert!(undo_token.is_none());
+        CoreEvent::Error { source, message } => {
+            assert_eq!(source, localpaste_gui::backend::CoreErrorSource::Other);
+            assert!(
+                message.contains("Missing version content"),
+                "unexpected delete error: {}",
+                message
+            );
         }
-        other => panic!("expected PasteDeleted event, got {:?}", other),
+        other => panic!("expected delete error event, got {:?}", other),
     }
     assert!(db
         .pastes
         .get(&paste_id)
         .expect("get after delete")
-        .is_none());
+        .is_some());
 }

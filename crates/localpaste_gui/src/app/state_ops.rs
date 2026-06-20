@@ -280,7 +280,7 @@ impl LocalPasteApp {
                             ToastAction::UndoDelete { undo_token },
                         );
                     } else {
-                        self.set_status("Paste deleted. Undo unavailable for large history.");
+                        self.set_status("Paste deleted. Undo unavailable.");
                     }
                 } else if let Some(undo_token) = undo_token {
                     self.set_status_with_action(
@@ -288,9 +288,7 @@ impl LocalPasteApp {
                         ToastAction::UndoDelete { undo_token },
                     );
                 } else {
-                    self.set_status(
-                        "Paste deleted; list refreshed. Undo unavailable for large history.",
-                    );
+                    self.set_status("Paste deleted; list refreshed. Undo unavailable.");
                 }
                 self.request_refresh();
             }

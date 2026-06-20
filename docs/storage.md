@@ -22,6 +22,9 @@ Derived/index tables:
 - `pastes_by_updated`: recency index keyed by `(reverse_millis, paste_id)`.
 - `paste_versions_meta`: newest-first historical snapshot metadata per paste.
 - `paste_versions_content`: historical snapshot content keyed by `(paste_id, version_id_ms)`.
+- `deleted_pastes`: GUI delete-undo staging rows keyed by undo token.
+- `deleted_paste_versions_meta`: staged historical snapshot metadata keyed by undo token.
+- `deleted_paste_versions_content`: staged historical snapshot content keyed by `(undo_token, version_id_ms)`.
 
 ## Version History Storage
 
@@ -30,6 +33,8 @@ Content-changing writes may archive the outgoing head content as a historical sn
 History reset workflows may temporarily preserve one confirmed reset target in addition to the normal retention limit while saving the current head before the reset. This prevents the selected rollback target from being pruned between user confirmation and the backend reset transaction. GUI reset transactions archive the outgoing head as a recovery snapshot before restoring the selected historical version.
 
 Retention pruning keeps the newest configured snapshot metadata rows and removes older matching `paste_versions_content` rows in the same write transaction that records a new version.
+
+GUI delete undo moves the paste row and its version rows into `deleted_*` staging tables inside the same write transaction that removes the active rows and updates folder projections. Undo restore moves those rows back into the active tables by token. Expired or overflowed undo tokens are discarded by the GUI backend worker.
 
 ## Compatibility Policy
 

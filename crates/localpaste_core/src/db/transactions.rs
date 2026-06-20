@@ -5,9 +5,11 @@ use super::tables::{
     PASTE_VERSIONS_META,
 };
 use super::Database;
+#[cfg(test)]
+use crate::db::paste::remove_paste_versions_for_delete_capped;
 use crate::db::paste::{
     apply_update_request, deserialize_paste, discard_paste_versions_for_delete,
-    remove_paste_versions_for_delete_capped, reverse_timestamp_key,
+    reverse_timestamp_key,
 };
 use crate::db::versioning::{
     decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
@@ -15,7 +17,9 @@ use crate::db::versioning::{
 };
 use crate::error::AppError;
 use crate::models::folder::Folder;
-use crate::models::paste::{DeletedPasteBundle, Paste, PasteMeta, UpdatePasteRequest};
+#[cfg(test)]
+use crate::models::paste::DeletedPasteBundle;
+use crate::models::paste::{Paste, PasteMeta, UpdatePasteRequest};
 use redb::ReadableTable;
 use std::sync::MutexGuard;
 
@@ -28,7 +32,8 @@ pub struct FolderTxnGuard<'a> {
 }
 
 /// Result for a delete that may or may not keep an in-memory undo bundle.
-pub struct DeletePasteUndoResult {
+#[cfg(test)]
+pub(crate) struct DeletePasteUndoResult {
     /// Restorable deleted paste bundle, or `None` when the configured cap was exceeded.
     pub undo_bundle: Option<DeletedPasteBundle>,
 }
@@ -67,7 +72,21 @@ fn folder_disappeared_after_assignability_error(folder_id: &str) -> AppError {
     ))
 }
 
-fn apply_folder_count_transition(
+/// Apply folder paste-count changes for a paste moving between optional folders.
+///
+/// Missing old folders are ignored so restore paths can tolerate deleted source folders.
+///
+/// # Arguments
+/// - `folders`: Open mutable folder table.
+/// - `old_folder_id`: Previous folder id, if any.
+/// - `new_folder_id`: Destination folder id, if any.
+///
+/// # Returns
+/// `Ok(())` after folder counts are updated.
+///
+/// # Errors
+/// Returns an error when the destination folder disappears inside the transaction or row serialization fails.
+pub(super) fn apply_folder_count_transition(
     folders: &mut redb::Table<&str, &[u8]>,
     old_folder_id: Option<&str>,
     new_folder_id: Option<&str>,
@@ -268,32 +287,6 @@ impl TransactionOps {
         Self::delete_paste_with_folder_bundle_locked(db, &guard, paste_id)
     }
 
-    /// Atomically delete a paste, returning undo data only when it fits a cap.
-    ///
-    /// # Arguments
-    /// - `db`: Open database handle.
-    /// - `paste_id`: Paste id to remove.
-    /// - `max_undo_version_payload_bytes`: Optional cap for serialized version content bytes.
-    ///
-    /// # Returns
-    /// `Ok(Some(result))` when a paste was removed, `Ok(None)` when missing.
-    ///
-    /// # Errors
-    /// Returns an error when storage access or deserialization fails.
-    pub fn delete_paste_with_folder_undo_limited(
-        db: &Database,
-        paste_id: &str,
-        max_undo_version_payload_bytes: Option<usize>,
-    ) -> Result<Option<DeletePasteUndoResult>, AppError> {
-        let guard = Self::acquire_folder_txn_guard(db)?;
-        Self::delete_paste_with_folder_undo_limited_locked(
-            db,
-            &guard,
-            paste_id,
-            max_undo_version_payload_bytes,
-        )
-    }
-
     /// Delete a paste while holding a folder transaction guard.
     ///
     /// # Arguments
@@ -353,7 +346,8 @@ impl TransactionOps {
     ///
     /// # Errors
     /// Returns an error when storage access or deserialization fails.
-    pub fn delete_paste_with_folder_bundle_locked(
+    #[cfg(test)]
+    pub(crate) fn delete_paste_with_folder_bundle_locked(
         db: &Database,
         _folder_guard: &FolderTxnGuard<'_>,
         paste_id: &str,
@@ -383,7 +377,8 @@ impl TransactionOps {
     ///
     /// # Errors
     /// Returns an error when storage access or deserialization fails.
-    pub fn delete_paste_with_folder_undo_limited_locked(
+    #[cfg(test)]
+    pub(crate) fn delete_paste_with_folder_undo_limited_locked(
         db: &Database,
         _folder_guard: &FolderTxnGuard<'_>,
         paste_id: &str,
@@ -448,7 +443,8 @@ impl TransactionOps {
     ///
     /// # Errors
     /// Returns an error when storage access fails or the paste id already exists.
-    pub fn restore_deleted_paste(
+    #[cfg(test)]
+    pub(crate) fn restore_deleted_paste(
         db: &Database,
         bundle: DeletedPasteBundle,
     ) -> Result<Paste, AppError> {
@@ -468,7 +464,8 @@ impl TransactionOps {
     ///
     /// # Errors
     /// Returns an error when storage access fails or the paste id already exists.
-    pub fn restore_deleted_paste_locked(
+    #[cfg(test)]
+    pub(crate) fn restore_deleted_paste_locked(
         db: &Database,
         _folder_guard: &FolderTxnGuard<'_>,
         bundle: DeletedPasteBundle,

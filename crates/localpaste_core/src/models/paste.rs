@@ -128,6 +128,13 @@ pub struct DeletedPasteBundle {
     pub versions: Vec<DeletedPasteVersion>,
 }
 
+/// Persisted tombstone for a deleted paste undo token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedPasteRecord {
+    pub paste: Paste,
+    pub expires_at_ms: i64,
+}
+
 /// Query parameters for listing paste versions.
 #[derive(Debug, Deserialize)]
 pub struct VersionListQuery {

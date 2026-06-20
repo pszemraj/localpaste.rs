@@ -2,6 +2,7 @@
 
 /// Backup utilities.
 pub mod backup;
+mod delete_undo;
 /// Folder storage helpers.
 pub mod folder;
 /// Lock handling helpers.

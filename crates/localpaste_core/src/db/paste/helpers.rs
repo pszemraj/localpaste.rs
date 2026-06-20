@@ -39,6 +39,7 @@ pub(crate) fn reverse_timestamp_key(updated_at: DateTime<Utc>) -> u64 {
 /// # Errors
 /// Returns an error when storage access, metadata decoding, content decoding, or
 /// uncapped content/meta consistency checks fail.
+#[cfg(test)]
 pub(crate) fn remove_paste_versions_for_delete_capped(
     versions_meta: &mut redb::Table<&str, &[u8]>,
     versions_content: &mut redb::Table<(&str, u64), &[u8]>,
