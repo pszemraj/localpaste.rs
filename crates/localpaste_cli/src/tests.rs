@@ -12,7 +12,9 @@ use clap::{CommandFactory, Parser};
 use localpaste_core::config::api_addr_file_path_from_env_or_default;
 use localpaste_core::diff::{unified_diff_lines, DiffResponse, EqualResponse};
 use localpaste_core::env::{env_lock, EnvGuard};
-use localpaste_core::{DEFAULT_CLI_SERVER_URL, DEFAULT_PORT};
+use localpaste_core::{
+    DEFAULT_CLI_SERVER_URL, DEFAULT_PORT, LOCALPASTE_SERVER_HEADER, LOCALPASTE_SERVER_VALUE,
+};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::mpsc;
@@ -81,6 +83,42 @@ fn bind_reachable_discovery(env: &DiscoveryTestEnv) -> (String, TcpListener) {
     (discovered, listener)
 }
 
+#[derive(Clone, Copy)]
+enum SearchCommandVariant {
+    Search,
+    SearchMeta,
+}
+
+fn assert_search_command_parse<const N: usize>(
+    args: [&str; N],
+    expected_variant: SearchCommandVariant,
+    expected_query: &str,
+    expected_case_sensitive: bool,
+) {
+    let cli = Cli::try_parse_from(args).expect("cli should parse search command");
+    match (expected_variant, cli.command) {
+        (
+            SearchCommandVariant::Search,
+            Commands::Search {
+                query,
+                case_sensitive,
+            },
+        )
+        | (
+            SearchCommandVariant::SearchMeta,
+            Commands::SearchMeta {
+                query,
+                case_sensitive,
+            },
+        ) => {
+            assert_eq!(query, expected_query);
+            assert_eq!(case_sensitive, expected_case_sensitive);
+        }
+        (SearchCommandVariant::Search, _) => panic!("expected search command"),
+        (SearchCommandVariant::SearchMeta, _) => panic!("expected search-meta command"),
+    }
+}
+
 struct LocalpasteProbeServer {
     shutdown_tx: mpsc::Sender<()>,
     worker: Option<thread::JoinHandle<()>>,
@@ -104,18 +142,12 @@ impl LocalpasteProbeServer {
                     let _ = stream.read(&mut request_buf);
                     let body = "[]";
                     let response = format!(
-                        "{}{}",
-                        concat!(
-                            "HTTP/1.1 200 OK\r\n",
-                            "Content-Type: application/json\r\n",
-                            "X-Content-Type-Options: nosniff\r\n",
-                            "X-Frame-Options: DENY\r\n",
-                            "X-LocalPaste-Server: 1\r\n",
-                            "Content-Length: "
-                        ),
-                        body.len()
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\n{}: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        LOCALPASTE_SERVER_HEADER,
+                        LOCALPASTE_SERVER_VALUE,
+                        body.len(),
+                        body
                     );
-                    let response = format!("{}\r\nConnection: close\r\n\r\n{}", response, body);
                     let _ = stream.write_all(response.as_bytes());
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
@@ -328,34 +360,22 @@ fn api_url_matrix_covers_encoding_and_base_path_append() {
 
 #[test]
 fn cli_parses_search_meta_subcommand() {
-    let cli = Cli::try_parse_from(["lpaste", "search-meta", "needle"])
-        .expect("cli should parse search-meta");
-    match cli.command {
-        Commands::SearchMeta {
-            query,
-            case_sensitive,
-        } => {
-            assert_eq!(query, "needle");
-            assert!(!case_sensitive);
-        }
-        _ => panic!("expected search-meta command"),
-    }
+    assert_search_command_parse(
+        ["lpaste", "search-meta", "needle"],
+        SearchCommandVariant::SearchMeta,
+        "needle",
+        false,
+    );
 }
 
 #[test]
 fn cli_parses_case_sensitive_search_flags() {
-    let cli = Cli::try_parse_from(["lpaste", "search", "--case-sensitive", "Needle"])
-        .expect("cli should parse case-sensitive search");
-    match cli.command {
-        Commands::Search {
-            query,
-            case_sensitive,
-        } => {
-            assert_eq!(query, "Needle");
-            assert!(case_sensitive);
-        }
-        _ => panic!("expected search command"),
-    }
+    assert_search_command_parse(
+        ["lpaste", "search", "--case-sensitive", "Needle"],
+        SearchCommandVariant::Search,
+        "Needle",
+        true,
+    );
 }
 
 #[test]
@@ -619,17 +639,13 @@ fn resolve_server_discovery_matrix_handles_absent_blank_and_non_localpaste_endpo
 
 #[test]
 fn discovery_identity_probe_requires_localpaste_headers() {
-    let valid = concat!(
-        "HTTP/1.1 200 OK\r\n",
-        "Content-Type: application/json\r\n",
-        "X-Content-Type-Options: nosniff\r\n",
-        "X-Frame-Options: DENY\r\n",
-        "X-LocalPaste-Server: 1\r\n",
-        "\r\n",
-        "[]"
-    )
-    .as_bytes();
-    assert!(discovery_probe_response_looks_like_localpaste(valid));
+    let valid = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\n{}: {}\r\n\r\n[]",
+        LOCALPASTE_SERVER_HEADER, LOCALPASTE_SERVER_VALUE
+    );
+    assert!(discovery_probe_response_looks_like_localpaste(
+        valid.as_bytes()
+    ));
 
     let missing_headers = concat!(
         "HTTP/1.1 200 OK\r\n",

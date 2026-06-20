@@ -26,6 +26,10 @@ pub const DEFAULT_SEARCH_PASTES_LIMIT: usize = 512;
 pub const DEFAULT_CLI_SERVER_URL: &str = "http://localhost:38411";
 /// Discovery filename for the active embedded API address.
 pub const API_ADDR_FILE_NAME: &str = ".api-addr";
+/// Response header used by CLI discovery to identify LocalPaste endpoints.
+pub const LOCALPASTE_SERVER_HEADER: &str = "x-localpaste-server";
+/// Response header value used by CLI discovery to identify LocalPaste endpoints.
+pub const LOCALPASTE_SERVER_VALUE: &str = "1";
 
 /// Process-lifetime owner lock file used to detect active writers safely.
 pub const DB_OWNER_LOCK_FILE_NAME: &str = "db.owner.lock";

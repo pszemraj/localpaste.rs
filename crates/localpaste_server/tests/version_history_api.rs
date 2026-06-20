@@ -1,6 +1,7 @@
 //! Integration tests for version-history API edge cases.
 
-mod support;
+/// Shared real-listener server harness for version-history API tests.
+pub mod support;
 
 use axum::http::StatusCode;
 use localpaste_core::env::{env_lock, EnvGuard};
@@ -13,7 +14,7 @@ use tempfile::TempDir;
 async fn test_duplicate_version_accepts_empty_body_and_uses_generated_name() {
     let _env_lock = env_lock().lock().expect("env lock");
     let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
-    let (server, _temp, _locks) = setup_test_server();
+    let (server, _locks) = setup_test_server();
 
     let create_response = server
         .post("/api/paste")
@@ -69,7 +70,7 @@ async fn test_version_retention_cap_is_enforced_through_api_updates() {
     let _env_lock = env_lock().lock().expect("env lock");
     let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
     let _retention_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
-    let (server, _temp, _locks) = setup_test_server();
+    let (server, _locks) = setup_test_server();
 
     let create_response = server
         .post("/api/paste")
@@ -177,6 +178,7 @@ async fn test_version_mutations_reject_historical_snapshots_exceeding_current_si
         assert_eq!(list_versions_response.status_code(), StatusCode::OK);
         let versions: Vec<serde_json::Value> = list_versions_response.json();
         version_id = versions[0]["version_id_ms"].as_u64().unwrap();
+        server.shutdown().await;
     }
 
     {

@@ -1,6 +1,7 @@
 //! Regression tests for explicit language handling on paste creation.
 
-mod support;
+/// Shared real-listener server harness for manual-language tests.
+pub mod support;
 
 use axum::http::StatusCode;
 use serde_json::json;
@@ -37,7 +38,7 @@ async fn test_create_paste_manual_language_mode_matrix() {
     ];
 
     for case in cases {
-        let (server, _temp, _locks) = setup_test_server();
+        let (server, _locks) = setup_test_server();
 
         let create_response = server.post("/api/paste").json(&case.request).await;
 
@@ -50,7 +51,7 @@ async fn test_create_paste_manual_language_mode_matrix() {
 
 #[tokio::test]
 async fn test_default_create_then_auto_toggle_then_content_redetect_cycle() {
-    let (server, _temp, _locks) = setup_test_server();
+    let (server, _locks) = setup_test_server();
 
     let created = server
         .post("/api/paste")
@@ -90,7 +91,7 @@ async fn test_default_create_then_auto_toggle_then_content_redetect_cycle() {
 
 #[tokio::test]
 async fn test_metadata_save_does_not_clear_legacy_auto_resolved_language() {
-    let (server, _temp, _locks) = setup_test_server();
+    let (server, _locks) = setup_test_server();
 
     let created = server
         .post("/api/paste")

@@ -3,7 +3,7 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use localpaste_core::diff::{DiffRef, DiffRequest, DiffResponse, EqualResponse};
-use localpaste_core::DEFAULT_CLI_SERVER_URL;
+use localpaste_core::{DEFAULT_CLI_SERVER_URL, LOCALPASTE_SERVER_HEADER, LOCALPASTE_SERVER_VALUE};
 use serde_json::Value;
 use std::io::{self, Read, Write};
 use std::net::ToSocketAddrs;
@@ -517,8 +517,8 @@ fn discovery_probe_response_looks_like_localpaste(response: &[u8]) -> bool {
                     has_frame_deny = true;
                 }
             }
-            "x-localpaste-server" => {
-                if value == "1" {
+            header if header == LOCALPASTE_SERVER_HEADER => {
+                if value == LOCALPASTE_SERVER_VALUE {
                     has_localpaste_server = true;
                 }
             }
