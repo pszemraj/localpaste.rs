@@ -304,6 +304,7 @@ fn make_app() -> TestHarness {
         palette_search_last_input_at: None,
         pending_copy_action: None,
         pending_selection_id: None,
+        pending_delete_id: None,
         clipboard_outgoing: None,
         active_buffer_epoch: 0,
         virtual_editor_buffer: RopeBuffer::new("content"),
@@ -400,6 +401,7 @@ mod history_reset;
 mod keyboard_navigation_audit;
 mod persistence;
 mod save_and_metadata;
+mod selected_delete;
 mod shutdown_behavior;
 mod state_basics;
 mod state_toasts;

@@ -1,6 +1,7 @@
 //! Native egui app skeleton for the LocalPaste rewrite.
 
 mod deferred_saves;
+mod delete_flow;
 mod editor;
 mod highlight;
 mod highlight_flow;
@@ -89,6 +90,7 @@ pub(crate) struct LocalPasteApp {
     palette_search_last_input_at: Option<Instant>,
     pending_copy_action: Option<PaletteCopyAction>,
     pending_selection_id: Option<String>,
+    pending_delete_id: Option<String>,
     clipboard_outgoing: Option<String>,
     active_buffer_epoch: u64,
     virtual_editor_buffer: RopeBuffer,
@@ -383,6 +385,7 @@ impl LocalPasteApp {
             palette_search_last_input_at: None,
             pending_copy_action: None,
             pending_selection_id: None,
+            pending_delete_id: None,
             clipboard_outgoing: None,
             active_buffer_epoch: 0,
             virtual_editor_buffer: RopeBuffer::new(""),

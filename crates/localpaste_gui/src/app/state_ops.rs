@@ -183,6 +183,7 @@ impl LocalPasteApp {
                     self.recompute_visible_pastes();
                 }
                 self.maybe_continue_queued_history_reset();
+                self.maybe_continue_pending_delete();
                 self.try_apply_pending_selection();
                 if self.search_query.trim().is_empty() {
                     self.ensure_selection_after_list_update();
@@ -209,6 +210,7 @@ impl LocalPasteApp {
                 }
                 self.ensure_selection_after_list_update();
                 self.maybe_continue_queued_history_reset();
+                self.maybe_continue_pending_delete();
                 self.try_apply_pending_selection();
             }
             CoreEvent::SearchResults {
@@ -391,6 +393,7 @@ impl LocalPasteApp {
                 match source {
                     CoreErrorSource::SaveMetadata if self.metadata_save_in_flight => {
                         self.cancel_queued_history_reset();
+                        self.cancel_pending_delete();
                         self.metadata_dirty = true;
                         self.metadata_save_in_flight = false;
                         self.metadata_save_request = None;
@@ -405,6 +408,7 @@ impl LocalPasteApp {
                     }
                     CoreErrorSource::SaveContent if self.save_in_flight => {
                         self.cancel_queued_history_reset();
+                        self.cancel_pending_delete();
                         if self.save_status == SaveStatus::Saving {
                             self.save_status = SaveStatus::Dirty;
                         }
@@ -616,6 +620,7 @@ impl LocalPasteApp {
         if self.selected_id.as_deref() == Some(id.as_str()) {
             return true;
         }
+        self.cancel_pending_delete();
         // Detached version workflows own the current subject paste; switching away would
         // invalidate the open modal context and, during reset, release the held lock too early.
         if self.selection_transition_block_reason().is_some() {
@@ -717,6 +722,7 @@ impl LocalPasteApp {
     }
 
     fn apply_selection_now(&mut self, id: String) -> bool {
+        self.cancel_pending_delete();
         // Acquire target lock before releasing current selection lock so failed
         // switches never drop the currently editable paste unexpectedly.
         if !self.acquire_paste_lock(id.as_str()) {
@@ -757,6 +763,7 @@ impl LocalPasteApp {
     /// Clears active/pending selection and releases any held paste lock.
     pub(super) fn clear_selection(&mut self) {
         self.clear_pending_selection_request();
+        self.cancel_pending_delete();
         if let Some(prev) = self.selected_id.take() {
             self.release_paste_lock(prev.as_str());
         }
@@ -778,31 +785,6 @@ impl LocalPasteApp {
             CoreCmd::CreatePaste { content },
             "Create failed: backend unavailable.",
         );
-    }
-
-    /// Sends a delete command for `id` and reports whether dispatch succeeded.
-    /// # Returns
-    /// `true` when the backend command was queued, otherwise `false`.
-    pub(super) fn send_delete_paste(&mut self, id: String) -> bool {
-        if self.mutation_shortcut_block_reason().is_some() {
-            self.set_mutation_shortcut_blocked_status();
-            return false;
-        }
-        if self.history_reset_pending_for(id.as_str()) {
-            self.set_reset_transition_blocked_status();
-            return false;
-        }
-        self.send_backend_cmd_or_status(
-            CoreCmd::DeletePaste { id },
-            "Delete failed: backend unavailable.",
-        )
-    }
-
-    /// Deletes the currently selected paste, if any.
-    pub(super) fn delete_selected(&mut self) {
-        if let Some(id) = self.selected_id.clone() {
-            let _sent = self.send_delete_paste(id);
-        }
     }
 
     /// Marks current editor content dirty and arms autosave timing.
