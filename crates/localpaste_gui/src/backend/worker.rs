@@ -215,6 +215,8 @@ impl WorkerState {
     }
 
     fn next_deleted_paste_undo_timeout(&mut self) -> Option<Duration> {
+        // Persistent tombstones can survive a GUI restart without an in-memory
+        // undo token, so sweep storage before deciding to block indefinitely.
         self.prune_deleted_paste_undo();
         let token = self.deleted_paste_order.front()?;
         self.deleted_paste_undo
@@ -532,7 +534,11 @@ mod tests {
         }
     }
 
-    fn stage_deleted_paste(worker: &mut TestWorkerState, id: &str) -> String {
+    fn stage_persisted_deleted_paste(
+        worker: &mut TestWorkerState,
+        id: &str,
+        expires_at_ms: i64,
+    ) -> String {
         let mut paste = Paste::new("content".to_string(), "deleted".to_string());
         paste.id = id.to_string();
         worker
@@ -542,8 +548,6 @@ mod tests {
             .create(&paste)
             .expect("seed deleted paste");
         let token = worker.state.next_deleted_paste_undo_token();
-        let expires_at = Instant::now() + DELETE_UNDO_TTL;
-        let expires_at_ms = Utc::now().timestamp_millis() + DELETE_UNDO_TTL.as_millis() as i64;
         {
             let guard = TransactionOps::acquire_folder_txn_guard(&worker.state.db).expect("guard");
             let deleted = TransactionOps::delete_paste_with_folder_staged_undo_locked(
@@ -556,6 +560,13 @@ mod tests {
             .expect("stage deleted paste");
             assert!(deleted, "paste should exist");
         }
+        token
+    }
+
+    fn stage_deleted_paste(worker: &mut TestWorkerState, id: &str) -> String {
+        let expires_at = Instant::now() + DELETE_UNDO_TTL;
+        let expires_at_ms = Utc::now().timestamp_millis() + DELETE_UNDO_TTL.as_millis() as i64;
+        let token = stage_persisted_deleted_paste(worker, id, expires_at_ms);
         worker
             .state
             .register_deleted_paste_undo(token.clone(), expires_at);
@@ -658,6 +669,29 @@ mod tests {
                 .expect("restore lookup")
                 .is_none(),
             "idle pruning should discard the staged tombstone"
+        );
+    }
+
+    #[test]
+    fn expired_persistent_delete_undo_is_pruned_before_blocking_on_startup() {
+        let mut worker = make_state();
+        let token =
+            stage_persisted_deleted_paste(&mut worker, "alpha", Utc::now().timestamp_millis() - 1);
+        let (cmd_tx, cmd_rx) = unbounded();
+        drop(cmd_tx);
+
+        match recv_command_or_prune_deleted_paste_undo(&cmd_rx, &mut worker.state) {
+            Err(RecvTimeoutError::Disconnected) => {}
+            other => panic!("expected disconnected command channel, got {:?}", other),
+        }
+
+        assert!(worker.state.deleted_paste_undo.is_empty());
+        assert!(worker.state.deleted_paste_order.is_empty());
+        assert!(
+            TransactionOps::restore_deleted_paste_by_token(&worker.state.db, &token)
+                .expect("restore lookup")
+                .is_none(),
+            "startup pruning should discard expired persisted tombstones without an in-memory token"
         );
     }
 
