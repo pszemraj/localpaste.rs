@@ -66,4 +66,5 @@ mod concurrency;
 mod folder_transactions;
 mod search_and_meta;
 mod startup_reconcile;
+mod version_compat;
 mod version_retention;
