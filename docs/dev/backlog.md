@@ -21,6 +21,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Plan egui/eframe `0.34+` as a standalone migration with text-layout regression coverage and real Windows cold-start smoke testing; keep the current dependency line at `0.33.3` until that migration lands.
 - [ ] Complete manual newline-burst highlight perf recheck (per [gui-perf-protocol.md](gui-perf-protocol.md)), capture refreshed perf evidence in release notes, and decide gate flip from `p95 <= 25 ms` to `p95 <= 16 ms`.
 - [ ] Enforce key/value identity checks for authoritative paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
+- [ ] Remove or explicitly re-approve the narrow redb row-shape reader fallbacks before stable release; storage compatibility policy is in [../storage.md#compatibility-policy](../storage.md#compatibility-policy).
 - [ ] Narrow `PasteDb` mutation API so folder assignment changes cannot bypass folder-count transaction paths.
 - [ ] Track folder-count decrement failures with a persistent repair marker and run opportunistic `reconcile_folder_invariants` recovery in long-lived processes.
 - [ ] Add an explicit runtime reconcile entrypoint/scheduler for metadata indexes so degraded states are repaired without restart.
