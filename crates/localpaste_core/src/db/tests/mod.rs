@@ -64,6 +64,7 @@ pub(super) fn update_existing_paste(
 mod basic_ops;
 mod concurrency;
 mod folder_transactions;
+mod row_compat;
 mod search_and_meta;
 mod startup_reconcile;
 mod version_compat;

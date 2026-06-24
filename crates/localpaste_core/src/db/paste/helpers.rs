@@ -5,9 +5,11 @@ use crate::db::versioning::{
 };
 use crate::error::AppError;
 use crate::models::paste::*;
-use crate::semantic::PasteKind;
+use crate::semantic::{DerivedMeta, PasteKind};
 use chrono::{DateTime, Utc};
 use redb::ReadableTable;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 /// Converts a timestamp into a reverse-sorted key for newest-first indexes.
 ///
@@ -640,15 +642,16 @@ pub(super) fn folder_matches_expected(
     current_folder_id == expected_folder_id
 }
 
-/// Deserializes a [`Paste`] row from storage bytes.
+/// Deserializes a [`Paste`] row, with compatibility for legacy serialized rows.
 ///
 /// # Returns
 /// A decoded [`Paste`] value.
 ///
 /// # Errors
-/// Returns a bincode error when the row bytes are malformed or incompatible.
+/// Returns the primary deserialization error when neither current nor legacy
+/// wire formats can be decoded.
 pub(crate) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
-    bincode::deserialize(bytes)
+    deserialize_current_or_legacy::<Paste, LegacyPaste>(bytes, Paste::from)
 }
 
 /// Deserializes a [`PasteMeta`] row from storage bytes.
@@ -659,7 +662,101 @@ pub(crate) fn deserialize_paste(bytes: &[u8]) -> Result<Paste, bincode::Error> {
 /// # Errors
 /// Returns a bincode error when the row bytes are malformed or incompatible.
 pub(super) fn deserialize_meta(bytes: &[u8]) -> Result<PasteMeta, bincode::Error> {
-    bincode::deserialize(bytes)
+    deserialize_current_or_legacy::<PasteMeta, LegacyPasteMeta>(bytes, PasteMeta::from)
+}
+
+fn deserialize_current_or_legacy<T, L>(
+    bytes: &[u8],
+    upgrade_legacy: impl FnOnce(L) -> T,
+) -> Result<T, bincode::Error>
+where
+    T: DeserializeOwned,
+    L: DeserializeOwned,
+{
+    bincode::deserialize::<T>(bytes).or_else(|err| {
+        bincode::deserialize::<L>(bytes)
+            .map(upgrade_legacy)
+            .map_err(|_| err)
+    })
+}
+
+#[derive(Serialize, Deserialize)]
+struct LegacyPaste {
+    id: String,
+    name: String,
+    content: String,
+    language: Option<String>,
+    folder_id: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    tags: Vec<String>,
+    is_markdown: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LegacyPasteMeta {
+    id: String,
+    name: String,
+    language: Option<String>,
+    folder_id: Option<String>,
+    updated_at: DateTime<Utc>,
+    tags: Vec<String>,
+    content_len: usize,
+    is_markdown: bool,
+}
+
+impl From<LegacyPaste> for Paste {
+    fn from(old: LegacyPaste) -> Self {
+        let LegacyPaste {
+            id,
+            name,
+            content,
+            language,
+            folder_id,
+            created_at,
+            updated_at,
+            tags,
+            is_markdown,
+        } = old;
+        Self {
+            id,
+            name,
+            content,
+            language,
+            language_is_manual: false,
+            folder_id,
+            created_at,
+            updated_at,
+            tags,
+            is_markdown,
+        }
+    }
+}
+
+impl From<LegacyPasteMeta> for PasteMeta {
+    fn from(old: LegacyPasteMeta) -> Self {
+        let LegacyPasteMeta {
+            id,
+            name,
+            language,
+            folder_id,
+            updated_at,
+            tags,
+            content_len,
+            is_markdown,
+        } = old;
+        Self {
+            id,
+            name,
+            language,
+            folder_id,
+            updated_at,
+            tags,
+            content_len,
+            is_markdown,
+            derived: DerivedMeta::default(),
+        }
+    }
 }
 
 #[cfg(test)]
