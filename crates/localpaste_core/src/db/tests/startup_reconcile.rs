@@ -1,7 +1,10 @@
 //! Startup behavior and invariant repair tests.
 
 use super::*;
-use crate::db::tables::REDB_FILE_NAME;
+use crate::db::paste::META_SCHEMA_VERSION_KEY;
+use crate::db::tables::{PASTES, PASTES_META_STATE, REDB_FILE_NAME};
+use redb::ReadableDatabase;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 fn setup_temp_db_path(name: &str) -> (TempDir, String) {
@@ -9,6 +12,28 @@ fn setup_temp_db_path(name: &str) -> (TempDir, String) {
     let db_path = temp_dir.path().join(name);
     let db_path_str = db_path.to_str().expect("db path").to_string();
     (temp_dir, db_path_str)
+}
+
+fn startup_backup_files(db_path: &Path) -> Vec<PathBuf> {
+    let Some(parent) = db_path.parent() else {
+        return Vec::new();
+    };
+    let Some(base_name) = db_path.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+    let prefix = format!("{base_name}.backup.");
+
+    let mut paths = std::fs::read_dir(parent)
+        .expect("read backup parent")
+        .map(|entry| entry.expect("backup entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".redb"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 #[test]
@@ -21,6 +46,93 @@ fn database_new_reports_error_for_non_directory_db_path() {
     assert!(
         matches!(result, Err(AppError::StorageMessage(_))),
         "opening a non-directory DB_PATH should fail"
+    );
+}
+
+#[test]
+fn database_new_creates_backup_before_existing_schema_repair() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    std::fs::create_dir_all(&db_path).expect("create db dir");
+    let db_file = db_path.join(REDB_FILE_NAME);
+
+    let raw_db = redb::Database::create(&db_file).expect("create raw old db");
+    let paste = Paste::new("important text".to_string(), "saved paste".to_string());
+    let encoded = bincode::serialize(&paste).expect("serialize paste");
+    let write_txn = raw_db.begin_write().expect("begin write");
+    {
+        let mut pastes = write_txn.open_table(PASTES).expect("open pastes");
+        pastes
+            .insert(paste.id.as_str(), encoded.as_slice())
+            .expect("insert paste");
+    }
+    write_txn.commit().expect("commit raw old db");
+    drop(raw_db);
+
+    assert!(
+        startup_backup_files(&db_path).is_empty(),
+        "test setup should start without backup files"
+    );
+
+    let db = open_test_database(db_path.to_str().expect("db path"));
+    assert!(
+        db.pastes
+            .get(paste.id.as_str())
+            .expect("load paste")
+            .is_some(),
+        "startup repair must preserve canonical paste rows"
+    );
+    drop(db);
+
+    let backup_files = startup_backup_files(&db_path);
+    assert_eq!(
+        backup_files.len(),
+        1,
+        "existing databases that need schema repair must be snapshotted first"
+    );
+
+    let backup_db = redb::Database::create(&backup_files[0]).expect("open backup");
+    let read_txn = backup_db.begin_read().expect("begin backup read");
+    let pastes = read_txn.open_table(PASTES).expect("open backup pastes");
+    assert!(
+        pastes
+            .get(paste.id.as_str())
+            .expect("backup paste lookup")
+            .is_some(),
+        "startup backup must contain pre-repair paste rows"
+    );
+}
+
+#[test]
+fn database_new_does_not_backup_current_schema_on_normal_reopen() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("db");
+    let db_path = Path::new(&db_path_str).to_path_buf();
+
+    let db = open_test_database(&db_path_str);
+    drop(db);
+    assert!(
+        startup_backup_files(&db_path).is_empty(),
+        "new database creation should not create a compatibility backup"
+    );
+
+    let reopened = open_test_database(&db_path_str);
+    let read_txn = reopened.db.begin_read().expect("begin read");
+    let meta_state = read_txn
+        .open_table(PASTES_META_STATE)
+        .expect("open meta state");
+    assert!(
+        meta_state
+            .get(META_SCHEMA_VERSION_KEY)
+            .expect("schema lookup")
+            .is_some(),
+        "schema marker should be current after initial startup"
+    );
+    drop(read_txn);
+    drop(reopened);
+
+    assert!(
+        startup_backup_files(&db_path).is_empty(),
+        "current-schema reopen should not create a compatibility backup"
     );
 }
 
