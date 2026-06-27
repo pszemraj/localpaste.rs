@@ -161,7 +161,7 @@ fn empty_preedit_clears_composition_and_allows_insert_text() {
 }
 
 #[test]
-fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
+fn click_in_editor_viewport_without_row_hit_places_cursor_at_eof() {
     let mut harness = make_app();
     harness.app.reset_virtual_editor("line one\n");
 
@@ -170,7 +170,7 @@ fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
     let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
 
-    run_editor_panel_once(
+    let output = run_editor_panel_once_output(
         &mut harness.app,
         &ctx,
         egui::RawInput {
@@ -200,7 +200,17 @@ fn click_in_editor_viewport_without_row_hit_reclaims_focus() {
     );
 
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        harness.app.virtual_editor_buffer.len_chars()
+    );
+    assert!(
+        output
+            .viewport_output
+            .values()
+            .any(|viewport| viewport.repaint_delay == Duration::ZERO),
+        "blank editor click must repaint the newly focused caret"
+    );
 }
 
 #[test]
@@ -225,7 +235,7 @@ fn same_frame_editor_click_and_arrow_moves_cursor_once() {
                     pressed: true,
                     modifiers: egui::Modifiers::default(),
                 },
-                key_event(egui::Key::ArrowRight, egui::Modifiers::default()),
+                key_event(egui::Key::ArrowLeft, egui::Modifiers::default()),
             ],
             ..Default::default()
         },
@@ -233,7 +243,14 @@ fn same_frame_editor_click_and_arrow_moves_cursor_once() {
 
     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert_eq!(harness.app.virtual_editor_state.cursor(), 1);
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        harness
+            .app
+            .virtual_editor_buffer
+            .len_chars()
+            .saturating_sub(1)
+    );
     assert!(harness.app.virtual_editor_state.selection_range().is_none());
 }
 
@@ -437,7 +454,7 @@ fn focused_editor_delete_chord_edits_text_without_dispatching_paste_delete() {
 }
 
 #[test]
-fn focused_editor_keeps_command_arrow_focus_inside_real_app_chrome() {
+fn focused_editor_keeps_platform_mod_arrow_focus_inside_real_app_chrome() {
     let mut harness = make_app();
     harness
         .app
@@ -461,22 +478,18 @@ fn focused_editor_keeps_command_arrow_focus_inside_real_app_chrome() {
     );
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
 
-    let command_only = egui::Modifiers {
-        command: true,
-        ..Default::default()
-    };
+    let command_only = primary_command_modifiers();
     let command_shift = egui::Modifiers {
-        command: true,
         shift: true,
-        ..Default::default()
+        ..primary_command_modifiers()
     };
     let cases = [
-        ("command-left", egui::Key::ArrowLeft, command_only),
-        ("command-up", egui::Key::ArrowUp, command_only),
-        ("command-right", egui::Key::ArrowRight, command_only),
-        ("command-down", egui::Key::ArrowDown, command_only),
-        ("command-shift-left", egui::Key::ArrowLeft, command_shift),
-        ("command-shift-up", egui::Key::ArrowUp, command_shift),
+        ("mod-left", egui::Key::ArrowLeft, command_only),
+        ("mod-up", egui::Key::ArrowUp, command_only),
+        ("mod-right", egui::Key::ArrowRight, command_only),
+        ("mod-down", egui::Key::ArrowDown, command_only),
+        ("mod-shift-left", egui::Key::ArrowLeft, command_shift),
+        ("mod-shift-up", egui::Key::ArrowUp, command_shift),
     ];
 
     for (name, key, modifiers) in cases {

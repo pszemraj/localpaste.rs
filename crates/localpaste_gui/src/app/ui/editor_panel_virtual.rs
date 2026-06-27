@@ -126,6 +126,7 @@ impl LocalPasteApp {
         let had_focus = focused;
         let mut ime_cursor_rect: Option<egui::Rect> = None;
         let mut pending_follow_scroll_offset_y: Option<f32> = None;
+        let mut editor_pointer_action_handled = false;
         let scroll_output =
             scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
                 ui.set_min_width(wrap_width);
@@ -306,6 +307,7 @@ impl LocalPasteApp {
                 if let Some(action) = pending_action {
                     ui.memory_mut(|m| m.request_focus(editor_id));
                     focused = true;
+                    editor_pointer_action_handled = true;
                     match action {
                         RowAction::Click { global } => {
                             self.virtual_editor_state
@@ -367,6 +369,7 @@ impl LocalPasteApp {
                             self.reset_virtual_caret_blink();
                         }
                     }
+                    ui.ctx().request_repaint();
                 }
 
                 let pointer_pos = ui.input(|input| {
@@ -545,28 +548,37 @@ impl LocalPasteApp {
         // Treat any primary click inside the editor viewport as an explicit focus
         // claim, even when no row hit-test action fired (e.g. empty space below
         // the last visual row).
-        let clicked_inside_editor = ui.input(|input| {
-            input.pointer.button_pressed(egui::PointerButton::Primary)
-                && input
-                    .pointer
-                    .interact_pos()
-                    .or_else(|| input.pointer.latest_pos())
-                    .map(|pos| interaction_rect.contains(pos))
-                    .unwrap_or(false)
+        let primary_pressed =
+            ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary));
+        let pointer_press_pos = ui.input(|input| {
+            input
+                .pointer
+                .interact_pos()
+                .or_else(|| input.pointer.latest_pos())
         });
+        let clicked_inside_editor = pointer_press_pos
+            .map(|pos| primary_pressed && interaction_rect.contains(pos))
+            .unwrap_or(false);
+        let clicked_inside_editor_content = pointer_press_pos
+            .map(|pos| primary_pressed && scroll_output.inner_rect.contains(pos))
+            .unwrap_or(false);
         if clicked_inside_editor {
             ui.memory_mut(|m| m.request_focus(editor_id));
             egui_focus = true;
+            if clicked_inside_editor_content && !editor_pointer_action_handled {
+                let eof =
+                    self.clamp_virtual_cursor_for_render(self.virtual_editor_buffer.len_chars());
+                self.virtual_editor_state
+                    .set_cursor(eof, self.virtual_editor_buffer.len_chars());
+                self.virtual_editor_state.clear_preferred_column();
+                self.reset_virtual_click_streak();
+                self.reset_virtual_caret_blink();
+                ui.ctx().request_repaint();
+            }
         }
-        let clicked_outside_editor = ui.input(|input| {
-            input.pointer.button_pressed(egui::PointerButton::Primary)
-                && input
-                    .pointer
-                    .interact_pos()
-                    .or_else(|| input.pointer.latest_pos())
-                    .map(|pos| !interaction_rect.contains(pos))
-                    .unwrap_or(false)
-        });
+        let clicked_outside_editor = pointer_press_pos
+            .map(|pos| primary_pressed && !interaction_rect.contains(pos))
+            .unwrap_or(false);
         let window_blurred =
             ui.input(|input| !input.focused || input.viewport().focused == Some(false));
         let explicit_blur = should_explicitly_blur_virtual_editor(
@@ -580,6 +592,7 @@ impl LocalPasteApp {
         }
         if focus_response.gained_focus() || (egui_focus && !had_focus) {
             self.reset_virtual_caret_blink();
+            ui.ctx().request_repaint();
         }
         focused = egui_focus;
         let editor_shortcuts_available = focused && !self.editor_shortcuts_blocked();
