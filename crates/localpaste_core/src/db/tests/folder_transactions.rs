@@ -1,9 +1,12 @@
 //! Folder transaction behavior tests.
 
 use super::*;
-use crate::db::tables::{PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META};
+use crate::db::tables::{
+    DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META,
+    PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META,
+};
 use crate::env::{env_lock, EnvGuard};
-use redb::ReadableDatabase;
+use redb::{ReadableDatabase, ReadableTable};
 use std::time::Duration;
 
 struct FolderMoveFixture {
@@ -37,6 +40,64 @@ fn setup_folder_move_fixture() -> FolderMoveFixture {
         new_folder_id,
         paste_id,
     }
+}
+
+fn seed_versioned_paste(db: &Database, name: &str) -> String {
+    let paste = Paste::new("initial content".to_string(), name.to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create paste");
+    db.pastes
+        .update(
+            &paste_id,
+            UpdatePasteRequest {
+                content: Some("current content".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: None,
+                tags: None,
+            },
+        )
+        .expect("update paste")
+        .expect("paste exists");
+    paste_id
+}
+
+fn assert_staged_undo_token(db: &Database, token: &str, expected: bool) {
+    let read_txn = db.db.begin_read().expect("begin read");
+    let deleted_pastes = read_txn
+        .open_table(DELETED_PASTES)
+        .expect("open deleted pastes");
+    let deleted_versions_meta = read_txn
+        .open_table(DELETED_PASTE_VERSIONS_META)
+        .expect("open deleted version meta");
+    let deleted_versions_content = read_txn
+        .open_table(DELETED_PASTE_VERSIONS_CONTENT)
+        .expect("open deleted version content");
+
+    assert_eq!(
+        deleted_pastes
+            .get(token)
+            .expect("lookup deleted paste")
+            .is_some(),
+        expected
+    );
+    assert_eq!(
+        deleted_versions_meta
+            .get(token)
+            .expect("lookup deleted version meta")
+            .is_some(),
+        expected
+    );
+    let has_content = deleted_versions_content
+        .iter()
+        .expect("iterate deleted version content")
+        .any(|row| {
+            let (key, _) = row.expect("deleted version content row");
+            let (row_token, _) = key.value();
+            row_token == token
+        });
+    assert_eq!(has_content, expected);
 }
 
 #[test]
@@ -721,6 +782,34 @@ fn staged_delete_undo_preserves_versions_without_payload_cap() {
         .expect("get restored version")
         .expect("version exists");
     assert_eq!(snapshot.content, "content");
+}
+
+#[test]
+fn prune_expired_staged_delete_undo_removes_all_staged_rows() {
+    let (db, _temp) = setup_test_db();
+    let expired_paste_id = seed_versioned_paste(&db, "expired undo");
+    let live_paste_id = seed_versioned_paste(&db, "live undo");
+
+    assert!(TransactionOps::delete_paste_with_folder_staged_undo(
+        &db,
+        &expired_paste_id,
+        "expired-token",
+        10
+    )
+    .expect("stage expired paste"));
+    assert!(TransactionOps::delete_paste_with_folder_staged_undo(
+        &db,
+        &live_paste_id,
+        "live-token",
+        i64::MAX
+    )
+    .expect("stage live paste"));
+
+    let pruned = TransactionOps::prune_expired_deleted_paste_undo(&db, 10)
+        .expect("prune expired staged rows");
+    assert_eq!(pruned, vec!["expired-token".to_string()]);
+    assert_staged_undo_token(&db, "expired-token", false);
+    assert_staged_undo_token(&db, "live-token", true);
 }
 
 #[test]

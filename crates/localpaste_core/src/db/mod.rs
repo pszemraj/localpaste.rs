@@ -26,6 +26,7 @@ use redb::{Database as RedbDatabase, DatabaseError, ReadableDatabase};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::SystemTime;
 
 pub use transactions::{FolderTxnGuard, TransactionOps};
 
@@ -382,6 +383,14 @@ impl Database {
             );
         }
         self.pastes.ensure_meta_index_current()?;
+        let now_ms = time_util::unix_timestamp_millis(SystemTime::now())?;
+        let pruned = TransactionOps::prune_expired_deleted_paste_undo(self, now_ms)?;
+        if !pruned.is_empty() {
+            tracing::info!(
+                count = pruned.len(),
+                "Pruned expired delete-undo tombstones during database startup"
+            );
+        }
         Ok(())
     }
 

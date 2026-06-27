@@ -2,8 +2,11 @@
 
 use super::*;
 use crate::db::paste::META_SCHEMA_VERSION_KEY;
-use crate::db::tables::{PASTES, PASTES_META_STATE, REDB_FILE_NAME};
-use redb::ReadableDatabase;
+use crate::db::tables::{
+    DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META, PASTES,
+    PASTES_META_STATE, REDB_FILE_NAME,
+};
+use redb::{ReadableDatabase, ReadableTable};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
@@ -34,6 +37,37 @@ fn startup_backup_files(db_path: &Path) -> Vec<PathBuf> {
         .collect::<Vec<_>>();
     paths.sort();
     paths
+}
+
+fn assert_deleted_undo_token_absent(db: &Database, token: &str) {
+    let read_txn = db.db.begin_read().expect("begin read");
+    let deleted_pastes = read_txn
+        .open_table(DELETED_PASTES)
+        .expect("open deleted pastes");
+    let deleted_versions_meta = read_txn
+        .open_table(DELETED_PASTE_VERSIONS_META)
+        .expect("open deleted version meta");
+    let deleted_versions_content = read_txn
+        .open_table(DELETED_PASTE_VERSIONS_CONTENT)
+        .expect("open deleted version content");
+
+    assert!(deleted_pastes
+        .get(token)
+        .expect("lookup deleted paste")
+        .is_none());
+    assert!(deleted_versions_meta
+        .get(token)
+        .expect("lookup deleted version meta")
+        .is_none());
+    let has_content = deleted_versions_content
+        .iter()
+        .expect("iterate deleted version content")
+        .any(|row| {
+            let (key, _) = row.expect("deleted version content row");
+            let (row_token, _) = key.value();
+            row_token == token
+        });
+    assert!(!has_content);
 }
 
 #[test]
@@ -134,6 +168,40 @@ fn database_new_does_not_backup_current_schema_on_normal_reopen() {
         startup_backup_files(&db_path).is_empty(),
         "current-schema reopen should not create a compatibility backup"
     );
+}
+
+#[test]
+fn database_new_prunes_expired_deleted_paste_undo_on_restart() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("db");
+    let db = open_test_database(&db_path_str);
+    let paste = Paste::new("old head".to_string(), "expired staged undo".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create paste");
+    db.pastes
+        .update(
+            &paste_id,
+            UpdatePasteRequest {
+                content: Some("current head".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: None,
+                tags: None,
+            },
+        )
+        .expect("update paste")
+        .expect("paste exists");
+    assert!(TransactionOps::delete_paste_with_folder_staged_undo(
+        &db,
+        &paste_id,
+        "expired-token",
+        10
+    )
+    .expect("stage expired undo"));
+    drop(db);
+
+    let reopened = open_test_database(&db_path_str);
+    assert_deleted_undo_token_absent(&reopened, "expired-token");
 }
 
 #[test]

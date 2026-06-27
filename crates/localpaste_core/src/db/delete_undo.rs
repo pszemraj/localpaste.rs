@@ -8,10 +8,12 @@ use super::tables::{
 use super::transactions::{apply_folder_count_transition, FolderTxnGuard, TransactionOps};
 use super::Database;
 use crate::db::paste::{deserialize_paste, reverse_timestamp_key};
+use crate::db::time_util::unix_timestamp_millis;
 use crate::db::versioning::{decode_version_meta_list, encode_version_meta_list};
 use crate::error::AppError;
 use crate::models::paste::{DeletedPasteRecord, Paste, PasteMeta};
 use redb::ReadableTable;
+use std::time::SystemTime;
 
 fn collect_deleted_version_content_ids(
     deleted_versions_content: &redb::Table<(&str, u64), &[u8]>,
@@ -288,6 +290,7 @@ impl TransactionOps {
         _folder_guard: &FolderTxnGuard<'_>,
         undo_token: &str,
     ) -> Result<Option<Paste>, AppError> {
+        let now_ms = unix_timestamp_millis(SystemTime::now())?;
         let write_txn = db.db.begin_write()?;
         let restored = {
             let mut pastes = write_txn.open_table(PASTES)?;
@@ -307,6 +310,15 @@ impl TransactionOps {
             };
             let record: DeletedPasteRecord = bincode::deserialize(record_guard.value())?;
             drop(record_guard);
+            if record.expires_at_ms <= now_ms {
+                let _ = remove_deleted_paste_undo_rows(
+                    &mut deleted_pastes,
+                    &mut deleted_versions_meta,
+                    &mut deleted_versions_content,
+                    undo_token,
+                )?;
+                return Ok(None);
+            }
             let mut paste = record.paste;
             if pastes.get(paste.id.as_str())?.is_some() {
                 return Err(AppError::BadRequest(format!(
