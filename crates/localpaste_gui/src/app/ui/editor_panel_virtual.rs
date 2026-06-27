@@ -255,8 +255,23 @@ impl LocalPasteApp {
                     if response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                     }
-                    if pending_action.is_none() && (response.drag_started() || response.clicked()) {
-                        if let Some(pointer_pos) = response.interact_pointer_pos() {
+                    let (primary_pressed_on_row, current_pointer_pos) = ui.input(|input| {
+                        let pointer_pos = input
+                            .pointer
+                            .interact_pos()
+                            .or_else(|| input.pointer.latest_pos());
+                        let pressed_on_row =
+                            input.pointer.button_pressed(egui::PointerButton::Primary)
+                                && pointer_pos.map(|pos| rect.contains(pos)).unwrap_or(false);
+                        (pressed_on_row, pointer_pos)
+                    });
+                    let pointer_down_on_row =
+                        response.is_pointer_button_down_on() || primary_pressed_on_row;
+                    if pending_action.is_none()
+                        && (response.drag_started() || response.clicked() || pointer_down_on_row)
+                    {
+                        let pointer_pos = response.interact_pointer_pos().or(current_pointer_pos);
+                        if let Some(pointer_pos) = pointer_pos {
                             let clamped_x = pointer_pos.x.clamp(text_rect.min.x, text_rect.max.x);
                             let clamped_y = pointer_pos.y.clamp(rect.min.y, rect.max.y);
                             let local_pos = egui::vec2(
@@ -269,7 +284,7 @@ impl LocalPasteApp {
                             if response.drag_started() {
                                 self.reset_virtual_click_streak();
                                 pending_action = Some(RowAction::DragStart { global });
-                            } else {
+                            } else if response.clicked() {
                                 let click_count = self.register_virtual_click(pointer_pos);
                                 match click_count {
                                     3 => {
@@ -288,6 +303,8 @@ impl LocalPasteApp {
                                         pending_action = Some(RowAction::Click { global });
                                     }
                                 }
+                            } else {
+                                pending_action = Some(RowAction::Click { global });
                             }
                         }
                     }

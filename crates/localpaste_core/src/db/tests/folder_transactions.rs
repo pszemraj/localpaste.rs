@@ -1,12 +1,9 @@
 //! Folder transaction behavior tests.
 
 use super::*;
-use crate::db::tables::{
-    DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META,
-    PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META,
-};
+use crate::db::tables::{PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META};
 use crate::env::{env_lock, EnvGuard};
-use redb::{ReadableDatabase, ReadableTable};
+use redb::ReadableDatabase;
 use std::time::Duration;
 
 struct FolderMoveFixture {
@@ -40,64 +37,6 @@ fn setup_folder_move_fixture() -> FolderMoveFixture {
         new_folder_id,
         paste_id,
     }
-}
-
-fn seed_versioned_paste(db: &Database, name: &str) -> String {
-    let paste = Paste::new("initial content".to_string(), name.to_string());
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).expect("create paste");
-    db.pastes
-        .update(
-            &paste_id,
-            UpdatePasteRequest {
-                content: Some("current content".to_string()),
-                name: None,
-                language: None,
-                language_is_manual: None,
-                folder_id: None,
-                tags: None,
-            },
-        )
-        .expect("update paste")
-        .expect("paste exists");
-    paste_id
-}
-
-fn assert_staged_undo_token(db: &Database, token: &str, expected: bool) {
-    let read_txn = db.db.begin_read().expect("begin read");
-    let deleted_pastes = read_txn
-        .open_table(DELETED_PASTES)
-        .expect("open deleted pastes");
-    let deleted_versions_meta = read_txn
-        .open_table(DELETED_PASTE_VERSIONS_META)
-        .expect("open deleted version meta");
-    let deleted_versions_content = read_txn
-        .open_table(DELETED_PASTE_VERSIONS_CONTENT)
-        .expect("open deleted version content");
-
-    assert_eq!(
-        deleted_pastes
-            .get(token)
-            .expect("lookup deleted paste")
-            .is_some(),
-        expected
-    );
-    assert_eq!(
-        deleted_versions_meta
-            .get(token)
-            .expect("lookup deleted version meta")
-            .is_some(),
-        expected
-    );
-    let has_content = deleted_versions_content
-        .iter()
-        .expect("iterate deleted version content")
-        .any(|row| {
-            let (key, _) = row.expect("deleted version content row");
-            let (row_token, _) = key.value();
-            row_token == token
-        });
-    assert_eq!(has_content, expected);
 }
 
 #[test]
@@ -769,6 +708,7 @@ fn staged_delete_undo_preserves_versions_without_payload_cap() {
         .expect("staged token exists");
     assert_eq!(restored.id, fixture.paste_id);
     assert_eq!(restored.content, "updated");
+    assert_staged_undo_token(db, token, false);
 
     let versions = db
         .pastes

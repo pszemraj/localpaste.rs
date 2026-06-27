@@ -269,6 +269,45 @@ mod tests {
             },
             Case {
                 wants_keyboard_input_before: false,
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    ..egui::Modifiers::NONE
+                },
+                has_pastes: true,
+                editor_claims_navigation_pre: false,
+                command_palette_open: false,
+                modal_overlay_open: false,
+                shortcut_help_open: false,
+                expected: false,
+            },
+            Case {
+                wants_keyboard_input_before: false,
+                modifiers: egui::Modifiers {
+                    alt: true,
+                    ..egui::Modifiers::NONE
+                },
+                has_pastes: true,
+                editor_claims_navigation_pre: false,
+                command_palette_open: false,
+                modal_overlay_open: false,
+                shortcut_help_open: false,
+                expected: false,
+            },
+            Case {
+                wants_keyboard_input_before: false,
+                modifiers: egui::Modifiers {
+                    command: true,
+                    ..egui::Modifiers::NONE
+                },
+                has_pastes: true,
+                editor_claims_navigation_pre: false,
+                command_palette_open: false,
+                modal_overlay_open: false,
+                shortcut_help_open: false,
+                expected: false,
+            },
+            Case {
+                wants_keyboard_input_before: false,
                 modifiers: egui::Modifiers::NONE,
                 has_pastes: true,
                 editor_claims_navigation_pre: true,

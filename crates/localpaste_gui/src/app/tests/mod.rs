@@ -410,3 +410,4 @@ mod version_async_status;
 mod version_modal_caching;
 mod version_overlay_exclusivity;
 mod virtual_editor_behaviors;
+mod virtual_editor_focus;

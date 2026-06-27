@@ -317,67 +317,69 @@ impl TransactionOps {
                     &mut deleted_versions_content,
                     undo_token,
                 )?;
-                return Ok(None);
-            }
-            let mut paste = record.paste;
-            if pastes.get(paste.id.as_str())?.is_some() {
-                return Err(AppError::BadRequest(format!(
-                    "Paste '{}' already exists",
-                    paste.id
-                )));
-            }
-            let version_items = decode_version_meta_list(
-                deleted_versions_meta
-                    .get(undo_token)?
-                    .as_ref()
-                    .map(|value| value.value()),
-            )?;
-            let mut version_contents = Vec::with_capacity(version_items.len());
-            for version in &version_items {
-                let Some(content_guard) =
-                    deleted_versions_content.get((undo_token, version.version_id_ms))?
-                else {
-                    return Err(AppError::StorageMessage(format!(
-                        "Missing staged version content for undo token '{}' version {}",
-                        undo_token, version.version_id_ms
+                None
+            } else {
+                let mut paste = record.paste;
+                if pastes.get(paste.id.as_str())?.is_some() {
+                    return Err(AppError::BadRequest(format!(
+                        "Paste '{}' already exists",
+                        paste.id
                     )));
-                };
-                version_contents.push((version.version_id_ms, content_guard.value().to_vec()));
-            }
-
-            let restore_folder = match paste.folder_id.as_deref() {
-                Some(folder_id)
-                    if folders.get(folder_id)?.is_some() && deleting.get(folder_id)?.is_none() =>
-                {
-                    paste.folder_id.clone()
                 }
-                _ => None,
-            };
-            paste.folder_id = restore_folder;
+                let version_items = decode_version_meta_list(
+                    deleted_versions_meta
+                        .get(undo_token)?
+                        .as_ref()
+                        .map(|value| value.value()),
+                )?;
+                let mut version_contents = Vec::with_capacity(version_items.len());
+                for version in &version_items {
+                    let Some(content_guard) =
+                        deleted_versions_content.get((undo_token, version.version_id_ms))?
+                    else {
+                        return Err(AppError::StorageMessage(format!(
+                            "Missing staged version content for undo token '{}' version {}",
+                            undo_token, version.version_id_ms
+                        )));
+                    };
+                    version_contents.push((version.version_id_ms, content_guard.value().to_vec()));
+                }
 
-            let encoded_paste = bincode::serialize(&paste)?;
-            let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
-            let encoded_versions = encode_version_meta_list(&version_items)?;
-            pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
-            metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
-            updated.insert(
-                (reverse_timestamp_key(paste.updated_at), paste.id.as_str()),
-                (),
-            )?;
-            versions_meta.insert(paste.id.as_str(), encoded_versions.as_slice())?;
-            for (version_id_ms, content_bytes) in version_contents {
-                versions_content
-                    .insert((paste.id.as_str(), version_id_ms), content_bytes.as_slice())?;
+                let restore_folder = match paste.folder_id.as_deref() {
+                    Some(folder_id)
+                        if folders.get(folder_id)?.is_some()
+                            && deleting.get(folder_id)?.is_none() =>
+                    {
+                        paste.folder_id.clone()
+                    }
+                    _ => None,
+                };
+                paste.folder_id = restore_folder;
+
+                let encoded_paste = bincode::serialize(&paste)?;
+                let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
+                let encoded_versions = encode_version_meta_list(&version_items)?;
+                pastes.insert(paste.id.as_str(), encoded_paste.as_slice())?;
+                metas.insert(paste.id.as_str(), encoded_meta.as_slice())?;
+                updated.insert(
+                    (reverse_timestamp_key(paste.updated_at), paste.id.as_str()),
+                    (),
+                )?;
+                versions_meta.insert(paste.id.as_str(), encoded_versions.as_slice())?;
+                for (version_id_ms, content_bytes) in version_contents {
+                    versions_content
+                        .insert((paste.id.as_str(), version_id_ms), content_bytes.as_slice())?;
+                }
+
+                let _ = remove_deleted_paste_undo_rows(
+                    &mut deleted_pastes,
+                    &mut deleted_versions_meta,
+                    &mut deleted_versions_content,
+                    undo_token,
+                )?;
+                apply_folder_count_transition(&mut folders, None, paste.folder_id.as_deref())?;
+                Some(paste)
             }
-
-            let _ = remove_deleted_paste_undo_rows(
-                &mut deleted_pastes,
-                &mut deleted_versions_meta,
-                &mut deleted_versions_content,
-                undo_token,
-            )?;
-            apply_folder_count_transition(&mut folders, None, paste.folder_id.as_deref())?;
-            Some(paste)
         };
 
         write_txn.commit()?;

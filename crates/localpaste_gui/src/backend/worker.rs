@@ -612,6 +612,39 @@ mod tests {
     }
 
     #[test]
+    fn delete_undo_overflow_discards_oldest_persisted_token() {
+        let mut worker = make_state();
+        let mut tokens = Vec::new();
+        for idx in 0..=DELETE_UNDO_LIMIT {
+            tokens.push(stage_deleted_paste(
+                &mut worker,
+                format!("paste-{idx}").as_str(),
+            ));
+        }
+
+        let oldest = tokens.first().expect("oldest token");
+        let newest = tokens.last().expect("newest token");
+        assert!(!worker.state.deleted_paste_undo.contains_key(oldest));
+        assert!(!worker.state.deleted_paste_order.contains(oldest));
+        assert_eq!(worker.state.deleted_paste_order.len(), DELETE_UNDO_LIMIT);
+        assert!(
+            TransactionOps::restore_deleted_paste_by_token(&worker.state.db, oldest)
+                .expect("oldest restore lookup")
+                .is_none(),
+            "overflow pruning should discard the oldest persisted tombstone"
+        );
+
+        assert!(worker.state.deleted_paste_undo.contains_key(newest));
+        assert!(worker.state.deleted_paste_order.contains(newest));
+        assert!(
+            TransactionOps::restore_deleted_paste_by_token(&worker.state.db, newest)
+                .expect("newest restore lookup")
+                .is_some(),
+            "overflow pruning must preserve live newest undo tombstones"
+        );
+    }
+
+    #[test]
     fn expired_restore_emits_nonretryable_restore_failure() {
         let mut worker = make_state();
         let token = stage_deleted_paste(&mut worker, "alpha");
