@@ -45,6 +45,7 @@ impl LocalPasteApp {
                             let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
                             let name_response = ui.add(
                                 egui::TextEdit::singleline(&mut self.edit_name)
+                                    .id(egui::Id::new(TITLE_INPUT_ID))
                                     .font(egui::TextStyle::Button)
                                     .desired_width(title_width)
                                     .hint_text("Untitled paste"),

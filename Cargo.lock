@@ -2397,6 +2397,7 @@ dependencies = [
  "reqwest",
  "rfd",
  "ropey",
+ "serde",
  "serde_json",
  "syntect",
  "tempfile",

@@ -6,6 +6,7 @@ mod editor;
 mod highlight;
 mod highlight_flow;
 mod interaction_helpers;
+mod nav_probe;
 mod paste_intent;
 mod perf_trace;
 mod shutdown;
@@ -149,6 +150,8 @@ pub(crate) struct LocalPasteApp {
     last_perf_log_at: Instant,
     editor_input_trace_enabled: bool,
     highlight_trace_enabled: bool,
+    nav_probe: Option<nav_probe::NavProbe>,
+    nav_probe_applied_commands: Vec<String>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -244,6 +247,12 @@ const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
+const TITLE_INPUT_ID: &str = "editor_title_input";
+const COMMAND_PALETTE_INPUT_ID: &str = "command_palette_query_input";
+const PROPERTIES_NAME_INPUT_ID: &str = "properties_name_input";
+const PROPERTIES_TAGS_INPUT_ID: &str = "properties_tags_input";
+const DIFF_QUERY_INPUT_ID: &str = "diff_query_input";
+const NAV_PROBE_PASTE_ID: &str = "__nav_probe__";
 const STORAGE_SELECTED_ID_KEY: &str = "localpaste.selected_id";
 const STORAGE_ACTIVE_COLLECTION_KEY: &str = "localpaste.active_collection";
 const STORAGE_ACTIVE_LANGUAGE_KEY: &str = "localpaste.active_language_filter";
@@ -443,8 +452,12 @@ impl LocalPasteApp {
             paste_as_new_clipboard_requested_at: None,
             editor_input_trace_enabled: env_flag_enabled("LOCALPASTE_EDITOR_INPUT_TRACE"),
             highlight_trace_enabled: env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE"),
+            nav_probe: nav_probe::NavProbe::from_env(),
+            nav_probe_applied_commands: Vec::new(),
         };
-        app.request_refresh();
+        if !app.apply_nav_probe_seed_from_env() {
+            app.request_refresh();
+        }
         Ok(app)
     }
 
@@ -549,6 +562,7 @@ impl eframe::App for LocalPasteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.track_frame_metrics();
         self.virtual_paste_applied_this_frame = false;
+        self.nav_probe_begin_frame(ctx);
         let min_size = egui::vec2(MIN_WINDOW_SIZE[0], MIN_WINDOW_SIZE[1]);
         let max_size = egui::vec2(MAX_WINDOW_SIZE[0], MAX_WINDOW_SIZE[1]);
         enforce_window_bounds(ctx, _frame, &mut self.window_checked, min_size, max_size);
@@ -786,6 +800,7 @@ impl eframe::App for LocalPasteApp {
             repaint_after = repaint_after.min(until);
         }
         ctx.request_repaint_after(repaint_after);
+        self.nav_probe_write_frame(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

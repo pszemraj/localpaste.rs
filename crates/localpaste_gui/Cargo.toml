@@ -24,6 +24,8 @@ unicode-segmentation = "1.11"
 unicode-width = "0.2"
 chrono = { workspace = true, features = ["serde"] }
 rfd = "0.17.2"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 
 [features]
 default = ["magika"]
@@ -35,5 +37,4 @@ winresource = "0.1"
 [dev-dependencies]
 tempfile.workspace = true
 reqwest = { workspace = true, features = ["json", "blocking"] }
-serde_json.workspace = true
 bincode = "1.3"

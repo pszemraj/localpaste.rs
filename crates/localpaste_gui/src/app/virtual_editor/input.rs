@@ -53,7 +53,7 @@ pub(crate) enum VirtualInputCommand {
 ///
 /// We keep this extremely small so the translation logic stays auditable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PlatformFlavor {
+pub(crate) enum PlatformFlavor {
     Mac,
     Other,
 }
@@ -66,6 +66,27 @@ impl PlatformFlavor {
             Self::Other
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static PLATFORM_OVERRIDE: std::cell::Cell<Option<PlatformFlavor>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+/// Sets the per-thread platform override used by full-frame virtual-editor tests.
+pub(crate) fn set_test_platform(platform: Option<PlatformFlavor>) {
+    PLATFORM_OVERRIDE.with(|cell| cell.set(platform));
+}
+
+fn active_platform() -> PlatformFlavor {
+    #[cfg(test)]
+    if let Some(platform) = PLATFORM_OVERRIDE.with(|cell| cell.get()) {
+        return platform;
+    }
+
+    PlatformFlavor::current()
 }
 
 fn is_word_modifier(platform: PlatformFlavor, modifiers: egui::Modifiers) -> bool {
@@ -290,7 +311,7 @@ pub(crate) fn commands_from_events(
     events: &[egui::Event],
     focused: bool,
 ) -> Vec<VirtualInputCommand> {
-    commands_from_events_for_platform(events, focused, PlatformFlavor::current())
+    commands_from_events_for_platform(events, focused, active_platform())
 }
 
 fn commands_from_events_for_platform(

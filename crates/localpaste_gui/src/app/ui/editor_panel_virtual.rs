@@ -48,10 +48,10 @@ impl LocalPasteApp {
         }
 
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-        if self.focus_editor_next {
+        let focus_editor_requested = self.focus_editor_next;
+        if focus_editor_requested {
             ui.memory_mut(|m| m.request_focus(editor_id));
             self.reset_virtual_caret_blink();
-            self.focus_editor_next = false;
         }
         let wrap_width = ui.available_width().max(1.0);
         let perf_enabled = self.perf_log_enabled;
@@ -607,6 +607,9 @@ impl LocalPasteApp {
             ui.memory_mut(|m| m.surrender_focus(editor_id));
             egui_focus = false;
         }
+        if focus_editor_requested && !window_blurred && egui_focus {
+            self.focus_editor_next = false;
+        }
         if focus_response.gained_focus() || (egui_focus && !had_focus) {
             self.reset_virtual_caret_blink();
             ui.ctx().request_repaint();
@@ -670,6 +673,7 @@ impl LocalPasteApp {
                     .collect::<Vec<_>>()
             });
             let input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
+            self.nav_probe_record_applied_commands(&commands);
             consume_virtual_editor_owned_key_events(ui.ctx(), &commands);
             let apply_started = Instant::now();
             let apply_result = self.apply_virtual_commands(ui.ctx(), &commands);

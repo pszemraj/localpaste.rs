@@ -53,6 +53,7 @@ impl LocalPasteApp {
                 let mut query_buf = self.command_palette_query.clone();
                 let query_resp = ui.add(
                     egui::TextEdit::singleline(&mut query_buf)
+                        .id(egui::Id::new(COMMAND_PALETTE_INPUT_ID))
                         .hint_text("Run a command or search pastes..."),
                 );
                 query_resp.request_focus();

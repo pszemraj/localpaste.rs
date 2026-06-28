@@ -17,5 +17,7 @@ pub(crate) use buffer::{RopeBuffer, VirtualEditDelta};
 pub(crate) use galley_cache::{VirtualGalleyCache, VirtualGalleyContext};
 pub(crate) use history::{EditIntent, RecordedEdit, VirtualEditorHistory};
 pub(crate) use input::{commands_from_events, VirtualInputCommand};
+#[cfg(test)]
+pub(crate) use input::{set_test_platform, PlatformFlavor};
 pub(crate) use state::{VirtualEditorState, WrapBoundaryAffinity};
 pub(crate) use visual_rows::VisualRowLayoutCache as WrapLayoutCache;

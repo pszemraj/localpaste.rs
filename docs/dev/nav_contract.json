@@ -1,0 +1,44 @@
+{
+  "scenarios": [
+    {
+      "id": "ctrl_home_from_middle",
+      "platforms": ["windows", "linux"],
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "cursor.line": 0,
+        "cursor.col": 0,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "MoveDocHome",
+        "applied_commands": "MoveDocHome"
+      }
+    },
+    {
+      "id": "cmd_up_from_middle",
+      "platforms": ["macos"],
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "cursor.line": 0,
+        "cursor.col": 0,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "MoveDocHome",
+        "applied_commands": "MoveDocHome"
+      }
+    }
+  ]
+}

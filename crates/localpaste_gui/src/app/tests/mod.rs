@@ -187,6 +187,31 @@ pub(super) fn primary_command_modifiers() -> egui::Modifiers {
     }
 }
 
+/// Runs a closure with the virtual-editor platform keymap overridden.
+///
+/// # Arguments
+/// - `platform`: Platform flavor to use for virtual-editor input mapping during `run`.
+/// - `run`: Closure executed while the test platform override is active.
+///
+/// # Returns
+/// The closure result.
+pub(super) fn with_platform<R>(
+    platform: super::virtual_editor::PlatformFlavor,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct ResetGuard;
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            super::virtual_editor::set_test_platform(None);
+        }
+    }
+
+    super::virtual_editor::set_test_platform(Some(platform));
+    let _guard = ResetGuard;
+    run()
+}
+
 /// Builds a command-modified pressed key event for platform-agnostic shortcut tests.
 ///
 /// # Arguments
@@ -363,6 +388,8 @@ fn make_app() -> TestHarness {
         paste_as_new_clipboard_requested_at: None,
         editor_input_trace_enabled: false,
         highlight_trace_enabled: false,
+        nav_probe: None,
+        nav_probe_applied_commands: Vec::new(),
     };
 
     TestHarness {

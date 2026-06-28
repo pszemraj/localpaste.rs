@@ -157,7 +157,7 @@ impl LocalPasteApp {
                 let mut search_buf = self.search_query.clone();
                 let search_resp = ui.add(
                     egui::TextEdit::singleline(&mut search_buf)
-                        .id_salt(SEARCH_INPUT_ID)
+                        .id(egui::Id::new(SEARCH_INPUT_ID))
                         .hint_text("Search pastes... (Ctrl/Cmd+F)"),
                 );
                 if self.search_focus_requested {
