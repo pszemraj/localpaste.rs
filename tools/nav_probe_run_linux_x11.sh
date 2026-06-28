@@ -5,6 +5,7 @@ spec="docs/dev/nav_contract.json"
 log=""
 build=0
 assert=0
+list=0
 launch_poll_ms=100
 launch_poll_count=400
 after_focus_ms=50
@@ -21,6 +22,7 @@ Options:
   --spec PATH                 Navigation contract JSON path
   --log PATH                  Probe NDJSON path; defaults to a unique target/ file
   --only SCENARIO             Run one scenario; may be repeated
+  --list                      List selected Linux X11 scenarios and exit
   --build                     Build localpaste-gui before running
   --assert                    Run tools/nav_probe_assert.py after the probe run
   --launch-poll-ms MS         Poll interval while waiting for app/probe readiness
@@ -29,6 +31,9 @@ Options:
   --between-keys-ms MS        Delay between keys inside a scenario
   --after-scenario-ms MS      Delay after keys before closing the app
   --after-close-ms MS         Delay between scenario processes
+
+Environment:
+  LOCALPASTE_NAV_PROBE_PYTHON  Python executable to use for JSON parsing; otherwise inherits an active venv/conda env, then falls back to python3/python
 EOF
 }
 
@@ -48,6 +53,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --build)
             build=1
+            shift
+            ;;
+        --list)
+            list=1
             shift
             ;;
         --assert)
@@ -132,23 +141,27 @@ spec_path="$(assert_repo_path "$spec" "Spec")"
 log_path="$(assert_repo_path "$log" "Log")"
 exe="$(assert_repo_path "target/debug/localpaste-gui" "Executable")"
 
-if [[ "${XDG_SESSION_TYPE:-x11}" == "wayland" ]]; then
-    echo "Linux navigation automation is X11-only; run the probe manually on Wayland." >&2
-    exit 2
-fi
-require_command xdotool
-require_command conda
 require_command awk
 
-if [[ "$build" -eq 1 ]]; then
-    cargo build -p localpaste_gui --bin localpaste-gui
-fi
-if [[ ! -x "$exe" ]]; then
-    echo "GUI executable not found: $exe. Run with --build or build it first." >&2
+python_cmd=()
+if [[ -n "${LOCALPASTE_NAV_PROBE_PYTHON:-}" ]]; then
+    python_cmd=("$LOCALPASTE_NAV_PROBE_PYTHON")
+elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+    python_cmd=("${VIRTUAL_ENV}/bin/python")
+elif [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+    python_cmd=("${CONDA_PREFIX}/bin/python")
+elif command -v python3 >/dev/null 2>&1; then
+    python_cmd=(python3)
+elif command -v python >/dev/null 2>&1; then
+    python_cmd=(python)
+else
+    echo "required command not found: python3 or python" >&2
     exit 2
 fi
-mkdir -p "$(dirname "$log_path")"
-rm -f "$log_path"
+
+run_python() {
+    "${python_cmd[@]}" "$@"
+}
 
 scenario_args=()
 for scenario_id in "${only[@]}"; do
@@ -156,7 +169,7 @@ for scenario_id in "${only[@]}"; do
 done
 
 mapfile -t scenarios < <(
-    conda run -n misc python - "$spec_path" "${only[@]}" <<'PY'
+    run_python - "$spec_path" "${only[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -188,6 +201,34 @@ if [[ "${#scenarios[@]}" -eq 0 ]]; then
     exit 2
 fi
 
+if [[ "$list" -eq 1 ]]; then
+    for scenario_json in "${scenarios[@]}"; do
+        run_python - "$scenario_json" <<'PY'
+import json
+import sys
+
+print(json.loads(sys.argv[1])["id"])
+PY
+    done
+    exit 0
+fi
+
+if [[ "${XDG_SESSION_TYPE:-x11}" == "wayland" ]]; then
+    echo "Linux navigation automation is X11-only; run the probe manually on Wayland." >&2
+    exit 2
+fi
+require_command xdotool
+
+if [[ "$build" -eq 1 ]]; then
+    cargo build -p localpaste_gui --bin localpaste-gui
+fi
+if [[ ! -x "$exe" ]]; then
+    echo "GUI executable not found: $exe. Run with --build or build it first." >&2
+    exit 2
+fi
+mkdir -p "$(dirname "$log_path")"
+rm -f "$log_path"
+
 safe_name() {
     printf '%s' "$1" | sed -E 's/[^A-Za-z0-9_.-]/_/g'
 }
@@ -195,7 +236,7 @@ safe_name() {
 json_field() {
     local json="$1"
     local field="$2"
-    conda run -n misc python - "$json" "$field" <<'PY'
+    run_python - "$json" "$field" <<'PY'
 import json
 import sys
 
@@ -213,7 +254,7 @@ PY
 json_text_field() {
     local json="$1"
     local field="$2"
-    conda run -n misc python - "$json" "$field" <<'PY'
+    run_python - "$json" "$field" <<'PY'
 import json
 import sys
 
@@ -229,7 +270,7 @@ probe_seeded() {
     local scenario_id="$1"
     local expected_len="$2"
     [[ -f "$log_path" ]] || return 1
-    conda run -n misc python - "$log_path" "$scenario_id" "$expected_len" <<'PY'
+    run_python - "$log_path" "$scenario_id" "$expected_len" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -366,5 +407,5 @@ done
 
 echo "nav probe log: $log_path"
 if [[ "$assert" -eq 1 ]]; then
-    conda run -n misc python tools/nav_probe_assert.py "$log_path" "$spec_path" --platform linux "${scenario_args[@]}"
+    run_python tools/nav_probe_assert.py "$log_path" "$spec_path" --platform linux "${scenario_args[@]}"
 fi
