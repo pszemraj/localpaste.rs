@@ -476,6 +476,9 @@ impl LocalPasteApp {
     }
 
     fn release_paste_lock(&mut self, id: &str) {
+        if id == NAV_PROBE_PASTE_ID && self.nav_probe.is_some() {
+            return;
+        }
         if let Err(err) = self.locks.release(id, &self.lock_owner_id) {
             warn!(
                 "failed to release paste lock '{}' for GUI owner: {}",
@@ -483,6 +486,10 @@ impl LocalPasteApp {
             );
             self.set_status("Lock release failed; restart app if edits remain blocked.");
         }
+    }
+
+    fn nav_probe_seed_active(&self) -> bool {
+        self.nav_probe.is_some() && self.selected_id.as_deref() == Some(NAV_PROBE_PASTE_ID)
     }
 
     fn track_frame_metrics(&mut self) {
@@ -776,7 +783,9 @@ impl eframe::App for LocalPasteApp {
         self.maybe_dispatch_palette_search();
         self.maybe_dispatch_search();
         self.maybe_autosave();
-        if self.last_refresh_at.elapsed() >= EXTERNAL_REFRESH_INTERVAL {
+        if self.last_refresh_at.elapsed() >= EXTERNAL_REFRESH_INTERVAL
+            && !self.nav_probe_seed_active()
+        {
             self.request_refresh();
         }
         let mut repaint_after = if self.save_status == SaveStatus::Dirty {
@@ -811,6 +820,9 @@ impl eframe::App for LocalPasteApp {
 impl Drop for LocalPasteApp {
     fn drop(&mut self) {
         if let Some(id) = self.selected_id.take() {
+            if id == NAV_PROBE_PASTE_ID && self.nav_probe.is_some() {
+                return;
+            }
             if let Err(err) = self.locks.release(&id, &self.lock_owner_id) {
                 warn!("failed to release paste lock '{}' on drop: {}", id, err);
             }

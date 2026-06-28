@@ -21,10 +21,28 @@ def dotted(value, path):
     return cur
 
 
+def matches_subset(value, expected) -> bool:
+    for key, expected_value in expected.items():
+        try:
+            actual = dotted(value, key)
+        except KeyError:
+            return False
+        if actual != expected_value:
+            return False
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("log", type=Path)
     parser.add_argument("spec", type=Path)
+    parser.add_argument("--platform", default=None, help="Override detected host platform")
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        default=[],
+        help="Only assert the named scenario; may be repeated",
+    )
     args = parser.parse_args()
 
     frames = [
@@ -34,9 +52,12 @@ def main() -> int:
     ]
     spec = json.loads(args.spec.read_text("utf-8"))
     failures = []
-    host_platform = host()
+    host_platform = args.platform or host()
+    scenario_filter = set(args.scenario)
 
     for scenario in spec.get("scenarios", []):
+        if scenario_filter and scenario.get("id") not in scenario_filter:
+            continue
         platforms = scenario.get("platforms")
         if platforms and host_platform not in platforms:
             continue
@@ -80,6 +101,15 @@ def main() -> int:
             ):
                 failures.append(
                     f"{scenario_id}: {key} did not contain {expected_part!r}; got {actual!r}"
+                )
+        for expected_event in scenario.get("expect_events", []):
+            actual_events = frame.get("raw_events")
+            if not isinstance(actual_events, list):
+                failures.append(f"{scenario_id}: raw_events is not a list")
+                continue
+            if not any(matches_subset(event, expected_event) for event in actual_events):
+                failures.append(
+                    f"{scenario_id}: raw_events did not contain event subset {expected_event!r}; got {actual_events!r}"
                 )
 
     if failures:

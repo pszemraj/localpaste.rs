@@ -11,7 +11,7 @@ use serde::Serialize;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::warn;
 
 #[derive(Debug)]
@@ -23,6 +23,7 @@ pub(super) struct NavProbe {
     started_at: Instant,
     current_raw_events: Vec<ProbeEvent>,
     current_candidate_commands_if_editor_focused: Vec<String>,
+    focus_editor_until_acquired: bool,
 }
 
 impl NavProbe {
@@ -63,6 +64,7 @@ impl NavProbe {
             started_at: Instant::now(),
             current_raw_events: Vec::new(),
             current_candidate_commands_if_editor_focused: Vec::new(),
+            focus_editor_until_acquired: env_truthy("LOCALPASTE_NAV_PROBE_FOCUS_EDITOR"),
         })
     }
 
@@ -209,6 +211,16 @@ impl LocalPasteApp {
         if self.nav_probe.is_none() {
             return;
         }
+        if self
+            .nav_probe
+            .as_ref()
+            .map(|probe| probe.focus_editor_until_acquired)
+            .unwrap_or(false)
+            && !ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)))
+        {
+            self.focus_editor_next = true;
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
         let frame = self.build_nav_probe_frame(ctx);
         if let Some(probe) = self.nav_probe.as_mut() {
             probe.write_frame(&frame);
@@ -260,6 +272,14 @@ impl LocalPasteApp {
 
         if env_truthy("LOCALPASTE_NAV_PROBE_FOCUS_EDITOR") {
             self.focus_editor_next = true;
+        }
+        if let Ok(cursor) = std::env::var("LOCALPASTE_NAV_PROBE_SEED_CURSOR") {
+            if let Some(cursor_char) =
+                parse_nav_probe_seed_cursor(cursor.as_str(), &self.virtual_editor_buffer)
+            {
+                let len = self.virtual_editor_buffer.len_chars();
+                self.virtual_editor_state.set_cursor(cursor_char, len);
+            }
         }
         true
     }
@@ -406,6 +426,29 @@ fn env_truthy(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn parse_nav_probe_seed_cursor(value: &str, buffer: &super::RopeBuffer) -> Option<usize> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some((line, col)) = trimmed.split_once(':') {
+        let line = parse_nav_probe_usize(line)?;
+        let col = parse_nav_probe_usize(col)?;
+        return Some(buffer.line_col_to_char(line, col));
+    }
+    parse_nav_probe_usize(trimmed).map(|char_index| char_index.min(buffer.len_chars()))
+}
+
+fn parse_nav_probe_usize(value: &str) -> Option<usize> {
+    match value.trim().parse::<usize>() {
+        Ok(parsed) => Some(parsed),
+        Err(err) => {
+            warn!("invalid navigation probe cursor component '{value}': {err}");
+            None
+        }
+    }
+}
+
 fn stable_hash(value: &str) -> String {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for byte in value.as_bytes() {
@@ -424,5 +467,24 @@ fn platform_name() -> &'static str {
         "linux"
     } else {
         "other"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::RopeBuffer;
+
+    #[test]
+    fn seed_cursor_parser_accepts_char_index_and_line_col() {
+        let buffer = RopeBuffer::new("alpha\nbeta\n");
+        assert_eq!(parse_nav_probe_seed_cursor("3", &buffer), Some(3));
+        assert_eq!(parse_nav_probe_seed_cursor("1:2", &buffer), Some(8));
+        assert_eq!(
+            parse_nav_probe_seed_cursor("999", &buffer),
+            Some(buffer.len_chars())
+        );
+        assert_eq!(parse_nav_probe_seed_cursor("", &buffer), None);
+        assert_eq!(parse_nav_probe_seed_cursor("bad", &buffer), None);
     }
 }
