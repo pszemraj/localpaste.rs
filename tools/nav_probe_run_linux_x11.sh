@@ -10,7 +10,7 @@ ctrl_only=0
 summary=0
 launch_poll_ms=100
 launch_poll_count=400
-after_focus_ms=50
+after_focus_ms=150
 between_keys_ms=350
 after_scenario_ms=900
 after_close_ms=500
@@ -362,6 +362,23 @@ activate_window() {
     local window_id="$1"
     xdotool windowraise "$window_id" >/dev/null 2>&1 || true
     xdotool windowactivate --sync "$window_id" >/dev/null 2>&1 || true
+    xdotool windowfocus --sync "$window_id" >/dev/null 2>&1 || true
+}
+
+wait_active_window() {
+    local window_id="$1"
+    local scenario_id="$2"
+    local active_window=""
+    for _ in $(seq 1 "$launch_poll_count"); do
+        activate_window "$window_id"
+        active_window="$(xdotool getactivewindow 2>/dev/null || true)"
+        if [[ "$active_window" == "$window_id" ]]; then
+            return 0
+        fi
+        ms_sleep "$launch_poll_ms"
+    done
+    echo "localpaste-gui did not become active X11 window before input for $scenario_id" >&2
+    return 1
 }
 
 close_app() {
@@ -459,10 +476,20 @@ for scenario_json in "${scenarios[@]}"; do
         exit 1
     fi
 
-    activate_window "$window_id"
+    if ! wait_active_window "$window_id" "$scenario_id"; then
+        close_app "$pid" "$window_id"
+        current_pid=""
+        current_window_id=""
+        exit 1
+    fi
     ms_sleep "$after_focus_ms"
     for key in "${keys[@]}"; do
-        activate_window "$window_id"
+        if ! wait_active_window "$window_id" "$scenario_id"; then
+            close_app "$pid" "$window_id"
+            current_pid=""
+            current_window_id=""
+            exit 1
+        fi
         xdotool key "$key"
         ms_sleep "$between_keys_ms"
     done
