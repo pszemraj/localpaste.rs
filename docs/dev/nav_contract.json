@@ -148,6 +148,104 @@
       "expect_events": [{"kind": "key", "key": "ArrowRight", "pressed": true, "modifiers.ctrl": true, "modifiers.shift": true, "modifiers.command": true}]
     },
     {
+      "id": "ctrl_up_from_middle",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
+      "driver": {"windows": {"send_keys": ["^{UP}"]}, "linux_x11": {"keys": ["ctrl+Up"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 0,
+        "cursor.col": 5,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "MoveUp",
+        "applied_commands": "MoveUp"
+      },
+      "expect_events": [{"kind": "key", "key": "ArrowUp", "pressed": true, "modifiers.ctrl": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_down_from_middle",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
+      "driver": {"windows": {"send_keys": ["^{DOWN}"]}, "linux_x11": {"keys": ["ctrl+Down"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 2,
+        "cursor.col": 5,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "MoveDown",
+        "applied_commands": "MoveDown"
+      },
+      "expect_events": [{"kind": "key", "key": "ArrowDown", "pressed": true, "modifiers.ctrl": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_shift_up_from_middle",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
+      "driver": {"windows": {"send_keys": ["^+{UP}"]}, "linux_x11": {"keys": ["ctrl+shift+Up"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 0,
+        "cursor.col": 5,
+        "selection.start": 5,
+        "selection.end": 16
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "MoveUp",
+        "applied_commands": "MoveUp"
+      },
+      "expect_events": [{"kind": "key", "key": "ArrowUp", "pressed": true, "modifiers.ctrl": true, "modifiers.shift": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_shift_down_from_middle",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
+      "driver": {"windows": {"send_keys": ["^+{DOWN}"]}, "linux_x11": {"keys": ["ctrl+shift+Down"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 2,
+        "cursor.col": 5,
+        "selection.start": 16,
+        "selection.end": 28
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "MoveDown",
+        "applied_commands": "MoveDown"
+      },
+      "expect_events": [{"kind": "key", "key": "ArrowDown", "pressed": true, "modifiers.ctrl": true, "modifiers.shift": true, "modifiers.command": true}]
+    },
+    {
       "id": "home_from_middle",
       "platforms": ["windows", "linux"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
