@@ -150,6 +150,21 @@ function Invoke-NavProbeAssertions {
     }
 }
 
+function Write-NavProbeManifest {
+    param([string]$Status, [string]$ErrorMessage = "")
+    $manifest["status"] = $Status
+    $manifest["completed_at"] = (Get-Date).ToUniversalTime().ToString("o")
+    if ([string]::IsNullOrWhiteSpace($ErrorMessage)) {
+        if ($manifest.Contains("error")) {
+            $manifest.Remove("error")
+        }
+    }
+    else {
+        $manifest["error"] = $ErrorMessage
+    }
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+}
+
 Assert-RepoPath $specPath "Spec"
 Assert-RepoPath $logPath "Log"
 Assert-RepoPath $manifestPath "Manifest"
@@ -451,6 +466,7 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
+try {
 for ($repeatIndex = 1; $repeatIndex -le $RepeatCount; $repeatIndex++) {
 foreach ($scenario in $scenarios) {
     $scenarioId = [string]$scenario.id
@@ -560,11 +576,15 @@ elseif ($Assert) {
 }
 
 if ($Assert) {
-    $manifest.status = "assertions_passed"
+    Write-NavProbeManifest "assertions_passed"
 }
 else {
-    $manifest.status = "completed_without_assertions"
+    Write-NavProbeManifest "completed_without_assertions"
 }
-$manifest.completed_at = (Get-Date).ToUniversalTime().ToString("o")
-$manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 Write-Host "nav probe manifest: $manifestPath"
+}
+catch {
+    Write-NavProbeManifest "failed" ([string]$_)
+    Write-Host "nav probe manifest: $manifestPath"
+    throw
+}
