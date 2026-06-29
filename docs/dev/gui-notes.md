@@ -63,8 +63,11 @@ Windows automation uses `tools/nav_probe_run_windows.ps1` from Windows PowerShel
 ```powershell
 tools\nav_probe_run_windows.ps1 -Build -Assert -Only ctrl_home_from_middle
 tools\nav_probe_run_windows.ps1 -Build -Assert -CtrlOnly -Summary
+tools\nav_probe_run_windows.ps1 -Build -Assert -CtrlOnly -Summary -RepeatCount 3
 tools\nav_probe_run_windows.ps1 -Assert
 ```
+
+Use `-RepeatCount` for flake hunting. When assertions are enabled, repeated runs assert each scenario repetition immediately so a later passing run cannot hide an earlier failed chord.
 
 Set `LOCALPASTE_NAV_PROBE_PYTHON` when the assertion checker should use a specific Python interpreter instead of the active `python`/`python3`/conda fallback.
 Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --windows-runner tools/nav_probe_run_windows.ps1` to lint scenario ids, driver chord syntax, and Windows runner key support without launching the GUI.

@@ -17,7 +17,8 @@ param(
     [int]$AfterFocusMs = 150,
     [int]$BetweenKeysMs = 350,
     [int]$AfterScenarioMs = 900,
-    [int]$AfterCloseMs = 500
+    [int]$AfterCloseMs = 500,
+    [int]$RepeatCount = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -114,8 +115,26 @@ function Set-NavProbeProcessEnv {
     $ProcessStartInfo.EnvironmentVariables[$Name] = $Value
 }
 
+function Invoke-NavProbeAssertions {
+    param([string[]]$ScenarioIds, [bool]$IncludeSummary)
+    $assertArgs = @("tools/nav_probe_assert.py", $logPath, $specPath, "--platform", "windows")
+    foreach ($scenarioId in $ScenarioIds) {
+        $assertArgs += @("--scenario", [string]$scenarioId)
+    }
+    if ($IncludeSummary) {
+        $assertArgs += @("--summary")
+    }
+    Invoke-NavProbePython $assertArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "navigation probe assertions failed with exit code $LASTEXITCODE"
+    }
+}
+
 Assert-RepoPath $specPath "Spec"
 Assert-RepoPath $logPath "Log"
+if ($RepeatCount -lt 1) {
+    throw "RepeatCount must be at least 1"
+}
 
 $specJson = Get-Content -LiteralPath $specPath -Raw | ConvertFrom-Json
 $scenarios = @(
@@ -371,7 +390,11 @@ if ($sendWithLowLevelInput) {
 else {
     Write-Host "nav probe input driver: WScript.SendKeys"
 }
+if ($Assert) {
+    $script:NavProbePython = @(Resolve-NavProbePython)
+}
 
+for ($repeatIndex = 1; $repeatIndex -le $RepeatCount; $repeatIndex++) {
 foreach ($scenario in $scenarios) {
     $scenarioId = [string]$scenario.id
     $safeScenario = ConvertTo-SafeName $scenarioId
@@ -399,7 +422,12 @@ foreach ($scenario in $scenarios) {
         Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_SEED_CURSOR" ([string]$scenario.seed.cursor)
     }
 
-    Write-Host "nav probe: $scenarioId"
+    if ($RepeatCount -gt 1) {
+        Write-Host "nav probe: $scenarioId ($repeatIndex/$RepeatCount)"
+    }
+    else {
+        Write-Host "nav probe: $scenarioId"
+    }
     $proc = [System.Diagnostics.Process]::Start($psi)
     try {
         Release-NavModifiers
@@ -457,20 +485,14 @@ foreach ($scenario in $scenarios) {
         Stop-NavProbeProcess $proc
     }
     Start-Sleep -Milliseconds $AfterCloseMs
+    if ($Assert -and $RepeatCount -gt 1) {
+        Invoke-NavProbeAssertions -ScenarioIds @($scenarioId) -IncludeSummary $false
+    }
+}
 }
 
 Write-Host "nav probe log: $logPath"
 if ($Assert) {
-    $script:NavProbePython = @(Resolve-NavProbePython)
-    $assertArgs = @("tools/nav_probe_assert.py", $logPath, $specPath, "--platform", "windows")
-    foreach ($scenario in $scenarios) {
-        $assertArgs += @("--scenario", [string]$scenario.id)
-    }
-    if ($Summary) {
-        $assertArgs += @("--summary")
-    }
-    Invoke-NavProbePython $assertArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "navigation probe assertions failed with exit code $LASTEXITCODE"
-    }
+    $scenarioIds = @($scenarios | ForEach-Object { [string]$_.id })
+    Invoke-NavProbeAssertions -ScenarioIds $scenarioIds -IncludeSummary ([bool]$Summary)
 }
