@@ -316,23 +316,31 @@ function Wait-NavProbeForeground {
 
 function Stop-NavProbeProcess {
     param([System.Diagnostics.Process]$Process)
-    $Process.Refresh()
-    if ($Process.HasExited) {
-        return
-    }
-    $Process.CloseMainWindow() | Out-Null
-    if ($Process.WaitForExit(5000)) {
+    if ($null -eq $Process) {
         return
     }
     try {
-        $Process.Kill()
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            return
+        }
+        $Process.CloseMainWindow() | Out-Null
+        if ($Process.WaitForExit(5000)) {
+            return
+        }
+        try {
+            $Process.Kill()
+        }
+        catch {
+            Write-Warning "failed to kill nav probe process $($Process.Id): $_"
+            return
+        }
+        if (-not $Process.WaitForExit(5000)) {
+            Write-Warning "nav probe process $($Process.Id) did not exit after Kill()"
+        }
     }
-    catch {
-        Write-Warning "failed to kill nav probe process $($Process.Id): $_"
-        return
-    }
-    if (-not $Process.WaitForExit(5000)) {
-        Write-Warning "nav probe process $($Process.Id) did not exit after Kill()"
+    finally {
+        $Process.Dispose()
     }
 }
 
