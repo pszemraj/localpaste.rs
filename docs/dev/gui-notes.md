@@ -59,6 +59,16 @@ The Linux runner sets `LOCALPASTE_LINUX_DESKTOP_ENTRY=off` for probe launches so
 It also defaults probe launches to `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_BACKEND=gl` to avoid host GPU/EGL startup noise; set either variable before running the script to override that default.
 Before injecting keys, the Linux runner waits for both a stable active X11 window and a probe frame showing virtual-editor keyboard focus. It also uses a small `xdotool` keydown/keyup delay; override it with `--key-delay-ms` only when debugging the input driver.
 
+macOS automation uses `tools/nav_probe_run_macos.sh` and requires Accessibility permission for the terminal running the script, because native key injection goes through `osascript`/System Events:
+
+```bash
+tools/nav_probe_run_macos.sh --build --assert --only cmd_up_from_middle --summary
+tools/nav_probe_run_macos.sh --build --assert --summary
+tools/nav_probe_run_macos.sh --list
+```
+
+The macOS runner uses the same isolated seed/probe path as Linux and Windows. It waits for the app process to be frontmost and for a probe frame showing virtual-editor keyboard focus before sending each key-code chord.
+
 Windows automation uses `tools/nav_probe_run_windows.ps1` from Windows PowerShell 5.1 or PowerShell 7 and defaults to the low-level `SendInput` path for navigation chords. Use `-UseSendKeys` only as a fallback when debugging the driver itself:
 
 ```powershell
@@ -77,7 +87,7 @@ Re-verify a completed Windows artifact bundle with `python tools/nav_probe_asser
 For the full Windows ctrl-navigation proof, re-verify the final artifact with `python tools/nav_probe_assert.py --manifest target/<run>.manifest.json --require-full-windows-ctrl --min-repeat-count 3 --summary`.
 
 Set `LOCALPASTE_NAV_PROBE_PYTHON` when the assertion checker should use a specific Python interpreter instead of the active `python`/`python3`/conda fallback.
-Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --windows-runner tools/nav_probe_run_windows.ps1 --self-test` to lint scenario ids, driver chord syntax, Windows runner key support, and manifest-completeness checks without launching the GUI.
+Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --windows-runner tools/nav_probe_run_windows.ps1 --self-test` to lint scenario ids, driver chord syntax, macOS key-code entries, Windows runner key support, and manifest-completeness checks without launching the GUI.
 
 ## Stable Behavior Notes
 

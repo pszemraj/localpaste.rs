@@ -24,6 +24,8 @@ WINDOWS_SEND_KEY_RE = re.compile(
     rf"^(?:\^)?(?:\+)?\{{({'|'.join(WINDOWS_SEND_KEY_NAMES)})\}}$"
 )
 WINDOWS_RUNNER_SWITCH_RE = re.compile(r'^\s*"([A-Z0-9_]+)"\s*\{', re.MULTILINE)
+MACOS_ALLOWED_MODIFIERS = {"command", "option", "shift", "control"}
+MACOS_KNOWN_KEY_CODES = {51, 115, 116, 117, 119, 121, 123, 124, 125, 126}
 
 
 def host() -> str:
@@ -224,6 +226,33 @@ def validate_spec(spec, windows_runner: Path | None = None) -> list[str]:
             linux_keys = driver.get("linux_x11", {}).get("keys")
             if not isinstance(linux_keys, list) or not linux_keys:
                 failures.append(f"{scenario_id}: missing driver.linux_x11.keys")
+        if "macos" in (platforms or []):
+            mac_keys = driver.get("macos", {}).get("keys")
+            if not isinstance(mac_keys, list) or not mac_keys:
+                failures.append(f"{scenario_id}: missing driver.macos.keys")
+            else:
+                for key_index, key in enumerate(mac_keys):
+                    if not isinstance(key, dict):
+                        failures.append(f"{scenario_id}: driver.macos.keys[{key_index}] must be an object")
+                        continue
+                    key_code = key.get("key_code")
+                    if not isinstance(key_code, int) or key_code < 0:
+                        failures.append(
+                            f"{scenario_id}: driver.macos.keys[{key_index}].key_code must be a non-negative integer"
+                        )
+                    elif key_code not in MACOS_KNOWN_KEY_CODES:
+                        failures.append(
+                            f"{scenario_id}: driver.macos.keys[{key_index}].key_code {key_code} is not in the audited key-code set"
+                        )
+                    modifiers = key.get("modifiers")
+                    if not isinstance(modifiers, list):
+                        failures.append(f"{scenario_id}: driver.macos.keys[{key_index}].modifiers must be a list")
+                    else:
+                        for modifier in modifiers:
+                            if modifier not in MACOS_ALLOWED_MODIFIERS:
+                                failures.append(
+                                    f"{scenario_id}: unsupported macOS modifier {modifier!r}"
+                                )
     if windows_runner is not None:
         supported_windows_keys = windows_runner_supported_keys(windows_runner)
         missing = used_windows_keys - supported_windows_keys
