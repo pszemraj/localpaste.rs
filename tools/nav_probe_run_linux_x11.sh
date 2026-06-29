@@ -482,7 +482,6 @@ for scenario_json in "${scenarios[@]}"; do
         current_window_id=""
         exit 1
     fi
-    ms_sleep "$after_focus_ms"
     for key in "${keys[@]}"; do
         if ! wait_active_window "$window_id" "$scenario_id"; then
             close_app "$pid" "$window_id"
@@ -490,6 +489,7 @@ for scenario_json in "${scenarios[@]}"; do
             current_window_id=""
             exit 1
         fi
+        ms_sleep "$after_focus_ms"
         xdotool key "$key"
         ms_sleep "$between_keys_ms"
     done

@@ -14,7 +14,7 @@ param(
     [int]$LaunchPollCount = 800,
     [int]$ForegroundPollMs = 25,
     [int]$ForegroundPollCount = 80,
-    [int]$AfterFocusMs = 25,
+    [int]$AfterFocusMs = 150,
     [int]$BetweenKeysMs = 350,
     [int]$AfterScenarioMs = 900,
     [int]$AfterCloseMs = 500
@@ -434,10 +434,10 @@ foreach ($scenario in $scenarios) {
         }
         [LocalPasteNavProbeWindow]::ClickTitleBar($handle)
         Wait-NavProbeForeground $proc $handle $scenarioId
-        Start-Sleep -Milliseconds $AfterFocusMs
         foreach ($key in $scenario.driver.windows.send_keys) {
             try {
                 Wait-NavProbeForeground $proc $handle $scenarioId
+                Start-Sleep -Milliseconds $AfterFocusMs
                 if ($sendWithLowLevelInput) {
                     Send-NavChord ([string]$key)
                 }
