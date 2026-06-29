@@ -455,6 +455,8 @@
         "focus.properties_tags": false,
         "focus.diff_query": false,
         "app.selected_id": "__nav_probe__",
+        "cursor.line": 0,
+        "cursor.col": 0,
         "selection": null
       },
       "expect_contains": {
@@ -477,6 +479,8 @@
         "focus.properties_tags": false,
         "focus.diff_query": false,
         "app.selected_id": "__nav_probe__",
+        "cursor.line": 3,
+        "cursor.col": 0,
         "selection": null
       },
       "expect_contains": {
@@ -484,6 +488,104 @@
         "applied_commands": "PageDown"
       },
       "expect_events": [{"kind": "key", "key": "PageDown", "pressed": true}]
+    },
+    {
+      "id": "ctrl_page_up_from_third_line",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "2:5"},
+      "driver": {"windows": {"send_keys": ["^{PGUP}"]}, "linux_x11": {"keys": ["ctrl+Page_Up"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 0,
+        "cursor.col": 0,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "PageUp",
+        "applied_commands": "PageUp"
+      },
+      "expect_events": [{"kind": "key", "key": "PageUp", "pressed": true, "modifiers.ctrl": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_page_down_from_first_line",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "0:5"},
+      "driver": {"windows": {"send_keys": ["^{PGDN}"]}, "linux_x11": {"keys": ["ctrl+Page_Down"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 3,
+        "cursor.col": 0,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "PageDown",
+        "applied_commands": "PageDown"
+      },
+      "expect_events": [{"kind": "key", "key": "PageDown", "pressed": true, "modifiers.ctrl": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_shift_page_up_from_third_line",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "2:5"},
+      "driver": {"windows": {"send_keys": ["^+{PGUP}"]}, "linux_x11": {"keys": ["ctrl+shift+Page_Up"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 0,
+        "cursor.col": 0,
+        "selection.start": 0,
+        "selection.end": 28
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "PageUp",
+        "applied_commands": "PageUp"
+      },
+      "expect_events": [{"kind": "key", "key": "PageUp", "pressed": true, "modifiers.ctrl": true, "modifiers.shift": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_shift_page_down_from_first_line",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "0:5"},
+      "driver": {"windows": {"send_keys": ["^+{PGDN}"]}, "linux_x11": {"keys": ["ctrl+shift+Page_Down"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 3,
+        "cursor.col": 0,
+        "selection.start": 5,
+        "selection.end": 36
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "PageDown",
+        "applied_commands": "PageDown"
+      },
+      "expect_events": [{"kind": "key", "key": "PageDown", "pressed": true, "modifiers.ctrl": true, "modifiers.shift": true, "modifiers.command": true}]
     },
     {
       "id": "ctrl_backspace_from_delta",
