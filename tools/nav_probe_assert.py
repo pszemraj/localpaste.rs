@@ -6,7 +6,7 @@ import json
 import platform
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 WINDOWS_SEND_KEY_NAMES = (
     "LEFT",
@@ -246,74 +246,106 @@ def validate_scenario_aliases(spec, aliases: dict[str, str]) -> list[str]:
     ]
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("log", type=Path, nargs="?")
-    parser.add_argument("spec", type=Path, nargs="?")
-    parser.add_argument("--platform", default=None, help="Override detected host platform")
-    parser.add_argument(
-        "--scenario",
-        action="append",
-        default=[],
-        help="Only assert the named scenario; may be repeated",
-    )
-    parser.add_argument(
-        "--scenario-alias",
-        action="append",
-        default=[],
-        help="Map a spec scenario id to a different log scenario label; format SPEC_ID=LOG_ID",
-    )
-    parser.add_argument(
-        "--check-spec",
-        action="store_true",
-        help="Validate the contract spec without reading a probe log",
-    )
-    parser.add_argument(
-        "--summary",
-        action="store_true",
-        help="Print compact per-scenario evidence lines after selecting assertion frames",
-    )
-    parser.add_argument(
-        "--windows-runner",
-        type=Path,
-        help="Validate Windows send_keys against a nav_probe_run_windows.ps1 Send-NavChord switch",
-    )
-    args = parser.parse_args()
-    try:
-        scenario_aliases = parse_scenario_aliases(args.scenario_alias)
-    except ValueError as error:
-        parser.error(str(error))
+def validate_manifest(manifest) -> list[str]:
+    failures = []
+    if not isinstance(manifest, dict):
+        return ["manifest must be a JSON object"]
+    if manifest.get("event") != "nav_probe_windows_run":
+        failures.append("manifest.event must be 'nav_probe_windows_run'")
+    if manifest.get("platform") != "windows":
+        failures.append("manifest.platform must be 'windows'")
+    if manifest.get("status") != "assertions_passed":
+        failures.append("manifest.status must be 'assertions_passed'")
+    if manifest.get("assert_enabled") is not True:
+        failures.append("manifest.assert_enabled must be true")
+    repeat_count = manifest.get("repeat_count")
+    if not isinstance(repeat_count, int) or repeat_count < 1:
+        failures.append("manifest.repeat_count must be a positive integer")
+    scenario_count = manifest.get("scenario_count")
+    if not isinstance(scenario_count, int) or scenario_count < 1:
+        failures.append("manifest.scenario_count must be a positive integer")
+    runs = manifest.get("runs")
+    if not isinstance(runs, list) or not runs:
+        failures.append("manifest.runs must be a non-empty list")
+        return failures
+    run_count = manifest.get("run_count")
+    if run_count != len(runs):
+        failures.append(f"manifest.run_count expected {len(runs)!r}, got {run_count!r}")
+    if isinstance(repeat_count, int) and isinstance(scenario_count, int):
+        expected_run_count = repeat_count * scenario_count
+        if len(runs) != expected_run_count:
+            failures.append(
+                f"manifest.runs expected {expected_run_count} entries, got {len(runs)}"
+            )
+    seen_log_ids = set()
+    for index, run in enumerate(runs):
+        if not isinstance(run, dict):
+            failures.append(f"manifest.runs[{index}] must be an object")
+            continue
+        scenario_id = run.get("scenario_id")
+        log_scenario_id = run.get("log_scenario_id")
+        repeat_index = run.get("repeat_index")
+        if not isinstance(scenario_id, str) or not scenario_id:
+            failures.append(f"manifest.runs[{index}].scenario_id must be a non-empty string")
+        if not isinstance(log_scenario_id, str) or not log_scenario_id:
+            failures.append(f"manifest.runs[{index}].log_scenario_id must be a non-empty string")
+        elif log_scenario_id in seen_log_ids:
+            failures.append(f"manifest log scenario {log_scenario_id!r} is duplicated")
+        else:
+            seen_log_ids.add(log_scenario_id)
+        if not isinstance(repeat_index, int) or repeat_index < 1:
+            failures.append(f"manifest.runs[{index}].repeat_index must be a positive integer")
+        elif isinstance(repeat_count, int) and repeat_index > repeat_count:
+            failures.append(
+                f"manifest.runs[{index}].repeat_index {repeat_index} exceeds repeat_count {repeat_count}"
+            )
+    return failures
 
-    if args.check_spec:
-        spec_path = args.spec or args.log
-        if spec_path is None:
-            parser.error("--check-spec requires a spec path")
-        spec = json.loads(spec_path.read_text("utf-8"))
-        failures = validate_spec(spec, args.windows_runner)
-        failures.extend(validate_scenario_aliases(spec, scenario_aliases))
-        if failures:
-            print("navigation probe spec validation failed:", file=sys.stderr)
-            for failure in failures:
-                print(f"- {failure}", file=sys.stderr)
-            return 1
-        print("navigation probe spec validation passed")
-        return 0
 
-    if args.log is None or args.spec is None:
-        parser.error("log and spec are required unless --check-spec is used")
+def manifest_path_candidates(raw_path: str, manifest_path: Path) -> list[Path]:
+    candidates = [Path(raw_path)]
+    for name in {Path(raw_path).name, PureWindowsPath(raw_path).name}:
+        if name:
+            candidates.append(manifest_path.parent / name)
+    windows_parts = PureWindowsPath(raw_path).parts
+    for marker in ("docs", "target"):
+        if marker in windows_parts:
+            candidates.append(Path(*windows_parts[windows_parts.index(marker):]))
+    deduped = []
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            deduped.append(candidate)
+            seen.add(key)
+    return deduped
 
-    frames = [
-        json.loads(line)
-        for line in args.log.read_text("utf-8").splitlines()
-        if line.strip()
-    ]
-    spec = json.loads(args.spec.read_text("utf-8"))
-    failures = validate_spec(spec, args.windows_runner)
-    failures.extend(validate_scenario_aliases(spec, scenario_aliases))
+
+def resolve_manifest_path(manifest, key: str, manifest_path: Path, override: Path | None):
+    if override is not None:
+        return override, []
+    raw_path = manifest.get(key)
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None, [f"manifest.{key} must be a non-empty string"]
+    candidates = manifest_path_candidates(raw_path, manifest_path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate, []
+    joined = ", ".join(str(candidate) for candidate in candidates)
+    return None, [f"manifest.{key} does not exist; tried {joined}"]
+
+
+def assert_scenarios(
+    frames,
+    spec,
+    host_platform: str,
+    scenario_filter: set[str],
+    scenario_aliases: dict[str, str],
+    include_summary: bool,
+):
+    failures = []
     summaries = []
-    host_platform = args.platform or host()
-    scenario_filter = set(args.scenario)
-
+    matched_scenarios = set()
     for scenario in spec.get("scenarios", []):
         if scenario_filter and scenario.get("id") not in scenario_filter:
             continue
@@ -321,13 +353,14 @@ def main() -> int:
         if platforms and host_platform not in platforms:
             continue
         scenario_id = scenario["id"]
+        matched_scenarios.add(scenario_id)
         log_scenario_id = scenario_aliases.get(scenario_id, scenario_id)
         matching = [frame for frame in frames if frame.get("scenario") == log_scenario_id]
         if not matching:
             failures.append(f"{scenario_id}: no frames for log scenario {log_scenario_id!r}")
             continue
         event_frame, state_frame = selected_frames(matching)
-        if args.summary:
+        if include_summary:
             summary_id = (
                 scenario_id
                 if log_scenario_id == scenario_id
@@ -364,6 +397,145 @@ def main() -> int:
                 failures.append(
                     f"{scenario_id}: raw_events did not contain event subset {expected_event!r}; got {actual_events!r}"
                 )
+    if scenario_filter and not matched_scenarios:
+        requested = ", ".join(sorted(str(scenario_id) for scenario_id in scenario_filter))
+        failures.append(f"no spec scenarios matched selection: {requested}")
+    return failures, summaries
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("log", type=Path, nargs="?")
+    parser.add_argument("spec", type=Path, nargs="?")
+    parser.add_argument("--platform", default=None, help="Override detected host platform")
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        default=[],
+        help="Only assert the named scenario; may be repeated",
+    )
+    parser.add_argument(
+        "--scenario-alias",
+        action="append",
+        default=[],
+        help="Map a spec scenario id to a different log scenario label; format SPEC_ID=LOG_ID",
+    )
+    parser.add_argument(
+        "--check-spec",
+        action="store_true",
+        help="Validate the contract spec without reading a probe log",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        help="Assert all runs listed in a Windows probe manifest",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print compact per-scenario evidence lines after selecting assertion frames",
+    )
+    parser.add_argument(
+        "--windows-runner",
+        type=Path,
+        help="Validate Windows send_keys against a nav_probe_run_windows.ps1 Send-NavChord switch",
+    )
+    args = parser.parse_args()
+    try:
+        scenario_aliases = parse_scenario_aliases(args.scenario_alias)
+    except ValueError as error:
+        parser.error(str(error))
+
+    if args.check_spec:
+        spec_path = args.spec or args.log
+        if spec_path is None:
+            parser.error("--check-spec requires a spec path")
+        spec = json.loads(spec_path.read_text("utf-8"))
+        failures = validate_spec(spec, args.windows_runner)
+        failures.extend(validate_scenario_aliases(spec, scenario_aliases))
+        if failures:
+            print("navigation probe spec validation failed:", file=sys.stderr)
+            for failure in failures:
+                print(f"- {failure}", file=sys.stderr)
+            return 1
+        print("navigation probe spec validation passed")
+        return 0
+
+    manifest = None
+    manifest_failures = []
+    if args.manifest is not None:
+        manifest = json.loads(args.manifest.read_text("utf-8"))
+        manifest_failures = validate_manifest(manifest)
+        if not isinstance(manifest, dict):
+            print("navigation probe manifest validation failed:", file=sys.stderr)
+            for failure in manifest_failures:
+                print(f"- {failure}", file=sys.stderr)
+            return 1
+
+    if manifest is None and (args.log is None or args.spec is None):
+        parser.error("log and spec are required unless --check-spec is used")
+
+    if manifest is not None:
+        log_path, path_failures = resolve_manifest_path(manifest, "log_path", args.manifest, args.log)
+        manifest_failures.extend(path_failures)
+        spec_path, path_failures = resolve_manifest_path(manifest, "spec_path", args.manifest, args.spec)
+        manifest_failures.extend(path_failures)
+        if log_path is None or spec_path is None:
+            print("navigation probe manifest validation failed:", file=sys.stderr)
+            for failure in manifest_failures:
+                print(f"- {failure}", file=sys.stderr)
+            return 1
+    else:
+        log_path = args.log
+        spec_path = args.spec
+
+    frames = [
+        json.loads(line)
+        for line in log_path.read_text("utf-8").splitlines()
+        if line.strip()
+    ]
+    spec = json.loads(spec_path.read_text("utf-8"))
+    failures = validate_spec(spec, args.windows_runner)
+    failures.extend(validate_scenario_aliases(spec, scenario_aliases))
+    failures.extend(manifest_failures)
+    summaries = []
+    host_platform = args.platform or (manifest.get("platform") if manifest else None) or host()
+    scenario_filter = set(args.scenario)
+
+    if manifest is not None:
+        selected_runs = [
+            run
+            for run in manifest.get("runs", [])
+            if not scenario_filter
+            or run.get("scenario_id") in scenario_filter
+            or run.get("log_scenario_id") in scenario_filter
+        ]
+        if not selected_runs:
+            failures.append("manifest selection matched no runs")
+        for run in selected_runs:
+            run_scenario_id = run.get("scenario_id")
+            run_log_scenario_id = run.get("log_scenario_id")
+            run_failures, run_summaries = assert_scenarios(
+                frames,
+                spec,
+                host_platform,
+                {run_scenario_id},
+                {run_scenario_id: run_log_scenario_id},
+                args.summary,
+            )
+            failures.extend(run_failures)
+            summaries.extend(run_summaries)
+    else:
+        run_failures, run_summaries = assert_scenarios(
+            frames,
+            spec,
+            host_platform,
+            scenario_filter,
+            scenario_aliases,
+            args.summary,
+        )
+        failures.extend(run_failures)
+        summaries.extend(run_summaries)
 
     if args.summary:
         print("navigation probe summary:")
