@@ -67,7 +67,7 @@ tools\nav_probe_run_windows.ps1 -Assert
 ```
 
 Set `LOCALPASTE_NAV_PROBE_PYTHON` when the assertion checker should use a specific Python interpreter instead of the active `python`/`python3`/conda fallback.
-Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json` to lint scenario ids and driver chord syntax without launching the GUI.
+Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --windows-runner tools/nav_probe_run_windows.ps1` to lint scenario ids, driver chord syntax, and Windows runner key support without launching the GUI.
 
 ## Stable Behavior Notes
 

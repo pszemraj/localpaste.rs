@@ -8,9 +8,22 @@ import re
 import sys
 from pathlib import Path
 
-WINDOWS_SEND_KEY_RE = re.compile(
-    r"^(?:\^)?(?:\+)?\{(?:LEFT|RIGHT|UP|DOWN|HOME|END|PGUP|PGDN|BACKSPACE|DEL)\}$"
+WINDOWS_SEND_KEY_NAMES = (
+    "LEFT",
+    "RIGHT",
+    "UP",
+    "DOWN",
+    "HOME",
+    "END",
+    "PGUP",
+    "PGDN",
+    "BACKSPACE",
+    "DEL",
 )
+WINDOWS_SEND_KEY_RE = re.compile(
+    rf"^(?:\^)?(?:\+)?\{{({'|'.join(WINDOWS_SEND_KEY_NAMES)})\}}$"
+)
+WINDOWS_RUNNER_SWITCH_RE = re.compile(r'^\s*"([A-Z0-9_]+)"\s*\{', re.MULTILINE)
 
 
 def host() -> str:
@@ -150,9 +163,21 @@ def scenario_summary(scenario_id: str, event_frame, state_frame) -> str:
     )
 
 
-def validate_spec(spec) -> list[str]:
+def windows_send_key_name(chord: str) -> str | None:
+    match = WINDOWS_SEND_KEY_RE.fullmatch(chord)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def windows_runner_supported_keys(path: Path) -> set[str]:
+    return set(WINDOWS_RUNNER_SWITCH_RE.findall(path.read_text("utf-8")))
+
+
+def validate_spec(spec, windows_runner: Path | None = None) -> list[str]:
     failures = []
     seen = set()
+    used_windows_keys = set()
     for index, scenario in enumerate(spec.get("scenarios", [])):
         scenario_id = scenario.get("id")
         if not scenario_id:
@@ -171,12 +196,25 @@ def validate_spec(spec) -> list[str]:
                 failures.append(f"{scenario_id}: missing driver.windows.send_keys")
             else:
                 for key in send_keys:
-                    if not isinstance(key, str) or not WINDOWS_SEND_KEY_RE.fullmatch(key):
+                    if not isinstance(key, str):
                         failures.append(f"{scenario_id}: unsupported Windows send_keys chord {key!r}")
+                        continue
+                    key_name = windows_send_key_name(key)
+                    if key_name is None:
+                        failures.append(f"{scenario_id}: unsupported Windows send_keys chord {key!r}")
+                        continue
+                    used_windows_keys.add(key_name)
         if "linux" in (platforms or []):
             linux_keys = driver.get("linux_x11", {}).get("keys")
             if not isinstance(linux_keys, list) or not linux_keys:
                 failures.append(f"{scenario_id}: missing driver.linux_x11.keys")
+    if windows_runner is not None:
+        supported_windows_keys = windows_runner_supported_keys(windows_runner)
+        missing = used_windows_keys - supported_windows_keys
+        for key_name in sorted(missing):
+            failures.append(
+                f"{windows_runner}: Send-NavChord does not implement contract key {key_name}"
+            )
     return failures
 
 
@@ -201,6 +239,11 @@ def main() -> int:
         action="store_true",
         help="Print compact per-scenario evidence lines after selecting assertion frames",
     )
+    parser.add_argument(
+        "--windows-runner",
+        type=Path,
+        help="Validate Windows send_keys against a nav_probe_run_windows.ps1 Send-NavChord switch",
+    )
     args = parser.parse_args()
 
     if args.check_spec:
@@ -208,7 +251,7 @@ def main() -> int:
         if spec_path is None:
             parser.error("--check-spec requires a spec path")
         spec = json.loads(spec_path.read_text("utf-8"))
-        failures = validate_spec(spec)
+        failures = validate_spec(spec, args.windows_runner)
         if failures:
             print("navigation probe spec validation failed:", file=sys.stderr)
             for failure in failures:
@@ -226,7 +269,7 @@ def main() -> int:
         if line.strip()
     ]
     spec = json.loads(args.spec.read_text("utf-8"))
-    failures = validate_spec(spec)
+    failures = validate_spec(spec, args.windows_runner)
     summaries = []
     host_platform = args.platform or host()
     scenario_filter = set(args.scenario)
