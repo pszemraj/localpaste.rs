@@ -216,6 +216,9 @@ enum PaletteCopyAction {
     Fenced(String),
 }
 
+// GUI-owned writes refresh immediately through backend events. This fallback is
+// only for out-of-process writers sharing `DB_PATH`, so keep it low-frequency
+// until worker-driven external invalidation replaces polling.
 const EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const STATUS_TTL: Duration = Duration::from_secs(5);
 const TOAST_TTL: Duration = Duration::from_secs(4);

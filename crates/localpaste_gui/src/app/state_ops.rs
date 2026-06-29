@@ -338,6 +338,15 @@ impl LocalPasteApp {
                 }
                 self.set_status(message);
             }
+            CoreEvent::PasteUndoEvicted { undo_token } => {
+                self.pending_undo_restore_tokens.remove(&undo_token);
+                self.toasts.retain(|toast| {
+                    !matches!(
+                        &toast.action,
+                        Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
+                    )
+                });
+            }
             CoreEvent::PasteMissing { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);

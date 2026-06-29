@@ -65,6 +65,8 @@ impl LocalPasteApp {
     }
 
     fn prune_toast_overflow(&mut self) {
+        // Undo toasts mirror the backend's bounded live-token queue, so they are
+        // allowed to exceed the ordinary status-toast cap.
         while self.undo_delete_toast_count() > DELETE_UNDO_LIMIT {
             let Some(index) = self.oldest_undo_delete_toast_index() else {
                 break;

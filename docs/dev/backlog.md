@@ -14,7 +14,8 @@ Status uses the same checklist markers as other dev docs:
 - [~] Avoid full `Vec<HighlightRenderLine>` clone during patch merge (`queue_highlight_patch`) for very large files; one redundant `base.lines.clone()` was removed, but fallback-path `HighlightRender` cloning still needs structural refactor (e.g., base lookup plus move/patch without full render clone).
 - [ ] Investigate worker-side highlight diffing that avoids full line-hash scans for every request (especially tiny edits), while preserving patch correctness and stale-result dropping semantics.
 - [ ] Revisit backend query-cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
-- [ ] Replace the GUI's unconditional external-refresh poll with worker-driven invalidation for app-owned writes, keeping a low-frequency fallback only for genuine external writers sharing `DB_PATH`.
+- [ ] Replace the GUI's 30s external-refresh poll with worker-driven invalidation for out-of-process writers sharing `DB_PATH`; GUI-owned writes already refresh immediately through backend events.
+- [ ] Add a synthetic same-frame focus-loss + `Ctrl+Delete` regression once the per-frame input pipeline is extracted, so the paste-delete shortcut and editor word-delete ownership stay covered under simultaneous pointer/key input.
 - [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or retired now that owner-lock probing is the preferred path.
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR`).
 - [ ] Finish native macOS GUI smoke/probe before merging phase-two UX hardening; cover keyboard ownership, IME `cursor_rect` placement, and cold-start visibility because headless tests stop at the rendering boundary. Linux X11 and Windows navigation probe automation are covered in [gui-notes.md#navigation-probe](gui-notes.md#navigation-probe).

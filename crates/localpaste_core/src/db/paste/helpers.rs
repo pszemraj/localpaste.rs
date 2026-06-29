@@ -36,13 +36,12 @@ pub(crate) fn reverse_timestamp_key(updated_at: DateTime<Utc>) -> u64 {
 ///
 /// # Returns
 /// `Some` deleted version metadata/content pairs in stored metadata order, or
-/// `None` when the payload would exceed `max_payload_bytes` or capped undo
-/// cannot safely include every historical content row. When `None` is returned,
-/// no version rows have been removed.
+/// `None` when the payload would exceed `max_payload_bytes`. When `None` is
+/// returned, no version rows have been removed.
 ///
 /// # Errors
 /// Returns an error when storage access, metadata decoding, content decoding, or
-/// uncapped content/meta consistency checks fail.
+/// content/meta consistency checks fail.
 #[cfg(test)]
 pub(crate) fn remove_paste_versions_for_delete_capped(
     versions_meta: &mut redb::Table<&str, &[u8]>,
@@ -61,7 +60,10 @@ pub(crate) fn remove_paste_versions_for_delete_capped(
         for version in &version_items {
             let Some(content_guard) = versions_content.get((paste_id, version.version_id_ms))?
             else {
-                return Ok(None);
+                return Err(AppError::StorageMessage(format!(
+                    "Missing version content for paste '{}' version {}",
+                    paste_id, version.version_id_ms
+                )));
             };
             payload_bytes = payload_bytes.saturating_add(content_guard.value().len());
             if payload_bytes > max_payload_bytes {

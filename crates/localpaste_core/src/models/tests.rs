@@ -35,6 +35,32 @@ mod model_tests {
     }
 
     #[test]
+    fn test_paste_detect_language_matrix() {
+        let cases = [
+            ("fn main() { println!(\"hi\"); }", Some("rust")),
+            ("def main():\n    print('hi')", Some("python")),
+            ("const x = () => console.log('hi');", Some("javascript")),
+            ("#!/bin/bash\necho hello", Some("shell")),
+            ("name: app\nversion: 1\n...\n", Some("yaml")),
+            ("select id from users where active = 1", Some("sql")),
+            ("[tool]\nname = \"demo\"\nversion = \"0.1.0\"", Some("toml")),
+            (
+                "import Foundation\nfunc main() { print(\"hi\") }",
+                Some("swift"),
+            ),
+            ("fun main() { println(\"hi\") }", Some("kotlin")),
+            ("just some plain text words", None),
+        ];
+        for (content, expected) in cases {
+            assert_eq!(
+                paste::detect_language(content).as_deref(),
+                expected,
+                "content: {content}"
+            );
+        }
+    }
+
+    #[test]
     fn test_paste_new_stores_detected_language_as_locked() {
         let paste = paste::Paste::new(
             "fn main() {\n    let value = 5;\n    println!(\"{value}\");\n}".to_string(),

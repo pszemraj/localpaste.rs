@@ -15,6 +15,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
+// Short GUI affordance, intentionally fixed so toast lifetime and persisted
+// tombstone cleanup stay in lockstep across sessions.
 const DELETE_UNDO_TTL: Duration = Duration::from_secs(10);
 
 /// Handle for sending commands to, and receiving events from, the backend worker.
@@ -137,6 +139,7 @@ struct WorkerState {
     delete_undo_seq: u64,
     deleted_paste_order: VecDeque<String>,
     deleted_paste_undo: HashMap<String, PendingDeletedPaste>,
+    persistent_delete_undo_startup_pruned: bool,
 }
 
 struct PendingDeletedPaste {
@@ -144,7 +147,7 @@ struct PendingDeletedPaste {
 }
 
 impl WorkerState {
-    fn prune_deleted_paste_undo(&mut self) {
+    fn prune_persisted_expired_deleted_paste_undo(&mut self) {
         match TransactionOps::prune_expired_deleted_paste_undo(
             &self.db,
             Utc::now().timestamp_millis(),
@@ -157,6 +160,9 @@ impl WorkerState {
             }
             Err(err) => warn!("failed to prune expired delete undo tombstones: {}", err),
         }
+    }
+
+    fn prune_in_memory_expired_deleted_paste_undo(&mut self) {
         let now = Instant::now();
         while let Some(token) = self.deleted_paste_order.front() {
             let expired = self
@@ -174,12 +180,23 @@ impl WorkerState {
                 }
             }
         }
+    }
+
+    fn prune_deleted_paste_undo(&mut self) {
+        self.prune_persisted_expired_deleted_paste_undo();
+        self.prune_in_memory_expired_deleted_paste_undo();
+    }
+
+    fn prune_deleted_paste_undo_overflow(&mut self) {
         while self.deleted_paste_order.len() > DELETE_UNDO_LIMIT {
             if let Some(token) = self.deleted_paste_order.pop_front() {
                 self.deleted_paste_undo.remove(token.as_str());
                 if let Err(err) = TransactionOps::discard_deleted_paste_undo(&self.db, &token) {
                     warn!("failed to discard overflow delete undo token: {}", err);
                 }
+                let _ = self
+                    .evt_tx
+                    .send(CoreEvent::PasteUndoEvicted { undo_token: token });
             }
         }
     }
@@ -194,15 +211,15 @@ impl WorkerState {
     }
 
     fn register_deleted_paste_undo(&mut self, token: String, expires_at: Instant) {
-        self.prune_deleted_paste_undo();
+        self.prune_in_memory_expired_deleted_paste_undo();
         self.deleted_paste_order.push_back(token.clone());
         self.deleted_paste_undo
             .insert(token, PendingDeletedPaste { expires_at });
-        self.prune_deleted_paste_undo();
+        self.prune_deleted_paste_undo_overflow();
     }
 
     fn pending_deleted_paste_token(&mut self, token: &str) -> bool {
-        self.prune_deleted_paste_undo();
+        self.prune_in_memory_expired_deleted_paste_undo();
         self.deleted_paste_undo.contains_key(token)
     }
 
@@ -214,10 +231,7 @@ impl WorkerState {
         }
     }
 
-    fn next_deleted_paste_undo_timeout(&mut self) -> Option<Duration> {
-        // Persistent tombstones can survive a GUI restart without an in-memory
-        // undo token, so sweep storage before deciding to block indefinitely.
-        self.prune_deleted_paste_undo();
+    fn next_deleted_paste_undo_timeout(&self) -> Option<Duration> {
         let token = self.deleted_paste_order.front()?;
         self.deleted_paste_undo
             .get(token)
@@ -378,6 +392,10 @@ fn recv_command_or_prune_deleted_paste_undo(
     cmd_rx: &Receiver<CoreCmd>,
     state: &mut WorkerState,
 ) -> Result<Option<CoreCmd>, RecvTimeoutError> {
+    if !state.persistent_delete_undo_startup_pruned {
+        state.prune_persisted_expired_deleted_paste_undo();
+        state.persistent_delete_undo_startup_pruned = true;
+    }
     match state.next_deleted_paste_undo_timeout() {
         Some(timeout) => match cmd_rx.recv_timeout(timeout) {
             Ok(cmd) => Ok(Some(cmd)),
@@ -475,6 +493,7 @@ pub fn spawn_backend_with_locks_and_owner(
                 delete_undo_seq: 0,
                 deleted_paste_order: VecDeque::new(),
                 deleted_paste_undo: HashMap::new(),
+                persistent_delete_undo_startup_pruned: false,
             };
             loop {
                 match recv_command_or_prune_deleted_paste_undo(&cmd_rx, &mut state) {
@@ -529,6 +548,7 @@ mod tests {
                 delete_undo_seq: 0,
                 deleted_paste_order: VecDeque::new(),
                 deleted_paste_undo: HashMap::new(),
+                persistent_delete_undo_startup_pruned: false,
             },
             evt_rx,
         }
@@ -633,6 +653,14 @@ mod tests {
                 .is_none(),
             "overflow pruning should discard the oldest persisted tombstone"
         );
+        match worker
+            .evt_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("overflow eviction event")
+        {
+            CoreEvent::PasteUndoEvicted { undo_token } => assert_eq!(undo_token, *oldest),
+            other => panic!("expected PasteUndoEvicted event, got {:?}", other),
+        }
 
         assert!(worker.state.deleted_paste_undo.contains_key(newest));
         assert!(worker.state.deleted_paste_order.contains(newest));

@@ -25,6 +25,7 @@ fn heuristic_detects_existing_language_matrix() {
         ("#!/bin/bash\necho hello", Some("shell")),
         ("name: app\nservices:\n  - web", Some("yaml")),
         ("name: app\nversion: 1\nport: 8080\n", Some("yaml")),
+        ("name: app\nversion: 1\n...\n", Some("yaml")),
         ("name: app", None),
         ("display name: app\nport: 8080", None),
         ("services: [web]\nversion: 3", Some("yaml")),
@@ -292,6 +293,7 @@ fn flat_config_yaml_helper_accepts_config_shaped_flat_mappings_only() {
     assert!(looks_like_flat_config_yaml(
         "name: app\nversion: 1\nport: 8080\n"
     ));
+    assert!(looks_like_flat_config_yaml("name: app\nversion: 1\n...\n"));
     assert!(looks_like_flat_config_yaml("apiVersion: v1\nkind: Pod\n"));
     assert!(!looks_like_flat_config_yaml(
         "display name: api\nport: 8080\n"

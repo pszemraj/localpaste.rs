@@ -227,7 +227,7 @@ pub(crate) fn looks_like_flat_config_yaml(content: &str) -> bool {
 
     for line in content.lines().take(512) {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "---" {
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "---" || trimmed == "..." {
             continue;
         }
         meaningful_lines = meaningful_lines.saturating_add(1);

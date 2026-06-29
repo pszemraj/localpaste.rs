@@ -153,8 +153,12 @@ pub enum CoreEvent {
     /// Response confirming a paste was deleted.
     PasteDeleted {
         id: String,
+        /// Undo token for GUI recoverable deletes; `None` means the delete
+        /// succeeded through a path where undo is intentionally unavailable.
         undo_token: Option<String>,
     },
+    /// A live delete-undo token was evicted to keep the backend undo buffer bounded.
+    PasteUndoEvicted { undo_token: String },
     /// Response confirming a paste was restored from delete undo.
     PasteRestored { paste: Paste, undo_token: String },
     /// Restoring a deleted paste from an undo token failed.

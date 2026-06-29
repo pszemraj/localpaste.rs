@@ -12,7 +12,7 @@ use crate::db::time_util::unix_timestamp_millis;
 use crate::db::versioning::{decode_version_meta_list, encode_version_meta_list};
 use crate::error::AppError;
 use crate::models::paste::{DeletedPasteRecord, Paste, PasteMeta};
-use redb::ReadableTable;
+use redb::{ReadableDatabase, ReadableTable};
 use std::time::SystemTime;
 
 fn collect_deleted_version_content_ids(
@@ -20,12 +20,11 @@ fn collect_deleted_version_content_ids(
     token: &str,
 ) -> Result<Vec<u64>, AppError> {
     let mut ids = Vec::new();
-    for row in deleted_versions_content.iter()? {
+    for row in deleted_versions_content.range((token, 0)..=(token, u64::MAX))? {
         let (key, _) = row?;
         let (row_token, version_id_ms) = key.value();
-        if row_token == token {
-            ids.push(version_id_ms);
-        }
+        debug_assert_eq!(row_token, token);
+        ids.push(version_id_ms);
     }
     Ok(ids)
 }
@@ -223,12 +222,9 @@ impl TransactionOps {
         db: &Database,
         now_ms: i64,
     ) -> Result<Vec<String>, AppError> {
-        let write_txn = db.db.begin_write()?;
-        let pruned = {
-            let mut deleted_pastes = write_txn.open_table(DELETED_PASTES)?;
-            let mut deleted_versions_meta = write_txn.open_table(DELETED_PASTE_VERSIONS_META)?;
-            let mut deleted_versions_content =
-                write_txn.open_table(DELETED_PASTE_VERSIONS_CONTENT)?;
+        let expired_tokens = {
+            let read_txn = db.db.begin_read()?;
+            let deleted_pastes = read_txn.open_table(DELETED_PASTES)?;
             let mut expired_tokens = Vec::new();
             for row in deleted_pastes.iter()? {
                 let (token_guard, record_guard) = row?;
@@ -237,6 +233,18 @@ impl TransactionOps {
                     expired_tokens.push(token_guard.value().to_string());
                 }
             }
+            expired_tokens
+        };
+        if expired_tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let write_txn = db.db.begin_write()?;
+        {
+            let mut deleted_pastes = write_txn.open_table(DELETED_PASTES)?;
+            let mut deleted_versions_meta = write_txn.open_table(DELETED_PASTE_VERSIONS_META)?;
+            let mut deleted_versions_content =
+                write_txn.open_table(DELETED_PASTE_VERSIONS_CONTENT)?;
             for token in &expired_tokens {
                 let _ = remove_deleted_paste_undo_rows(
                     &mut deleted_pastes,
@@ -245,10 +253,9 @@ impl TransactionOps {
                     token,
                 )?;
             }
-            expired_tokens
-        };
+        }
         write_txn.commit()?;
-        Ok(pruned)
+        Ok(expired_tokens)
     }
 
     /// Restore a staged deleted paste by undo token.

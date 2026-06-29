@@ -39,6 +39,44 @@ fn setup_folder_move_fixture() -> FolderMoveFixture {
     }
 }
 
+fn create_snapshot_then_remove_version_content(fixture: &FolderMoveFixture) {
+    let db = &fixture.db;
+    let update = UpdatePasteRequest {
+        content: Some("updated".to_string()),
+        name: None,
+        language: None,
+        language_is_manual: None,
+        folder_id: Some(fixture.old_folder_id.clone()),
+        tags: None,
+    };
+    TransactionOps::move_paste_between_folders(
+        db,
+        &fixture.paste_id,
+        Some(fixture.old_folder_id.as_str()),
+        update,
+    )
+    .expect("update")
+    .expect("paste exists");
+
+    let version_id = db
+        .pastes
+        .list_versions(&fixture.paste_id, Some(1))
+        .expect("list versions")
+        .expect("paste exists")[0]
+        .version_id_ms;
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut versions_content = write_txn
+            .open_table(PASTE_VERSIONS_CONTENT)
+            .expect("open versions content");
+        let removed = versions_content
+            .remove((fixture.paste_id.as_str(), version_id))
+            .expect("remove version content");
+        assert!(removed.is_some());
+    }
+    write_txn.commit().expect("commit missing content row");
+}
+
 #[test]
 fn create_with_folder_rejects_when_folder_is_marked_for_delete() {
     let (db, _temp) = setup_test_db();
@@ -756,41 +794,7 @@ fn prune_expired_staged_delete_undo_removes_all_staged_rows() {
 fn staged_delete_undo_fails_atomically_when_version_content_is_missing() {
     let fixture = setup_folder_move_fixture();
     let db = &fixture.db;
-
-    let update = UpdatePasteRequest {
-        content: Some("updated".to_string()),
-        name: None,
-        language: None,
-        language_is_manual: None,
-        folder_id: Some(fixture.old_folder_id.clone()),
-        tags: None,
-    };
-    TransactionOps::move_paste_between_folders(
-        db,
-        &fixture.paste_id,
-        Some(fixture.old_folder_id.as_str()),
-        update,
-    )
-    .expect("update")
-    .expect("paste exists");
-
-    let version_id = db
-        .pastes
-        .list_versions(&fixture.paste_id, Some(1))
-        .expect("list versions")
-        .expect("paste exists")[0]
-        .version_id_ms;
-    let write_txn = db.db.begin_write().expect("begin write");
-    {
-        let mut versions_content = write_txn
-            .open_table(PASTE_VERSIONS_CONTENT)
-            .expect("open versions content");
-        let removed = versions_content
-            .remove((fixture.paste_id.as_str(), version_id))
-            .expect("remove version content");
-        assert!(removed.is_some());
-    }
-    write_txn.commit().expect("commit missing content row");
+    create_snapshot_then_remove_version_content(&fixture);
 
     let err = TransactionOps::delete_paste_with_folder_staged_undo(
         db,
@@ -824,6 +828,35 @@ fn staged_delete_undo_fails_atomically_when_version_content_is_missing() {
     assert!(versions_meta
         .get(fixture.paste_id.as_str())
         .expect("get versions meta")
+        .is_some());
+}
+
+#[test]
+fn capped_delete_undo_errors_when_version_content_is_missing() {
+    let fixture = setup_folder_move_fixture();
+    let db = &fixture.db;
+    create_snapshot_then_remove_version_content(&fixture);
+
+    let guard = TransactionOps::acquire_folder_txn_guard(db).expect("guard");
+    let result = TransactionOps::delete_paste_with_folder_undo_limited_locked(
+        db,
+        &guard,
+        &fixture.paste_id,
+        Some(usize::MAX),
+    );
+    let err = match result {
+        Err(err) => err,
+        Ok(_) => panic!("missing historical content should abort capped undo delete"),
+    };
+    assert!(
+        err.to_string().contains("Missing version content"),
+        "unexpected capped undo delete error: {}",
+        err
+    );
+    assert!(db
+        .pastes
+        .get(&fixture.paste_id)
+        .expect("lookup after delete")
         .is_some());
 }
 

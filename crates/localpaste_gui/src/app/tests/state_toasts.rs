@@ -294,6 +294,38 @@ fn paste_restored_ack_removes_matching_undo_toast() {
     );
 }
 
+#[test]
+fn undo_eviction_removes_matching_toast_without_touching_other_undo_actions() {
+    let mut harness = make_app();
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        },
+    );
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-beta".to_string(),
+        },
+    );
+    harness
+        .app
+        .pending_undo_restore_tokens
+        .insert("undo-alpha".to_string());
+
+    harness.app.apply_event(CoreEvent::PasteUndoEvicted {
+        undo_token: "undo-alpha".to_string(),
+    });
+
+    assert!(!undo_toast_exists(&harness.app, "undo-alpha"));
+    assert!(undo_toast_exists(&harness.app, "undo-beta"));
+    assert!(!harness
+        .app
+        .pending_undo_restore_tokens
+        .contains("undo-alpha"));
+}
+
 fn undo_toast_exists(app: &LocalPasteApp, token: &str) -> bool {
     app.toasts.iter().any(|toast| {
         matches!(

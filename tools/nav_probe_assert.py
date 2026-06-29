@@ -181,6 +181,42 @@ def parse_scenario_aliases(values: list[str]) -> dict[str, str]:
     return aliases
 
 
+def load_json_file(path: Path, label: str):
+    try:
+        return json.loads(path.read_text("utf-8"))
+    except OSError as exc:
+        print(f"failed to read navigation probe {label} {path}: {exc}", file=sys.stderr)
+    except json.JSONDecodeError as exc:
+        print(
+            f"invalid navigation probe {label} JSON at {path}:{exc.lineno}:{exc.colno}: {exc.msg}",
+            file=sys.stderr,
+        )
+    return None
+
+
+def load_ndjson_frames(path: Path):
+    try:
+        lines = path.read_text("utf-8").splitlines()
+    except OSError as exc:
+        print(f"failed to read navigation probe log {path}: {exc}", file=sys.stderr)
+        return None
+
+    frames = []
+    for line_no, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            frames.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            print(
+                "invalid navigation probe NDJSON at "
+                f"{path}:{line_no}:{exc.colno}: {exc.msg}",
+                file=sys.stderr,
+            )
+            return None
+    return frames
+
+
 def windows_send_key_name(chord: str) -> str | None:
     match = WINDOWS_SEND_KEY_RE.fullmatch(chord)
     if match is None:
@@ -813,7 +849,9 @@ def main() -> int:
     manifest = None
     manifest_failures = []
     if args.manifest is not None:
-        manifest = json.loads(args.manifest.read_text("utf-8"))
+        manifest = load_json_file(args.manifest, "manifest")
+        if manifest is None:
+            return 1
         manifest_failures = validate_manifest(manifest)
         if not isinstance(manifest, dict):
             print("navigation probe manifest validation failed:", file=sys.stderr)
@@ -838,12 +876,12 @@ def main() -> int:
         log_path = args.log
         spec_path = args.spec
 
-    frames = [
-        json.loads(line)
-        for line in log_path.read_text("utf-8").splitlines()
-        if line.strip()
-    ]
-    spec = json.loads(spec_path.read_text("utf-8"))
+    frames = load_ndjson_frames(log_path)
+    if frames is None:
+        return 1
+    spec = load_json_file(spec_path, "spec")
+    if spec is None:
+        return 1
     failures = validate_spec(spec, args.windows_runner)
     failures.extend(validate_scenario_aliases(spec, scenario_aliases))
     failures.extend(manifest_failures)

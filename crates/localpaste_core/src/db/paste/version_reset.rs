@@ -1,12 +1,10 @@
 //! Hard-reset operations for paste version history.
 
-use super::{deserialize_paste, reverse_timestamp_key, PasteDb};
+use super::{deserialize_paste, prune_and_persist_version_meta, reverse_timestamp_key, PasteDb};
 use crate::{
     db::{
         tables::*,
-        versioning::{
-            decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
-        },
+        versioning::{decode_version_meta_list, next_version_meta_for_content},
     },
     error::AppError,
     models::paste::{is_markdown_content, Paste, PasteMeta},
@@ -168,8 +166,14 @@ impl PasteDb {
             for removed in removed_versions {
                 let _ = versions_content.remove((paste_id, removed))?;
             }
-            let encoded_versions = encode_version_meta_list(&version_items)?;
-            versions_meta.insert(paste_id, encoded_versions.as_slice())?;
+            prune_and_persist_version_meta(
+                &mut versions_meta,
+                &mut versions_content,
+                paste_id,
+                &mut version_items,
+                self.version_retention_limit(),
+                None,
+            )?;
 
             Some(paste)
         };

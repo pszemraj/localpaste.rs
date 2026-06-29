@@ -154,6 +154,8 @@ jobs:
             --asset-suffix "${ASSET_SUFFIX}"
             --packager-config "${PACKAGER_CONFIG}"
             --runner-os "macOS"
+            # Keep this verify path aligned with the Windows release packager,
+            # which currently targets WiX Toolset v3 MSI generation.
             --expected-wix-major 3
           )
           python .github/scripts/release_gui_prepare.py "${prepare_args[@]}"

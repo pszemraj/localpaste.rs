@@ -390,6 +390,68 @@ fn save_and_reset_preserves_just_saved_dirty_head_as_recoverable_version() {
 }
 
 #[test]
+fn hard_reset_prunes_surviving_older_versions_to_retention_limit() {
+    let _lock = env_lock().lock().expect("env lock");
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let db_path_str = db_path.to_str().expect("db path");
+    let (paste_id, reset_target) = {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
+        let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "10");
+        let db = with_db_init_test_lock(|| Database::new(db_path_str).expect("db"));
+
+        let paste = Paste::new("v1".to_string(), "reset-retention".to_string());
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).expect("create");
+        for content in ["v2", "v3", "v4", "v5"] {
+            update_existing_paste(
+                &db,
+                &paste_id,
+                update_request(Some(content), None, None, None),
+                "update seeded version",
+            );
+            std::thread::sleep(Duration::from_millis(1100));
+        }
+
+        let versions_before = db
+            .pastes
+            .list_versions(&paste_id, Some(10))
+            .expect("list versions before reset")
+            .expect("paste exists");
+        assert_eq!(versions_before.len(), 4);
+        let reset_target = versions_before[0].version_id_ms;
+        (paste_id, reset_target)
+    };
+
+    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
+    let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
+    let db = with_db_init_test_lock(|| Database::new(db_path_str).expect("reopen db"));
+    let reset = db
+        .pastes
+        .reset_hard_to_version(&paste_id, reset_target, usize::MAX)
+        .expect("reset hard")
+        .expect("paste exists");
+    assert_eq!(reset.content, "v4");
+
+    let versions_after = db
+        .pastes
+        .list_versions(&paste_id, Some(10))
+        .expect("list versions after reset")
+        .expect("paste exists");
+    assert_eq!(
+        versions_after.len(),
+        2,
+        "reset target becomes current head, and older survivors are pruned to the lowered cap"
+    );
+    let retained = db
+        .pastes
+        .get_version(&paste_id, versions_after[0].version_id_ms)
+        .expect("load retained older version")
+        .expect("retained older version exists");
+    assert_eq!(retained.content, "v3");
+}
+
+#[test]
 fn reset_preserving_current_head_keeps_clean_head_recoverable() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {
