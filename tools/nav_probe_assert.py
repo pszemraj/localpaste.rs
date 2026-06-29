@@ -425,6 +425,58 @@ def validate_manifest_selection(manifest, spec) -> list[str]:
     return failures
 
 
+def validate_manifest_requirements(
+    manifest,
+    spec,
+    *,
+    require_full_windows_ctrl: bool,
+    min_repeat_count: int | None,
+) -> list[str]:
+    failures = []
+    if not isinstance(manifest, dict):
+        return failures
+    repeat_count = manifest.get("repeat_count")
+    if min_repeat_count is not None:
+        if min_repeat_count < 1:
+            failures.append("--min-repeat-count must be at least 1")
+        elif not isinstance(repeat_count, int) or repeat_count < min_repeat_count:
+            failures.append(
+                f"manifest.repeat_count must be at least {min_repeat_count} for this proof"
+            )
+    if not require_full_windows_ctrl:
+        return failures
+
+    only = manifest.get("only", [])
+    if manifest.get("platform") != "windows":
+        failures.append("--require-full-windows-ctrl requires a Windows manifest")
+    if manifest.get("ctrl_only") is not True:
+        failures.append("--require-full-windows-ctrl requires manifest.ctrl_only to be true")
+    if only:
+        failures.append("--require-full-windows-ctrl requires manifest.only to be empty")
+
+    expected = set(windows_scenario_ids(spec, ctrl_only=True))
+    if not expected:
+        failures.append("--require-full-windows-ctrl found no Windows ctrl scenarios in spec")
+        return failures
+    actual = {
+        run.get("scenario_id")
+        for run in manifest.get("runs", [])
+        if isinstance(run, dict) and isinstance(run.get("scenario_id"), str)
+    }
+    missing = expected - actual
+    unexpected = actual - expected
+    if missing:
+        failures.append(
+            "full Windows ctrl proof is missing scenarios: " + ", ".join(sorted(missing))
+        )
+    if unexpected:
+        failures.append(
+            "full Windows ctrl proof includes non-ctrl/unexpected scenarios: "
+            + ", ".join(sorted(unexpected))
+        )
+    return failures
+
+
 def windows_scenario_ids(spec, ctrl_only: bool = False) -> list[str]:
     scenario_ids = []
     for scenario in spec.get("scenarios", []):
@@ -486,12 +538,33 @@ def self_test_manifest_selection(spec) -> list[str]:
             "complete ctrl-only manifest should pass selection validation: "
             + "; ".join(complete_failures)
         )
+    complete_requirement_failures = validate_manifest_requirements(
+        complete,
+        spec,
+        require_full_windows_ctrl=True,
+        min_repeat_count=2,
+    )
+    if complete_requirement_failures:
+        failures.append(
+            "complete ctrl-only manifest should pass strict proof requirements: "
+            + "; ".join(complete_requirement_failures)
+        )
 
     missing = synthetic_windows_manifest(ctrl_ids, 2, ctrl_only=True)
     missing["runs"] = missing["runs"][:-1]
     missing_failures = validate_manifest_selection(missing, spec)
     if not missing_failures or ctrl_ids[-1] not in "\n".join(missing_failures):
         failures.append("missing ctrl scenario was not reported by manifest selection validation")
+
+    too_few_repeats = synthetic_windows_manifest(ctrl_ids, 1, ctrl_only=True)
+    repeat_failures = validate_manifest_requirements(
+        too_few_repeats,
+        spec,
+        require_full_windows_ctrl=True,
+        min_repeat_count=2,
+    )
+    if not repeat_failures or "repeat_count" not in "\n".join(repeat_failures):
+        failures.append("too-low repeat count was not reported by strict proof requirements")
 
     unexpected_ids = list(ctrl_ids)
     non_ctrl_ids = [scenario_id for scenario_id in all_ids if not scenario_id.startswith("ctrl_")]
@@ -502,6 +575,19 @@ def self_test_manifest_selection(spec) -> list[str]:
         if not unexpected_failures or non_ctrl_ids[0] not in "\n".join(unexpected_failures):
             failures.append(
                 "unexpected non-ctrl scenario was not reported by manifest selection validation"
+            )
+        unexpected_requirement_failures = validate_manifest_requirements(
+            unexpected,
+            spec,
+            require_full_windows_ctrl=True,
+            min_repeat_count=1,
+        )
+        if (
+            not unexpected_requirement_failures
+            or non_ctrl_ids[0] not in "\n".join(unexpected_requirement_failures)
+        ):
+            failures.append(
+                "unexpected non-ctrl scenario was not reported by strict proof requirements"
             )
 
     unknown = synthetic_windows_manifest([], 1, ctrl_only=False, only=["__missing__"])
@@ -645,6 +731,17 @@ def main() -> int:
         help="Assert all runs listed in a Windows probe manifest",
     )
     parser.add_argument(
+        "--require-full-windows-ctrl",
+        action="store_true",
+        help="Require a manifest proving every Windows ctrl scenario with no -Only filter",
+    )
+    parser.add_argument(
+        "--min-repeat-count",
+        type=int,
+        default=None,
+        help="Require at least this many manifest repeats",
+    )
+    parser.add_argument(
         "--summary",
         action="store_true",
         help="Print compact per-scenario evidence lines after selecting assertion frames",
@@ -723,6 +820,14 @@ def main() -> int:
     failures.extend(manifest_failures)
     if manifest is not None:
         failures.extend(validate_manifest_selection(manifest, spec))
+        failures.extend(
+            validate_manifest_requirements(
+                manifest,
+                spec,
+                require_full_windows_ctrl=args.require_full_windows_ctrl,
+                min_repeat_count=args.min_repeat_count,
+            )
+        )
     summaries = []
     host_platform = args.platform or (manifest.get("platform") if manifest else None) or host()
     scenario_filter = set(args.scenario)
