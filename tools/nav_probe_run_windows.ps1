@@ -358,7 +358,7 @@ foreach ($scenario in $scenarios) {
     }
     $expectedBufferLen = $seedText.Length
 
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exe
     $psi.WorkingDirectory = $repo
     $psi.UseShellExecute = $false
