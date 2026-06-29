@@ -268,8 +268,15 @@ if ($CtrlOnly) {
     $scenarios = @($scenarios | Where-Object { [string]$_.id -like "ctrl_*" })
 }
 if ($Only.Count -gt 0) {
+    $known = @{}
+    foreach ($scenario in $scenarios) {
+        $known[[string]$scenario.id] = $true
+    }
     $allowed = @{}
     foreach ($scenarioId in $Only) {
+        if (-not $known.ContainsKey([string]$scenarioId)) {
+            throw "Unknown Windows navigation probe scenario for current selection: $scenarioId"
+        }
         $allowed[[string]$scenarioId] = $true
     }
     $scenarios = @($scenarios | Where-Object { $allowed.ContainsKey([string]$_.id) })
