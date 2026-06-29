@@ -69,6 +69,20 @@ function Get-ScenarioLogId {
     return $ScenarioId
 }
 
+function Assert-PositiveInt {
+    param([string]$Name, [int]$Value)
+    if ($Value -lt 1) {
+        throw "$Name must be at least 1; got $Value"
+    }
+}
+
+function Assert-NonNegativeInt {
+    param([string]$Name, [int]$Value)
+    if ($Value -lt 0) {
+        throw "$Name must be non-negative; got $Value"
+    }
+}
+
 function Test-ProbeReady {
     param([string]$Path, [string]$ScenarioId, [int]$ExpectedBufferLen)
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -233,9 +247,16 @@ $manifest = [ordered]@{
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
 try {
-if ($RepeatCount -lt 1) {
-    throw "RepeatCount must be at least 1"
-}
+Assert-PositiveInt "RepeatCount" $RepeatCount
+Assert-PositiveInt "LaunchPollCount" $LaunchPollCount
+Assert-PositiveInt "ForegroundPollCount" $ForegroundPollCount
+Assert-NonNegativeInt "LaunchPollMs" $LaunchPollMs
+Assert-NonNegativeInt "ForegroundPollMs" $ForegroundPollMs
+Assert-NonNegativeInt "AfterFocusMs" $AfterFocusMs
+Assert-NonNegativeInt "KeyDelayMs" $KeyDelayMs
+Assert-NonNegativeInt "BetweenKeysMs" $BetweenKeysMs
+Assert-NonNegativeInt "AfterScenarioMs" $AfterScenarioMs
+Assert-NonNegativeInt "AfterCloseMs" $AfterCloseMs
 
 $specJson = Get-Content -LiteralPath $specPath -Raw | ConvertFrom-Json
 $scenarios = @(
