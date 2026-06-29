@@ -116,10 +116,17 @@ function Set-NavProbeProcessEnv {
 }
 
 function Invoke-NavProbeAssertions {
-    param([string[]]$ScenarioIds, [bool]$IncludeSummary)
+    param(
+        [string[]]$ScenarioIds,
+        [string[]]$ScenarioAliases = @(),
+        [bool]$IncludeSummary
+    )
     $assertArgs = @("tools/nav_probe_assert.py", $logPath, $specPath, "--platform", "windows")
     foreach ($scenarioId in $ScenarioIds) {
         $assertArgs += @("--scenario", [string]$scenarioId)
+    }
+    foreach ($scenarioAlias in $ScenarioAliases) {
+        $assertArgs += @("--scenario-alias", [string]$scenarioAlias)
     }
     if ($IncludeSummary) {
         $assertArgs += @("--summary")
@@ -397,7 +404,11 @@ if ($Assert) {
 for ($repeatIndex = 1; $repeatIndex -le $RepeatCount; $repeatIndex++) {
 foreach ($scenario in $scenarios) {
     $scenarioId = [string]$scenario.id
-    $safeScenario = ConvertTo-SafeName $scenarioId
+    $scenarioLogId = $scenarioId
+    if ($RepeatCount -gt 1) {
+        $scenarioLogId = "${scenarioId}__repeat_$repeatIndex"
+    }
+    $safeScenario = ConvertTo-SafeName $scenarioLogId
     $dbPath = [System.IO.Path]::GetFullPath((Join-Path $repo "target/nav-probe-db-$safeScenario-$([guid]::NewGuid().ToString('N'))"))
     Assert-RepoPath $dbPath "DB_PATH"
     New-Item -ItemType Directory -Force -Path $dbPath | Out-Null
@@ -414,7 +425,7 @@ foreach ($scenario in $scenarios) {
     $psi.UseShellExecute = $false
     Set-NavProbeProcessEnv $psi "DB_PATH" $dbPath
     Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_LOG" $logPath
-    Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_SCENARIO" $scenarioId
+    Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_SCENARIO" $scenarioLogId
     Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_SEED_TEXT" $seedText
     Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_SEED_NAME" "nav-probe"
     Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_FOCUS_EDITOR" "1"
@@ -423,7 +434,7 @@ foreach ($scenario in $scenarios) {
     }
 
     if ($RepeatCount -gt 1) {
-        Write-Host "nav probe: $scenarioId ($repeatIndex/$RepeatCount)"
+        Write-Host "nav probe: $scenarioId ($repeatIndex/$RepeatCount as $scenarioLogId)"
     }
     else {
         Write-Host "nav probe: $scenarioId"
@@ -452,7 +463,7 @@ foreach ($scenario in $scenarios) {
         for ($idx = 0; $idx -lt $LaunchPollCount; $idx++) {
             Set-NavProbeForeground $proc $handle
             Start-Sleep -Milliseconds $LaunchPollMs
-            if (Test-ProbeSeeded $logPath $scenarioId $expectedBufferLen) {
+            if (Test-ProbeSeeded $logPath $scenarioLogId $expectedBufferLen) {
                 $seeded = $true
                 break
             }
@@ -486,13 +497,17 @@ foreach ($scenario in $scenarios) {
     }
     Start-Sleep -Milliseconds $AfterCloseMs
     if ($Assert -and $RepeatCount -gt 1) {
-        Invoke-NavProbeAssertions -ScenarioIds @($scenarioId) -IncludeSummary $false
+        $scenarioAlias = "$scenarioId=$scenarioLogId"
+        Invoke-NavProbeAssertions -ScenarioIds @($scenarioId) -ScenarioAliases @($scenarioAlias) -IncludeSummary ([bool]$Summary)
     }
 }
 }
 
 Write-Host "nav probe log: $logPath"
-if ($Assert) {
+if ($Assert -and $RepeatCount -eq 1) {
     $scenarioIds = @($scenarios | ForEach-Object { [string]$_.id })
     Invoke-NavProbeAssertions -ScenarioIds $scenarioIds -IncludeSummary ([bool]$Summary)
+}
+elseif ($Assert) {
+    Write-Host "navigation probe assertions passed for repeated windows runs"
 }
