@@ -72,7 +72,7 @@ Use `-RepeatCount` for flake hunting. When assertions are enabled, repeated runs
 Before injecting keys, the Windows runner waits for both the foreground window and a probe frame showing virtual-editor keyboard focus. The low-level `SendInput` path also uses a small keydown/keyup delay; override it with `-KeyDelayMs` only when debugging the input driver.
 The runner terminates the probe process after the evidence frame by default to avoid GUI shutdown races in disposable probe runs. Use `-GracefulShutdown` only when debugging normal window-close behavior.
 Every Windows run also writes a manifest next to the NDJSON log by default (`*.manifest.json`) with the selected scenarios, repeat labels, completed runs, input driver, key delay, shutdown mode, log path, and final assertion status. Aborted runs finalize the manifest with `status: "failed"`, `current_run`, `completed_runs`, and an `error` field before rethrowing. Use `-Manifest <path>` to override it.
-Runs with `-Assert` self-verify the final manifest before exiting.
+Runs with `-Assert` self-verify the final manifest before exiting. New manifests record `-Only` selections, so a `-CtrlOnly` manifest without `-Only` must cover every Windows ctrl scenario in the current contract for every repeat.
 Re-verify a completed Windows artifact bundle with `python tools/nav_probe_assert.py --manifest target/<run>.manifest.json --summary`; pass explicit `LOG SPEC` positional paths before `--manifest` if the manifest was copied from another checkout.
 
 Set `LOCALPASTE_NAV_PROBE_PYTHON` when the assertion checker should use a specific Python interpreter instead of the active `python`/`python3`/conda fallback.

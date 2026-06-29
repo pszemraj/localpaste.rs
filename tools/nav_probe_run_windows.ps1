@@ -222,6 +222,7 @@ $manifest = [ordered]@{
     manifest_path = $manifestPath
     assert_enabled = [bool]$Assert
     ctrl_only = [bool]$CtrlOnly
+    only = @($Only | ForEach-Object { [string]$_ })
     repeat_count = $RepeatCount
     scenario_count = 0
     run_count = 0

@@ -264,6 +264,11 @@ def validate_manifest(manifest) -> list[str]:
     key_delay_ms = manifest.get("key_delay_ms")
     if key_delay_ms is not None and (not isinstance(key_delay_ms, int) or key_delay_ms < 0):
         failures.append("manifest.key_delay_ms must be a non-negative integer")
+    only = manifest.get("only")
+    if only is not None and (
+        not isinstance(only, list) or any(not isinstance(item, str) for item in only)
+    ):
+        failures.append("manifest.only must be a list of strings")
     repeat_count = manifest.get("repeat_count")
     if not isinstance(repeat_count, int) or repeat_count < 1:
         failures.append("manifest.repeat_count must be a positive integer")
@@ -331,6 +336,92 @@ def validate_manifest(manifest) -> list[str]:
         }
         if len(completed_runs) != len(runs) or actual != expected:
             failures.append("manifest.completed_runs must exactly match manifest.runs")
+    return failures
+
+
+def windows_manifest_expected_scenarios(manifest, spec) -> tuple[list[str], list[str]]:
+    failures = []
+    only_raw = manifest.get("only", [])
+    only = set(only_raw) if isinstance(only_raw, list) else set()
+    expected = []
+    known_windows = set()
+    for scenario in spec.get("scenarios", []):
+        scenario_id = scenario.get("id")
+        if not isinstance(scenario_id, str):
+            continue
+        if "windows" not in scenario.get("platforms", []):
+            continue
+        if not scenario.get("driver", {}).get("windows"):
+            continue
+        known_windows.add(scenario_id)
+        if only and scenario_id not in only:
+            continue
+        if manifest.get("ctrl_only") is True and not scenario_id.startswith("ctrl_"):
+            continue
+        expected.append(scenario_id)
+    unknown_only = only - known_windows
+    for scenario_id in sorted(unknown_only):
+        failures.append(f"manifest.only references unknown Windows scenario {scenario_id!r}")
+    return expected, failures
+
+
+def validate_manifest_selection(manifest, spec) -> list[str]:
+    failures = []
+    if not isinstance(manifest, dict):
+        return failures
+    # Older manifests did not record the explicit -Only filter. Keep them
+    # readable, but require complete selection proofs for new manifests.
+    if "only" not in manifest:
+        return failures
+    repeat_count = manifest.get("repeat_count")
+    runs = manifest.get("runs")
+    if not isinstance(repeat_count, int) or not isinstance(runs, list):
+        return failures
+    expected_ids, expected_failures = windows_manifest_expected_scenarios(manifest, spec)
+    failures.extend(expected_failures)
+    expected = set(expected_ids)
+    if not expected:
+        failures.append("manifest selection matched no Windows spec scenarios")
+        return failures
+    actual = {
+        run.get("scenario_id")
+        for run in runs
+        if isinstance(run, dict) and isinstance(run.get("scenario_id"), str)
+    }
+    missing = expected - actual
+    unexpected = actual - expected
+    if missing:
+        failures.append(
+            "manifest.runs missing selected Windows scenarios: "
+            + ", ".join(sorted(missing))
+        )
+    if unexpected:
+        failures.append(
+            "manifest.runs contains unselected Windows scenarios: "
+            + ", ".join(sorted(unexpected))
+        )
+    if len(actual) != len(expected):
+        failures.append(
+            f"manifest scenario coverage expected {len(expected)} scenarios, got {len(actual)}"
+        )
+    for repeat_index in range(1, repeat_count + 1):
+        repeated = {
+            run.get("scenario_id")
+            for run in runs
+            if isinstance(run, dict) and run.get("repeat_index") == repeat_index
+        }
+        if repeated != expected:
+            repeat_parts = []
+            repeat_missing = expected - repeated
+            repeat_unexpected = repeated - expected
+            if repeat_missing:
+                repeat_parts.append("missing " + ", ".join(sorted(repeat_missing)))
+            if repeat_unexpected:
+                repeat_parts.append("unexpected " + ", ".join(sorted(repeat_unexpected)))
+            detail = "; ".join(repeat_parts) if repeat_parts else "scenario set mismatch"
+            failures.append(
+                f"manifest repeat {repeat_index} does not exactly cover selected Windows scenarios: {detail}"
+            )
     return failures
 
 
@@ -530,6 +621,8 @@ def main() -> int:
     failures = validate_spec(spec, args.windows_runner)
     failures.extend(validate_scenario_aliases(spec, scenario_aliases))
     failures.extend(manifest_failures)
+    if manifest is not None:
+        failures.extend(validate_manifest_selection(manifest, spec))
     summaries = []
     host_platform = args.platform or (manifest.get("platform") if manifest else None) or host()
     scenario_filter = set(args.scenario)
