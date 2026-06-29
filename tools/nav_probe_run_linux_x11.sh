@@ -18,6 +18,10 @@ usage() {
     cat <<'EOF'
 Usage: tools/nav_probe_run_linux_x11.sh [options]
 
+Prerequisites:
+  Linux X11 session with xdotool installed. Wayland sessions must use the
+  navigation probe manually because synthetic input is compositor-restricted.
+
 Options:
   --spec PATH                 Navigation contract JSON path
   --log PATH                  Probe NDJSON path; defaults to a unique target/ file
@@ -137,6 +141,19 @@ require_command() {
     fi
 }
 
+require_xdotool() {
+    if ! command -v xdotool >/dev/null 2>&1; then
+        cat >&2 <<'EOF'
+required command not found: xdotool
+
+Linux navigation automation is X11-only and requires xdotool for window focus
+and native key injection. Install xdotool for automated contract runs, or run
+the navigation probe manually on Wayland.
+EOF
+        exit 2
+    fi
+}
+
 spec_path="$(assert_repo_path "$spec" "Spec")"
 log_path="$(assert_repo_path "$log" "Log")"
 exe="$(assert_repo_path "target/debug/localpaste-gui" "Executable")"
@@ -217,7 +234,7 @@ if [[ "${XDG_SESSION_TYPE:-x11}" == "wayland" ]]; then
     echo "Linux navigation automation is X11-only; run the probe manually on Wayland." >&2
     exit 2
 fi
-require_command xdotool
+require_xdotool
 
 if [[ "$build" -eq 1 ]]; then
     cargo build -p localpaste_gui --bin localpaste-gui
@@ -328,14 +345,15 @@ activate_window() {
 
 close_app() {
     local pid="$1"
-    local window_id="${2:-}"
+    local _window_id="${2:-}"
     if ! kill -0 "$pid" >/dev/null 2>&1; then
         wait "$pid" || true
         return 0
     fi
-    if [[ -n "$window_id" ]]; then
-        xdotool windowclose "$window_id" >/dev/null 2>&1 || true
-    fi
+    # Probe runs use a disposable DB and need deterministic teardown. X11
+    # window-close events can race with winit window geometry queries after the
+    # evidence frame has been written, producing noisy shutdown panics.
+    kill "$pid" >/dev/null 2>&1 || true
     for _ in $(seq 1 50); do
         if ! kill -0 "$pid" >/dev/null 2>&1; then
             wait "$pid" || true
@@ -366,6 +384,9 @@ for scenario_json in "${scenarios[@]}"; do
         "LOCALPASTE_NAV_PROBE_SEED_TEXT=$seed_text"
         "LOCALPASTE_NAV_PROBE_SEED_NAME=nav-probe"
         "LOCALPASTE_NAV_PROBE_FOCUS_EDITOR=1"
+        "LOCALPASTE_LINUX_DESKTOP_ENTRY=off"
+        "LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-1}"
+        "WGPU_BACKEND=${WGPU_BACKEND:-gl}"
     )
     if [[ -n "$seed_cursor" ]]; then
         env_args+=("LOCALPASTE_NAV_PROBE_SEED_CURSOR=$seed_cursor")

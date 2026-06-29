@@ -173,6 +173,18 @@ fn linux_force_desktop_entry_write_enabled() -> bool {
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn linux_desktop_entry_write_disabled() -> bool {
+    std::env::var("LOCALPASTE_LINUX_DESKTOP_ENTRY")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off" | "skip" | "disable" | "disabled"
+            )
+        })
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn linux_exe_path_looks_stable_with_home(exe_path: &Path, home: Option<&Path>) -> bool {
     if has_target_build_segment(exe_path) {
         return false;
@@ -243,7 +255,7 @@ fn linux_system_desktop_entry_exists() -> bool {
 #[cfg(target_os = "linux")]
 fn ensure_linux_desktop_integration() -> std::io::Result<()> {
     // AppImage/packaged launches already carry desktop integration.
-    if std::env::var_os("APPIMAGE").is_some() {
+    if std::env::var_os("APPIMAGE").is_some() || linux_desktop_entry_write_disabled() {
         return Ok(());
     }
 
@@ -373,8 +385,9 @@ pub fn run() -> eframe::Result<()> {
 mod tests {
     use super::{
         decide_linux_desktop_entry_write, desktop_entry_is_managed,
-        linux_dev_desktop_entry_allowed, linux_exe_path_looks_stable_with_home,
-        linux_force_desktop_entry_write_enabled, LinuxDesktopEntryDecision,
+        linux_desktop_entry_write_disabled, linux_dev_desktop_entry_allowed,
+        linux_exe_path_looks_stable_with_home, linux_force_desktop_entry_write_enabled,
+        LinuxDesktopEntryDecision,
     };
     use super::{load_desktop_icon, open_log_file, resolve_log_file_path};
     use localpaste_core::env::{env_lock, EnvGuard};
@@ -499,6 +512,24 @@ mod tests {
             {
                 let _set = EnvGuard::set("LOCALPASTE_LINUX_DESKTOP_ENTRY", "true");
                 assert!(!linux_force_desktop_entry_write_enabled());
+            }
+        });
+    }
+
+    #[test]
+    fn linux_desktop_entry_write_disabled_flag_matrix() {
+        with_cleared_env_var("LOCALPASTE_LINUX_DESKTOP_ENTRY", || {
+            assert!(!linux_desktop_entry_write_disabled());
+            for value in ["0", "false", "no", "off", "skip", "disable", "disabled"] {
+                let _set = EnvGuard::set("LOCALPASTE_LINUX_DESKTOP_ENTRY", value);
+                assert!(
+                    linux_desktop_entry_write_disabled(),
+                    "{value} should disable desktop entry setup"
+                );
+            }
+            {
+                let _set = EnvGuard::set("LOCALPASTE_LINUX_DESKTOP_ENTRY", "force");
+                assert!(!linux_desktop_entry_write_disabled());
             }
         });
     }

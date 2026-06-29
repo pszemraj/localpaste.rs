@@ -11,6 +11,7 @@ Perf validation steps and gates: [gui-perf-protocol.md](gui-perf-protocol.md).
 - `LOCALPASTE_EDITOR_INPUT_TRACE=1`: virtual input routing trace.
 - `LOCALPASTE_HIGHLIGHT_TRACE=1`: highlight request/apply/drop lifecycle trace.
 - `LOCALPASTE_LOG_FILE=<path>`: append GUI tracing logs to a file (useful on Windows release builds where no console is shown).
+- `LOCALPASTE_LINUX_DESKTOP_ENTRY=force|off`: Linux-only desktop-entry setup override. `force` writes the managed user entry; `off`/`skip`/`disabled` disables desktop-entry setup for isolated probe or test launches.
 - Boolean flags accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
 - Unrecognized flag values emit a warning and are treated as unset/false (shared parser behavior across core/server/gui env flags).
 
@@ -34,6 +35,27 @@ Navigation/selection contract:
 - Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
 - Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
+
+## Navigation Probe
+
+The navigation probe writes per-frame NDJSON for native keyboard focus and caret checks. It is enabled by `LOCALPASTE_NAV_PROBE_LOG` and normally driven through the OS-specific runner scripts.
+
+Linux automation is X11-only and requires `xdotool`; Wayland must be checked manually with the same probe environment variables because compositor policy restricts synthetic input. Automated Linux runs stay isolated under `target/`:
+
+```bash
+tools/nav_probe_run_linux_x11.sh --build --assert --only ctrl_home_from_middle
+tools/nav_probe_run_linux_x11.sh --assert
+```
+
+Set `LOCALPASTE_NAV_PROBE_PYTHON` when a specific Python is needed for JSON parsing, for example:
+
+```bash
+LOCALPASTE_NAV_PROBE_PYTHON=/home/pszemraj/miniforge3/envs/misc/bin/python \
+  tools/nav_probe_run_linux_x11.sh --assert
+```
+
+The Linux runner sets `LOCALPASTE_LINUX_DESKTOP_ENTRY=off` for probe launches so contract runs do not touch user desktop-integration paths.
+It also defaults probe launches to `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_BACKEND=gl` to avoid host GPU/EGL startup noise; set either variable before running the script to override that default.
 
 ## Stable Behavior Notes
 
