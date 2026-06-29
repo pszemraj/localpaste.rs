@@ -34,13 +34,21 @@ LocalPaste gives those scraps a durable home:
 
 ## Quick Start
 
-Run the desktop app:
+Download the latest binary for your system from
+[GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases), then install and run LocalPaste.[^gui-release]
+
+[^gui-release]: Release downloads currently install the desktop GUI only. For most local paste workflows,
+    that is enough; build from source when you need `lpaste` or the standalone server.
+
+To build from source:
 
 ```bash
+git clone https://github.com/pszemraj/localpaste.rs.git
+cd localpaste.rs
 cargo run
 ```
 
-Or target the GUI binary explicitly:
+Or target the GUI binary explicitly after cloning:
 
 ```bash
 cargo run -p localpaste_gui --bin localpaste-gui
