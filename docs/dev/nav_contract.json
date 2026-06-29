@@ -74,6 +74,55 @@
       "expect_events": [{"kind": "key", "key": "ArrowLeft", "pressed": true, "modifiers.ctrl": true, "modifiers.command": true}]
     },
     {
+      "id": "ctrl_right_from_gamma",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
+      "driver": {"windows": {"send_keys": ["^{RIGHT}"]}, "linux_x11": {"keys": ["ctrl+Right"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 1,
+        "cursor.col": 6,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "MoveRight",
+        "applied_commands": "MoveRight"
+      },
+      "expect_events": [{"kind": "key", "key": "ArrowRight", "pressed": true, "modifiers.ctrl": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_shift_left_from_delta",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:6"},
+      "driver": {"windows": {"send_keys": ["^+{LEFT}"]}, "linux_x11": {"keys": ["ctrl+shift+Left"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 1,
+        "cursor.col": 0,
+        "selection.start": 11,
+        "selection.end": 17
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "MoveLeft",
+        "applied_commands": "MoveLeft"
+      },
+      "expect_events": [{"kind": "key", "key": "ArrowLeft", "pressed": true, "modifiers.ctrl": true, "modifiers.shift": true, "modifiers.command": true}]
+    },
+    {
       "id": "ctrl_shift_right_from_gamma",
       "platforms": ["windows", "linux"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},

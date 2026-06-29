@@ -5,7 +5,9 @@ param(
     [string[]]$Only = @(),
     [switch]$Build,
     [switch]$Assert,
+    [switch]$List,
     [switch]$UseLowLevelInput,
+    [switch]$UseSendKeys,
     [int]$LaunchPollMs = 50,
     [int]$LaunchPollCount = 800,
     [int]$AfterFocusMs = 25,
@@ -24,7 +26,11 @@ $logPath = [System.IO.Path]::GetFullPath((Join-Path $repo $Log))
 
 function Assert-RepoPath {
     param([string]$Path, [string]$Label)
-    if (-not $Path.StartsWith($repo, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $separators = [char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $repoRoot = [System.IO.Path]::GetFullPath($repo).TrimEnd($separators)
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd($separators)
+    $repoPrefix = $repoRoot + [System.IO.Path]::DirectorySeparatorChar
+    if (-not ($fullPath.Equals($repoRoot, [System.StringComparison]::OrdinalIgnoreCase) -or $fullPath.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase))) {
         throw "$Label must stay inside repository root: $Path"
     }
 }
@@ -57,26 +63,72 @@ function Test-ProbeSeeded {
     return $false
 }
 
+function Resolve-NavProbePython {
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALPASTE_NAV_PROBE_PYTHON)) {
+        return @($env:LOCALPASTE_NAV_PROBE_PYTHON)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:VIRTUAL_ENV)) {
+        $candidate = Join-Path $env:VIRTUAL_ENV "Scripts\python.exe"
+        if (Test-Path -LiteralPath $candidate) {
+            return @($candidate)
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CONDA_PREFIX)) {
+        $candidate = Join-Path $env:CONDA_PREFIX "python.exe"
+        if (Test-Path -LiteralPath $candidate) {
+            return @($candidate)
+        }
+    }
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($python) {
+        return @($python.Source)
+    }
+    $python3 = Get-Command python3 -ErrorAction SilentlyContinue
+    if ($python3) {
+        return @($python3.Source)
+    }
+    $conda = Get-Command conda -ErrorAction SilentlyContinue
+    if ($conda) {
+        return @($conda.Source, "run", "-n", "misc", "python")
+    }
+    throw "required command not found: python, python3, conda, or LOCALPASTE_NAV_PROBE_PYTHON"
+}
+
+function Invoke-NavProbePython {
+    param([string[]]$Arguments)
+    $pythonCommand = @($script:NavProbePython)
+    $cmd = $pythonCommand[0]
+    $prefixArgs = @()
+    if ($pythonCommand.Count -gt 1) {
+        $prefixArgs = $pythonCommand[1..($pythonCommand.Count - 1)]
+    }
+    & $cmd @prefixArgs @Arguments
+}
+
 Assert-RepoPath $specPath "Spec"
 Assert-RepoPath $logPath "Log"
 
-if ($Build) {
-    cargo build -p localpaste_gui --bin localpaste-gui
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo build failed with exit code $LASTEXITCODE"
+$specJson = Get-Content -LiteralPath $specPath -Raw | ConvertFrom-Json
+$scenarios = @(
+    $specJson.scenarios | Where-Object {
+        $_.platforms -contains "windows" -and $_.driver -and $_.driver.windows
     }
+)
+if ($Only.Count -gt 0) {
+    $allowed = @{}
+    foreach ($scenarioId in $Only) {
+        $allowed[[string]$scenarioId] = $true
+    }
+    $scenarios = @($scenarios | Where-Object { $allowed.ContainsKey([string]$_.id) })
 }
-
-$exe = [System.IO.Path]::GetFullPath((Join-Path $repo "target/debug/localpaste-gui.exe"))
-Assert-RepoPath $exe "Executable"
-if (-not (Test-Path -LiteralPath $exe)) {
-    throw "GUI executable not found: $exe. Run with -Build or build it first."
+if ($scenarios.Count -eq 0) {
+    throw "No Windows scenarios found in $specPath"
 }
-
-$logParent = Split-Path -Parent $logPath
-New-Item -ItemType Directory -Force -Path $logParent | Out-Null
-if (Test-Path -LiteralPath $logPath) {
-    Remove-Item -LiteralPath $logPath -Force
+if ($List) {
+    foreach ($scenario in $scenarios) {
+        Write-Output ([string]$scenario.id)
+    }
+    exit 0
 }
 
 Add-Type @'
@@ -197,23 +249,27 @@ function Set-NavProbeForeground {
     [LocalPasteNavProbeWindow]::RestoreAndForeground($Handle)
 }
 
-$specJson = Get-Content -LiteralPath $specPath -Raw | ConvertFrom-Json
+if ($Build) {
+    cargo build -p localpaste_gui --bin localpaste-gui
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo build failed with exit code $LASTEXITCODE"
+    }
+}
+
+$exe = [System.IO.Path]::GetFullPath((Join-Path $repo "target/debug/localpaste-gui.exe"))
+Assert-RepoPath $exe "Executable"
+if (-not (Test-Path -LiteralPath $exe)) {
+    throw "GUI executable not found: $exe. Run with -Build or build it first."
+}
+
+$logParent = Split-Path -Parent $logPath
+New-Item -ItemType Directory -Force -Path $logParent | Out-Null
+if (Test-Path -LiteralPath $logPath) {
+    Remove-Item -LiteralPath $logPath -Force
+}
+
 $wscript = New-Object -ComObject WScript.Shell
-$scenarios = @(
-    $specJson.scenarios | Where-Object {
-        $_.platforms -contains "windows" -and $_.driver -and $_.driver.windows
-    }
-)
-if ($Only.Count -gt 0) {
-    $allowed = @{}
-    foreach ($scenarioId in $Only) {
-        $allowed[[string]$scenarioId] = $true
-    }
-    $scenarios = @($scenarios | Where-Object { $allowed.ContainsKey([string]$_.id) })
-}
-if ($scenarios.Count -eq 0) {
-    throw "No Windows scenarios found in $specPath"
-}
+$sendWithLowLevelInput = (-not $UseSendKeys) -or $UseLowLevelInput
 
 foreach ($scenario in $scenarios) {
     $scenarioId = [string]$scenario.id
@@ -280,7 +336,7 @@ foreach ($scenario in $scenarios) {
         Start-Sleep -Milliseconds $AfterFocusMs
         foreach ($key in $scenario.driver.windows.send_keys) {
             try {
-                if ($UseLowLevelInput) {
+                if ($sendWithLowLevelInput) {
                     Send-NavChord ([string]$key)
                 }
                 else {
@@ -309,11 +365,12 @@ foreach ($scenario in $scenarios) {
 
 Write-Host "nav probe log: $logPath"
 if ($Assert) {
+    $script:NavProbePython = @(Resolve-NavProbePython)
     $assertArgs = @("tools/nav_probe_assert.py", $logPath, $specPath, "--platform", "windows")
     foreach ($scenarioId in $Only) {
         $assertArgs += @("--scenario", [string]$scenarioId)
     }
-    conda run -n misc python @assertArgs
+    Invoke-NavProbePython $assertArgs
     if ($LASTEXITCODE -ne 0) {
         throw "navigation probe assertions failed with exit code $LASTEXITCODE"
     }

@@ -361,9 +361,28 @@ close_app() {
         fi
         sleep 0.1
     done
-    kill "$pid" >/dev/null 2>&1 || true
+    kill -KILL "$pid" >/dev/null 2>&1 || true
     wait "$pid" || true
 }
+
+current_pid=""
+current_window_id=""
+cleanup_running_app() {
+    if [[ -n "$current_pid" ]]; then
+        close_app "$current_pid" "$current_window_id"
+        current_pid=""
+        current_window_id=""
+    fi
+}
+cleanup_and_exit() {
+    local code="$1"
+    cleanup_running_app
+    trap - EXIT INT TERM
+    exit "$code"
+}
+trap cleanup_running_app EXIT
+trap 'cleanup_and_exit 130' INT
+trap 'cleanup_and_exit 143' TERM
 
 for scenario_json in "${scenarios[@]}"; do
     scenario_id="$(json_field "$scenario_json" id)"
@@ -393,11 +412,14 @@ for scenario_json in "${scenarios[@]}"; do
     fi
     env "${env_args[@]}" "$exe" &
     pid="$!"
+    current_pid="$pid"
     window_id=""
     if ! window_id="$(wait_for_window "$pid")"; then
         close_app "$pid" "$window_id"
+        current_pid=""
         exit 1
     fi
+    current_window_id="$window_id"
 
     seeded=0
     for _ in $(seq 1 "$launch_poll_count"); do
@@ -410,6 +432,8 @@ for scenario_json in "${scenarios[@]}"; do
     done
     if [[ "$seeded" -ne 1 ]]; then
         close_app "$pid" "$window_id"
+        current_pid=""
+        current_window_id=""
         echo "navigation probe did not report seeded editor before input for $scenario_id" >&2
         exit 1
     fi
@@ -423,6 +447,8 @@ for scenario_json in "${scenarios[@]}"; do
     done
     ms_sleep "$after_scenario_ms"
     close_app "$pid" "$window_id"
+    current_pid=""
+    current_window_id=""
     ms_sleep "$after_close_ms"
 done
 

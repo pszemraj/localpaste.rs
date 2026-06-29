@@ -57,6 +57,15 @@ LOCALPASTE_NAV_PROBE_PYTHON=/home/pszemraj/miniforge3/envs/misc/bin/python \
 The Linux runner sets `LOCALPASTE_LINUX_DESKTOP_ENTRY=off` for probe launches so contract runs do not touch user desktop-integration paths.
 It also defaults probe launches to `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_BACKEND=gl` to avoid host GPU/EGL startup noise; set either variable before running the script to override that default.
 
+Windows automation uses `tools/nav_probe_run_windows.ps1` and defaults to the low-level `keybd_event` path for navigation chords. Use `-UseSendKeys` only as a fallback when debugging the driver itself:
+
+```powershell
+tools\nav_probe_run_windows.ps1 -Build -Assert -Only ctrl_home_from_middle
+tools\nav_probe_run_windows.ps1 -Assert
+```
+
+Set `LOCALPASTE_NAV_PROBE_PYTHON` when the assertion checker should use a specific Python interpreter instead of the active `python`/`python3`/conda fallback.
+
 ## Stable Behavior Notes
 
 - Paste rows use `selectable_label`; keep this if adjusting row styling to preserve reliable click targets.
