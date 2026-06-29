@@ -11,6 +11,7 @@ param(
     [switch]$Summary,
     [switch]$UseLowLevelInput,
     [switch]$UseSendKeys,
+    [switch]$GracefulShutdown,
     [int]$LaunchPollMs = 50,
     [int]$LaunchPollCount = 800,
     [int]$ForegroundPollMs = 25,
@@ -27,12 +28,21 @@ $repo = (Get-Location).Path
 if ([string]::IsNullOrWhiteSpace($Log)) {
     $Log = "target/nav-probe-windows-$([guid]::NewGuid().ToString('N')).ndjson"
 }
-$specPath = [System.IO.Path]::GetFullPath((Join-Path $repo $Spec))
-$logPath = [System.IO.Path]::GetFullPath((Join-Path $repo $Log))
 if ([string]::IsNullOrWhiteSpace($Manifest)) {
     $Manifest = [System.IO.Path]::ChangeExtension($Log, ".manifest.json")
 }
-$manifestPath = [System.IO.Path]::GetFullPath((Join-Path $repo $Manifest))
+
+function Resolve-RepoPath {
+    param([string]$Path)
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $repo $Path))
+}
+
+$specPath = Resolve-RepoPath $Spec
+$logPath = Resolve-RepoPath $Log
+$manifestPath = Resolve-RepoPath $Manifest
 
 function Assert-RepoPath {
     param([string]$Path, [string]$Label)
@@ -186,6 +196,12 @@ if ($sendWithLowLevelInput) {
 else {
     $inputDriver = "WScript.SendKeys"
 }
+if ($GracefulShutdown) {
+    $shutdownMode = "CloseMainWindow"
+}
+else {
+    $shutdownMode = "Kill"
+}
 $manifestParent = Split-Path -Parent $manifestPath
 New-Item -ItemType Directory -Force -Path $manifestParent | Out-Null
 $manifestRuns = @()
@@ -197,6 +213,7 @@ $manifest = [ordered]@{
     completed_at = $null
     platform = "windows"
     input_driver = $inputDriver
+    shutdown_mode = $shutdownMode
     spec_path = $specPath
     log_path = $logPath
     manifest_path = $manifestPath
@@ -441,9 +458,11 @@ function Stop-NavProbeProcess {
         if ($Process.HasExited) {
             return
         }
-        $Process.CloseMainWindow() | Out-Null
-        if ($Process.WaitForExit(5000)) {
-            return
+        if ($GracefulShutdown) {
+            $Process.CloseMainWindow() | Out-Null
+            if ($Process.WaitForExit(5000)) {
+                return
+            }
         }
         try {
             $Process.Kill()
@@ -468,7 +487,7 @@ if ($Build) {
     }
 }
 
-$exe = [System.IO.Path]::GetFullPath((Join-Path $repo "target/debug/localpaste-gui.exe"))
+$exe = Resolve-RepoPath "target/debug/localpaste-gui.exe"
 Assert-RepoPath $exe "Executable"
 if (-not (Test-Path -LiteralPath $exe)) {
     throw "GUI executable not found: $exe. Run with -Build or build it first."
@@ -502,7 +521,7 @@ foreach ($scenario in $scenarios) {
     }
     $manifest["current_run"] = $runManifestEntry
     $safeScenario = ConvertTo-SafeName $scenarioLogId
-    $dbPath = [System.IO.Path]::GetFullPath((Join-Path $repo "target/nav-probe-db-$safeScenario-$([guid]::NewGuid().ToString('N'))"))
+    $dbPath = Resolve-RepoPath "target/nav-probe-db-$safeScenario-$([guid]::NewGuid().ToString('N'))"
     Assert-RepoPath $dbPath "DB_PATH"
     New-Item -ItemType Directory -Force -Path $dbPath | Out-Null
 
