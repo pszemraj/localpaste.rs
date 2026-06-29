@@ -12,6 +12,8 @@ param(
     [switch]$UseSendKeys,
     [int]$LaunchPollMs = 50,
     [int]$LaunchPollCount = 800,
+    [int]$ForegroundPollMs = 25,
+    [int]$ForegroundPollCount = 80,
     [int]$AfterFocusMs = 25,
     [int]$BetweenKeysMs = 350,
     [int]$AfterScenarioMs = 900,
@@ -166,6 +168,8 @@ public static class LocalPasteNavProbeWindow {
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
     static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")]
     static extern bool GetCursorPos(out POINT point);
@@ -176,6 +180,9 @@ public static class LocalPasteNavProbeWindow {
     public static void RestoreAndForeground(IntPtr hWnd) {
         ShowWindow(hWnd, SW_RESTORE);
         SetForegroundWindow(hWnd);
+    }
+    public static bool IsForegroundWindow(IntPtr hWnd) {
+        return GetForegroundWindow() == hWnd;
     }
     public static void ClickTitleBar(IntPtr hWnd) {
         RECT rect;
@@ -295,6 +302,18 @@ function Set-NavProbeForeground {
     [LocalPasteNavProbeWindow]::RestoreAndForeground($Handle)
 }
 
+function Wait-NavProbeForeground {
+    param([System.Diagnostics.Process]$Process, [IntPtr]$Handle, [string]$ScenarioId)
+    for ($idx = 0; $idx -lt $ForegroundPollCount; $idx++) {
+        Set-NavProbeForeground $Process $Handle
+        if ([LocalPasteNavProbeWindow]::IsForegroundWindow($Handle)) {
+            return
+        }
+        Start-Sleep -Milliseconds $ForegroundPollMs
+    }
+    throw "localpaste-gui did not become foreground window before input for $ScenarioId"
+}
+
 function Stop-NavProbeProcess {
     param([System.Diagnostics.Process]$Process)
     $Process.Refresh()
@@ -406,10 +425,11 @@ foreach ($scenario in $scenarios) {
             throw "navigation probe did not report seeded editor before input for $scenarioId"
         }
         [LocalPasteNavProbeWindow]::ClickTitleBar($handle)
-        Set-NavProbeForeground $proc $handle
+        Wait-NavProbeForeground $proc $handle $scenarioId
         Start-Sleep -Milliseconds $AfterFocusMs
         foreach ($key in $scenario.driver.windows.send_keys) {
             try {
+                Wait-NavProbeForeground $proc $handle $scenarioId
                 if ($sendWithLowLevelInput) {
                     Send-NavChord ([string]$key)
                 }
