@@ -57,6 +57,7 @@ LOCALPASTE_NAV_PROBE_PYTHON=/home/pszemraj/miniforge3/envs/misc/bin/python \
 
 The Linux runner sets `LOCALPASTE_LINUX_DESKTOP_ENTRY=off` for probe launches so contract runs do not touch user desktop-integration paths.
 It also defaults probe launches to `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_BACKEND=gl` to avoid host GPU/EGL startup noise; set either variable before running the script to override that default.
+Before injecting keys, the Linux runner waits for both a stable active X11 window and a probe frame showing virtual-editor keyboard focus. It also uses a small `xdotool` keydown/keyup delay; override it with `--key-delay-ms` only when debugging the input driver.
 
 Windows automation uses `tools/nav_probe_run_windows.ps1` from Windows PowerShell 5.1 or PowerShell 7 and defaults to the low-level `SendInput` path for navigation chords. Use `-UseSendKeys` only as a fallback when debugging the driver itself:
 

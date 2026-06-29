@@ -11,6 +11,7 @@ summary=0
 launch_poll_ms=100
 launch_poll_count=400
 after_focus_ms=150
+key_delay_ms=40
 between_keys_ms=350
 after_scenario_ms=900
 after_close_ms=500
@@ -36,6 +37,7 @@ Options:
   --launch-poll-ms MS         Poll interval while waiting for app/probe readiness
   --launch-poll-count COUNT   Poll count while waiting for app/probe readiness
   --after-focus-ms MS         Delay after final window activation before sending keys
+  --key-delay-ms MS           xdotool keydown/keyup delay for each key chord
   --between-keys-ms MS        Delay between keys inside a scenario
   --after-scenario-ms MS      Delay after keys before closing the app
   --after-close-ms MS         Delay between scenario processes
@@ -89,6 +91,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --after-focus-ms)
             after_focus_ms="${2:?missing --after-focus-ms value}"
+            shift 2
+            ;;
+        --key-delay-ms)
+            key_delay_ms="${2:?missing --key-delay-ms value}"
             shift 2
             ;;
         --between-keys-ms)
@@ -304,7 +310,7 @@ sys.stdout.write("__LOCALPASTE_NAV_PROBE_SENTINEL__")
 PY
 }
 
-probe_seeded() {
+probe_ready() {
     local scenario_id="$1"
     local expected_len="$2"
     [[ -f "$log_path" ]] || return 1
@@ -331,7 +337,10 @@ for line in reversed(lines):
         continue
     app = frame.get("app", {})
     cursor = frame.get("cursor", {})
-    if app.get("selected_id") == "__nav_probe__" and cursor.get("buffer_len_chars") == expected_len:
+    focus = frame.get("focus", {})
+    has_seed = app.get("selected_id") == "__nav_probe__" and cursor.get("buffer_len_chars") == expected_len
+    has_keyboard_focus = focus.get("virtual_editor") is True and focus.get("wants_keyboard_input") is True
+    if has_seed and has_keyboard_focus:
         raise SystemExit(0)
     raise SystemExit(1)
 raise SystemExit(1)
@@ -369,11 +378,17 @@ wait_active_window() {
     local window_id="$1"
     local scenario_id="$2"
     local active_window=""
+    local stable_count=0
     for _ in $(seq 1 "$launch_poll_count"); do
         activate_window "$window_id"
         active_window="$(xdotool getactivewindow 2>/dev/null || true)"
         if [[ "$active_window" == "$window_id" ]]; then
-            return 0
+            stable_count=$((stable_count + 1))
+            if [[ "$stable_count" -ge 2 ]]; then
+                return 0
+            fi
+        else
+            stable_count=0
         fi
         ms_sleep "$launch_poll_ms"
     done
@@ -459,20 +474,20 @@ for scenario_json in "${scenarios[@]}"; do
     fi
     current_window_id="$window_id"
 
-    seeded=0
+    ready=0
     for _ in $(seq 1 "$launch_poll_count"); do
         activate_window "$window_id"
-        if probe_seeded "$scenario_id" "$seed_len"; then
-            seeded=1
+        if probe_ready "$scenario_id" "$seed_len"; then
+            ready=1
             break
         fi
         ms_sleep "$launch_poll_ms"
     done
-    if [[ "$seeded" -ne 1 ]]; then
+    if [[ "$ready" -ne 1 ]]; then
         close_app "$pid" "$window_id"
         current_pid=""
         current_window_id=""
-        echo "navigation probe did not report seeded editor before input for $scenario_id" >&2
+        echo "navigation probe did not report focused seeded editor before input for $scenario_id" >&2
         exit 1
     fi
 
@@ -490,7 +505,7 @@ for scenario_json in "${scenarios[@]}"; do
             exit 1
         fi
         ms_sleep "$after_focus_ms"
-        xdotool key "$key"
+        xdotool key --delay "$key_delay_ms" "$key"
         ms_sleep "$between_keys_ms"
     done
     ms_sleep "$after_scenario_ms"
