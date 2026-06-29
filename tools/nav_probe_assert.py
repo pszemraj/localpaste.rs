@@ -4,8 +4,13 @@
 import argparse
 import json
 import platform
+import re
 import sys
 from pathlib import Path
+
+WINDOWS_SEND_KEY_RE = re.compile(
+    r"^(?:\^)?(?:\+)?\{(?:LEFT|RIGHT|UP|DOWN|HOME|END|PGUP|PGDN|BACKSPACE|DEL)\}$"
+)
 
 
 def host() -> str:
@@ -32,10 +37,40 @@ def matches_subset(value, expected) -> bool:
     return True
 
 
+def validate_spec(spec) -> list[str]:
+    failures = []
+    seen = set()
+    for index, scenario in enumerate(spec.get("scenarios", [])):
+        scenario_id = scenario.get("id")
+        if not scenario_id:
+            failures.append(f"scenario[{index}]: missing id")
+            continue
+        if scenario_id in seen:
+            failures.append(f"{scenario_id}: duplicate scenario id")
+        seen.add(scenario_id)
+        platforms = scenario.get("platforms")
+        if not isinstance(platforms, list) or not platforms:
+            failures.append(f"{scenario_id}: platforms must be a non-empty list")
+        driver = scenario.get("driver", {})
+        if "windows" in (platforms or []):
+            send_keys = driver.get("windows", {}).get("send_keys")
+            if not isinstance(send_keys, list) or not send_keys:
+                failures.append(f"{scenario_id}: missing driver.windows.send_keys")
+            else:
+                for key in send_keys:
+                    if not isinstance(key, str) or not WINDOWS_SEND_KEY_RE.fullmatch(key):
+                        failures.append(f"{scenario_id}: unsupported Windows send_keys chord {key!r}")
+        if "linux" in (platforms or []):
+            linux_keys = driver.get("linux_x11", {}).get("keys")
+            if not isinstance(linux_keys, list) or not linux_keys:
+                failures.append(f"{scenario_id}: missing driver.linux_x11.keys")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("log", type=Path)
-    parser.add_argument("spec", type=Path)
+    parser.add_argument("log", type=Path, nargs="?")
+    parser.add_argument("spec", type=Path, nargs="?")
     parser.add_argument("--platform", default=None, help="Override detected host platform")
     parser.add_argument(
         "--scenario",
@@ -43,7 +78,29 @@ def main() -> int:
         default=[],
         help="Only assert the named scenario; may be repeated",
     )
+    parser.add_argument(
+        "--check-spec",
+        action="store_true",
+        help="Validate the contract spec without reading a probe log",
+    )
     args = parser.parse_args()
+
+    if args.check_spec:
+        spec_path = args.spec or args.log
+        if spec_path is None:
+            parser.error("--check-spec requires a spec path")
+        spec = json.loads(spec_path.read_text("utf-8"))
+        failures = validate_spec(spec)
+        if failures:
+            print("navigation probe spec validation failed:", file=sys.stderr)
+            for failure in failures:
+                print(f"- {failure}", file=sys.stderr)
+            return 1
+        print("navigation probe spec validation passed")
+        return 0
+
+    if args.log is None or args.spec is None:
+        parser.error("log and spec are required unless --check-spec is used")
 
     frames = [
         json.loads(line)
@@ -51,7 +108,7 @@ def main() -> int:
         if line.strip()
     ]
     spec = json.loads(args.spec.read_text("utf-8"))
-    failures = []
+    failures = validate_spec(spec)
     host_platform = args.platform or host()
     scenario_filter = set(args.scenario)
 
