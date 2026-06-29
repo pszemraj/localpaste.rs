@@ -102,7 +102,7 @@ Start here:
 For development:
 
 - Build, validation, and smoke-test workflow: [`docs/dev/devlog.md`](docs/dev/devlog.md)
-- GUI behavior notes and manual test checklist: [`docs/dev/gui-notes.md`](docs/dev/gui-notes.md)
+- GUI behavior notes, navigation probe, and manual test checklist: [`docs/dev/gui-notes.md`](docs/dev/gui-notes.md)
 - GUI release pipeline: [`docs/release-gui.md`](docs/release-gui.md)
 
 ## License

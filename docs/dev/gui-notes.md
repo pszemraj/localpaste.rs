@@ -40,7 +40,19 @@ Navigation/selection contract:
 
 The navigation probe writes per-frame NDJSON for native keyboard focus and caret checks. It is enabled by `LOCALPASTE_NAV_PROBE_LOG` and normally driven through the OS-specific runner scripts.
 
-Linux automation is X11-only and requires `xdotool`; Wayland must be checked manually with the same probe environment variables because compositor policy restricts synthetic input. Automated Linux runs stay isolated under `target/`:
+Probe contract and tooling:
+
+- Scenario contract: [nav_contract.json](nav_contract.json)
+- Assertion checker: [../../tools/nav_probe_assert.py](../../tools/nav_probe_assert.py)
+- Linux X11 runner: [../../tools/nav_probe_run_linux_x11.sh](../../tools/nav_probe_run_linux_x11.sh)
+- macOS runner: [../../tools/nav_probe_run_macos.sh](../../tools/nav_probe_run_macos.sh)
+- Windows runner: [../../tools/nav_probe_run_windows.ps1](../../tools/nav_probe_run_windows.ps1)
+
+All automated runners launch a disposable probe DB under `target/`, seed the editor, wait for a probe frame showing virtual-editor keyboard focus, inject native key chords, and write NDJSON evidence. They terminate the child GUI process after the evidence frame by default so disposable probe runs do not fail on normal window-close shutdown races. Use `--help` / `Get-Help` on the runner for timing and filtering options.
+
+Set `LOCALPASTE_NAV_PROBE_PYTHON` when the assertion checker or runner should use a specific Python interpreter instead of the active `python`/`python3`/conda fallback.
+
+Linux automation is X11-only and requires `xdotool`; Wayland must be checked manually with the same probe environment variables because compositor policy restricts synthetic input.
 
 ```bash
 tools/nav_probe_run_linux_x11.sh --build --assert --only ctrl_home_from_middle
@@ -48,16 +60,8 @@ tools/nav_probe_run_linux_x11.sh --assert --ctrl-only --summary
 tools/nav_probe_run_linux_x11.sh --assert
 ```
 
-Set `LOCALPASTE_NAV_PROBE_PYTHON` when a specific Python is needed for JSON parsing, for example:
-
-```bash
-LOCALPASTE_NAV_PROBE_PYTHON=/home/pszemraj/miniforge3/envs/misc/bin/python \
-  tools/nav_probe_run_linux_x11.sh --assert
-```
-
 The Linux runner sets `LOCALPASTE_LINUX_DESKTOP_ENTRY=off` for probe launches so contract runs do not touch user desktop-integration paths.
 It also defaults probe launches to `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_BACKEND=gl` to avoid host GPU/EGL startup noise; set either variable before running the script to override that default.
-Before injecting keys, the Linux runner waits for both a stable active X11 window and a probe frame showing virtual-editor keyboard focus. It also uses a small `xdotool` keydown/keyup delay; override it with `--key-delay-ms` only when debugging the input driver.
 
 macOS automation uses `tools/nav_probe_run_macos.sh` and requires Accessibility permission for the terminal running the script, because native key injection goes through `osascript`/System Events:
 
@@ -66,8 +70,6 @@ tools/nav_probe_run_macos.sh --build --assert --only cmd_up_from_middle --summar
 tools/nav_probe_run_macos.sh --build --assert --summary
 tools/nav_probe_run_macos.sh --list
 ```
-
-The macOS runner uses the same isolated seed/probe path as Linux and Windows. It waits for the app process to be frontmost and for a probe frame showing virtual-editor keyboard focus before sending each key-code chord.
 
 Windows automation uses `tools/nav_probe_run_windows.ps1` from Windows PowerShell 5.1 or PowerShell 7 and defaults to the low-level `SendInput` path for navigation chords. Use `-UseSendKeys` only as a fallback when debugging the driver itself:
 
@@ -79,14 +81,11 @@ tools\nav_probe_run_windows.ps1 -Assert
 ```
 
 Use `-RepeatCount` for flake hunting. When assertions are enabled, repeated runs log each repetition under a unique scenario label and assert it immediately against the base contract so a later passing run cannot hide an earlier failed chord.
-Before injecting keys, the Windows runner waits for both the foreground window and a probe frame showing virtual-editor keyboard focus. The low-level `SendInput` path also uses a small keydown/keyup delay; override it with `-KeyDelayMs` only when debugging the input driver.
-The runner terminates the probe process after the evidence frame by default to avoid GUI shutdown races in disposable probe runs. Use `-GracefulShutdown` only when debugging normal window-close behavior.
-Every Windows run also writes a manifest next to the NDJSON log by default (`*.manifest.json`) with the selected scenarios, repeat labels, completed runs, input driver, key delay, shutdown mode, log path, and final assertion status. Aborted runs finalize the manifest with `status: "failed"`, `current_run`, `completed_runs`, and an `error` field before rethrowing. Use `-Manifest <path>` to override it.
+Windows runs also write a manifest next to the NDJSON log by default (`*.manifest.json`) with scenario selection, repeat labels, completed runs, input driver, shutdown mode, log path, and final assertion status. Use `-Manifest <path>` to override it.
 Runs with `-Assert` self-verify the final manifest before exiting. New manifests record `-Only` selections, so a `-CtrlOnly` manifest without `-Only` must cover every Windows ctrl scenario in the current contract for every repeat.
 Re-verify a completed Windows artifact bundle with `python tools/nav_probe_assert.py --manifest target/<run>.manifest.json --summary`; pass explicit `LOG SPEC` positional paths before `--manifest` if the manifest was copied from another checkout.
 For the full Windows ctrl-navigation proof, re-verify the final artifact with `python tools/nav_probe_assert.py --manifest target/<run>.manifest.json --require-full-windows-ctrl --min-repeat-count 3 --summary`.
 
-Set `LOCALPASTE_NAV_PROBE_PYTHON` when the assertion checker should use a specific Python interpreter instead of the active `python`/`python3`/conda fallback.
 Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --windows-runner tools/nav_probe_run_windows.ps1 --self-test` to lint scenario ids, driver chord syntax, macOS key-code entries, Windows runner key support, and manifest-completeness checks without launching the GUI.
 
 ## Stable Behavior Notes

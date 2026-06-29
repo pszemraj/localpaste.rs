@@ -13,7 +13,7 @@
 | Detection, normalization, and highlighting | [language-detection.md](language-detection.md) |
 | Lock semantics (`db.owner.lock`, paste edit locks, API `423`) | [dev/locking-model.md](dev/locking-model.md) |
 | Version history, diff, and metadata retrieval/search path | [architecture.md#5-read-and-write-paths](architecture.md#5-read-and-write-paths) |
-| GUI runtime flags and interaction behavior | [dev/gui-notes.md](dev/gui-notes.md) |
+| GUI runtime flags, navigation probe, and interaction behavior | [dev/gui-notes.md](dev/gui-notes.md) |
 | GUI perf protocol and thresholds | [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md) |
 | Build/run/validation workflow | [dev/devlog.md](dev/devlog.md) |
 | Server+CLI smoke test (restart persistence included) | [dev/devlog.md#runtime-smoke-test-server-cli](dev/devlog.md#runtime-smoke-test-server-cli) |
