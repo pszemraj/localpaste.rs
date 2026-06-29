@@ -133,6 +133,7 @@ if ($List) {
 
 Add-Type @'
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 public static class LocalPasteNavProbeWindow {
     const int SW_RESTORE = 9;
@@ -184,29 +185,63 @@ public static class LocalPasteNavProbeWindow {
     }
 }
 public static class LocalPasteNavProbeInput {
-    const int KEYEVENTF_KEYUP = 0x0002;
-    const byte VK_CONTROL = 0x11;
-    const byte VK_SHIFT = 0x10;
-    const byte VK_MENU = 0x12;
-    [DllImport("user32.dll")]
-    static extern void keybd_event(byte bVk, byte bScan, int dwFlags, UIntPtr dwExtraInfo);
-    static void Down(byte vk) { keybd_event(vk, 0, 0, UIntPtr.Zero); }
-    static void Up(byte vk) { keybd_event(vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); }
-    public static void SendChord(byte key, bool ctrl, bool shift) {
+    const uint INPUT_KEYBOARD = 1;
+    const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+    const uint KEYEVENTF_KEYUP = 0x0002;
+    const ushort VK_CONTROL = 0x11;
+    const ushort VK_SHIFT = 0x10;
+    const ushort VK_MENU = 0x12;
+    [StructLayout(LayoutKind.Sequential)]
+    struct INPUT {
+        public uint type;
+        public InputUnion input;
+    }
+    [StructLayout(LayoutKind.Explicit)]
+    struct InputUnion {
+        [FieldOffset(0)]
+        public KEYBDINPUT keyboard;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct KEYBDINPUT {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+    static void SendKey(ushort vk, bool keyUp, bool extended) {
+        INPUT input = new INPUT();
+        input.type = INPUT_KEYBOARD;
+        input.input.keyboard.wVk = vk;
+        input.input.keyboard.wScan = 0;
+        input.input.keyboard.dwFlags = (keyUp ? KEYEVENTF_KEYUP : 0) | (extended ? KEYEVENTF_EXTENDEDKEY : 0);
+        input.input.keyboard.time = 0;
+        input.input.keyboard.dwExtraInfo = UIntPtr.Zero;
+        INPUT[] inputs = new INPUT[] { input };
+        uint sent = SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+        if (sent != 1) {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "SendInput failed");
+        }
+    }
+    static void Down(ushort vk, bool extended) { SendKey(vk, false, extended); }
+    static void Up(ushort vk, bool extended) { SendKey(vk, true, extended); }
+    public static void SendChord(ushort key, bool ctrl, bool shift, bool extended) {
         try {
-            if (ctrl) { Down(VK_CONTROL); }
-            if (shift) { Down(VK_SHIFT); }
-            Down(key);
-            Up(key);
+            if (ctrl) { Down(VK_CONTROL, false); }
+            if (shift) { Down(VK_SHIFT, false); }
+            Down(key, extended);
+            Up(key, extended);
         } finally {
-            if (shift) { Up(VK_SHIFT); }
-            if (ctrl) { Up(VK_CONTROL); }
+            if (shift) { Up(VK_SHIFT, false); }
+            if (ctrl) { Up(VK_CONTROL, false); }
         }
     }
     public static void ReleaseModifiers() {
-        Up(VK_MENU);
-        Up(VK_SHIFT);
-        Up(VK_CONTROL);
+        Up(VK_MENU, false);
+        Up(VK_SHIFT, false);
+        Up(VK_CONTROL, false);
     }
 }
 '@
@@ -219,6 +254,7 @@ function Send-NavChord {
     if ($Chord -match '\{([^}]+)\}') {
         $name = $Matches[1]
     }
+    $extended = $true
     $vk = switch ($name.ToUpperInvariant()) {
         "LEFT" { 0x25 }
         "RIGHT" { 0x27 }
@@ -228,11 +264,11 @@ function Send-NavChord {
         "END" { 0x23 }
         "PGUP" { 0x21 }
         "PGDN" { 0x22 }
-        "BACKSPACE" { 0x08 }
+        "BACKSPACE" { $extended = $false; 0x08 }
         "DEL" { 0x2E }
         default { throw "Unsupported navigation chord: $Chord" }
     }
-    [LocalPasteNavProbeInput]::SendChord([byte]$vk, [bool]$ctrl, [bool]$shift)
+    [LocalPasteNavProbeInput]::SendChord([UInt16]$vk, [bool]$ctrl, [bool]$shift, [bool]$extended)
 }
 
 function Release-NavModifiers {
@@ -247,6 +283,28 @@ function Set-NavProbeForeground {
     }
     $null = $wscript.AppActivate($Process.Id)
     [LocalPasteNavProbeWindow]::RestoreAndForeground($Handle)
+}
+
+function Stop-NavProbeProcess {
+    param([System.Diagnostics.Process]$Process)
+    $Process.Refresh()
+    if ($Process.HasExited) {
+        return
+    }
+    $Process.CloseMainWindow() | Out-Null
+    if ($Process.WaitForExit(5000)) {
+        return
+    }
+    try {
+        $Process.Kill()
+    }
+    catch {
+        Write-Warning "failed to kill nav probe process $($Process.Id): $_"
+        return
+    }
+    if (-not $Process.WaitForExit(5000)) {
+        Write-Warning "nav probe process $($Process.Id) did not exit after Kill()"
+    }
 }
 
 if ($Build) {
@@ -270,6 +328,12 @@ if (Test-Path -LiteralPath $logPath) {
 
 $wscript = New-Object -ComObject WScript.Shell
 $sendWithLowLevelInput = (-not $UseSendKeys) -or $UseLowLevelInput
+if ($sendWithLowLevelInput) {
+    Write-Host "nav probe input driver: SendInput"
+}
+else {
+    Write-Host "nav probe input driver: WScript.SendKeys"
+}
 
 foreach ($scenario in $scenarios) {
     $scenarioId = [string]$scenario.id
@@ -352,13 +416,7 @@ foreach ($scenario in $scenarios) {
     }
     finally {
         Release-NavModifiers
-        if (-not $proc.HasExited) {
-            $proc.CloseMainWindow() | Out-Null
-            if (-not $proc.WaitForExit(5000)) {
-                $proc.Kill()
-                $proc.WaitForExit()
-            }
-        }
+        Stop-NavProbeProcess $proc
     }
     Start-Sleep -Milliseconds $AfterCloseMs
 }

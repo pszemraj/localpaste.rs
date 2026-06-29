@@ -66,6 +66,7 @@ def main() -> int:
         if not matching:
             failures.append(f"{scenario_id}: no frames")
             continue
+        state_frame = matching[-1]
         applied = [frame for frame in matching if frame.get("applied_commands")]
         candidates = [
             frame
@@ -74,16 +75,16 @@ def main() -> int:
         ]
         raw = [frame for frame in matching if frame.get("raw_events")]
         if applied:
-            frame = applied[-1]
+            event_frame = applied[-1]
         elif candidates:
-            frame = candidates[-1]
+            event_frame = candidates[-1]
         elif raw:
-            frame = raw[-1]
+            event_frame = raw[-1]
         else:
-            frame = matching[-1]
+            event_frame = state_frame
         for key, expected in scenario.get("expect", {}).items():
             try:
-                actual = dotted(frame, key)
+                actual = dotted(state_frame, key)
             except KeyError:
                 failures.append(f"{scenario_id}: missing {key}")
                 continue
@@ -91,7 +92,7 @@ def main() -> int:
                 failures.append(f"{scenario_id}: {key} expected {expected!r}, got {actual!r}")
         for key, expected_part in scenario.get("expect_contains", {}).items():
             try:
-                actual = dotted(frame, key)
+                actual = dotted(event_frame, key)
             except KeyError:
                 failures.append(f"{scenario_id}: missing {key}")
                 continue
@@ -103,7 +104,7 @@ def main() -> int:
                     f"{scenario_id}: {key} did not contain {expected_part!r}; got {actual!r}"
                 )
         for expected_event in scenario.get("expect_events", []):
-            actual_events = frame.get("raw_events")
+            actual_events = event_frame.get("raw_events")
             if not isinstance(actual_events, list):
                 failures.append(f"{scenario_id}: raw_events is not a list")
                 continue
