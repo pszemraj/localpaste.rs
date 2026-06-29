@@ -13,6 +13,7 @@
 - [9) GUI Save Pipeline](#9-gui-save-pipeline)
 - [10) Discovery And Trust](#10-discovery-and-trust)
 - [11) Validation Strategy](#11-validation-strategy)
+
 ## 1) System At A Glance
 
 LocalPaste is a local-first paste manager with a shared core and multiple frontends:

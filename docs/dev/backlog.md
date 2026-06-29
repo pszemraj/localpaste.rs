@@ -36,7 +36,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
 - [ ] Triage the current `check-ast-dupes --root crates` likely-dead and visibility-tighten candidates; separate test-only false positives from real cleanup before changing helper visibility or deleting symbols.
-- [ ] Revisit the remaining `check-ast-dupes --include-tests` near-miss pairs only if a measured cleanup reduces LOC or clarifies behavior: sidebar time-bucket tests cover local-day cutoffs, `localpaste_server/tests/manual_language_create.rs` covers different language-state transitions, and `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` covers distinct cursor semantics.
+- [ ] Revisit the remaining `check-ast-dupes --include-tests` near-miss pair only if a measured cleanup reduces LOC or clarifies behavior: `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` covers distinct cursor semantics that should stay explicit unless a better structure preserves the invariants.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
 - [ ] Expand `verify-gui-packaging.yml` beyond macOS (at least Linux x64) so packaging script regressions are caught before release-tag runs.
 - [ ] Revisit `TransactionOps` create/delete/move wrapper consolidation with a lock-safe transaction template only if we can preserve operation-specific invariants and error semantics without reducing readability.

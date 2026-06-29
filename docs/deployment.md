@@ -47,11 +47,9 @@ pkill -f "cargo run -p localpaste_server --bin localpaste" || true
 # Verify port release
 lsof -i :38411
 
-# Last resort ONLY (can leave lock state requiring recovery):
+# Last resort:
 # lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
-
-Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
 
 > [!CAUTION]
 > `kill -9` can leave stale lock state and require manual recovery on next start.

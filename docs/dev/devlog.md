@@ -201,8 +201,7 @@ Remove-Item -Recurse -Force $env:DB_PATH
 
 ## Tooling CLI Contracts
 
-This section documents `localpaste_tools` CLI behavior
-used in automation/CI contracts.
+`localpaste_tools` CLI behavior used in automation/CI contracts:
 
 ### `generate-test-data`
 
