@@ -44,6 +44,7 @@ Linux automation is X11-only and requires `xdotool`; Wayland must be checked man
 
 ```bash
 tools/nav_probe_run_linux_x11.sh --build --assert --only ctrl_home_from_middle
+tools/nav_probe_run_linux_x11.sh --assert --ctrl-only
 tools/nav_probe_run_linux_x11.sh --assert
 ```
 
@@ -61,6 +62,7 @@ Windows automation uses `tools/nav_probe_run_windows.ps1` and defaults to the lo
 
 ```powershell
 tools\nav_probe_run_windows.ps1 -Build -Assert -Only ctrl_home_from_middle
+tools\nav_probe_run_windows.ps1 -Build -Assert -CtrlOnly
 tools\nav_probe_run_windows.ps1 -Assert
 ```
 

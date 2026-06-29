@@ -6,6 +6,7 @@ log=""
 build=0
 assert=0
 list=0
+ctrl_only=0
 launch_poll_ms=100
 launch_poll_count=400
 after_focus_ms=50
@@ -27,6 +28,7 @@ Options:
   --log PATH                  Probe NDJSON path; defaults to a unique target/ file
   --only SCENARIO             Run one scenario; may be repeated
   --list                      List selected Linux X11 scenarios and exit
+  --ctrl-only                 Run/list only scenarios whose id starts with ctrl_
   --build                     Build localpaste-gui before running
   --assert                    Run tools/nav_probe_assert.py after the probe run
   --launch-poll-ms MS         Poll interval while waiting for app/probe readiness
@@ -61,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --list)
             list=1
+            shift
+            ;;
+        --ctrl-only)
+            ctrl_only=1
             shift
             ;;
         --assert)
@@ -180,21 +186,19 @@ run_python() {
     "${python_cmd[@]}" "$@"
 }
 
-scenario_args=()
-for scenario_id in "${only[@]}"; do
-    scenario_args+=(--scenario "$scenario_id")
-done
-
 mapfile -t scenarios < <(
-    run_python - "$spec_path" "${only[@]}" <<'PY'
+    run_python - "$spec_path" "$ctrl_only" "${only[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 spec = json.loads(Path(sys.argv[1]).read_text("utf-8"))
-only = set(sys.argv[2:])
+ctrl_only = sys.argv[2] == "1"
+only = set(sys.argv[3:])
 for scenario in spec.get("scenarios", []):
     if only and scenario.get("id") not in only:
+        continue
+    if ctrl_only and not str(scenario.get("id", "")).startswith("ctrl_"):
         continue
     if "linux" not in scenario.get("platforms", []):
         continue
@@ -217,6 +221,17 @@ if [[ "${#scenarios[@]}" -eq 0 ]]; then
     echo "No Linux X11 scenarios found in $spec_path" >&2
     exit 2
 fi
+
+scenario_args=()
+for scenario_json in "${scenarios[@]}"; do
+    scenario_args+=(--scenario "$(run_python - "$scenario_json" <<'PY'
+import json
+import sys
+
+print(json.loads(sys.argv[1])["id"])
+PY
+)")
+done
 
 if [[ "$list" -eq 1 ]]; then
     for scenario_json in "${scenarios[@]}"; do

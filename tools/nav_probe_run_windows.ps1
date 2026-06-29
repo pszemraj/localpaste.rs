@@ -6,6 +6,7 @@ param(
     [switch]$Build,
     [switch]$Assert,
     [switch]$List,
+    [switch]$CtrlOnly,
     [switch]$UseLowLevelInput,
     [switch]$UseSendKeys,
     [int]$LaunchPollMs = 50,
@@ -114,6 +115,9 @@ $scenarios = @(
         $_.platforms -contains "windows" -and $_.driver -and $_.driver.windows
     }
 )
+if ($CtrlOnly) {
+    $scenarios = @($scenarios | Where-Object { [string]$_.id -like "ctrl_*" })
+}
 if ($Only.Count -gt 0) {
     $allowed = @{}
     foreach ($scenarioId in $Only) {
@@ -425,8 +429,8 @@ Write-Host "nav probe log: $logPath"
 if ($Assert) {
     $script:NavProbePython = @(Resolve-NavProbePython)
     $assertArgs = @("tools/nav_probe_assert.py", $logPath, $specPath, "--platform", "windows")
-    foreach ($scenarioId in $Only) {
-        $assertArgs += @("--scenario", [string]$scenarioId)
+    foreach ($scenario in $scenarios) {
+        $assertArgs += @("--scenario", [string]$scenario.id)
     }
     Invoke-NavProbePython $assertArgs
     if ($LASTEXITCODE -ne 0) {
