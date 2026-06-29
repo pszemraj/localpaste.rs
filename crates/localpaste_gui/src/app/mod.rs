@@ -585,8 +585,15 @@ impl eframe::App for LocalPasteApp {
         }
         self.prune_expired_toasts(now);
 
-        while let Ok(event) = self.backend.evt_rx.try_recv() {
-            self.apply_event(event);
+        loop {
+            match self.backend.evt_rx.try_recv() {
+                Ok(event) => self.apply_event(event),
+                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.handle_backend_event_channel_disconnected();
+                    break;
+                }
+            }
         }
         self.poll_export_result();
 

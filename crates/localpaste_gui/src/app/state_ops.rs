@@ -43,6 +43,15 @@ impl LocalPasteApp {
         false
     }
 
+    /// Clears UI state that can only complete via backend events after the event channel closes.
+    pub(super) fn handle_backend_event_channel_disconnected(&mut self) {
+        if self.pending_undo_restore_tokens.is_empty() {
+            return;
+        }
+        self.pending_undo_restore_tokens.clear();
+        self.set_status("Undo delete canceled: backend unavailable.");
+    }
+
     fn send_update_paste_or_mark_failed(&mut self, command: CoreCmd, mode: &str) -> bool {
         if self.backend.cmd_tx.send(command).is_ok() {
             return true;

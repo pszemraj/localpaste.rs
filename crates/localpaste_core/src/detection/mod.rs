@@ -298,10 +298,16 @@ fn yaml_value_is_block_scalar_header(value: &str) -> bool {
     if indicator != '|' && indicator != '>' {
         return false;
     }
-    trimmed
-        .chars()
-        .skip(1)
-        .all(|ch| matches!(ch, '+' | '-' | '0'..='9'))
+    let mut chomping_seen = false;
+    let mut indent_seen = false;
+    for ch in trimmed.chars().skip(1) {
+        match ch {
+            '+' | '-' if !chomping_seen => chomping_seen = true,
+            '1'..='9' if !indent_seen => indent_seen = true,
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn yaml_value_is_anchor_header(value: &str) -> bool {

@@ -437,3 +437,37 @@ fn undo_delete_send_failure_keeps_retryable_toast() {
         Some("Undo delete failed: backend unavailable.")
     );
 }
+
+#[test]
+fn backend_event_disconnect_clears_in_flight_undo_restore_token() {
+    let (mut harness, evt_tx) = make_app_with_event_tx();
+    harness.app.set_status_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        },
+    );
+    harness.app.restore_deleted_paste("undo-alpha".to_string());
+    assert_restore_deleted_command(&harness.cmd_rx, "undo-alpha");
+    assert!(harness
+        .app
+        .pending_undo_restore_tokens
+        .contains("undo-alpha"));
+
+    drop(evt_tx);
+    let ctx = egui::Context::default();
+    run_full_update(&mut harness.app, &ctx, Vec::new());
+
+    assert!(!harness
+        .app
+        .pending_undo_restore_tokens
+        .contains("undo-alpha"));
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Undo delete canceled: backend unavailable.")
+    );
+}

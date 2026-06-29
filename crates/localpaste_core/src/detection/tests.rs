@@ -61,6 +61,10 @@ fn yaml_shape_helper_requires_supporting_structure_for_marker_values() {
     assert!(!looks_like_yaml("rule: >threshold\nstatus: active\n"));
     assert!(!looks_like_yaml("script: |\nstatus: active\n"));
     assert!(looks_like_yaml("script: |-\n  echo hi\n"));
+    assert!(looks_like_yaml("script: |2\n  echo hi\n"));
+    assert!(looks_like_yaml("script: >2-\n  echo hi\n"));
+    assert!(!looks_like_yaml("script: |0\n  echo hi\n"));
+    assert!(!looks_like_yaml("script: >0\n  echo hi\n"));
     assert!(looks_like_yaml("defaults: &defaults\n  timeout: 30\n"));
 }
 
