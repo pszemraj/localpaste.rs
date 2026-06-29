@@ -425,6 +425,92 @@ def validate_manifest_selection(manifest, spec) -> list[str]:
     return failures
 
 
+def windows_scenario_ids(spec, ctrl_only: bool = False) -> list[str]:
+    scenario_ids = []
+    for scenario in spec.get("scenarios", []):
+        scenario_id = scenario.get("id")
+        if not isinstance(scenario_id, str):
+            continue
+        if "windows" not in scenario.get("platforms", []):
+            continue
+        if not scenario.get("driver", {}).get("windows"):
+            continue
+        if ctrl_only and not scenario_id.startswith("ctrl_"):
+            continue
+        scenario_ids.append(scenario_id)
+    return scenario_ids
+
+
+def synthetic_windows_manifest(
+    scenario_ids: list[str],
+    repeat_count: int,
+    *,
+    ctrl_only: bool,
+    only: list[str] | None = None,
+) -> dict:
+    runs = [
+        {
+            "scenario_id": scenario_id,
+            "log_scenario_id": f"{scenario_id}__repeat_{repeat_index}",
+            "repeat_index": repeat_index,
+        }
+        for repeat_index in range(1, repeat_count + 1)
+        for scenario_id in scenario_ids
+    ]
+    return {
+        "event": "nav_probe_windows_run",
+        "status": "assertions_passed",
+        "platform": "windows",
+        "assert_enabled": True,
+        "ctrl_only": ctrl_only,
+        "only": list(only or []),
+        "repeat_count": repeat_count,
+        "scenario_count": len(scenario_ids),
+        "run_count": len(runs),
+        "runs": runs,
+        "current_run": None,
+        "completed_runs": list(runs),
+    }
+
+
+def self_test_manifest_selection(spec) -> list[str]:
+    failures = []
+    ctrl_ids = windows_scenario_ids(spec, ctrl_only=True)
+    all_ids = windows_scenario_ids(spec)
+    if not ctrl_ids:
+        return ["self-test expected at least one Windows ctrl scenario"]
+    complete = synthetic_windows_manifest(ctrl_ids, 2, ctrl_only=True)
+    complete_failures = validate_manifest_selection(complete, spec)
+    if complete_failures:
+        failures.append(
+            "complete ctrl-only manifest should pass selection validation: "
+            + "; ".join(complete_failures)
+        )
+
+    missing = synthetic_windows_manifest(ctrl_ids, 2, ctrl_only=True)
+    missing["runs"] = missing["runs"][:-1]
+    missing_failures = validate_manifest_selection(missing, spec)
+    if not missing_failures or ctrl_ids[-1] not in "\n".join(missing_failures):
+        failures.append("missing ctrl scenario was not reported by manifest selection validation")
+
+    unexpected_ids = list(ctrl_ids)
+    non_ctrl_ids = [scenario_id for scenario_id in all_ids if not scenario_id.startswith("ctrl_")]
+    if non_ctrl_ids:
+        unexpected_ids.append(non_ctrl_ids[0])
+        unexpected = synthetic_windows_manifest(unexpected_ids, 1, ctrl_only=True)
+        unexpected_failures = validate_manifest_selection(unexpected, spec)
+        if not unexpected_failures or non_ctrl_ids[0] not in "\n".join(unexpected_failures):
+            failures.append(
+                "unexpected non-ctrl scenario was not reported by manifest selection validation"
+            )
+
+    unknown = synthetic_windows_manifest([], 1, ctrl_only=False, only=["__missing__"])
+    unknown_failures = validate_manifest_selection(unknown, spec)
+    if not unknown_failures or "__missing__" not in "\n".join(unknown_failures):
+        failures.append("unknown manifest.only scenario was not reported by selection validation")
+    return failures
+
+
 def manifest_path_candidates(raw_path: str, manifest_path: Path) -> list[Path]:
     candidates = [Path(raw_path)]
     for name in {Path(raw_path).name, PureWindowsPath(raw_path).name}:
@@ -549,6 +635,11 @@ def main() -> int:
         help="Validate the contract spec without reading a probe log",
     )
     parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Run verifier self-tests against the contract spec",
+    )
+    parser.add_argument(
         "--manifest",
         type=Path,
         help="Assert all runs listed in a Windows probe manifest",
@@ -569,19 +660,28 @@ def main() -> int:
     except ValueError as error:
         parser.error(str(error))
 
-    if args.check_spec:
+    if args.check_spec or args.self_test:
         spec_path = args.spec or args.log
         if spec_path is None:
-            parser.error("--check-spec requires a spec path")
+            parser.error("--check-spec/--self-test requires a spec path")
         spec = json.loads(spec_path.read_text("utf-8"))
-        failures = validate_spec(spec, args.windows_runner)
-        failures.extend(validate_scenario_aliases(spec, scenario_aliases))
+        failures = []
+        if args.check_spec:
+            failures.extend(validate_spec(spec, args.windows_runner))
+            failures.extend(validate_scenario_aliases(spec, scenario_aliases))
+        if args.self_test:
+            failures.extend(self_test_manifest_selection(spec))
         if failures:
-            print("navigation probe spec validation failed:", file=sys.stderr)
+            print("navigation probe validation failed:", file=sys.stderr)
             for failure in failures:
                 print(f"- {failure}", file=sys.stderr)
             return 1
-        print("navigation probe spec validation passed")
+        if args.check_spec and args.self_test:
+            print("navigation probe spec validation and self-test passed")
+        elif args.self_test:
+            print("navigation probe self-test passed")
+        else:
+            print("navigation probe spec validation passed")
         return 0
 
     manifest = None
