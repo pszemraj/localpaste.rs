@@ -107,6 +107,11 @@ function Invoke-NavProbePython {
     & $cmd @prefixArgs @Arguments
 }
 
+function Set-NavProbeProcessEnv {
+    param([System.Diagnostics.ProcessStartInfo]$ProcessStartInfo, [string]$Name, [string]$Value)
+    $ProcessStartInfo.EnvironmentVariables[$Name] = $Value
+}
+
 Assert-RepoPath $specPath "Spec"
 Assert-RepoPath $logPath "Log"
 
@@ -357,14 +362,14 @@ foreach ($scenario in $scenarios) {
     $psi.FileName = $exe
     $psi.WorkingDirectory = $repo
     $psi.UseShellExecute = $false
-    $psi.Environment["DB_PATH"] = $dbPath
-    $psi.Environment["LOCALPASTE_NAV_PROBE_LOG"] = $logPath
-    $psi.Environment["LOCALPASTE_NAV_PROBE_SCENARIO"] = $scenarioId
-    $psi.Environment["LOCALPASTE_NAV_PROBE_SEED_TEXT"] = $seedText
-    $psi.Environment["LOCALPASTE_NAV_PROBE_SEED_NAME"] = "nav-probe"
-    $psi.Environment["LOCALPASTE_NAV_PROBE_FOCUS_EDITOR"] = "1"
+    Set-NavProbeProcessEnv $psi "DB_PATH" $dbPath
+    Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_LOG" $logPath
+    Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_SCENARIO" $scenarioId
+    Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_SEED_TEXT" $seedText
+    Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_SEED_NAME" "nav-probe"
+    Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_FOCUS_EDITOR" "1"
     if ($scenario.seed -and $scenario.seed.cursor) {
-        $psi.Environment["LOCALPASTE_NAV_PROBE_SEED_CURSOR"] = [string]$scenario.seed.cursor
+        Set-NavProbeProcessEnv $psi "LOCALPASTE_NAV_PROBE_SEED_CURSOR" ([string]$scenario.seed.cursor)
     }
 
     Write-Host "nav probe: $scenarioId"
