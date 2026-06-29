@@ -168,6 +168,39 @@ function Write-NavProbeManifest {
 Assert-RepoPath $specPath "Spec"
 Assert-RepoPath $logPath "Log"
 Assert-RepoPath $manifestPath "Manifest"
+$sendWithLowLevelInput = (-not $UseSendKeys) -or $UseLowLevelInput
+if ($sendWithLowLevelInput) {
+    $inputDriver = "SendInput"
+}
+else {
+    $inputDriver = "WScript.SendKeys"
+}
+$manifestParent = Split-Path -Parent $manifestPath
+New-Item -ItemType Directory -Force -Path $manifestParent | Out-Null
+$manifestRuns = @()
+$completedRuns = @()
+$manifest = [ordered]@{
+    event = "nav_probe_windows_run"
+    status = "started"
+    started_at = (Get-Date).ToUniversalTime().ToString("o")
+    completed_at = $null
+    platform = "windows"
+    input_driver = $inputDriver
+    spec_path = $specPath
+    log_path = $logPath
+    manifest_path = $manifestPath
+    assert_enabled = [bool]$Assert
+    ctrl_only = [bool]$CtrlOnly
+    repeat_count = $RepeatCount
+    scenario_count = 0
+    run_count = 0
+    runs = $manifestRuns
+    current_run = $null
+    completed_runs = $completedRuns
+}
+$manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
+try {
 if ($RepeatCount -lt 1) {
     throw "RepeatCount must be at least 1"
 }
@@ -195,21 +228,11 @@ if ($List) {
     foreach ($scenario in $scenarios) {
         Write-Output ([string]$scenario.id)
     }
+    Write-NavProbeManifest "listed_without_running"
+    Write-Host "nav probe manifest: $manifestPath"
     exit 0
 }
 
-$sendWithLowLevelInput = (-not $UseSendKeys) -or $UseLowLevelInput
-if ($sendWithLowLevelInput) {
-    $inputDriver = "SendInput"
-}
-else {
-    $inputDriver = "WScript.SendKeys"
-}
-
-$manifestParent = Split-Path -Parent $manifestPath
-New-Item -ItemType Directory -Force -Path $manifestParent | Out-Null
-$manifestRuns = @()
-$completedRuns = @()
 for ($manifestRepeatIndex = 1; $manifestRepeatIndex -le $RepeatCount; $manifestRepeatIndex++) {
     foreach ($scenario in $scenarios) {
         $manifestScenarioId = [string]$scenario.id
@@ -221,29 +244,11 @@ for ($manifestRepeatIndex = 1; $manifestRepeatIndex -le $RepeatCount; $manifestR
         }
     }
 }
-
-$manifest = [ordered]@{
-    event = "nav_probe_windows_run"
-    status = "started"
-    started_at = (Get-Date).ToUniversalTime().ToString("o")
-    completed_at = $null
-    platform = "windows"
-    input_driver = $inputDriver
-    spec_path = $specPath
-    log_path = $logPath
-    manifest_path = $manifestPath
-    assert_enabled = [bool]$Assert
-    ctrl_only = [bool]$CtrlOnly
-    repeat_count = $RepeatCount
-    scenario_count = $scenarios.Count
-    run_count = $manifestRuns.Count
-    runs = $manifestRuns
-    current_run = $null
-    completed_runs = $completedRuns
-}
+$manifest["scenario_count"] = $scenarios.Count
+$manifest["run_count"] = $manifestRuns.Count
+$manifest["runs"] = $manifestRuns
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
-try {
 Add-Type @'
 using System;
 using System.ComponentModel;
