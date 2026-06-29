@@ -299,6 +299,32 @@ def validate_manifest(manifest) -> list[str]:
             failures.append(
                 f"manifest.runs[{index}].repeat_index {repeat_index} exceeds repeat_count {repeat_count}"
             )
+    if manifest.get("current_run") is not None:
+        failures.append("manifest.current_run must be null for a successful run")
+    completed_runs = manifest.get("completed_runs")
+    if not isinstance(completed_runs, list):
+        failures.append("manifest.completed_runs must be a list")
+    else:
+        expected = {
+            (
+                run.get("scenario_id"),
+                run.get("log_scenario_id"),
+                run.get("repeat_index"),
+            )
+            for run in runs
+            if isinstance(run, dict)
+        }
+        actual = {
+            (
+                run.get("scenario_id"),
+                run.get("log_scenario_id"),
+                run.get("repeat_index"),
+            )
+            for run in completed_runs
+            if isinstance(run, dict)
+        }
+        if len(completed_runs) != len(runs) or actual != expected:
+            failures.append("manifest.completed_runs must exactly match manifest.runs")
     return failures
 
 

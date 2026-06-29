@@ -435,6 +435,7 @@ if ($Assert) {
 $manifestParent = Split-Path -Parent $manifestPath
 New-Item -ItemType Directory -Force -Path $manifestParent | Out-Null
 $manifestRuns = @()
+$completedRuns = @()
 for ($manifestRepeatIndex = 1; $manifestRepeatIndex -le $RepeatCount; $manifestRepeatIndex++) {
     foreach ($scenario in $scenarios) {
         $manifestScenarioId = [string]$scenario.id
@@ -463,6 +464,8 @@ $manifest = [ordered]@{
     scenario_count = $scenarios.Count
     run_count = $manifestRuns.Count
     runs = $manifestRuns
+    current_run = $null
+    completed_runs = $completedRuns
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
@@ -471,6 +474,12 @@ for ($repeatIndex = 1; $repeatIndex -le $RepeatCount; $repeatIndex++) {
 foreach ($scenario in $scenarios) {
     $scenarioId = [string]$scenario.id
     $scenarioLogId = Get-ScenarioLogId $scenarioId $repeatIndex
+    $runManifestEntry = [ordered]@{
+        scenario_id = $scenarioId
+        log_scenario_id = $scenarioLogId
+        repeat_index = $repeatIndex
+    }
+    $manifest["current_run"] = $runManifestEntry
     $safeScenario = ConvertTo-SafeName $scenarioLogId
     $dbPath = [System.IO.Path]::GetFullPath((Join-Path $repo "target/nav-probe-db-$safeScenario-$([guid]::NewGuid().ToString('N'))"))
     Assert-RepoPath $dbPath "DB_PATH"
@@ -563,6 +572,9 @@ foreach ($scenario in $scenarios) {
         $scenarioAlias = "$scenarioId=$scenarioLogId"
         Invoke-NavProbeAssertions -ScenarioIds @($scenarioId) -ScenarioAliases @($scenarioAlias) -IncludeSummary ([bool]$Summary)
     }
+    $completedRuns += $runManifestEntry
+    $manifest["completed_runs"] = $completedRuns
+    $manifest["current_run"] = $null
 }
 }
 
@@ -576,9 +588,11 @@ elseif ($Assert) {
 }
 
 if ($Assert) {
+    $manifest["current_run"] = $null
     Write-NavProbeManifest "assertions_passed"
 }
 else {
+    $manifest["current_run"] = $null
     Write-NavProbeManifest "completed_without_assertions"
 }
 Write-Host "nav probe manifest: $manifestPath"
