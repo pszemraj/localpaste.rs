@@ -2,6 +2,7 @@
 param(
     [string]$Spec = "docs/dev/nav_contract.json",
     [string]$Log = "",
+    [string]$Manifest = "",
     [string[]]$Only = @(),
     [switch]$Build,
     [switch]$Assert,
@@ -28,6 +29,10 @@ if ([string]::IsNullOrWhiteSpace($Log)) {
 }
 $specPath = [System.IO.Path]::GetFullPath((Join-Path $repo $Spec))
 $logPath = [System.IO.Path]::GetFullPath((Join-Path $repo $Log))
+if ([string]::IsNullOrWhiteSpace($Manifest)) {
+    $Manifest = [System.IO.Path]::ChangeExtension($Log, ".manifest.json")
+}
+$manifestPath = [System.IO.Path]::GetFullPath((Join-Path $repo $Manifest))
 
 function Assert-RepoPath {
     param([string]$Path, [string]$Label)
@@ -43,6 +48,14 @@ function Assert-RepoPath {
 function ConvertTo-SafeName {
     param([string]$Value)
     return ($Value -replace '[^A-Za-z0-9_.-]', '_')
+}
+
+function Get-ScenarioLogId {
+    param([string]$ScenarioId, [int]$RepeatIndex)
+    if ($RepeatCount -gt 1) {
+        return "${ScenarioId}__repeat_$RepeatIndex"
+    }
+    return $ScenarioId
 }
 
 function Test-ProbeSeeded {
@@ -139,6 +152,7 @@ function Invoke-NavProbeAssertions {
 
 Assert-RepoPath $specPath "Spec"
 Assert-RepoPath $logPath "Log"
+Assert-RepoPath $manifestPath "Manifest"
 if ($RepeatCount -lt 1) {
     throw "RepeatCount must be at least 1"
 }
@@ -392,22 +406,55 @@ if (Test-Path -LiteralPath $logPath) {
 $wscript = New-Object -ComObject WScript.Shell
 $sendWithLowLevelInput = (-not $UseSendKeys) -or $UseLowLevelInput
 if ($sendWithLowLevelInput) {
+    $inputDriver = "SendInput"
     Write-Host "nav probe input driver: SendInput"
 }
 else {
+    $inputDriver = "WScript.SendKeys"
     Write-Host "nav probe input driver: WScript.SendKeys"
 }
 if ($Assert) {
     $script:NavProbePython = @(Resolve-NavProbePython)
 }
 
+$manifestParent = Split-Path -Parent $manifestPath
+New-Item -ItemType Directory -Force -Path $manifestParent | Out-Null
+$manifestRuns = @()
+for ($manifestRepeatIndex = 1; $manifestRepeatIndex -le $RepeatCount; $manifestRepeatIndex++) {
+    foreach ($scenario in $scenarios) {
+        $manifestScenarioId = [string]$scenario.id
+        $manifestScenarioLogId = Get-ScenarioLogId $manifestScenarioId $manifestRepeatIndex
+        $manifestRuns += [ordered]@{
+            scenario_id = $manifestScenarioId
+            log_scenario_id = $manifestScenarioLogId
+            repeat_index = $manifestRepeatIndex
+        }
+    }
+}
+
+$manifest = [ordered]@{
+    event = "nav_probe_windows_run"
+    status = "started"
+    started_at = (Get-Date).ToUniversalTime().ToString("o")
+    completed_at = $null
+    platform = "windows"
+    input_driver = $inputDriver
+    spec_path = $specPath
+    log_path = $logPath
+    manifest_path = $manifestPath
+    assert_enabled = [bool]$Assert
+    ctrl_only = [bool]$CtrlOnly
+    repeat_count = $RepeatCount
+    scenario_count = $scenarios.Count
+    run_count = $manifestRuns.Count
+    runs = $manifestRuns
+}
+$manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
 for ($repeatIndex = 1; $repeatIndex -le $RepeatCount; $repeatIndex++) {
 foreach ($scenario in $scenarios) {
     $scenarioId = [string]$scenario.id
-    $scenarioLogId = $scenarioId
-    if ($RepeatCount -gt 1) {
-        $scenarioLogId = "${scenarioId}__repeat_$repeatIndex"
-    }
+    $scenarioLogId = Get-ScenarioLogId $scenarioId $repeatIndex
     $safeScenario = ConvertTo-SafeName $scenarioLogId
     $dbPath = [System.IO.Path]::GetFullPath((Join-Path $repo "target/nav-probe-db-$safeScenario-$([guid]::NewGuid().ToString('N'))"))
     Assert-RepoPath $dbPath "DB_PATH"
@@ -511,3 +558,13 @@ if ($Assert -and $RepeatCount -eq 1) {
 elseif ($Assert) {
     Write-Host "navigation probe assertions passed for repeated windows runs"
 }
+
+if ($Assert) {
+    $manifest.status = "assertions_passed"
+}
+else {
+    $manifest.status = "completed_without_assertions"
+}
+$manifest.completed_at = (Get-Date).ToUniversalTime().ToString("o")
+$manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+Write-Host "nav probe manifest: $manifestPath"
