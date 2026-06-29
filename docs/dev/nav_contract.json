@@ -601,6 +601,10 @@
         "focus.properties_tags": false,
         "focus.diff_query": false,
         "app.selected_id": "__nav_probe__",
+        "cursor.line": 1,
+        "cursor.col": 0,
+        "cursor.buffer_len_chars": 30,
+        "editor.buffer_len_chars": 30,
         "selection": null
       },
       "expect_contains": {
@@ -608,6 +612,32 @@
         "applied_commands": "Backspace { word: true }"
       },
       "expect_events": [{"kind": "key", "key": "Backspace", "pressed": true, "modifiers.ctrl": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_shift_backspace_from_delta",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:6"},
+      "driver": {"windows": {"send_keys": ["^+{BACKSPACE}"]}, "linux_x11": {"keys": ["ctrl+shift+BackSpace"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 1,
+        "cursor.col": 0,
+        "cursor.buffer_len_chars": 30,
+        "editor.buffer_len_chars": 30,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "Backspace { word: true }",
+        "applied_commands": "Backspace { word: true }"
+      },
+      "expect_events": [{"kind": "key", "key": "Backspace", "pressed": true, "modifiers.ctrl": true, "modifiers.shift": true, "modifiers.command": true}]
     },
     {
       "id": "ctrl_delete_from_gamma",
@@ -623,6 +653,10 @@
         "focus.properties_tags": false,
         "focus.diff_query": false,
         "app.selected_id": "__nav_probe__",
+        "cursor.line": 1,
+        "cursor.col": 0,
+        "cursor.buffer_len_chars": 30,
+        "editor.buffer_len_chars": 30,
         "selection": null
       },
       "expect_contains": {
@@ -630,6 +664,32 @@
         "applied_commands": "DeleteForward { word: true }"
       },
       "expect_events": [{"kind": "key", "key": "Delete", "pressed": true, "modifiers.ctrl": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_shift_delete_from_gamma",
+      "platforms": ["windows", "linux"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
+      "driver": {"windows": {"send_keys": ["^+{DEL}"]}, "linux_x11": {"keys": ["ctrl+shift+Delete"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 1,
+        "cursor.col": 0,
+        "cursor.buffer_len_chars": 30,
+        "editor.buffer_len_chars": 30,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "DeleteForward { word: true }",
+        "applied_commands": "DeleteForward { word: true }"
+      },
+      "expect_events": [{"kind": "key", "key": "Delete", "pressed": true, "modifiers.ctrl": true, "modifiers.shift": true, "modifiers.command": true}]
     },
     {
       "id": "cmd_up_from_middle",

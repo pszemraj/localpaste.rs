@@ -110,10 +110,11 @@ def cursor_summary(frame) -> str:
     cursor = frame.get("cursor")
     if not isinstance(cursor, dict):
         return "cursor=?"
-    return "cursor={}:{}@{}".format(
+    return "cursor={}:{}@{}/{}".format(
         cursor.get("line", "?"),
         cursor.get("col", "?"),
         cursor.get("char_index", "?"),
+        cursor.get("buffer_len_chars", "?"),
     )
 
 
