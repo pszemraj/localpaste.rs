@@ -226,19 +226,7 @@ impl PasteSummary {
     /// # Returns
     /// A lightweight struct containing the fields needed to render list rows.
     pub fn from_paste(paste: &Paste) -> Self {
-        Self {
-            id: paste.id.clone(),
-            name: paste.name.clone(),
-            language: paste.language.clone(),
-            content_len: paste.content.len(),
-            updated_at: paste.updated_at,
-            folder_id: paste.folder_id.clone(),
-            tags: paste.tags.clone(),
-            derived: localpaste_core::semantic::derive(
-                paste.content.as_str(),
-                paste.language.as_deref(),
-            ),
-        }
+        Self::from_meta(&PasteMeta::from(paste))
     }
 
     /// Build a summary from a metadata record.

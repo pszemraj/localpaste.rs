@@ -1,12 +1,12 @@
 //! Background syntect worker lifecycle and tests.
 
-use super::super::util::env_flag_enabled;
 use super::{
     align_old_lines_by_hash, hash_bytes, line_hash_matches, line_start_state_matches,
     resolve_syntax, HighlightPatch, HighlightRender, HighlightRenderLine, HighlightRequest,
     HighlightSpan, HighlightStateSnapshot, HighlightStyle, HighlightWorkerResult, SyntectSettings,
 };
 use crossbeam_channel::{Receiver, Sender};
+use localpaste_core::config::env_flag_enabled;
 use std::ops::Range;
 use std::thread;
 use std::time::Instant;

@@ -496,32 +496,35 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_time_bucket_uses_local_calendar_cutoff_for_this_week() {
-        let tz = FixedOffset::east_opt(14 * 60 * 60).unwrap();
-        let now = tz.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
-        let cutoff_day = tz.with_ymd_and_hms(2026, 6, 8, 0, 1, 0).unwrap();
-        let before_cutoff_day = tz.with_ymd_and_hms(2026, 6, 7, 23, 59, 59).unwrap();
+    fn sidebar_time_bucket_uses_local_calendar_boundaries() {
+        let east = FixedOffset::east_opt(14 * 60 * 60).unwrap();
+        let west = FixedOffset::west_opt(10 * 60 * 60).unwrap();
+        let this_week_now = east.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
+        let yesterday_now = west.with_ymd_and_hms(2026, 6, 15, 0, 30, 0).unwrap();
+        let cases = [
+            (
+                east.with_ymd_and_hms(2026, 6, 8, 0, 1, 0).unwrap(),
+                this_week_now,
+                SidebarTimeBucket::ThisWeek,
+            ),
+            (
+                east.with_ymd_and_hms(2026, 6, 7, 23, 59, 59).unwrap(),
+                this_week_now,
+                SidebarTimeBucket::Earlier,
+            ),
+            (
+                west.with_ymd_and_hms(2026, 6, 14, 23, 59, 0).unwrap(),
+                yesterday_now,
+                SidebarTimeBucket::Yesterday,
+            ),
+        ];
 
-        assert_eq!(
-            sidebar_time_bucket(cutoff_day.with_timezone(&Utc), now),
-            SidebarTimeBucket::ThisWeek
-        );
-        assert_eq!(
-            sidebar_time_bucket(before_cutoff_day.with_timezone(&Utc), now),
-            SidebarTimeBucket::Earlier
-        );
-    }
-
-    #[test]
-    fn sidebar_time_bucket_uses_local_day_for_yesterday() {
-        let tz = FixedOffset::west_opt(10 * 60 * 60).unwrap();
-        let now = tz.with_ymd_and_hms(2026, 6, 15, 0, 30, 0).unwrap();
-        let previous_local_day = tz.with_ymd_and_hms(2026, 6, 14, 23, 59, 0).unwrap();
-
-        assert_eq!(
-            sidebar_time_bucket(previous_local_day.with_timezone(&Utc), now),
-            SidebarTimeBucket::Yesterday
-        );
+        for (updated_at, now, expected) in cases {
+            assert_eq!(
+                sidebar_time_bucket(updated_at.with_timezone(&Utc), now),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Paste HTTP handlers.
 
 use super::deprecation::maybe_with_folder_deprecation_headers;
-use super::normalize::{normalize_optional_for_create, normalize_optional_for_update};
+use super::normalize::normalize_optional_for_update;
 use crate::{error::HttpError, models::paste::*, naming, AppError, AppState};
 use axum::{
     extract::{Path, Query, State},
@@ -9,8 +9,10 @@ use axum::{
     response::Response,
     Json,
 };
+use localpaste_core::detection::detect_language;
 use localpaste_core::diff::{DiffRequest, DiffResponse, EqualResponse};
 use localpaste_core::folder_ops::map_missing_folder_for_optional_request;
+use localpaste_core::text::normalize_optional_nonempty;
 use localpaste_core::validation::ensure_paste_content_size;
 
 const RESPONSE_SHAPE_HEADER: &str = "x-localpaste-response-shape";
@@ -29,7 +31,7 @@ fn normalized_limit(limit: Option<usize>) -> usize {
 }
 
 fn normalize_folder_filter_for_query(folder_id: Option<String>) -> (Option<String>, bool) {
-    let normalized = normalize_optional_for_create(folder_id);
+    let normalized = normalize_optional_nonempty(folder_id);
     let used = normalized.is_some();
     (normalized, used)
 }
@@ -38,7 +40,7 @@ fn normalize_search_filters_for_query(
     query: &SearchQuery,
 ) -> (usize, Option<String>, Option<String>, bool) {
     let limit = normalized_limit(query.limit);
-    let normalized_language = normalize_optional_for_create(query.language.clone());
+    let normalized_language = normalize_optional_nonempty(query.language.clone());
     let (normalized_folder_id, folder_filter_used) =
         normalize_folder_filter_for_query(query.folder_id.clone());
     (
@@ -77,7 +79,7 @@ fn build_paste_for_create(
         name,
         language,
         language_is_manual,
-        localpaste_core::models::paste::detect_language,
+        detect_language,
     )
 }
 
@@ -217,7 +219,7 @@ pub async fn create_paste(
         tags,
         name,
     } = req;
-    let normalized_folder_id = normalize_optional_for_create(folder_id);
+    let normalized_folder_id = normalize_optional_nonempty(folder_id);
 
     ensure_paste_content_size(&content, state.config.max_paste_size)?;
 

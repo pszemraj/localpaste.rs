@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::detect_language as detect_language_impl;
+use crate::detection::detect_language;
 use crate::semantic::DerivedMeta;
 
 /// Paste metadata stored in the database and returned by the API.
@@ -276,12 +276,4 @@ pub fn is_markdown_content(content: &str) -> bool {
             || trimmed.starts_with("> ")
             || is_markdown_list_line(trimmed)
     })
-}
-
-/// Detect language for paste content using core detection adapters.
-///
-/// # Returns
-/// Canonical language label when detection succeeds, otherwise `None`.
-pub fn detect_language(content: &str) -> Option<String> {
-    detect_language_impl(content)
 }

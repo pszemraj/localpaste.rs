@@ -40,6 +40,7 @@ pub(super) use interaction_helpers::{
     is_plain_command_shortcut, next_virtual_click_count, non_focusable_click_sense,
     paint_virtual_selection_overlay, should_route_sidebar_arrows,
 };
+use localpaste_core::config::env_flag_enabled;
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
@@ -51,7 +52,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use style::*;
 use tracing::{info, warn};
-use util::{display_language_label, env_flag_enabled, word_range_at};
+use util::{display_language_label, word_range_at};
 use version_ui::VersionUiState;
 use virtual_editor::{
     commands_from_events, RopeBuffer, VirtualEditorHistory, VirtualEditorState, VirtualGalleyCache,

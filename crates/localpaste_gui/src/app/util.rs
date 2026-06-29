@@ -1,13 +1,5 @@
 //! Small UI helpers for labels and word selection.
 
-/// Reads a boolean environment feature flag using shared core parsing rules.
-///
-/// # Returns
-/// `true` when the named flag resolves to an enabled value.
-pub(super) fn env_flag_enabled(name: &str) -> bool {
-    localpaste_core::config::env_flag_enabled(name)
-}
-
 /// Formats the language label shown in the UI, falling back to auto/plain.
 ///
 /// # Arguments

@@ -5,6 +5,7 @@ use crate::backend::{CoreErrorSource, CoreEvent, VERSION_WORKFLOW_LIST_LIMIT};
 use chrono::{Duration as ChronoDuration, Utc};
 use localpaste_core::{
     db::TransactionOps,
+    detection::detect_language,
     diff::{unified_diff_lines, DiffResponse},
     folder_ops::map_missing_folder_for_optional_request,
     models::paste::{self, UpdatePasteRequest},
@@ -87,7 +88,7 @@ pub(super) fn handle_create_paste(state: &mut WorkerState, content: String) {
         send_error(&state.evt_tx, CoreErrorSource::Other, message);
         return;
     }
-    let inferred = paste::detect_language(&content);
+    let inferred = detect_language(&content);
     let inferred_is_locked = inferred.is_some();
     let name = naming::generate_name();
     let paste = paste::Paste::new_with_language(content, name, inferred, inferred_is_locked);

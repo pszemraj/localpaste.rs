@@ -31,7 +31,7 @@ mod model_tests {
 
     #[test]
     fn test_detect_language_plain_text() {
-        assert_eq!(paste::detect_language("just some words"), None);
+        assert_eq!(crate::detection::detect_language("just some words"), None);
     }
 
     #[test]
@@ -53,7 +53,7 @@ mod model_tests {
         ];
         for (content, expected) in cases {
             assert_eq!(
-                paste::detect_language(content).as_deref(),
+                crate::detection::detect_language(content).as_deref(),
                 expected,
                 "content: {content}"
             );
@@ -74,7 +74,10 @@ mod model_tests {
     fn test_detect_language_handles_large_payload_without_losing_prefix_signal() {
         let mut content = String::from("pub fn main() {\n    let value = 42;\n}\n");
         content.push_str(&"x".repeat(256 * 1024));
-        assert_eq!(paste::detect_language(&content), Some("rust".to_string()));
+        assert_eq!(
+            crate::detection::detect_language(&content),
+            Some("rust".to_string())
+        );
     }
 
     #[test]
@@ -93,7 +96,10 @@ mod model_tests {
             content.len() > 64 * 1024,
             "test fixture must exceed sampled prefix size"
         );
-        assert_eq!(paste::detect_language(&content), Some("json".to_string()));
+        assert_eq!(
+            crate::detection::detect_language(&content),
+            Some("json".to_string())
+        );
     }
 
     #[test]

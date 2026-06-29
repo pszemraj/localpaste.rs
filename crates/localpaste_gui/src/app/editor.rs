@@ -13,8 +13,6 @@ fn trim_line_endings(mut line: &str) -> &str {
 /// Holds byte offsets for each line in the buffer to enable fast line lookups.
 #[derive(Default, Debug, Clone)]
 pub(super) struct EditorLineIndex {
-    revision: u64,
-    text_len: usize,
     lines: Vec<LineEntry>,
 }
 
@@ -25,22 +23,20 @@ struct LineEntry {
 }
 
 impl EditorLineIndex {
-    /// Clears cached line offsets and revision metadata.
+    /// Clears cached line offsets.
     pub(super) fn reset(&mut self) {
-        self.revision = 0;
-        self.text_len = 0;
         self.lines.clear();
     }
 
     /// Rebuilds cached byte/char offsets for each logical line.
     ///
     /// # Arguments
-    /// - `revision`: Buffer revision for cache identity.
+    /// - `_revision`: Buffer revision kept at call sites for cache-owner clarity.
     /// - `text`: Source text to index.
     ///
     /// # Panics
     /// Panics if computed byte spans are not valid UTF-8 boundaries.
-    pub(super) fn rebuild(&mut self, revision: u64, text: &str) {
+    pub(super) fn rebuild(&mut self, _revision: u64, text: &str) {
         self.lines.clear();
         let mut start = 0usize;
         for (idx, byte) in text.as_bytes().iter().enumerate() {
@@ -57,8 +53,6 @@ impl EditorLineIndex {
         if self.lines.is_empty() {
             self.lines.push(LineEntry { start: 0, len: 0 });
         }
-        self.revision = revision;
-        self.text_len = text.len();
     }
 
     /// Returns the number of indexed lines.

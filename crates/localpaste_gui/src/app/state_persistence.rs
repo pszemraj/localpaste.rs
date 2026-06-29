@@ -4,15 +4,10 @@ use super::{
     LocalPasteApp, SidebarCollection, STORAGE_ACTIVE_COLLECTION_KEY, STORAGE_ACTIVE_LANGUAGE_KEY,
     STORAGE_SELECTED_ID_KEY,
 };
-
-fn non_empty_storage_value(value: Option<String>) -> Option<String> {
-    value
-        .map(|raw| raw.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
+use localpaste_core::text::normalize_optional_nonempty;
 
 fn normalize_storage_language(value: Option<String>) -> Option<String> {
-    non_empty_storage_value(value)
+    normalize_optional_nonempty(value)
         .map(|value| localpaste_core::detection::canonical::canonicalize(value.as_str()))
 }
 
@@ -39,7 +34,7 @@ impl LocalPasteApp {
         self.active_language_filter =
             normalize_storage_language(storage.get_string(STORAGE_ACTIVE_LANGUAGE_KEY));
         self.pending_selection_id =
-            non_empty_storage_value(storage.get_string(STORAGE_SELECTED_ID_KEY));
+            normalize_optional_nonempty(storage.get_string(STORAGE_SELECTED_ID_KEY));
     }
 
     /// Persist lightweight GUI state through eframe storage.
@@ -61,17 +56,7 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{non_empty_storage_value, normalize_storage_language};
-
-    #[test]
-    fn storage_values_trim_and_drop_blanks() {
-        assert_eq!(
-            non_empty_storage_value(Some(" abc ".to_string())),
-            Some("abc".to_string())
-        );
-        assert_eq!(non_empty_storage_value(Some("   ".to_string())), None);
-        assert_eq!(non_empty_storage_value(None), None);
-    }
+    use super::normalize_storage_language;
 
     #[test]
     fn storage_language_is_canonicalized() {

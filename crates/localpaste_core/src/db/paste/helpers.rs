@@ -3,6 +3,7 @@
 use crate::db::versioning::{
     decode_version_meta_list, encode_version_meta_list, prune_version_meta_to_limit_preserving,
 };
+use crate::detection::detect_language;
 use crate::error::AppError;
 use crate::models::paste::*;
 use crate::semantic::{DerivedMeta, PasteKind};
