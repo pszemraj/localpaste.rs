@@ -37,6 +37,118 @@ def matches_subset(value, expected) -> bool:
     return True
 
 
+def selected_frames(matching):
+    state_frame = matching[-1]
+    applied = [frame for frame in matching if frame.get("applied_commands")]
+    candidates = [
+        frame
+        for frame in matching
+        if frame.get("candidate_commands_if_editor_focused")
+    ]
+    raw = [frame for frame in matching if frame.get("raw_events")]
+    if applied:
+        event_frame = applied[-1]
+    elif candidates:
+        event_frame = candidates[-1]
+    elif raw:
+        event_frame = raw[-1]
+    else:
+        event_frame = state_frame
+    return event_frame, state_frame
+
+
+def modifier_names(modifiers) -> list[str]:
+    if not isinstance(modifiers, dict):
+        return []
+    names = []
+    for key in ("ctrl", "shift", "alt", "command", "mac_cmd"):
+        if modifiers.get(key):
+            names.append(key)
+    return names
+
+
+def key_event_summary(frame) -> str:
+    raw_events = frame.get("raw_events")
+    if not isinstance(raw_events, list):
+        return "event=?"
+    pressed_keys = [
+        event
+        for event in raw_events
+        if event.get("kind") == "key" and event.get("pressed") is True
+    ]
+    if not pressed_keys:
+        return "event=?"
+    parts = []
+    for event in pressed_keys:
+        modifiers = "+".join(modifier_names(event.get("modifiers")))
+        key = event.get("key") or "?"
+        parts.append(f"{modifiers}+{key}" if modifiers else str(key))
+    return "event=" + ",".join(parts)
+
+
+def focus_summary(frame) -> str:
+    focus = frame.get("focus")
+    if not isinstance(focus, dict):
+        return "focus=?"
+    owners = [
+        key
+        for key in (
+            "virtual_editor",
+            "sidebar_search",
+            "editor_title",
+            "command_palette_query",
+            "properties_name",
+            "properties_tags",
+            "diff_query",
+        )
+        if focus.get(key)
+    ]
+    return "focus=" + ("|".join(owners) if owners else "none")
+
+
+def cursor_summary(frame) -> str:
+    cursor = frame.get("cursor")
+    if not isinstance(cursor, dict):
+        return "cursor=?"
+    return "cursor={}:{}@{}".format(
+        cursor.get("line", "?"),
+        cursor.get("col", "?"),
+        cursor.get("char_index", "?"),
+    )
+
+
+def selection_summary(frame) -> str:
+    selection = frame.get("selection")
+    if selection is None:
+        return "selection=null"
+    if not isinstance(selection, dict):
+        return "selection=?"
+    return "selection={}..{}".format(selection.get("start", "?"), selection.get("end", "?"))
+
+
+def command_summary(frame, key: str) -> str:
+    commands = frame.get(key)
+    if not isinstance(commands, list):
+        return f"{key}=?"
+    if not commands:
+        return f"{key}=none"
+    return f"{key}=" + ";".join(str(command) for command in commands)
+
+
+def scenario_summary(scenario_id: str, event_frame, state_frame) -> str:
+    return " | ".join(
+        [
+            scenario_id,
+            key_event_summary(event_frame),
+            command_summary(event_frame, "candidate_commands_if_editor_focused"),
+            command_summary(event_frame, "applied_commands"),
+            focus_summary(state_frame),
+            cursor_summary(state_frame),
+            selection_summary(state_frame),
+        ]
+    )
+
+
 def validate_spec(spec) -> list[str]:
     failures = []
     seen = set()
@@ -83,6 +195,11 @@ def main() -> int:
         action="store_true",
         help="Validate the contract spec without reading a probe log",
     )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print compact per-scenario evidence lines after selecting assertion frames",
+    )
     args = parser.parse_args()
 
     if args.check_spec:
@@ -109,6 +226,7 @@ def main() -> int:
     ]
     spec = json.loads(args.spec.read_text("utf-8"))
     failures = validate_spec(spec)
+    summaries = []
     host_platform = args.platform or host()
     scenario_filter = set(args.scenario)
 
@@ -123,22 +241,9 @@ def main() -> int:
         if not matching:
             failures.append(f"{scenario_id}: no frames")
             continue
-        state_frame = matching[-1]
-        applied = [frame for frame in matching if frame.get("applied_commands")]
-        candidates = [
-            frame
-            for frame in matching
-            if frame.get("candidate_commands_if_editor_focused")
-        ]
-        raw = [frame for frame in matching if frame.get("raw_events")]
-        if applied:
-            event_frame = applied[-1]
-        elif candidates:
-            event_frame = candidates[-1]
-        elif raw:
-            event_frame = raw[-1]
-        else:
-            event_frame = state_frame
+        event_frame, state_frame = selected_frames(matching)
+        if args.summary:
+            summaries.append(scenario_summary(scenario_id, event_frame, state_frame))
         for key, expected in scenario.get("expect", {}).items():
             try:
                 actual = dotted(state_frame, key)
@@ -169,6 +274,11 @@ def main() -> int:
                 failures.append(
                     f"{scenario_id}: raw_events did not contain event subset {expected_event!r}; got {actual_events!r}"
                 )
+
+    if args.summary:
+        print("navigation probe summary:")
+        for summary in summaries:
+            print(f"- {summary}")
 
     if failures:
         print("navigation probe assertions failed:", file=sys.stderr)

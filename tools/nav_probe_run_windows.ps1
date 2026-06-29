@@ -7,6 +7,7 @@ param(
     [switch]$Assert,
     [switch]$List,
     [switch]$CtrlOnly,
+    [switch]$Summary,
     [switch]$UseLowLevelInput,
     [switch]$UseSendKeys,
     [int]$LaunchPollMs = 50,
@@ -431,6 +432,9 @@ if ($Assert) {
     $assertArgs = @("tools/nav_probe_assert.py", $logPath, $specPath, "--platform", "windows")
     foreach ($scenario in $scenarios) {
         $assertArgs += @("--scenario", [string]$scenario.id)
+    }
+    if ($Summary) {
+        $assertArgs += @("--summary")
     }
     Invoke-NavProbePython $assertArgs
     if ($LASTEXITCODE -ne 0) {

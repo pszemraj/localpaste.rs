@@ -7,6 +7,7 @@ build=0
 assert=0
 list=0
 ctrl_only=0
+summary=0
 launch_poll_ms=100
 launch_poll_count=400
 after_focus_ms=50
@@ -29,6 +30,7 @@ Options:
   --only SCENARIO             Run one scenario; may be repeated
   --list                      List selected Linux X11 scenarios and exit
   --ctrl-only                 Run/list only scenarios whose id starts with ctrl_
+  --summary                   Print compact per-scenario evidence after assertions
   --build                     Build localpaste-gui before running
   --assert                    Run tools/nav_probe_assert.py after the probe run
   --launch-poll-ms MS         Poll interval while waiting for app/probe readiness
@@ -67,6 +69,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --ctrl-only)
             ctrl_only=1
+            shift
+            ;;
+        --summary)
+            summary=1
             shift
             ;;
         --assert)
@@ -469,5 +475,9 @@ done
 
 echo "nav probe log: $log_path"
 if [[ "$assert" -eq 1 ]]; then
-    run_python tools/nav_probe_assert.py "$log_path" "$spec_path" --platform linux "${scenario_args[@]}"
+    summary_args=()
+    if [[ "$summary" -eq 1 ]]; then
+        summary_args+=(--summary)
+    fi
+    run_python tools/nav_probe_assert.py "$log_path" "$spec_path" --platform linux "${scenario_args[@]}" "${summary_args[@]}"
 fi
