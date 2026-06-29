@@ -25,13 +25,12 @@ LocalPaste gives those scraps a durable home:
 
 ## Highlights
 
-- **Fast capture**: paste into the app, or pipe text from the terminal. In the GUI, paste shortcuts outside the editor can create a new paste directly.
-- **Technical-text editor**: syntax highlighting, language detection with Magika plus heuristic fallback, manual language overrides, large-buffer behavior, undo/redo, and keyboard-focused editing.
-- **Searchable library**: recent items, smart collections, tags, language filters, metadata search, and full-content search help old fragments stay findable.
-- **Version history**: content edits are snapshotted. You can inspect history, diff versions, duplicate an older snapshot, or hard-reset a paste.
-- **Recovery paths**: destructive GUI delete flows use an undo window, and version history preserves earlier content until retention pruning applies.
-- **Three interfaces, one local store**: native GUI (`localpaste-gui`), headless server (`localpaste`), and CLI (`lpaste`) share the same data model.
-- **Local by default**: loopback binding, on-disk storage, no account, and no network dependency for day-to-day use.
+- **Fast capture**: paste in the app or pipe text from the terminal.
+- **Code-aware editor**: highlighting, language overrides, undo/redo, and large-buffer handling.
+- **Searchable library**: find snippets by content, name, tags, language, or metadata.
+- **Version recovery**: inspect, diff, duplicate, reset, or undo destructive GUI deletes.
+- **Shared interfaces**: GUI, server, and `lpaste` use the same local data model.
+- **Local by default**: loopback API, on-disk storage, no account, no cloud dependency.
 
 ## Quick Start
 
