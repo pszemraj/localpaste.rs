@@ -150,6 +150,17 @@ function Invoke-NavProbeAssertions {
     }
 }
 
+function Invoke-NavProbeManifestAssertions {
+    $manifestArgs = @("tools/nav_probe_assert.py", "--manifest", $manifestPath)
+    if ($Summary) {
+        $manifestArgs += @("--summary")
+    }
+    Invoke-NavProbePython $manifestArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "navigation probe manifest assertions failed with exit code $LASTEXITCODE"
+    }
+}
+
 function Write-NavProbeManifest {
     param([string]$Status, [string]$ErrorMessage = "")
     $manifest["status"] = $Status
@@ -600,6 +611,7 @@ elseif ($Assert) {
 if ($Assert) {
     $manifest["current_run"] = $null
     Write-NavProbeManifest "assertions_passed"
+    Invoke-NavProbeManifestAssertions
 }
 else {
     $manifest["current_run"] = $null

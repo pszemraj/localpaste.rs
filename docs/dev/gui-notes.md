@@ -69,6 +69,7 @@ tools\nav_probe_run_windows.ps1 -Assert
 
 Use `-RepeatCount` for flake hunting. When assertions are enabled, repeated runs log each repetition under a unique scenario label and assert it immediately against the base contract so a later passing run cannot hide an earlier failed chord.
 Every Windows run also writes a manifest next to the NDJSON log by default (`*.manifest.json`) with the selected scenarios, repeat labels, completed runs, input driver, log path, and final assertion status. Aborted runs finalize the manifest with `status: "failed"`, `current_run`, `completed_runs`, and an `error` field before rethrowing. Use `-Manifest <path>` to override it.
+Runs with `-Assert` self-verify the final manifest before exiting.
 Re-verify a completed Windows artifact bundle with `python tools/nav_probe_assert.py --manifest target/<run>.manifest.json --summary`; pass explicit `LOG SPEC` positional paths before `--manifest` if the manifest was copied from another checkout.
 
 Set `LOCALPASTE_NAV_PROBE_PYTHON` when the assertion checker should use a specific Python interpreter instead of the active `python`/`python3`/conda fallback.
