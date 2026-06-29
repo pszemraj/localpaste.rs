@@ -261,6 +261,9 @@ def validate_manifest(manifest) -> list[str]:
     shutdown_mode = manifest.get("shutdown_mode")
     if shutdown_mode is not None and shutdown_mode not in {"Kill", "CloseMainWindow"}:
         failures.append("manifest.shutdown_mode must be 'Kill' or 'CloseMainWindow'")
+    key_delay_ms = manifest.get("key_delay_ms")
+    if key_delay_ms is not None and (not isinstance(key_delay_ms, int) or key_delay_ms < 0):
+        failures.append("manifest.key_delay_ms must be a non-negative integer")
     repeat_count = manifest.get("repeat_count")
     if not isinstance(repeat_count, int) or repeat_count < 1:
         failures.append("manifest.repeat_count must be a positive integer")

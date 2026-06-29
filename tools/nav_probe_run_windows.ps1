@@ -17,6 +17,7 @@ param(
     [int]$ForegroundPollMs = 25,
     [int]$ForegroundPollCount = 80,
     [int]$AfterFocusMs = 150,
+    [int]$KeyDelayMs = 40,
     [int]$BetweenKeysMs = 350,
     [int]$AfterScenarioMs = 900,
     [int]$AfterCloseMs = 500,
@@ -68,7 +69,7 @@ function Get-ScenarioLogId {
     return $ScenarioId
 }
 
-function Test-ProbeSeeded {
+function Test-ProbeReady {
     param([string]$Path, [string]$ScenarioId, [int]$ExpectedBufferLen)
     if (-not (Test-Path -LiteralPath $Path)) {
         return $false
@@ -86,7 +87,8 @@ function Test-ProbeSeeded {
         }
         $hasProbePaste = [string]$frame.app.selected_id -eq "__nav_probe__"
         $hasSeedBuffer = [int]$frame.cursor.buffer_len_chars -eq $ExpectedBufferLen
-        return ($hasProbePaste -and $hasSeedBuffer)
+        $hasKeyboardFocus = [bool]$frame.focus.virtual_editor -and [bool]$frame.focus.wants_keyboard_input
+        return ($hasProbePaste -and $hasSeedBuffer -and $hasKeyboardFocus)
     }
     return $false
 }
@@ -214,6 +216,7 @@ $manifest = [ordered]@{
     platform = "windows"
     input_driver = $inputDriver
     shutdown_mode = $shutdownMode
+    key_delay_ms = $KeyDelayMs
     spec_path = $specPath
     log_path = $logPath
     manifest_path = $manifestPath
@@ -277,11 +280,13 @@ $manifest["run_count"] = $manifestRuns.Count
 $manifest["runs"] = $manifestRuns
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
+if (-not ("LocalPasteNavProbeWindowV2" -as [type]) -or -not ("LocalPasteNavProbeInputV2" -as [type])) {
 Add-Type @'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
-public static class LocalPasteNavProbeWindow {
+using System.Threading;
+public static class LocalPasteNavProbeWindowV2 {
     const int SW_RESTORE = 9;
     const int MOUSEEVENTF_LEFTDOWN = 0x0002;
     const int MOUSEEVENTF_LEFTUP = 0x0004;
@@ -335,7 +340,7 @@ public static class LocalPasteNavProbeWindow {
         }
     }
 }
-public static class LocalPasteNavProbeInput {
+public static class LocalPasteNavProbeInputV2 {
     const uint INPUT_KEYBOARD = 1;
     const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     const uint KEYEVENTF_KEYUP = 0x0002;
@@ -378,14 +383,19 @@ public static class LocalPasteNavProbeInput {
     }
     static void Down(ushort vk, bool extended) { SendKey(vk, false, extended); }
     static void Up(ushort vk, bool extended) { SendKey(vk, true, extended); }
-    public static void SendChord(ushort key, bool ctrl, bool shift, bool extended) {
+    public static void SendChord(ushort key, bool ctrl, bool shift, bool extended, int delayMs) {
         try {
             if (ctrl) { Down(VK_CONTROL, false); }
+            if (delayMs > 0) { Thread.Sleep(delayMs); }
             if (shift) { Down(VK_SHIFT, false); }
+            if (delayMs > 0) { Thread.Sleep(delayMs); }
             Down(key, extended);
+            if (delayMs > 0) { Thread.Sleep(delayMs); }
             Up(key, extended);
         } finally {
+            if (delayMs > 0) { Thread.Sleep(delayMs); }
             if (shift) { Up(VK_SHIFT, false); }
+            if (delayMs > 0) { Thread.Sleep(delayMs); }
             if (ctrl) { Up(VK_CONTROL, false); }
         }
     }
@@ -396,6 +406,7 @@ public static class LocalPasteNavProbeInput {
     }
 }
 '@
+}
 
 function Send-NavChord {
     param([string]$Chord)
@@ -419,11 +430,11 @@ function Send-NavChord {
         "DEL" { 0x2E }
         default { throw "Unsupported navigation chord: $Chord" }
     }
-    [LocalPasteNavProbeInput]::SendChord([UInt16]$vk, [bool]$ctrl, [bool]$shift, [bool]$extended)
+    [LocalPasteNavProbeInputV2]::SendChord([UInt16]$vk, [bool]$ctrl, [bool]$shift, [bool]$extended, [int]$KeyDelayMs)
 }
 
 function Release-NavModifiers {
-    [LocalPasteNavProbeInput]::ReleaseModifiers()
+    [LocalPasteNavProbeInputV2]::ReleaseModifiers()
 }
 
 function Set-NavProbeForeground {
@@ -433,14 +444,14 @@ function Set-NavProbeForeground {
         $null = $wscript.AppActivate($Process.MainWindowTitle)
     }
     $null = $wscript.AppActivate($Process.Id)
-    [LocalPasteNavProbeWindow]::RestoreAndForeground($Handle)
+    [LocalPasteNavProbeWindowV2]::RestoreAndForeground($Handle)
 }
 
 function Wait-NavProbeForeground {
     param([System.Diagnostics.Process]$Process, [IntPtr]$Handle, [string]$ScenarioId)
     for ($idx = 0; $idx -lt $ForegroundPollCount; $idx++) {
         Set-NavProbeForeground $Process $Handle
-        if ([LocalPasteNavProbeWindow]::IsForegroundWindow($Handle)) {
+        if ([LocalPasteNavProbeWindowV2]::IsForegroundWindow($Handle)) {
             return
         }
         Start-Sleep -Milliseconds $ForegroundPollMs
@@ -569,21 +580,21 @@ foreach ($scenario in $scenarios) {
         if ($handle -eq [IntPtr]::Zero) {
             throw "localpaste-gui did not expose a main window for $scenarioId"
         }
-        [LocalPasteNavProbeWindow]::ClickTitleBar($handle)
+        [LocalPasteNavProbeWindowV2]::ClickTitleBar($handle)
         Start-Sleep -Milliseconds 100
-        $seeded = $false
+        $ready = $false
         for ($idx = 0; $idx -lt $LaunchPollCount; $idx++) {
             Set-NavProbeForeground $proc $handle
             Start-Sleep -Milliseconds $LaunchPollMs
-            if (Test-ProbeSeeded $logPath $scenarioLogId $expectedBufferLen) {
-                $seeded = $true
+            if (Test-ProbeReady $logPath $scenarioLogId $expectedBufferLen) {
+                $ready = $true
                 break
             }
         }
-        if (-not $seeded) {
-            throw "navigation probe did not report seeded editor before input for $scenarioId"
+        if (-not $ready) {
+            throw "navigation probe did not report focused seeded editor before input for $scenarioId"
         }
-        [LocalPasteNavProbeWindow]::ClickTitleBar($handle)
+        [LocalPasteNavProbeWindowV2]::ClickTitleBar($handle)
         Wait-NavProbeForeground $proc $handle $scenarioId
         foreach ($key in $scenario.driver.windows.send_keys) {
             try {
