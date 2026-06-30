@@ -74,16 +74,22 @@ enum Commands {
     /// Search pastes by full content.
     Search {
         /// Preserve case while matching the search query.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "case_insensitive")]
         case_sensitive: bool,
+        /// Ignore case while matching the search query.
+        #[arg(long, conflicts_with = "case_sensitive")]
+        case_insensitive: bool,
         /// Search query text.
         query: String,
     },
     /// Search persisted metadata only (name, tags, language, derived terms).
     SearchMeta {
         /// Preserve case while matching the search query.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "case_insensitive")]
         case_sensitive: bool,
+        /// Ignore case while matching the search query.
+        #[arg(long, conflicts_with = "case_sensitive")]
+        case_insensitive: bool,
         /// Search query text.
         query: String,
     },
@@ -168,11 +174,11 @@ enum ApiCommand {
     },
     Search {
         query: String,
-        case_sensitive: bool,
+        case_sensitive: Option<bool>,
     },
     SearchMeta {
         query: String,
-        case_sensitive: bool,
+        case_sensitive: Option<bool>,
     },
     Delete {
         id: String,
@@ -208,6 +214,16 @@ enum ApiCommand {
     },
 }
 
+fn case_sensitive_override(case_sensitive: bool, case_insensitive: bool) -> Option<bool> {
+    if case_sensitive {
+        Some(true)
+    } else if case_insensitive {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 fn classify_command(command: Commands) -> Result<ApiCommand, Shell> {
     match command {
         Commands::Completions { shell } => Err(shell),
@@ -217,16 +233,18 @@ fn classify_command(command: Commands) -> Result<ApiCommand, Shell> {
         Commands::Search {
             query,
             case_sensitive,
+            case_insensitive,
         } => Ok(ApiCommand::Search {
             query,
-            case_sensitive,
+            case_sensitive: case_sensitive_override(case_sensitive, case_insensitive),
         }),
         Commands::SearchMeta {
             query,
             case_sensitive,
+            case_insensitive,
         } => Ok(ApiCommand::SearchMeta {
             query,
-            case_sensitive,
+            case_sensitive: case_sensitive_override(case_sensitive, case_insensitive),
         }),
         Commands::Delete { id } => Ok(ApiCommand::Delete { id }),
         Commands::Versions { id, limit } => Ok(ApiCommand::Versions { id, limit }),
@@ -864,8 +882,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let endpoint = api_url_or_exit(&server, "Search", &["api", "search"]);
             let mut request = client.get(endpoint).query(&[("q", query.as_str())]);
-            if case_sensitive {
-                request = request.query(&[("case_sensitive", "true")]);
+            if let Some(case_sensitive) = case_sensitive {
+                request = request.query(&[("case_sensitive", case_sensitive)]);
             }
             let request_start = Instant::now();
             let res = send_or_exit(request, "Search", source, server.as_str()).await;
@@ -894,8 +912,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let endpoint = api_url_or_exit(&server, "Search metadata", &["api", "search", "meta"]);
             let mut request = client.get(endpoint).query(&[("q", query.as_str())]);
-            if case_sensitive {
-                request = request.query(&[("case_sensitive", "true")]);
+            if let Some(case_sensitive) = case_sensitive {
+                request = request.query(&[("case_sensitive", case_sensitive)]);
             }
             let request_start = Instant::now();
             let res = send_or_exit(request, "Search metadata", source, server.as_str()).await;

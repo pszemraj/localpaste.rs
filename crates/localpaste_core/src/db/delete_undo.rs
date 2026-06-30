@@ -37,7 +37,16 @@ fn remove_deleted_paste_undo_rows(
 ) -> Result<bool, AppError> {
     let removed_paste = deleted_pastes.remove(token)?.is_some();
     let version_items = match deleted_versions_meta.remove(token)? {
-        Some(meta_guard) => decode_version_meta_list(Some(meta_guard.value()))?,
+        Some(meta_guard) => match decode_version_meta_list(Some(meta_guard.value())) {
+            Ok(items) => items,
+            Err(err) => {
+                tracing::warn!(
+                    undo_token = token,
+                    "discarding unreadable staged delete-undo version metadata: {err}"
+                );
+                Vec::new()
+            }
+        },
         None => Vec::new(),
     };
     if version_items.is_empty() {
@@ -207,6 +216,55 @@ impl TransactionOps {
         Ok(removed)
     }
 
+    /// Permanently discard every staged deleted-paste undo token.
+    ///
+    /// Delete undo is a short GUI affordance, not durable history. Startup and
+    /// backend reinitialization use this to remove persisted tombstones that no
+    /// longer have an in-memory undo token or visible UI affordance.
+    ///
+    /// # Arguments
+    /// - `db`: Open database handle.
+    ///
+    /// # Returns
+    /// Tokens discarded from persistent undo staging.
+    ///
+    /// # Errors
+    /// Returns an error when storage access fails. Malformed staged version metadata is
+    /// discarded with the rest of the token because delete-undo staging is ephemeral.
+    pub fn discard_all_deleted_paste_undo(db: &Database) -> Result<Vec<String>, AppError> {
+        let tokens = {
+            let read_txn = db.db.begin_read()?;
+            let deleted_pastes = read_txn.open_table(DELETED_PASTES)?;
+            let mut tokens = Vec::new();
+            for row in deleted_pastes.iter()? {
+                let (token_guard, _) = row?;
+                tokens.push(token_guard.value().to_string());
+            }
+            tokens
+        };
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let write_txn = db.db.begin_write()?;
+        {
+            let mut deleted_pastes = write_txn.open_table(DELETED_PASTES)?;
+            let mut deleted_versions_meta = write_txn.open_table(DELETED_PASTE_VERSIONS_META)?;
+            let mut deleted_versions_content =
+                write_txn.open_table(DELETED_PASTE_VERSIONS_CONTENT)?;
+            for token in &tokens {
+                let _ = remove_deleted_paste_undo_rows(
+                    &mut deleted_pastes,
+                    &mut deleted_versions_meta,
+                    &mut deleted_versions_content,
+                    token,
+                )?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(tokens)
+    }
+
     /// Prune expired staged delete-undo tombstones.
     ///
     /// # Arguments
@@ -217,7 +275,8 @@ impl TransactionOps {
     /// Tokens pruned from persistent undo staging.
     ///
     /// # Errors
-    /// Returns an error when storage access or deserialization fails.
+    /// Returns an error when storage access fails. Malformed tombstones are pruned because
+    /// delete-undo staging is ephemeral and should not block database startup.
     pub fn prune_expired_deleted_paste_undo(
         db: &Database,
         now_ms: i64,
@@ -228,9 +287,20 @@ impl TransactionOps {
             let mut expired_tokens = Vec::new();
             for row in deleted_pastes.iter()? {
                 let (token_guard, record_guard) = row?;
-                let record: DeletedPasteRecord = bincode::deserialize(record_guard.value())?;
+                let token = token_guard.value().to_string();
+                let record: DeletedPasteRecord = match bincode::deserialize(record_guard.value()) {
+                    Ok(record) => record,
+                    Err(err) => {
+                        tracing::warn!(
+                            undo_token = token.as_str(),
+                            "discarding unreadable staged delete-undo tombstone: {err}"
+                        );
+                        expired_tokens.push(token);
+                        continue;
+                    }
+                };
                 if record.expires_at_ms <= now_ms {
-                    expired_tokens.push(token_guard.value().to_string());
+                    expired_tokens.push(token);
                 }
             }
             expired_tokens

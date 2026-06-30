@@ -304,12 +304,7 @@ impl LocalPasteApp {
             CoreEvent::PasteRestored { paste, undo_token } => {
                 let paste_id = paste.id.clone();
                 self.pending_undo_restore_tokens.remove(&undo_token);
-                self.toasts.retain(|toast| {
-                    !matches!(
-                        &toast.action,
-                        Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
-                    )
-                });
+                self.remove_undo_toast(&undo_token);
                 self.upsert_cached_paste_summary(&paste);
                 if !self.search_query.trim().is_empty() {
                     self.search_last_sent.clear();
@@ -338,23 +333,13 @@ impl LocalPasteApp {
             } => {
                 self.pending_undo_restore_tokens.remove(&undo_token);
                 if !retryable {
-                    self.toasts.retain(|toast| {
-                        !matches!(
-                            &toast.action,
-                            Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
-                        )
-                    });
+                    self.remove_undo_toast(&undo_token);
                 }
                 self.set_status(message);
             }
             CoreEvent::PasteUndoEvicted { undo_token } => {
                 self.pending_undo_restore_tokens.remove(&undo_token);
-                self.toasts.retain(|toast| {
-                    !matches!(
-                        &toast.action,
-                        Some(ToastAction::UndoDelete { undo_token: token }) if token == &undo_token
-                    )
-                });
+                self.remove_undo_toast(&undo_token);
             }
             CoreEvent::PasteMissing { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);
@@ -818,6 +803,9 @@ impl LocalPasteApp {
 
     /// Dispatches autosave once dirty content has been idle past the autosave delay.
     pub(super) fn maybe_autosave(&mut self) {
+        if self.nav_probe_seed_active() {
+            return;
+        }
         if self.save_block_reason().is_some() {
             return;
         }
@@ -838,6 +826,9 @@ impl LocalPasteApp {
 
     /// Forces immediate content save dispatch when the current paste is dirty.
     pub(super) fn save_now(&mut self) {
+        if self.nav_probe_seed_active() {
+            return;
+        }
         if self.save_block_reason().is_some() {
             self.set_save_blocked_status();
             return;
@@ -936,19 +927,44 @@ impl LocalPasteApp {
         self.pastes.iter().position(|paste| paste.id == *id)
     }
 
+    /// Returns the sidebar paste id targeted by an arrow-key move, if any.
+    ///
+    /// # Arguments
+    /// - `direction`: Signed navigation delta relative to the current selection.
+    ///
+    /// # Returns
+    /// `Some(id)` when the arrow move should select another visible paste, otherwise `None`.
+    pub(super) fn sidebar_arrow_target_id(&self, direction: i32) -> Option<String> {
+        if direction == 0 {
+            return None;
+        }
+        let current = self.selected_index().unwrap_or(0) as i32;
+        let max_index = self.pastes.len().checked_sub(1)? as i32;
+        let next = (current + direction).clamp(0, max_index) as usize;
+        if self.selected_index() == Some(next) {
+            return None;
+        }
+        self.pastes.get(next).map(|paste| paste.id.clone())
+    }
+
     fn search_backend_filters(&self) -> (Option<String>, Option<String>) {
         (None, self.active_language_filter.clone())
+    }
+
+    fn current_filter_cutoffs() -> (chrono::NaiveDate, chrono::NaiveDate, chrono::DateTime<Utc>) {
+        let local_now = Local::now();
+        let now = local_now.with_timezone(&Utc);
+        let today_local = local_now.date_naive();
+        let week_cutoff_day = today_local - ChronoDuration::days(7);
+        let recent_cutoff = now - ChronoDuration::days(30);
+        (today_local, week_cutoff_day, recent_cutoff)
     }
 
     /// Filters sidebar summaries through the active collection/language state.
     /// # Returns
     /// Visible sidebar rows preserving the input ordering of `items`.
     pub(super) fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
-        let local_now = Local::now();
-        let now = local_now.with_timezone(&Utc);
-        let today_local = local_now.date_naive();
-        let week_cutoff_day = today_local - ChronoDuration::days(7);
-        let recent_cutoff = now - ChronoDuration::days(30);
+        let (today_local, week_cutoff_day, recent_cutoff) = Self::current_filter_cutoffs();
         let active_language_filter = self.active_language_filter.as_deref();
         items
             .iter()
@@ -967,11 +983,7 @@ impl LocalPasteApp {
     }
 
     fn retain_search_results_for_active_filters(&mut self) {
-        let local_now = Local::now();
-        let now = local_now.with_timezone(&Utc);
-        let today_local = local_now.date_naive();
-        let week_cutoff_day = today_local - ChronoDuration::days(7);
-        let recent_cutoff = now - ChronoDuration::days(30);
+        let (today_local, week_cutoff_day, recent_cutoff) = Self::current_filter_cutoffs();
         let active_collection = self.active_collection.clone();
         let active_language_filter = self.active_language_filter.clone();
         self.pastes.retain(|item| {

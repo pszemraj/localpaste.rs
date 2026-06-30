@@ -80,6 +80,25 @@ async fn test_paste_lifecycle() {
 }
 
 #[tokio::test]
+async fn test_malformed_extractors_return_bad_request() {
+    let (server, _locks) = setup_test_server();
+
+    for path in [
+        "/api/pastes?limit=abc",
+        "/api/search?q=needle&case_sensitive=maybe",
+        "/api/search",
+        "/api/paste/abc/versions/not-a-number",
+    ] {
+        let response = server.get(path).await;
+        assert_eq!(
+            response.status_code(),
+            StatusCode::BAD_REQUEST,
+            "path should reject malformed extractor input: {path}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_folder_lifecycle() {
     let (server, _locks) = setup_test_server();
 

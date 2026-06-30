@@ -172,7 +172,7 @@ impl PasteDb {
                 paste_id,
                 &mut version_items,
                 self.version_retention_limit(),
-                None,
+                preserved_current_head_version_id,
             )?;
 
             Some(paste)

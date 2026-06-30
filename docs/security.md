@@ -33,7 +33,7 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 | `ALLOW_PUBLIC_ACCESS` | disabled | Enable CORS for all origins and allow non-loopback bind |
 | `MAX_PASTE_SIZE` | `10485760` | Max accepted paste size in bytes for API and GUI backend write paths |
 | `AUTO_SAVE_INTERVAL` | `2000` | GUI autosave delay in milliseconds |
-| `AUTO_BACKUP` | disabled | Create DB backup on startup when an existing DB is present |
+| `AUTO_BACKUP` | disabled | Create DB backup in the DB directory on startup when an existing DB is present |
 | `LOCALPASTE_SEARCH_CASE_SENSITIVE` | disabled | Default case-sensitive matching for search endpoints when the request omits `case_sensitive` |
 | `LOCALPASTE_VERSION_INTERVAL_SECS` | `300` | Minimum seconds between persisted historical snapshots (`>= 1`) |
 | `LOCALPASTE_VERSION_RETENTION_LIMIT` | `200` | Maximum historical snapshots retained per paste (`1..=1000`) |
@@ -131,7 +131,7 @@ server {
 2. **Monitoring**: Watch logs for unusual activity
    Use the service/logging patterns in [deployment.md](deployment.md).
 
-3. **Backups**: Use `AUTO_BACKUP=true` for startup snapshots or back up `DB_PATH` with external tooling. LocalPaste does not run scheduled backups.
+3. **Backups**: Use `AUTO_BACKUP=true` for startup snapshots or back up `DB_PATH` with external tooling. Startup snapshots are written inside the DB directory as `data.redb.backup.<timestamp>.redb` files. LocalPaste does not run scheduled backups or automatic backup rotation.
 
 4. **Access Control**: Use firewall rules
 

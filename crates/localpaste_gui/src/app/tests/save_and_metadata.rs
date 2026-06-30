@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::backend::CoreErrorSource;
+use localpaste_core::env::{env_lock, EnvGuard};
 
 #[test]
 fn paste_meta_saved_refilters_when_selected_paste_leaves_active_scope() {
@@ -370,6 +371,41 @@ fn virtual_editor_autosave_dispatches_rope_snapshot_command() {
         }
         other => panic!("unexpected command: {:?}", other),
     }
+}
+
+#[test]
+fn nav_probe_seed_blocks_content_save_dispatch() {
+    let _lock = env_lock().lock().expect("env lock");
+    let log_dir = TempDir::new().expect("nav probe temp dir");
+    let log_path = log_dir.path().join("probe.jsonl");
+    let _log = EnvGuard::set(
+        "LOCALPASTE_NAV_PROBE_LOG",
+        log_path.to_str().expect("utf-8 log path"),
+    );
+    let mut harness = make_app();
+    harness.app.nav_probe = nav_probe::NavProbe::from_env();
+    assert!(harness.app.nav_probe.is_some());
+    harness.app.selected_id = Some(NAV_PROBE_PASTE_ID.to_string());
+    set_active_content(&mut harness.app, "probe dirty content");
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.last_edit_at =
+        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+
+    harness.app.maybe_autosave();
+    assert!(!harness.app.save_in_flight);
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+
+    harness.app.save_now();
+    assert!(!harness.app.save_in_flight);
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
 }
 
 #[test]

@@ -234,3 +234,30 @@ fn save_error_cancels_pending_delete_and_preserves_dirty_selected_state() {
         Err(TryRecvError::Empty)
     ));
 }
+
+#[test]
+fn metadata_save_error_cancels_pending_delete_and_preserves_dirty_selected_state() {
+    let mut harness = make_app();
+    harness.app.metadata_dirty = true;
+    harness.app.edit_name = "Still Dirty".to_string();
+
+    harness.app.delete_selected();
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::UpdatePasteMeta { .. }
+    ));
+
+    harness.app.apply_event(CoreEvent::Error {
+        source: CoreErrorSource::SaveMetadata,
+        message: "Metadata save failed: disk full.".to_string(),
+    });
+
+    assert!(harness.app.pending_delete_id.is_none());
+    assert!(harness.app.metadata_dirty);
+    assert!(!harness.app.metadata_save_in_flight);
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}

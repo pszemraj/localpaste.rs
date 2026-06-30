@@ -5,6 +5,11 @@ use crate::env::{env_lock, EnvGuard};
 use std::time::Duration;
 
 #[test]
+fn default_retention_limit_matches_documented_default() {
+    assert_eq!(crate::constants::DEFAULT_PASTE_VERSION_RETENTION_LIMIT, 200);
+}
+
+#[test]
 fn content_update_prunes_versions_to_single_retained_snapshot() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {

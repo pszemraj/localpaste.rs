@@ -78,12 +78,12 @@ impl BackupManager {
     fn next_backup_path(&self, timestamp: u64) -> PathBuf {
         let mut candidate = self
             .db_path
-            .with_extension(format!("backup.{}.redb", timestamp));
+            .join(format!("{REDB_FILE_NAME}.backup.{timestamp}.redb"));
         let mut suffix = 1usize;
         while candidate.exists() {
             candidate = self
                 .db_path
-                .with_extension(format!("backup.{}.{}.redb", timestamp, suffix));
+                .join(format!("{REDB_FILE_NAME}.backup.{timestamp}.{suffix}.redb"));
             suffix += 1;
         }
         candidate
@@ -217,6 +217,25 @@ mod tests {
             }
             other => panic!("unexpected error variant: {:?}", other),
         }
+    }
+
+    #[test]
+    fn next_backup_path_stays_inside_db_dir_and_adds_collision_suffix() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        std::fs::create_dir_all(&db_path).expect("create db dir");
+        let manager = BackupManager::new(db_path.to_str().expect("db path"));
+
+        let first = manager.next_backup_path(123);
+        assert_eq!(first, db_path.join("data.redb.backup.123.redb"));
+        std::fs::write(&first, b"existing backup").expect("seed existing backup");
+
+        let second = manager.next_backup_path(123);
+        assert_eq!(second, db_path.join("data.redb.backup.123.1.redb"));
+        assert!(
+            second.starts_with(&db_path),
+            "backup suffixes must stay under the DB directory"
+        );
     }
 
     #[test]

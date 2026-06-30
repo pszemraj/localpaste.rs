@@ -56,6 +56,16 @@ impl LocalPasteApp {
         self.toasts.retain(|toast| now < toast.expires_at);
     }
 
+    /// Removes any pending undo-delete toast for a consumed or expired token.
+    pub(super) fn remove_undo_toast(&mut self, undo_token: &str) {
+        self.toasts.retain(|toast| {
+            !matches!(
+                &toast.action,
+                Some(ToastAction::UndoDelete { undo_token: token }) if token == undo_token
+            )
+        });
+    }
+
     /// Returns the next toast expiration time, regardless of queue order.
     ///
     /// # Returns

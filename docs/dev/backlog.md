@@ -27,6 +27,8 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Track folder-count decrement failures with a persistent repair marker and run opportunistic `reconcile_folder_invariants` recovery in long-lived processes.
 - [ ] Add an explicit runtime reconcile entrypoint/scheduler for metadata indexes so degraded states are repaired without restart.
 - [ ] Add low-cost semantic drift detection for `pastes_meta` rows (without full content deserialization in list/search hot paths), e.g. metadata hash/version marker validation at write/reconcile time.
+- [ ] Migrate remaining test-only delete-undo bundle/capped coverage to the persisted staged-token restore APIs, then remove the `#[cfg(test)]` bundle helpers if they no longer protect distinct invariants.
+- [x] Define and test the restart contract for non-expired staged delete-undo tokens: persisted tokens are deliberately discarded during database startup and GUI backend reinitialization.
 - [x] Add persisted derived semantic metadata for paste retrieval (`kind` / compact handle / derived terms) with `pastes_meta` rebuild, then use it for metadata-only search, smart filters, the properties drawer, and sidebar hover metadata.
 - [ ] Add a muted second sidebar metadata line when a derived handle exists, now that persisted semantic retrieval metadata and hover/details surfaces are in place.
 - [ ] Split history-reset worker failures out from generic `CoreErrorSource::SaveContent` so reset-specific UI transitions and error reporting do not rely on shared save-content handling.
@@ -34,6 +36,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Decide whether sidebar recency grouping should keep the current rolling seven-day `This Week` behavior, switch to local-calendar week semantics, or rename the bucket to `Last 7 Days`.
 - [ ] Define the virtual editor accessibility contract and decide whether to publish a read-only AccessKit text node with caret/selection metadata, or document bespoke editor screen-reader support as out of scope for the current local-tool UX.
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
+- [ ] Add schema-repair backup retention/rotation so repeated upgrades cannot accumulate unbounded snapshots in the DB directory.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
 - [ ] Triage the current `check-ast-dupes --root crates` likely-dead and visibility-tighten candidates; separate test-only false positives from real cleanup before changing helper visibility or deleting symbols.
 - [ ] Revisit the remaining `check-ast-dupes --include-tests` near-miss pair only if a measured cleanup reduces LOC or clarifies behavior: `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` covers distinct cursor semantics that should stay explicit unless a better structure preserves the invariants.
@@ -47,4 +50,6 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Re-evaluate whether `LocalPasteApp::{active_text_len_bytes, active_text_chars, active_revision, active_snapshot}` should remain separate explicit helpers or move behind a single active-buffer abstraction; keep separate until a clear readability/perf win is demonstrated.
 - [ ] Replace real `sleep(1100ms)` version-history/retention test waits with an injectable clock or deterministic snapshot timestamp hook across core and server tests.
 - [ ] Extract focused helpers from `crates/localpaste_gui/src/app/state_ops.rs` and `crates/localpaste_gui/src/app/version_ui.rs` before adding more GUI workflows so both files move away from their temporary LoC exception ceilings.
+- [ ] Extract `render_virtual_editor_panel` into smaller focused helpers when the virtual-input pipeline work lands; keep the current monolithic method stable until then.
+- [ ] Decide whether YAML alias-only markers (`*alias`) should count as distinctive YAML structure or remain rejected as ambiguous prose.
 - [x] Add explicit `Paste as new paste` UX (`Ctrl/Cmd+Shift+V` + command palette action) so new-paste clipboard flow does not depend on editor blur/focus heuristics.

@@ -2,7 +2,10 @@
 
 use super::*;
 use crate::db::paste::META_SCHEMA_VERSION_KEY;
-use crate::db::tables::{PASTES, PASTES_META_STATE, REDB_FILE_NAME};
+use crate::db::tables::{
+    DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META, PASTES,
+    PASTES_META_STATE, REDB_FILE_NAME,
+};
 use redb::ReadableDatabase;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -15,16 +18,10 @@ fn setup_temp_db_path(name: &str) -> (TempDir, String) {
 }
 
 fn startup_backup_files(db_path: &Path) -> Vec<PathBuf> {
-    let Some(parent) = db_path.parent() else {
-        return Vec::new();
-    };
-    let Some(base_name) = db_path.file_name().and_then(|name| name.to_str()) else {
-        return Vec::new();
-    };
-    let prefix = format!("{base_name}.backup.");
+    let prefix = format!("{REDB_FILE_NAME}.backup.");
 
-    let mut paths = std::fs::read_dir(parent)
-        .expect("read backup parent")
+    let mut paths = std::fs::read_dir(db_path)
+        .expect("read db dir")
         .map(|entry| entry.expect("backup entry").path())
         .filter(|path| {
             path.file_name()
@@ -137,15 +134,17 @@ fn database_new_does_not_backup_current_schema_on_normal_reopen() {
 }
 
 #[test]
-fn database_new_prunes_expired_deleted_paste_undo_on_restart() {
+fn database_new_discards_persisted_deleted_paste_undo_on_restart() {
     let (_temp_dir, db_path_str) = setup_temp_db_path("db");
     let db = open_test_database(&db_path_str);
-    let paste = Paste::new("old head".to_string(), "expired staged undo".to_string());
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).expect("create paste");
+    let expired_paste = Paste::new("old head".to_string(), "expired staged undo".to_string());
+    let expired_paste_id = expired_paste.id.clone();
+    db.pastes
+        .create(&expired_paste)
+        .expect("create expired paste");
     db.pastes
         .update(
-            &paste_id,
+            &expired_paste_id,
             UpdatePasteRequest {
                 content: Some("current head".to_string()),
                 name: None,
@@ -159,15 +158,86 @@ fn database_new_prunes_expired_deleted_paste_undo_on_restart() {
         .expect("paste exists");
     assert!(TransactionOps::delete_paste_with_folder_staged_undo(
         &db,
-        &paste_id,
+        &expired_paste_id,
         "expired-token",
         10
     )
     .expect("stage expired undo"));
+
+    let live_paste = Paste::new("old head".to_string(), "live staged undo".to_string());
+    let live_paste_id = live_paste.id.clone();
+    db.pastes.create(&live_paste).expect("create live paste");
+    db.pastes
+        .update(
+            &live_paste_id,
+            UpdatePasteRequest {
+                content: Some("current head".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: None,
+                tags: None,
+            },
+        )
+        .expect("update paste")
+        .expect("paste exists");
+    assert!(TransactionOps::delete_paste_with_folder_staged_undo(
+        &db,
+        &live_paste_id,
+        "live-token",
+        i64::MAX
+    )
+    .expect("stage live undo"));
     drop(db);
 
     let reopened = open_test_database(&db_path_str);
     assert_staged_undo_token(&reopened, "expired-token", false);
+    assert_staged_undo_token(&reopened, "live-token", false);
+    assert!(reopened
+        .pastes
+        .get(&expired_paste_id)
+        .expect("expired paste lookup")
+        .is_none());
+    assert!(reopened
+        .pastes
+        .get(&live_paste_id)
+        .expect("live paste lookup")
+        .is_none());
+}
+
+#[test]
+fn database_new_prunes_unreadable_deleted_paste_undo_on_restart() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("db");
+    let db = open_test_database(&db_path_str);
+    let token = "corrupt-startup-undo";
+
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut deleted_pastes = write_txn
+            .open_table(DELETED_PASTES)
+            .expect("open deleted pastes");
+        let mut deleted_versions_meta = write_txn
+            .open_table(DELETED_PASTE_VERSIONS_META)
+            .expect("open deleted version meta");
+        let mut deleted_versions_content = write_txn
+            .open_table(DELETED_PASTE_VERSIONS_CONTENT)
+            .expect("open deleted version content");
+        deleted_pastes
+            .insert(token, &[][..])
+            .expect("insert unreadable tombstone");
+        deleted_versions_meta
+            .insert(token, b"not-version-metadata".as_slice())
+            .expect("insert unreadable version metadata");
+        deleted_versions_content
+            .insert((token, 1), b"staged-content".as_slice())
+            .expect("insert staged version content");
+    }
+    write_txn.commit().expect("commit unreadable tombstone");
+    assert_staged_undo_token(&db, token, true);
+    drop(db);
+
+    let reopened = open_test_database(&db_path_str);
+    assert_staged_undo_token(&reopened, token, false);
 }
 
 #[test]

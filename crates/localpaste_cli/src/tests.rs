@@ -93,7 +93,7 @@ fn assert_search_command_parse<const N: usize>(
     args: [&str; N],
     expected_variant: SearchCommandVariant,
     expected_query: &str,
-    expected_case_sensitive: bool,
+    expected_case_sensitive: Option<bool>,
 ) {
     let cli = Cli::try_parse_from(args).expect("cli should parse search command");
     match (expected_variant, cli.command) {
@@ -102,6 +102,7 @@ fn assert_search_command_parse<const N: usize>(
             Commands::Search {
                 query,
                 case_sensitive,
+                case_insensitive,
             },
         )
         | (
@@ -109,10 +110,18 @@ fn assert_search_command_parse<const N: usize>(
             Commands::SearchMeta {
                 query,
                 case_sensitive,
+                case_insensitive,
             },
         ) => {
             assert_eq!(query, expected_query);
-            assert_eq!(case_sensitive, expected_case_sensitive);
+            let parsed_case_sensitive = if case_sensitive {
+                Some(true)
+            } else if case_insensitive {
+                Some(false)
+            } else {
+                None
+            };
+            assert_eq!(parsed_case_sensitive, expected_case_sensitive);
         }
         (SearchCommandVariant::Search, _) => panic!("expected search command"),
         (SearchCommandVariant::SearchMeta, _) => panic!("expected search-meta command"),
@@ -364,7 +373,7 @@ fn cli_parses_search_meta_subcommand() {
         ["lpaste", "search-meta", "needle"],
         SearchCommandVariant::SearchMeta,
         "needle",
-        false,
+        None,
     );
 }
 
@@ -374,8 +383,36 @@ fn cli_parses_case_sensitive_search_flags() {
         ["lpaste", "search", "--case-sensitive", "Needle"],
         SearchCommandVariant::Search,
         "Needle",
-        true,
+        Some(true),
     );
+    assert_search_command_parse(
+        ["lpaste", "search", "--case-insensitive", "Needle"],
+        SearchCommandVariant::Search,
+        "Needle",
+        Some(false),
+    );
+    assert_search_command_parse(
+        ["lpaste", "search-meta", "--case-insensitive", "Needle"],
+        SearchCommandVariant::SearchMeta,
+        "Needle",
+        Some(false),
+    );
+}
+
+#[test]
+fn cli_rejects_conflicting_case_search_flags() {
+    let err = match Cli::try_parse_from([
+        "lpaste",
+        "search",
+        "--case-sensitive",
+        "--case-insensitive",
+        "Needle",
+    ]) {
+        Ok(_) => panic!("conflicting search case flags should fail"),
+        Err(err) => err,
+    };
+
+    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
 }
 
 #[test]

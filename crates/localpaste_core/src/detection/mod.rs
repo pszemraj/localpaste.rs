@@ -195,9 +195,7 @@ pub(crate) fn looks_like_yaml(content: &str) -> bool {
         return mapping_pairs >= 1 || sequence_items >= 2;
     }
 
-    strong_structure && (mapping_pairs >= 1 || sequence_items >= 1)
-        || sequence_mapping_items >= 2
-        || (bare_sequence_items == 0 && sequence_items >= 2 && sequence_mapping_items >= 1)
+    strong_structure && (mapping_pairs >= 1 || sequence_items >= 1) || sequence_mapping_items >= 2
 }
 
 fn looks_like_yaml_sequence_item(item: &str) -> bool {

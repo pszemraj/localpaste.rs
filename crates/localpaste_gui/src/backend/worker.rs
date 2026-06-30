@@ -139,7 +139,7 @@ struct WorkerState {
     delete_undo_seq: u64,
     deleted_paste_order: VecDeque<String>,
     deleted_paste_undo: HashMap<String, PendingDeletedPaste>,
-    persistent_delete_undo_startup_pruned: bool,
+    persistent_delete_undo_startup_discarded: bool,
 }
 
 struct PendingDeletedPaste {
@@ -159,6 +159,21 @@ impl WorkerState {
                 }
             }
             Err(err) => warn!("failed to prune expired delete undo tombstones: {}", err),
+        }
+    }
+
+    fn discard_persisted_deleted_paste_undo_on_startup(&mut self) {
+        match TransactionOps::discard_all_deleted_paste_undo(&self.db) {
+            Ok(tokens) => {
+                for token in tokens {
+                    self.deleted_paste_undo.remove(token.as_str());
+                    self.deleted_paste_order.retain(|item| item != &token);
+                }
+            }
+            Err(err) => warn!(
+                "failed to discard persisted delete undo tombstones: {}",
+                err
+            ),
         }
     }
 
@@ -392,9 +407,9 @@ fn recv_command_or_prune_deleted_paste_undo(
     cmd_rx: &Receiver<CoreCmd>,
     state: &mut WorkerState,
 ) -> Result<Option<CoreCmd>, RecvTimeoutError> {
-    if !state.persistent_delete_undo_startup_pruned {
-        state.prune_persisted_expired_deleted_paste_undo();
-        state.persistent_delete_undo_startup_pruned = true;
+    if !state.persistent_delete_undo_startup_discarded {
+        state.discard_persisted_deleted_paste_undo_on_startup();
+        state.persistent_delete_undo_startup_discarded = true;
     }
     match state.next_deleted_paste_undo_timeout() {
         Some(timeout) => match cmd_rx.recv_timeout(timeout) {
@@ -493,7 +508,7 @@ pub fn spawn_backend_with_locks_and_owner(
                 delete_undo_seq: 0,
                 deleted_paste_order: VecDeque::new(),
                 deleted_paste_undo: HashMap::new(),
-                persistent_delete_undo_startup_pruned: false,
+                persistent_delete_undo_startup_discarded: false,
             };
             loop {
                 match recv_command_or_prune_deleted_paste_undo(&cmd_rx, &mut state) {
@@ -548,7 +563,7 @@ mod tests {
                 delete_undo_seq: 0,
                 deleted_paste_order: VecDeque::new(),
                 deleted_paste_undo: HashMap::new(),
-                persistent_delete_undo_startup_pruned: false,
+                persistent_delete_undo_startup_discarded: true,
             },
             evt_rx,
         }
@@ -604,6 +619,38 @@ mod tests {
             !worker.state.pending_deleted_paste_token(&token),
             "a consumed undo token must not restore the same tombstone twice"
         );
+    }
+
+    #[test]
+    fn duplicate_deleted_paste_restore_reports_nonretryable_expiration() {
+        let mut worker = make_state();
+        let token = stage_deleted_paste(&mut worker, "alpha");
+
+        paste::handle_restore_deleted_paste(&mut worker.state, token.clone());
+        assert!(matches!(
+            worker
+                .evt_rx
+                .recv_timeout(Duration::from_millis(200))
+                .expect("restore event"),
+            CoreEvent::PasteRestored { .. }
+        ));
+
+        paste::handle_restore_deleted_paste(&mut worker.state, token.clone());
+        match worker
+            .evt_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("duplicate restore event")
+        {
+            CoreEvent::PasteRestoreFailed {
+                undo_token,
+                retryable,
+                ..
+            } => {
+                assert_eq!(undo_token, token);
+                assert!(!retryable);
+            }
+            other => panic!("expected duplicate restore failure, got {:?}", other),
+        }
     }
 
     #[test]
@@ -734,10 +781,16 @@ mod tests {
     }
 
     #[test]
-    fn expired_persistent_delete_undo_is_pruned_before_blocking_on_startup() {
+    fn persistent_delete_undo_is_discarded_before_blocking_on_startup() {
         let mut worker = make_state();
-        let token =
+        worker.state.persistent_delete_undo_startup_discarded = false;
+        let expired_token =
             stage_persisted_deleted_paste(&mut worker, "alpha", Utc::now().timestamp_millis() - 1);
+        let live_token = stage_persisted_deleted_paste(
+            &mut worker,
+            "beta",
+            Utc::now().timestamp_millis() + DELETE_UNDO_TTL.as_millis() as i64,
+        );
         let (cmd_tx, cmd_rx) = unbounded();
         drop(cmd_tx);
 
@@ -749,10 +802,16 @@ mod tests {
         assert!(worker.state.deleted_paste_undo.is_empty());
         assert!(worker.state.deleted_paste_order.is_empty());
         assert!(
-            TransactionOps::restore_deleted_paste_by_token(&worker.state.db, &token)
-                .expect("restore lookup")
+            TransactionOps::restore_deleted_paste_by_token(&worker.state.db, &expired_token)
+                .expect("expired restore lookup")
                 .is_none(),
-            "startup pruning should discard expired persisted tombstones without an in-memory token"
+            "startup discard should remove expired persisted tombstones without an in-memory token"
+        );
+        assert!(
+            TransactionOps::restore_deleted_paste_by_token(&worker.state.db, &live_token)
+                .expect("live restore lookup")
+                .is_none(),
+            "startup discard should remove live persisted tombstones that cannot be rehydrated"
         );
     }
 

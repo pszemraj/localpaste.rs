@@ -12,6 +12,25 @@ fn output_has_request_paste(output: &egui::FullOutput) -> bool {
 }
 
 #[test]
+fn sidebar_arrow_target_is_empty_list_safe() {
+    let mut harness = make_app();
+    harness.app.selected_id = Some("alpha".to_string());
+    harness.app.pastes.clear();
+
+    assert_eq!(harness.app.sidebar_arrow_target_id(1), None);
+    assert_eq!(harness.app.sidebar_arrow_target_id(-1), None);
+
+    harness.app.pastes = vec![
+        test_summary("alpha", "Alpha", None, 1),
+        test_summary("beta", "Beta", None, 1),
+    ];
+    assert_eq!(
+        harness.app.sidebar_arrow_target_id(1),
+        Some("beta".to_string())
+    );
+}
+
+#[test]
 fn focused_virtual_editor_requests_repaint_after_text_input() {
     let mut harness = make_app();
     harness.app.reset_virtual_editor("alpha");

@@ -54,6 +54,14 @@ lpaste search-meta validation
 lpaste search-meta cublaslt
 ```
 
+Search inherits the server's default case behavior, including `LOCALPASTE_SEARCH_CASE_SENSITIVE`.
+Use an explicit flag when a script needs deterministic matching:
+
+```bash
+lpaste search --case-sensitive Needle
+lpaste search-meta --case-insensitive needle
+```
+
 Fetch the current content of a paste into a local file:
 
 ```bash

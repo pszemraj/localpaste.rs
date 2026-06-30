@@ -737,11 +737,7 @@ impl eframe::App for LocalPasteApp {
         let editor_focus_post = virtual_editor_focus_post;
         let wants_keyboard_input_after = ctx.wants_keyboard_input();
         if sidebar_direction != 0 && !virtual_editor_focus_post && !wants_keyboard_input_after {
-            let current = self.selected_index().unwrap_or(0) as i32;
-            let max_index = (self.pastes.len().saturating_sub(1)) as i32;
-            let next = (current + sidebar_direction).clamp(0, max_index) as usize;
-            if self.selected_index() != Some(next) {
-                let next_id = self.pastes[next].id.clone();
+            if let Some(next_id) = self.sidebar_arrow_target_id(sidebar_direction) {
                 self.select_paste(next_id);
             }
         }
