@@ -69,7 +69,27 @@ def selected_frames(matching):
         event_frame = raw[-1]
     else:
         event_frame = state_frame
+    event_index = next(
+        (index for index, frame in enumerate(matching) if frame is event_frame),
+        len(matching) - 1,
+    )
+    # Native runners may log a final WindowFocused(false) while tearing down
+    # the scenario process. Assert the post-key state before that blur marker.
+    post_event = []
+    for frame in matching[event_index:]:
+        if frame is not event_frame and frame_has_window_blur(frame):
+            break
+        post_event.append(frame)
+    if post_event:
+        state_frame = post_event[-1]
     return event_frame, state_frame
+
+
+def frame_has_window_blur(frame) -> bool:
+    raw_events = frame.get("raw_events")
+    if not isinstance(raw_events, list):
+        return False
+    return any(event.get("kind") == "WindowFocused(false)" for event in raw_events)
 
 
 def modifier_names(modifiers) -> list[str]:

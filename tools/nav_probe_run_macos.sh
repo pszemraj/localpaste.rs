@@ -21,7 +21,7 @@ Usage: tools/nav_probe_run_macos.sh [options]
 
 Prerequisites:
   macOS with Accessibility permission granted to the terminal running this
-  script. Native key injection uses osascript/System Events.
+  script. Native key injection uses a small Swift/CoreGraphics helper.
 
 Options:
   --spec PATH                 Navigation contract JSON path
@@ -212,6 +212,8 @@ require_command() {
 spec_path="$(assert_repo_path "$spec" "Spec")"
 log_path="$(assert_repo_path "$log" "Log")"
 exe="$(assert_repo_path "target/debug/localpaste-gui" "Executable")"
+driver_src="$(assert_repo_path "tools/nav_probe_macos_driver.swift" "Driver source")"
+driver="$(assert_repo_path "target/nav-probe-macos-driver" "Driver")"
 
 if [[ "${#only[@]}" -gt 0 ]]; then
     run_python - "$spec_path" "${only[@]}" <<'PY'
@@ -234,8 +236,9 @@ if missing:
 PY
 fi
 
-mapfile -t scenarios < <(
-    run_python - "$spec_path" "${only[@]}" <<'PY'
+emit_scenarios() {
+    if [[ "${#only[@]}" -gt 0 ]]; then
+        run_python - "$spec_path" "${only[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -260,7 +263,39 @@ for scenario in spec.get("scenarios", []):
         "keys": macos.get("keys", []),
     }))
 PY
-)
+    else
+        run_python - "$spec_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+spec = json.loads(Path(sys.argv[1]).read_text("utf-8"))
+only = set(sys.argv[2:])
+for scenario in spec.get("scenarios", []):
+    if only and scenario.get("id") not in only:
+        continue
+    if "macos" not in scenario.get("platforms", []):
+        continue
+    macos = scenario.get("driver", {}).get("macos")
+    if not macos:
+        continue
+    seed = scenario.get("seed", {})
+    text = seed.get("text", "alpha beta\ngamma delta\nepsilon zeta\n")
+    print(json.dumps({
+        "id": scenario["id"],
+        "seed_text": text,
+        "seed_cursor": seed.get("cursor"),
+        "seed_len": len(text),
+        "keys": macos.get("keys", []),
+    }))
+PY
+    fi
+}
+
+scenarios=()
+while IFS= read -r scenario_json; do
+    scenarios+=("$scenario_json")
+done < <(emit_scenarios)
 
 if [[ "${#scenarios[@]}" -eq 0 ]]; then
     echo "No macOS scenarios found in $spec_path" >&2
@@ -294,7 +329,20 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "macOS navigation automation requires Darwin; use --list for scenario discovery on other hosts." >&2
     exit 2
 fi
-require_command osascript
+require_command xcrun
+
+build_driver() {
+    if [[ ! -x "$driver" || "$driver_src" -nt "$driver" ]]; then
+        mkdir -p "$(dirname "$driver")"
+        xcrun swiftc "$driver_src" -o "$driver"
+    fi
+}
+
+build_driver
+if ! "$driver" check-accessibility --prompt >/dev/null; then
+    echo "macOS Accessibility permission is required for $driver. Grant it in System Settings, then rerun this script." >&2
+    exit 1
+fi
 
 if [[ "$build" -eq 1 ]]; then
     cargo build -p localpaste_gui --bin localpaste-gui
@@ -346,18 +394,6 @@ sys.stdout.write("__LOCALPASTE_NAV_PROBE_SENTINEL__")
 PY
 }
 
-join_csv() {
-    local joined=""
-    local item
-    for item in "$@"; do
-        if [[ -n "$joined" ]]; then
-            joined+=", "
-        fi
-        joined+="$item"
-    done
-    printf '%s' "$joined"
-}
-
 probe_ready() {
     local scenario_id="$1"
     local expected_len="$2"
@@ -397,84 +433,66 @@ PY
 
 process_exists() {
     local pid="$1"
-    osascript - "$pid" <<'APPLESCRIPT' >/dev/null
-on run argv
-    set targetPid to item 1 of argv as integer
-    tell application "System Events"
-        set matches to every process whose unix id is targetPid
-        if (count of matches) is 0 then error "process not found"
-    end tell
-end run
-APPLESCRIPT
+    "$driver" exists --pid "$pid" >/dev/null 2>&1
 }
 
 activate_app() {
     local pid="$1"
-    osascript - "$pid" <<'APPLESCRIPT' >/dev/null
-on run argv
-    set targetPid to item 1 of argv as integer
-    tell application "System Events"
-        set matches to every process whose unix id is targetPid
-        if (count of matches) is 0 then error "process not found"
-        set frontmost of item 1 of matches to true
-    end tell
-end run
-APPLESCRIPT
+    "$driver" activate --pid "$pid" >/dev/null
 }
 
 wait_active_app() {
     local pid="$1"
     local scenario_id="$2"
+    local activation_error=""
+    local last_activation_error=""
     for _ in $(seq 1 "$launch_poll_count"); do
         if ! kill -0 "$pid" >/dev/null 2>&1; then
             wait "$pid" || true
             echo "localpaste-gui exited before activation for $scenario_id" >&2
             return 1
         fi
-        if activate_app "$pid"; then
+        if activation_error="$(activate_app "$pid" 2>&1)"; then
             return 0
         fi
+        last_activation_error="$activation_error"
         ms_sleep "$launch_poll_ms"
     done
     echo "localpaste-gui did not become activatable before input for $scenario_id" >&2
+    if [[ -n "$last_activation_error" ]]; then
+        echo "last activation error: $last_activation_error" >&2
+    fi
     return 1
 }
 
 send_macos_key() {
-    local key_json="$1"
+    local pid="$1"
+    local key_json="$2"
     local key_code
     key_code="$(json_field "$key_json" key_code)"
     if [[ ! "$key_code" =~ ^[0-9]+$ ]]; then
         echo "invalid macOS key_code: $key_code" >&2
         return 2
     fi
-    mapfile -t modifiers < <(json_field "$key_json" modifiers || true)
-    local clauses=()
+    local modifiers=()
+    while IFS= read -r modifier; do
+        modifiers+=("$modifier")
+    done < <(json_field "$key_json" modifiers || true)
+    local driver_args=(key --pid "$pid" --key-code "$key_code")
     local modifier
-    for modifier in "${modifiers[@]}"; do
-        case "$modifier" in
-            command) clauses+=("command down") ;;
-            option) clauses+=("option down") ;;
-            shift) clauses+=("shift down") ;;
-            control) clauses+=("control down") ;;
-            "") ;;
-            *)
-                echo "unsupported macOS modifier: $modifier" >&2
-                return 2
-                ;;
-        esac
-    done
-    local using_clause=""
-    if [[ "${#clauses[@]}" -gt 0 ]]; then
-        local joined
-        joined="$(join_csv "${clauses[@]}")"
-        using_clause=" using {$joined}"
+    if [[ "${#modifiers[@]}" -gt 0 ]]; then
+        for modifier in "${modifiers[@]}"; do
+            case "$modifier" in
+                command|option|shift|control) driver_args+=(--modifier "$modifier") ;;
+                "") ;;
+                *)
+                    echo "unsupported macOS modifier: $modifier" >&2
+                    return 2
+                    ;;
+            esac
+        done
     fi
-    osascript <<APPLESCRIPT >/dev/null
-tell application "System Events"
-    key code $key_code$using_clause
-end tell
-APPLESCRIPT
+    "$driver" "${driver_args[@]}" >/dev/null
 }
 
 close_app() {
@@ -521,7 +539,10 @@ for scenario_json in "${scenarios[@]}"; do
     seed_text="${seed_text_raw%__LOCALPASTE_NAV_PROBE_SENTINEL__}"
     seed_len="$(json_field "$scenario_json" seed_len)"
     seed_cursor="$(json_field "$scenario_json" seed_cursor || true)"
-    mapfile -t keys < <(json_field "$scenario_json" keys)
+    keys=()
+    while IFS= read -r key; do
+        keys+=("$key")
+    done < <(json_field "$scenario_json" keys)
     safe_scenario="$(safe_name "$scenario_id")"
     db_path="$(assert_repo_path "target/nav-probe-db-${safe_scenario}-$(date +%s%N)" "DB_PATH")"
     mkdir -p "$db_path"
@@ -558,13 +579,16 @@ for scenario_json in "${scenarios[@]}"; do
     if [[ "$process_visible" -ne 1 ]]; then
         close_app "$pid"
         current_pid=""
-        echo "localpaste-gui did not expose a System Events process for $scenario_id" >&2
+        echo "localpaste-gui did not expose a native process for $scenario_id" >&2
         exit 1
     fi
 
     ready=0
+    last_activation_error=""
     for _ in $(seq 1 "$launch_poll_count"); do
-        activate_app "$pid" || true
+        if ! activation_error="$(activate_app "$pid" 2>&1)"; then
+            last_activation_error="$activation_error"
+        fi
         if probe_ready "$scenario_id" "$seed_len"; then
             ready=1
             break
@@ -575,6 +599,9 @@ for scenario_json in "${scenarios[@]}"; do
         close_app "$pid"
         current_pid=""
         echo "navigation probe did not report focused seeded editor before input for $scenario_id" >&2
+        if [[ -n "$last_activation_error" ]]; then
+            echo "last activation error: $last_activation_error" >&2
+        fi
         exit 1
     fi
 
@@ -590,7 +617,7 @@ for scenario_json in "${scenarios[@]}"; do
             exit 1
         fi
         ms_sleep "$after_focus_ms"
-        send_macos_key "$key"
+        send_macos_key "$pid" "$key"
         ms_sleep "$between_keys_ms"
     done
     ms_sleep "$after_scenario_ms"
@@ -601,9 +628,9 @@ done
 
 echo "nav probe log: $log_path"
 if [[ "$assert" -eq 1 ]]; then
-    summary_args=()
     if [[ "$summary" -eq 1 ]]; then
-        summary_args+=(--summary)
+        run_python tools/nav_probe_assert.py "$log_path" "$spec_path" --platform macos "${scenario_args[@]}" --summary
+    else
+        run_python tools/nav_probe_assert.py "$log_path" "$spec_path" --platform macos "${scenario_args[@]}"
     fi
-    run_python tools/nav_probe_assert.py "$log_path" "$spec_path" --platform macos "${scenario_args[@]}" "${summary_args[@]}"
 fi
