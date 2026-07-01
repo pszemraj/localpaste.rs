@@ -80,21 +80,39 @@ pub(super) fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -
     )
 }
 
+/// Requests virtual-editor keyboard focus and installs its navigation lock filter.
+///
+/// # Arguments
+/// - `ui`: UI owning the current frame memory.
+/// - `editor_id`: Stable virtual editor focus id.
+/// - `shortcuts_available`: Whether the editor should retain navigation keys this frame.
+pub(super) fn request_virtual_editor_focus(
+    ui: &mut egui::Ui,
+    editor_id: egui::Id,
+    shortcuts_available: bool,
+) {
+    ui.memory_mut(|m| {
+        m.request_focus(editor_id);
+        m.set_focus_lock_filter(
+            editor_id,
+            virtual_editor_focus_lock_filter(shortcuts_available),
+        );
+    });
+}
+
 /// Returns whether a pointer/window event should explicitly blur the editor.
 ///
 /// # Arguments
 /// - `clicked_outside_editor`: Whether the primary pointer press landed outside the editor.
-/// - `window_blurred`: Whether the app viewport lost focus.
 /// - `preserve_editor_focus`: Whether editor chrome claimed focus preservation for this frame.
 ///
 /// # Returns
 /// `true` when the virtual editor should surrender egui focus.
 pub(super) fn should_explicitly_blur_virtual_editor(
     clicked_outside_editor: bool,
-    window_blurred: bool,
     preserve_editor_focus: bool,
 ) -> bool {
-    window_blurred || (clicked_outside_editor && !preserve_editor_focus)
+    clicked_outside_editor && !preserve_editor_focus
 }
 
 /// Marks key events consumed after virtual-editor routing applies them.
@@ -310,9 +328,8 @@ mod tests {
 
     #[test]
     fn explicit_blur_policy_preserves_editor_focus_for_editor_chrome_actions() {
-        assert!(should_explicitly_blur_virtual_editor(true, false, false));
-        assert!(!should_explicitly_blur_virtual_editor(true, false, true));
-        assert!(should_explicitly_blur_virtual_editor(false, true, true));
-        assert!(!should_explicitly_blur_virtual_editor(false, false, false));
+        assert!(should_explicitly_blur_virtual_editor(true, false));
+        assert!(!should_explicitly_blur_virtual_editor(true, true));
+        assert!(!should_explicitly_blur_virtual_editor(false, false));
     }
 }

@@ -612,7 +612,8 @@ impl eframe::App for LocalPasteApp {
         let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
         let has_virtual_selection_pre = self.virtual_editor_state.selection_range().is_some();
-        let virtual_editor_focus_active_pre = egui_focus_pre || self.focus_editor_next;
+        let virtual_editor_focus_active_pre =
+            egui_focus_pre || self.virtual_editor_state.has_focus || self.focus_editor_next;
         let version_overlay_open = self.version_overlay_open();
         let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
@@ -732,7 +733,8 @@ impl eframe::App for LocalPasteApp {
         self.render_command_palette(ctx);
         self.render_shortcut_help(ctx);
 
-        let virtual_editor_focus_post = ctx.memory(|m| m.has_focus(focus_id));
+        let virtual_editor_focus_post =
+            ctx.memory(|m| m.has_focus(focus_id)) || self.virtual_editor_state.has_focus;
         let editor_focus_for_plain_paste_post = virtual_editor_focus_post;
         let editor_focus_post = virtual_editor_focus_post;
         let wants_keyboard_input_after = ctx.wants_keyboard_input();
@@ -808,7 +810,7 @@ impl eframe::App for LocalPasteApp {
             let until = expires_at.saturating_duration_since(Instant::now());
             repaint_after = repaint_after.min(until);
         }
-        if ctx.memory(|m| m.has_focus(focus_id)) {
+        if ctx.memory(|m| m.has_focus(focus_id)) || self.virtual_editor_state.has_focus {
             let elapsed = Instant::now().saturating_duration_since(self.virtual_caret_phase_start);
             let interval_ms = CARET_BLINK_INTERVAL.as_millis().max(1);
             let remainder_ms = interval_ms - (elapsed.as_millis() % interval_ms);

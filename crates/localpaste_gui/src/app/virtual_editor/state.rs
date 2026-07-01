@@ -27,6 +27,7 @@ pub(crate) struct VirtualEditorState {
     anchor: Option<usize>,
     preferred_column: Option<usize>,
     wrap_boundary_affinity: WrapBoundaryAffinity,
+    pub(crate) has_focus: bool,
     pub(crate) ime: ImeState,
 }
 

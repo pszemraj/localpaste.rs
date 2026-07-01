@@ -78,8 +78,29 @@ fn platform_doc_modifiers(platform: PlatformFlavor) -> egui::Modifiers {
     }
 }
 
+fn raw_input_with_viewport_focus(
+    focused: bool,
+    viewport_focused: Option<bool>,
+    events: Vec<egui::Event>,
+    modifiers: egui::Modifiers,
+) -> egui::RawInput {
+    let mut input = egui::RawInput {
+        focused,
+        screen_rect: Some(screen_rect()),
+        modifiers,
+        events,
+        ..Default::default()
+    };
+    input
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .expect("root viewport")
+        .focused = viewport_focused;
+    input
+}
+
 #[test]
-fn focus_editor_next_survives_initial_window_blur() {
+fn focus_editor_next_is_consumed_despite_initial_native_unfocus() {
     let mut harness = make_app();
     harness.app.reset_virtual_editor("alpha\nbeta\n");
     harness.app.focus_editor_next = true;
@@ -95,8 +116,9 @@ fn focus_editor_next_survives_initial_window_blur() {
             ..Default::default()
         },
     );
-    assert!(harness.app.focus_editor_next);
-    assert!(!ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
+    assert!(!harness.app.focus_editor_next);
+    assert_editor_focus(&ctx);
+    assert!(harness.app.virtual_editor_state.has_focus);
 
     let _ = run_full_update_with_input(
         &mut harness.app,
@@ -188,6 +210,168 @@ fn same_frame_blank_editor_click_and_arrow_moves_from_eof() {
         .saturating_sub(1);
     assert_eq!(harness.app.virtual_editor_state.cursor(), expected);
     assert!(harness.app.virtual_editor_state.selection_range().is_none());
+}
+
+#[test]
+fn transient_window_unfocus_during_editor_click_keeps_platform_navigation_alive() {
+    struct Case {
+        platform: PlatformFlavor,
+        key: egui::Key,
+        modifiers: egui::Modifiers,
+        expect_doc_start: bool,
+    }
+
+    let cases = [
+        Case {
+            platform: PlatformFlavor::Mac,
+            key: egui::Key::ArrowUp,
+            modifiers: platform_doc_modifiers(PlatformFlavor::Mac),
+            expect_doc_start: true,
+        },
+        Case {
+            platform: PlatformFlavor::Other,
+            key: egui::Key::ArrowLeft,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            },
+            expect_doc_start: false,
+        },
+    ];
+
+    for case in cases {
+        with_platform(case.platform, || {
+            let mut harness = make_app();
+            harness.app.reset_virtual_editor("alpha beta\n");
+            let ctx = egui::Context::default();
+            configure_virtual_editor_test_ctx(&ctx);
+            run_editor_panel_once(
+                &mut harness.app,
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(screen_rect()),
+                    ..Default::default()
+                },
+            );
+
+            run_editor_panel_once(
+                &mut harness.app,
+                &ctx,
+                raw_input_with_viewport_focus(
+                    false,
+                    None,
+                    primary_click_events(egui::pos2(240.0, 700.0)),
+                    egui::Modifiers::default(),
+                ),
+            );
+            let cursor_after_click = harness.app.virtual_editor_state.cursor();
+            assert_eq!(
+                cursor_after_click,
+                harness.app.virtual_editor_buffer.len_chars()
+            );
+            assert!(
+                ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)))
+                    || harness.app.focus_editor_next,
+                "inside-editor click on a transient unfocused frame must preserve or queue focus"
+            );
+
+            run_editor_panel_once(
+                &mut harness.app,
+                &ctx,
+                raw_input_with_viewport_focus(
+                    true,
+                    Some(true),
+                    Vec::new(),
+                    egui::Modifiers::default(),
+                ),
+            );
+            run_editor_panel_once(
+                &mut harness.app,
+                &ctx,
+                raw_input_with_viewport_focus(
+                    true,
+                    Some(true),
+                    Vec::new(),
+                    egui::Modifiers::default(),
+                ),
+            );
+            assert_editor_focus(&ctx);
+
+            run_editor_panel_once(
+                &mut harness.app,
+                &ctx,
+                raw_input_with_viewport_focus(
+                    true,
+                    Some(true),
+                    vec![key_event(case.key, case.modifiers)],
+                    case.modifiers,
+                ),
+            );
+
+            assert_editor_focus(&ctx);
+            let cursor_after_key = harness.app.virtual_editor_state.cursor();
+            if case.expect_doc_start {
+                assert_eq!(cursor_after_key, 0);
+            } else {
+                assert!(
+                    cursor_after_key < cursor_after_click,
+                    "modified arrow should be handled by the focused editor"
+                );
+            }
+        });
+    }
+}
+
+#[test]
+fn viewport_focus_signal_prevents_repeated_false_global_focus_from_blurring_editor() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("alpha\n");
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+
+    run_editor_panel_once(
+        &mut harness.app,
+        &ctx,
+        raw_input_with_viewport_focus(
+            false,
+            Some(true),
+            primary_click_events(egui::pos2(240.0, 700.0)),
+            egui::Modifiers::default(),
+        ),
+    );
+    assert_editor_focus(&ctx);
+
+    for _ in 0..10 {
+        run_editor_panel_once(
+            &mut harness.app,
+            &ctx,
+            raw_input_with_viewport_focus(
+                false,
+                Some(true),
+                Vec::new(),
+                egui::Modifiers::default(),
+            ),
+        );
+        assert_editor_focus(&ctx);
+    }
+
+    let cursor_before = harness.app.virtual_editor_state.cursor();
+    run_editor_panel_once(
+        &mut harness.app,
+        &ctx,
+        raw_input_with_viewport_focus(
+            false,
+            Some(true),
+            vec![key_event(egui::Key::ArrowLeft, egui::Modifiers::default())],
+            egui::Modifiers::default(),
+        ),
+    );
+    assert_editor_focus(&ctx);
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        cursor_before.saturating_sub(1)
+    );
 }
 
 #[test]
@@ -309,6 +493,7 @@ fn settled_focus_plain_arrows_move_cursor_inside_editor_without_sidebar_selectio
 fn stale_virtual_focus_does_not_steal_arrow_from_other_focus_owner() {
     let mut harness = make_app();
     harness.app.reset_virtual_editor("alpha\n");
+    harness.app.virtual_editor_state.has_focus = true;
 
     let ctx = egui::Context::default();
     configure_virtual_editor_test_ctx(&ctx);
@@ -329,6 +514,7 @@ fn stale_virtual_focus_does_not_steal_arrow_from_other_focus_owner() {
     );
 
     assert!(!ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
+    assert!(!harness.app.virtual_editor_state.has_focus);
     assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
 }
 

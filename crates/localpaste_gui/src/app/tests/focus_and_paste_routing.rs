@@ -116,7 +116,7 @@ fn click_outside_editor_viewport_blurs_focus() {
 }
 
 #[test]
-fn virtual_editor_window_blur_clears_focus_state() {
+fn native_window_unfocus_does_not_clear_virtual_editor_keyboard_ownership() {
     let mut harness = make_app();
     harness.app.reset_virtual_editor("line one\nline two\n");
 
@@ -135,6 +135,7 @@ fn virtual_editor_window_blur_clears_focus_state() {
         },
     );
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
 
     run_editor_panel_once(
         &mut harness.app,
@@ -145,7 +146,8 @@ fn virtual_editor_window_blur_clears_focus_state() {
             ..Default::default()
         },
     );
-    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
 }
 
 #[test]

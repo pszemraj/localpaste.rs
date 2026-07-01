@@ -49,8 +49,18 @@ impl LocalPasteApp {
 
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         let focus_editor_requested = self.focus_editor_next;
+        let editor_shortcuts_unblocked_for_frame = !self.editor_shortcuts_blocked();
+        let other_keyboard_input_has_focus = ui.memory(|m| {
+            m.focused()
+                .map(|focused_id| focused_id != editor_id)
+                .unwrap_or(false)
+        }) && ui.ctx().wants_keyboard_input();
+        if other_keyboard_input_has_focus && !focus_editor_requested {
+            self.virtual_editor_state.has_focus = false;
+        }
         if focus_editor_requested {
-            ui.memory_mut(|m| m.request_focus(editor_id));
+            self.virtual_editor_state.has_focus = true;
+            request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
             self.reset_virtual_caret_blink();
         }
         let wrap_width = ui.available_width().max(1.0);
@@ -122,7 +132,8 @@ impl LocalPasteApp {
                 ui.ctx().pixels_per_point(),
             ),
         );
-        let mut focused = ui.memory(|m| m.has_focus(editor_id));
+        let mut focused =
+            ui.memory(|m| m.has_focus(editor_id)) || self.virtual_editor_state.has_focus;
         let had_focus = focused;
         let mut ime_cursor_rect: Option<egui::Rect> = None;
         let mut pending_follow_scroll_offset_y: Option<f32> = None;
@@ -322,7 +333,12 @@ impl LocalPasteApp {
                 }
 
                 if let Some(action) = pending_action {
-                    ui.memory_mut(|m| m.request_focus(editor_id));
+                    self.virtual_editor_state.has_focus = true;
+                    request_virtual_editor_focus(
+                        ui,
+                        editor_id,
+                        editor_shortcuts_unblocked_for_frame,
+                    );
                     focused = true;
                     editor_pointer_action_handled = true;
                     match action {
@@ -580,7 +596,8 @@ impl LocalPasteApp {
             .map(|pos| primary_pressed && scroll_output.inner_rect.contains(pos))
             .unwrap_or(false);
         if clicked_inside_editor {
-            ui.memory_mut(|m| m.request_focus(editor_id));
+            self.virtual_editor_state.has_focus = true;
+            request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
             egui_focus = true;
             if clicked_inside_editor_content && !editor_pointer_action_handled {
                 let eof =
@@ -596,26 +613,30 @@ impl LocalPasteApp {
         let clicked_outside_editor = pointer_press_pos
             .map(|pos| primary_pressed && !interaction_rect.contains(pos))
             .unwrap_or(false);
-        let window_blurred =
-            ui.input(|input| !input.focused || input.viewport().focused == Some(false));
         let explicit_blur = should_explicitly_blur_virtual_editor(
             clicked_outside_editor,
-            window_blurred,
             options.preserve_focus_from_editor_chrome,
         );
         if explicit_blur {
+            self.virtual_editor_state.has_focus = false;
             ui.memory_mut(|m| m.surrender_focus(editor_id));
             egui_focus = false;
         }
-        if focus_editor_requested && !window_blurred && egui_focus {
+        if egui_focus {
+            self.virtual_editor_state.has_focus = true;
+        } else if self.virtual_editor_state.has_focus {
+            request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
+            egui_focus = true;
+        }
+        if focus_editor_requested && egui_focus {
             self.focus_editor_next = false;
         }
         if focus_response.gained_focus() || (egui_focus && !had_focus) {
             self.reset_virtual_caret_blink();
             ui.ctx().request_repaint();
         }
-        focused = egui_focus;
-        let editor_shortcuts_available = focused && !self.editor_shortcuts_blocked();
+        focused = egui_focus || self.virtual_editor_state.has_focus;
+        let editor_shortcuts_available = focused && editor_shortcuts_unblocked_for_frame;
         if focused {
             // egui owns this filter and replaces it on focus changes; setting
             // it only while focused avoids stale ownership after blur.
@@ -678,6 +699,10 @@ impl LocalPasteApp {
             let apply_started = Instant::now();
             let apply_result = self.apply_virtual_commands(ui.ctx(), &commands);
             let apply_ms = apply_started.elapsed().as_secs_f32() * 1000.0;
+            if !commands.is_empty() {
+                self.virtual_editor_state.has_focus = true;
+                focused = true;
+            }
             if apply_result.pasted {
                 self.virtual_paste_applied_this_frame = true;
             }
@@ -713,6 +738,7 @@ impl LocalPasteApp {
                     apply_result,
                 },
             );
+            request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
         }
         if let Some(started) = frame_started {
             let total_ms = started.elapsed().as_secs_f32() * 1000.0;

@@ -217,6 +217,7 @@ impl LocalPasteApp {
             .map(|probe| probe.focus_editor_until_acquired)
             .unwrap_or(false)
             && !ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)))
+            && !self.virtual_editor_state.has_focus
         {
             self.focus_editor_next = true;
             ctx.request_repaint_after(Duration::from_millis(16));
@@ -289,7 +290,8 @@ impl LocalPasteApp {
 
         let wants_keyboard_input = ctx.wants_keyboard_input();
         let focus = ctx.memory(|memory| FocusSnapshot {
-            virtual_editor: memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)),
+            virtual_editor: memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))
+                || self.virtual_editor_state.has_focus,
             sidebar_search: memory.has_focus(egui::Id::new(SEARCH_INPUT_ID)),
             editor_title: memory.has_focus(egui::Id::new(TITLE_INPUT_ID)),
             command_palette_query: memory.has_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID)),

@@ -19,7 +19,8 @@ impl LocalPasteApp {
 
             if let Some(id) = selected_meta {
                 let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-                let editor_had_virtual_focus = ctx.memory(|m| m.has_focus(editor_id));
+                let editor_had_virtual_focus =
+                    ctx.memory(|m| m.has_focus(editor_id)) || self.virtual_editor_state.has_focus;
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
                 let visible_tags = parse_tags_csv(self.edit_tags.as_str())
