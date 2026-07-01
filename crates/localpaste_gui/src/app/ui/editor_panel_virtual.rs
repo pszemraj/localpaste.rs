@@ -276,10 +276,8 @@ impl LocalPasteApp {
                                 && pointer_pos.map(|pos| rect.contains(pos)).unwrap_or(false);
                         (pressed_on_row, pointer_pos)
                     });
-                    let pointer_down_on_row =
-                        response.is_pointer_button_down_on() || primary_pressed_on_row;
                     if pending_action.is_none()
-                        && (response.drag_started() || response.clicked() || pointer_down_on_row)
+                        && (response.drag_started() || response.clicked() || primary_pressed_on_row)
                     {
                         let pointer_pos = response.interact_pointer_pos().or(current_pointer_pos);
                         if let Some(pointer_pos) = pointer_pos {

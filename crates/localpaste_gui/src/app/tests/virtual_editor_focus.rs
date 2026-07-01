@@ -213,6 +213,92 @@ fn same_frame_blank_editor_click_and_arrow_moves_from_eof() {
 }
 
 #[test]
+fn drag_selection_frame_without_new_press_preserves_anchor() {
+    let text = "abcdef\n";
+    let (row_pos, row_cursor) = [16.0, 40.0, 80.0, 140.0, 240.0, 360.0, 520.0]
+        .into_iter()
+        .flat_map(|x| (0..260).map(move |idx| egui::pos2(x, 20.0 + idx as f32)))
+        .find_map(|pos| {
+            let mut candidate = make_app();
+            candidate.app.reset_virtual_editor(text);
+            let candidate_ctx = egui::Context::default();
+            configure_virtual_editor_test_ctx(&candidate_ctx);
+            run_editor_panel_once(
+                &mut candidate.app,
+                &candidate_ctx,
+                egui::RawInput {
+                    screen_rect: Some(screen_rect()),
+                    ..Default::default()
+                },
+            );
+            run_editor_panel_once(
+                &mut candidate.app,
+                &candidate_ctx,
+                egui::RawInput {
+                    screen_rect: Some(screen_rect()),
+                    events: primary_click_events(pos),
+                    ..Default::default()
+                },
+            );
+            let cursor = candidate.app.virtual_editor_state.cursor();
+            let len = candidate.app.virtual_editor_buffer.len_chars();
+            let focused = candidate_ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+            (focused && cursor > 0 && cursor < len).then_some((pos, cursor))
+        })
+        .expect("candidate click should hit a rendered editor row after the first char");
+
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor(text);
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    run_editor_panel_once(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect()),
+            ..Default::default()
+        },
+    );
+    run_editor_panel_once(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect()),
+            events: primary_click_events(row_pos),
+            ..Default::default()
+        },
+    );
+
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(0, len);
+    harness
+        .app
+        .virtual_editor_state
+        .move_cursor(row_cursor, len, true);
+    harness.app.virtual_drag_active = true;
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..row_cursor)
+    );
+
+    run_editor_panel_once(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect()),
+            events: vec![egui::Event::PointerMoved(row_pos)],
+            ..Default::default()
+        },
+    );
+
+    assert!(harness.app.virtual_drag_active);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..row_cursor)
+    );
+}
+
+#[test]
 fn transient_window_unfocus_during_editor_click_keeps_platform_navigation_alive() {
     struct Case {
         platform: PlatformFlavor,
