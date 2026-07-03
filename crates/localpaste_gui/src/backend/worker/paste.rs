@@ -1,7 +1,7 @@
 //! Paste CRUD command handlers for the GUI backend worker.
 
 use super::{send_error, WorkerState, DELETE_UNDO_TTL};
-use crate::backend::{CoreErrorSource, CoreEvent, VERSION_WORKFLOW_LIST_LIMIT};
+use crate::backend::{CoreErrorSource, CoreEvent};
 use chrono::{Duration as ChronoDuration, Utc};
 use localpaste_core::{
     db::TransactionOps,
@@ -551,9 +551,11 @@ pub(super) fn handle_reset_paste_hard_to_version(
         Ok(Some(paste)) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::PasteResetToVersion { paste });
-            // Reset refresh should preserve the same history window depth the GUI
-            // requested for detached version workflows.
-            handle_list_paste_versions(state, id, VERSION_WORKFLOW_LIST_LIMIT);
+            // This is the user's configured retained history depth, not the
+            // default page size. Without paging, the recovery workflow must keep
+            // every retained snapshot reachable after a reset refresh.
+            let limit = state.db.paste_version_retention_limit();
+            handle_list_paste_versions(state, id, limit);
         }
         Ok(None) => match state.db.pastes.get(id.as_str()) {
             Ok(Some(_)) => send_error(

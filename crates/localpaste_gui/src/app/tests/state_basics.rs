@@ -621,6 +621,7 @@ fn content_save_refreshes_open_history_modal_for_active_paste() {
     let mut harness = make_app();
     harness.app.selected_id = Some("alpha".to_string());
     harness.app.version_ui.history_modal_open = true;
+    harness.app.version_history_limit = 250;
 
     let mut saved = Paste::new("updated".to_string(), "Alpha".to_string());
     saved.id = "alpha".to_string();
@@ -636,7 +637,7 @@ fn content_save_refreshes_open_history_modal_for_active_paste() {
     {
         CoreCmd::ListPasteVersions { id, limit } => {
             assert_eq!(id, "alpha");
-            assert_eq!(limit, 200);
+            assert_eq!(limit, 250);
         }
         other => panic!("expected ListPasteVersions command, got {:?}", other),
     }

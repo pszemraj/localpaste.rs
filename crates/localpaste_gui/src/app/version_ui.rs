@@ -8,9 +8,7 @@ use super::{
     editor::EditorLineIndex, highlight::hash_bytes, non_focusable_click_sense, LocalPasteApp,
     SaveStatus, SEARCH_DEBOUNCE,
 };
-use crate::backend::{
-    CoreCmd, CoreErrorSource, CoreEvent, PasteSummary, VERSION_WORKFLOW_LIST_LIMIT,
-};
+use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use eframe::egui;
 use localpaste_core::diff::DiffResponse;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
@@ -360,7 +358,7 @@ impl LocalPasteApp {
             .cmd_tx
             .send(CoreCmd::ListPasteVersions {
                 id,
-                limit: VERSION_WORKFLOW_LIST_LIMIT,
+                limit: self.version_history_limit,
             })
             .is_err()
         {

@@ -17,6 +17,11 @@ max_lines = 1100
 reason = "Temporary overage while keyboard parity regression matrix lands; split planned after stabilization."
 
 [[exceptions]]
+path = "crates/localpaste_gui/src/app/tests/virtual_editor_focus.rs"
+max_lines = 1160
+reason = "Virtual editor focus, click, and paste-routing regressions share one egui harness while focus ownership behavior stabilizes; split after the input routing matrix settles."
+
+[[exceptions]]
 path = "crates/localpaste_cli/src/main.rs"
 max_lines = 1200
 reason = "CLI currently centralizes endpoint resolution and command execution; split into subcommand modules is pending follow-up cleanup."
@@ -43,8 +48,8 @@ reason = "Virtual editor input translation deliberately centralizes platform sho
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/backend/mod.rs"
-max_lines = 1120
-reason = "Backend worker tests centralize query, version, and delete-undo cases while parity stabilizes."
+max_lines = 1130
+reason = "Backend worker tests centralize query, version-retention refresh, and delete-undo cases while parity stabilizes."
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/app/tests/collections_and_search.rs"

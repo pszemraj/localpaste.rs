@@ -430,6 +430,16 @@ impl Database {
         )
     }
 
+    /// Return the effective per-paste historical snapshot retention limit.
+    ///
+    /// # Returns
+    /// The configured retention limit captured when this database handle was
+    /// opened.
+    #[must_use]
+    pub fn paste_version_retention_limit(&self) -> usize {
+        self.pastes.version_retention_limit()
+    }
+
     /// Open the database and initialize tables.
     ///
     /// # Returns

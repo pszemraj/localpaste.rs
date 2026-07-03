@@ -346,6 +346,7 @@ fn make_app() -> TestHarness {
         virtual_pending_scroll_offset_y: None,
         virtual_follow_cursor_next_frame: false,
         virtual_paste_applied_this_frame: false,
+        version_history_limit: db.paste_version_retention_limit(),
         version_ui: super::version_ui::VersionUiState::default(),
         highlight_worker: spawn_highlight_worker(),
         highlight_pending: None,

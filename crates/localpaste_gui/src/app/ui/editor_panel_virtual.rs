@@ -20,6 +20,29 @@ pub(super) struct VirtualEditorRenderOptions<'a> {
 }
 
 impl LocalPasteApp {
+    fn queue_virtual_cursor_follow_scroll(
+        &mut self,
+        visible_row_range: Option<std::ops::Range<usize>>,
+        editor_height: f32,
+    ) -> bool {
+        let Some(range) = visible_row_range else {
+            return false;
+        };
+        let cursor_row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
+        let viewport_rows = ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
+        if let Some(offset) = follow_cursor_scroll_offset_y(
+            true,
+            cursor_row,
+            range,
+            viewport_rows,
+            self.virtual_line_height,
+        ) {
+            self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
+            return true;
+        }
+        false
+    }
+
     /// Renders the interactive rope-backed virtual editor surface.
     ///
     /// # Arguments
@@ -708,7 +731,9 @@ impl LocalPasteApp {
                 self.mark_dirty();
             }
             if apply_result.cursor_moved {
-                self.virtual_follow_cursor_next_frame = true;
+                let visible_row_range_available = visible_row_range.is_some();
+                self.queue_virtual_cursor_follow_scroll(visible_row_range.clone(), editor_height);
+                self.virtual_follow_cursor_next_frame = !visible_row_range_available;
             }
             if apply_result.changed || apply_result.cursor_moved {
                 ui.ctx().request_repaint();

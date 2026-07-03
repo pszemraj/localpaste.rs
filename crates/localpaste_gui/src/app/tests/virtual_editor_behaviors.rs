@@ -227,6 +227,50 @@ fn virtual_editor_frame_consumes_pending_follow_scroll_offset() {
 }
 
 #[test]
+fn focused_large_paste_queues_post_edit_scroll_follow() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("alpha\n");
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(len, len);
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    ctx.memory_mut(|m| m.request_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+
+    let paste = (0..300)
+        .map(|idx| format!("line {idx}\n"))
+        .collect::<String>();
+    let output = run_editor_panel_once_output(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(900.0, 260.0),
+            )),
+            events: vec![egui::Event::Paste(paste)],
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        harness.app.virtual_pending_scroll_offset_y.is_some(),
+        "large focused paste must queue cursor-follow scroll from the post-paste cursor"
+    );
+    assert!(
+        !harness.app.virtual_follow_cursor_next_frame,
+        "same-frame post-edit scroll queuing should not leave a redundant delayed follow pass"
+    );
+    assert!(
+        output
+            .viewport_output
+            .values()
+            .any(|viewport| viewport.repaint_delay == Duration::ZERO),
+        "queued cursor-follow scroll must repaint immediately"
+    );
+}
+
+#[test]
 fn virtual_editor_enter_and_select_all_work_after_idle_frames() {
     let mut harness = make_app();
     harness.app.reset_virtual_editor("alpha\n// beta\n");

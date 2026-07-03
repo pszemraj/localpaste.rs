@@ -109,6 +109,7 @@ pub(crate) struct LocalPasteApp {
     virtual_pending_scroll_offset_y: Option<f32>,
     virtual_follow_cursor_next_frame: bool,
     virtual_paste_applied_this_frame: bool,
+    version_history_limit: usize,
     version_ui: VersionUiState,
     highlight_worker: HighlightWorker,
     highlight_pending: Option<HighlightRequestMeta>,
@@ -347,6 +348,7 @@ impl LocalPasteApp {
         let db_path = config.db_path.clone();
         let autosave_delay = Duration::from_millis(config.auto_save_interval);
         let db = Database::new(&config.db_path)?;
+        let version_history_limit = db.paste_version_retention_limit();
         info!("native GUI opened database at {}", config.db_path);
 
         let locks = Arc::new(PasteLockManager::default());
@@ -414,6 +416,7 @@ impl LocalPasteApp {
             virtual_pending_scroll_offset_y: None,
             virtual_follow_cursor_next_frame: false,
             virtual_paste_applied_this_frame: false,
+            version_history_limit,
             version_ui: VersionUiState::default(),
             highlight_worker,
             highlight_pending: None,
