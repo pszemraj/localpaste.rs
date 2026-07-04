@@ -37,6 +37,7 @@ impl LocalPasteApp {
                 let mut copy_link_requested = false;
                 let mut duplicate_requested = false;
                 let mut export_requested = false;
+                let mut find_requested = false;
                 let mut open_properties = false;
                 let mut delete_requested = false;
                 ui.scope(|ui| {
@@ -137,6 +138,9 @@ impl LocalPasteApp {
                             export_requested = true;
                             preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
+                        if non_focusable_small_toolbar_button(ui, "Find").clicked() {
+                            find_requested = true;
+                        }
                         if non_focusable_small_toolbar_button(ui, "Properties").clicked() {
                             open_properties = true;
                         }
@@ -172,11 +176,19 @@ impl LocalPasteApp {
                 if export_requested {
                     self.export_selected_paste();
                 }
+                if find_requested {
+                    self.open_editor_find();
+                }
                 if open_properties {
                     self.properties_drawer_open = true;
                 }
                 if delete_requested {
                     self.delete_selected();
+                }
+
+                self.render_editor_find_bar(ui);
+                if self.editor_find.open {
+                    ui.add_space(4.0);
                 }
 
                 ui.label(

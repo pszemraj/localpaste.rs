@@ -95,6 +95,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Language filtering is rendered in the sidebar under smart filters and always includes an explicit `All languages` clear option.
 - Language filtering stacks with the active smart collection instead of replacing it.
 - Sidebar list refresh runs on metadata projections (`name/tags/language/folder`); sidebar search and command-palette paste discovery run full-content substring search and return metadata summaries.
+- Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar full-content search primes this in-paste find bar when the sidebar query appears in the paste body.
 - Command palette is action-first (`Commands` section first; `Pastes` section is secondary search/open context).
 - Virtual-editor highlight debounce/staging policy is defined in
   [language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
@@ -183,6 +184,8 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Open history and diff modals from palette queries (`history`, `diff`) when a paste is selected.
 6. Search and filters:
    - Sidebar query narrows results and clearing query restores list.
+   - Opening a paste from a sidebar body-text search selects and scrolls to the first matching substring in the editor.
+   - Editor toolbar `Find` locates substrings within the selected paste; `Next`/`Prev` wrap through all matches and the `Case` toggle narrows matching.
    - Smart collections (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) re-scope results.
    - Sidebar language filter (`All languages` + detected languages) stacks with active collection (not replacing it).
 7. Metadata/properties:

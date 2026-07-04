@@ -708,6 +708,7 @@ impl LocalPasteApp {
         self.reset_virtual_editor(paste.content.as_str());
         self.clear_highlight_state();
         self.selected_paste = Some(paste);
+        self.prime_editor_find_from_sidebar_query();
         self.try_complete_pending_copy();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;

@@ -314,6 +314,7 @@ fn make_app() -> TestHarness {
         metadata_dirty: false,
         metadata_save_in_flight: false,
         metadata_save_request: None,
+        editor_find: EditorFindState::default(),
         search_query: String::new(),
         search_last_input_at: None,
         search_last_sent: String::new(),
@@ -425,6 +426,7 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 mod backend_dispatch;
 mod collections_and_search;
 mod creation_and_projection;
+mod editor_find;
 mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod history_reset;

@@ -3,6 +3,7 @@
 mod deferred_saves;
 mod delete_flow;
 mod editor;
+mod editor_find;
 mod highlight;
 mod highlight_flow;
 mod interaction_helpers;
@@ -77,6 +78,7 @@ pub(crate) struct LocalPasteApp {
     metadata_dirty: bool,
     metadata_save_in_flight: bool,
     metadata_save_request: Option<MetadataDraftSnapshot>,
+    editor_find: EditorFindState,
     search_query: String,
     search_last_input_at: Option<Instant>,
     search_last_sent: String,
@@ -255,6 +257,7 @@ const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const SHUTDOWN_SAVE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
+const EDITOR_FIND_INPUT_ID: &str = "editor_find_input";
 const TITLE_INPUT_ID: &str = "editor_title_input";
 const COMMAND_PALETTE_INPUT_ID: &str = "command_palette_query_input";
 const PROPERTIES_NAME_INPUT_ID: &str = "properties_name_input";
@@ -278,6 +281,18 @@ struct ToastMessage {
     text: String,
     expires_at: Instant,
     action: Option<ToastAction>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct EditorFindState {
+    open: bool,
+    query: String,
+    matches: Vec<Range<usize>>,
+    active_match: Option<usize>,
+    case_sensitive: bool,
+    focus_requested: bool,
+    last_buffer_epoch: Option<u64>,
+    last_buffer_revision: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -387,6 +402,7 @@ impl LocalPasteApp {
             metadata_dirty: false,
             metadata_save_in_flight: false,
             metadata_save_request: None,
+            editor_find: EditorFindState::default(),
             search_query: String::new(),
             search_last_input_at: None,
             search_last_sent: String::new(),
