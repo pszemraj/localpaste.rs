@@ -7,7 +7,8 @@ use super::deferred_saves::rollback_deferred_save_dispatches;
 use super::util::{format_fenced_code_block, parse_tags_csv};
 use super::{
     ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
-    SidebarCollection, ToastAction, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
+    SidebarCollection, ToastAction, BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW,
+    PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Local, Utc};
@@ -15,7 +16,7 @@ use localpaste_core::{
     models::paste::Paste, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
 };
 use std::collections::BTreeSet;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::warn;
 
 use self::filters::{
@@ -23,6 +24,35 @@ use self::filters::{
 };
 
 impl LocalPasteApp {
+    /// Sends a backend command and arms short-term event polling for its reply.
+    ///
+    /// The fallback external refresh timer is intentionally slow, but commands
+    /// dispatched near the end of a quiet frame still need prompt repainting so
+    /// worker responses are drained without waiting for that fallback interval.
+    ///
+    /// # Returns
+    /// `true` when the command was queued and short polling was armed.
+    pub(super) fn dispatch_backend_cmd(&mut self, command: CoreCmd) -> bool {
+        if self.backend.cmd_tx.send(command).is_err() {
+            return false;
+        }
+        self.backend_event_poll_until = Some(Instant::now() + BACKEND_EVENT_POLL_WINDOW);
+        true
+    }
+
+    /// Returns the next short polling repaint delay while a backend reply is expected.
+    ///
+    /// # Returns
+    /// `Some` with the remaining bounded polling delay, or `None` when no short polling window is active.
+    pub(super) fn backend_event_poll_repaint_after(&mut self, now: Instant) -> Option<Duration> {
+        let until = self.backend_event_poll_until?;
+        if until <= now {
+            self.backend_event_poll_until = None;
+            return None;
+        }
+        Some(BACKEND_EVENT_POLL_INTERVAL.min(until.saturating_duration_since(now)))
+    }
+
     /// Sends a backend command and reports a status message if dispatch fails.
     ///
     /// # Arguments
@@ -36,7 +66,7 @@ impl LocalPasteApp {
         command: CoreCmd,
         error_message: &str,
     ) -> bool {
-        if self.backend.cmd_tx.send(command).is_ok() {
+        if self.dispatch_backend_cmd(command) {
             return true;
         }
         self.set_status(error_message);
@@ -53,7 +83,7 @@ impl LocalPasteApp {
     }
 
     fn send_update_paste_or_mark_failed(&mut self, command: CoreCmd, mode: &str) -> bool {
-        if self.backend.cmd_tx.send(command).is_ok() {
+        if self.dispatch_backend_cmd(command) {
             return true;
         }
         self.save_in_flight = false;
@@ -429,15 +459,10 @@ impl LocalPasteApp {
     /// Requests a fresh paste list from the backend and updates query perf counters.
     pub(super) fn request_refresh(&mut self) {
         let sent_at = Instant::now();
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::ListPastes {
-                limit: DEFAULT_LIST_PASTES_LIMIT,
-                folder_id: None,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::ListPastes {
+            limit: DEFAULT_LIST_PASTES_LIMIT,
+            folder_id: None,
+        }) {
             self.set_status("List failed: backend unavailable.");
             return;
         }
@@ -539,17 +564,12 @@ impl LocalPasteApp {
         }
 
         let (folder_id, language) = self.search_backend_filters();
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::SearchPastes {
-                query: query.clone(),
-                limit: DEFAULT_SEARCH_PASTES_LIMIT,
-                folder_id,
-                language,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::SearchPastes {
+            query: query.clone(),
+            limit: DEFAULT_SEARCH_PASTES_LIMIT,
+            folder_id,
+            language,
+        }) {
             // Avoid per-frame retry storms/toast spam while backend is unavailable.
             // Re-arm debounce so we retry on a bounded cadence.
             self.search_last_input_at = Some(Instant::now());
@@ -591,15 +611,10 @@ impl LocalPasteApp {
             return;
         }
 
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::SearchPalette {
-                query: query.clone(),
-                limit: PALETTE_SEARCH_LIMIT,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::SearchPalette {
+            query: query.clone(),
+            limit: PALETTE_SEARCH_LIMIT,
+        }) {
             // Mirror sidebar-search behavior: bounded retry cadence and deduped status.
             self.palette_search_last_input_at = Some(Instant::now());
             const PALETTE_SEARCH_UNAVAILABLE: &str =
@@ -733,7 +748,7 @@ impl LocalPasteApp {
             self.release_paste_lock(prev.as_str());
         }
         self.reset_selection_editor_state();
-        if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPaste { id }) {
             self.clear_selection();
             self.set_status("Get paste failed: backend unavailable.");
             return false;
@@ -862,19 +877,14 @@ impl LocalPasteApp {
         };
         let tags = Some(parse_tags_csv(self.edit_tags.as_str()));
         self.metadata_save_request = None;
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::UpdatePasteMeta {
-                id,
-                name: Some(self.edit_name.clone()),
-                language,
-                language_is_manual: Some(self.edit_language_is_manual),
-                folder_id: None,
-                tags,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::UpdatePasteMeta {
+            id,
+            name: Some(self.edit_name.clone()),
+            language,
+            language_is_manual: Some(self.edit_language_is_manual),
+            folder_id: None,
+            tags,
+        }) {
             self.set_status("Metadata save failed: backend unavailable.");
             return;
         }

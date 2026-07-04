@@ -145,6 +145,7 @@ pub(crate) struct LocalPasteApp {
     window_shown_once: bool,
     window_checked: bool,
     last_refresh_at: Instant,
+    backend_event_poll_until: Option<Instant>,
     query_perf: QueryPerfCounters,
     perf_log_enabled: bool,
     frame_samples: VecDeque<f32>,
@@ -222,6 +223,8 @@ enum PaletteCopyAction {
 // only for out-of-process writers sharing `DB_PATH`, so keep it low-frequency
 // until worker-driven external invalidation replaces polling.
 const EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const BACKEND_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const BACKEND_EVENT_POLL_WINDOW: Duration = Duration::from_secs(5);
 const STATUS_TTL: Duration = Duration::from_secs(5);
 const TOAST_TTL: Duration = Duration::from_secs(4);
 const UNDO_DELETE_TOAST_TTL: Duration = Duration::from_secs(8);
@@ -446,6 +449,7 @@ impl LocalPasteApp {
             window_shown_once: false,
             window_checked: false,
             last_refresh_at: Instant::now(),
+            backend_event_poll_until: None,
             query_perf: QueryPerfCounters::default(),
             perf_log_enabled: env_flag_enabled("LOCALPASTE_EDITOR_PERF_LOG"),
             frame_samples: VecDeque::with_capacity(PERF_SAMPLE_CAP),
@@ -811,6 +815,9 @@ impl eframe::App for LocalPasteApp {
         }
         if let Some(expires_at) = self.next_toast_expiration() {
             let until = expires_at.saturating_duration_since(Instant::now());
+            repaint_after = repaint_after.min(until);
+        }
+        if let Some(until) = self.backend_event_poll_repaint_after(Instant::now()) {
             repaint_after = repaint_after.min(until);
         }
         if ctx.memory(|m| m.has_focus(focus_id)) || self.virtual_editor_state.has_focus {

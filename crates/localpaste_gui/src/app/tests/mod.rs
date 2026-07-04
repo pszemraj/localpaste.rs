@@ -376,6 +376,7 @@ fn make_app() -> TestHarness {
         window_shown_once: false,
         window_checked: false,
         last_refresh_at: Instant::now(),
+        backend_event_poll_until: None,
         query_perf: QueryPerfCounters::default(),
         perf_log_enabled: false,
         frame_samples: VecDeque::with_capacity(PERF_SAMPLE_CAP),
@@ -421,6 +422,7 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
     }
 }
 
+mod backend_dispatch;
 mod collections_and_search;
 mod creation_and_projection;
 mod focus_and_paste_routing;

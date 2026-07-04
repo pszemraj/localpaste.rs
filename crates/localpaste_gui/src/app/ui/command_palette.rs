@@ -366,7 +366,7 @@ impl LocalPasteApp {
             return;
         }
 
-        if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPaste { id }) {
             self.pending_copy_action = None;
             self.set_status("Load paste for copy failed: backend unavailable.");
             return;

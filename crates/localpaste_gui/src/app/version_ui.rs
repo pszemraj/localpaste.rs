@@ -353,15 +353,10 @@ impl LocalPasteApp {
             self.version_ui.clear_history_selection();
             return;
         };
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::ListPasteVersions {
-                id,
-                limit: self.version_history_limit,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::ListPasteVersions {
+            id,
+            limit: self.version_history_limit,
+        }) {
             self.set_status("List versions failed: backend unavailable.");
         }
     }
@@ -371,12 +366,7 @@ impl LocalPasteApp {
             return;
         };
         self.version_ui.history_loading_snapshot_id = Some(version_id_ms);
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::GetPasteVersion { id, version_id_ms })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPasteVersion { id, version_id_ms }) {
             self.version_ui.clear_history_snapshot_state();
             self.set_status("Load version failed: backend unavailable.");
         }
@@ -496,16 +486,11 @@ impl LocalPasteApp {
             return false;
         };
         let request_id = self.version_ui.next_diff_preview_request_id();
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::ComputeDiffPreview {
-                request_id,
-                left_text: self.version_ui.active_snapshot_cache_text.clone(),
-                right_text,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::ComputeDiffPreview {
+            request_id,
+            left_text: self.version_ui.active_snapshot_cache_text.clone(),
+            right_text,
+        }) {
             self.version_ui.diff_preview_cache_key = None;
             self.version_ui.diff_preview_pending_request_id = None;
             self.version_ui.diff_preview = None;
@@ -542,16 +527,11 @@ impl LocalPasteApp {
         let Some(meta) = self.selected_history_meta() else {
             return;
         };
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::DuplicatePasteVersion {
-                id,
-                version_id_ms: meta.version_id_ms,
-                name: None,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::DuplicatePasteVersion {
+            id,
+            version_id_ms: meta.version_id_ms,
+            name: None,
+        }) {
             self.set_status("Duplicate version failed: backend unavailable.");
             return;
         }
@@ -741,16 +721,11 @@ impl LocalPasteApp {
             return;
         }
 
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::ResetPasteHardToVersion {
-                id: id.clone(),
-                version_id_ms,
-                preserve_current_head: true,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::ResetPasteHardToVersion {
+            id: id.clone(),
+            version_id_ms,
+            preserve_current_head: true,
+        }) {
             self.set_status("Reset hard failed: backend unavailable.");
             return;
         }
@@ -809,16 +784,11 @@ impl LocalPasteApp {
             }
             return;
         }
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::ResetPasteHardToVersion {
-                id: pending.paste_id.clone(),
-                version_id_ms: pending.version_id_ms,
-                preserve_current_head: pending.preserve_current_head,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::ResetPasteHardToVersion {
+            id: pending.paste_id.clone(),
+            version_id_ms: pending.version_id_ms,
+            preserve_current_head: pending.preserve_current_head,
+        }) {
             self.version_ui.clear_history_reset_queue();
             self.set_status("Reset hard failed: backend unavailable.");
             return;
@@ -844,12 +814,7 @@ impl LocalPasteApp {
         self.version_ui.diff_preview_cache_key = None;
         self.version_ui.diff_preview_pending_request_id = None;
         self.version_ui.diff_preview = None;
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::GetDiffTargetPaste { id })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::GetDiffTargetPaste { id }) {
             self.version_ui.clear_diff_target_state();
             self.set_status("Diff load failed: backend unavailable.");
         }
