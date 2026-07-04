@@ -1,7 +1,9 @@
 //! Deleted-paste undo lifecycle tests.
 
 use super::*;
-use crate::db::tables::{PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META};
+use crate::db::tables::{
+    DELETED_PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META,
+};
 use crate::db::versioning::encode_version_meta_list;
 use chrono::Utc;
 
@@ -48,6 +50,21 @@ fn seed_paste_with_version_rows(db: &Database, name: &str, version_rows: &[(u64,
     }
     write_txn.commit().expect("commit version rows");
     paste_id
+}
+
+fn insert_extra_staged_version_content(db: &Database, token: &str, version_id_ms: u64) {
+    let encoded_content =
+        bincode::serialize(&"extra staged snapshot".to_string()).expect("encode staged content");
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut deleted_versions_content = write_txn
+            .open_table(DELETED_PASTE_VERSIONS_CONTENT)
+            .expect("open deleted version content");
+        deleted_versions_content
+            .insert((token, version_id_ms), encoded_content.as_slice())
+            .expect("insert extra staged version content");
+    }
+    write_txn.commit().expect("commit extra staged content");
 }
 
 #[test]
@@ -107,6 +124,27 @@ fn discard_deleted_paste_undo_consumes_all_staged_rows() {
     assert!(TransactionOps::restore_deleted_paste_by_token(&db, token)
         .expect("restore discarded token")
         .is_none());
+}
+
+#[test]
+fn discard_deleted_paste_undo_removes_unlisted_content_rows_with_valid_metadata() {
+    let (db, _temp) = setup_test_db();
+    let paste_id =
+        seed_paste_with_version_rows(&db, "discard with extra content", &[(3_000, "snapshot")]);
+    let token = "discard-extra-content-token";
+
+    assert!(
+        TransactionOps::delete_paste_with_folder_staged_undo(&db, &paste_id, token, i64::MAX,)
+            .expect("stage delete undo")
+    );
+    insert_extra_staged_version_content(&db, token, 9_999);
+    assert_staged_undo_token(&db, token, true);
+
+    assert!(
+        TransactionOps::discard_deleted_paste_undo(&db, token).expect("discard staged undo"),
+        "discard should consume the staged paste row"
+    );
+    assert_staged_undo_token(&db, token, false);
 }
 
 #[test]

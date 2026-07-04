@@ -35,29 +35,18 @@ fn remove_deleted_paste_undo_rows(
     deleted_versions_content: &mut redb::Table<(&str, u64), &[u8]>,
     token: &str,
 ) -> Result<bool, AppError> {
+    let version_content_ids = collect_deleted_version_content_ids(deleted_versions_content, token)?;
     let removed_paste = deleted_pastes.remove(token)?.is_some();
-    let version_items = match deleted_versions_meta.remove(token)? {
-        Some(meta_guard) => match decode_version_meta_list(Some(meta_guard.value())) {
-            Ok(items) => items,
-            Err(err) => {
-                tracing::warn!(
-                    undo_token = token,
-                    "discarding unreadable staged delete-undo version metadata: {err}"
-                );
-                Vec::new()
-            }
-        },
-        None => Vec::new(),
-    };
-    if version_items.is_empty() {
-        let orphan_ids = collect_deleted_version_content_ids(deleted_versions_content, token)?;
-        for version_id_ms in orphan_ids {
-            let _ = deleted_versions_content.remove((token, version_id_ms))?;
+    if let Some(meta_guard) = deleted_versions_meta.remove(token)? {
+        if let Err(err) = decode_version_meta_list(Some(meta_guard.value())) {
+            tracing::warn!(
+                undo_token = token,
+                "discarding unreadable staged delete-undo version metadata: {err}"
+            );
         }
-    } else {
-        for version in version_items {
-            let _ = deleted_versions_content.remove((token, version.version_id_ms))?;
-        }
+    }
+    for version_id_ms in version_content_ids {
+        let _ = deleted_versions_content.remove((token, version_id_ms))?;
     }
     Ok(removed_paste)
 }
