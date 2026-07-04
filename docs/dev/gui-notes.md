@@ -26,6 +26,9 @@ Shortcut contract:
 - `Ctrl/Cmd+Shift+P`: toggle command palette.
 - `Ctrl/Cmd+K`: toggle command palette (legacy alias).
 - `Ctrl/Cmd+I`: toggle Properties drawer.
+- `F1`: toggle keyboard shortcut help.
+- `Ctrl/Cmd+A/C/X/Z/Y`: standard virtual-editor select-all/copy/cut/undo/redo when editor owns focus.
+- `Ctrl/Cmd+Shift+Z`: redo editor edit when editor owns focus.
 - `Ctrl/Cmd+V`: insert when editor is focused; create new paste from clipboard when editor is not focused.
 - `Ctrl/Cmd+Shift+V`: explicit "force paste as new" fallback.
 
@@ -96,6 +99,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Language filtering stacks with the active smart collection instead of replacing it.
 - Sidebar list refresh runs on metadata projections (`name/tags/language/folder`); sidebar search and command-palette paste discovery run full-content substring search and return metadata summaries.
 - Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar full-content search primes this in-paste find bar when the sidebar query appears in the paste body.
+- Keyboard shortcut help is rendered from the shortcut registry and intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
 - Command palette is action-first (`Commands` section first; `Pastes` section is secondary search/open context).
 - Virtual-editor highlight debounce/staging policy is defined in
   [language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
