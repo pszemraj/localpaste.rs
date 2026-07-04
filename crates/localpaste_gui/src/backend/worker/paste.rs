@@ -7,18 +7,28 @@ use localpaste_core::{
     db::TransactionOps,
     detection::detect_language,
     diff::{unified_diff_lines, DiffResponse},
+    error::AppError,
     folder_ops::map_missing_folder_for_optional_request,
     models::paste::{self, UpdatePasteRequest},
     naming,
     validation::paste_content_size_error,
 };
 use ropey::Rope;
-use tracing::error;
+use tracing::{error, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PasteLoadRoute {
     Selection,
     DiffTarget,
+}
+
+enum DeletePasteOutcome {
+    WithUndo(bool),
+    WithoutUndo(bool),
+}
+
+fn delete_undo_staging_can_fallback(err: &AppError) -> bool {
+    matches!(err, AppError::VersionContentMissing { .. })
 }
 
 /// Fetches a paste by id and emits load/missing/error events.
@@ -356,16 +366,28 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
                 }
             };
 
-        TransactionOps::delete_paste_with_folder_staged_undo_locked(
+        match TransactionOps::delete_paste_with_folder_staged_undo_locked(
             &state.db,
             &folder_guard,
             &id,
             undo_token.as_str(),
             expires_at_ms,
-        )
+        ) {
+            Ok(deleted) => Ok(DeletePasteOutcome::WithUndo(deleted)),
+            Err(err) if delete_undo_staging_can_fallback(&err) => {
+                warn!(
+                    paste_id = id.as_str(),
+                    "delete undo staging could not copy historical version content; deleting without undo: {}",
+                    err
+                );
+                TransactionOps::delete_paste_with_folder_locked(&state.db, &folder_guard, &id)
+                    .map(DeletePasteOutcome::WithoutUndo)
+            }
+            Err(err) => Err(err),
+        }
     };
     match deleted {
-        Ok(true) => {
+        Ok(DeletePasteOutcome::WithUndo(true)) => {
             state.query_cache.invalidate();
             state.register_deleted_paste_undo(undo_token.clone(), expires_at);
             let _ = state.evt_tx.send(CoreEvent::PasteDeleted {
@@ -373,7 +395,14 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
                 undo_token: Some(undo_token),
             });
         }
-        Ok(false) => {
+        Ok(DeletePasteOutcome::WithoutUndo(true)) => {
+            state.query_cache.invalidate();
+            let _ = state.evt_tx.send(CoreEvent::PasteDeleted {
+                id,
+                undo_token: None,
+            });
+        }
+        Ok(DeletePasteOutcome::WithUndo(false) | DeletePasteOutcome::WithoutUndo(false)) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
         }

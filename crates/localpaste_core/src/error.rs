@@ -25,6 +25,12 @@ pub enum AppError {
     #[error("Locked: {0}")]
     Locked(String),
 
+    #[error("Missing version content for paste '{paste_id}' version {version_id_ms}")]
+    VersionContentMissing {
+        paste_id: String,
+        version_id_ms: u64,
+    },
+
     #[error("Internal server error")]
     Internal,
 }

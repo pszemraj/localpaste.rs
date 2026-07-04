@@ -85,7 +85,7 @@ fn backend_delete_returns_undo_when_version_history_payload_exceeds_old_cap() {
 }
 
 #[test]
-fn backend_delete_fails_without_removing_paste_when_version_history_content_is_missing() {
+fn backend_delete_falls_back_without_undo_when_version_history_content_is_missing() {
     let dir = TempDir::new().expect("temp dir");
     let db_path = dir.path().join("db");
     let db = Database::new(db_path.to_str().expect("db path")).expect("db");
@@ -133,19 +133,18 @@ fn backend_delete_fails_without_removing_paste_when_version_history_content_is_m
         })
         .expect("send delete");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::Error { source, message } => {
-            assert_eq!(source, localpaste_gui::backend::CoreErrorSource::Other);
+        CoreEvent::PasteDeleted { id, undo_token } => {
+            assert_eq!(id, paste_id);
             assert!(
-                message.contains("Missing version content"),
-                "unexpected delete error: {}",
-                message
+                undo_token.is_none(),
+                "missing history content should delete without exposing unusable undo"
             );
         }
-        other => panic!("expected delete error event, got {:?}", other),
+        other => panic!("expected PasteDeleted event, got {:?}", other),
     }
     assert!(db
         .pastes
         .get(&paste_id)
         .expect("get after delete")
-        .is_some());
+        .is_none());
 }

@@ -150,10 +150,10 @@ impl TransactionOps {
                 let Some(content_guard) =
                     versions_content.get((paste_id, version.version_id_ms))?
                 else {
-                    return Err(AppError::StorageMessage(format!(
-                        "Missing version content for paste '{}' version {}",
-                        paste_id, version.version_id_ms
-                    )));
+                    return Err(AppError::VersionContentMissing {
+                        paste_id: paste_id.to_string(),
+                        version_id_ms: version.version_id_ms,
+                    });
                 };
                 let content_bytes = content_guard.value().to_vec();
                 drop(content_guard);

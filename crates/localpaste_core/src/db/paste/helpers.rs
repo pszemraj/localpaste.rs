@@ -61,10 +61,10 @@ pub(crate) fn remove_paste_versions_for_delete_capped(
         for version in &version_items {
             let Some(content_guard) = versions_content.get((paste_id, version.version_id_ms))?
             else {
-                return Err(AppError::StorageMessage(format!(
-                    "Missing version content for paste '{}' version {}",
-                    paste_id, version.version_id_ms
-                )));
+                return Err(AppError::VersionContentMissing {
+                    paste_id: paste_id.to_string(),
+                    version_id_ms: version.version_id_ms,
+                });
             };
             payload_bytes = payload_bytes.saturating_add(content_guard.value().len());
             if payload_bytes > max_payload_bytes {
@@ -79,11 +79,9 @@ pub(crate) fn remove_paste_versions_for_delete_capped(
             .remove((paste_id, version.version_id_ms))?
             .map(|guard| bincode::deserialize::<String>(guard.value()))
             .transpose()?
-            .ok_or_else(|| {
-                AppError::StorageMessage(format!(
-                    "Missing version content for paste '{}' version {}",
-                    paste_id, version.version_id_ms
-                ))
+            .ok_or_else(|| AppError::VersionContentMissing {
+                paste_id: paste_id.to_string(),
+                version_id_ms: version.version_id_ms,
             })?;
         versions.push(DeletedPasteVersion {
             meta: version,
