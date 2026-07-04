@@ -22,18 +22,15 @@ pub(super) struct VirtualEditorRenderOptions<'a> {
 impl LocalPasteApp {
     fn queue_virtual_cursor_follow_scroll(
         &mut self,
-        visible_row_range: Option<std::ops::Range<usize>>,
+        scroll_offset_y: f32,
         editor_height: f32,
     ) -> bool {
-        let Some(range) = visible_row_range else {
-            return false;
-        };
         let cursor_row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
         let viewport_rows = ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
         if let Some(offset) = follow_cursor_scroll_offset_y(
             true,
             cursor_row,
-            range,
+            scroll_offset_y,
             viewport_rows,
             self.virtual_line_height,
         ) {
@@ -159,7 +156,6 @@ impl LocalPasteApp {
             ui.memory(|m| m.has_focus(editor_id)) || self.virtual_editor_state.has_focus;
         let had_focus = focused;
         let mut ime_cursor_rect: Option<egui::Rect> = None;
-        let mut pending_follow_scroll_offset_y: Option<f32> = None;
         let mut editor_pointer_action_handled = false;
         let scroll_output =
             scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
@@ -566,27 +562,24 @@ impl LocalPasteApp {
                 if let Some(started) = paint_started {
                     paint_ms = started.elapsed().as_secs_f32() * 1000.0;
                 }
-
-                let follow_requested = self.virtual_follow_cursor_next_frame;
-                if follow_requested {
-                    self.virtual_follow_cursor_next_frame = false;
-                }
-                if had_focus && !self.virtual_drag_active {
-                    let cursor_row =
-                        self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
-                    let viewport_rows =
-                        ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
-                    pending_follow_scroll_offset_y = follow_cursor_scroll_offset_y(
-                        follow_requested,
-                        cursor_row,
-                        range,
-                        viewport_rows,
-                        self.virtual_line_height,
-                    );
-                }
             });
-        if let Some(offset) = pending_follow_scroll_offset_y {
-            self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
+        let follow_requested = self.virtual_follow_cursor_next_frame;
+        if follow_requested {
+            self.virtual_follow_cursor_next_frame = false;
+        }
+        if had_focus && !self.virtual_drag_active {
+            let cursor_row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
+            let viewport_rows =
+                ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
+            if let Some(offset) = follow_cursor_scroll_offset_y(
+                follow_requested,
+                cursor_row,
+                scroll_output.state.offset.y,
+                viewport_rows,
+                self.virtual_line_height,
+            ) {
+                self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
+            }
         }
         // Include scrollbar gutter when classifying inside/outside editor clicks.
         // Scrollbar interaction should not be treated as an external blur.
@@ -731,9 +724,12 @@ impl LocalPasteApp {
                 self.mark_dirty();
             }
             if apply_result.cursor_moved {
-                let visible_row_range_available = visible_row_range.is_some();
-                self.queue_virtual_cursor_follow_scroll(visible_row_range.clone(), editor_height);
-                self.virtual_follow_cursor_next_frame = !visible_row_range_available;
+                let queued_follow_scroll = self.queue_virtual_cursor_follow_scroll(
+                    scroll_output.state.offset.y,
+                    editor_height,
+                );
+                self.virtual_follow_cursor_next_frame =
+                    !queued_follow_scroll && apply_result.pasted;
             }
             if apply_result.changed || apply_result.cursor_moved {
                 ui.ctx().request_repaint();

@@ -228,6 +228,7 @@ fn virtual_editor_frame_consumes_pending_follow_scroll_offset() {
 
 #[test]
 fn focused_large_paste_queues_post_edit_scroll_follow() {
+    let line_count = 300usize;
     let mut harness = make_app();
     harness.app.reset_virtual_editor("alpha\n");
     let len = harness.app.virtual_editor_buffer.len_chars();
@@ -237,7 +238,7 @@ fn focused_large_paste_queues_post_edit_scroll_follow() {
     configure_virtual_editor_test_ctx(&ctx);
     ctx.memory_mut(|m| m.request_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
 
-    let paste = (0..300)
+    let paste = (0..line_count)
         .map(|idx| format!("line {idx}\n"))
         .collect::<String>();
     let output = run_editor_panel_once_output(
@@ -246,7 +247,7 @@ fn focused_large_paste_queues_post_edit_scroll_follow() {
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::pos2(0.0, 0.0),
-                egui::vec2(900.0, 260.0),
+                egui::vec2(900.0, 160.0),
             )),
             events: vec![egui::Event::Paste(paste)],
             ..Default::default()

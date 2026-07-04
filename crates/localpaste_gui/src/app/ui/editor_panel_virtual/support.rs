@@ -193,22 +193,33 @@ where
 /// # Arguments
 /// - `follow_requested`: Whether this frame requested cursor-follow scrolling.
 /// - `cursor_row`: Visual row index containing the cursor.
-/// - `visible_row_range`: Currently visible visual row range.
+/// - `scroll_offset_y`: Current vertical scroll offset in points.
 /// - `viewport_rows`: Number of rows that fit in the viewport.
 /// - `line_height`: Height of a virtual editor row.
 ///
 /// # Returns
 /// New vertical scroll offset when the cursor needs to be revealed.
+///
+/// # Panics
+/// This helper does not intentionally panic.
 pub(super) fn follow_cursor_scroll_offset_y(
     follow_requested: bool,
     cursor_row: usize,
-    visible_row_range: std::ops::Range<usize>,
+    scroll_offset_y: f32,
     viewport_rows: usize,
     line_height: f32,
 ) -> Option<f32> {
     if !follow_requested || viewport_rows == 0 {
         return None;
     }
+    let line_height = line_height.max(1.0);
+    let scroll_offset_y = if scroll_offset_y.is_finite() {
+        scroll_offset_y.max(0.0)
+    } else {
+        0.0
+    };
+    let viewport_start = (scroll_offset_y / line_height).floor() as usize;
+    let visible_row_range = viewport_start..viewport_start.saturating_add(viewport_rows);
     let scrolloff_rows = 2usize.min(viewport_rows.saturating_sub(1));
     if cursor_row.saturating_add(scrolloff_rows) >= visible_row_range.end {
         let desired_top = cursor_row
@@ -257,13 +268,23 @@ mod tests {
 
     #[test]
     fn follow_cursor_scroll_offset_only_applies_when_requested() {
-        let hidden_cursor_offset = follow_cursor_scroll_offset_y(false, 100, 0..20, 20, 12.0);
+        let hidden_cursor_offset = follow_cursor_scroll_offset_y(false, 100, 0.0, 20, 12.0);
         assert_eq!(hidden_cursor_offset, None);
 
-        let requested_offset = follow_cursor_scroll_offset_y(true, 100, 0..20, 20, 12.0);
+        let requested_offset = follow_cursor_scroll_offset_y(true, 100, 0.0, 20, 12.0);
         assert!(
             requested_offset.is_some(),
             "requested follow should produce a scroll offset when caret is out of view"
+        );
+    }
+
+    #[test]
+    fn follow_cursor_scroll_offset_uses_viewport_offset_not_rendered_tail() {
+        let offset = follow_cursor_scroll_offset_y(true, 25, 0.0, 20, 12.0);
+        assert_eq!(
+            offset,
+            Some(96.0),
+            "cursor below the viewport must scroll even if a renderer also draws lower rows"
         );
     }
 
