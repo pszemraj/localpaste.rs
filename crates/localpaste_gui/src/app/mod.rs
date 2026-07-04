@@ -10,6 +10,7 @@ mod interaction_helpers;
 mod nav_probe;
 mod paste_intent;
 mod perf_trace;
+mod shortcuts;
 mod shutdown;
 mod state_accessors;
 mod state_cache;
@@ -38,14 +39,15 @@ use highlight::{
 };
 pub(super) use interaction_helpers::{
     drag_autoscroll_delta, is_command_shift_shortcut, is_editor_word_char,
-    is_plain_command_shortcut, next_virtual_click_count, non_focusable_click_sense,
-    paint_virtual_selection_overlay, should_route_sidebar_arrows,
+    next_virtual_click_count, non_focusable_click_sense, paint_virtual_selection_overlay,
+    should_route_sidebar_arrows,
 };
 use localpaste_core::config::env_flag_enabled;
 use localpaste_core::models::paste::Paste;
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
 use perf_trace::VirtualInputPerfStats;
+use shortcuts::{pressed_runtime_shortcuts, RuntimeShortcutAction};
 use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::ops::Range;
@@ -654,58 +656,58 @@ impl eframe::App for LocalPasteApp {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());
             }
-            let plain_command = is_plain_command_shortcut(input.modifiers);
-            let command_shift = is_command_shift_shortcut(input.modifiers);
-
-            if plain_command && input.key_pressed(egui::Key::N) {
-                if mutation_shortcut_blocked.is_some() {
-                    self.set_mutation_shortcut_blocked_status();
-                } else {
-                    self.create_new_paste();
+            for action in pressed_runtime_shortcuts(input) {
+                match action {
+                    RuntimeShortcutAction::NewPaste => {
+                        if mutation_shortcut_blocked.is_some() {
+                            self.set_mutation_shortcut_blocked_status();
+                        } else {
+                            self.create_new_paste();
+                        }
+                    }
+                    RuntimeShortcutAction::Save => {
+                        self.save_now();
+                        self.save_metadata_now();
+                    }
+                    RuntimeShortcutAction::DeleteSelected => {
+                        delete_selected_shortcut_pressed = true;
+                    }
+                    RuntimeShortcutAction::FocusSearch => {
+                        self.search_focus_requested = true;
+                    }
+                    RuntimeShortcutAction::ToggleCommandPalette
+                    | RuntimeShortcutAction::ToggleCommandPaletteLegacy => {
+                        self.command_palette_open = !self.command_palette_open;
+                        self.command_palette_query.clear();
+                        self.command_palette_selected = 0;
+                        self.palette_search_results.clear();
+                        self.palette_search_last_sent.clear();
+                        self.palette_search_last_input_at = None;
+                    }
+                    RuntimeShortcutAction::ToggleProperties => {
+                        self.properties_drawer_open = !self.properties_drawer_open;
+                    }
+                    RuntimeShortcutAction::PlainPaste => {
+                        if mutation_shortcut_blocked.is_some() {
+                            self.set_mutation_shortcut_blocked_status();
+                        } else {
+                            // A newer plain paste intent should take precedence over any older
+                            // explicit paste-as-new intent still waiting on clipboard payload.
+                            self.cancel_paste_as_new_intent();
+                            plain_paste_shortcut_pressed = true;
+                        }
+                    }
+                    RuntimeShortcutAction::PasteAsNew => {
+                        if mutation_shortcut_blocked.is_some() {
+                            self.set_mutation_shortcut_blocked_status();
+                        } else {
+                            request_paste_as_new = true;
+                        }
+                    }
+                    RuntimeShortcutAction::ToggleShortcutHelp => {
+                        self.shortcut_help_open = !self.shortcut_help_open;
+                    }
                 }
-            }
-            if plain_command && input.key_pressed(egui::Key::Delete) {
-                delete_selected_shortcut_pressed = true;
-            }
-            if plain_command && input.key_pressed(egui::Key::S) {
-                self.save_now();
-                self.save_metadata_now();
-            }
-            if plain_command && input.key_pressed(egui::Key::F) {
-                self.search_focus_requested = true;
-            }
-            if (plain_command && input.key_pressed(egui::Key::K))
-                || (command_shift && input.key_pressed(egui::Key::P))
-            {
-                self.command_palette_open = !self.command_palette_open;
-                self.command_palette_query.clear();
-                self.command_palette_selected = 0;
-                self.palette_search_results.clear();
-                self.palette_search_last_sent.clear();
-                self.palette_search_last_input_at = None;
-            }
-            if plain_command && input.key_pressed(egui::Key::I) {
-                self.properties_drawer_open = !self.properties_drawer_open;
-            }
-            if command_shift && input.key_pressed(egui::Key::V) {
-                if mutation_shortcut_blocked.is_some() {
-                    self.set_mutation_shortcut_blocked_status();
-                } else {
-                    request_paste_as_new = true;
-                }
-            }
-            if plain_command && input.key_pressed(egui::Key::V) {
-                if mutation_shortcut_blocked.is_some() {
-                    self.set_mutation_shortcut_blocked_status();
-                } else {
-                    // A newer plain paste intent should take precedence over any older
-                    // explicit paste-as-new intent still waiting on clipboard payload.
-                    self.cancel_paste_as_new_intent();
-                    plain_paste_shortcut_pressed = true;
-                }
-            }
-            if input.key_pressed(egui::Key::F1) {
-                self.shortcut_help_open = !self.shortcut_help_open;
             }
             // These fallback shortcuts bypass the primary event-to-command path, so they
             // must honor the same modal/reset fence as the main virtual-editor extractor.
