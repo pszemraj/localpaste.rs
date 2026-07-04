@@ -12,61 +12,11 @@
 # reason = "Temporary during editor state extraction work"
 
 [[exceptions]]
-path = "crates/localpaste_gui/src/app/tests/virtual_editor_behaviors.rs"
-max_lines = 1100
-reason = "Temporary overage while keyboard parity regression matrix lands; split planned after stabilization."
-
-[[exceptions]]
-path = "crates/localpaste_gui/src/app/tests/virtual_editor_focus.rs"
-max_lines = 1160
-reason = "Virtual editor focus, click, and paste-routing regressions share one egui harness while focus ownership behavior stabilizes; split after the input routing matrix settles."
-
-[[exceptions]]
-path = "crates/localpaste_cli/src/main.rs"
-max_lines = 1200
-reason = "CLI currently centralizes endpoint resolution and command execution; split into subcommand modules is pending follow-up cleanup."
-
-[[exceptions]]
-path = "crates/localpaste_server/tests/api_integration.rs"
-max_lines = 1200
-reason = "Integration coverage remains centralized while version/diff endpoint contracts land; follow-up will split into focused test files."
-
-[[exceptions]]
-path = "crates/localpaste_gui/src/app/mod.rs"
-max_lines = 1050
-reason = "The main GUI update loop still centralizes frame input routing and per-frame orchestration; the reset-mutation fence landed here pending extraction into a dedicated input pipeline module."
-
-[[exceptions]]
 path = "crates/localpaste_gui/src/app/state_ops.rs"
 max_lines = 1140
-reason = "Selection, save, backend event transitions, and undo restore stay together until helper extraction."
-
-[[exceptions]]
-path = "crates/localpaste_gui/src/app/virtual_editor/input.rs"
-max_lines = 1044
-reason = "Virtual editor input translation deliberately centralizes platform shortcut normalization and focus-retention regressions in one place; split test/support modules if the command matrix grows further."
-
-[[exceptions]]
-path = "crates/localpaste_gui/src/backend/mod.rs"
-max_lines = 1130
-reason = "Backend worker tests centralize query, version-retention refresh, and delete-undo cases while parity stabilizes."
-
-[[exceptions]]
-path = "crates/localpaste_gui/src/app/tests/collections_and_search.rs"
-max_lines = 1050
-reason = "Collection/search regressions remain in one integration-style matrix while metadata retrieval and visible-projection freshness stabilize."
-
-[[exceptions]]
-path = "crates/localpaste_gui/src/app/tests/state_basics.rs"
-max_lines = 1200
-reason = "State/event matrix covers delete-undo, viewport reveal, and dirty reset; split after hardening."
-
-[[exceptions]]
-path = "crates/localpaste_gui/tests/headless_workflows.rs"
-max_lines = 1120
-reason = "Headless backend/API workflows share one harness while undo history and lock/race tests stabilize."
+reason = "Temporary production state-machine exception while extracting backend event handling, search dispatch/projection, and selection transitions into focused state_ops submodules."
 
 [[exceptions]]
 path = "crates/localpaste_gui/src/app/version_ui.rs"
 max_lines = 1100
-reason = "Version history state, dirty-reset flushing, reset confirmation, and recovery-snapshot intent stay together pending extraction."
+reason = "Temporary production version-workflow exception while extracting snapshot/diff caches, history-reset fencing, and version event handling into focused version_ui submodules."

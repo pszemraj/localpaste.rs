@@ -441,3 +441,5 @@ mod version_modal_caching;
 mod version_overlay_exclusivity;
 mod virtual_editor_behaviors;
 mod virtual_editor_focus;
+mod virtual_editor_focus_shortcuts;
+mod virtual_editor_focus_support;

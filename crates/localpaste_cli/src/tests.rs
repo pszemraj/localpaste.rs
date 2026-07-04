@@ -1,8 +1,11 @@
 //! Unit tests for the `lpaste` CLI entrypoint module.
 
-use super::{
+use super::discovery::test_exports::{
     api_url, default_resolution_connect_hint, discovered_server_from_file_with_reachability,
-    discovery_probe_response_looks_like_localpaste, error_message_for_response,
+    discovery_probe_response_looks_like_localpaste,
+};
+use super::output::test_exports::error_message_for_response;
+use super::{
     format_delete_output, format_diff_output, format_equal_output, format_get_output,
     format_summary_output, normalize_server, paste_id_and_name, resolve_server,
     resolve_server_with_source, ServerResolutionSource,
