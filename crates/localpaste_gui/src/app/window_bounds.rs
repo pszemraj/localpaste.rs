@@ -82,6 +82,26 @@ fn clamped_size_for_window_limit(
     ))
 }
 
+fn clamped_size_for_window_and_texture_limits(
+    current_points: egui::Vec2,
+    pixels_per_point: f32,
+    min_points: egui::Vec2,
+    max_points: egui::Vec2,
+    max_dimension_px: f32,
+) -> Option<egui::Vec2> {
+    let window_clamped_points =
+        clamped_size_for_window_limit(current_points, min_points, max_points);
+    let texture_check_points = window_clamped_points.unwrap_or(current_points);
+
+    clamped_size_for_texture_limit(
+        texture_check_points,
+        pixels_per_point,
+        min_points,
+        max_dimension_px,
+    )
+    .or(window_clamped_points)
+}
+
 /// Enforces viewport minimum size, monitor-sane maximum size, and GPU texture-size bounds.
 ///
 /// # Arguments
@@ -105,18 +125,13 @@ pub(super) fn enforce_window_bounds(
         *window_checked = true;
     }
 
-    if let Some(clamped_points) =
-        clamped_size_for_window_limit(current_points, min_points, max_points)
-    {
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(clamped_points));
-    }
-
     let pixels_per_point = ctx.pixels_per_point().max(1.0);
     let max_dimension_px = max_texture_dimension_px(frame);
-    if let Some(clamped_points) = clamped_size_for_texture_limit(
+    if let Some(clamped_points) = clamped_size_for_window_and_texture_limits(
         current_points,
         pixels_per_point,
         min_points,
+        max_points,
         max_dimension_px,
     ) {
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(clamped_points));
@@ -125,7 +140,10 @@ pub(super) fn enforce_window_bounds(
 
 #[cfg(test)]
 mod tests {
-    use super::{clamped_size_for_texture_limit, clamped_size_for_window_limit};
+    use super::{
+        clamped_size_for_texture_limit, clamped_size_for_window_and_texture_limits,
+        clamped_size_for_window_limit,
+    };
     use eframe::egui;
 
     fn assert_clamp_case(
@@ -174,6 +192,40 @@ mod tests {
         assert_eq!(
             clamped_size_for_window_limit(egui::vec2(5120.0, 2880.0), min, max),
             None
+        );
+    }
+
+    #[test]
+    fn combined_clamp_does_not_relax_window_limit_to_texture_limit() {
+        let min = egui::vec2(900.0, 600.0);
+        let max = egui::vec2(7680.0, 4320.0);
+
+        assert_eq!(
+            clamped_size_for_window_and_texture_limits(
+                egui::vec2(9000.0, 3000.0),
+                1.0,
+                min,
+                max,
+                8192.0,
+            ),
+            Some(egui::vec2(7680.0, 3000.0))
+        );
+    }
+
+    #[test]
+    fn combined_clamp_uses_texture_limit_when_it_is_stricter() {
+        let min = egui::vec2(900.0, 600.0);
+        let max = egui::vec2(7680.0, 4320.0);
+
+        assert_eq!(
+            clamped_size_for_window_and_texture_limits(
+                egui::vec2(9000.0, 5000.0),
+                2.0,
+                min,
+                max,
+                8192.0,
+            ),
+            Some(egui::vec2(4096.0, 4096.0))
         );
     }
 }
