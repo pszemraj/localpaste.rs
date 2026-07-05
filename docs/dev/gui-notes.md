@@ -99,6 +99,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Language filtering stacks with the active smart collection instead of replacing it.
 - Sidebar list refresh runs on metadata projections (`name/tags/language/folder`); sidebar search and command-palette paste discovery run full-content substring search and return metadata summaries.
 - Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar full-content search primes this in-paste find bar when the sidebar query appears in the paste body.
+- Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.
 - App-level shortcut dispatch, command-palette hints, and keyboard shortcut help share the runtime shortcut registry. The shortcut help intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
 - Command palette is action-first (`Commands` section first; `Pastes` section is secondary search/open context).
 - Virtual-editor highlight debounce/staging policy is defined in
@@ -197,6 +198,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Rename in the editor header applies on `Enter` and on blur (without requiring Apply click).
 8. Clipboard/editing baseline:
    - `Ctrl/Cmd+C`, `Ctrl/Cmd+X`, `Ctrl/Cmd+V`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Y` behave correctly in virtual editor mode.
+   - Paste a 20-30 line block near the bottom of the visible editor; expected: the inserted tail/caret scrolls into view.
    - `Ctrl/Cmd+V` outside editor focus creates a new paste from clipboard.
    - `Ctrl/Cmd+Shift+V` can still be used as explicit force-new fallback.
    - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not switch sidebar filters.
