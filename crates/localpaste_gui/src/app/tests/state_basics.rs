@@ -157,6 +157,139 @@ fn output_has_visible_true(output: &eframe::egui::FullOutput) -> bool {
     })
 }
 
+fn shortcut_raw_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
+    egui::RawInput {
+        modifiers,
+        events: vec![key_event(key, modifiers)],
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1200.0, 900.0),
+        )),
+        ..Default::default()
+    }
+}
+
+fn primary_command_shift_modifiers() -> egui::Modifiers {
+    let mut modifiers = primary_command_modifiers();
+    modifiers.shift = true;
+    modifiers
+}
+
+#[test]
+fn runtime_shortcuts_drive_full_update_state_and_commands() {
+    let mut help = make_app();
+    let ctx = egui::Context::default();
+    run_full_update_with_input(
+        &mut help.app,
+        &ctx,
+        shortcut_raw_input(egui::Key::F1, egui::Modifiers::default()),
+    );
+    assert!(help.app.shortcut_help_open);
+    run_full_update_with_input(
+        &mut help.app,
+        &ctx,
+        shortcut_raw_input(egui::Key::F1, egui::Modifiers::default()),
+    );
+    assert!(!help.app.shortcut_help_open);
+
+    let mut palette = make_app();
+    palette.app.command_palette_query = "stale".to_string();
+    palette.app.command_palette_selected = 4;
+    palette
+        .app
+        .palette_search_results
+        .push(test_summary("beta", "Beta", None, 4));
+    run_full_update_with_input(
+        &mut palette.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::P, primary_command_shift_modifiers()),
+    );
+    assert!(palette.app.command_palette_open);
+    assert!(palette.app.command_palette_query.is_empty());
+    assert_eq!(palette.app.command_palette_selected, 0);
+    assert!(palette.app.palette_search_results.is_empty());
+
+    let mut legacy_palette = make_app();
+    run_full_update_with_input(
+        &mut legacy_palette.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::K, primary_command_modifiers()),
+    );
+    assert!(legacy_palette.app.command_palette_open);
+
+    let mut properties = make_app();
+    run_full_update_with_input(
+        &mut properties.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::I, primary_command_modifiers()),
+    );
+    assert!(properties.app.properties_drawer_open);
+
+    let mut search = make_app();
+    let ctx = egui::Context::default();
+    run_full_update_with_input(
+        &mut search.app,
+        &ctx,
+        shortcut_raw_input(egui::Key::F, primary_command_modifiers()),
+    );
+    assert!(
+        ctx.memory(|memory| memory.has_focus(egui::Id::new(SEARCH_INPUT_ID))),
+        "Ctrl/Cmd+F should focus the rendered sidebar search input"
+    );
+
+    let mut new_paste = make_app();
+    run_full_update_with_input(
+        &mut new_paste.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::N, primary_command_modifiers()),
+    );
+    match recv_cmd(&new_paste.cmd_rx) {
+        CoreCmd::CreatePaste { content } => assert!(content.is_empty()),
+        other => panic!("expected new-paste command, got {:?}", other),
+    }
+
+    let mut save = make_app();
+    set_active_content(&mut save.app, "shortcut saved");
+    save.app.save_status = SaveStatus::Dirty;
+    save.app.metadata_dirty = true;
+    save.app.edit_name = "Shortcut Saved".to_string();
+    save.app.edit_tags = "shortcut, dispatch".to_string();
+    run_full_update_with_input(
+        &mut save.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::S, primary_command_modifiers()),
+    );
+    match recv_cmd(&save.cmd_rx) {
+        CoreCmd::UpdatePasteVirtual { id, content, .. } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(content.to_string(), "shortcut saved");
+        }
+        other => panic!("expected shortcut content save command, got {:?}", other),
+    }
+    match recv_cmd(&save.cmd_rx) {
+        CoreCmd::UpdatePasteMeta { id, name, tags, .. } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(name.as_deref(), Some("Shortcut Saved"));
+            assert_eq!(
+                tags,
+                Some(vec!["shortcut".to_string(), "dispatch".to_string()])
+            );
+        }
+        other => panic!("expected shortcut metadata save command, got {:?}", other),
+    }
+
+    let mut delete = make_app();
+    run_full_update_with_input(
+        &mut delete.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::Delete, primary_command_modifiers()),
+    );
+    match recv_cmd(&delete.cmd_rx) {
+        CoreCmd::DeletePaste { id } => assert_eq!(id, "alpha"),
+        other => panic!("expected delete shortcut command, got {:?}", other),
+    }
+}
+
 #[test]
 fn shortcut_help_closes_on_escape() {
     let mut harness = make_app();
