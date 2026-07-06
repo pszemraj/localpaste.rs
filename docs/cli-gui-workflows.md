@@ -3,7 +3,7 @@
 `lpaste` is the terminal-side companion to the desktop app. It talks to the same localhost API that the GUI exposes, so you can inspect, export, diff, or automate work without leaving the editor.
 
 > [!IMPORTANT]
-> GitHub Releases currently ship GUI assets only. To use `lpaste`, build it from source with Cargo, for example:
+> GitHub release asset scope is listed in [README.md#releases](../README.md#releases). To use `lpaste`, build it from source with Cargo:
 >
 > ```bash
 > cargo build -p localpaste_cli --bin lpaste

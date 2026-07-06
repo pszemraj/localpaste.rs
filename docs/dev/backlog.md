@@ -41,7 +41,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Triage the current `check-ast-dupes --root crates` likely-dead and visibility-tighten candidates; separate test-only false positives from real cleanup before changing helper visibility or deleting symbols.
 - [ ] Revisit the remaining `check-ast-dupes --include-tests` near-miss pair only if a measured cleanup reduces LOC or clarifies behavior: `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` covers distinct cursor semantics that should stay explicit unless a better structure preserves the invariants.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
-- [ ] Expand `verify-gui-packaging.yml` beyond macOS (at least Linux x64) so packaging script regressions are caught before release-tag runs.
+- [ ] Expand standalone `verify-gui-packaging.yml` beyond macOS (at least Linux x64) so packaging script regressions are caught before release-tag runs.
 - [ ] Revisit `TransactionOps` create/delete/move wrapper consolidation with a lock-safe transaction template only if we can preserve operation-specific invariants and error semantics without reducing readability.
 - [ ] Revisit the duplicated selected-paste gate/setup in `crates/localpaste_gui/src/app/version_ui.rs` (`open_history_modal` vs `open_diff_modal`) and extract a shared helper only if it improves readability without hiding modal-specific state.
 - [ ] Revisit overlapping heuristic detection matrix tests in `crates/localpaste_core/src/detection/tests.rs` (`heuristic_detects_existing_language_matrix` and `heuristic_detects_fallback_languages_and_conflict_matrix`) only if coverage stays explicit.

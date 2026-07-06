@@ -23,15 +23,12 @@ To publish from a manual run, the operator must explicitly choose `release_tag`,
 provide a stable release tag/version (`vX.Y.Z` or `X.Y.Z`), and set `dry_run`
 to `false`.
 
-`verify-gui-packaging.yml` follows the same split:
+`verify-gui-packaging.yml` follows the same tag/version split for its macOS-only packaging smoke:
 
 - explicit `tag` input remains stable-only,
 - empty `tag` derives packaging metadata from `[workspace.package].version`, including prerelease workspace versions used for smoke/verification branches.
 
-When packaging metadata comes from a prerelease workspace version, artifact
-names and manifests keep the full prerelease tag. Windows packager config uses
-the numeric `major.minor.patch` core only, because WiX/MSI product versions do
-not accept prerelease/build metadata.
+When packaging metadata comes from a prerelease workspace version, artifact names and manifests keep the full prerelease tag. Windows packager config uses the numeric `major.minor.patch` core only, because WiX/MSI product versions do not accept prerelease/build metadata.
 
 `release_tag` publishes on tag-triggered runs and on manual runs where
 `dry_run` is `false`.
@@ -58,7 +55,7 @@ Published release assets (when produced) follow:
 
 Windows and Linux artifacts are always expected for successful release runs.
 
-Packaging verification checks include:
+`release-gui.yml` packaging jobs verify produced assets before upload:
 
 - Windows: MSI presence + non-empty payload + administrative extraction contains `localpaste.exe`.
 - Linux: AppImage presence + non-empty payload + runtime metadata check via `--appimage-version`.

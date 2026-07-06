@@ -12,8 +12,13 @@ Perf validation steps and gates: [gui-perf-protocol.md](gui-perf-protocol.md).
 - `LOCALPASTE_HIGHLIGHT_TRACE=1`: highlight request/apply/drop lifecycle trace.
 - `LOCALPASTE_LOG_FILE=<path>`: append GUI tracing logs to a file (useful on Windows release builds where no console is shown).
 - `LOCALPASTE_LINUX_DESKTOP_ENTRY=force|off`: Linux-only desktop-entry setup override. `force` writes the managed user entry; `off`/`skip`/`disabled` disables desktop-entry setup for isolated probe or test launches.
-- Boolean flags accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
-- Unrecognized flag values emit a warning and are treated as unset/false (shared parser behavior across core/server/gui env flags).
+- `LOCALPASTE_NAV_PROBE_LOG=<path>`: enables per-frame NDJSON navigation probe logging.
+- `LOCALPASTE_NAV_PROBE_SCENARIO=<id>`: labels probe frames for runner assertions.
+- `LOCALPASTE_NAV_PROBE_SEED_TEXT=<text>`, `LOCALPASTE_NAV_PROBE_SEED_NAME=<name>`, `LOCALPASTE_NAV_PROBE_SEED_CURSOR=<char|line:col>`: seed the disposable in-memory probe paste and initial caret.
+- `LOCALPASTE_NAV_PROBE_FOCUS_EDITOR=1`: keeps requesting virtual-editor focus until the probe sees it.
+- `LOCALPASTE_NAV_PROBE_PYTHON=<path>`: runner/assertion Python executable override.
+- Shared boolean flags above accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
+- Unrecognized shared boolean values emit a warning and are treated as unset/false.
 
 ## Keyboard And Navigation Contract
 
@@ -41,7 +46,7 @@ Navigation/selection contract:
 
 ## Navigation Probe
 
-The navigation probe writes per-frame NDJSON for native keyboard focus and caret checks. It is enabled by `LOCALPASTE_NAV_PROBE_LOG` and normally driven through the OS-specific runner scripts.
+The navigation probe writes per-frame NDJSON for native keyboard focus and caret checks. The OS-specific runner scripts set the probe environment variables listed in [Runtime Flags](#runtime-flags); set them directly only for local debugging or manual Wayland checks.
 
 Probe contract and tooling:
 
@@ -52,8 +57,6 @@ Probe contract and tooling:
 - Windows runner: [../../tools/nav_probe_run_windows.ps1](../../tools/nav_probe_run_windows.ps1)
 
 All automated runners launch a disposable probe DB under `target/`, seed the editor, wait for a probe frame showing virtual-editor keyboard focus, inject native key chords, and write NDJSON evidence. They terminate the child GUI process after the evidence frame by default so disposable probe runs do not fail on normal window-close shutdown races. Use `--help` / `Get-Help` on the runner for timing and filtering options.
-
-Set `LOCALPASTE_NAV_PROBE_PYTHON` when the assertion checker or runner should use a specific Python interpreter instead of the active `python`/`python3`/conda fallback.
 
 Linux automation is X11-only and requires `xdotool`; Wayland must be checked manually with the same probe environment variables because compositor policy restricts synthetic input.
 
