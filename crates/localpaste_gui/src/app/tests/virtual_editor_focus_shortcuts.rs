@@ -4,6 +4,188 @@ use super::virtual_editor_focus_support::*;
 use super::*;
 use crate::app::virtual_editor::PlatformFlavor;
 
+fn run_virtual_editor_frame(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> bool {
+    let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    let focus_active_pre = ctx.memory(|m| m.has_focus(focus_id));
+    let raw_input = egui::RawInput {
+        events,
+        ..Default::default()
+    };
+    let _ = ctx.run(raw_input, |ctx| {
+        app.render_editor_panel(ctx);
+    });
+    focus_active_pre
+}
+
+#[test]
+fn focused_home_end_keys_do_not_break_follow_on_vertical_arrows() {
+    with_platform(PlatformFlavor::Other, || {
+        let mut harness = make_app();
+        configure_virtual_editor_with_wrap(
+            &mut harness.app,
+            "0123456789\nshort\nabcdefghij\n",
+            400.0,
+        );
+
+        let ctx = egui::Context::default();
+        configure_virtual_editor_test_ctx(&ctx);
+        let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+        ctx.memory_mut(|m| m.request_focus(editor_id));
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::Home, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert!(ctx.memory(|m| m.has_focus(editor_id)));
+        assert_cursor_line_col(&harness.app, (1, 0));
+
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowUp, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (0, 0));
+
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+        let _ = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::Home, egui::Modifiers::default())],
+        );
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowDown, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (2, 0));
+
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::End, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert!(ctx.memory(|m| m.has_focus(editor_id)));
+        assert_cursor_line_col(&harness.app, (1, 5));
+
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowUp, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (0, 5));
+
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+        let _ = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::End, egui::Modifiers::default())],
+        );
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowDown, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (2, 5));
+    });
+}
+
+#[test]
+fn focused_mac_line_boundary_keys_do_not_break_follow_on_vertical_arrows() {
+    with_platform(PlatformFlavor::Mac, || {
+        let mut harness = make_app();
+        configure_virtual_editor_with_wrap(
+            &mut harness.app,
+            "0123456789\nshort\nabcdefghij\n",
+            400.0,
+        );
+
+        let ctx = egui::Context::default();
+        configure_virtual_editor_test_ctx(&ctx);
+        let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+        let command = egui::Modifiers {
+            command: true,
+            ..Default::default()
+        };
+        ctx.memory_mut(|m| m.request_focus(editor_id));
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowLeft, command)],
+        );
+        assert!(focus_active_pre);
+        assert!(ctx.memory(|m| m.has_focus(editor_id)));
+        assert_cursor_line_col(&harness.app, (1, 0));
+
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowUp, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (0, 0));
+
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+        let _ = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowLeft, command)],
+        );
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowDown, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (2, 0));
+
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowRight, command)],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (1, 5));
+
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowUp, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (0, 5));
+
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+        let _ = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowRight, command)],
+        );
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowDown, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (2, 5));
+    });
+}
+
 #[test]
 fn ctrl_home_after_clicking_into_editor_stays_in_editor() {
     let mut harness = make_app();
