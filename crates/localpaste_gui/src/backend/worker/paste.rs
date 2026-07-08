@@ -1,21 +1,34 @@
 //! Paste CRUD command handlers for the GUI backend worker.
 
-use super::{send_error, validate_paste_size, validate_paste_size_bytes, WorkerState};
-use crate::backend::{CoreErrorSource, CoreEvent, VERSION_WORKFLOW_LIST_LIMIT};
+use super::{send_error, WorkerState, DELETE_UNDO_TTL};
+use crate::backend::{CoreErrorSource, CoreEvent};
+use chrono::{Duration as ChronoDuration, Utc};
 use localpaste_core::{
     db::TransactionOps,
+    detection::detect_language,
     diff::{unified_diff_lines, DiffResponse},
+    error::AppError,
     folder_ops::map_missing_folder_for_optional_request,
     models::paste::{self, UpdatePasteRequest},
     naming,
+    validation::paste_content_size_error,
 };
 use ropey::Rope;
-use tracing::error;
+use tracing::{error, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PasteLoadRoute {
     Selection,
     DiffTarget,
+}
+
+enum DeletePasteOutcome {
+    WithUndo(bool),
+    WithoutUndo(bool),
+}
+
+fn delete_undo_staging_can_fallback(err: &AppError) -> bool {
+    matches!(err, AppError::VersionContentMissing { .. })
 }
 
 /// Fetches a paste by id and emits load/missing/error events.
@@ -81,11 +94,11 @@ fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteL
 /// - `state`: Worker state containing db and event channel handles.
 /// - `content`: Paste body content.
 pub(super) fn handle_create_paste(state: &mut WorkerState, content: String) {
-    if let Err(message) = validate_paste_size(content.as_str(), state.max_paste_size) {
+    if let Some(message) = paste_content_size_error(content.len(), state.max_paste_size) {
         send_error(&state.evt_tx, CoreErrorSource::Other, message);
         return;
     }
-    let inferred = paste::detect_language(&content);
+    let inferred = detect_language(&content);
     let inferred_is_locked = inferred.is_some();
     let name = naming::generate_name();
     let paste = paste::Paste::new_with_language(content, name, inferred, inferred_is_locked);
@@ -105,8 +118,14 @@ pub(super) fn handle_create_paste(state: &mut WorkerState, content: String) {
     }
 }
 
-fn apply_content_update(state: &mut WorkerState, id: String, content: String, log_label: &str) {
-    if let Err(message) = validate_paste_size(content.as_str(), state.max_paste_size) {
+fn apply_content_update(
+    state: &mut WorkerState,
+    id: String,
+    content: String,
+    protected_version_id_ms: Option<u64>,
+    log_label: &str,
+) {
+    if let Some(message) = paste_content_size_error(content.len(), state.max_paste_size) {
         send_error(&state.evt_tx, CoreErrorSource::SaveContent, message);
         return;
     }
@@ -134,7 +153,15 @@ fn apply_content_update(state: &mut WorkerState, id: String, content: String, lo
             return;
         }
     };
-    match state.db.pastes.update(&id, update) {
+    let update_result = if let Some(protected_version_id_ms) = protected_version_id_ms {
+        state
+            .db
+            .pastes
+            .update_preserving_version(&id, update, protected_version_id_ms)
+    } else {
+        state.db.pastes.update(&id, update)
+    };
+    match update_result {
         Ok(Some(paste)) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::PasteSaved { paste });
@@ -154,24 +181,19 @@ fn apply_content_update(state: &mut WorkerState, id: String, content: String, lo
     }
 }
 
-/// Saves updated paste content using the standard string update path.
-///
-/// # Arguments
-/// - `state`: Worker state containing db, locks, and event channel handles.
-/// - `id`: Target paste id.
-/// - `content`: Replacement content payload.
-pub(super) fn handle_update_paste(state: &mut WorkerState, id: String, content: String) {
-    apply_content_update(state, id, content, "backend update failed");
-}
-
 /// Saves updated paste content from the virtual-editor rope buffer.
 ///
 /// # Arguments
 /// - `state`: Worker state containing db, locks, and event channel handles.
 /// - `id`: Target paste id.
 /// - `content`: Replacement content stored as a rope buffer.
-pub(super) fn handle_update_paste_virtual(state: &mut WorkerState, id: String, content: Rope) {
-    if let Err(message) = validate_paste_size_bytes(content.len_bytes(), state.max_paste_size) {
+pub(super) fn handle_update_paste_virtual(
+    state: &mut WorkerState,
+    id: String,
+    content: Rope,
+    protected_version_id_ms: Option<u64>,
+) {
+    if let Some(message) = paste_content_size_error(content.len_bytes(), state.max_paste_size) {
         send_error(&state.evt_tx, CoreErrorSource::SaveContent, message);
         return;
     }
@@ -179,6 +201,7 @@ pub(super) fn handle_update_paste_virtual(state: &mut WorkerState, id: String, c
         state,
         id,
         content.to_string(),
+        protected_version_id_ms,
         "backend virtual update failed",
     );
 }
@@ -317,32 +340,69 @@ pub(super) fn handle_update_paste_meta(
 /// - `state`: Worker state containing db, locks, and event channel handles.
 /// - `id`: Paste id to delete.
 pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
-    let (folder_guard, _mutation_guard) =
-        match localpaste_server::locks::acquire_folder_scoped_mutation_guards(
-            &state.db,
-            state.locks.as_ref(),
-            id.as_str(),
-            "Paste is currently open for editing.",
-            Some(&state.lock_owner_id),
-        ) {
-            Ok(guards) => guards,
-            Err(err) => {
-                send_error(
-                    &state.evt_tx,
-                    CoreErrorSource::Other,
-                    format!("Delete failed: {}", err),
-                );
-                return;
-            }
-        };
+    let undo_token = state.next_deleted_paste_undo_token();
+    let expires_at = std::time::Instant::now() + DELETE_UNDO_TTL;
+    let expires_at_ms = (Utc::now()
+        + ChronoDuration::from_std(DELETE_UNDO_TTL)
+            .unwrap_or_else(|_| ChronoDuration::seconds(10)))
+    .timestamp_millis();
+    let deleted = {
+        let (folder_guard, _mutation_guard) =
+            match localpaste_server::locks::acquire_folder_scoped_mutation_guards(
+                &state.db,
+                state.locks.as_ref(),
+                id.as_str(),
+                "Paste is currently open for editing.",
+                Some(&state.lock_owner_id),
+            ) {
+                Ok(guards) => guards,
+                Err(err) => {
+                    send_error(
+                        &state.evt_tx,
+                        CoreErrorSource::Other,
+                        format!("Delete failed: {}", err),
+                    );
+                    return;
+                }
+            };
 
-    let deleted = TransactionOps::delete_paste_with_folder_locked(&state.db, &folder_guard, &id);
-    match deleted {
-        Ok(true) => {
-            state.query_cache.invalidate();
-            let _ = state.evt_tx.send(CoreEvent::PasteDeleted { id });
+        match TransactionOps::delete_paste_with_folder_staged_undo_locked(
+            &state.db,
+            &folder_guard,
+            &id,
+            undo_token.as_str(),
+            expires_at_ms,
+        ) {
+            Ok(deleted) => Ok(DeletePasteOutcome::WithUndo(deleted)),
+            Err(err) if delete_undo_staging_can_fallback(&err) => {
+                warn!(
+                    paste_id = id.as_str(),
+                    "delete undo staging could not copy historical version content; deleting without undo: {}",
+                    err
+                );
+                TransactionOps::delete_paste_with_folder_locked(&state.db, &folder_guard, &id)
+                    .map(DeletePasteOutcome::WithoutUndo)
+            }
+            Err(err) => Err(err),
         }
-        Ok(false) => {
+    };
+    match deleted {
+        Ok(DeletePasteOutcome::WithUndo(true)) => {
+            state.query_cache.invalidate();
+            state.register_deleted_paste_undo(undo_token.clone(), expires_at);
+            let _ = state.evt_tx.send(CoreEvent::PasteDeleted {
+                id,
+                undo_token: Some(undo_token),
+            });
+        }
+        Ok(DeletePasteOutcome::WithoutUndo(true)) => {
+            state.query_cache.invalidate();
+            let _ = state.evt_tx.send(CoreEvent::PasteDeleted {
+                id,
+                undo_token: None,
+            });
+        }
+        Ok(DeletePasteOutcome::WithUndo(false) | DeletePasteOutcome::WithoutUndo(false)) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::PasteMissing { id });
         }
@@ -353,6 +413,48 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
                 CoreErrorSource::Other,
                 format!("Delete failed: {}", err),
             );
+        }
+    }
+}
+
+/// Restores a recently deleted paste from the backend undo buffer.
+///
+/// # Arguments
+/// - `state`: Worker state containing db, undo buffer, and event channel handles.
+/// - `undo_token`: Token emitted by a prior delete event.
+pub(super) fn handle_restore_deleted_paste(state: &mut WorkerState, undo_token: String) {
+    if !state.pending_deleted_paste_token(undo_token.as_str()) {
+        let _ = state.evt_tx.send(CoreEvent::PasteRestoreFailed {
+            undo_token,
+            message: "Undo delete expired.".to_string(),
+            retryable: false,
+        });
+        return;
+    }
+
+    match TransactionOps::restore_deleted_paste_by_token(&state.db, undo_token.as_str()) {
+        Ok(Some(paste)) => {
+            state.query_cache.invalidate();
+            state.discard_deleted_paste_undo(undo_token.as_str());
+            let _ = state
+                .evt_tx
+                .send(CoreEvent::PasteRestored { paste, undo_token });
+        }
+        Ok(None) => {
+            state.discard_deleted_paste_undo(undo_token.as_str());
+            let _ = state.evt_tx.send(CoreEvent::PasteRestoreFailed {
+                undo_token,
+                message: "Undo delete expired.".to_string(),
+                retryable: false,
+            });
+        }
+        Err(err) => {
+            error!("backend restore deleted paste failed: {}", err);
+            let _ = state.evt_tx.send(CoreEvent::PasteRestoreFailed {
+                undo_token,
+                message: format!("Undo delete failed: {}", err),
+                retryable: true,
+            });
         }
     }
 }
@@ -438,6 +540,7 @@ pub(super) fn handle_reset_paste_hard_to_version(
     state: &mut WorkerState,
     id: String,
     version_id_ms: u64,
+    preserve_current_head: bool,
 ) {
     let reset_result = {
         let _mutation_guard = match localpaste_server::locks::acquire_paste_mutation_guard(
@@ -456,19 +559,32 @@ pub(super) fn handle_reset_paste_hard_to_version(
                 return;
             }
         };
-        state
-            .db
-            .pastes
-            .reset_hard_to_version(id.as_str(), version_id_ms, state.max_paste_size)
+        if preserve_current_head {
+            state
+                .db
+                .pastes
+                .reset_hard_to_version_preserving_current_head(
+                    id.as_str(),
+                    version_id_ms,
+                    state.max_paste_size,
+                )
+        } else {
+            state
+                .db
+                .pastes
+                .reset_hard_to_version(id.as_str(), version_id_ms, state.max_paste_size)
+        }
     };
 
     match reset_result {
         Ok(Some(paste)) => {
             state.query_cache.invalidate();
             let _ = state.evt_tx.send(CoreEvent::PasteResetToVersion { paste });
-            // Reset refresh should preserve the same history window depth the GUI
-            // requested for detached version workflows.
-            handle_list_paste_versions(state, id, VERSION_WORKFLOW_LIST_LIMIT);
+            // This is the user's configured retained history depth, not the
+            // default page size. Without paging, the recovery workflow must keep
+            // every retained snapshot reachable after a reset refresh.
+            let limit = state.db.paste_version_retention_limit();
+            handle_list_paste_versions(state, id, limit);
         }
         Ok(None) => match state.db.pastes.get(id.as_str()) {
             Ok(Some(_)) => send_error(

@@ -648,11 +648,7 @@ impl LocalPasteApp {
         paste_id: &str,
     ) {
         let text_len = text.len_bytes();
-        let edit_hint = if self.is_virtual_editor_mode() {
-            self.highlight_edit_hint.take()
-        } else {
-            None
-        };
+        let edit_hint = self.highlight_edit_hint.take();
         let patch_base = [
             self.highlight_staged.as_ref(),
             self.highlight_render.as_ref(),

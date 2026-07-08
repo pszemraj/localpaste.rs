@@ -1,15 +1,5 @@
 //! Shared normalization helpers for optional string request fields.
 
-/// Normalize optional identifiers for create/list/search semantics.
-///
-/// Empty or whitespace-only values are treated as absent.
-///
-/// # Returns
-/// `None` for blank input, otherwise a trimmed non-empty string.
-pub(super) fn normalize_optional_for_create(value: Option<String>) -> Option<String> {
-    localpaste_core::text::normalize_optional_nonempty(value)
-}
-
 /// Normalize optional identifiers for update semantics.
 ///
 /// Empty or whitespace-only values are preserved as explicit clear markers.

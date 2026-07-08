@@ -1,6 +1,5 @@
-//! Small state accessors shared across editor modes.
+//! Small state accessors shared across editor state code.
 
-use super::editor::EditorMode;
 use super::LocalPasteApp;
 use crate::backend::PasteSummary;
 
@@ -26,45 +25,28 @@ impl LocalPasteApp {
         self.command_palette_open || self.shortcut_help_open || self.version_overlay_open()
     }
 
-    /// Returns whether the app is currently in interactive virtual-editor mode.
+    /// Returns active buffer length in bytes.
     ///
     /// # Returns
-    /// `true` when the active editor mode is [`EditorMode::VirtualEditor`].
-    pub(super) fn is_virtual_editor_mode(&self) -> bool {
-        self.editor_mode == EditorMode::VirtualEditor
-    }
-
-    /// Returns active buffer length in bytes for the current editor mode.
-    ///
-    /// # Returns
-    /// UTF-8 byte count from virtual buffer or text-edit buffer.
+    /// UTF-8 byte count from the virtual editor buffer.
     pub(super) fn active_text_len_bytes(&self) -> usize {
-        match self.editor_mode {
-            EditorMode::VirtualEditor => self.virtual_editor_buffer.len_bytes(),
-            EditorMode::VirtualPreview => self.selected_content.len(),
-        }
+        self.virtual_editor_buffer.len_bytes()
     }
 
-    /// Returns active buffer length in characters for the current editor mode.
+    /// Returns active buffer length in characters.
     ///
     /// # Returns
-    /// Character count from virtual buffer or text-edit buffer.
+    /// Character count from the virtual editor buffer.
     pub(super) fn active_text_chars(&self) -> usize {
-        match self.editor_mode {
-            EditorMode::VirtualEditor => self.virtual_editor_buffer.len_chars(),
-            EditorMode::VirtualPreview => self.selected_content.chars_len(),
-        }
+        self.virtual_editor_buffer.len_chars()
     }
 
-    /// Returns active edit revision for the current editor mode.
+    /// Returns active edit revision.
     ///
     /// # Returns
-    /// Monotonic revision counter for active buffer.
+    /// Monotonic revision counter for the virtual editor buffer.
     pub(super) fn active_revision(&self) -> u64 {
-        match self.editor_mode {
-            EditorMode::VirtualEditor => self.virtual_editor_buffer.revision(),
-            EditorMode::VirtualPreview => self.selected_content.revision(),
-        }
+        self.virtual_editor_buffer.revision()
     }
 
     /// Returns an owned snapshot of active editor text.
@@ -72,10 +54,7 @@ impl LocalPasteApp {
     /// # Returns
     /// Current content as a new [`String`].
     pub(super) fn active_snapshot(&self) -> String {
-        match self.editor_mode {
-            EditorMode::VirtualEditor => self.virtual_editor_buffer.to_string(),
-            EditorMode::VirtualPreview => self.selected_content.to_string(),
-        }
+        self.virtual_editor_buffer.to_string()
     }
 
     /// Returns the current selected list/search summary when available.

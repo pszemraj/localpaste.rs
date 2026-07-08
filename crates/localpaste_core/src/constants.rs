@@ -12,6 +12,10 @@ pub const MAX_DIFF_INPUT_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_AUTO_SAVE_INTERVAL_MS: u64 = 2_000;
 /// Default minimum interval between persisted paste versions.
 pub const DEFAULT_PASTE_VERSION_INTERVAL_SECS: u64 = 300;
+/// Default maximum historical snapshots retained per paste.
+pub const DEFAULT_PASTE_VERSION_RETENTION_LIMIT: usize = 200;
+/// Maximum accepted value for historical snapshots retained per paste under the serialized metadata model.
+pub const MAX_PASTE_VERSION_RETENTION_LIMIT: usize = 1_000;
 
 /// Default list and search limits used by GUI list pagination.
 pub const DEFAULT_LIST_PASTES_LIMIT: usize = 512;
@@ -22,6 +26,10 @@ pub const DEFAULT_SEARCH_PASTES_LIMIT: usize = 512;
 pub const DEFAULT_CLI_SERVER_URL: &str = "http://localhost:38411";
 /// Discovery filename for the active embedded API address.
 pub const API_ADDR_FILE_NAME: &str = ".api-addr";
+/// Response header used by CLI discovery to identify LocalPaste endpoints.
+pub const LOCALPASTE_SERVER_HEADER: &str = "x-localpaste-server";
+/// Response header value used by CLI discovery to identify LocalPaste endpoints.
+pub const LOCALPASTE_SERVER_VALUE: &str = "1";
 
 /// Process-lifetime owner lock file used to detect active writers safely.
 pub const DB_OWNER_LOCK_FILE_NAME: &str = "db.owner.lock";

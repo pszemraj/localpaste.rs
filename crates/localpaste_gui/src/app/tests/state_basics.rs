@@ -42,7 +42,7 @@ fn paste_missing_updates_selection_and_list_matrix() {
                 assert!(harness.app.pastes.is_empty());
                 assert!(harness.app.selected_id.is_none());
                 assert!(harness.app.selected_paste.is_none());
-                assert_eq!(harness.app.selected_content.len(), 0);
+                assert_eq!(harness.app.active_text_chars(), 0);
                 assert!(harness.app.status.is_some());
             }
             MissingCase::NonSelected => {
@@ -138,33 +138,6 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
     }
 }
 
-#[test]
-fn set_status_pushes_toast_feedback() {
-    let mut harness = make_app();
-    harness.app.set_status("Saved metadata.");
-
-    assert!(harness.app.status.is_some());
-    assert_eq!(harness.app.toasts.len(), 1);
-    assert_eq!(
-        harness.app.toasts.back().map(|toast| toast.text.as_str()),
-        Some("Saved metadata.")
-    );
-}
-
-#[test]
-fn toast_queue_dedupes_tail_and_caps_length() {
-    let mut harness = make_app();
-
-    harness.app.set_status("Repeated");
-    harness.app.set_status("Repeated");
-    assert_eq!(harness.app.toasts.len(), 1);
-
-    for idx in 0..(TOAST_LIMIT + 2) {
-        harness.app.set_status(format!("Toast {}", idx));
-    }
-    assert_eq!(harness.app.toasts.len(), TOAST_LIMIT);
-}
-
 fn pressed_key(key: eframe::egui::Key) -> eframe::egui::Event {
     eframe::egui::Event::Key {
         key,
@@ -172,6 +145,148 @@ fn pressed_key(key: eframe::egui::Key) -> eframe::egui::Event {
         pressed: true,
         repeat: false,
         modifiers: eframe::egui::Modifiers::NONE,
+    }
+}
+
+fn output_has_visible_true(output: &eframe::egui::FullOutput) -> bool {
+    output.viewport_output.values().any(|viewport| {
+        viewport
+            .commands
+            .iter()
+            .any(|command| matches!(command, eframe::egui::ViewportCommand::Visible(true)))
+    })
+}
+
+fn shortcut_raw_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
+    egui::RawInput {
+        modifiers,
+        events: vec![key_event(key, modifiers)],
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1200.0, 900.0),
+        )),
+        ..Default::default()
+    }
+}
+
+fn primary_command_shift_modifiers() -> egui::Modifiers {
+    let mut modifiers = primary_command_modifiers();
+    modifiers.shift = true;
+    modifiers
+}
+
+#[test]
+fn runtime_shortcuts_drive_full_update_state_and_commands() {
+    let mut help = make_app();
+    let ctx = egui::Context::default();
+    run_full_update_with_input(
+        &mut help.app,
+        &ctx,
+        shortcut_raw_input(egui::Key::F1, egui::Modifiers::default()),
+    );
+    assert!(help.app.shortcut_help_open);
+    run_full_update_with_input(
+        &mut help.app,
+        &ctx,
+        shortcut_raw_input(egui::Key::F1, egui::Modifiers::default()),
+    );
+    assert!(!help.app.shortcut_help_open);
+
+    let mut palette = make_app();
+    palette.app.command_palette_query = "stale".to_string();
+    palette.app.command_palette_selected = 4;
+    palette
+        .app
+        .palette_search_results
+        .push(test_summary("beta", "Beta", None, 4));
+    run_full_update_with_input(
+        &mut palette.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::P, primary_command_shift_modifiers()),
+    );
+    assert!(palette.app.command_palette_open);
+    assert!(palette.app.command_palette_query.is_empty());
+    assert_eq!(palette.app.command_palette_selected, 0);
+    assert!(palette.app.palette_search_results.is_empty());
+
+    let mut legacy_palette = make_app();
+    run_full_update_with_input(
+        &mut legacy_palette.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::K, primary_command_modifiers()),
+    );
+    assert!(legacy_palette.app.command_palette_open);
+
+    let mut properties = make_app();
+    run_full_update_with_input(
+        &mut properties.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::I, primary_command_modifiers()),
+    );
+    assert!(properties.app.properties_drawer_open);
+
+    let mut search = make_app();
+    let ctx = egui::Context::default();
+    run_full_update_with_input(
+        &mut search.app,
+        &ctx,
+        shortcut_raw_input(egui::Key::F, primary_command_modifiers()),
+    );
+    assert!(
+        ctx.memory(|memory| memory.has_focus(egui::Id::new(SEARCH_INPUT_ID))),
+        "Ctrl/Cmd+F should focus the rendered sidebar search input"
+    );
+
+    let mut new_paste = make_app();
+    run_full_update_with_input(
+        &mut new_paste.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::N, primary_command_modifiers()),
+    );
+    match recv_cmd(&new_paste.cmd_rx) {
+        CoreCmd::CreatePaste { content } => assert!(content.is_empty()),
+        other => panic!("expected new-paste command, got {:?}", other),
+    }
+
+    let mut save = make_app();
+    set_active_content(&mut save.app, "shortcut saved");
+    save.app.save_status = SaveStatus::Dirty;
+    save.app.metadata_dirty = true;
+    save.app.edit_name = "Shortcut Saved".to_string();
+    save.app.edit_tags = "shortcut, dispatch".to_string();
+    run_full_update_with_input(
+        &mut save.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::S, primary_command_modifiers()),
+    );
+    match recv_cmd(&save.cmd_rx) {
+        CoreCmd::UpdatePasteVirtual { id, content, .. } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(content.to_string(), "shortcut saved");
+        }
+        other => panic!("expected shortcut content save command, got {:?}", other),
+    }
+    match recv_cmd(&save.cmd_rx) {
+        CoreCmd::UpdatePasteMeta { id, name, tags, .. } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(name.as_deref(), Some("Shortcut Saved"));
+            assert_eq!(
+                tags,
+                Some(vec!["shortcut".to_string(), "dispatch".to_string()])
+            );
+        }
+        other => panic!("expected shortcut metadata save command, got {:?}", other),
+    }
+
+    let mut delete = make_app();
+    run_full_update_with_input(
+        &mut delete.app,
+        &egui::Context::default(),
+        shortcut_raw_input(egui::Key::Delete, primary_command_modifiers()),
+    );
+    match recv_cmd(&delete.cmd_rx) {
+        CoreCmd::DeletePaste { id } => assert_eq!(id, "alpha"),
+        other => panic!("expected delete shortcut command, got {:?}", other),
     }
 }
 
@@ -198,6 +313,33 @@ fn shortcut_help_closes_on_escape() {
 }
 
 #[test]
+fn first_full_update_reveals_hidden_window_once() {
+    let mut harness = make_app();
+    let ctx = eframe::egui::Context::default();
+    harness.app.ensure_style(&ctx);
+
+    let mut frame = eframe::Frame::_new_kittest();
+    let first_output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
+        eframe::App::update(&mut harness.app, ctx, &mut frame);
+    });
+
+    assert!(harness.app.window_shown_once);
+    assert!(
+        output_has_visible_true(&first_output),
+        "first update should reveal the initially hidden native window"
+    );
+
+    let second_output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
+        eframe::App::update(&mut harness.app, ctx, &mut frame);
+    });
+
+    assert!(
+        !output_has_visible_true(&second_output),
+        "subsequent updates should not keep emitting viewport reveal commands"
+    );
+}
+
+#[test]
 fn history_modal_closes_on_escape() {
     let mut harness = make_app();
     harness.app.version_ui.history_modal_open = true;
@@ -220,21 +362,55 @@ fn history_modal_closes_on_escape() {
 }
 
 #[test]
-fn editor_buffer_tracks_char_len() {
-    let mut buffer = EditorBuffer::new("ab".to_string());
-    assert_eq!(buffer.chars_len(), 2);
+fn history_modal_headless_render_handles_long_inline_snapshot_band() {
+    let mut harness = make_app();
+    let long_snapshot = (0..180)
+        .map(|idx| format!("line {idx}: long inline history preview"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let now = chrono::Utc::now();
+    harness.app.version_ui.history_modal_open = true;
+    harness.app.version_ui.history_versions = vec![localpaste_core::models::paste::VersionMeta {
+        version_id_ms: 42,
+        created_at: now,
+        content_hash: "history-hash".to_string(),
+        len: long_snapshot.len(),
+        language: Some("text".to_string()),
+        language_is_manual: false,
+    }];
+    harness.app.version_ui.history_selected_index = 1;
+    harness.app.version_ui.history_snapshot =
+        Some(localpaste_core::models::paste::VersionSnapshot {
+            paste_id: "alpha".to_string(),
+            version_id_ms: 42,
+            created_at: now,
+            content_hash: "history-hash".to_string(),
+            len: long_snapshot.len(),
+            language: Some("text".to_string()),
+            language_is_manual: false,
+            content: long_snapshot.clone(),
+        });
 
-    buffer.insert_text("\u{00E9}", 1);
-    assert_eq!(buffer.chars_len(), 3);
+    let ctx = eframe::egui::Context::default();
+    let output = ctx.run(
+        eframe::egui::RawInput {
+            screen_rect: Some(eframe::egui::Rect::from_min_size(
+                eframe::egui::Pos2::ZERO,
+                eframe::egui::Vec2::new(640.0, 360.0),
+            )),
+            ..Default::default()
+        },
+        |ctx| {
+            harness.app.render_history_modal(ctx);
+        },
+    );
 
-    buffer.delete_char_range(1..2);
-    assert_eq!(buffer.chars_len(), 2);
-
-    buffer.replace_with("xyz");
-    assert_eq!(buffer.chars_len(), 3);
-
-    buffer.clear();
-    assert_eq!(buffer.chars_len(), 0);
+    assert!(harness.app.version_ui.history_modal_open);
+    assert_eq!(harness.app.version_ui.history_preview_text, long_snapshot);
+    assert!(
+        !output.shapes.is_empty(),
+        "headless modal render should produce paint output for the long inline snapshot"
+    );
 }
 
 #[test]
@@ -266,6 +442,7 @@ fn delete_actions_keep_lock_until_delete_event_matrix() {
 
         harness.app.apply_event(CoreEvent::PasteDeleted {
             id: "alpha".to_string(),
+            undo_token: Some("undo-alpha".to_string()),
         });
         assert!(!harness.app.locks.is_locked("alpha").expect("is_locked"));
     }
@@ -278,9 +455,53 @@ fn paste_deleted_clears_pending_copy_action_for_deleted_id() {
 
     harness.app.apply_event(CoreEvent::PasteDeleted {
         id: "alpha".to_string(),
+        undo_token: Some("undo-alpha".to_string()),
     });
 
     assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
+fn paste_restored_selects_restored_paste_and_refreshes_list() {
+    let mut harness = make_app();
+    let mut restored = Paste::new("restored content".to_string(), "Restored".to_string());
+    restored.id = "restored-id".to_string();
+
+    harness.app.apply_event(CoreEvent::PasteRestored {
+        paste: restored,
+        undo_token: "undo-restored".to_string(),
+    });
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("restored-id"));
+    assert_eq!(
+        harness
+            .app
+            .selected_paste
+            .as_ref()
+            .map(|paste| paste.content.as_str()),
+        Some("restored content")
+    );
+    assert!(harness
+        .app
+        .all_pastes
+        .iter()
+        .any(|paste| paste.id == "restored-id"));
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Restored deleted paste.")
+    );
+    match harness
+        .cmd_rx
+        .recv_timeout(Duration::from_millis(200))
+        .expect("expected refresh command")
+    {
+        CoreCmd::ListPastes { .. } => {}
+        other => panic!("expected ListPastes refresh, got {:?}", other),
+    }
 }
 
 #[test]
@@ -313,6 +534,7 @@ fn paste_deleted_selects_visible_neighbor_matrix() {
 
         harness.app.apply_event(CoreEvent::PasteDeleted {
             id: "b".to_string(),
+            undo_token: Some("undo-b".to_string()),
         });
         assert_eq!(
             harness.app.selected_id.as_deref(),
@@ -396,7 +618,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
     struct PaletteCopyCase {
         fenced: bool,
         saved_content: &'static str,
-        selected_content: &'static str,
+        active_content: &'static str,
         paste_language: Option<&'static str>,
         edit_language: Option<&'static str>,
         expected_clipboard: &'static str,
@@ -406,7 +628,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
         PaletteCopyCase {
             fenced: false,
             saved_content: "content",
-            selected_content: "content",
+            active_content: "content",
             paste_language: None,
             edit_language: None,
             expected_clipboard: "content",
@@ -414,7 +636,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
         PaletteCopyCase {
             fenced: true,
             saved_content: "content",
-            selected_content: "content",
+            active_content: "content",
             paste_language: Some("rust"),
             edit_language: None,
             expected_clipboard: "```rust\ncontent\n```",
@@ -422,7 +644,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
         PaletteCopyCase {
             fenced: false,
             saved_content: "saved",
-            selected_content: "unsaved",
+            active_content: "unsaved",
             paste_language: Some("rust"),
             edit_language: None,
             expected_clipboard: "unsaved",
@@ -430,7 +652,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
         PaletteCopyCase {
             fenced: true,
             saved_content: "saved",
-            selected_content: "unsaved",
+            active_content: "unsaved",
             paste_language: Some("rust"),
             edit_language: Some("python"),
             expected_clipboard: "```python\nunsaved\n```",
@@ -444,10 +666,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
             paste.content = case.saved_content.to_string();
             paste.language = case.paste_language.map(str::to_string);
         }
-        harness
-            .app
-            .selected_content
-            .reset(case.selected_content.to_string());
+        set_active_content(&mut harness.app, case.active_content);
         harness.app.edit_language = case.edit_language.map(str::to_string);
         harness.app.pending_copy_action = None;
 
@@ -490,445 +709,4 @@ fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
         app.selected_id.is_none(),
         "failed reselect should clear stale selection state"
     );
-}
-
-#[test]
-fn version_refresh_reloads_selected_snapshot_after_prior_load_failure() {
-    let mut harness = make_app();
-    harness.app.selected_id = Some("alpha".to_string());
-    harness.app.version_ui.history_selected_index = 1;
-    harness.app.version_ui.history_versions = vec![localpaste_core::models::paste::VersionMeta {
-        version_id_ms: 42,
-        created_at: chrono::Utc::now(),
-        content_hash: "hash".to_string(),
-        len: 4,
-        language: None,
-        language_is_manual: false,
-    }];
-    harness.app.version_ui.history_snapshot = None;
-    harness.app.version_ui.history_loading_snapshot_id = None;
-
-    let refreshed_items = vec![localpaste_core::models::paste::VersionMeta {
-        version_id_ms: 42,
-        created_at: chrono::Utc::now(),
-        content_hash: "hash".to_string(),
-        len: 4,
-        language: None,
-        language_is_manual: false,
-    }];
-    harness.app.apply_event(CoreEvent::PasteVersionsLoaded {
-        id: "alpha".to_string(),
-        items: refreshed_items,
-    });
-
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPasteVersion { id, version_id_ms } => {
-            assert_eq!(id, "alpha");
-            assert_eq!(version_id_ms, 42);
-        }
-        other => panic!("expected GetPasteVersion command, got {:?}", other),
-    }
-}
-
-#[test]
-fn content_save_refreshes_open_history_modal_for_active_paste() {
-    let mut harness = make_app();
-    harness.app.selected_id = Some("alpha".to_string());
-    harness.app.version_ui.history_modal_open = true;
-
-    let mut saved = Paste::new("updated".to_string(), "Alpha".to_string());
-    saved.id = "alpha".to_string();
-
-    harness
-        .app
-        .apply_event(CoreEvent::PasteSaved { paste: saved });
-
-    match harness
-        .cmd_rx
-        .recv_timeout(Duration::from_millis(200))
-        .expect("expected version refresh command")
-    {
-        CoreCmd::ListPasteVersions { id, limit } => {
-            assert_eq!(id, "alpha");
-            assert_eq!(limit, 200);
-        }
-        other => panic!("expected ListPasteVersions command, got {:?}", other),
-    }
-}
-
-#[test]
-fn reset_to_version_invalidates_active_search_dispatch_state() {
-    let mut harness = make_app();
-    harness.app.search_query = "alpha".to_string();
-    harness.app.search_last_sent = "alpha".to_string();
-    harness.app.search_last_input_at = None;
-    harness.app.selected_id = Some("alpha".to_string());
-
-    let mut reset_paste = Paste::new("reset content".to_string(), "Alpha".to_string());
-    reset_paste.id = "alpha".to_string();
-
-    harness
-        .app
-        .apply_event(CoreEvent::PasteResetToVersion { paste: reset_paste });
-
-    assert!(
-        harness.app.search_last_sent.is_empty(),
-        "reset should force a new backend search when query text is unchanged"
-    );
-    assert!(
-        harness.app.search_last_input_at.is_some(),
-        "search dispatch timestamp should be rewound so maybe_dispatch_search sends immediately"
-    );
-}
-
-#[test]
-fn reset_to_version_reprojects_sidebar_filters_without_search_query() {
-    let mut harness = make_app();
-    harness.app.all_pastes = vec![
-        test_summary("alpha", "Alpha", Some("rust"), 7),
-        test_summary("beta", "Beta", Some("rust"), 5),
-    ];
-    harness.app.pastes = harness.app.all_pastes.clone();
-    harness
-        .app
-        .set_active_language_filter(Some("rust".to_string()));
-    harness.app.selected_id = Some("alpha".to_string());
-
-    let mut reset_paste = Paste::new("reset content".to_string(), "Alpha".to_string());
-    reset_paste.id = "alpha".to_string();
-    reset_paste.language = Some("python".to_string());
-    reset_paste.language_is_manual = true;
-
-    harness
-        .app
-        .apply_event(CoreEvent::PasteResetToVersion { paste: reset_paste });
-
-    assert_eq!(
-        harness
-            .app
-            .pastes
-            .iter()
-            .map(|item| item.id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["beta"],
-        "reset should immediately reproject active language-filter results"
-    );
-    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
-        other => panic!("expected GetPaste command, got {:?}", other),
-    }
-}
-
-#[test]
-fn history_reset_confirm_keeps_original_target_after_selection_changes() {
-    let mut harness = make_app();
-    let version = |version_id_ms| localpaste_core::models::paste::VersionMeta {
-        version_id_ms,
-        created_at: chrono::Utc::now(),
-        content_hash: format!("hash-{version_id_ms}"),
-        len: 4,
-        language: None,
-        language_is_manual: false,
-    };
-    harness.app.version_ui.history_versions = vec![version(41), version(42)];
-    harness.app.version_ui.history_selected_index = 1;
-
-    harness.app.open_history_reset_confirm();
-    assert_eq!(
-        harness.app.version_ui.history_reset_confirm_target,
-        Some(41)
-    );
-
-    harness.app.version_ui.history_selected_index = 2;
-    harness.app.reset_selected_history_version();
-
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::ResetPasteHardToVersion { id, version_id_ms } => {
-            assert_eq!(id, "alpha");
-            assert_eq!(version_id_ms, 41);
-        }
-        other => panic!("expected ResetPasteHardToVersion command, got {:?}", other),
-    }
-    assert_eq!(
-        harness
-            .app
-            .version_ui
-            .history_reset_in_flight_paste_id
-            .as_deref(),
-        Some("alpha")
-    );
-    assert!(harness
-        .app
-        .version_ui
-        .history_reset_confirm_target
-        .is_none());
-}
-
-#[test]
-fn history_reset_is_blocked_while_local_changes_are_unsaved_or_saving_matrix() {
-    #[derive(Clone, Copy)]
-    enum ResetBlockCase {
-        ContentDirty,
-        ContentSaving,
-        MetadataDirty,
-        MetadataSaving,
-    }
-
-    for case in [
-        ResetBlockCase::ContentDirty,
-        ResetBlockCase::ContentSaving,
-        ResetBlockCase::MetadataDirty,
-        ResetBlockCase::MetadataSaving,
-    ] {
-        let mut harness = make_app();
-        harness.app.version_ui.history_versions =
-            vec![localpaste_core::models::paste::VersionMeta {
-                version_id_ms: 42,
-                created_at: chrono::Utc::now(),
-                content_hash: "hash".to_string(),
-                len: 4,
-                language: None,
-                language_is_manual: false,
-            }];
-        harness.app.version_ui.history_selected_index = 1;
-        harness.app.open_history_reset_confirm();
-
-        match case {
-            ResetBlockCase::ContentDirty => {
-                harness.app.save_status = SaveStatus::Dirty;
-            }
-            ResetBlockCase::ContentSaving => {
-                harness.app.save_status = SaveStatus::Saving;
-                harness.app.save_in_flight = true;
-            }
-            ResetBlockCase::MetadataDirty => {
-                harness.app.metadata_dirty = true;
-            }
-            ResetBlockCase::MetadataSaving => {
-                harness.app.metadata_save_in_flight = true;
-            }
-        }
-
-        harness.app.reset_selected_history_version();
-
-        assert!(harness
-            .app
-            .version_ui
-            .history_reset_in_flight_paste_id
-            .is_none());
-        assert_eq!(
-            harness.app.version_ui.history_reset_confirm_target,
-            Some(42)
-        );
-        assert_eq!(
-            harness
-                .app
-                .status
-                .as_ref()
-                .map(|status| status.text.as_str()),
-            Some("Reset is unavailable while local changes are unsaved or saving.")
-        );
-        assert!(matches!(
-            harness.cmd_rx.try_recv(),
-            Err(TryRecvError::Empty)
-        ));
-    }
-}
-
-#[test]
-fn history_reset_in_flight_blocks_selection_switches_until_matching_ack() {
-    let mut harness = make_app();
-    harness.app.all_pastes = vec![
-        test_summary("alpha", "Alpha", None, 7),
-        test_summary("beta", "Beta", None, 5),
-    ];
-    harness.app.pastes = harness.app.all_pastes.clone();
-    harness
-        .app
-        .locks
-        .acquire("alpha", &harness.app.lock_owner_id)
-        .expect("acquire alpha lock");
-    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
-
-    assert!(harness.app.reset_transition_active());
-    assert!(!harness.app.select_paste("beta".to_string()));
-    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
-    assert!(
-        harness
-            .app
-            .locks
-            .is_locked("alpha")
-            .expect("alpha lock state"),
-        "pending reset should keep the current paste locked until ack/error"
-    );
-    assert_eq!(
-        harness
-            .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Reset in progress; editor is temporarily read-only.")
-    );
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
-
-    let mut reset_paste = Paste::new("reset content".to_string(), "Alpha".to_string());
-    reset_paste.id = "alpha".to_string();
-    harness
-        .app
-        .apply_event(CoreEvent::PasteResetToVersion { paste: reset_paste });
-
-    assert!(harness
-        .app
-        .version_ui
-        .history_reset_in_flight_paste_id
-        .is_none());
-
-    assert!(harness.app.select_paste("beta".to_string()));
-    match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
-        other => panic!("expected GetPaste command, got {:?}", other),
-    }
-}
-
-#[test]
-fn history_reset_in_flight_preserves_selection_across_list_reprojection() {
-    let mut harness = make_app();
-    harness.app.all_pastes = vec![
-        test_summary("alpha", "Alpha", None, 7),
-        test_summary("beta", "Beta", None, 5),
-    ];
-    harness.app.pastes = vec![test_summary("beta", "Beta", None, 5)];
-    harness
-        .app
-        .locks
-        .acquire("alpha", &harness.app.lock_owner_id)
-        .expect("acquire alpha lock");
-    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
-
-    harness.app.ensure_selection_after_list_update();
-
-    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
-    assert!(
-        harness
-            .app
-            .locks
-            .is_locked("alpha")
-            .expect("alpha lock state"),
-        "filter/search reprojection should not release the selected paste lock during reset"
-    );
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
-}
-
-#[test]
-fn reset_transition_is_inactive_without_selected_or_pending_reset_paste() {
-    let mut harness = make_app();
-    harness.app.selected_id = None;
-    harness.app.selected_paste = None;
-    harness.app.version_ui.history_reset_in_flight_paste_id = None;
-
-    assert!(
-        !harness.app.reset_transition_active(),
-        "lack of selection must not be mistaken for a pending reset fence"
-    );
-}
-
-#[test]
-fn content_save_error_does_not_clear_reset_pending_for_other_paste() {
-    let mut harness = make_app();
-    harness.app.selected_id = Some("beta".to_string());
-    harness.app.save_in_flight = true;
-    harness.app.save_status = SaveStatus::Saving;
-    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
-
-    harness.app.apply_event(CoreEvent::Error {
-        source: crate::backend::CoreErrorSource::SaveContent,
-        message: "Update failed: backend unavailable.".to_string(),
-    });
-
-    assert_eq!(
-        harness
-            .app
-            .version_ui
-            .history_reset_in_flight_paste_id
-            .as_deref(),
-        Some("alpha")
-    );
-}
-
-#[test]
-fn history_reset_in_flight_blocks_create_delete_and_paste_as_new_requests() {
-    let mut harness = make_app();
-    let ctx = eframe::egui::Context::default();
-    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
-
-    harness
-        .app
-        .create_new_paste_with_content("hello".to_string());
-    harness.app.delete_selected();
-    harness.app.send_palette_delete("alpha".to_string());
-    harness.app.request_paste_as_new(&ctx);
-
-    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
-    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
-    assert_eq!(
-        harness
-            .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Reset in progress; editor is temporarily read-only.")
-    );
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
-}
-
-#[test]
-fn history_reset_in_flight_blocks_dirtying_and_save_dispatches() {
-    let mut harness = make_app();
-    harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".to_string());
-
-    harness.app.mark_dirty();
-    assert!(matches!(harness.app.save_status, SaveStatus::Saved));
-    assert!(harness.app.last_edit_at.is_none());
-
-    harness.app.selected_content.reset("auto-save".to_string());
-    harness.app.save_status = SaveStatus::Dirty;
-    harness.app.last_edit_at =
-        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
-    harness.app.maybe_autosave();
-    assert!(!harness.app.save_in_flight);
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
-
-    harness.app.save_now();
-    assert!(!harness.app.save_in_flight);
-    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
-
-    harness.app.metadata_dirty = true;
-    harness.app.save_metadata_now();
-    assert!(!harness.app.metadata_save_in_flight);
-    assert!(harness.app.metadata_dirty);
-    assert_eq!(
-        harness
-            .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Reset in progress; editor is temporarily read-only.")
-    );
-    assert!(matches!(
-        harness.cmd_rx.try_recv(),
-        Err(TryRecvError::Empty)
-    ));
 }

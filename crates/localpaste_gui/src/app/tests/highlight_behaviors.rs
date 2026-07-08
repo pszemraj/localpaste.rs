@@ -1,16 +1,19 @@
 //! Highlight cache/render alignment tests for editor and staged-highlight flows.
 
+use super::super::editor::EditorLineIndex;
 use super::super::highlight::{
     EditorLayoutCache, EditorLayoutRequest, HighlightPatch, HighlightRenderLine,
     HighlightRequestMeta, HighlightRequestText, HighlightWorker, SyntectSettings, VirtualEditHint,
 };
 use super::*;
+use eframe::egui::TextBuffer as _;
 
 #[test]
 fn highlight_cache_reuses_layout_when_unchanged() {
     let mut cache = EditorLayoutCache::default();
-    let buffer = EditorBuffer::new("def foo():\n    return 1\n".to_string());
+    let buffer = String::from("def foo():\n    return 1\n");
     let syntect = SyntectSettings::default();
+    let revision = 0;
 
     egui::__run_test_ctx(|ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -19,7 +22,7 @@ fn highlight_cache_reuses_layout_when_unchanged() {
             let _ = cache.layout(EditorLayoutRequest {
                 ui,
                 text: &buffer,
-                text_revision: Some(buffer.revision()),
+                text_revision: Some(revision),
                 wrap_width: 400.0,
                 language_hint: "py",
                 use_plain: false,
@@ -34,7 +37,7 @@ fn highlight_cache_reuses_layout_when_unchanged() {
             let _ = cache.layout(EditorLayoutRequest {
                 ui,
                 text: &buffer,
-                text_revision: Some(buffer.revision()),
+                text_revision: Some(revision),
                 wrap_width: 400.0,
                 language_hint: "py",
                 use_plain: false,
@@ -54,8 +57,9 @@ fn highlight_cache_reuses_layout_when_unchanged() {
 #[test]
 fn highlight_cache_updates_after_line_edit() {
     let mut cache = EditorLayoutCache::default();
-    let mut buffer = EditorBuffer::new("line1\nline2\nline3\n".to_string());
+    let mut buffer = String::from("line1\nline2\nline3\n");
     let syntect = SyntectSettings::default();
+    let mut revision = 0;
 
     egui::__run_test_ctx(|ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -64,7 +68,7 @@ fn highlight_cache_updates_after_line_edit() {
             let _ = cache.layout(EditorLayoutRequest {
                 ui,
                 text: &buffer,
-                text_revision: Some(buffer.revision()),
+                text_revision: Some(revision),
                 wrap_width: 400.0,
                 language_hint: "py",
                 use_plain: false,
@@ -76,11 +80,12 @@ fn highlight_cache_updates_after_line_edit() {
             });
 
             buffer.insert_text("x", 0);
+            revision += 1;
 
             let _ = cache.layout(EditorLayoutRequest {
                 ui,
                 text: &buffer,
-                text_revision: Some(buffer.revision()),
+                text_revision: Some(revision),
                 wrap_width: 400.0,
                 language_hint: "py",
                 use_plain: false,
@@ -138,26 +143,36 @@ fn align_old_lines_handles_insert_delete_and_replace_cases() {
 
 #[test]
 fn editor_line_index_tracks_lines_and_trailing_newlines() {
-    let buffer = EditorBuffer::new("alpha\nbeta\n".to_string());
+    let text = "alpha\nbeta\n";
     let mut index = EditorLineIndex::default();
-    index.ensure_for(buffer.revision(), buffer.as_str());
+    index.rebuild(0, text);
 
     assert_eq!(index.line_count(), 3);
-    assert_eq!(index.line_without_newline(buffer.as_str(), 0), "alpha");
-    assert_eq!(index.line_without_newline(buffer.as_str(), 1), "beta");
-    assert_eq!(index.line_without_newline(buffer.as_str(), 2), "");
+    assert_eq!(index.line_without_newline(text, 0), "alpha");
+    assert_eq!(index.line_without_newline(text, 1), "beta");
+    assert_eq!(index.line_without_newline(text, 2), "");
 }
 
 fn assert_virtual_selection_text(
     content: &str,
-    start: VirtualCursor,
-    end: VirtualCursor,
+    start: (usize, usize),
+    end: (usize, usize),
     expected: &str,
 ) {
     let mut harness = make_app();
-    harness.app.selected_content.reset(content.to_string());
-    harness.app.virtual_selection.select_range(start, end);
-    let copied = harness.app.virtual_selection_text().expect("copied text");
+    harness.app.reset_virtual_editor(content);
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    let start = harness
+        .app
+        .virtual_editor_buffer
+        .line_col_to_char(start.0, start.1);
+    let end = harness
+        .app
+        .virtual_editor_buffer
+        .line_col_to_char(end.0, end.1);
+    harness.app.virtual_editor_state.set_cursor(start, len);
+    harness.app.virtual_editor_state.move_cursor(end, len, true);
+    let copied = harness.app.virtual_selected_text().expect("copied text");
     assert_eq!(copied, expected);
 }
 
@@ -172,18 +187,8 @@ fn assert_virtual_select_line_text(content: &str, line: usize, expected: &str) {
 #[test]
 fn virtual_selection_text_matrix_preserves_line_boundaries() {
     let cases = [
-        (
-            "alpha\nbeta\ngamma",
-            VirtualCursor { line: 0, column: 2 },
-            VirtualCursor { line: 2, column: 3 },
-            "pha\nbeta\ngam",
-        ),
-        (
-            "a\n\nb",
-            VirtualCursor { line: 0, column: 1 },
-            VirtualCursor { line: 2, column: 0 },
-            "\n\n",
-        ),
+        ("alpha\nbeta\ngamma", (0, 2), (2, 3), "pha\nbeta\ngam"),
+        ("a\n\nb", (0, 1), (2, 0), "\n\n"),
     ];
 
     for (content, start, end, expected) in cases {
@@ -202,9 +207,9 @@ fn virtual_select_line_matrix_handles_terminal_and_non_terminal_lines() {
 #[test]
 fn staged_highlight_waits_for_idle() {
     let mut harness = make_app();
-    harness.app.selected_content.insert_text("x", 0);
-    let active_revision = harness.app.selected_content.revision();
-    let active_len = harness.app.selected_content.len();
+    insert_active_text(&mut harness.app, "x", 0);
+    let active_revision = harness.app.active_revision();
+    let active_len = harness.app.active_text_chars();
     harness.app.highlight_render = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: active_revision.saturating_sub(1),
@@ -257,8 +262,8 @@ fn staged_highlight_waits_for_idle() {
 #[test]
 fn staged_highlight_applies_immediately_without_current_render() {
     let mut harness = make_app();
-    let active_revision = harness.app.selected_content.revision();
-    let active_len = harness.app.selected_content.len();
+    let active_revision = harness.app.active_revision();
+    let active_len = harness.app.active_text_chars();
     harness.app.highlight_staged = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: active_revision,
@@ -289,8 +294,8 @@ fn staged_highlight_stale_matrix_drops_mismatched_revision_or_length_without_ver
     for (kind, expected_version) in cases {
         let mut harness = make_app();
         harness.app.highlight_version = expected_version;
-        let active_revision = harness.app.selected_content.revision();
-        let active_len = harness.app.selected_content.len();
+        let active_revision = harness.app.active_revision();
+        let active_len = harness.app.active_text_chars();
 
         let mut staged = HighlightRender {
             paste_id: "alpha".to_string(),
@@ -323,7 +328,7 @@ fn highlight_request_skips_when_staged_matches() {
     let render = HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 0,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -348,11 +353,9 @@ fn virtual_editor_requests_highlight_for_small_markdown_buffers() {
         rx: evt_rx,
     };
     let markdown = "# Title\n\n- item\n";
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.edit_language = Some("markdown".to_string());
     harness.app.edit_language_is_manual = true;
-    harness.app.selected_content.reset(markdown.to_string());
-    harness.app.reset_virtual_editor(markdown);
+    set_active_content(&mut harness.app, markdown);
 
     egui::__run_test_ctx(|ctx| {
         let mut style = (*ctx.style()).clone();
@@ -398,12 +401,10 @@ fn virtual_editor_plain_threshold_clears_stale_highlight_state() {
         tx: req_tx,
         rx: evt_rx,
     };
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.edit_language = Some("markdown".to_string());
     harness.app.edit_language_is_manual = true;
     let large_markdown = format!("# {}\n", "x".repeat(HIGHLIGHT_PLAIN_THRESHOLD));
-    harness.app.selected_content.reset(large_markdown.clone());
-    harness.app.reset_virtual_editor(large_markdown.as_str());
+    set_active_content(&mut harness.app, large_markdown.as_str());
 
     let revision = harness.app.active_revision();
     let text_len = harness.app.active_text_len_bytes();
@@ -462,7 +463,7 @@ fn queue_highlight_render_ignores_older_revision_when_current_exists() {
     harness.app.highlight_render = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 9,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -473,7 +474,7 @@ fn queue_highlight_render_ignores_older_revision_when_current_exists() {
     harness.app.queue_highlight_render(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 4,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -500,7 +501,7 @@ fn paste_saved_keeps_existing_highlight_render() {
     harness.app.highlight_render = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 42,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -518,32 +519,10 @@ fn paste_saved_keeps_existing_highlight_render() {
 }
 
 fn prepare_virtual_galley_cache(harness: &mut TestHarness, line_count: usize) {
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.virtual_galley_cache.prepare_frame(
         line_count,
         VirtualGalleyContext::new(
             420.0,
-            false,
-            &egui::FontId::monospace(14.0),
-            egui::Color32::WHITE,
-            1.0,
-        ),
-    );
-    for idx in 0..line_count {
-        harness.app.virtual_galley_cache.sync_line_rows(idx, 1);
-        harness
-            .app
-            .virtual_galley_cache
-            .insert(idx, 0, shaped_test_galley());
-    }
-}
-
-fn prepare_preview_galley_cache(harness: &mut TestHarness, line_count: usize) {
-    harness.app.editor_mode = EditorMode::VirtualPreview;
-    harness.app.virtual_galley_cache.prepare_frame(
-        line_count,
-        VirtualGalleyContext::new(
-            f32::INFINITY,
             false,
             &egui::FontId::monospace(14.0),
             egui::Color32::WHITE,
@@ -585,7 +564,7 @@ fn apply_patch_sequence_and_collect_evictions(
     harness.app.highlight_render = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: base_revision,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -597,9 +576,9 @@ fn apply_patch_sequence_and_collect_evictions(
         harness.app.queue_highlight_patch(HighlightPatch {
             paste_id: "alpha".to_string(),
             revision: patch.revision,
-            text_len: harness.app.selected_content.len(),
+            text_len: harness.app.active_text_chars(),
             base_revision: patch.base_revision,
-            base_text_len: harness.app.selected_content.len(),
+            base_text_len: harness.app.active_text_chars(),
             language_hint: "py".to_string(),
             theme_key: "base16-mocha.dark".to_string(),
             total_lines: base_line_lens.len(),
@@ -620,7 +599,7 @@ fn queue_highlight_patch_prefers_latest_staged_base() {
     harness.app.highlight_render = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 10,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -635,7 +614,7 @@ fn queue_highlight_patch_prefers_latest_staged_base() {
     harness.app.highlight_staged = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 11,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -650,9 +629,9 @@ fn queue_highlight_patch_prefers_latest_staged_base() {
     harness.app.queue_highlight_patch(HighlightPatch {
         paste_id: "alpha".to_string(),
         revision: 12,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: 11,
-        base_text_len: harness.app.selected_content.len(),
+        base_text_len: harness.app.active_text_chars(),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         total_lines: 3,
@@ -680,7 +659,7 @@ fn queue_highlight_patch_clears_matching_pending_request() {
     harness.app.highlight_staged = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 11,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -695,7 +674,7 @@ fn queue_highlight_patch_clears_matching_pending_request() {
     harness.app.highlight_pending = Some(super::super::highlight::HighlightRequestMeta {
         paste_id: "alpha".to_string(),
         revision: 12,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
     });
@@ -703,9 +682,9 @@ fn queue_highlight_patch_clears_matching_pending_request() {
     harness.app.queue_highlight_patch(HighlightPatch {
         paste_id: "alpha".to_string(),
         revision: 12,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: 11,
-        base_text_len: harness.app.selected_content.len(),
+        base_text_len: harness.app.active_text_chars(),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         total_lines: 3,
@@ -722,7 +701,7 @@ fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
     harness.app.highlight_render = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 5,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -737,9 +716,9 @@ fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
     harness.app.queue_highlight_patch(HighlightPatch {
         paste_id: "alpha".to_string(),
         revision: 6,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: 4,
-        base_text_len: harness.app.selected_content.len().saturating_add(99),
+        base_text_len: harness.app.active_text_chars().saturating_add(99),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         total_lines: 3,
@@ -802,13 +781,9 @@ fn chained_highlight_patches_union_galley_invalidation_ranges() {
 }
 
 #[test]
-fn virtual_preview_render_reuses_cached_galleys_across_idle_frames() {
+fn virtual_editor_render_reuses_cached_galleys_across_idle_frames() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualPreview;
-    harness
-        .app
-        .selected_content
-        .reset("alpha\nbeta\ngamma\n".to_string());
+    set_active_content(&mut harness.app, "alpha\nbeta\ngamma\n");
 
     egui::__run_test_ctx(|ctx| {
         configure_virtual_editor_test_ctx(ctx);
@@ -817,30 +792,30 @@ fn virtual_preview_render_reuses_cached_galleys_across_idle_frames() {
             .app
             .virtual_galley_cache
             .get(0, 0)
-            .expect("preview render should populate cache");
+            .expect("virtual editor render should populate cache");
 
         run_editor_panel_once(&mut harness.app, ctx, egui::RawInput::default());
         let second = harness
             .app
             .virtual_galley_cache
             .get(0, 0)
-            .expect("idle preview frame should retain cache entry");
+            .expect("idle virtual editor frame should retain cache entry");
 
         assert!(
             Arc::ptr_eq(&first, &second),
-            "unchanged preview frames should reuse shaped row galleys"
+            "unchanged virtual editor frames should reuse shaped row galleys"
         );
     });
 }
 
 #[test]
-fn apply_staged_highlight_patch_evicts_only_changed_virtual_preview_lines() {
+fn apply_staged_highlight_patch_evicts_only_changed_virtual_editor_lines() {
     let mut harness = make_app();
-    prepare_preview_galley_cache(&mut harness, 3);
+    prepare_virtual_galley_cache(&mut harness, 3);
     harness.app.highlight_render = Some(HighlightRender {
         paste_id: "alpha".to_string(),
         revision: 4,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
@@ -851,9 +826,9 @@ fn apply_staged_highlight_patch_evicts_only_changed_virtual_preview_lines() {
     harness.app.queue_highlight_patch(HighlightPatch {
         paste_id: "alpha".to_string(),
         revision: 5,
-        text_len: harness.app.selected_content.len(),
+        text_len: harness.app.active_text_chars(),
         base_revision: 4,
-        base_text_len: harness.app.selected_content.len(),
+        base_text_len: harness.app.active_text_chars(),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         total_lines: 3,
@@ -870,7 +845,6 @@ fn apply_staged_highlight_patch_evicts_only_changed_virtual_preview_lines() {
 #[test]
 fn staged_highlight_waits_for_idle_in_virtual_editor_mode() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness
         .app
         .virtual_editor_buffer
@@ -973,7 +947,7 @@ fn dispatch_highlight_request_clears_pending_when_worker_channel_is_closed() {
 
     harness.app.dispatch_highlight_request(
         harness.app.active_revision(),
-        HighlightRequestText::Owned("fn main() {}\n".to_string()),
+        HighlightRequestText::Rope(ropey::Rope::from_str("fn main() {}\n")),
         "rust",
         "base16-mocha.dark",
         "alpha",

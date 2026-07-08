@@ -2,10 +2,71 @@
 
 use super::*;
 
+fn output_has_request_paste(output: &egui::FullOutput) -> bool {
+    output.viewport_output.values().any(|viewport| {
+        viewport
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::RequestPaste))
+    })
+}
+
+#[test]
+fn sidebar_arrow_target_is_empty_list_safe() {
+    let mut harness = make_app();
+    harness.app.selected_id = Some("alpha".to_string());
+    harness.app.pastes.clear();
+
+    assert_eq!(harness.app.sidebar_arrow_target_id(1), None);
+    assert_eq!(harness.app.sidebar_arrow_target_id(-1), None);
+
+    harness.app.pastes = vec![
+        test_summary("alpha", "Alpha", None, 1),
+        test_summary("beta", "Beta", None, 1),
+    ];
+    assert_eq!(
+        harness.app.sidebar_arrow_target_id(1),
+        Some("beta".to_string())
+    );
+}
+
+#[test]
+fn focused_virtual_editor_requests_repaint_after_text_input() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("alpha");
+    set_virtual_cursor_at(&mut harness.app, 0, 5);
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
+
+    let output = run_editor_panel_once_output(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1200.0, 900.0),
+            )),
+            events: vec![egui::Event::Text("!".to_string())],
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "alpha!");
+    assert!(
+        output
+            .viewport_output
+            .values()
+            .any(|viewport| viewport.repaint_delay == Duration::ZERO),
+        "post-paint editor input must schedule an immediate repaint"
+    );
+}
+
 #[test]
 fn click_outside_editor_viewport_blurs_focus() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("line one\nline two\n");
 
     let ctx = egui::Context::default();
@@ -32,7 +93,6 @@ fn click_outside_editor_viewport_blurs_focus() {
         },
     );
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
 
     let outside_click = egui::pos2(20.0, 20.0);
     run_editor_panel_once(
@@ -53,13 +113,11 @@ fn click_outside_editor_viewport_blurs_focus() {
         },
     );
     assert!(!ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(!harness.app.virtual_editor_state.has_focus);
 }
 
 #[test]
-fn virtual_editor_window_blur_clears_focus_state() {
+fn native_window_unfocus_does_not_clear_virtual_editor_keyboard_ownership() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("line one\nline two\n");
 
     let ctx = egui::Context::default();
@@ -67,7 +125,7 @@ fn virtual_editor_window_blur_clears_focus_state() {
     let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
 
-    harness.app.focus_editor_next = true;
+    ctx.memory_mut(|m| m.request_focus(editor_id));
     run_editor_panel_once(
         &mut harness.app,
         &ctx,
@@ -88,49 +146,102 @@ fn virtual_editor_window_blur_clears_focus_state() {
             ..Default::default()
         },
     );
-    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(!harness.app.virtual_editor_state.has_focus);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(harness.app.virtual_editor_state.has_focus);
 }
 
 #[test]
-fn focus_promotion_consumes_bare_arrows_before_sidebar_routing() {
+fn focused_plain_paste_with_payload_does_not_request_second_paste() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("alpha");
+    let end = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(end, end);
+
     let ctx = egui::Context::default();
-    let _ = ctx.run(
+    configure_virtual_editor_test_ctx(&ctx);
+    let mut frame = eframe::Frame::_new_kittest();
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|memory| memory.request_focus(editor_id));
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        harness.app.update(ctx, &mut frame);
+    });
+    assert!(ctx.memory(|memory| memory.has_focus(editor_id)));
+
+    let modifiers = primary_command_modifiers();
+    let output = ctx.run(
         egui::RawInput {
-            events: vec![egui::Event::Key {
-                key: egui::Key::ArrowDown,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::default(),
-            }],
+            modifiers,
+            events: vec![
+                key_event(egui::Key::V, modifiers),
+                egui::Event::Paste(" beta".to_string()),
+            ],
             ..Default::default()
         },
         |ctx| {
-            consume_virtual_editor_focus_keys(ctx, true);
-            let sidebar_routed = ctx.input(|input| {
-                should_route_sidebar_arrows(false, input.modifiers, true, true, false, false, false)
-                    && input.key_pressed(egui::Key::ArrowDown)
-            });
-            assert!(!sidebar_routed);
+            harness.app.update(ctx, &mut frame);
         },
     );
+
+    assert_eq!(harness.app.virtual_editor_buffer.to_string(), "alpha beta");
+    assert!(harness.app.virtual_paste_applied_this_frame);
+    assert!(
+        !output_has_request_paste(&output),
+        "focused paste event should be owned by the editor without a second RequestPaste"
+    );
+}
+
+#[test]
+fn same_frame_editor_click_and_sidebar_arrow_does_not_change_selection() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("alpha\nbeta\n");
+    harness.app.pastes = vec![
+        test_summary("alpha", "Alpha", None, 7),
+        test_summary("beta", "Beta", None, 4),
+    ];
+    harness.app.all_pastes = harness.app.pastes.clone();
+    harness.app.selected_id = Some("alpha".to_string());
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    let mut frame = eframe::Frame::_new_kittest();
+    let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
+    let click_pos = egui::pos2(520.0, 700.0);
+    let _ = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            events: vec![
+                egui::Event::PointerMoved(click_pos),
+                egui::Event::PointerButton {
+                    pos: click_pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::default(),
+                },
+                key_event(egui::Key::ArrowDown, egui::Modifiers::default()),
+            ],
+            ..Default::default()
+        },
+        |ctx| {
+            harness.app.update(ctx, &mut frame);
+        },
+    );
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
 }
 
 #[test]
 fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha beta gamma");
-    harness.app.focus_editor_next = true;
 
     let ctx = egui::Context::default();
     configure_virtual_editor_test_ctx(&ctx);
     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
 
     run_full_update(&mut harness.app, &ctx, Vec::new());
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
 
     #[cfg(target_os = "macos")]
     let word_select_event = key_event(
@@ -155,7 +266,6 @@ fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
     run_full_update(&mut harness.app, &ctx, vec![word_select_event.clone()]);
     let first_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 6);
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
     assert_eq!(
         harness.app.virtual_editor_state.selection_range(),
         Some(0..first_expected)
@@ -164,7 +274,6 @@ fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
     run_full_update(&mut harness.app, &ctx, vec![word_select_event]);
     let second_expected = harness.app.virtual_editor_buffer.line_col_to_char(0, 11);
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
     assert_eq!(
         harness.app.virtual_editor_state.selection_range(),
         Some(0..second_expected)
@@ -174,17 +283,15 @@ fn platform_native_word_selection_shortcuts_keep_virtual_editor_focus() {
 #[test]
 fn line_selection_shortcut_retains_focus_for_follow_up_delete() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.reset_virtual_editor("alpha beta gamma");
-    harness.app.focus_editor_next = true;
 
     let ctx = egui::Context::default();
     configure_virtual_editor_test_ctx(&ctx);
     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    ctx.memory_mut(|m| m.request_focus(editor_id));
 
     run_full_update(&mut harness.app, &ctx, Vec::new());
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
 
     let len = harness.app.virtual_editor_buffer.len_chars();
     let cursor = harness.app.virtual_editor_buffer.line_col_to_char(0, 11);
@@ -210,7 +317,6 @@ fn line_selection_shortcut_retains_focus_for_follow_up_delete() {
 
     run_full_update(&mut harness.app, &ctx, vec![select_to_line_start]);
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
     assert_eq!(
         harness.app.virtual_editor_state.selection_range(),
         Some(0..cursor)
@@ -222,7 +328,6 @@ fn line_selection_shortcut_retains_focus_for_follow_up_delete() {
         vec![key_event(egui::Key::Backspace, egui::Modifiers::default())],
     );
     assert!(ctx.memory(|m| m.has_focus(editor_id)));
-    assert!(harness.app.virtual_editor_state.has_focus);
     assert_eq!(harness.app.virtual_editor_buffer.to_string(), "gamma");
     assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
     assert!(harness.app.virtual_editor_state.selection_range().is_none());
@@ -534,7 +639,7 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
 
     for case in cases {
         let harness = make_app();
-        let focus_state = LocalPasteApp::plain_paste_focus_state(
+        let focus_state = LocalPasteApp::keyboard_focus_state(
             case.editor_focus_pre,
             case.wants_keyboard_input_before,
         );
@@ -556,14 +661,13 @@ fn plain_paste_shortcut_routes_by_editor_focus_contract() {
 
 #[test]
 fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
-    let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
+    let harness = make_app();
 
     // Regression guard: when focus is acquired in the same frame as Ctrl/Cmd+V,
     // plain paste should stay in the editor instead of creating a new paste.
     let (request_virtual, request_new) = harness.app.resolve_plain_paste_shortcut_request(
         true,
-        LocalPasteApp::plain_paste_focus_state(true, true),
+        LocalPasteApp::keyboard_focus_state(true, true),
         false,
     );
     assert!(request_virtual);
@@ -571,7 +675,7 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
 
     let (request_virtual, request_new) = harness.app.resolve_plain_paste_shortcut_request(
         false,
-        LocalPasteApp::plain_paste_focus_state(false, false),
+        LocalPasteApp::keyboard_focus_state(false, false),
         false,
     );
     assert!(!request_virtual);
@@ -584,7 +688,6 @@ fn delete_shortcut_guard_preserves_editor_delete_ownership_and_global_unfocused_
         name: &'static str,
         wants_keyboard_input: bool,
         virtual_editor_focus_active: bool,
-        focus_promotion_requested: bool,
         expected: bool,
     }
 
@@ -593,38 +696,27 @@ fn delete_shortcut_guard_preserves_editor_delete_ownership_and_global_unfocused_
             name: "text input owns keyboard",
             wants_keyboard_input: true,
             virtual_editor_focus_active: false,
-            focus_promotion_requested: false,
             expected: false,
         },
         Case {
             name: "virtual editor focused",
             wants_keyboard_input: false,
             virtual_editor_focus_active: true,
-            focus_promotion_requested: false,
-            expected: false,
-        },
-        Case {
-            name: "virtual editor focus promotion pending",
-            wants_keyboard_input: false,
-            virtual_editor_focus_active: false,
-            focus_promotion_requested: true,
             expected: false,
         },
         Case {
             name: "non editor context",
             wants_keyboard_input: false,
             virtual_editor_focus_active: false,
-            focus_promotion_requested: false,
             expected: true,
         },
     ];
 
     for case in cases {
         let harness = make_app();
-        let focus_state = LocalPasteApp::delete_shortcut_focus_state(
-            case.wants_keyboard_input,
+        let focus_state = LocalPasteApp::keyboard_focus_state(
             case.virtual_editor_focus_active,
-            case.focus_promotion_requested,
+            case.wants_keyboard_input,
         );
         let actual = harness
             .app
@@ -731,7 +823,7 @@ fn version_overlay_blocks_selection_switches_and_auto_reselection() {
 #[test]
 fn opening_version_overlay_cancels_pending_selection_switch_before_save_ack() {
     let mut harness = make_app();
-    harness.app.selected_content.reset("dirty".to_string());
+    set_active_content(&mut harness.app, "dirty");
     harness.app.save_status = SaveStatus::Dirty;
 
     assert!(harness.app.select_paste("beta".to_string()));
@@ -776,35 +868,29 @@ fn version_overlay_allows_content_and_metadata_persistence_dispatches() {
 
         match case {
             SaveCase::Autosave => {
-                harness
-                    .app
-                    .selected_content
-                    .reset("dirty-autosave".to_string());
+                harness.app.reset_virtual_editor("dirty-autosave");
                 harness.app.save_status = SaveStatus::Dirty;
                 harness.app.last_edit_at =
                     Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
                 harness.app.maybe_autosave();
                 assert!(harness.app.save_in_flight);
                 match recv_cmd(&harness.cmd_rx) {
-                    CoreCmd::UpdatePaste { id, content } => {
+                    CoreCmd::UpdatePasteVirtual { id, content, .. } => {
                         assert_eq!(id, "alpha");
-                        assert_eq!(content, "dirty-autosave");
+                        assert_eq!(content.to_string(), "dirty-autosave");
                     }
                     other => panic!("unexpected command: {:?}", other),
                 }
             }
             SaveCase::ManualContent => {
-                harness
-                    .app
-                    .selected_content
-                    .reset("dirty-manual".to_string());
+                harness.app.reset_virtual_editor("dirty-manual");
                 harness.app.save_status = SaveStatus::Dirty;
                 harness.app.save_now();
                 assert!(harness.app.save_in_flight);
                 match recv_cmd(&harness.cmd_rx) {
-                    CoreCmd::UpdatePaste { id, content } => {
+                    CoreCmd::UpdatePasteVirtual { id, content, .. } => {
                         assert_eq!(id, "alpha");
-                        assert_eq!(content, "dirty-manual");
+                        assert_eq!(content.to_string(), "dirty-manual");
                     }
                     other => panic!("unexpected command: {:?}", other),
                 }

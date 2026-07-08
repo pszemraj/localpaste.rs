@@ -1,10 +1,36 @@
 //! Top bar and sidebar rendering for paste navigation and quick actions.
 
 use super::super::*;
+use chrono::{DateTime, Duration as ChronoDuration, Local, TimeZone, Utc};
 use eframe::egui::{self, RichText};
 
 const APP_VERSION_LABEL: &str = concat!("- v", env!("CARGO_PKG_VERSION"));
 const SIDEBAR_LANGUAGE_COLUMN_WIDTH: f32 = 84.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SidebarTimeBucket {
+    Today,
+    Yesterday,
+    ThisWeek,
+    Earlier,
+}
+
+impl SidebarTimeBucket {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Today => "Today",
+            Self::Yesterday => "Yesterday",
+            Self::ThisWeek => "This Week",
+            Self::Earlier => "Earlier",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SidebarListItem {
+    Header(SidebarTimeBucket),
+    Row(usize),
+}
 
 fn sidebar_hover_text(paste: &PasteSummary) -> String {
     let mut lines = vec![paste.name.clone()];
@@ -36,6 +62,48 @@ fn sidebar_row_text_rects(
     let lang_rect =
         egui::Rect::from_min_max(egui::pos2(lang_left, content_rect.min.y), content_rect.max);
     (title_rect, lang_rect)
+}
+
+fn sidebar_time_bucket<Tz: TimeZone>(
+    updated_at: DateTime<Utc>,
+    now: DateTime<Tz>,
+) -> SidebarTimeBucket {
+    let timezone = now.timezone();
+    let updated_day = updated_at.with_timezone(&timezone).date_naive();
+    let today = now.date_naive();
+    if updated_day == today {
+        return SidebarTimeBucket::Today;
+    }
+    if updated_day == today - ChronoDuration::days(1) {
+        return SidebarTimeBucket::Yesterday;
+    }
+    if updated_day >= today - ChronoDuration::days(7) {
+        SidebarTimeBucket::ThisWeek
+    } else {
+        SidebarTimeBucket::Earlier
+    }
+}
+
+fn build_sidebar_list_items(
+    pastes: &[PasteSummary],
+    search_query: &str,
+    now: DateTime<Local>,
+) -> Vec<SidebarListItem> {
+    if !search_query.trim().is_empty() {
+        return (0..pastes.len()).map(SidebarListItem::Row).collect();
+    }
+
+    let mut items = Vec::with_capacity(pastes.len().saturating_add(4));
+    let mut current_bucket = None;
+    for (idx, paste) in pastes.iter().enumerate() {
+        let bucket = sidebar_time_bucket(paste.updated_at, now);
+        if current_bucket != Some(bucket) {
+            items.push(SidebarListItem::Header(bucket));
+            current_bucket = Some(bucket);
+        }
+        items.push(SidebarListItem::Row(idx));
+    }
+    items
 }
 
 impl LocalPasteApp {
@@ -89,7 +157,7 @@ impl LocalPasteApp {
                 let mut search_buf = self.search_query.clone();
                 let search_resp = ui.add(
                     egui::TextEdit::singleline(&mut search_buf)
-                        .id_salt(SEARCH_INPUT_ID)
+                        .id(egui::Id::new(SEARCH_INPUT_ID))
                         .hint_text("Search pastes... (Ctrl/Cmd+F)"),
                 );
                 if self.search_focus_requested {
@@ -135,63 +203,88 @@ impl LocalPasteApp {
                 let mut pending_select: Option<String> = None;
                 let selection_blocked = self.selection_transition_block_reason().is_some();
                 let row_height = ui.spacing().interact_size.y;
+                let sidebar_items = build_sidebar_list_items(
+                    &self.pastes,
+                    self.search_query.as_str(),
+                    Local::now(),
+                );
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
-                    .show_rows(ui, row_height, self.pastes.len(), |ui, range| {
-                        for idx in range {
-                            if let Some(paste) = self.pastes.get(idx) {
-                                let selected =
-                                    self.selected_id.as_deref() == Some(paste.id.as_str());
-                                let lang_label = display_language_label(
-                                    paste.language.as_deref(),
-                                    false,
-                                    paste.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
-                                );
-                                let row_width = ui.available_width().max(1.0);
-                                let (row_rect, row_response) = ui.allocate_exact_size(
-                                    egui::vec2(row_width, row_height),
-                                    egui::Sense::click(),
-                                );
-                                let row_visuals =
-                                    ui.style().interact_selectable(&row_response, selected);
-                                ui.painter().rect(
-                                    row_rect.expand(row_visuals.expansion),
-                                    row_visuals.corner_radius,
-                                    row_visuals.bg_fill,
-                                    row_visuals.bg_stroke,
-                                    egui::StrokeKind::Middle,
-                                );
+                    .show_rows(ui, row_height, sidebar_items.len(), |ui, range| {
+                        for item_idx in range {
+                            match sidebar_items.get(item_idx).copied() {
+                                Some(SidebarListItem::Header(bucket)) => {
+                                    let row_width = ui.available_width().max(1.0);
+                                    let (row_rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(row_width, row_height),
+                                        egui::Sense::hover(),
+                                    );
+                                    let text_pos = egui::pos2(row_rect.left(), row_rect.center().y);
+                                    ui.painter().text(
+                                        text_pos,
+                                        egui::Align2::LEFT_CENTER,
+                                        bucket.label(),
+                                        egui::TextStyle::Small.resolve(ui.style()),
+                                        COLOR_TEXT_MUTED,
+                                    );
+                                }
+                                Some(SidebarListItem::Row(idx)) => {
+                                    if let Some(paste) = self.pastes.get(idx) {
+                                        let selected =
+                                            self.selected_id.as_deref() == Some(paste.id.as_str());
+                                        let lang_label = display_language_label(
+                                            paste.language.as_deref(),
+                                            false,
+                                            paste.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
+                                        );
+                                        let row_width = ui.available_width().max(1.0);
+                                        let (row_rect, row_response) = ui.allocate_exact_size(
+                                            egui::vec2(row_width, row_height),
+                                            egui::Sense::click(),
+                                        );
+                                        let row_visuals =
+                                            ui.style().interact_selectable(&row_response, selected);
+                                        ui.painter().rect(
+                                            row_rect.expand(row_visuals.expansion),
+                                            row_visuals.corner_radius,
+                                            row_visuals.bg_fill,
+                                            row_visuals.bg_stroke,
+                                            egui::StrokeKind::Middle,
+                                        );
 
-                                let (title_rect, lang_rect) = sidebar_row_text_rects(
-                                    row_rect,
-                                    ui.spacing().button_padding.x,
-                                    ui.spacing().item_spacing.x,
-                                );
-                                ui.painter().with_clip_rect(title_rect).text(
-                                    egui::pos2(title_rect.left(), title_rect.center().y),
-                                    egui::Align2::LEFT_CENTER,
-                                    paste.name.as_str(),
-                                    egui::TextStyle::Button.resolve(ui.style()),
-                                    row_visuals.text_color(),
-                                );
-                                ui.painter().with_clip_rect(lang_rect).text(
-                                    egui::pos2(lang_rect.right(), lang_rect.center().y),
-                                    egui::Align2::RIGHT_CENTER,
-                                    lang_label.as_str(),
-                                    egui::TextStyle::Small.resolve(ui.style()),
-                                    COLOR_TEXT_MUTED,
-                                );
+                                        let (title_rect, lang_rect) = sidebar_row_text_rects(
+                                            row_rect,
+                                            ui.spacing().button_padding.x,
+                                            ui.spacing().item_spacing.x,
+                                        );
+                                        ui.painter().with_clip_rect(title_rect).text(
+                                            egui::pos2(title_rect.left(), title_rect.center().y),
+                                            egui::Align2::LEFT_CENTER,
+                                            paste.name.as_str(),
+                                            egui::TextStyle::Button.resolve(ui.style()),
+                                            row_visuals.text_color(),
+                                        );
+                                        ui.painter().with_clip_rect(lang_rect).text(
+                                            egui::pos2(lang_rect.right(), lang_rect.center().y),
+                                            egui::Align2::RIGHT_CENTER,
+                                            lang_label.as_str(),
+                                            egui::TextStyle::Small.resolve(ui.style()),
+                                            COLOR_TEXT_MUTED,
+                                        );
 
-                                if row_response
-                                    .on_hover_text(sidebar_hover_text(paste))
-                                    .clicked()
-                                {
-                                    if selection_blocked {
-                                        self.set_selection_transition_blocked_status();
-                                    } else {
-                                        pending_select = Some(paste.id.clone());
+                                        if row_response
+                                            .on_hover_text(sidebar_hover_text(paste))
+                                            .clicked()
+                                        {
+                                            if selection_blocked {
+                                                self.set_selection_transition_blocked_status();
+                                            } else {
+                                                pending_select = Some(paste.id.clone());
+                                            }
+                                        }
                                     }
                                 }
+                                None => {}
                             }
                         }
                     });
@@ -332,8 +425,25 @@ impl LocalPasteApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{sidebar_hover_text, sidebar_row_text_rects};
+    use super::{
+        build_sidebar_list_items, sidebar_hover_text, sidebar_row_text_rects, sidebar_time_bucket,
+        SidebarListItem, SidebarTimeBucket,
+    };
+    use chrono::{Duration, FixedOffset, Local, TimeZone, Utc};
     use eframe::egui;
+
+    fn summary(id: &str, updated_at: chrono::DateTime<Utc>) -> crate::backend::PasteSummary {
+        crate::backend::PasteSummary {
+            id: id.to_string(),
+            name: id.to_string(),
+            language: None,
+            content_len: 0,
+            updated_at,
+            folder_id: None,
+            tags: Vec::new(),
+            derived: localpaste_core::semantic::DerivedMeta::default(),
+        }
+    }
 
     #[test]
     fn sidebar_row_text_layout_matrix() {
@@ -362,6 +472,93 @@ mod tests {
                 assert!((lang_rect.right() - expected_lang_right).abs() < f32::EPSILON);
             }
         }
+    }
+
+    #[test]
+    fn sidebar_time_bucket_classifies_recency_boundaries() {
+        let now = Local.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
+        assert_eq!(
+            sidebar_time_bucket((now - Duration::hours(2)).with_timezone(&Utc), now),
+            SidebarTimeBucket::Today
+        );
+        assert_eq!(
+            sidebar_time_bucket((now - Duration::days(1)).with_timezone(&Utc), now),
+            SidebarTimeBucket::Yesterday
+        );
+        assert_eq!(
+            sidebar_time_bucket((now - Duration::days(3)).with_timezone(&Utc), now),
+            SidebarTimeBucket::ThisWeek
+        );
+        assert_eq!(
+            sidebar_time_bucket((now - Duration::days(9)).with_timezone(&Utc), now),
+            SidebarTimeBucket::Earlier
+        );
+    }
+
+    #[test]
+    fn sidebar_time_bucket_uses_local_calendar_boundaries() {
+        let east = FixedOffset::east_opt(14 * 60 * 60).unwrap();
+        let west = FixedOffset::west_opt(10 * 60 * 60).unwrap();
+        let this_week_now = east.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
+        let yesterday_now = west.with_ymd_and_hms(2026, 6, 15, 0, 30, 0).unwrap();
+        let cases = [
+            (
+                east.with_ymd_and_hms(2026, 6, 8, 0, 1, 0).unwrap(),
+                this_week_now,
+                SidebarTimeBucket::ThisWeek,
+            ),
+            (
+                east.with_ymd_and_hms(2026, 6, 7, 23, 59, 59).unwrap(),
+                this_week_now,
+                SidebarTimeBucket::Earlier,
+            ),
+            (
+                west.with_ymd_and_hms(2026, 6, 14, 23, 59, 0).unwrap(),
+                yesterday_now,
+                SidebarTimeBucket::Yesterday,
+            ),
+        ];
+
+        for (updated_at, now, expected) in cases {
+            assert_eq!(
+                sidebar_time_bucket(updated_at.with_timezone(&Utc), now),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn sidebar_list_items_matrix_covers_headers_and_search_density() {
+        let now = Local.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
+        let pastes = vec![
+            summary("today", (now - Duration::hours(1)).with_timezone(&Utc)),
+            summary("yesterday", (now - Duration::days(1)).with_timezone(&Utc)),
+            summary("week", (now - Duration::days(3)).with_timezone(&Utc)),
+            summary("earlier", (now - Duration::days(9)).with_timezone(&Utc)),
+        ];
+
+        assert_eq!(
+            build_sidebar_list_items(&pastes, "", now),
+            vec![
+                SidebarListItem::Header(SidebarTimeBucket::Today),
+                SidebarListItem::Row(0),
+                SidebarListItem::Header(SidebarTimeBucket::Yesterday),
+                SidebarListItem::Row(1),
+                SidebarListItem::Header(SidebarTimeBucket::ThisWeek),
+                SidebarListItem::Row(2),
+                SidebarListItem::Header(SidebarTimeBucket::Earlier),
+                SidebarListItem::Row(3),
+            ]
+        );
+        assert_eq!(
+            build_sidebar_list_items(&pastes, "needle", now),
+            vec![
+                SidebarListItem::Row(0),
+                SidebarListItem::Row(1),
+                SidebarListItem::Row(2),
+                SidebarListItem::Row(3),
+            ]
+        );
     }
 
     #[test]

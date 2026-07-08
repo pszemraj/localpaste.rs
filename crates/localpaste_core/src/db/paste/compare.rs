@@ -63,21 +63,6 @@ impl PasteDb {
         }
     }
 
-    /// Resolve a [`DiffRef`] to raw content from head or a historical version.
-    ///
-    /// # Returns
-    /// `Ok(Some(content))` when the reference resolves, `Ok(None)` when missing.
-    ///
-    /// # Errors
-    /// Returns an error when storage access fails.
-    pub fn resolve_diff_ref_content(
-        &self,
-        reference: &DiffRef,
-    ) -> Result<Option<String>, AppError> {
-        let read_txn = self.db.begin_read()?;
-        self.resolve_diff_ref_content_in_txn(&read_txn, reference)
-    }
-
     /// Compute a diff within an existing read snapshot.
     ///
     /// # Arguments

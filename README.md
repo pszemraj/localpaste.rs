@@ -1,74 +1,116 @@
 # LocalPaste.rs
 
-A fast, localhost-only pastebin with a modern editor, built in Rust.
+Your local scratch layer for technical text that should be easy to save, search, edit, diff, and recover.
 
 ![LocalPaste Screenshot](assets/ui.jpg)
 
-## What It Is
+LocalPaste is for the text that lives between your clipboard, a repo, and a formal document: code snippets, logs, stack traces, config fragments, prompts, queries, links, notes, and half-formed fixes you do not want to lose.
 
-LocalPaste provides:
-
-- Native desktop GUI (`localpaste-gui`) as the primary UX
-- Headless API server (`localpaste`) for automation/integration
-- CLI client (`lpaste`) for terminal workflows
+It is local-first by design. The desktop app is the main workspace, backed by an embedded database on your machine. A localhost API and the `lpaste` CLI can use the same store, so terminal capture, scripts, and the GUI can fit into one workflow without sending sensitive material to a cloud pastebin.
 
 > [!WARNING]
-> Keep exactly one writer process per `DB_PATH` (`localpaste-gui` or standalone `localpaste`).
+> Follow the [storage operational expectations](docs/storage.md#operational-expectations) when combining GUI, server, and CLI workflows.
+
+## Why It Exists
+
+Clipboard history is too transient. A repo is too heavy for every useful fragment. Cloud pastebins are the wrong default for secrets, logs, client data, and work-in-progress.
+
+LocalPaste gives those scraps a durable home:
+
+- paste first, organize later
+- search by content, name, tags, language, and derived metadata
+- edit in a code-aware desktop surface
+- recover older versions when a scratch edit goes sideways
+- automate through a CLI or localhost HTTP API when the terminal is faster
+
+## Highlights
+
+- **Fast capture**: paste in the app or pipe text from the terminal.
+- **Code-aware editor**: highlighting, language overrides, undo/redo, and large-buffer handling.
+- **Searchable library**: find snippets by content, name, tags, language, or metadata.
+- **Version recovery**: inspect, diff, duplicate, reset, or undo destructive GUI deletes.
+- **Shared interfaces**: GUI, server, and `lpaste` use the same local data model.
+- **Local by default**: loopback API, on-disk storage, no account, no cloud dependency.
 
 ## Quick Start
 
-GUI is the default workspace target:
+Download the latest binary for your system from
+[GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases), then install and run LocalPaste.[^gui-release]
+
+[^gui-release]: Release downloads currently install the desktop GUI only. For most local paste workflows,
+    that is enough; build from source when you need `lpaste` or the standalone server.
+
+To build from source:
 
 ```bash
-# Desktop GUI
+git clone https://github.com/pszemraj/localpaste.rs.git
+cd localpaste.rs
 cargo run
+```
 
-# Explicit GUI binary
+Or target the GUI binary explicitly after cloning:
+
+```bash
 cargo run -p localpaste_gui --bin localpaste-gui
 ```
 
-Headless server + CLI flow:
+Use the standalone server and CLI when you want a headless workflow:
 
 ```bash
-# Terminal A: run server on default local endpoint (127.0.0.1:38411)
+# Terminal A: run the server on the default local endpoint, 127.0.0.1:38411
 cargo run -p localpaste_server --bin localpaste
 
-# Terminal B: create/list via CLI
+# Terminal B: create and list pastes through the CLI
 echo "hello from quickstart" | cargo run -p localpaste_cli --bin lpaste -- new --name "quickstart"
 cargo run -p localpaste_cli --bin lpaste -- list --limit 5
 ```
 
-If your server is not on the default endpoint, set `LP_SERVER` (or pass `--server`):
+If the server is not on the default endpoint, pass `--server` or set `LP_SERVER`:
 
 ```bash
-# bash example
 export LP_SERVER="http://127.0.0.1:38973"
-
-# powershell example
-$env:LP_SERVER="http://127.0.0.1:38973"
 ```
 
-Language detection and highlighting defaults:
+```powershell
+$env:LP_SERVER = "http://127.0.0.1:38973"
+```
 
-- `localpaste_gui` and `localpaste_server` enable `magika` by default.
-- `localpaste_cli` stays heuristic-only by default.
-- Feature/runtime details: [`docs/language-detection.md`](docs/language-detection.md).
+When the GUI is already running, `lpaste` can usually discover the GUI's embedded API for the same `DB_PATH`:
 
-## Precompiled Binaries
+```bash
+lpaste list --limit 20
+lpaste search-meta validation
+lpaste get <paste-id>
+```
 
-GitHub Releases publish GUI assets under `localpaste-*` filenames.
-`lpaste` and the standalone `localpaste` server are source-built with Cargo.
-Artifact names, platform coverage, checksums, and macOS signing/notarization behavior are in
-[`docs/release-gui.md`](docs/release-gui.md).
+## Configuration Notes
 
-## Configuration and Ops
+- Language detection defaults: [`docs/language-detection.md#feature-topology`](docs/language-detection.md#feature-topology).
+- Version history, server exposure, CORS, size limits, and backup settings: [`docs/security.md#environment-variables`](docs/security.md#environment-variables).
+- Storage and single-writer rules: [`docs/storage.md`](docs/storage.md).
 
-- Documentation map: [`docs/README.md`](docs/README.md)
-- Practical terminal workflows alongside the GUI: [`docs/cli-gui-workflows.md`](docs/cli-gui-workflows.md)
-- Detection, normalization, and highlighting: [`docs/language-detection.md`](docs/language-detection.md)
-- Build/run/validation workflow: [`docs/dev/devlog.md`](docs/dev/devlog.md)
-- Security, storage, and service operations: [`docs/security.md`](docs/security.md), [`docs/storage.md`](docs/storage.md), [`docs/deployment.md`](docs/deployment.md)
-- GUI release pipeline and artifact contract: [`docs/release-gui.md`](docs/release-gui.md)
+## Releases
+
+GitHub Releases publish desktop GUI assets under `localpaste-*` filenames. The CLI (`lpaste`) and standalone server (`localpaste`) are source-built with Cargo.
+
+Artifact names, platform coverage, checksums, and macOS signing/notarization behavior are documented in [`docs/release-gui.md`](docs/release-gui.md).
+
+## Documentation
+
+Start here:
+
+- Terminal workflows with the GUI: [`docs/cli-gui-workflows.md`](docs/cli-gui-workflows.md)
+- Language detection and highlighting: [`docs/language-detection.md`](docs/language-detection.md)
+- Storage and durability: [`docs/storage.md`](docs/storage.md)
+- Security and exposure model: [`docs/security.md`](docs/security.md)
+- Deployment and service operations: [`docs/deployment.md`](docs/deployment.md)
+- Full documentation map: [`docs/README.md`](docs/README.md)
+
+For development:
+
+- Build, validation, and smoke-test workflow: [`docs/dev/devlog.md`](docs/dev/devlog.md)
+- GUI behavior notes, navigation probe, and manual test checklist: [`docs/dev/gui-notes.md`](docs/dev/gui-notes.md)
+- GUI release pipeline: [`docs/release-gui.md`](docs/release-gui.md)
 
 ## License
 

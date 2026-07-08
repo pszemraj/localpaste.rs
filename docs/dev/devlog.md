@@ -50,7 +50,7 @@ cargo build -p localpaste_tools --bin check-ast-dupes --release
 ## Run Matrix
 
 ```bash
-# Rewrite GUI
+# GUI
 cargo run -p localpaste_gui --bin localpaste-gui
 
 # Server
@@ -63,21 +63,22 @@ cargo run -p localpaste_server --bin localpaste --release
 Runtime contract references:
 
 - Runtime topologies + endpoint discovery/trust checks:
-  [docs/architecture.md#2-runtime-topologies](../architecture.md#2-runtime-topologies)
+  [architecture.md#2-runtime-topologies](../architecture.md#2-runtime-topologies)
   and
-  [docs/architecture.md#10-discovery-and-trust](../architecture.md#10-discovery-and-trust)
-- Single-writer `DB_PATH` + on-disk contract: [docs/storage.md](../storage.md)
+  [architecture.md#10-discovery-and-trust](../architecture.md#10-discovery-and-trust)
+- Single-writer `DB_PATH` + on-disk contract: [storage.md](../storage.md)
 - Lock semantics and API `423 Locked` behavior:
-  [docs/dev/locking-model.md](locking-model.md)
+  [locking-model.md](locking-model.md)
 
-Day-to-day rule:
+Day-to-day runtime details:
 
-- Keep exactly one writer process per `DB_PATH` during local development and validation.
+- DB ownership rules: [storage.md#operational-expectations](../storage.md#operational-expectations)
+- The GUI polls for out-of-process DB writes every 30 seconds; app-owned mutations refresh immediately.
 
 For editor-mode flags and tracing env vars, see
-[docs/dev/gui-notes.md](gui-notes.md).
+[gui-notes.md](gui-notes.md).
 For repeatable GUI perf validation, see
-[docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
+[gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Validation Loop
 
@@ -96,15 +97,18 @@ cargo check --workspace --all-targets --all-features
 # 4) LoC policy check
 cargo run -p localpaste_tools --bin check-loc -- --max-lines 1000 --warn-lines 900
 
-# 5) duplicate/dead-symbol audit (required on refactors)
+# 5) duplicate/dead-symbol audit
 cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
+
+# For broad refactors or test-suite consolidation, include tests in the audit.
+cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates --include-tests
 
 # 6) targeted tests for touched areas
 # cargo test -p <crate>
 
 # 7) runtime smoke (server + CLI + restart persistence)
 # run the smoke runbook:
-# docs/dev/devlog.md#runtime-smoke-test-server-cli
+# devlog.md#runtime-smoke-test-server-cli
 
 # 8) docs contract check
 rustdoc-checker crates --strict
@@ -123,10 +127,10 @@ python .github/scripts/validate_workflow.py .github/workflows
 ```
 
 - Manual GUI checklist:
-  [docs/dev/gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
+  [gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
 
 Language detection/normalization/highlight behavior is tracked in
-[docs/language-detection.md](../language-detection.md).
+[language-detection.md](../language-detection.md).
 
 ## Runtime Smoke Test (Server CLI)
 
@@ -150,6 +154,7 @@ sleep 1
 echo "smoke hello" | ./target/debug/lpaste new --name "smoke-test"
 ID="$(./target/debug/lpaste list --limit 1 | awk '{print $1}')"
 ./target/debug/lpaste get "$ID"
+./target/debug/lpaste search smoke
 
 # Restart persistence check
 kill "$SERVER_PID"
@@ -158,6 +163,7 @@ SERVER_PID=$!
 sleep 1
 ./target/debug/lpaste get "$ID"
 ./target/debug/lpaste delete "$ID"
+! ./target/debug/lpaste get "$ID"
 
 kill "$SERVER_PID"
 rm -rf "$DB_PATH"
@@ -179,6 +185,7 @@ Start-Sleep -Seconds 1
 "smoke hello" | .\target\debug\lpaste.exe new --name "smoke-test"
 $id = (.\target\debug\lpaste.exe list --limit 1) -split ' ' | Select-Object -First 1
 .\target\debug\lpaste.exe get $id
+.\target\debug\lpaste.exe search smoke
 
 # Restart persistence check
 Stop-Process -Id $proc.Id
@@ -186,6 +193,7 @@ $proc = Start-Process -FilePath .\target\debug\localpaste.exe -NoNewWindow -Pass
 Start-Sleep -Seconds 1
 .\target\debug\lpaste.exe get $id
 .\target\debug\lpaste.exe delete $id
+.\target\debug\lpaste.exe get $id; if ($LASTEXITCODE -eq 0) { throw "deleted paste still exists" }
 
 Stop-Process -Id $proc.Id
 Remove-Item -Recurse -Force $env:DB_PATH
@@ -193,8 +201,7 @@ Remove-Item -Recurse -Force $env:DB_PATH
 
 ## Tooling CLI Contracts
 
-This section documents `localpaste_tools` CLI behavior
-used in automation/CI contracts.
+`localpaste_tools` CLI behavior used in automation/CI contracts:
 
 ### `generate-test-data`
 
@@ -237,9 +244,4 @@ used in automation/CI contracts.
 
 ## GUI Release Pipeline
 
-Packaging/release behavior lives in [../release-gui.md](../release-gui.md).
-
-Current workflow-helper regression coverage includes prerelease workspace
-version handling for `release-gui.yml` `current_ref` runs and for
-`verify-gui-packaging.yml` when packaging metadata is derived from
-`[workspace.package].version`.
+Packaging/release behavior: [../release-gui.md](../release-gui.md).

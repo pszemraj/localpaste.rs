@@ -5,7 +5,6 @@ use crate::db::paste::{CURRENT_PASTES_META_SCHEMA_VERSION, META_SCHEMA_VERSION_K
 use crate::db::tables::{PASTES_META, PASTES_META_STATE};
 use chrono::Duration;
 use redb::ReadableDatabase;
-use serde::{Deserialize, Serialize};
 
 #[test]
 fn paste_list_and_list_meta_order_by_updated_and_honor_limit() {
@@ -82,6 +81,94 @@ fn paste_search_respects_exact_match_and_top_k_ranking() {
 }
 
 #[test]
+fn paste_search_matches_content_case_insensitively_by_default_and_case_sensitively_when_requested()
+{
+    let (db, _temp) = setup_test_db();
+    let paste = Paste::new(
+        "The Basic Substring Needle lives only in content.".to_string(),
+        "plain-title".to_string(),
+    );
+    db.pastes.create(&paste).expect("create");
+
+    let default_results = db
+        .pastes
+        .search("basic substring needle", 10, None, None)
+        .expect("default search");
+    assert_eq!(default_results.len(), 1);
+    assert_eq!(default_results[0].id, paste.id);
+
+    let mismatched_case_results = db
+        .pastes
+        .search_with_options(
+            "basic substring needle",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive search");
+    assert!(mismatched_case_results.is_empty());
+
+    let exact_case_results = db
+        .pastes
+        .search_with_options(
+            "Basic Substring Needle",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive search");
+    assert_eq!(exact_case_results.len(), 1);
+    assert_eq!(exact_case_results[0].id, paste.id);
+}
+
+#[test]
+fn paste_search_combines_full_content_and_metadata_derived_matches() {
+    let (db, _temp) = setup_test_db();
+    let content_only = Paste::new(
+        "plain exact full body marker only in content".to_string(),
+        "plain-title".to_string(),
+    );
+    let derived_terms = Paste::new(
+        "fsdp2 validation failed after cublaslt retry\nfsdp2 validation repeated\n".to_string(),
+        "silent-forest".to_string(),
+    );
+    let mut language_only = Paste::new("hello world".to_string(), "language-note".to_string());
+    language_only.language = Some("python".to_string());
+    language_only.language_is_manual = true;
+
+    db.pastes.create(&content_only).expect("create content");
+    db.pastes.create(&derived_terms).expect("create derived");
+    db.pastes.create(&language_only).expect("create language");
+
+    let content_results = db
+        .pastes
+        .search("exact full body marker", 10, None, None)
+        .expect("content search");
+    assert_eq!(content_results.len(), 1);
+    assert_eq!(content_results[0].id, content_only.id);
+
+    let derived_results = db
+        .pastes
+        .search("fsdp2 cublaslt", 10, None, None)
+        .expect("derived search");
+    assert_eq!(derived_results.len(), 1);
+    assert_eq!(derived_results[0].id, derived_terms.id);
+
+    let language_results = db
+        .pastes
+        .search("python", 10, None, None)
+        .expect("language search");
+    assert_eq!(language_results.len(), 1);
+    assert_eq!(language_results[0].id, language_only.id);
+}
+
+#[test]
 fn paste_search_meta_uses_persisted_metadata_and_derived_terms() {
     let (db, _temp) = setup_test_db();
 
@@ -109,6 +196,135 @@ fn paste_search_meta_uses_persisted_metadata_and_derived_terms() {
     assert!(ids.contains(&by_name.id));
     assert!(ids.contains(&by_tag.id));
     assert!(ids.contains(&by_derived.id));
+}
+
+#[test]
+fn paste_search_meta_case_sensitive_keeps_exact_language_matches() {
+    let (db, _temp) = setup_test_db();
+    let mut language_only = Paste::new("plain body".to_string(), "language-only".to_string());
+    language_only.language = Some("rust".to_string());
+    language_only.language_is_manual = true;
+    language_only.tags = Vec::new();
+
+    db.pastes.create(&language_only).expect("create language");
+
+    let exact_results = db
+        .pastes
+        .search_meta_with_options(
+            "rust",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive language search");
+    assert_eq!(exact_results.len(), 1);
+    assert_eq!(exact_results[0].id, language_only.id);
+
+    let mismatched_results = db
+        .pastes
+        .search_meta_with_options(
+            "Rust",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive language search");
+    assert!(
+        mismatched_results.is_empty(),
+        "case-sensitive metadata search should not fold language case"
+    );
+}
+
+#[test]
+fn paste_search_meta_case_sensitive_keeps_exact_derived_metadata_matches() {
+    let (db, _temp) = setup_test_db();
+    let handle = Paste::new_with_language(
+        "fn RenderPanel() {}\n".to_string(),
+        "handler".to_string(),
+        Some("rust".to_string()),
+        true,
+    );
+    let terms = Paste::new(
+        "FSDP2 validation failed after CUBLASLT retry\nFSDP2 validation repeated\n".to_string(),
+        "trainer".to_string(),
+    );
+    let kind = Paste::new_with_language(
+        "fn main() {}\n".to_string(),
+        "kind-note".to_string(),
+        Some("rust".to_string()),
+        true,
+    );
+
+    db.pastes.create(&handle).expect("create handle");
+    db.pastes.create(&terms).expect("create terms");
+    db.pastes.create(&kind).expect("create kind");
+
+    let handle_results = db
+        .pastes
+        .search_meta_with_options(
+            "RenderPanel",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive handle search");
+    assert!(handle_results.iter().any(|meta| meta.id == handle.id));
+
+    let term_results = db
+        .pastes
+        .search_meta_with_options(
+            "fsdp2",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive derived term search");
+    assert!(term_results.iter().any(|meta| meta.id == terms.id));
+
+    let mismatched_term_results = db
+        .pastes
+        .search_meta_with_options(
+            "FSDP2",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive derived term search");
+    assert!(
+        mismatched_term_results
+            .iter()
+            .all(|meta| meta.id != terms.id),
+        "case-sensitive metadata search should compare derived terms as stored"
+    );
+
+    let kind_results = db
+        .pastes
+        .search_meta_with_options(
+            "Code",
+            10,
+            None,
+            None,
+            SearchOptions {
+                case_sensitive: true,
+            },
+        )
+        .expect("case-sensitive kind search");
+    assert!(kind_results.iter().any(|meta| meta.id == kind.id));
 }
 
 #[test]
@@ -324,71 +540,6 @@ fn meta_indexes_stay_consistent_after_update_and_delete() {
     assert!(!metas_after_delete.into_iter().any(|m| m.id == paste_id));
 }
 
-#[derive(Serialize, Deserialize)]
-struct LegacyPasteMetaWire {
-    id: String,
-    name: String,
-    language: Option<String>,
-    folder_id: Option<String>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-    tags: Vec<String>,
-    content_len: usize,
-    is_markdown: bool,
-}
-
-#[test]
-fn database_new_rebuilds_legacy_meta_rows_with_derived_fields() {
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let db_path = temp_dir.path().join("db");
-    let db_path_str = db_path.to_str().expect("db path").to_string();
-
-    let db = open_test_database(&db_path_str);
-    let paste = Paste::new(
-        "cargo test --package trainer\n".to_string(),
-        "legacy-meta".to_string(),
-    );
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).expect("create");
-
-    let legacy_meta = LegacyPasteMetaWire {
-        id: paste_id.clone(),
-        name: paste.name.clone(),
-        language: paste.language.clone(),
-        folder_id: None,
-        updated_at: paste.updated_at,
-        tags: Vec::new(),
-        content_len: paste.content.len(),
-        is_markdown: paste.is_markdown,
-    };
-    let encoded = bincode::serialize(&legacy_meta).expect("serialize");
-    let write_txn = db.db.begin_write().expect("begin write");
-    {
-        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
-        let mut meta_state = write_txn
-            .open_table(PASTES_META_STATE)
-            .expect("open meta state");
-        metas
-            .insert(paste_id.as_str(), encoded.as_slice())
-            .expect("overwrite legacy meta");
-        let _ = meta_state
-            .remove(META_SCHEMA_VERSION_KEY)
-            .expect("remove schema marker");
-    }
-    write_txn.commit().expect("commit");
-    drop(db);
-
-    let reopened = open_test_database(&db_path_str);
-    let meta = reopened
-        .pastes
-        .list_meta(10, None)
-        .expect("list")
-        .into_iter()
-        .find(|meta| meta.id == paste_id)
-        .expect("meta row");
-    assert_eq!(meta.derived.kind, crate::semantic::PasteKind::Code);
-    assert_eq!(meta.derived.handle.as_deref(), Some("cargo test"));
-}
-
 #[test]
 fn database_new_rebuilds_markerless_current_meta_rows() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -477,6 +628,82 @@ fn database_new_rebuilds_markerless_current_meta_rows() {
             .any(|term| term == "frozen-term"),
         "rebuilt metadata should remain current on subsequent opens"
     );
+}
+
+#[test]
+fn database_new_rebuilds_stale_schema_meta_rows_for_semantic_handle_changes() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let db_path_str = db_path.to_str().expect("db path").to_string();
+
+    let db = open_test_database(&db_path_str);
+    let paste = Paste::new_with_language(
+        "export const renderPanel = () => {};\n".to_string(),
+        "stale-semantic-meta".to_string(),
+        Some("typescript".to_string()),
+        true,
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let mut stale_meta = PasteMeta::from(&paste);
+    stale_meta.derived = crate::semantic::DerivedMeta {
+        kind: crate::semantic::PasteKind::Code,
+        handle: Some("renderpanel".to_string()),
+        terms: vec!["renderpanel".to_string()],
+    };
+    let encoded_meta = bincode::serialize(&stale_meta).expect("serialize meta");
+    let old_schema_version = bincode::serialize(&1u64).expect("serialize old schema version");
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
+        let mut meta_state = write_txn
+            .open_table(PASTES_META_STATE)
+            .expect("open meta state");
+        metas
+            .insert(paste_id.as_str(), encoded_meta.as_slice())
+            .expect("overwrite stale meta");
+        meta_state
+            .insert(META_SCHEMA_VERSION_KEY, old_schema_version.as_slice())
+            .expect("stamp old schema version");
+    }
+    write_txn.commit().expect("commit");
+    drop(db);
+
+    let reopened = open_test_database(&db_path_str);
+    let meta = reopened
+        .pastes
+        .list_meta(10, None)
+        .expect("list")
+        .into_iter()
+        .find(|meta| meta.id == paste_id)
+        .expect("meta row");
+    assert_eq!(
+        meta.derived.handle.as_deref(),
+        Some("export const renderPanel"),
+        "stale schema marker must force derived JS/TS handles to rebuild"
+    );
+
+    let search_results = reopened
+        .pastes
+        .search_meta("export const renderPanel", 10, None, None)
+        .expect("search rebuilt handle");
+    assert_eq!(
+        search_results.first().map(|meta| meta.id.as_str()),
+        Some(paste_id.as_str())
+    );
+
+    let read_txn = reopened.db.begin_read().expect("begin read");
+    let meta_state = read_txn
+        .open_table(PASTES_META_STATE)
+        .expect("open meta state");
+    let stored_version = meta_state
+        .get(META_SCHEMA_VERSION_KEY)
+        .expect("schema lookup")
+        .expect("schema row");
+    let stored_version: u64 =
+        bincode::deserialize(stored_version.value()).expect("decode schema version");
+    assert_eq!(stored_version, CURRENT_PASTES_META_SCHEMA_VERSION);
 }
 
 #[test]

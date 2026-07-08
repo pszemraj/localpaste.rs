@@ -8,9 +8,11 @@ use localpaste_core::models::{
 };
 use localpaste_core::semantic::DerivedMeta;
 use ropey::Rope;
-
-/// Version row count requested by detached history workflows.
-pub(crate) const VERSION_WORKFLOW_LIST_LIMIT: usize = 200;
+/// Maximum number of deleted-paste undo bundles the backend keeps live.
+///
+/// UI undo affordances must not exceed this count, otherwise visible undo
+/// buttons can outlive the backend tokens they reference.
+pub(crate) const DELETE_UNDO_LIMIT: usize = 8;
 
 /// Commands issued by the UI thread for the backend worker to execute.
 #[derive(Debug)]
@@ -35,12 +37,14 @@ pub enum CoreCmd {
     GetDiffTargetPaste { id: String },
     /// Create a new paste with the provided content.
     CreatePaste { content: String },
-    /// Persist updated content for an existing paste.
-    UpdatePaste { id: String, content: String },
     /// Persist updated content for an existing paste using a rope snapshot.
     ///
     /// This keeps rope->string materialization off the UI thread.
-    UpdatePasteVirtual { id: String, content: Rope },
+    UpdatePasteVirtual {
+        id: String,
+        content: Rope,
+        protected_version_id_ms: Option<u64>,
+    },
     /// Persist metadata changes for an existing paste.
     UpdatePasteMeta {
         id: String,
@@ -52,12 +56,21 @@ pub enum CoreCmd {
     },
     /// Delete a paste by id.
     DeletePaste { id: String },
+    /// Restore a recently deleted paste from an undo token.
+    RestoreDeletedPaste { undo_token: String },
     /// List historical versions for a paste.
     ListPasteVersions { id: String, limit: usize },
     /// Load one historical version snapshot.
     GetPasteVersion { id: String, version_id_ms: u64 },
     /// Reset current paste content to a historical version.
-    ResetPasteHardToVersion { id: String, version_id_ms: u64 },
+    ///
+    /// `preserve_current_head` archives the outgoing head as a recovery snapshot
+    /// before the selected historical version becomes current.
+    ResetPasteHardToVersion {
+        id: String,
+        version_id_ms: u64,
+        preserve_current_head: bool,
+    },
     /// Duplicate a paste from a historical version snapshot.
     DuplicatePasteVersion {
         id: String,
@@ -135,7 +148,22 @@ pub enum CoreEvent {
     /// Response confirming a paste's metadata was updated.
     PasteMetaSaved { paste: Paste },
     /// Response confirming a paste was deleted.
-    PasteDeleted { id: String },
+    PasteDeleted {
+        id: String,
+        /// Undo token for GUI recoverable deletes; `None` means the delete
+        /// succeeded through a path where undo is intentionally unavailable.
+        undo_token: Option<String>,
+    },
+    /// A live delete-undo token was evicted to keep the backend undo buffer bounded.
+    PasteUndoEvicted { undo_token: String },
+    /// Response confirming a paste was restored from delete undo.
+    PasteRestored { paste: Paste, undo_token: String },
+    /// Restoring a deleted paste from an undo token failed.
+    PasteRestoreFailed {
+        undo_token: String,
+        message: String,
+        retryable: bool,
+    },
     /// Response containing historical version metadata rows for a paste.
     PasteVersionsLoaded { id: String, items: Vec<VersionMeta> },
     /// Response containing a historical version snapshot.
@@ -195,19 +223,7 @@ impl PasteSummary {
     /// # Returns
     /// A lightweight struct containing the fields needed to render list rows.
     pub fn from_paste(paste: &Paste) -> Self {
-        Self {
-            id: paste.id.clone(),
-            name: paste.name.clone(),
-            language: paste.language.clone(),
-            content_len: paste.content.len(),
-            updated_at: paste.updated_at,
-            folder_id: paste.folder_id.clone(),
-            tags: paste.tags.clone(),
-            derived: localpaste_core::semantic::derive(
-                paste.content.as_str(),
-                paste.language.as_deref(),
-            ),
-        }
+        Self::from_meta(&PasteMeta::from(paste))
     }
 
     /// Build a summary from a metadata record.

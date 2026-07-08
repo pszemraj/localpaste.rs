@@ -30,70 +30,54 @@ mod model_tests {
     }
 
     #[test]
+    fn test_detect_language_plain_text() {
+        assert_eq!(crate::detection::detect_language("just some words"), None);
+    }
+
+    #[test]
     fn test_paste_detect_language_matrix() {
         let cases = [
+            ("fn main() { println!(\"hi\"); }", Some("rust")),
+            ("def main():\n    print('hi')", Some("python")),
+            ("const x = () => console.log('hi');", Some("javascript")),
+            ("#!/bin/bash\necho hello", Some("shell")),
+            ("name: app\nversion: 1\n...\n", Some("yaml")),
+            ("select id from users where active = 1", Some("sql")),
+            ("[tool]\nname = \"demo\"\nversion = \"0.1.0\"", Some("toml")),
             (
-                "python",
-                "def main():\n    import sys\n    print('hello')",
-                "python",
+                "import Foundation\nfunc main() { print(\"hi\") }",
+                Some("swift"),
             ),
-            (
-                "rust",
-                "fn main() {\n    let x = 5;\n    println!(\"hello\");\n}",
-                "rust",
-            ),
-            (
-                "javascript",
-                "const hello = () => {\n    console.log('hello');\n}",
-                "javascript",
-            ),
-            ("json", "{\n  \"name\": \"test\",\n  \"value\": 123\n}", "json"),
-            (
-                "csharp",
-                "using System;\nnamespace Demo {\n    public class Program {\n        public static void Main(string[] args) {\n            Console.WriteLine(\"hi\");\n        }\n    }\n}",
-                "cs",
-            ),
-            (
-                "html",
-                "<!DOCTYPE html>\n<html>\n  <body>\n    <h1>Hello</h1>\n  </body>\n</html>",
-                "html",
-            ),
-            ("css", "body {\n  color: #333;\n  margin: 0;\n}", "css"),
-            (
-                "shell",
-                "#!/bin/bash\nname=$1\necho \"Hello ${name}\"",
-                "shell",
-            ),
-            ("toml", "[tool]\nname = \"demo\"\nversion = \"0.1.0\"", "toml"),
-            ("yaml", "name: demo\nservices:\n  - web\n  - worker", "yaml"),
+            ("fun main() { println(\"hi\") }", Some("kotlin")),
+            ("just some plain text words", None),
         ];
-
-        for (name, content, expected_language) in cases {
-            let paste = paste::Paste::new(content.to_string(), name.to_string());
+        for (content, expected) in cases {
             assert_eq!(
-                paste.language.as_deref(),
-                Some(expected_language),
-                "language detection mismatch for case '{}'",
-                name
-            );
-            assert!(
-                paste.language_is_manual,
-                "detected language should be locked for case '{}'",
-                name
+                crate::detection::detect_language(content).as_deref(),
+                expected,
+                "content: {content}"
             );
         }
     }
 
     #[test]
-    fn test_detect_language_plain_text() {
-        assert_eq!(paste::detect_language("just some words"), None);
+    fn test_paste_new_stores_detected_language_as_locked() {
+        let paste = paste::Paste::new(
+            "fn main() {\n    let value = 5;\n    println!(\"{value}\");\n}".to_string(),
+            "rust".to_string(),
+        );
+        assert_eq!(paste.language.as_deref(), Some("rust"));
+        assert!(paste.language_is_manual);
     }
 
     #[test]
     fn test_detect_language_handles_large_payload_without_losing_prefix_signal() {
         let mut content = String::from("pub fn main() {\n    let value = 42;\n}\n");
         content.push_str(&"x".repeat(256 * 1024));
-        assert_eq!(paste::detect_language(&content), Some("rust".to_string()));
+        assert_eq!(
+            crate::detection::detect_language(&content),
+            Some("rust".to_string())
+        );
     }
 
     #[test]
@@ -112,7 +96,10 @@ mod model_tests {
             content.len() > 64 * 1024,
             "test fixture must exceed sampled prefix size"
         );
-        assert_eq!(paste::detect_language(&content), Some("json".to_string()));
+        assert_eq!(
+            crate::detection::detect_language(&content),
+            Some("json".to_string())
+        );
     }
 
     #[test]
@@ -141,20 +128,6 @@ mod model_tests {
         assert_eq!(config_meta.derived.handle.as_deref(), Some("model gpt-4"));
         assert_eq!(link_meta.derived.kind, crate::semantic::PasteKind::Link);
         assert_eq!(link_meta.derived.handle.as_deref(), Some("example.com"));
-    }
-
-    #[test]
-    fn test_paste_request_validation() {
-        let valid_req = paste::CreatePasteRequest {
-            content: "test".to_string(),
-            name: Some("test-paste".to_string()),
-            language: Some("rust".to_string()),
-            language_is_manual: Some(true),
-            folder_id: None,
-            tags: None,
-        };
-
-        assert!(!valid_req.content.is_empty());
     }
 
     #[test]
@@ -203,16 +176,5 @@ mod model_tests {
         assert!(!folder.id.is_empty());
         assert_eq!(folder.paste_count, 0);
         assert!(folder.parent_id.is_none());
-    }
-
-    #[test]
-    fn test_folder_request() {
-        let req = folder::CreateFolderRequest {
-            name: "Test Folder".to_string(),
-            parent_id: None,
-        };
-
-        assert_eq!(req.name, "Test Folder");
-        assert!(req.parent_id.is_none());
     }
 }

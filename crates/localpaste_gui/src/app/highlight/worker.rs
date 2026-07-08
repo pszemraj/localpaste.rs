@@ -1,12 +1,12 @@
 //! Background syntect worker lifecycle and tests.
 
-use super::super::util::env_flag_enabled;
 use super::{
     align_old_lines_by_hash, hash_bytes, line_hash_matches, line_start_state_matches,
     resolve_syntax, HighlightPatch, HighlightRender, HighlightRenderLine, HighlightRequest,
     HighlightSpan, HighlightStateSnapshot, HighlightStyle, HighlightWorkerResult, SyntectSettings,
 };
 use crossbeam_channel::{Receiver, Sender};
+use localpaste_core::config::env_flag_enabled;
 use std::ops::Range;
 use std::thread;
 use std::time::Instant;
@@ -427,13 +427,14 @@ mod resolver_tests {
         SyntectSettings,
     };
     use crate::app::highlight::worker::HighlightWorkerCache;
+    use ropey::Rope;
 
     fn render_for_label(settings: &SyntectSettings, label: &str, text: &str) -> HighlightRender {
         let mut cache = HighlightWorkerCache::default();
         let req = HighlightRequest {
             paste_id: "test".to_string(),
             revision: 1,
-            text: HighlightRequestText::Owned(text.to_string()),
+            text: HighlightRequestText::Rope(Rope::from_str(text)),
             language_hint: label.to_string(),
             theme_key: "base16-mocha.dark".to_string(),
             edit_hint: None,
@@ -472,7 +473,7 @@ mod resolver_tests {
         HighlightRequest {
             paste_id: "test".to_string(),
             revision,
-            text: HighlightRequestText::Owned(text.to_string()),
+            text: HighlightRequestText::Rope(Rope::from_str(text)),
             language_hint: "rust".to_string(),
             theme_key: "base16-mocha.dark".to_string(),
             edit_hint: None,

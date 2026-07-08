@@ -1,7 +1,8 @@
 //! Backup and restore helpers for redb databases.
 
 use super::tables::{
-    FOLDERS, FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META, PASTES_META_STATE,
+    DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META, FOLDERS,
+    FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META, PASTES_META_STATE,
     PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META, REDB_FILE_NAME,
 };
 use super::time_util::unix_timestamp_seconds;
@@ -57,7 +58,14 @@ impl BackupManager {
         Self::copy_bytes_table(&source_read, &backup_write, PASTES_META)?;
         Self::copy_bytes_table(&source_read, &backup_write, PASTES_META_STATE)?;
         Self::copy_bytes_table(&source_read, &backup_write, PASTE_VERSIONS_META)?;
-        Self::copy_version_content_table(&source_read, &backup_write)?;
+        Self::copy_version_content_table(&source_read, &backup_write, PASTE_VERSIONS_CONTENT)?;
+        Self::copy_bytes_table(&source_read, &backup_write, DELETED_PASTES)?;
+        Self::copy_bytes_table(&source_read, &backup_write, DELETED_PASTE_VERSIONS_META)?;
+        Self::copy_version_content_table(
+            &source_read,
+            &backup_write,
+            DELETED_PASTE_VERSIONS_CONTENT,
+        )?;
         Self::copy_bytes_table(&source_read, &backup_write, FOLDERS)?;
         Self::copy_unit_table(&source_read, &backup_write, FOLDERS_DELETING)?;
         Self::copy_updated_index_table(&source_read, &backup_write)?;
@@ -70,12 +78,12 @@ impl BackupManager {
     fn next_backup_path(&self, timestamp: u64) -> PathBuf {
         let mut candidate = self
             .db_path
-            .with_extension(format!("backup.{}.redb", timestamp));
+            .join(format!("{REDB_FILE_NAME}.backup.{timestamp}.redb"));
         let mut suffix = 1usize;
         while candidate.exists() {
             candidate = self
                 .db_path
-                .with_extension(format!("backup.{}.{}.redb", timestamp, suffix));
+                .join(format!("{REDB_FILE_NAME}.backup.{timestamp}.{suffix}.redb"));
             suffix += 1;
         }
         candidate
@@ -86,10 +94,8 @@ impl BackupManager {
         destination: &redb::WriteTransaction,
         table: redb::TableDefinition<&str, &[u8]>,
     ) -> Result<(), AppError> {
-        let source_table = match source.open_table(table) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
-            Err(err) => return Err(err.into()),
+        let Some(source_table) = Self::open_source_table(source, table)? else {
+            return Ok(());
         };
         let mut destination_table = destination.open_table(table)?;
 
@@ -108,10 +114,8 @@ impl BackupManager {
         destination: &redb::WriteTransaction,
         table: redb::TableDefinition<&str, ()>,
     ) -> Result<(), AppError> {
-        let source_table = match source.open_table(table) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
-            Err(err) => return Err(err.into()),
+        let Some(source_table) = Self::open_source_table(source, table)? else {
+            return Ok(());
         };
         let mut destination_table = destination.open_table(table)?;
 
@@ -128,10 +132,8 @@ impl BackupManager {
         source: &redb::ReadTransaction,
         destination: &redb::WriteTransaction,
     ) -> Result<(), AppError> {
-        let source_table = match source.open_table(PASTES_BY_UPDATED) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
-            Err(err) => return Err(err.into()),
+        let Some(source_table) = Self::open_source_table(source, PASTES_BY_UPDATED)? else {
+            return Ok(());
         };
         let mut destination_table = destination.open_table(PASTES_BY_UPDATED)?;
 
@@ -148,13 +150,12 @@ impl BackupManager {
     fn copy_version_content_table(
         source: &redb::ReadTransaction,
         destination: &redb::WriteTransaction,
+        table: redb::TableDefinition<(&str, u64), &[u8]>,
     ) -> Result<(), AppError> {
-        let source_table = match source.open_table(PASTE_VERSIONS_CONTENT) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
-            Err(err) => return Err(err.into()),
+        let Some(source_table) = Self::open_source_table(source, table)? else {
+            return Ok(());
         };
-        let mut destination_table = destination.open_table(PASTE_VERSIONS_CONTENT)?;
+        let mut destination_table = destination.open_table(table)?;
 
         for row in source_table.iter()? {
             let (key, value) = row?;
@@ -169,6 +170,21 @@ impl BackupManager {
 
         Ok(())
     }
+
+    fn open_source_table<K, V>(
+        source: &redb::ReadTransaction,
+        table: redb::TableDefinition<K, V>,
+    ) -> Result<Option<redb::ReadOnlyTable<K, V>>, AppError>
+    where
+        K: redb::Key + 'static,
+        V: redb::Value + 'static,
+    {
+        match source.open_table(table) {
+            Ok(table) => Ok(Some(table)),
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -176,8 +192,10 @@ mod tests {
     use super::{unix_timestamp_seconds, BackupManager};
     use crate::db::paste::{CURRENT_PASTES_META_SCHEMA_VERSION, META_SCHEMA_VERSION_KEY};
     use crate::db::tables::{
-        PASTES, PASTES_META, PASTES_META_STATE, PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META,
+        DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META, PASTES,
+        PASTES_META, PASTES_META_STATE, PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META,
     };
+    use crate::db::TransactionOps;
     use crate::error::AppError;
     use crate::models::paste::{Paste, UpdatePasteRequest};
     use crate::test_support::open_test_database;
@@ -199,6 +217,25 @@ mod tests {
             }
             other => panic!("unexpected error variant: {:?}", other),
         }
+    }
+
+    #[test]
+    fn next_backup_path_stays_inside_db_dir_and_adds_collision_suffix() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        std::fs::create_dir_all(&db_path).expect("create db dir");
+        let manager = BackupManager::new(db_path.to_str().expect("db path"));
+
+        let first = manager.next_backup_path(123);
+        assert_eq!(first, db_path.join("data.redb.backup.123.redb"));
+        std::fs::write(&first, b"existing backup").expect("seed existing backup");
+
+        let second = manager.next_backup_path(123);
+        assert_eq!(second, db_path.join("data.redb.backup.123.1.redb"));
+        assert!(
+            second.starts_with(&db_path),
+            "backup suffixes must stay under the DB directory"
+        );
     }
 
     #[test]
@@ -231,6 +268,40 @@ mod tests {
             .first()
             .expect("stored version")
             .version_id_ms;
+        let deleted = Paste::new("deleted-body".to_string(), "deleted-name".to_string());
+        db.pastes.create(&deleted).expect("create deleted paste");
+        db.pastes
+            .update(
+                deleted.id.as_str(),
+                UpdatePasteRequest {
+                    content: Some("deleted-body-updated".to_string()),
+                    name: None,
+                    language: None,
+                    language_is_manual: None,
+                    folder_id: None,
+                    tags: None,
+                },
+            )
+            .expect("update deleted paste");
+        let deleted_version_id = db
+            .pastes
+            .list_versions(deleted.id.as_str(), Some(1))
+            .expect("list deleted versions")
+            .expect("deleted paste should exist")
+            .first()
+            .expect("stored deleted version")
+            .version_id_ms;
+        let deleted_token = "backup-delete-undo";
+        assert!(
+            TransactionOps::delete_paste_with_folder_staged_undo(
+                &db,
+                deleted.id.as_str(),
+                deleted_token,
+                i64::MAX,
+            )
+            .expect("stage deleted paste"),
+            "deleted paste should be staged"
+        );
 
         let manager = BackupManager::new(db_path_str);
         let backup_path = manager
@@ -255,6 +326,15 @@ mod tests {
         let versions_content = read_txn
             .open_table(PASTE_VERSIONS_CONTENT)
             .expect("open versions content");
+        let deleted_pastes = read_txn
+            .open_table(DELETED_PASTES)
+            .expect("open deleted pastes");
+        let deleted_versions_meta = read_txn
+            .open_table(DELETED_PASTE_VERSIONS_META)
+            .expect("open deleted versions meta");
+        let deleted_versions_content = read_txn
+            .open_table(DELETED_PASTE_VERSIONS_CONTENT)
+            .expect("open deleted versions content");
         assert!(
             pastes
                 .get(paste.id.as_str())
@@ -286,6 +366,27 @@ mod tests {
                 .expect("version content lookup")
                 .is_some(),
             "backup must include historical version content"
+        );
+        assert!(
+            deleted_pastes
+                .get(deleted_token)
+                .expect("deleted paste lookup")
+                .is_some(),
+            "backup must include staged deleted paste rows"
+        );
+        assert!(
+            deleted_versions_meta
+                .get(deleted_token)
+                .expect("deleted version meta lookup")
+                .is_some(),
+            "backup must include staged deleted version metadata"
+        );
+        assert!(
+            deleted_versions_content
+                .get((deleted_token, deleted_version_id))
+                .expect("deleted version content lookup")
+                .is_some(),
+            "backup must include staged deleted version content"
         );
     }
 }

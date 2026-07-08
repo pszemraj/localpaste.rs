@@ -10,7 +10,7 @@ These instructions apply to the headless `localpaste` server. The desktop GUI (`
 - [macOS (launchd)](#macos-launchd)
 - [Windows](#windows)
 - [Common Patterns](#common-patterns)
-- [Embedded API Address Discovery (.api-addr)](#embedded-api-address-discovery-api-addr)
+- [Embedded API Discovery](#embedded-api-discovery)
 
 ---
 ## Quick Start
@@ -26,9 +26,6 @@ mkdir -p ~/.cache/localpaste
 nohup "$HOME/.cargo/bin/localpaste" > ~/.cache/localpaste/server.log 2>&1 &
 echo $! > ~/.cache/localpaste/localpaste.pid
 ```
-
-Writer/lock contract and `DB_PATH` safety rules are documented in:
-[storage.md](storage.md) and [dev/locking-model.md](dev/locking-model.md).
 
 ## Process Management
 
@@ -50,11 +47,9 @@ pkill -f "cargo run -p localpaste_server --bin localpaste" || true
 # Verify port release
 lsof -i :38411
 
-# Last resort ONLY (can leave lock state requiring recovery):
+# Last resort:
 # lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
-
-Avoid `kill -9` unless absolutely necessary. It bypasses graceful shutdown.
 
 > [!CAUTION]
 > `kill -9` can leave stale lock state and require manual recovery on next start.
@@ -200,14 +195,8 @@ With cron:
 curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "Service down"
 ```
 
-## Embedded API Address Discovery (.api-addr)
-
-Operator guidance:
+## Embedded API Discovery
 
 - Prefer explicit `--server`/`LP_SERVER` for deterministic automation.
 - Use `lpaste --no-discovery ...` to disable `.api-addr` discovery.
-
-Discovery behavior details (trust checks, fallback rules, and header verification):
-
-- [architecture.md](architecture.md#10-discovery-and-trust)
-- [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)
+- Discovery trust checks and fallback rules: [architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust)

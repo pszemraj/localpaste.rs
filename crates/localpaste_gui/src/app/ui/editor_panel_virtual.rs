@@ -1,43 +1,13 @@
 //! Virtual preview/editor rendering extracted from the main editor panel.
 
 use super::super::*;
-use crate::app::text_coords::prefix_by_chars;
 use eframe::egui;
 use tracing::info;
 
-const VIRTUAL_EDITOR_TEXT_INSET: f32 = 6.0;
-const VIRTUAL_EDITOR_LINE_NUMBER_PADDING: f32 = 8.0;
+mod support;
 
-fn line_number_font_for_row_height(row_height: f32) -> egui::FontId {
-    egui::FontId::monospace((row_height * 0.72).clamp(10.0, 14.0))
-}
-fn line_number_gutter_width(line_count: usize, line_number_char_width: f32) -> f32 {
-    let line_number_digits = line_count.max(1).to_string().len();
-    (line_number_digits as f32 * line_number_char_width.max(1.0))
-        + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0
-}
-fn virtual_row_hit_test_sense() -> egui::Sense {
-    let mut sense = egui::Sense::click_and_drag();
-    sense.remove(egui::Sense::focusable_noninteractive());
-    sense
-}
-fn editor_interaction_rect(inner_rect: egui::Rect, wrap_width: f32) -> egui::Rect {
-    let scrollbar_gutter = (wrap_width - inner_rect.width()).max(0.0);
-    if scrollbar_gutter <= 0.0 {
-        return inner_rect;
-    }
-    egui::Rect::from_min_max(
-        inner_rect.min,
-        egui::pos2(inner_rect.max.x + scrollbar_gutter, inner_rect.max.y),
-    )
-}
-fn should_explicitly_blur_virtual_editor(
-    clicked_outside_editor: bool,
-    window_blurred: bool,
-    preserve_editor_focus: bool,
-) -> bool {
-    window_blurred || (clicked_outside_editor && !preserve_editor_focus)
-}
+use support::*;
+
 /// Rendering flags for the interactive rope-backed virtual editor surface.
 #[derive(Clone, Copy)]
 pub(super) struct VirtualEditorRenderOptions<'a> {
@@ -48,357 +18,26 @@ pub(super) struct VirtualEditorRenderOptions<'a> {
     /// Whether same-frame editor-chrome actions should preserve editor focus.
     pub(super) preserve_focus_from_editor_chrome: bool,
 }
-fn preview_triple_click_selection_bounds(
-    line_idx: usize,
-    line_count: usize,
-    line_chars: usize,
-) -> (VirtualCursor, VirtualCursor) {
-    let start = VirtualCursor {
-        line: line_idx,
-        column: 0,
-    };
-    let end = if line_idx + 1 < line_count {
-        VirtualCursor {
-            line: line_idx + 1,
-            column: 0,
-        }
-    } else {
-        VirtualCursor {
-            line: line_idx,
-            column: line_chars,
-        }
-    };
-    (start, end)
-}
-fn virtual_editor_double_click_selection_bounds<F>(
-    line_start: usize,
-    column_in_line: usize,
-    line: &str,
-    clamp_global: F,
-) -> Option<(usize, usize)>
-where
-    F: Fn(usize) -> usize,
-{
-    let (start, end) = word_range_at(line, column_in_line)?;
-    Some((
-        clamp_global(line_start.saturating_add(start)),
-        clamp_global(line_start.saturating_add(end)),
-    ))
-}
-fn follow_cursor_scroll_offset_y(
-    follow_requested: bool,
-    cursor_row: usize,
-    visible_row_range: std::ops::Range<usize>,
-    viewport_rows: usize,
-    line_height: f32,
-) -> Option<f32> {
-    if !follow_requested || viewport_rows == 0 {
-        return None;
-    }
-    let scrolloff_rows = 2usize.min(viewport_rows.saturating_sub(1));
-    if cursor_row.saturating_add(scrolloff_rows) >= visible_row_range.end {
-        let desired_top = cursor_row
-            .saturating_add(1)
-            .saturating_add(scrolloff_rows)
-            .saturating_sub(viewport_rows);
-        return Some(desired_top as f32 * line_height);
-    }
-    if cursor_row < visible_row_range.start.saturating_add(scrolloff_rows) {
-        let desired_top = cursor_row.saturating_sub(scrolloff_rows);
-        return Some(desired_top as f32 * line_height);
-    }
-    None
-}
+
 impl LocalPasteApp {
-    /// Renders the read-only virtual preview panel for large text payloads.
-    ///
-    /// # Arguments
-    /// - `ui`: Target UI region.
-    /// - `row_height`: Height per rendered row.
-    /// - `editor_height`: Available viewport height.
-    /// - `editor_font`: Font id used to shape line galleys.
-    /// - `highlight_render_match`: Optional precomputed highlight render payload.
-    /// - `use_plain`: When `true`, bypass syntax-highlighted rendering.
-    pub(super) fn render_virtual_preview_panel(
+    fn queue_virtual_cursor_follow_scroll(
         &mut self,
-        ui: &mut egui::Ui,
-        row_height: f32,
+        scroll_offset_y: f32,
         editor_height: f32,
-        editor_font: &egui::FontId,
-        highlight_render_match: Option<&HighlightRender>,
-        use_plain: bool,
-    ) {
-        let mut scroll = egui::ScrollArea::vertical()
-            .id_salt("editor_scroll")
-            .max_height(editor_height)
-            .auto_shrink([false; 2]);
-        if let Some(offset) = self.virtual_pending_scroll_offset_y.take() {
-            scroll = scroll.vertical_scroll_offset(offset.max(0.0));
+    ) -> bool {
+        let cursor_row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
+        let viewport_rows = ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
+        if let Some(offset) = follow_cursor_scroll_offset_y(
+            true,
+            cursor_row,
+            scroll_offset_y,
+            viewport_rows,
+            self.virtual_line_height,
+        ) {
+            self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
+            return true;
         }
-
-        let text = self.selected_content.as_str();
-        self.editor_lines
-            .ensure_for(self.selected_content.revision(), text);
-        let line_count = self.editor_lines.line_count();
-        // Preview rows are unwrapped physical lines; cache them so idle large-buffer frames do not reshape every visible row on each repaint.
-        self.virtual_galley_cache.prepare_frame(
-            line_count,
-            VirtualGalleyContext::new(
-                f32::INFINITY,
-                use_plain,
-                editor_font,
-                ui.visuals().text_color(),
-                ui.ctx().pixels_per_point(),
-            ),
-        );
-        let mut last_virtual_click_at = self.last_virtual_click_at;
-        let mut last_virtual_click_pos = self.last_virtual_click_pos;
-        let mut last_virtual_click_count = self.last_virtual_click_count;
-        let mut preview_render_capped_lines = 0usize;
-        scroll.show_rows(ui, row_height, line_count, |ui, range| {
-            ui.set_min_width(ui.available_width());
-            let sense = virtual_row_hit_test_sense();
-            struct RowRender {
-                line_idx: usize,
-                rect: egui::Rect,
-                galley: Arc<egui::Galley>,
-                line_chars: usize,
-            }
-            enum RowAction<'a> {
-                Triple {
-                    line_idx: usize,
-                    line_chars: usize,
-                },
-                Double {
-                    cursor: VirtualCursor,
-                    line: &'a str,
-                },
-                DragStart {
-                    cursor: VirtualCursor,
-                },
-                Click {
-                    cursor: VirtualCursor,
-                },
-            }
-            let mut rows = Vec::with_capacity(range.len());
-            let mut pending_action: Option<RowAction<'_>> = None;
-            for line_idx in range {
-                let line = self.editor_lines.line_without_newline(text, line_idx);
-                let full_line_chars = self.editor_lines.line_len_chars(line_idx);
-                let rendered_line_chars = full_line_chars.min(MAX_RENDER_CHARS_PER_LINE);
-                if full_line_chars > MAX_RENDER_CHARS_PER_LINE {
-                    preview_render_capped_lines = preview_render_capped_lines.saturating_add(1);
-                }
-                let line_for_render = if full_line_chars > MAX_RENDER_CHARS_PER_LINE {
-                    prefix_by_chars(line, MAX_RENDER_CHARS_PER_LINE)
-                } else {
-                    line
-                };
-                self.virtual_galley_cache.sync_line_rows(line_idx, 1);
-                let galley = if let Some(cached) = self.virtual_galley_cache.get(line_idx, 0) {
-                    cached
-                } else {
-                    let render_line =
-                        highlight_render_match.and_then(|render| render.lines.get(line_idx));
-                    let job = build_virtual_line_job(
-                        ui,
-                        line_for_render,
-                        editor_font,
-                        render_line,
-                        use_plain,
-                    );
-                    let shaped = ui.fonts_mut(|f| f.layout_job(job));
-                    self.virtual_galley_cache
-                        .insert(line_idx, 0, shaped.clone());
-                    shaped
-                };
-                let row_width = ui.available_width();
-                let (rect, response) =
-                    ui.allocate_exact_size(egui::vec2(row_width, row_height), sense);
-                if response.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
-                }
-                if pending_action.is_none() && (response.drag_started() || response.clicked()) {
-                    if let Some(pointer_pos) = response.interact_pointer_pos() {
-                        let local_pos = pointer_pos - rect.min;
-                        let cursor = galley.cursor_from_pos(local_pos);
-                        let vcursor = VirtualCursor {
-                            line: line_idx,
-                            column: cursor.index.min(rendered_line_chars),
-                        };
-                        if response.drag_started() {
-                            last_virtual_click_at = None;
-                            last_virtual_click_pos = None;
-                            last_virtual_click_count = 0;
-                            pending_action = Some(RowAction::DragStart { cursor: vcursor });
-                        } else {
-                            let now = Instant::now();
-                            let click_count = next_virtual_click_count(
-                                last_virtual_click_at,
-                                last_virtual_click_pos,
-                                last_virtual_click_count,
-                                pointer_pos,
-                                now,
-                            );
-                            last_virtual_click_at = Some(now);
-                            last_virtual_click_pos = Some(pointer_pos);
-                            last_virtual_click_count = click_count;
-                            match click_count {
-                                3 => {
-                                    pending_action = Some(RowAction::Triple {
-                                        line_idx,
-                                        // Triple-click must target the full physical line, even when render truncation is active.
-                                        line_chars: full_line_chars,
-                                    });
-                                }
-                                2 => {
-                                    pending_action = Some(RowAction::Double {
-                                        cursor: vcursor,
-                                        line,
-                                    });
-                                }
-                                _ => {
-                                    pending_action = Some(RowAction::Click { cursor: vcursor });
-                                }
-                            }
-                        }
-                    }
-                }
-                rows.push(RowRender {
-                    line_idx,
-                    rect,
-                    galley,
-                    line_chars: rendered_line_chars,
-                });
-            }
-
-            if let Some(action) = pending_action {
-                match action {
-                    RowAction::Triple {
-                        line_idx,
-                        line_chars,
-                    } => {
-                        let (start, end) =
-                            preview_triple_click_selection_bounds(line_idx, line_count, line_chars);
-                        self.virtual_selection.select_range(start, end);
-                    }
-                    RowAction::Double { cursor, line } => {
-                        if let Some((start, end)) = word_range_at(line, cursor.column) {
-                            self.virtual_selection.select_range(
-                                VirtualCursor {
-                                    line: cursor.line,
-                                    column: start,
-                                },
-                                VirtualCursor {
-                                    line: cursor.line,
-                                    column: end,
-                                },
-                            );
-                        } else {
-                            self.virtual_selection.set_cursor(cursor);
-                        }
-                    }
-                    RowAction::DragStart { cursor } => {
-                        self.virtual_selection.begin_drag(cursor);
-                    }
-                    RowAction::Click { cursor } => {
-                        self.virtual_selection.set_cursor(cursor);
-                    }
-                }
-            }
-
-            let pointer_pos = ui.input(|input| {
-                input
-                    .pointer
-                    .interact_pos()
-                    .or_else(|| input.pointer.latest_pos())
-            });
-            let pointer_down = ui.input(|input| input.pointer.primary_down());
-            if pointer_down {
-                if let Some(pointer_pos) = pointer_pos {
-                    let viewport_rect = ui.clip_rect();
-                    let target_row = rows
-                        .iter()
-                        .find(|row| {
-                            pointer_pos.y >= row.rect.min.y && pointer_pos.y <= row.rect.max.y
-                        })
-                        .or_else(|| {
-                            let first = rows.first()?;
-                            let last = rows.last()?;
-                            if pointer_pos.y < first.rect.min.y {
-                                Some(first)
-                            } else if pointer_pos.y > last.rect.max.y {
-                                Some(last)
-                            } else {
-                                None
-                            }
-                        });
-                    if let Some(row) = target_row {
-                        let clamped_pos = egui::pos2(
-                            pointer_pos.x.clamp(row.rect.min.x, row.rect.max.x),
-                            pointer_pos.y.clamp(row.rect.min.y, row.rect.max.y),
-                        );
-                        let local_pos = clamped_pos - row.rect.min;
-                        let cursor = row.galley.cursor_from_pos(local_pos);
-                        let vcursor = VirtualCursor {
-                            line: row.line_idx,
-                            column: cursor.index,
-                        };
-                        self.virtual_selection.update_drag(vcursor);
-                    }
-                    let scroll_delta = drag_autoscroll_delta(
-                        pointer_pos.y,
-                        viewport_rect.min.y,
-                        viewport_rect.max.y,
-                        row_height,
-                    );
-                    if scroll_delta != 0.0 {
-                        ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
-                    }
-                }
-            } else {
-                self.virtual_selection.end_drag();
-            }
-
-            let selection_fill = ui.visuals().selection.bg_fill;
-            for row in rows {
-                let galley = row.galley;
-                if let Some(selection) = self
-                    .virtual_selection
-                    .selection_for_line(row.line_idx, row.line_chars)
-                {
-                    paint_virtual_selection_overlay(
-                        ui.painter(),
-                        row.rect,
-                        galley.as_ref(),
-                        selection,
-                        selection_fill,
-                    );
-                }
-                ui.painter()
-                    .galley(row.rect.min, galley, ui.visuals().text_color());
-            }
-        });
-        self.last_virtual_click_at = last_virtual_click_at;
-        self.last_virtual_click_pos = last_virtual_click_pos;
-        self.last_virtual_click_count = last_virtual_click_count;
-        self.virtual_editor_active = false;
-        if preview_render_capped_lines > 0 {
-            let line_label = if preview_render_capped_lines == 1 {
-                "line"
-            } else {
-                "lines"
-            };
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(format!(
-                    "Rendering truncated after {} chars on {} visible {}.",
-                    MAX_RENDER_CHARS_PER_LINE, preview_render_capped_lines, line_label
-                ))
-                .small()
-                .color(COLOR_TEXT_MUTED),
-            );
-        }
+        false
     }
 
     /// Renders the interactive rope-backed virtual editor surface.
@@ -429,13 +68,21 @@ impl LocalPasteApp {
         }
 
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-        if self.focus_editor_next {
-            ui.memory_mut(|m| m.request_focus(editor_id));
-            self.virtual_editor_state.has_focus = true;
-            self.reset_virtual_caret_blink();
-            self.focus_editor_next = false;
+        let focus_editor_requested = self.focus_editor_next;
+        let editor_shortcuts_unblocked_for_frame = !self.editor_shortcuts_blocked();
+        let other_keyboard_input_has_focus = ui.memory(|m| {
+            m.focused()
+                .map(|focused_id| focused_id != editor_id)
+                .unwrap_or(false)
+        }) && ui.ctx().wants_keyboard_input();
+        if other_keyboard_input_has_focus && !focus_editor_requested {
+            self.virtual_editor_state.has_focus = false;
         }
-
+        if focus_editor_requested {
+            self.virtual_editor_state.has_focus = true;
+            request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
+            self.reset_virtual_caret_blink();
+        }
         let wrap_width = ui.available_width().max(1.0);
         let perf_enabled = self.perf_log_enabled;
         let frame_started = perf_enabled.then(Instant::now);
@@ -445,6 +92,7 @@ impl LocalPasteApp {
         let mut galley_misses = 0usize;
         let mut galley_build_ms = 0.0f32;
         let mut paint_ms = 0.0f32;
+        let mut visible_row_range: Option<std::ops::Range<usize>> = None;
         self.virtual_line_height = row_height.max(1.0);
         let line_number_font = line_number_font_for_row_height(self.virtual_line_height);
         let editor_char_width = ui.fonts_mut(|f| {
@@ -504,16 +152,16 @@ impl LocalPasteApp {
                 ui.ctx().pixels_per_point(),
             ),
         );
-        let mut focused = ui.memory(|m| m.has_focus(editor_id));
-        let had_focus = focused || self.virtual_editor_state.has_focus;
-        let frame_contains_focus_retaining_command = had_focus
-            && ui.input(|input| frame_contains_focus_retaining_editor_command(&input.events));
-        let mut editor_interacted = false;
-        let mut pending_follow_scroll_offset_y: Option<f32> = None;
+        let mut focused =
+            ui.memory(|m| m.has_focus(editor_id)) || self.virtual_editor_state.has_focus;
+        let had_focus = focused;
+        let mut ime_cursor_rect: Option<egui::Rect> = None;
+        let mut editor_pointer_action_handled = false;
         let scroll_output =
             scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
                 ui.set_min_width(wrap_width);
                 visible_rows = range.len();
+                visible_row_range = Some(range.clone());
                 struct RowRender {
                     line_idx: usize,
                     segment_start: usize,
@@ -637,8 +285,21 @@ impl LocalPasteApp {
                     if response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                     }
-                    if pending_action.is_none() && (response.drag_started() || response.clicked()) {
-                        if let Some(pointer_pos) = response.interact_pointer_pos() {
+                    let (primary_pressed_on_row, current_pointer_pos) = ui.input(|input| {
+                        let pointer_pos = input
+                            .pointer
+                            .interact_pos()
+                            .or_else(|| input.pointer.latest_pos());
+                        let pressed_on_row =
+                            input.pointer.button_pressed(egui::PointerButton::Primary)
+                                && pointer_pos.map(|pos| rect.contains(pos)).unwrap_or(false);
+                        (pressed_on_row, pointer_pos)
+                    });
+                    if pending_action.is_none()
+                        && (response.drag_started() || response.clicked() || primary_pressed_on_row)
+                    {
+                        let pointer_pos = response.interact_pointer_pos().or(current_pointer_pos);
+                        if let Some(pointer_pos) = pointer_pos {
                             let clamped_x = pointer_pos.x.clamp(text_rect.min.x, text_rect.max.x);
                             let clamped_y = pointer_pos.y.clamp(rect.min.y, rect.max.y);
                             let local_pos = egui::vec2(
@@ -650,17 +311,14 @@ impl LocalPasteApp {
                             let global = segment_range.start.saturating_add(local_col);
                             if response.drag_started() {
                                 self.reset_virtual_click_streak();
-                                editor_interacted = true;
                                 pending_action = Some(RowAction::DragStart { global });
-                            } else {
+                            } else if response.clicked() {
                                 let click_count = self.register_virtual_click(pointer_pos);
                                 match click_count {
                                     3 => {
-                                        editor_interacted = true;
                                         pending_action = Some(RowAction::Triple { line_idx });
                                     }
                                     2 => {
-                                        editor_interacted = true;
                                         pending_action = Some(RowAction::Double {
                                             line_idx,
                                             line_start,
@@ -670,10 +328,11 @@ impl LocalPasteApp {
                                         });
                                     }
                                     _ => {
-                                        editor_interacted = true;
                                         pending_action = Some(RowAction::Click { global });
                                     }
                                 }
+                            } else {
+                                pending_action = Some(RowAction::Click { global });
                             }
                         }
                     }
@@ -691,10 +350,14 @@ impl LocalPasteApp {
                 }
 
                 if let Some(action) = pending_action {
-                    ui.memory_mut(|m| m.request_focus(editor_id));
-                    focused = true;
                     self.virtual_editor_state.has_focus = true;
-                    editor_interacted = true;
+                    request_virtual_editor_focus(
+                        ui,
+                        editor_id,
+                        editor_shortcuts_unblocked_for_frame,
+                    );
+                    focused = true;
+                    editor_pointer_action_handled = true;
                     match action {
                         RowAction::Click { global } => {
                             self.virtual_editor_state
@@ -756,6 +419,7 @@ impl LocalPasteApp {
                             self.reset_virtual_caret_blink();
                         }
                     }
+                    ui.ctx().request_repaint();
                 }
 
                 let pointer_pos = ui.input(|input| {
@@ -766,7 +430,6 @@ impl LocalPasteApp {
                 });
                 let pointer_down = ui.input(|input| input.pointer.primary_down());
                 if pointer_down && self.virtual_drag_active {
-                    editor_interacted = true;
                     if let Some(pointer_pos) = pointer_pos {
                         let viewport_rect = ui.clip_rect();
                         let target_row = rows
@@ -859,7 +522,7 @@ impl LocalPasteApp {
                     ui.painter()
                         .galley(row.text_origin, galley.clone(), ui.visuals().text_color());
 
-                    if focused && caret_visible {
+                    if focused {
                         let cursor = clamped_caret_cursor;
                         let affinity = self.virtual_editor_state.wrap_boundary_affinity();
                         let segment_end = row.segment_start.saturating_add(row.segment_chars);
@@ -878,38 +541,45 @@ impl LocalPasteApp {
                             let caret_rect = galley.pos_from_cursor(CCursor::new(local_col));
                             let x = (row.text_origin.x + caret_rect.min.x).max(row.text_origin.x);
                             let y_min = row.text_origin.y + caret_rect.min.y;
-                            let y_max = row.text_origin.y + caret_rect.max.y;
-                            ui.painter().line_segment(
-                                [egui::pos2(x, y_min), egui::pos2(x, y_max)],
-                                Stroke::new(1.0, ui.visuals().text_color()),
+                            let mut y_max = row.text_origin.y + caret_rect.max.y;
+                            if y_max <= y_min {
+                                y_max = y_min + self.virtual_line_height.max(1.0);
+                            }
+                            let global_caret_rect = egui::Rect::from_min_max(
+                                egui::pos2(x, y_min),
+                                egui::pos2(x, y_max),
                             );
+                            ime_cursor_rect = Some(global_caret_rect);
+                            if caret_visible {
+                                ui.painter().line_segment(
+                                    [egui::pos2(x, y_min), egui::pos2(x, y_max)],
+                                    Stroke::new(1.0, ui.visuals().text_color()),
+                                );
+                            }
                         }
                     }
                 }
                 if let Some(started) = paint_started {
                     paint_ms = started.elapsed().as_secs_f32() * 1000.0;
                 }
-
-                let follow_requested = self.virtual_follow_cursor_next_frame;
-                if follow_requested {
-                    self.virtual_follow_cursor_next_frame = false;
-                }
-                if had_focus && !self.virtual_drag_active {
-                    let cursor_row =
-                        self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
-                    let viewport_rows =
-                        ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
-                    pending_follow_scroll_offset_y = follow_cursor_scroll_offset_y(
-                        follow_requested,
-                        cursor_row,
-                        range,
-                        viewport_rows,
-                        self.virtual_line_height,
-                    );
-                }
             });
-        if let Some(offset) = pending_follow_scroll_offset_y {
-            self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
+        let follow_requested = self.virtual_follow_cursor_next_frame;
+        if follow_requested {
+            self.virtual_follow_cursor_next_frame = false;
+        }
+        if had_focus && !self.virtual_drag_active {
+            let cursor_row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
+            let viewport_rows =
+                ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
+            if let Some(offset) = follow_cursor_scroll_offset_y(
+                follow_requested,
+                cursor_row,
+                scroll_output.state.offset.y,
+                viewport_rows,
+                self.virtual_line_height,
+            ) {
+                self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
+            }
         }
         // Include scrollbar gutter when classifying inside/outside editor clicks.
         // Scrollbar interaction should not be treated as an external blur.
@@ -925,54 +595,170 @@ impl LocalPasteApp {
         // Treat any primary click inside the editor viewport as an explicit focus
         // claim, even when no row hit-test action fired (e.g. empty space below
         // the last visual row).
-        let clicked_inside_editor = ui.input(|input| {
-            input.pointer.button_pressed(egui::PointerButton::Primary)
-                && input
-                    .pointer
-                    .interact_pos()
-                    .or_else(|| input.pointer.latest_pos())
-                    .map(|pos| interaction_rect.contains(pos))
-                    .unwrap_or(false)
+        let primary_pressed =
+            ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary));
+        let pointer_press_pos = ui.input(|input| {
+            input
+                .pointer
+                .interact_pos()
+                .or_else(|| input.pointer.latest_pos())
         });
+        let clicked_inside_editor = pointer_press_pos
+            .map(|pos| primary_pressed && interaction_rect.contains(pos))
+            .unwrap_or(false);
+        let clicked_inside_editor_content = pointer_press_pos
+            .map(|pos| primary_pressed && scroll_output.inner_rect.contains(pos))
+            .unwrap_or(false);
         if clicked_inside_editor {
-            ui.memory_mut(|m| m.request_focus(editor_id));
+            self.virtual_editor_state.has_focus = true;
+            request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
             egui_focus = true;
+            if clicked_inside_editor_content && !editor_pointer_action_handled {
+                let eof =
+                    self.clamp_virtual_cursor_for_render(self.virtual_editor_buffer.len_chars());
+                self.virtual_editor_state
+                    .set_cursor(eof, self.virtual_editor_buffer.len_chars());
+                self.virtual_editor_state.clear_preferred_column();
+                self.reset_virtual_click_streak();
+                self.reset_virtual_caret_blink();
+                ui.ctx().request_repaint();
+            }
         }
-        let clicked_outside_editor = ui.input(|input| {
-            input.pointer.button_pressed(egui::PointerButton::Primary)
-                && input
-                    .pointer
-                    .interact_pos()
-                    .or_else(|| input.pointer.latest_pos())
-                    .map(|pos| !interaction_rect.contains(pos))
-                    .unwrap_or(false)
-        });
-        let window_blurred =
-            ui.input(|input| !input.focused || input.viewport().focused == Some(false));
+        let clicked_outside_editor = pointer_press_pos
+            .map(|pos| primary_pressed && !interaction_rect.contains(pos))
+            .unwrap_or(false);
         let explicit_blur = should_explicitly_blur_virtual_editor(
             clicked_outside_editor,
-            window_blurred,
             options.preserve_focus_from_editor_chrome,
         );
         if explicit_blur {
+            self.virtual_editor_state.has_focus = false;
             ui.memory_mut(|m| m.surrender_focus(editor_id));
             egui_focus = false;
-        } else if had_focus
-            && !egui_focus
-            && (frame_contains_focus_retaining_command || !ui.ctx().wants_keyboard_input())
-        {
-            ui.memory_mut(|m| m.request_focus(editor_id));
+        }
+        if egui_focus {
+            self.virtual_editor_state.has_focus = true;
+        } else if self.virtual_editor_state.has_focus {
+            request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
             egui_focus = true;
+        }
+        if focus_editor_requested && egui_focus {
+            self.focus_editor_next = false;
         }
         if focus_response.gained_focus() || (egui_focus && !had_focus) {
             self.reset_virtual_caret_blink();
+            ui.ctx().request_repaint();
         }
-        focused = egui_focus;
-        self.virtual_editor_state.has_focus = focused;
-        self.virtual_editor_active = focused
-            || self.virtual_editor_state.has_focus
-            || self.virtual_drag_active
-            || editor_interacted;
+        focused = egui_focus || self.virtual_editor_state.has_focus;
+        let editor_shortcuts_available = focused && editor_shortcuts_unblocked_for_frame;
+        if focused {
+            // egui owns this filter and replaces it on focus changes; setting
+            // it only while focused avoids stale ownership after blur.
+            ui.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    editor_id,
+                    virtual_editor_focus_lock_filter(editor_shortcuts_available),
+                );
+            });
+            let cursor_rect = ime_cursor_rect.or_else(|| {
+                let range = visible_row_range.as_ref()?;
+                let cursor_row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
+                let row_offset = if cursor_row < range.start {
+                    0
+                } else if cursor_row >= range.end {
+                    range.len().saturating_sub(1)
+                } else {
+                    cursor_row.saturating_sub(range.start)
+                };
+                let y_min = (interaction_rect.min.y + row_offset as f32 * self.virtual_line_height)
+                    .clamp(
+                        interaction_rect.min.y,
+                        (interaction_rect.max.y - self.virtual_line_height)
+                            .max(interaction_rect.min.y),
+                    );
+                let y_max = (y_min + self.virtual_line_height.max(1.0))
+                    .min(interaction_rect.max.y)
+                    .max(y_min + 1.0);
+                let x = (interaction_rect.min.x + line_number_gutter + VIRTUAL_EDITOR_TEXT_INSET)
+                    .clamp(interaction_rect.min.x, interaction_rect.max.x);
+                Some(egui::Rect::from_min_max(
+                    egui::pos2(x, y_min),
+                    egui::pos2(x, y_max),
+                ))
+            });
+            if let Some(cursor_rect) = cursor_rect {
+                let to_global = ui
+                    .ctx()
+                    .layer_transform_to_global(ui.layer_id())
+                    .unwrap_or_default();
+                ui.output_mut(|output| {
+                    output.ime = Some(egui::output::IMEOutput {
+                        rect: to_global * interaction_rect,
+                        cursor_rect: to_global * cursor_rect,
+                    });
+                });
+            }
+        }
+        if editor_shortcuts_available {
+            let route_started = Instant::now();
+            let commands = ui.input(|input| {
+                commands_from_events(&input.events, true)
+                    .into_iter()
+                    .filter(|command| !self.should_skip_virtual_command_for_paste_as_new(command))
+                    .collect::<Vec<_>>()
+            });
+            let input_route_ms = route_started.elapsed().as_secs_f32() * 1000.0;
+            self.nav_probe_record_applied_commands(&commands);
+            consume_virtual_editor_owned_key_events(ui.ctx(), &commands);
+            let apply_started = Instant::now();
+            let apply_result = self.apply_virtual_commands(ui.ctx(), &commands);
+            let apply_ms = apply_started.elapsed().as_secs_f32() * 1000.0;
+            if !commands.is_empty() {
+                self.virtual_editor_state.has_focus = true;
+                focused = true;
+            }
+            if apply_result.pasted {
+                self.virtual_paste_applied_this_frame = true;
+            }
+            if apply_result.changed {
+                self.mark_dirty();
+            }
+            if apply_result.cursor_moved {
+                let queued_follow_scroll = self.queue_virtual_cursor_follow_scroll(
+                    scroll_output.state.offset.y,
+                    editor_height,
+                );
+                self.virtual_follow_cursor_next_frame =
+                    !queued_follow_scroll && apply_result.pasted;
+            }
+            if apply_result.changed || apply_result.cursor_moved {
+                ui.ctx().request_repaint();
+            }
+            let selection_chars = self
+                .virtual_editor_state
+                .selection_range()
+                .map(|range| range.end.saturating_sub(range.start))
+                .unwrap_or(0);
+            self.trace_input(InputTraceFrame {
+                focus_active_pre: had_focus,
+                focus_active_post: focused,
+                egui_focus_pre: had_focus,
+                egui_focus_post: focused,
+                copy_ready_post: focused || selection_chars > 0,
+                selection_chars,
+                commands: &commands,
+                apply_result,
+            });
+            self.trace_virtual_input_perf(
+                &commands,
+                VirtualInputPerfStats {
+                    input_route_ms,
+                    apply_ms,
+                    apply_result,
+                },
+            );
+            request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
+        }
         if let Some(started) = frame_started {
             let total_ms = started.elapsed().as_secs_f32() * 1000.0;
             info!(
@@ -988,118 +774,5 @@ impl LocalPasteApp {
                 "virtual editor frame breakdown"
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        editor_interaction_rect, follow_cursor_scroll_offset_y, line_number_font_for_row_height,
-        line_number_gutter_width, preview_triple_click_selection_bounds,
-        should_explicitly_blur_virtual_editor, virtual_editor_double_click_selection_bounds,
-        virtual_row_hit_test_sense,
-    };
-    use crate::app::MAX_RENDER_CHARS_PER_LINE;
-    use eframe::egui;
-
-    #[test]
-    fn interaction_rect_handles_scrollbar_gutter_matrix() {
-        struct Case {
-            total_width: f32,
-            expected_extra_right: f32,
-        }
-
-        let inner = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(180.0, 60.0));
-        let cases = [
-            Case {
-                total_width: 180.0,
-                expected_extra_right: 0.0,
-            },
-            Case {
-                total_width: 194.0,
-                expected_extra_right: 14.0,
-            },
-        ];
-
-        for case in cases {
-            let rect = editor_interaction_rect(inner, case.total_width);
-            assert_eq!(rect.min, inner.min);
-            assert_eq!(rect.max.y, inner.max.y);
-            assert_eq!(rect.max.x, inner.max.x + case.expected_extra_right);
-        }
-    }
-
-    #[test]
-    fn follow_cursor_scroll_offset_only_applies_when_requested() {
-        let hidden_cursor_offset = follow_cursor_scroll_offset_y(false, 100, 0..20, 20, 12.0);
-        assert_eq!(hidden_cursor_offset, None);
-
-        let requested_offset = follow_cursor_scroll_offset_y(true, 100, 0..20, 20, 12.0);
-        assert!(
-            requested_offset.is_some(),
-            "requested follow should produce a scroll offset when caret is out of view"
-        );
-    }
-
-    #[test]
-    fn preview_triple_click_terminal_line_uses_full_line_len() {
-        let full_line_chars = MAX_RENDER_CHARS_PER_LINE.saturating_add(64);
-
-        let (start, end) = preview_triple_click_selection_bounds(2, 3, full_line_chars);
-
-        assert_eq!((start.line, start.column), (2, 0));
-        assert_eq!((end.line, end.column), (2, full_line_chars));
-    }
-
-    #[test]
-    fn virtual_editor_double_click_selection_respects_clamp_callback() {
-        let line_start = 17usize;
-        let clamp_end = line_start.saturating_add(32);
-        let line = "a".repeat(96);
-
-        let bounds =
-            virtual_editor_double_click_selection_bounds(line_start, 31, line.as_str(), |global| {
-                global.min(clamp_end)
-            })
-            .expect("expected word bounds");
-
-        assert_eq!(bounds, (line_start, clamp_end));
-    }
-
-    #[test]
-    fn line_number_font_size_is_clamped() {
-        assert_eq!(line_number_font_for_row_height(1.0).size, 10.0);
-        assert_eq!(line_number_font_for_row_height(100.0).size, 14.0);
-        let mid = line_number_font_for_row_height(16.0).size;
-        assert!(mid > 10.0 && mid < 14.0);
-    }
-
-    #[test]
-    fn line_number_gutter_width_scales_with_digits_and_char_width() {
-        let single_digit = line_number_gutter_width(9, 5.0);
-        let two_digits = line_number_gutter_width(10, 5.0);
-        let wider_chars = line_number_gutter_width(10, 7.0);
-        assert!(two_digits > single_digit);
-        assert!(wider_chars > two_digits);
-
-        let clamped = line_number_gutter_width(999, 0.0);
-        let expected = (3.0 * 1.0) + super::VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
-        assert!((clamped - expected).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn virtual_row_hit_test_sense_is_non_focusable_click_and_drag() {
-        let sense = virtual_row_hit_test_sense();
-        assert!(sense.senses_click());
-        assert!(sense.senses_drag());
-        assert!(!sense.is_focusable());
-    }
-
-    #[test]
-    fn explicit_blur_policy_preserves_editor_focus_for_editor_chrome_actions() {
-        assert!(should_explicitly_blur_virtual_editor(true, false, false));
-        assert!(!should_explicitly_blur_virtual_editor(true, false, true));
-        assert!(should_explicitly_blur_virtual_editor(false, true, true));
-        assert!(!should_explicitly_blur_virtual_editor(false, false, false));
     }
 }

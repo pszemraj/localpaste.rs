@@ -5,7 +5,6 @@ use super::*;
 use crate::backend::{BackendHandle, CoreCmd, CoreEvent};
 use chrono::Utc;
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
-use eframe::egui::TextBuffer;
 use eframe::App as _;
 use localpaste_server::LockOwnerId;
 use syntect::util::LinesWithEndings;
@@ -31,15 +30,38 @@ fn aligned_names(aligned: &[Option<FakeHighlightLine>]) -> Vec<Option<&'static s
 }
 
 fn test_summary(id: &str, name: &str, language: Option<&str>, content_len: usize) -> PasteSummary {
+    test_summary_at(id, name, language, content_len, Utc::now())
+}
+
+fn test_summary_at(
+    id: &str,
+    name: &str,
+    language: Option<&str>,
+    content_len: usize,
+    updated_at: chrono::DateTime<Utc>,
+) -> PasteSummary {
     PasteSummary {
         id: id.to_string(),
         name: name.to_string(),
         language: language.map(ToString::to_string),
         content_len,
-        updated_at: Utc::now(),
+        updated_at,
         folder_id: None,
         tags: Vec::new(),
         derived: Default::default(),
+    }
+}
+
+fn test_summary_with_folder(
+    id: &str,
+    name: &str,
+    language: Option<&str>,
+    content_len: usize,
+    folder_id: &str,
+) -> PasteSummary {
+    PasteSummary {
+        folder_id: Some(folder_id.to_string()),
+        ..test_summary(id, name, language, content_len)
     }
 }
 
@@ -103,6 +125,41 @@ pub(super) fn set_virtual_cursor_at(app: &mut LocalPasteApp, line: usize, col: u
     app.virtual_editor_state.set_cursor(pos, len);
 }
 
+/// Asserts the virtual editor cursor's logical line/column coordinates.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `expected`: Expected zero-based `(line, column)` cursor coordinates.
+///
+/// # Panics
+/// Panics when the actual cursor coordinates do not match `expected`.
+pub(super) fn assert_cursor_line_col(app: &LocalPasteApp, expected: (usize, usize)) {
+    let line_col = app
+        .virtual_editor_buffer
+        .char_to_line_col(app.virtual_editor_state.cursor());
+    assert_eq!(line_col, expected);
+}
+
+/// Replaces the active editor buffer through the live rope-backed path.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `text`: Replacement buffer text.
+pub(super) fn set_active_content(app: &mut LocalPasteApp, text: &str) {
+    app.reset_virtual_editor(text);
+}
+
+/// Inserts text into the active editor buffer at a character index.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `text`: Text to insert.
+/// - `char_index`: Global character insertion position.
+pub(super) fn insert_active_text(app: &mut LocalPasteApp, text: &str, char_index: usize) {
+    let idx = char_index.min(app.virtual_editor_buffer.len_chars());
+    let _ = app.virtual_editor_buffer.replace_char_range(idx..idx, text);
+}
+
 /// Builds a pressed key event with the provided modifier state.
 ///
 /// # Arguments
@@ -145,6 +202,31 @@ pub(super) fn primary_command_modifiers() -> egui::Modifiers {
     }
 }
 
+/// Runs a closure with the virtual-editor platform keymap overridden.
+///
+/// # Arguments
+/// - `platform`: Platform flavor to use for virtual-editor input mapping during `run`.
+/// - `run`: Closure executed while the test platform override is active.
+///
+/// # Returns
+/// The closure result.
+pub(super) fn with_platform<R>(
+    platform: super::virtual_editor::PlatformFlavor,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct ResetGuard;
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            super::virtual_editor::set_test_platform(None);
+        }
+    }
+
+    super::virtual_editor::set_test_platform(Some(platform));
+    let _guard = ResetGuard;
+    run()
+}
+
 /// Builds a command-modified pressed key event for platform-agnostic shortcut tests.
 ///
 /// # Arguments
@@ -156,10 +238,18 @@ pub(super) fn command_key_event(key: egui::Key) -> egui::Event {
     key_event(key, primary_command_modifiers())
 }
 
-fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
-    let _ = ctx.run(input, |ctx| {
+fn run_editor_panel_once_output(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    input: egui::RawInput,
+) -> egui::FullOutput {
+    ctx.run(input, |ctx| {
         app.render_editor_panel(ctx);
-    });
+    })
+}
+
+fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: egui::RawInput) {
+    let _ = run_editor_panel_once_output(app, ctx, input);
 }
 
 /// Runs a full app update pass with the supplied raw egui events.
@@ -173,17 +263,35 @@ pub(super) fn run_full_update(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) {
-    app.ensure_style(ctx);
-    let mut frame = eframe::Frame::_new_kittest();
-    let _ = ctx.run(
+    let _ = run_full_update_with_input(
+        app,
+        ctx,
         egui::RawInput {
             events,
             ..Default::default()
         },
-        |ctx| {
-            app.update(ctx, &mut frame);
-        },
     );
+}
+
+/// Runs a full app update pass with explicit raw egui input.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `ctx`: egui context used for the frame.
+/// - `input`: Raw input to deliver during the frame.
+///
+/// # Returns
+/// Full egui frame output produced by the update pass.
+pub(super) fn run_full_update_with_input(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    input: egui::RawInput,
+) -> egui::FullOutput {
+    app.ensure_style(ctx);
+    let mut frame = eframe::Frame::_new_kittest();
+    ctx.run(input, |ctx| {
+        app.update(ctx, &mut frame);
+    })
 }
 
 fn make_app() -> TestHarness {
@@ -201,6 +309,7 @@ fn make_app() -> TestHarness {
         max_paste_size: 10 * 1024 * 1024,
         auto_save_interval: 2000,
         auto_backup: false,
+        search_case_sensitive: false,
     };
     let state = AppState::with_locks(config, server_db, locks.clone());
     let server = EmbeddedServer::start(state, false).expect("server");
@@ -220,6 +329,7 @@ fn make_app() -> TestHarness {
         metadata_dirty: false,
         metadata_save_in_flight: false,
         metadata_save_request: None,
+        editor_find: EditorFindState::default(),
         search_query: String::new(),
         search_last_input_at: None,
         search_last_sent: String::new(),
@@ -235,12 +345,9 @@ fn make_app() -> TestHarness {
         palette_search_last_input_at: None,
         pending_copy_action: None,
         pending_selection_id: None,
+        pending_delete_id: None,
         clipboard_outgoing: None,
         active_buffer_epoch: 0,
-        selected_content: EditorBuffer::new("content".to_string()),
-        editor_lines: EditorLineIndex::default(),
-        editor_mode: EditorMode::VirtualPreview,
-        virtual_selection: VirtualSelectionState::default(),
         virtual_editor_buffer: RopeBuffer::new("content"),
         virtual_editor_state: VirtualEditorState::default(),
         virtual_editor_history: VirtualEditorHistory::default(),
@@ -249,12 +356,13 @@ fn make_app() -> TestHarness {
         virtual_line_scratch: String::new(),
         virtual_caret_phase_start: Instant::now(),
         virtual_drag_active: false,
-        virtual_editor_active: false,
         virtual_viewport_height: 0.0,
         virtual_line_height: 1.0,
         virtual_wrap_width: 0.0,
         virtual_pending_scroll_offset_y: None,
         virtual_follow_cursor_next_frame: false,
+        virtual_paste_applied_this_frame: false,
+        version_history_limit: db.paste_version_retention_limit(),
         version_ui: super::version_ui::VersionUiState::default(),
         highlight_worker: spawn_highlight_worker(),
         highlight_pending: None,
@@ -271,6 +379,7 @@ fn make_app() -> TestHarness {
         server_used_fallback,
         status: None,
         toasts: VecDeque::with_capacity(TOAST_LIMIT),
+        pending_undo_restore_tokens: HashSet::new(),
         export_result_rx: None,
         save_status: SaveStatus::Saved,
         last_edit_at: None,
@@ -280,8 +389,10 @@ fn make_app() -> TestHarness {
         shortcut_help_open: false,
         focus_editor_next: false,
         style_applied: false,
+        window_shown_once: false,
         window_checked: false,
         last_refresh_at: Instant::now(),
+        backend_event_poll_until: None,
         query_perf: QueryPerfCounters::default(),
         perf_log_enabled: false,
         frame_samples: VecDeque::with_capacity(PERF_SAMPLE_CAP),
@@ -295,6 +406,8 @@ fn make_app() -> TestHarness {
         paste_as_new_clipboard_requested_at: None,
         editor_input_trace_enabled: false,
         highlight_trace_enabled: false,
+        nav_probe: None,
+        nav_probe_applied_commands: Vec::new(),
     };
 
     TestHarness {
@@ -325,15 +438,25 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
     }
 }
 
+mod backend_dispatch;
 mod collections_and_search;
 mod creation_and_projection;
+mod editor_find;
 mod focus_and_paste_routing;
 mod highlight_behaviors;
+mod history_reset;
 mod keyboard_navigation_audit;
+mod persistence;
 mod save_and_metadata;
+mod selected_delete;
 mod shutdown_behavior;
 mod state_basics;
+mod state_toasts;
+mod time_filters;
 mod version_async_status;
 mod version_modal_caching;
 mod version_overlay_exclusivity;
 mod virtual_editor_behaviors;
+mod virtual_editor_focus;
+mod virtual_editor_focus_shortcuts;
+mod virtual_editor_focus_support;

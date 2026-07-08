@@ -2,6 +2,7 @@
 
 /// Backup utilities.
 pub mod backup;
+mod delete_undo;
 /// Folder storage helpers.
 pub mod folder;
 /// Lock handling helpers.
@@ -14,10 +15,14 @@ mod time_util;
 mod transactions;
 mod versioning;
 
-use crate::db::tables::REDB_FILE_NAME;
+use crate::db::tables::{
+    DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META, FOLDERS,
+    FOLDERS_DELETING, PASTES, PASTES_BY_UPDATED, PASTES_META, PASTES_META_STATE,
+    PASTE_VERSIONS_CONTENT, PASTE_VERSIONS_META, REDB_FILE_NAME,
+};
 use crate::error::AppError;
 use crate::folder_ops::reconcile_folder_invariants;
-use redb::{Database as RedbDatabase, DatabaseError};
+use redb::{Database as RedbDatabase, DatabaseError, ReadableDatabase};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -278,6 +283,63 @@ pub fn looks_like_legacy_sled_layout(db_dir: &Path) -> Result<bool, AppError> {
     Ok(false)
 }
 
+fn table_exists<K, V>(
+    read_txn: &redb::ReadTransaction,
+    table: redb::TableDefinition<K, V>,
+) -> Result<bool, AppError>
+where
+    K: redb::Key + 'static,
+    V: redb::Value + 'static,
+{
+    match read_txn.open_table(table) {
+        Ok(_) => Ok(true),
+        Err(redb::TableError::TableDoesNotExist(_)) => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn meta_index_schema_current(read_txn: &redb::ReadTransaction) -> Result<bool, AppError> {
+    let meta_state = match read_txn.open_table(PASTES_META_STATE) {
+        Ok(table) => table,
+        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    let Some(value) = meta_state.get(paste::META_SCHEMA_VERSION_KEY)? else {
+        return Ok(false);
+    };
+    Ok(bincode::deserialize::<u64>(value.value()).ok()
+        == Some(paste::CURRENT_PASTES_META_SCHEMA_VERSION))
+}
+
+fn needs_startup_schema_snapshot(db: &redb::Database) -> Result<bool, AppError> {
+    let read_txn = db.begin_read()?;
+    let required_tables_current = table_exists(&read_txn, PASTES)?
+        && table_exists(&read_txn, PASTES_META)?
+        && table_exists(&read_txn, PASTES_META_STATE)?
+        && table_exists(&read_txn, PASTES_BY_UPDATED)?
+        && table_exists(&read_txn, PASTE_VERSIONS_META)?
+        && table_exists(&read_txn, PASTE_VERSIONS_CONTENT)?
+        && table_exists(&read_txn, DELETED_PASTES)?
+        && table_exists(&read_txn, DELETED_PASTE_VERSIONS_META)?
+        && table_exists(&read_txn, DELETED_PASTE_VERSIONS_CONTENT)?
+        && table_exists(&read_txn, FOLDERS)?
+        && table_exists(&read_txn, FOLDERS_DELETING)?;
+
+    Ok(!required_tables_current || !meta_index_schema_current(&read_txn)?)
+}
+
+fn create_startup_schema_snapshot(path: &str, db: &redb::Database) -> Result<(), AppError> {
+    let backup_manager = backup::BackupManager::new(path);
+    let backup_path = backup_manager.create_backup(db)?;
+    if !backup_path.is_empty() {
+        tracing::info!(
+            "Created startup schema backup before repairing database metadata at {}",
+            backup_path
+        );
+    }
+    Ok(())
+}
+
 impl Database {
     fn shared_folder_txn_lock_for_db(db: &Arc<RedbDatabase>) -> Result<Arc<Mutex<()>>, AppError> {
         static REGISTRY: OnceLock<Mutex<HashMap<usize, Weak<Mutex<()>>>>> = OnceLock::new();
@@ -320,6 +382,13 @@ impl Database {
             );
         }
         self.pastes.ensure_meta_index_current()?;
+        let discarded = TransactionOps::discard_all_deleted_paste_undo(self)?;
+        if !discarded.is_empty() {
+            tracing::info!(
+                count = discarded.len(),
+                "Discarded persisted delete-undo tombstones during database startup"
+            );
+        }
         Ok(())
     }
 
@@ -359,6 +428,16 @@ impl Database {
             self._owner_lock_guard.clone(),
             self.folder_txn_lock.clone(),
         )
+    }
+
+    /// Return the effective per-paste historical snapshot retention limit.
+    ///
+    /// # Returns
+    /// The configured retention limit captured when this database handle was
+    /// opened.
+    #[must_use]
+    pub fn paste_version_retention_limit(&self) -> usize {
+        self.pastes.version_retention_limit()
     }
 
     /// Open the database and initialize tables.
@@ -403,6 +482,7 @@ impl Database {
 
         let owner_lock_guard = Some(Arc::new(lock::acquire_owner_lock_for_lifetime(path)?));
         let db_file = db_dir.join(REDB_FILE_NAME);
+        let db_file_existed = db_file.is_file();
         let db = match RedbDatabase::create(&db_file) {
             Ok(db) => Arc::new(db),
             Err(DatabaseError::DatabaseAlreadyOpen) => match localpaste_process_probe() {
@@ -431,6 +511,15 @@ impl Database {
             },
             Err(err) => return Err(AppError::Database(err.into())),
         };
+
+        if db_file_existed && needs_startup_schema_snapshot(db.as_ref())? {
+            create_startup_schema_snapshot(path, db.as_ref()).map_err(|err| {
+                AppError::StorageMessage(format!(
+                    "Failed to create startup backup before database schema repair: {}",
+                    err
+                ))
+            })?;
+        }
 
         let folder_txn_lock = Self::shared_folder_txn_lock_for_db(&db)?;
         Self::from_shared_with_coordination(db, owner_lock_guard, folder_txn_lock)

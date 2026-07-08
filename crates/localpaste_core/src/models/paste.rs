@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::detect_language as detect_language_impl;
+use crate::detection::detect_language;
 use crate::semantic::DerivedMeta;
 
 /// Paste metadata stored in the database and returned by the API.
@@ -72,6 +72,13 @@ pub struct SearchQuery {
     pub folder_id: Option<String>,
     pub language: Option<String>,
     pub limit: Option<usize>,
+    pub case_sensitive: Option<bool>,
+}
+
+/// Search behavior flags shared by full-content and metadata-only search.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SearchOptions {
+    pub case_sensitive: bool,
 }
 
 /// Query parameters for listing pastes.
@@ -105,6 +112,27 @@ pub struct VersionSnapshot {
     #[serde(default)]
     pub language_is_manual: bool,
     pub content: String,
+}
+
+/// One historical snapshot captured as part of a reversible paste delete.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedPasteVersion {
+    pub meta: VersionMeta,
+    pub content: String,
+}
+
+/// Canonical paste row and historical snapshots needed to undo a delete.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedPasteBundle {
+    pub paste: Paste,
+    pub versions: Vec<DeletedPasteVersion>,
+}
+
+/// Persisted tombstone for a deleted paste undo token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedPasteRecord {
+    pub paste: Paste,
+    pub expires_at_ms: i64,
 }
 
 /// Query parameters for listing paste versions.
@@ -248,12 +276,4 @@ pub fn is_markdown_content(content: &str) -> bool {
             || trimmed.starts_with("> ")
             || is_markdown_list_line(trimmed)
     })
-}
-
-/// Detect language for paste content using core detection adapters.
-///
-/// # Returns
-/// Canonical language label when detection succeeds, otherwise `None`.
-pub fn detect_language(content: &str) -> Option<String> {
-    detect_language_impl(content)
 }

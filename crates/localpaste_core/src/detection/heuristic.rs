@@ -1,7 +1,8 @@
 //! Heuristic language detection fallback for text content.
 
-use super::looks_like_yaml;
+use super::{looks_like_flat_config_yaml, looks_like_yaml};
 use crate::models::paste::is_markdown_content;
+use crate::text::{utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 
 /// Best-effort language detection based on simple heuristics.
 ///
@@ -9,14 +10,13 @@ use crate::models::paste::is_markdown_content;
 /// Canonical-friendly language label when a strong pattern is found, otherwise
 /// `None`.
 pub(crate) fn detect(content: &str) -> Option<String> {
-    const SAMPLE_MAX_BYTES: usize = 64 * 1024;
     const SAMPLE_MAX_LINES: usize = 512;
 
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return None;
     }
-    let sample = utf8_prefix(trimmed, SAMPLE_MAX_BYTES);
+    let sample = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
     let lower = sample.to_ascii_lowercase();
     let lines = || sample.lines().take(SAMPLE_MAX_LINES);
     let shebang = shebang_interpreter(sample);
@@ -138,7 +138,9 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("sql".to_string());
     }
 
-    let yaml_like = looks_like_yaml(sample);
+    // Keep the heuristic YAML path conservative, while accepting multi-line
+    // config-shaped flat mappings consistently across Magika and fallback-only builds.
+    let yaml_like = looks_like_yaml(sample) || looks_like_flat_config_yaml(sample);
 
     if is_markdown_content(sample) && !yaml_like {
         return Some("markdown".to_string());
@@ -540,15 +542,4 @@ fn is_sql_identifier(token: &str) -> bool {
         return false;
     }
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-}
-
-fn utf8_prefix(content: &str, max_bytes: usize) -> &str {
-    if content.len() <= max_bytes {
-        return content;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !content.is_char_boundary(end) {
-        end = end.saturating_sub(1);
-    }
-    &content[..end]
 }

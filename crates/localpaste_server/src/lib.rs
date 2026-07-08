@@ -35,8 +35,6 @@ const MAX_JSON_REQUEST_BODY_BYTES: usize = 256 * 1024 * 1024;
 const CSP_HEADER_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 const X_CONTENT_TYPE_OPTIONS_NOSNIFF: &str = "nosniff";
 const X_FRAME_OPTIONS_DENY: &str = "DENY";
-const X_LOCALPASTE_SERVER_HEADER: &str = "x-localpaste-server";
-const X_LOCALPASTE_SERVER_VALUE: &str = "1";
 
 fn uncapped_request_body_limit(max_paste_size: usize) -> usize {
     max_paste_size
@@ -137,19 +135,6 @@ impl AppState {
             locks,
         }
     }
-}
-
-/// Create the application router with all routes and middleware.
-///
-/// # Arguments
-/// - `state`: Shared application state.
-/// - `allow_public_access`: Whether to allow cross-origin requests from any origin.
-///
-/// # Returns
-/// Configured `axum::Router`.
-pub fn create_app(state: AppState, allow_public_access: bool) -> Router {
-    let listener_port = state.config.port;
-    create_app_with_cors(state, allow_public_access, listener_port)
 }
 
 /// Resolve the listener address from env var overrides and security policy.
@@ -285,8 +270,8 @@ fn create_app_with_cors(state: AppState, allow_public_access: bool, listener_por
                     HeaderValue::from_static(X_FRAME_OPTIONS_DENY),
                 ))
                 .layer(SetResponseHeaderLayer::overriding(
-                    HeaderName::from_static(X_LOCALPASTE_SERVER_HEADER),
-                    HeaderValue::from_static(X_LOCALPASTE_SERVER_VALUE),
+                    HeaderName::from_static(localpaste_core::LOCALPASTE_SERVER_HEADER),
+                    HeaderValue::from_static(localpaste_core::LOCALPASTE_SERVER_VALUE),
                 )),
         )
 }
@@ -419,6 +404,7 @@ mod tests {
             max_paste_size: 1024,
             auto_save_interval: 2000,
             auto_backup: false,
+            search_case_sensitive: false,
         };
         let _bind = EnvGuard::set("BIND", "0.0.0.0:4040");
         let resolved = resolve_bind_address(&config, false);
@@ -435,6 +421,7 @@ mod tests {
             max_paste_size: 1024,
             auto_save_interval: 2000,
             auto_backup: false,
+            search_case_sensitive: false,
         };
         let loopback = resolve_bind_address(&config, false);
         assert_eq!(loopback, SocketAddr::from(([127, 0, 0, 1], 4041)));

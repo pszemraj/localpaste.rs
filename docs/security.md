@@ -1,15 +1,9 @@
 # Security Configuration
 
-Security defaults, exposure policy, and security-relevant environment settings.
-Storage compatibility lives in [storage.md](storage.md), service operations in
-[deployment.md](deployment.md), runtime-provider toggles in
-[language-detection.md](language-detection.md), and build/run commands in
-[dev/devlog.md](dev/devlog.md).
-
 ---
 
 - [Default Security Settings](#default-security-settings)
-- [Environment Variables](#environment-variables)
+- [Runtime Configuration](#runtime-configuration)
 - [Public Exposure (Not Recommended)](#public-exposure-not-recommended)
 - [Security Best Practices](#security-best-practices)
 - [Threat Model](#threat-model)
@@ -26,24 +20,26 @@ LocalPaste.rs is designed for local use and comes with secure defaults:
 - **CORS restrictions**: In strict mode, only accepts loopback origins that match the active listener port
 - **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options
 - **Request size limits**: Enforced at transport layer (default: 10MB)
-- **Storage durability**: defined in [storage.md](storage.md)
-- **Single-writer owner lock**: semantics in [dev/locking-model.md](dev/locking-model.md)
 
-## Environment Variables
+## Runtime Configuration
 
-### Network Configuration
+### Environment Variables
 
-| Variable              | Default           | Description                                                           |
-| --------------------- | ----------------- | --------------------------------------------------------------------- |
-| `PORT`                | `38411`           | Listener port used when `BIND` is unset                               |
-| `BIND`                | `127.0.0.1:38411` | Server bind address (non-loopback requires `ALLOW_PUBLIC_ACCESS=1`)   |
-| `ALLOW_PUBLIC_ACCESS` | disabled          | Enable CORS for all origins and allow non-loopback bind               |
-| `MAX_PASTE_SIZE`      | `10485760`        | Max accepted paste size (bytes) for write paths (API and GUI backend) |
-| `AUTO_BACKUP`         | disabled          | Create DB backup on startup when existing DB is present               |
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DB_PATH` | platform cache dir | Database directory containing `data.redb`, lock files, and GUI discovery metadata |
+| `PORT` | `38411` | Listener port used when `BIND` is unset |
+| `BIND` | `127.0.0.1:38411` | Server bind address; non-loopback values require `ALLOW_PUBLIC_ACCESS=1` |
+| `ALLOW_PUBLIC_ACCESS` | disabled | Enable CORS for all origins and allow non-loopback bind |
+| `MAX_PASTE_SIZE` | `10485760` | Max accepted paste size in bytes for API and GUI backend write paths |
+| `AUTO_SAVE_INTERVAL` | `2000` | GUI autosave delay in milliseconds |
+| `AUTO_BACKUP` | disabled | Create DB backup in the DB directory on startup when an existing DB is present |
+| `LOCALPASTE_SEARCH_CASE_SENSITIVE` | disabled | Default case-sensitive matching for search endpoints when the request omits `case_sensitive` |
 | `LOCALPASTE_VERSION_INTERVAL_SECS` | `300` | Minimum seconds between persisted historical snapshots (`>= 1`) |
+| `LOCALPASTE_VERSION_RETENTION_LIMIT` | `200` | Maximum historical snapshots retained per paste (`1..=1000`) |
 | `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` | unset | Legacy fallback key for `LOCALPASTE_VERSION_INTERVAL_SECS` |
 
-`localpaste` startup fails fast on malformed `BIND`/`PORT`/size/boolean/snapshot-interval env values so invalid deployment configuration is explicit.
+`localpaste` startup fails fast on malformed `BIND`/`PORT`/numeric/boolean/version env values so invalid deployment configuration is explicit.
 Reference defaults/examples: [`.env.example`](../.env.example).
 
 ### Security Headers
@@ -56,7 +52,7 @@ The following headers are automatically set:
 
 To add a referrer policy, configure your reverse proxy or extend the Axum middleware layer.
 
-### Lock Management Policy
+### Lock Management
 
 Operational recovery is documented in [deployment.md](deployment.md).
 Lock semantics are documented in [dev/locking-model.md](dev/locking-model.md).
@@ -135,8 +131,7 @@ server {
 2. **Monitoring**: Watch logs for unusual activity
    Use the service/logging patterns in [deployment.md](deployment.md).
 
-3. **Backups**: Regular database backups
-   Use the backup and retention procedures in [deployment.md](deployment.md).
+3. **Backups**: Use `AUTO_BACKUP=true` for startup snapshots or back up `DB_PATH` with external tooling. Startup snapshots are written inside the DB directory as `data.redb.backup.<timestamp>.redb` files. LocalPaste does not run scheduled backups or automatic backup rotation.
 
 4. **Access Control**: Use firewall rules
 

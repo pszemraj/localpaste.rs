@@ -2,6 +2,7 @@
 
 use super::canonical::canonicalize;
 use super::detect_language;
+use super::looks_like_flat_config_yaml;
 use super::looks_like_yaml;
 use super::refine_magika_label;
 
@@ -23,8 +24,10 @@ fn heuristic_detects_existing_language_matrix() {
         ("const x = () => console.log('hi');", Some("javascript")),
         ("#!/bin/bash\necho hello", Some("shell")),
         ("name: app\nservices:\n  - web", Some("yaml")),
-        ("name: app", Some("yaml")),
-        ("display name: app\nport: 8080", Some("yaml")),
+        ("name: app\nversion: 1\nport: 8080\n", Some("yaml")),
+        ("name: app\nversion: 1\n...\n", Some("yaml")),
+        ("name: app", None),
+        ("display name: app\nport: 8080", None),
         ("services: [web]\nversion: 3", Some("yaml")),
         (
             "jobs:\n  build:\n    runs-on: ubuntu-latest\n",
@@ -40,17 +43,40 @@ fn heuristic_detects_existing_language_matrix() {
 #[test]
 fn yaml_shape_helper_handles_flow_values_and_single_list_guard() {
     assert!(looks_like_yaml("root: {child: value}\n"));
-    assert!(looks_like_yaml("display name: api\nport: 8080\n"));
+    assert!(!looks_like_yaml("display name: api\nport: 8080\n"));
     assert!(looks_like_yaml("services: [web]\nversion: 3\n"));
     assert!(looks_like_yaml(
         "jobs:\n  build:\n    runs-on: ubuntu-latest\n"
     ));
+    assert!(looks_like_yaml("script: |\n  echo hi\n"));
+    assert!(looks_like_yaml("defaults: &defaults\n  timeout: 30\n"));
+    assert!(looks_like_yaml("- name: web\n- name: worker\n"));
     assert!(!looks_like_yaml("- item\n"));
+}
+
+#[test]
+fn yaml_shape_helper_requires_supporting_structure_for_marker_values() {
+    assert!(!looks_like_yaml("pattern: *.glob\nmode: strict\n"));
+    assert!(!looks_like_yaml("cmd: &background\nmode: async\n"));
+    assert!(!looks_like_yaml("rule: >threshold\nstatus: active\n"));
+    assert!(!looks_like_yaml("script: |\nstatus: active\n"));
+    assert!(looks_like_yaml("script: |-\n  echo hi\n"));
+    assert!(looks_like_yaml("script: |2\n  echo hi\n"));
+    assert!(looks_like_yaml("script: >2-\n  echo hi\n"));
+    assert!(!looks_like_yaml("script: |0\n  echo hi\n"));
+    assert!(!looks_like_yaml("script: >0\n  echo hi\n"));
+    assert!(looks_like_yaml("defaults: &defaults\n  timeout: 30\n"));
 }
 
 #[test]
 fn yaml_shape_helper_keeps_single_line_spaced_key_guardrail() {
     assert!(!looks_like_yaml("status report: done\n"));
+    assert!(!looks_like_yaml("name: app\n"));
+    assert!(!looks_like_yaml("From: jane@example.com\nSubject: demo\n"));
+    assert!(!looks_like_yaml(
+        "ERROR: connection refused\nWARN: retrying\n"
+    ));
+    assert!(!looks_like_yaml("Author: Jane\nStatus: draft\n"));
 }
 
 #[test]
@@ -212,6 +238,15 @@ fn magika_detects_high_signal_code_snippets() {
     }
 }
 
+#[cfg(feature = "magika")]
+#[test]
+fn magika_and_fallback_agree_on_flat_config_yaml() {
+    assert_eq!(
+        detect_language("name: app\nversion: 1\nport: 8080\n").as_deref(),
+        Some("yaml")
+    );
+}
+
 #[test]
 fn magika_refinement_rejects_weak_yaml_shape() {
     assert_eq!(refine_magika_label("yaml", "status report:\ndone\n"), None);
@@ -221,8 +256,13 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         refine_magika_label("yaml", "---\nname: app\n"),
         Some("yaml".to_string())
     );
+    assert_eq!(refine_magika_label("yaml", "name: app"), None);
     assert_eq!(
-        refine_magika_label("yaml", "name: app"),
+        refine_magika_label("yaml", "name: app\nversion: 1\nport: 8080\n"),
+        Some("yaml".to_string())
+    );
+    assert_eq!(
+        refine_magika_label("yaml", "apiVersion: v1\nkind: Pod\n"),
         Some("yaml".to_string())
     );
     assert_eq!(
@@ -231,7 +271,7 @@ fn magika_refinement_rejects_weak_yaml_shape() {
     );
     assert_eq!(
         refine_magika_label("yaml", "display name: api\nport: 8080\n"),
-        Some("yaml".to_string())
+        None
     );
     assert_eq!(
         refine_magika_label("yaml", "services:\n  web:\n    image: nginx\n"),
@@ -250,6 +290,22 @@ fn magika_refinement_rejects_weak_yaml_shape() {
         refine_magika_label("yaml", "```json\n{\"k\":1}\n```\n"),
         Some("markdown".to_string())
     );
+}
+
+#[test]
+fn flat_config_yaml_helper_accepts_config_shaped_flat_mappings_only() {
+    assert!(looks_like_flat_config_yaml(
+        "name: app\nversion: 1\nport: 8080\n"
+    ));
+    assert!(looks_like_flat_config_yaml("name: app\nversion: 1\n...\n"));
+    assert!(looks_like_flat_config_yaml("apiVersion: v1\nkind: Pod\n"));
+    assert!(!looks_like_flat_config_yaml(
+        "display name: api\nport: 8080\n"
+    ));
+    assert!(!looks_like_flat_config_yaml(
+        "Author: Jane\nStatus: draft\n"
+    ));
+    assert!(!looks_like_flat_config_yaml("name: app\n"));
 }
 
 #[test]

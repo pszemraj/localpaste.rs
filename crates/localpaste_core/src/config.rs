@@ -8,7 +8,8 @@ use tracing::warn;
 
 use crate::constants::{
     API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE,
-    DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PORT,
+    DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PASTE_VERSION_RETENTION_LIMIT, DEFAULT_PORT,
+    MAX_PASTE_VERSION_RETENTION_LIMIT,
 };
 
 /// Runtime configuration for LocalPaste.
@@ -19,6 +20,8 @@ pub struct Config {
     pub max_paste_size: usize,
     pub auto_save_interval: u64,
     pub auto_backup: bool,
+    #[serde(default)]
+    pub search_case_sensitive: bool,
 }
 
 /// Expand tilde (~) in paths to the user's home directory
@@ -185,46 +188,94 @@ pub fn api_addr_file_path_from_env_or_default() -> PathBuf {
     api_addr_file_path_for_db_path(db_path_from_env_or_default().as_str())
 }
 
-fn parse_nonzero_interval_seconds_strict(name: &str, default: u64) -> Result<u64, String> {
-    let value = parse_env_number_strict(name, default)?;
-    if value == 0 {
-        return Err(format!(
-            "Invalid value for {}='0': expected integer >= 1",
-            name
-        ));
-    }
-    Ok(value)
-}
-
-fn parse_nonzero_interval_seconds_permissive(name: &str, default: u64) -> u64 {
+fn parse_env_number_checked<T>(
+    name: &str,
+    default: T,
+    validate: impl Fn(T) -> Result<(), String>,
+) -> Result<T, String>
+where
+    T: FromStr + Copy + std::fmt::Display,
+    <T as FromStr>::Err: std::fmt::Display,
+{
     let Ok(value) = env::var(name) else {
-        return default;
+        return Ok(default);
     };
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        warn!(
-            "Environment variable {} is empty; using default {}",
-            name, default
-        );
-        return default;
+        return Err(format!("Environment variable {} is empty", name));
     }
-    match trimmed.parse::<u64>() {
-        Ok(parsed) if parsed >= 1 => parsed,
-        Ok(_) => {
-            warn!(
-                "Invalid value for {}='{}': expected integer >= 1. Using default {}",
-                name, value, default
-            );
-            default
-        }
+    let parsed = trimmed
+        .parse::<T>()
+        .map_err(|err| format!("Invalid value for {}='{}': {}", name, value, err))?;
+    validate(parsed)?;
+    Ok(parsed)
+}
+
+fn parse_env_number_permissive<T>(
+    name: &str,
+    default: T,
+    validate: impl Fn(T) -> Result<(), String>,
+) -> T
+where
+    T: FromStr + Copy + std::fmt::Display,
+    <T as FromStr>::Err: std::fmt::Display,
+{
+    match parse_env_number_checked(name, default, validate) {
+        Ok(value) => value,
         Err(err) => {
-            warn!(
-                "Invalid value for {}='{}': {}. Using default {}",
-                name, value, err, default
-            );
+            warn!("{}. Using default {}", err, default);
             default
         }
     }
+}
+
+fn validate_min_one<T>(name: &str, value: T) -> Result<(), String>
+where
+    T: From<u8> + PartialOrd + std::fmt::Display,
+{
+    if value >= T::from(1) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid value for {}='{}': expected integer >= 1",
+            name, value
+        ))
+    }
+}
+
+fn parse_nonzero_number_strict<T>(name: &str, default: T) -> Result<T, String>
+where
+    T: FromStr + Copy + std::fmt::Display + From<u8> + PartialOrd,
+    <T as FromStr>::Err: std::fmt::Display,
+{
+    parse_env_number_checked(name, default, |value| validate_min_one(name, value))
+}
+
+fn parse_nonzero_number_permissive<T>(name: &str, default: T) -> T
+where
+    T: FromStr + Copy + std::fmt::Display + From<u8> + PartialOrd,
+    <T as FromStr>::Err: std::fmt::Display,
+{
+    parse_env_number_permissive(name, default, |value| validate_min_one(name, value))
+}
+
+fn validate_retention_limit(name: &str, value: usize) -> Result<(), String> {
+    if (1..=MAX_PASTE_VERSION_RETENTION_LIMIT).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid value for {}='{}': expected integer between 1 and {}",
+            name, value, MAX_PASTE_VERSION_RETENTION_LIMIT
+        ))
+    }
+}
+
+fn parse_retention_limit_strict(name: &str, default: usize) -> Result<usize, String> {
+    parse_env_number_checked(name, default, |value| validate_retention_limit(name, value))
+}
+
+fn parse_retention_limit_permissive(name: &str, default: usize) -> usize {
+    parse_env_number_permissive(name, default, |value| validate_retention_limit(name, value))
 }
 
 enum IntervalParseMode {
@@ -249,12 +300,12 @@ fn resolve_paste_version_interval_secs(mode: IntervalParseMode) -> Result<u64, S
         return Ok(DEFAULT_PASTE_VERSION_INTERVAL_SECS);
     };
     match mode {
-        IntervalParseMode::Permissive => Ok(parse_nonzero_interval_seconds_permissive(
+        IntervalParseMode::Permissive => Ok(parse_nonzero_number_permissive(
             key,
             DEFAULT_PASTE_VERSION_INTERVAL_SECS,
         )),
         IntervalParseMode::Strict => {
-            parse_nonzero_interval_seconds_strict(key, DEFAULT_PASTE_VERSION_INTERVAL_SECS)
+            parse_nonzero_number_strict(key, DEFAULT_PASTE_VERSION_INTERVAL_SECS)
         }
     }
 }
@@ -288,6 +339,41 @@ pub fn paste_version_interval_secs_from_env_or_default() -> u64 {
 /// Returns an error when an explicitly provided interval is malformed or less than `1`.
 pub fn paste_version_interval_secs_from_env() -> Result<u64, String> {
     resolve_paste_version_interval_secs(IntervalParseMode::Strict)
+}
+
+/// Resolve the maximum number of persisted snapshots retained per paste using
+/// permissive env/default semantics.
+///
+/// # Returns
+/// Retention limit (between `1` and
+/// [`MAX_PASTE_VERSION_RETENTION_LIMIT`]), sourced from
+/// `LOCALPASTE_VERSION_RETENTION_LIMIT` when set.
+///
+/// Malformed or zero values emit a warning and fall back to the default limit
+/// instead of failing startup. Strict entrypoints should validate the same key
+/// via [`paste_version_retention_limit_from_env`].
+pub fn paste_version_retention_limit_from_env_or_default() -> usize {
+    parse_retention_limit_permissive(
+        "LOCALPASTE_VERSION_RETENTION_LIMIT",
+        DEFAULT_PASTE_VERSION_RETENTION_LIMIT,
+    )
+}
+
+/// Resolve the maximum number of persisted snapshots retained per paste.
+///
+/// # Returns
+/// Retention limit (between `1` and
+/// [`MAX_PASTE_VERSION_RETENTION_LIMIT`]), sourced from
+/// `LOCALPASTE_VERSION_RETENTION_LIMIT` when set.
+///
+/// # Errors
+/// Returns an error when an explicitly provided limit is malformed, less than
+/// `1`, or greater than [`MAX_PASTE_VERSION_RETENTION_LIMIT`].
+pub fn paste_version_retention_limit_from_env() -> Result<usize, String> {
+    parse_retention_limit_strict(
+        "LOCALPASTE_VERSION_RETENTION_LIMIT",
+        DEFAULT_PASTE_VERSION_RETENTION_LIMIT,
+    )
 }
 
 /// Parse a boolean-like environment flag value.
@@ -363,27 +449,7 @@ where
     T: FromStr + Copy + std::fmt::Display,
     <T as FromStr>::Err: std::fmt::Display,
 {
-    let Ok(value) = env::var(name) else {
-        return default;
-    };
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        warn!(
-            "Environment variable {} is empty; using default {}",
-            name, default
-        );
-        return default;
-    }
-    match trimmed.parse::<T>() {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            warn!(
-                "Invalid value for {}='{}': {}. Using default {}",
-                name, value, err, default
-            );
-            default
-        }
-    }
+    parse_env_number_permissive(name, default, |_| Ok(()))
 }
 
 fn parse_env_number_strict<T>(name: &str, default: T) -> Result<T, String>
@@ -391,16 +457,7 @@ where
     T: FromStr + Copy + std::fmt::Display,
     <T as FromStr>::Err: std::fmt::Display,
 {
-    let Ok(value) = env::var(name) else {
-        return Ok(default);
-    };
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(format!("Environment variable {} is empty", name));
-    }
-    trimmed
-        .parse::<T>()
-        .map_err(|err| format!("Invalid value for {}='{}': {}", name, value, err))
+    parse_env_number_checked(name, default, |_| Ok(()))
 }
 
 /// Read a boolean flag from the environment.
@@ -435,6 +492,7 @@ impl Config {
                 DEFAULT_AUTO_SAVE_INTERVAL_MS,
             ), // 2 seconds
             auto_backup: env_flag_enabled("AUTO_BACKUP"), // Default to false - backups should be explicit
+            search_case_sensitive: env_flag_enabled("LOCALPASTE_SEARCH_CASE_SENSITIVE"),
         }
     }
 
@@ -453,6 +511,7 @@ impl Config {
         // Validate snapshot interval envs during strict startup so malformed values
         // fail fast instead of surfacing later during write operations.
         let _ = paste_version_interval_secs_from_env()?;
+        let _ = paste_version_retention_limit_from_env()?;
 
         Ok(Self {
             db_path,
@@ -463,6 +522,10 @@ impl Config {
                 DEFAULT_AUTO_SAVE_INTERVAL_MS,
             )?,
             auto_backup: parse_bool_env_strict("AUTO_BACKUP", false)?,
+            search_case_sensitive: parse_bool_env_strict(
+                "LOCALPASTE_SEARCH_CASE_SENSITIVE",
+                false,
+            )?,
         })
     }
 }
@@ -473,11 +536,13 @@ mod tests {
         api_addr_file_path_for_db_path, db_path_from_env_or_default, db_path_from_env_strict,
         env_flag_enabled, parse_bool_env, parse_bool_env_strict, parse_env_flag,
         paste_version_interval_secs_from_env, paste_version_interval_secs_from_env_or_default,
+        paste_version_retention_limit_from_env, paste_version_retention_limit_from_env_or_default,
         resolve_db_path_with_explicit_or_env, Config,
     };
     use crate::constants::{
         API_ADDR_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS, DEFAULT_MAX_PASTE_SIZE,
-        DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PORT,
+        DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PASTE_VERSION_RETENTION_LIMIT, DEFAULT_PORT,
+        MAX_PASTE_VERSION_RETENTION_LIMIT,
     };
     use crate::env::{env_lock, EnvGuard};
     use std::path::PathBuf;
@@ -626,10 +691,7 @@ mod tests {
         assert!(err.contains("LOCALPASTE_TEST_FLAG"));
     }
 
-    #[test]
-    fn config_auto_backup_obeys_bool_matrix_values() {
-        let _lock = env_lock().lock().expect("env lock");
-        let backup_key = "AUTO_BACKUP";
+    fn assert_config_bool_matrix(key: &str, read_value: impl Fn(&Config) -> bool) {
         let values = [
             ("1", true),
             ("0", false),
@@ -639,10 +701,24 @@ mod tests {
         ];
 
         for (value, expected) in values {
-            let _flag = EnvGuard::set(backup_key, value);
+            let _flag = EnvGuard::set(key, value);
             let config = Config::from_env();
-            assert_eq!(config.auto_backup, expected, "value: {value}");
+            assert_eq!(read_value(&config), expected, "value: {value}");
         }
+    }
+
+    #[test]
+    fn config_auto_backup_obeys_bool_matrix_values() {
+        let _lock = env_lock().lock().expect("env lock");
+        assert_config_bool_matrix("AUTO_BACKUP", |config| config.auto_backup);
+    }
+
+    #[test]
+    fn config_search_case_sensitive_obeys_bool_matrix_values() {
+        let _lock = env_lock().lock().expect("env lock");
+        assert_config_bool_matrix("LOCALPASTE_SEARCH_CASE_SENSITIVE", |config| {
+            config.search_case_sensitive
+        });
     }
 
     #[test]
@@ -693,6 +769,67 @@ mod tests {
         assert_eq!(
             paste_version_interval_secs_from_env_or_default(),
             DEFAULT_PASTE_VERSION_INTERVAL_SECS
+        );
+    }
+
+    #[test]
+    fn paste_version_retention_parsing_respects_strict_and_permissive_modes() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _limit = EnvGuard::remove("LOCALPASTE_VERSION_RETENTION_LIMIT");
+        assert_eq!(
+            paste_version_retention_limit_from_env().expect("strict default retention"),
+            DEFAULT_PASTE_VERSION_RETENTION_LIMIT
+        );
+        assert_eq!(
+            paste_version_retention_limit_from_env_or_default(),
+            DEFAULT_PASTE_VERSION_RETENTION_LIMIT
+        );
+
+        let _limit = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "25");
+        assert_eq!(
+            paste_version_retention_limit_from_env().expect("strict configured retention"),
+            25
+        );
+        assert_eq!(paste_version_retention_limit_from_env_or_default(), 25);
+        drop(_limit);
+
+        let _limit = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "1");
+        assert_eq!(
+            paste_version_retention_limit_from_env().expect("strict minimum retention"),
+            1
+        );
+        assert_eq!(paste_version_retention_limit_from_env_or_default(), 1);
+        drop(_limit);
+
+        let _limit = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "0");
+        let err = paste_version_retention_limit_from_env()
+            .expect_err("strict zero retention should fail");
+        assert!(err.contains("LOCALPASTE_VERSION_RETENTION_LIMIT"));
+        assert_eq!(
+            paste_version_retention_limit_from_env_or_default(),
+            DEFAULT_PASTE_VERSION_RETENTION_LIMIT
+        );
+        drop(_limit);
+
+        let over_max = (MAX_PASTE_VERSION_RETENTION_LIMIT + 1).to_string();
+        let _limit = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", over_max.as_str());
+        let err = paste_version_retention_limit_from_env()
+            .expect_err("strict over-max retention should fail");
+        assert!(err.contains("LOCALPASTE_VERSION_RETENTION_LIMIT"));
+        assert!(err.contains(&MAX_PASTE_VERSION_RETENTION_LIMIT.to_string()));
+        assert_eq!(
+            paste_version_retention_limit_from_env_or_default(),
+            DEFAULT_PASTE_VERSION_RETENTION_LIMIT
+        );
+        drop(_limit);
+
+        let _limit = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "not-a-number");
+        let err = paste_version_retention_limit_from_env()
+            .expect_err("strict invalid retention should fail");
+        assert!(err.contains("LOCALPASTE_VERSION_RETENTION_LIMIT"));
+        assert_eq!(
+            paste_version_retention_limit_from_env_or_default(),
+            DEFAULT_PASTE_VERSION_RETENTION_LIMIT
         );
     }
 

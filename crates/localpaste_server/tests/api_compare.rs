@@ -1,6 +1,7 @@
 //! Integration tests for compare-oriented LocalPaste HTTP endpoints.
 
-mod support;
+/// Shared real-listener server harness for compare endpoint tests.
+pub mod support;
 
 use axum::http::StatusCode;
 use localpaste_core::env::{env_lock, EnvGuard};
@@ -11,8 +12,8 @@ use support::setup_test_server;
 #[allow(clippy::await_holding_lock)]
 async fn test_version_and_diff_endpoints_roundtrip() {
     let _env_lock = env_lock().lock().expect("env lock");
-    let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
-    let (server, _temp, _locks) = setup_test_server();
+    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
+    let (server, _locks) = setup_test_server();
 
     let create_response = server
         .post("/api/paste")
@@ -112,94 +113,55 @@ async fn test_version_and_diff_endpoints_roundtrip() {
 }
 
 #[tokio::test]
-async fn test_diff_endpoint_rejects_oversized_compare_inputs() {
-    let (server, _temp, _locks) = setup_test_server();
-    let oversized = "x".repeat((localpaste_core::MAX_DIFF_INPUT_BYTES / 2) + 1);
+async fn test_compare_endpoints_reject_oversized_inputs() {
+    let cases = [("/api/diff", "diff"), ("/api/equal", "equal")];
 
-    let left_response = server
-        .post("/api/paste")
-        .json(&json!({
-            "content": oversized,
-            "name": "diff-left"
-        }))
-        .await;
-    assert_eq!(left_response.status_code(), StatusCode::OK);
-    let left: serde_json::Value = left_response.json();
+    for (endpoint, name_prefix) in cases {
+        let (server, _locks) = setup_test_server();
+        let oversized = "x".repeat((localpaste_core::MAX_DIFF_INPUT_BYTES / 2) + 1);
 
-    let right_response = server
-        .post("/api/paste")
-        .json(&json!({
-            "content": "y".repeat((localpaste_core::MAX_DIFF_INPUT_BYTES / 2) + 1),
-            "name": "diff-right"
-        }))
-        .await;
-    assert_eq!(right_response.status_code(), StatusCode::OK);
-    let right: serde_json::Value = right_response.json();
+        let left_response = server
+            .post("/api/paste")
+            .json(&json!({
+                "content": oversized,
+                "name": format!("{name_prefix}-left")
+            }))
+            .await;
+        assert_eq!(left_response.status_code(), StatusCode::OK);
+        let left: serde_json::Value = left_response.json();
 
-    let diff_response = server
-        .post("/api/diff")
-        .json(&json!({
-            "left": { "paste_id": left["id"].as_str().unwrap(), "version_id_ms": null },
-            "right": { "paste_id": right["id"].as_str().unwrap(), "version_id_ms": null }
-        }))
-        .await;
+        let right_response = server
+            .post("/api/paste")
+            .json(&json!({
+                "content": "y".repeat((localpaste_core::MAX_DIFF_INPUT_BYTES / 2) + 1),
+                "name": format!("{name_prefix}-right")
+            }))
+            .await;
+        assert_eq!(right_response.status_code(), StatusCode::OK);
+        let right: serde_json::Value = right_response.json();
 
-    assert_eq!(diff_response.status_code(), StatusCode::PAYLOAD_TOO_LARGE);
-    let body: serde_json::Value = diff_response.json();
-    assert!(
-        body["error"]
-            .as_str()
-            .is_some_and(|message| message.contains("Combined diff input exceeds")),
-        "unexpected error payload: {body}"
-    );
-}
+        let response = server
+            .post(endpoint)
+            .json(&json!({
+                "left": { "paste_id": left["id"].as_str().unwrap(), "version_id_ms": null },
+                "right": { "paste_id": right["id"].as_str().unwrap(), "version_id_ms": null }
+            }))
+            .await;
 
-#[tokio::test]
-async fn test_equal_endpoint_rejects_oversized_compare_inputs() {
-    let (server, _temp, _locks) = setup_test_server();
-    let oversized = "x".repeat((localpaste_core::MAX_DIFF_INPUT_BYTES / 2) + 1);
-
-    let left_response = server
-        .post("/api/paste")
-        .json(&json!({
-            "content": oversized,
-            "name": "equal-left"
-        }))
-        .await;
-    assert_eq!(left_response.status_code(), StatusCode::OK);
-    let left: serde_json::Value = left_response.json();
-
-    let right_response = server
-        .post("/api/paste")
-        .json(&json!({
-            "content": "y".repeat((localpaste_core::MAX_DIFF_INPUT_BYTES / 2) + 1),
-            "name": "equal-right"
-        }))
-        .await;
-    assert_eq!(right_response.status_code(), StatusCode::OK);
-    let right: serde_json::Value = right_response.json();
-
-    let equal_response = server
-        .post("/api/equal")
-        .json(&json!({
-            "left": { "paste_id": left["id"].as_str().unwrap(), "version_id_ms": null },
-            "right": { "paste_id": right["id"].as_str().unwrap(), "version_id_ms": null }
-        }))
-        .await;
-
-    assert_eq!(equal_response.status_code(), StatusCode::PAYLOAD_TOO_LARGE);
-    let body: serde_json::Value = equal_response.json();
-    assert!(
-        body["error"]
-            .as_str()
-            .is_some_and(|message| message.contains("Combined diff input exceeds")),
-        "unexpected error payload: {body}"
-    );
+        assert_eq!(response.status_code(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body: serde_json::Value = response.json();
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("Combined diff input exceeds")),
+            "unexpected {endpoint} error payload: {body}"
+        );
+    }
 }
 
 #[tokio::test]
 async fn test_compare_endpoints_allow_large_identical_refs() {
-    let (server, _temp, _locks) = setup_test_server();
+    let (server, _locks) = setup_test_server();
     let oversized = "x".repeat((localpaste_core::MAX_DIFF_INPUT_BYTES / 2) + 1);
 
     let create_response = server

@@ -1,7 +1,8 @@
-//! Metadata list/search command handlers and short-lived cache for the GUI backend worker.
+//! Metadata list and full-content search command handlers for the GUI backend worker.
 
 use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent, PasteSummary};
+use localpaste_core::models::paste::SearchOptions;
 use std::time::{Duration, Instant};
 use tracing::{error, info};
 
@@ -17,17 +18,62 @@ struct SearchCacheKey {
     limit: usize,
     folder_id: Option<String>,
     language: Option<String>,
+    case_sensitive: bool,
+}
+
+#[derive(Debug)]
+struct CachedItems<K> {
+    key: Option<K>,
+    items: Option<Vec<PasteSummary>>,
+    cached_at: Option<Instant>,
+}
+
+impl<K> Default for CachedItems<K> {
+    fn default() -> Self {
+        Self {
+            key: None,
+            items: None,
+            cached_at: None,
+        }
+    }
+}
+
+impl<K: PartialEq> CachedItems<K> {
+    fn is_populated(&self) -> bool {
+        self.key.is_some() || self.items.is_some() || self.cached_at.is_some()
+    }
+
+    fn clear(&mut self) {
+        self.key = None;
+        self.items = None;
+        self.cached_at = None;
+    }
+
+    fn fresh_items(&self, key: &K) -> Option<Vec<PasteSummary>> {
+        if self.key.as_ref() != Some(key) {
+            return None;
+        }
+        let (Some(items), Some(cached_at)) = (self.items.clone(), self.cached_at) else {
+            return None;
+        };
+        if cached_at.elapsed() > QUERY_CACHE_MAX_AGE {
+            return None;
+        }
+        Some(items)
+    }
+
+    fn store(&mut self, key: K, items: Vec<PasteSummary>) {
+        self.key = Some(key);
+        self.items = Some(items);
+        self.cached_at = Some(Instant::now());
+    }
 }
 
 #[derive(Debug, Default)]
 /// Short-lived cache for list/search metadata queries in the backend worker.
 pub(super) struct QueryCache {
-    list_key: Option<ListCacheKey>,
-    list_items: Option<Vec<PasteSummary>>,
-    list_cached_at: Option<Instant>,
-    search_key: Option<SearchCacheKey>,
-    search_items: Option<Vec<PasteSummary>>,
-    search_cached_at: Option<Instant>,
+    list: CachedItems<ListCacheKey>,
+    search: CachedItems<SearchCacheKey>,
     list_hits: u64,
     list_misses: u64,
     search_hits: u64,
@@ -38,19 +84,9 @@ pub(super) struct QueryCache {
 impl QueryCache {
     /// Clears cached list/search entries and increments invalidation metrics.
     pub(super) fn invalidate(&mut self) {
-        if self.list_key.is_some()
-            || self.list_items.is_some()
-            || self.list_cached_at.is_some()
-            || self.search_key.is_some()
-            || self.search_items.is_some()
-            || self.search_cached_at.is_some()
-        {
-            self.list_key = None;
-            self.list_items = None;
-            self.list_cached_at = None;
-            self.search_key = None;
-            self.search_items = None;
-            self.search_cached_at = None;
+        if self.list.is_populated() || self.search.is_populated() {
+            self.list.clear();
+            self.search.clear();
             self.invalidations = self.invalidations.saturating_add(1);
         }
     }
@@ -92,18 +128,7 @@ fn try_cached_search_items(
     op: &str,
     started: Instant,
 ) -> Option<Vec<PasteSummary>> {
-    if state.query_cache.search_key.as_ref() != Some(key) {
-        return None;
-    }
-    let (Some(items), Some(cached_at)) = (
-        state.query_cache.search_items.clone(),
-        state.query_cache.search_cached_at,
-    ) else {
-        return None;
-    };
-    if cached_at.elapsed() > QUERY_CACHE_MAX_AGE {
-        return None;
-    }
+    let items = state.query_cache.search.fresh_items(key)?;
     state.query_cache.search_hits = state.query_cache.search_hits.saturating_add(1);
     log_query_perf(
         state.perf_log_enabled,
@@ -123,9 +148,7 @@ fn store_search_items_in_cache(
     started: Instant,
     items: Vec<PasteSummary>,
 ) -> Vec<PasteSummary> {
-    state.query_cache.search_key = Some(key);
-    state.query_cache.search_items = Some(items.clone());
-    state.query_cache.search_cached_at = Some(Instant::now());
+    state.query_cache.search.store(key, items.clone());
     log_query_perf(
         state.perf_log_enabled,
         &state.query_cache,
@@ -198,10 +221,14 @@ fn handle_search_variant<E>(
         limit,
         folder_id: folder_id.clone(),
         language: language.clone(),
+        case_sensitive: state.search_case_sensitive,
     };
     let query_for_fetch = query.clone();
     let folder_for_fetch = folder_id.clone();
     let language_for_fetch = language.clone();
+    let options = SearchOptions {
+        case_sensitive: state.search_case_sensitive,
+    };
     run_cached_search(
         state,
         key,
@@ -211,11 +238,12 @@ fn handle_search_variant<E>(
             worker
                 .db
                 .pastes
-                .search_meta(
+                .search_with_options(
                     &query_for_fetch,
                     limit,
                     folder_for_fetch,
                     language_for_fetch,
+                    options,
                 )
                 .map(|metas| metas.iter().map(PasteSummary::from_meta).collect())
                 .map_err(|err| err.to_string())
@@ -245,34 +273,25 @@ pub(super) fn handle_list_pastes(state: &mut WorkerState, limit: usize, folder_i
         limit,
         folder_id: folder_id.clone(),
     };
-    if state.query_cache.list_key.as_ref() == Some(&key) {
-        if let (Some(items), Some(cached_at)) = (
-            state.query_cache.list_items.clone(),
-            state.query_cache.list_cached_at,
-        ) {
-            if cached_at.elapsed() <= QUERY_CACHE_MAX_AGE {
-                state.query_cache.list_hits = state.query_cache.list_hits.saturating_add(1);
-                log_query_perf(
-                    state.perf_log_enabled,
-                    &state.query_cache,
-                    "list",
-                    true,
-                    started.elapsed().as_secs_f64() * 1000.0,
-                    items.len(),
-                );
-                let _ = state.evt_tx.send(CoreEvent::PasteList { items });
-                return;
-            }
-        }
+    if let Some(items) = state.query_cache.list.fresh_items(&key) {
+        state.query_cache.list_hits = state.query_cache.list_hits.saturating_add(1);
+        log_query_perf(
+            state.perf_log_enabled,
+            &state.query_cache,
+            "list",
+            true,
+            started.elapsed().as_secs_f64() * 1000.0,
+            items.len(),
+        );
+        let _ = state.evt_tx.send(CoreEvent::PasteList { items });
+        return;
     }
 
     state.query_cache.list_misses = state.query_cache.list_misses.saturating_add(1);
     match state.db.pastes.list_meta(limit, folder_id) {
         Ok(metas) => {
             let items: Vec<PasteSummary> = metas.iter().map(PasteSummary::from_meta).collect();
-            state.query_cache.list_key = Some(key);
-            state.query_cache.list_items = Some(items.clone());
-            state.query_cache.list_cached_at = Some(Instant::now());
+            state.query_cache.list.store(key, items.clone());
             log_query_perf(
                 state.perf_log_enabled,
                 &state.query_cache,
@@ -294,7 +313,7 @@ pub(super) fn handle_list_pastes(state: &mut WorkerState, limit: usize, folder_i
     }
 }
 
-/// Runs a metadata search and emits standard or palette search result events.
+/// Runs full-content search and emits standard or palette search result events.
 ///
 /// # Arguments
 /// - `state`: Worker state containing db/cache/event handles.

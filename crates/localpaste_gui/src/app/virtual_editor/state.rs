@@ -1,4 +1,4 @@
-//! Selection, caret, focus, and IME state for the virtual editor.
+//! Selection, caret, and IME state for the virtual editor.
 
 use std::ops::Range;
 

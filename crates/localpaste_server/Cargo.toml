@@ -32,5 +32,6 @@ default = ["magika"]
 magika = ["localpaste_core/magika"]
 
 [dev-dependencies]
-axum-test = "16.4.1"
+reqwest = { workspace = true, features = ["json"] }
+serde.workspace = true
 tempfile.workspace = true

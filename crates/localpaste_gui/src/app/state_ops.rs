@@ -1,11 +1,14 @@
 //! State transitions for backend events, selection, and autosave flow.
 
-mod filters;
+/// Filter helpers for sidebar collections, languages, and export filenames.
+pub(super) mod filters;
 
-use super::util::format_fenced_code_block;
+use super::deferred_saves::rollback_deferred_save_dispatches;
+use super::util::{format_fenced_code_block, parse_tags_csv};
 use super::{
     ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
-    SidebarCollection, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
+    SidebarCollection, ToastAction, BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW,
+    PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use chrono::{Duration as ChronoDuration, Local, Utc};
@@ -13,25 +16,74 @@ use localpaste_core::{
     models::paste::Paste, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
 };
 use std::collections::BTreeSet;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::warn;
 
 use self::filters::{
-    language_extension, matches_semantic_collection, normalize_language_filter_value,
-    parse_tags_csv, sanitize_filename,
+    language_extension, matches_active_filters, normalize_language_filter_value, sanitize_filename,
 };
 
 impl LocalPasteApp {
-    fn send_backend_cmd_or_status(&mut self, command: CoreCmd, error_message: &str) -> bool {
-        if self.backend.cmd_tx.send(command).is_ok() {
+    /// Sends a backend command and arms short-term event polling for its reply.
+    ///
+    /// The fallback external refresh timer is intentionally slow, but commands
+    /// dispatched near the end of a quiet frame still need prompt repainting so
+    /// worker responses are drained without waiting for that fallback interval.
+    ///
+    /// # Returns
+    /// `true` when the command was queued and short polling was armed.
+    pub(super) fn dispatch_backend_cmd(&mut self, command: CoreCmd) -> bool {
+        if self.backend.cmd_tx.send(command).is_err() {
+            return false;
+        }
+        self.backend_event_poll_until = Some(Instant::now() + BACKEND_EVENT_POLL_WINDOW);
+        true
+    }
+
+    /// Returns the next short polling repaint delay while a backend reply is expected.
+    ///
+    /// # Returns
+    /// `Some` with the remaining bounded polling delay, or `None` when no short polling window is active.
+    pub(super) fn backend_event_poll_repaint_after(&mut self, now: Instant) -> Option<Duration> {
+        let until = self.backend_event_poll_until?;
+        if until <= now {
+            self.backend_event_poll_until = None;
+            return None;
+        }
+        Some(BACKEND_EVENT_POLL_INTERVAL.min(until.saturating_duration_since(now)))
+    }
+
+    /// Sends a backend command and reports a status message if dispatch fails.
+    ///
+    /// # Arguments
+    /// - `command`: Backend command to queue.
+    /// - `error_message`: Status text used when the backend channel is closed.
+    ///
+    /// # Returns
+    /// `true` when the command was queued, otherwise `false`.
+    pub(super) fn send_backend_cmd_or_status(
+        &mut self,
+        command: CoreCmd,
+        error_message: &str,
+    ) -> bool {
+        if self.dispatch_backend_cmd(command) {
             return true;
         }
         self.set_status(error_message);
         false
     }
 
+    /// Clears UI state that can only complete via backend events after the event channel closes.
+    pub(super) fn handle_backend_event_channel_disconnected(&mut self) {
+        if self.pending_undo_restore_tokens.is_empty() {
+            return;
+        }
+        self.pending_undo_restore_tokens.clear();
+        self.set_status("Undo delete canceled: backend unavailable.");
+    }
+
     fn send_update_paste_or_mark_failed(&mut self, command: CoreCmd, mode: &str) -> bool {
-        if self.backend.cmd_tx.send(command).is_ok() {
+        if self.dispatch_backend_cmd(command) {
             return true;
         }
         self.save_in_flight = false;
@@ -46,17 +98,12 @@ impl LocalPasteApp {
         self.save_request_revision = Some(self.active_revision());
         self.save_in_flight = true;
         self.save_status = SaveStatus::Saving;
+        let protected_version_id_ms = self.protected_history_reset_version_for(id.as_str());
 
-        let command = if self.is_virtual_editor_mode() {
-            CoreCmd::UpdatePasteVirtual {
-                id,
-                content: self.virtual_editor_buffer.rope().clone(),
-            }
-        } else {
-            CoreCmd::UpdatePaste {
-                id,
-                content: self.selected_content.to_string(),
-            }
+        let command = CoreCmd::UpdatePasteVirtual {
+            id,
+            content: self.virtual_editor_buffer.rope().clone(),
+            protected_version_id_ms,
         };
 
         self.send_update_paste_or_mark_failed(command, mode)
@@ -143,22 +190,18 @@ impl LocalPasteApp {
                 let requested_revision = self.save_request_revision.take();
                 self.upsert_cached_paste_summary(&paste);
                 if !self.search_query.trim().is_empty() {
-                    // Content saves can update metadata used by metadata-only search
-                    // (language auto-detect, recency ordering), so force redispatch.
+                    // Content saves can update full-content search matches and summary
+                    // metadata, so force redispatch.
                     self.search_last_sent.clear();
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
                 if self.selected_id.as_deref() == Some(paste_id.as_str()) {
-                    let has_newer_local_edits = if self.is_virtual_editor_mode() {
-                        // `save_request_revision` can be cleared after a partial deferred-switch
-                        // failure even when a content-save command was already dispatched.
-                        // Use snapshot comparison as a safe fallback for late save acks.
-                        requested_revision
-                            .map(|revision| self.active_revision() != revision)
-                            .unwrap_or_else(|| self.active_snapshot() != paste.content)
-                    } else {
-                        self.selected_content.as_str() != paste.content
-                    };
+                    // `save_request_revision` can be cleared after a partial deferred-switch
+                    // failure even when a content-save command was already dispatched.
+                    // Use snapshot comparison as a safe fallback for late save acks.
+                    let has_newer_local_edits = requested_revision
+                        .map(|revision| self.active_revision() != revision)
+                        .unwrap_or_else(|| self.active_snapshot() != paste.content);
                     if !self.metadata_dirty && !self.metadata_save_in_flight {
                         self.sync_editor_metadata(&paste);
                     }
@@ -178,6 +221,8 @@ impl LocalPasteApp {
                 if self.search_query.trim().is_empty() {
                     self.recompute_visible_pastes();
                 }
+                self.maybe_continue_queued_history_reset();
+                self.maybe_continue_pending_delete();
                 self.try_apply_pending_selection();
                 if self.search_query.trim().is_empty() {
                     self.ensure_selection_after_list_update();
@@ -203,6 +248,8 @@ impl LocalPasteApp {
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
                 self.ensure_selection_after_list_update();
+                self.maybe_continue_queued_history_reset();
+                self.maybe_continue_pending_delete();
                 self.try_apply_pending_selection();
             }
             CoreEvent::SearchResults {
@@ -249,7 +296,7 @@ impl LocalPasteApp {
                     self.palette_search_results.len(),
                 );
             }
-            CoreEvent::PasteDeleted { id } => {
+            CoreEvent::PasteDeleted { id, undo_token } => {
                 let deleted_index = self.pastes.iter().position(|paste| paste.id == id);
                 let was_selected = self.selected_id.as_deref() == Some(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
@@ -266,11 +313,63 @@ impl LocalPasteApp {
                     if let Some(adjacent_id) = adjacent_id {
                         let _ = self.select_paste(adjacent_id);
                     }
-                    self.set_status("Paste deleted.");
+                    if let Some(undo_token) = undo_token {
+                        self.set_status_with_action(
+                            "Paste deleted.",
+                            ToastAction::UndoDelete { undo_token },
+                        );
+                    } else {
+                        self.set_status("Paste deleted. Undo unavailable.");
+                    }
+                } else if let Some(undo_token) = undo_token {
+                    self.set_status_with_action(
+                        "Paste deleted; list refreshed.",
+                        ToastAction::UndoDelete { undo_token },
+                    );
                 } else {
-                    self.set_status("Paste deleted; list refreshed.");
+                    self.set_status("Paste deleted; list refreshed. Undo unavailable.");
                 }
                 self.request_refresh();
+            }
+            CoreEvent::PasteRestored { paste, undo_token } => {
+                let paste_id = paste.id.clone();
+                self.pending_undo_restore_tokens.remove(&undo_token);
+                self.remove_undo_toast(&undo_token);
+                self.upsert_cached_paste_summary(&paste);
+                if !self.search_query.trim().is_empty() {
+                    self.search_last_sent.clear();
+                    self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+                } else {
+                    self.recompute_visible_pastes();
+                }
+                let can_select_restored = self.selection_transition_block_reason().is_none()
+                    && !self.save_in_flight
+                    && !self.metadata_save_in_flight
+                    && self.save_status == SaveStatus::Saved
+                    && !self.metadata_dirty;
+                if can_select_restored {
+                    self.select_loaded_paste(paste);
+                    self.pending_selection_id = None;
+                } else {
+                    self.queue_pending_selection(paste_id);
+                }
+                self.set_status("Restored deleted paste.");
+                self.request_refresh();
+            }
+            CoreEvent::PasteRestoreFailed {
+                undo_token,
+                message,
+                retryable,
+            } => {
+                self.pending_undo_restore_tokens.remove(&undo_token);
+                if !retryable {
+                    self.remove_undo_toast(&undo_token);
+                }
+                self.set_status(message);
+            }
+            CoreEvent::PasteUndoEvicted { undo_token } => {
+                self.pending_undo_restore_tokens.remove(&undo_token);
+                self.remove_undo_toast(&undo_token);
             }
             CoreEvent::PasteMissing { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);
@@ -324,6 +423,8 @@ impl LocalPasteApp {
                 // unrelated metadata/content saves that are still awaiting an ack.
                 match source {
                     CoreErrorSource::SaveMetadata if self.metadata_save_in_flight => {
+                        self.cancel_queued_history_reset();
+                        self.cancel_pending_delete();
                         self.metadata_dirty = true;
                         self.metadata_save_in_flight = false;
                         self.metadata_save_request = None;
@@ -337,6 +438,8 @@ impl LocalPasteApp {
                         }
                     }
                     CoreErrorSource::SaveContent if self.save_in_flight => {
+                        self.cancel_queued_history_reset();
+                        self.cancel_pending_delete();
                         if self.save_status == SaveStatus::Saving {
                             self.save_status = SaveStatus::Dirty;
                         }
@@ -356,15 +459,10 @@ impl LocalPasteApp {
     /// Requests a fresh paste list from the backend and updates query perf counters.
     pub(super) fn request_refresh(&mut self) {
         let sent_at = Instant::now();
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::ListPastes {
-                limit: DEFAULT_LIST_PASTES_LIMIT,
-                folder_id: None,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::ListPastes {
+            limit: DEFAULT_LIST_PASTES_LIMIT,
+            folder_id: None,
+        }) {
             self.set_status("List failed: backend unavailable.");
             return;
         }
@@ -466,17 +564,12 @@ impl LocalPasteApp {
         }
 
         let (folder_id, language) = self.search_backend_filters();
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::SearchPastes {
-                query: query.clone(),
-                limit: DEFAULT_SEARCH_PASTES_LIMIT,
-                folder_id,
-                language,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::SearchPastes {
+            query: query.clone(),
+            limit: DEFAULT_SEARCH_PASTES_LIMIT,
+            folder_id,
+            language,
+        }) {
             // Avoid per-frame retry storms/toast spam while backend is unavailable.
             // Re-arm debounce so we retry on a bounded cadence.
             self.search_last_input_at = Some(Instant::now());
@@ -518,15 +611,10 @@ impl LocalPasteApp {
             return;
         }
 
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::SearchPalette {
-                query: query.clone(),
-                limit: PALETTE_SEARCH_LIMIT,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::SearchPalette {
+            query: query.clone(),
+            limit: PALETTE_SEARCH_LIMIT,
+        }) {
             // Mirror sidebar-search behavior: bounded retry cadence and deduped status.
             self.palette_search_last_input_at = Some(Instant::now());
             const PALETTE_SEARCH_UNAVAILABLE: &str =
@@ -548,6 +636,7 @@ impl LocalPasteApp {
         if self.selected_id.as_deref() == Some(id.as_str()) {
             return true;
         }
+        self.cancel_pending_delete();
         // Detached version workflows own the current subject paste; switching away would
         // invalidate the open modal context and, during reset, release the held lock too early.
         if self.selection_transition_block_reason().is_some() {
@@ -567,21 +656,7 @@ impl LocalPasteApp {
             let content_save_dispatched = !content_save_needed || self.save_in_flight;
             let metadata_save_dispatched = !metadata_save_needed || self.metadata_save_in_flight;
             if !content_save_dispatched || !metadata_save_dispatched {
-                // If one save dispatch succeeded and the next failed, treat the whole
-                // deferred switch attempt as failed and roll back save in-flight flags.
-                if content_save_needed && self.save_in_flight {
-                    self.save_in_flight = false;
-                    self.save_status = SaveStatus::Dirty;
-                    self.save_request_revision = None;
-                    if self.last_edit_at.is_none() {
-                        self.last_edit_at = Some(Instant::now());
-                    }
-                }
-                if metadata_save_needed && self.metadata_save_in_flight {
-                    self.metadata_save_in_flight = false;
-                    self.metadata_dirty = true;
-                    self.metadata_save_request = None;
-                }
+                rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
                 if let Some(pending) = self.pending_selection_id.take() {
                     self.clear_pending_copy_for(pending.as_str());
                 }
@@ -630,12 +705,10 @@ impl LocalPasteApp {
         }
         self.sync_editor_metadata(&paste);
         self.bump_active_buffer_epoch();
-        self.selected_content.reset(paste.content.clone());
         self.reset_virtual_editor(paste.content.as_str());
-        self.editor_lines.reset();
-        self.virtual_selection.clear();
         self.clear_highlight_state();
         self.selected_paste = Some(paste);
+        self.prime_editor_find_from_sidebar_query();
         self.try_complete_pending_copy();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
@@ -656,10 +729,7 @@ impl LocalPasteApp {
         self.metadata_save_in_flight = false;
         self.metadata_save_request = None;
         self.bump_active_buffer_epoch();
-        self.selected_content.reset(String::new());
         self.reset_virtual_editor("");
-        self.editor_lines.reset();
-        self.virtual_selection.clear();
         self.clear_highlight_state();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
@@ -669,6 +739,7 @@ impl LocalPasteApp {
     }
 
     fn apply_selection_now(&mut self, id: String) -> bool {
+        self.cancel_pending_delete();
         // Acquire target lock before releasing current selection lock so failed
         // switches never drop the currently editable paste unexpectedly.
         if !self.acquire_paste_lock(id.as_str()) {
@@ -678,7 +749,7 @@ impl LocalPasteApp {
             self.release_paste_lock(prev.as_str());
         }
         self.reset_selection_editor_state();
-        if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPaste { id }) {
             self.clear_selection();
             self.set_status("Get paste failed: backend unavailable.");
             return false;
@@ -709,6 +780,7 @@ impl LocalPasteApp {
     /// Clears active/pending selection and releases any held paste lock.
     pub(super) fn clear_selection(&mut self) {
         self.clear_pending_selection_request();
+        self.cancel_pending_delete();
         if let Some(prev) = self.selected_id.take() {
             self.release_paste_lock(prev.as_str());
         }
@@ -732,49 +804,24 @@ impl LocalPasteApp {
         );
     }
 
-    /// Sends a delete command for `id` and reports whether dispatch succeeded.
-    /// # Returns
-    /// `true` when the backend command was queued, otherwise `false`.
-    pub(super) fn send_delete_paste(&mut self, id: String) -> bool {
-        if self.mutation_shortcut_block_reason().is_some() {
-            self.set_mutation_shortcut_blocked_status();
-            return false;
-        }
-        if self.history_reset_pending_for(id.as_str()) {
-            self.set_reset_transition_blocked_status();
-            return false;
-        }
-        self.send_backend_cmd_or_status(
-            CoreCmd::DeletePaste { id },
-            "Delete failed: backend unavailable.",
-        )
-    }
-
-    /// Deletes the currently selected paste, if any.
-    pub(super) fn delete_selected(&mut self) {
-        if let Some(id) = self.selected_id.clone() {
-            let _sent = self.send_delete_paste(id);
-        }
-    }
-
     /// Marks current editor content dirty and arms autosave timing.
     pub(super) fn mark_dirty(&mut self) {
         // Reset is authoritative once queued; the selected paste must stop accepting
         // local dirty-state transitions until the backend replies.
-        if self.reset_transition_active() {
+        if self.reset_transition_active() || self.history_reset_flush_active() {
             return;
         }
         if self.selected_id.is_some() {
             self.save_status = SaveStatus::Dirty;
             self.last_edit_at = Some(Instant::now());
-            if !self.is_virtual_editor_mode() {
-                self.highlight_edit_hint = None;
-            }
         }
     }
 
     /// Dispatches autosave once dirty content has been idle past the autosave delay.
     pub(super) fn maybe_autosave(&mut self) {
+        if self.nav_probe_seed_active() {
+            return;
+        }
         if self.save_block_reason().is_some() {
             return;
         }
@@ -795,6 +842,9 @@ impl LocalPasteApp {
 
     /// Forces immediate content save dispatch when the current paste is dirty.
     pub(super) fn save_now(&mut self) {
+        if self.nav_probe_seed_active() {
+            return;
+        }
         if self.save_block_reason().is_some() {
             self.set_save_blocked_status();
             return;
@@ -828,19 +878,14 @@ impl LocalPasteApp {
         };
         let tags = Some(parse_tags_csv(self.edit_tags.as_str()));
         self.metadata_save_request = None;
-        if self
-            .backend
-            .cmd_tx
-            .send(CoreCmd::UpdatePasteMeta {
-                id,
-                name: Some(self.edit_name.clone()),
-                language,
-                language_is_manual: Some(self.edit_language_is_manual),
-                folder_id: None,
-                tags,
-            })
-            .is_err()
-        {
+        if !self.dispatch_backend_cmd(CoreCmd::UpdatePasteMeta {
+            id,
+            name: Some(self.edit_name.clone()),
+            language,
+            language_is_manual: Some(self.edit_language_is_manual),
+            folder_id: None,
+            tags,
+        }) {
             self.set_status("Metadata save failed: backend unavailable.");
             return;
         }
@@ -893,67 +938,54 @@ impl LocalPasteApp {
         self.pastes.iter().position(|paste| paste.id == *id)
     }
 
+    /// Returns the sidebar paste id targeted by an arrow-key move, if any.
+    ///
+    /// # Arguments
+    /// - `direction`: Signed navigation delta relative to the current selection.
+    ///
+    /// # Returns
+    /// `Some(id)` when the arrow move should select another visible paste, otherwise `None`.
+    pub(super) fn sidebar_arrow_target_id(&self, direction: i32) -> Option<String> {
+        if direction == 0 {
+            return None;
+        }
+        let current = self.selected_index().unwrap_or(0) as i32;
+        let max_index = self.pastes.len().checked_sub(1)? as i32;
+        let next = (current + direction).clamp(0, max_index) as usize;
+        if self.selected_index() == Some(next) {
+            return None;
+        }
+        self.pastes.get(next).map(|paste| paste.id.clone())
+    }
+
     fn search_backend_filters(&self) -> (Option<String>, Option<String>) {
         (None, self.active_language_filter.clone())
     }
 
-    fn matches_active_filters(
-        item: &PasteSummary,
-        active_collection: &SidebarCollection,
-        active_language_filter: Option<&str>,
-        today_local: chrono::NaiveDate,
-        week_cutoff: chrono::DateTime<Utc>,
-        recent_cutoff: chrono::DateTime<Utc>,
-    ) -> bool {
-        let collection_match = match active_collection {
-            SidebarCollection::All => true,
-            SidebarCollection::Today => {
-                item.updated_at.with_timezone(&Local).date_naive() == today_local
-            }
-            SidebarCollection::Week => item.updated_at >= week_cutoff,
-            SidebarCollection::Recent => item.updated_at >= recent_cutoff,
-            SidebarCollection::Unfiled => item.folder_id.is_none(),
-            SidebarCollection::Code
-            | SidebarCollection::Config
-            | SidebarCollection::Logs
-            | SidebarCollection::Links => {
-                matches_semantic_collection(item, active_collection.clone())
-            }
-        };
-        if !collection_match {
-            return false;
-        }
-        match active_language_filter {
-            None => true,
-            Some(lang) => {
-                let canonical_filter = localpaste_core::detection::canonical::canonicalize(lang);
-                item.language
-                    .as_deref()
-                    .map(localpaste_core::detection::canonical::canonicalize)
-                    .map(|value| value == canonical_filter)
-                    .unwrap_or(false)
-            }
-        }
+    fn current_filter_cutoffs() -> (chrono::NaiveDate, chrono::NaiveDate, chrono::DateTime<Utc>) {
+        let local_now = Local::now();
+        let now = local_now.with_timezone(&Utc);
+        let today_local = local_now.date_naive();
+        let week_cutoff_day = today_local - ChronoDuration::days(7);
+        let recent_cutoff = now - ChronoDuration::days(30);
+        (today_local, week_cutoff_day, recent_cutoff)
     }
 
     /// Filters sidebar summaries through the active collection/language state.
     /// # Returns
     /// Visible sidebar rows preserving the input ordering of `items`.
     pub(super) fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
-        let now = Utc::now();
-        let today_local = Local::now().date_naive();
-        let week_cutoff = now - ChronoDuration::days(7);
-        let recent_cutoff = now - ChronoDuration::days(30);
+        let (today_local, week_cutoff_day, recent_cutoff) = Self::current_filter_cutoffs();
         let active_language_filter = self.active_language_filter.as_deref();
         items
             .iter()
             .filter(|item| {
-                Self::matches_active_filters(
+                matches_active_filters(
                     item,
                     &self.active_collection,
                     active_language_filter,
                     today_local,
-                    week_cutoff,
+                    week_cutoff_day,
                     recent_cutoff,
                 )
             })
@@ -962,19 +994,16 @@ impl LocalPasteApp {
     }
 
     fn retain_search_results_for_active_filters(&mut self) {
-        let now = Utc::now();
-        let today_local = Local::now().date_naive();
-        let week_cutoff = now - ChronoDuration::days(7);
-        let recent_cutoff = now - ChronoDuration::days(30);
+        let (today_local, week_cutoff_day, recent_cutoff) = Self::current_filter_cutoffs();
         let active_collection = self.active_collection.clone();
         let active_language_filter = self.active_language_filter.clone();
         self.pastes.retain(|item| {
-            Self::matches_active_filters(
+            matches_active_filters(
                 item,
                 &active_collection,
                 active_language_filter.as_deref(),
                 today_local,
-                week_cutoff,
+                week_cutoff_day,
                 recent_cutoff,
             )
         });
@@ -987,6 +1016,20 @@ impl LocalPasteApp {
     pub(super) fn ensure_selection_after_list_update(&mut self) {
         if self.selection_transition_block_reason().is_some() {
             return;
+        }
+        if let Some(pending) = self.pending_selection_id.clone() {
+            if self.pastes.iter().any(|paste| paste.id == pending) {
+                self.try_apply_pending_selection();
+                if self.selected_id.as_deref() == Some(pending.as_str())
+                    || self.pending_selection_id.is_none()
+                {
+                    return;
+                }
+            } else if self.selected_id.is_none() {
+                self.pending_selection_id = None;
+                let _ = self.apply_selection_now(pending);
+                return;
+            }
         }
         let selection_valid = self
             .selected_id

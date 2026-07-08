@@ -27,12 +27,15 @@ pub mod semantic;
 pub(crate) mod test_support;
 /// Shared string and host normalization helpers.
 pub mod text;
+/// Shared validation helpers for paste-domain invariants.
+pub mod validation;
 
 pub use config::Config;
 pub use constants::{
     API_ADDR_FILE_NAME, DB_OWNER_LOCK_FILE_NAME, DEFAULT_AUTO_SAVE_INTERVAL_MS,
     DEFAULT_CLI_SERVER_URL, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_MAX_PASTE_SIZE,
-    DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PORT, DEFAULT_SEARCH_PASTES_LIMIT,
+    DEFAULT_PASTE_VERSION_INTERVAL_SECS, DEFAULT_PASTE_VERSION_RETENTION_LIMIT, DEFAULT_PORT,
+    DEFAULT_SEARCH_PASTES_LIMIT, LOCALPASTE_SERVER_HEADER, LOCALPASTE_SERVER_VALUE,
     MAX_DIFF_INPUT_BYTES,
 };
 pub use db::Database;

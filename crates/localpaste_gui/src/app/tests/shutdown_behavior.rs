@@ -9,7 +9,7 @@ fn on_exit_dispatches_dirty_content_and_metadata_save_and_drop_releases_selected
         mut app,
         cmd_rx,
     } = make_app();
-    app.selected_content.reset("exit-save-content".to_string());
+    set_active_content(&mut app, "exit-save-content");
     app.save_status = SaveStatus::Dirty;
     app.save_in_flight = false;
     app.last_edit_at = Some(Instant::now());
@@ -27,9 +27,9 @@ fn on_exit_dispatches_dirty_content_and_metadata_save_and_drop_releases_selected
     eframe::App::on_exit(&mut app, None);
 
     match recv_cmd(&cmd_rx) {
-        CoreCmd::UpdatePaste { id, content } => {
+        CoreCmd::UpdatePasteVirtual { id, content, .. } => {
             assert_eq!(id, "alpha");
-            assert_eq!(content, "exit-save-content");
+            assert_eq!(content.to_string(), "exit-save-content");
         }
         other => panic!("unexpected command: {:?}", other),
     }
@@ -67,10 +67,7 @@ fn on_exit_dispatches_dirty_saves_even_with_version_overlay_open() {
 
     for overlay in [OverlayCase::History, OverlayCase::Diff] {
         let mut harness = make_app();
-        harness
-            .app
-            .selected_content
-            .reset("overlay-exit-content".to_string());
+        set_active_content(&mut harness.app, "overlay-exit-content");
         harness.app.save_status = SaveStatus::Dirty;
         harness.app.save_in_flight = false;
         harness.app.last_edit_at = Some(Instant::now());
@@ -95,9 +92,9 @@ fn on_exit_dispatches_dirty_saves_even_with_version_overlay_open() {
 
         for cmd in [first, second] {
             match cmd {
-                CoreCmd::UpdatePaste { id, content } => {
+                CoreCmd::UpdatePasteVirtual { id, content, .. } => {
                     assert_eq!(id, "alpha");
-                    assert_eq!(content, "overlay-exit-content");
+                    assert_eq!(content.to_string(), "overlay-exit-content");
                     saw_content = true;
                 }
                 CoreCmd::UpdatePasteMeta {
@@ -128,10 +125,7 @@ fn on_exit_dispatches_dirty_saves_even_with_version_overlay_open() {
 #[test]
 fn on_exit_requeues_dirty_tails_after_stale_in_flight_acks() {
     let (mut harness, evt_tx) = make_app_with_event_tx();
-    harness
-        .app
-        .selected_content
-        .reset("exit-newer-content".to_string());
+    set_active_content(&mut harness.app, "exit-newer-content");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.save_in_flight = true;
     harness.app.save_request_revision = None;
@@ -173,9 +167,9 @@ fn on_exit_requeues_dirty_tails_after_stale_in_flight_acks() {
 
     for cmd in [first, second] {
         match cmd {
-            CoreCmd::UpdatePaste { id, content } => {
+            CoreCmd::UpdatePasteVirtual { id, content, .. } => {
                 assert_eq!(id, "alpha");
-                assert_eq!(content, "exit-newer-content");
+                assert_eq!(content.to_string(), "exit-newer-content");
                 saw_content = true;
             }
             CoreCmd::UpdatePasteMeta {
@@ -211,10 +205,7 @@ fn on_exit_requeues_dirty_tails_after_stale_in_flight_acks() {
 #[test]
 fn on_exit_forces_final_dirty_snapshots_even_when_acks_never_arrive() {
     let mut harness = make_app();
-    harness
-        .app
-        .selected_content
-        .reset("shutdown-final-content".to_string());
+    set_active_content(&mut harness.app, "shutdown-final-content");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.save_in_flight = true;
     harness.app.save_request_revision = None;
@@ -241,9 +232,9 @@ fn on_exit_forces_final_dirty_snapshots_even_when_acks_never_arrive() {
 
     for cmd in [first, second] {
         match cmd {
-            CoreCmd::UpdatePaste { id, content } => {
+            CoreCmd::UpdatePasteVirtual { id, content, .. } => {
                 assert_eq!(id, "alpha");
-                assert_eq!(content, "shutdown-final-content");
+                assert_eq!(content.to_string(), "shutdown-final-content");
                 saw_content = true;
             }
             CoreCmd::UpdatePasteMeta {

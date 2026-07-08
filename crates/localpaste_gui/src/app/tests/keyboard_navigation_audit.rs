@@ -2,13 +2,6 @@
 
 use super::*;
 
-fn assert_cursor_line_col(app: &LocalPasteApp, expected: (usize, usize)) {
-    let line_col = app
-        .virtual_editor_buffer
-        .char_to_line_col(app.virtual_editor_state.cursor());
-    assert_eq!(line_col, expected);
-}
-
 #[test]
 fn shift_word_selection_extends_and_contracts_without_resetting_anchor() {
     let mut harness = make_app();
@@ -274,6 +267,163 @@ fn vertical_column_affinity_restores_target_after_short_line_and_resets_after_ho
         .app
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
     assert_cursor_line_col(&harness.app, (0, 7));
+}
+
+#[test]
+fn line_end_then_vertical_arrows_use_the_line_end_column() {
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "0123456789\nshort\nabcdefghij\n", 400.0);
+    let ctx = egui::Context::default();
+
+    set_virtual_cursor_at(&mut harness.app, 1, 2);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
+    assert_cursor_line_col(&harness.app, (1, 5));
+
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
+    assert_cursor_line_col(&harness.app, (0, 5));
+
+    set_virtual_cursor_at(&mut harness.app, 1, 2);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
+    assert_cursor_line_col(&harness.app, (2, 5));
+}
+
+#[test]
+fn line_home_then_vertical_arrows_use_the_line_home_column() {
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "0123456789\nshort\nabcdefghij\n", 400.0);
+    let ctx = egui::Context::default();
+
+    set_virtual_cursor_at(&mut harness.app, 1, 2);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
+    assert_cursor_line_col(&harness.app, (1, 0));
+
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
+    assert_cursor_line_col(&harness.app, (0, 0));
+
+    set_virtual_cursor_at(&mut harness.app, 1, 2);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
+    assert_cursor_line_col(&harness.app, (2, 0));
+}
+
+#[test]
+fn line_end_then_vertical_arrows_use_actual_word_wrapped_row() {
+    let mut up_case = make_app();
+    configure_virtual_editor_with_wrap(&mut up_case.app, "aaaaa bbbbb ccccc\nabcdefghij\n", 10.0);
+    let ctx = egui::Context::default();
+
+    set_virtual_cursor_at(&mut up_case.app, 0, 2);
+    let _ = up_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
+    assert_cursor_line_col(&up_case.app, (0, 17));
+    let _ = up_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
+    assert_cursor_line_col(&up_case.app, (0, 11));
+
+    let mut down_case = make_app();
+    configure_virtual_editor_with_wrap(&mut down_case.app, "aaaaa bbbbb ccccc\nabcdefghij\n", 10.0);
+    set_virtual_cursor_at(&mut down_case.app, 0, 2);
+    let _ = down_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
+    assert_cursor_line_col(&down_case.app, (0, 17));
+    let _ = down_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
+    assert_cursor_line_col(&down_case.app, (1, 5));
+}
+
+#[test]
+fn line_home_then_vertical_arrows_use_actual_word_wrapped_row() {
+    let mut up_case = make_app();
+    configure_virtual_editor_with_wrap(
+        &mut up_case.app,
+        "abcdefghij\naaaaa bbbbb ccccc\nuvwxyz\n",
+        10.0,
+    );
+    let ctx = egui::Context::default();
+
+    set_virtual_cursor_at(&mut up_case.app, 1, 14);
+    let _ = up_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
+    assert_cursor_line_col(&up_case.app, (1, 0));
+    let _ = up_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
+    assert_cursor_line_col(&up_case.app, (0, 0));
+
+    let mut down_case = make_app();
+    configure_virtual_editor_with_wrap(
+        &mut down_case.app,
+        "abcdefghij\naaaaa bbbbb ccccc\nuvwxyz\n",
+        10.0,
+    );
+    set_virtual_cursor_at(&mut down_case.app, 1, 14);
+    let _ = down_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
+    assert_cursor_line_col(&down_case.app, (1, 0));
+    let _ = down_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
+    assert_cursor_line_col(&down_case.app, (1, 6));
+}
+
+#[test]
+fn document_boundaries_then_vertical_arrows_use_actual_visual_rows() {
+    let mut doc_home_case = make_app();
+    configure_virtual_editor_with_wrap(
+        &mut doc_home_case.app,
+        "aaaaa bbbbb ccccc\nabcdefghij\nddddd eeeee fffff",
+        10.0,
+    );
+    let ctx = egui::Context::default();
+
+    set_virtual_cursor_at(&mut doc_home_case.app, 1, 5);
+    let _ = doc_home_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDocHome { select: false }]);
+    assert_cursor_line_col(&doc_home_case.app, (0, 0));
+    let _ = doc_home_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
+    assert_cursor_line_col(&doc_home_case.app, (0, 6));
+
+    let mut doc_end_case = make_app();
+    configure_virtual_editor_with_wrap(
+        &mut doc_end_case.app,
+        "aaaaa bbbbb ccccc\nabcdefghij\nddddd eeeee fffff",
+        10.0,
+    );
+    set_virtual_cursor_at(&mut doc_end_case.app, 1, 5);
+    let _ = doc_end_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDocEnd { select: false }]);
+    assert_cursor_line_col(&doc_end_case.app, (2, 17));
+    let _ = doc_end_case
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
+    assert_cursor_line_col(&doc_end_case.app, (2, 11));
 }
 
 #[test]

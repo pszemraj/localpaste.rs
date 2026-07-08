@@ -84,6 +84,7 @@ impl LocalPasteApp {
                     ui.label("Compare current paste against:");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.version_ui.diff_query)
+                            .id(egui::Id::new(DIFF_QUERY_INPUT_ID))
                             .desired_width(280.0)
                             .hint_text("name, id, tag, language"),
                     );

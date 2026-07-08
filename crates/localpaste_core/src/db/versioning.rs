@@ -16,7 +16,7 @@ fn version_id_from_millis(ms: i64) -> u64 {
 ///
 /// # Returns
 /// Lowercase BLAKE3 hex digest.
-pub(crate) fn content_hash_hex(content: &str) -> String {
+fn content_hash_hex(content: &str) -> String {
     blake3::hash(content.as_bytes()).to_hex().to_string()
 }
 
@@ -28,7 +28,7 @@ pub(crate) fn content_hash_hex(content: &str) -> String {
 ///
 /// # Returns
 /// A [`VersionMeta`] row for `content`.
-pub(crate) fn version_meta_for_content(
+fn version_meta_for_content(
     content: &str,
     language: Option<&str>,
     language_is_manual: bool,
@@ -105,6 +105,63 @@ pub(crate) fn decode_version_meta_list(bytes: Option<&[u8]>) -> Result<Vec<Versi
 /// Returns an error when serialization fails.
 pub(crate) fn encode_version_meta_list(items: &[VersionMeta]) -> Result<Vec<u8>, AppError> {
     Ok(bincode::serialize(items)?)
+}
+
+/// Keep the newest `limit` metadata rows and return pruned older rows.
+///
+/// Version metadata is stored newest-first, so pruning is a tail split. Callers
+/// must remove matching rows from `PASTE_VERSIONS_CONTENT` in the same write
+/// transaction before persisting the truncated metadata list.
+///
+/// # Arguments
+/// - `items`: Newest-first version metadata list to truncate in place.
+/// - `limit`: Maximum number of rows to retain.
+///
+/// # Returns
+/// Metadata rows removed from the retained list.
+fn prune_version_meta_to_limit(items: &mut Vec<VersionMeta>, limit: usize) -> Vec<VersionMeta> {
+    if items.len() <= limit {
+        Vec::new()
+    } else {
+        items.split_off(limit)
+    }
+}
+
+/// Keep the newest `limit` metadata rows while preserving one explicit row.
+///
+/// This is used by save-before-reset flows where the reset target must survive
+/// a content save that can otherwise push it past the retention tail.
+///
+/// # Arguments
+/// - `items`: Newest-first version metadata list to truncate in place.
+/// - `limit`: Maximum number of newest rows to retain under normal retention.
+/// - `protected_version_id_ms`: Version id that must remain available.
+///
+/// # Returns
+/// Metadata rows removed from the retained list.
+pub(crate) fn prune_version_meta_to_limit_preserving(
+    items: &mut Vec<VersionMeta>,
+    limit: usize,
+    protected_version_id_ms: Option<u64>,
+) -> Vec<VersionMeta> {
+    let Some(protected_version_id_ms) = protected_version_id_ms else {
+        return prune_version_meta_to_limit(items, limit);
+    };
+    if items.len() <= limit {
+        return Vec::new();
+    }
+
+    let mut retained = Vec::with_capacity(items.len().min(limit.saturating_add(1)));
+    let mut pruned = Vec::new();
+    for (index, item) in items.drain(..).enumerate() {
+        if index < limit || item.version_id_ms == protected_version_id_ms {
+            retained.push(item);
+        } else {
+            pruned.push(item);
+        }
+    }
+    *items = retained;
+    pruned
 }
 
 /// Returns whether a new version should be persisted.

@@ -368,18 +368,6 @@ def has_uses_step(job: dict[str, Any], action_prefix: str) -> bool:
     return False
 
 
-def has_named_step(job: dict[str, Any], step_name: str) -> bool:
-    steps = job.get("steps")
-    if not isinstance(steps, list):
-        return False
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        if step.get("name") == step_name:
-            return True
-    return False
-
-
 def find_step(job: dict[str, Any], *, step_id: str | None = None, step_name: str | None = None) -> dict[str, Any] | None:
     steps = job.get("steps")
     if not isinstance(steps, list):
@@ -587,6 +575,48 @@ def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> li
     return errors
 
 
+def validate_release_wix_prepare_guard(path: Path, data: dict[str, Any]) -> list[str]:
+    if path.name != "release-gui.yml":
+        return []
+
+    errors: list[str] = []
+    jobs = data.get("jobs")
+    if not isinstance(jobs, dict):
+        return errors
+
+    build_job = jobs.get("build_package")
+    if not isinstance(build_job, dict):
+        return errors
+
+    prepare_step = find_step(
+        build_job,
+        step_name="Prepare packager config and staged runtime",
+    )
+    if prepare_step is None:
+        errors.append(
+            f"{path}: build_package must include 'Prepare packager config and staged runtime' step"
+        )
+        return errors
+
+    run_script = prepare_step.get("run")
+    if not isinstance(run_script, str):
+        errors.append(
+            f"{path}: release packager prepare step must define a run script"
+        )
+        return errors
+
+    if "--expected-wix-major" not in run_script:
+        errors.append(
+            f"{path}: release packager prepare step must assert the expected WiX major when supported"
+        )
+    if "release_gui_prepare.py --help" not in run_script or "grep -q" not in run_script:
+        errors.append(
+            f"{path}: release packager prepare step must guard --expected-wix-major with the checked-out helper's --help output"
+        )
+
+    return errors
+
+
 def validate_workflow_file(path: Path) -> list[str]:
     data, errors = load_yaml(path)
     if data is None:
@@ -595,6 +625,7 @@ def validate_workflow_file(path: Path) -> list[str]:
     errors.extend(validate_release_trigger_rules(path, data))
     errors.extend(validate_release_job_shape(path, data))
     errors.extend(validate_release_macos_signing_rules(path, data))
+    errors.extend(validate_release_wix_prepare_guard(path, data))
 
     run_blocks = extract_job_run_blocks(data)
     for block_path, shell, script in run_blocks:

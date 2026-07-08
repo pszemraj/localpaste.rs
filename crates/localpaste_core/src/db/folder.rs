@@ -142,33 +142,6 @@ impl FolderDb {
         Ok(folders)
     }
 
-    /// Add or subtract from a folder's `paste_count`.
-    ///
-    /// # Arguments
-    /// - `id`: Folder id to update.
-    /// - `delta`: Signed delta applied with saturation.
-    ///
-    /// # Returns
-    /// `Ok(())` when the count update commits.
-    ///
-    /// # Errors
-    /// Returns [`AppError::NotFound`] when the folder is missing, or storage
-    /// / serialization errors when the update cannot be committed.
-    pub fn update_count(&self, id: &str, delta: i32) -> Result<(), AppError> {
-        let updated = self.update_folder_record(id, move |folder| {
-            if delta > 0 {
-                folder.paste_count = folder.paste_count.saturating_add(delta as usize);
-            } else {
-                folder.paste_count = folder.paste_count.saturating_sub((-delta) as usize);
-            }
-            Ok(())
-        })?;
-        if updated.is_none() {
-            return Err(AppError::NotFound);
-        }
-        Ok(())
-    }
-
     /// Set a folder's `paste_count` to an exact value.
     ///
     /// # Arguments
@@ -201,17 +174,6 @@ impl FolderDb {
     /// Returns an error when storage operations fail.
     pub fn mark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
         self.set_delete_markers(folder_ids, true)
-    }
-
-    /// Remove delete markers for folders.
-    ///
-    /// # Returns
-    /// `Ok(())` when all markers are removed.
-    ///
-    /// # Errors
-    /// Returns an error when storage operations fail.
-    pub fn unmark_deleting(&self, folder_ids: &[String]) -> Result<(), AppError> {
-        self.set_delete_markers(folder_ids, false)
     }
 
     /// Check whether a folder id is currently delete-marked.

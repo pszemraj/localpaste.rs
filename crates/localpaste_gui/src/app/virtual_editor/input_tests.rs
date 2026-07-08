@@ -12,6 +12,48 @@ fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
     }
 }
 
+fn modifiers(ctrl: bool, command: bool, alt: bool, shift: bool) -> egui::Modifiers {
+    egui::Modifiers {
+        alt,
+        ctrl,
+        shift,
+        command,
+        ..Default::default()
+    }
+}
+
+fn non_mac_ctrl() -> egui::Modifiers {
+    modifiers(true, true, false, false)
+}
+
+fn non_mac_ctrl_shift() -> egui::Modifiers {
+    modifiers(true, true, false, true)
+}
+
+fn mac_cmd() -> egui::Modifiers {
+    modifiers(false, true, false, false)
+}
+
+fn mac_cmd_shift() -> egui::Modifiers {
+    modifiers(false, true, false, true)
+}
+
+fn mac_option() -> egui::Modifiers {
+    modifiers(false, false, true, false)
+}
+
+fn mac_option_shift() -> egui::Modifiers {
+    modifiers(false, false, true, true)
+}
+
+fn mac_ctrl() -> egui::Modifiers {
+    modifiers(true, false, false, false)
+}
+
+fn mac_ctrl_shift() -> egui::Modifiers {
+    modifiers(true, false, false, true)
+}
+
 #[test]
 fn maps_command_shortcuts() {
     let events = vec![key_event(
@@ -293,12 +335,17 @@ fn maps_shift_selection_navigation_variants_mac() {
     );
 }
 
-fn assert_platform_commands_matrix(
-    cases: &[(Vec<egui::Event>, PlatformFlavor, Vec<VirtualInputCommand>)],
-) {
-    for (events, platform, expected) in cases {
-        let commands = commands_from_events_for_platform(events, true, *platform);
-        assert_eq!(commands, *expected);
+struct PlatformCommandCase {
+    name: &'static str,
+    events: Vec<egui::Event>,
+    platform: PlatformFlavor,
+    expected: Vec<VirtualInputCommand>,
+}
+
+fn assert_platform_commands_matrix(cases: &[PlatformCommandCase]) {
+    for case in cases {
+        let commands = commands_from_events_for_platform(&case.events, true, case.platform);
+        assert_eq!(commands, case.expected, "case '{}'", case.name);
     }
 }
 
@@ -471,44 +518,6 @@ fn copy_is_emitted_only_with_focus() {
 }
 
 #[test]
-fn routes_copy_as_copy_only() {
-    assert_eq!(
-        VirtualInputCommand::Copy.route(),
-        VirtualCommandRoute::CopyOnly
-    );
-}
-
-#[test]
-fn routes_mutating_commands_as_focus_required() {
-    let commands = [
-        VirtualInputCommand::InsertText("x".to_string()),
-        VirtualInputCommand::InsertNewline,
-        VirtualInputCommand::MoveLeft {
-            select: false,
-            word: false,
-        },
-        VirtualInputCommand::MoveLineHome { select: false },
-        VirtualInputCommand::MoveDocHome { select: false },
-        VirtualInputCommand::DeleteToLineStart,
-        VirtualInputCommand::Cut,
-        VirtualInputCommand::Paste("x".to_string()),
-        VirtualInputCommand::Undo,
-        VirtualInputCommand::ImeCommit("x".to_string()),
-    ];
-    for command in commands {
-        assert_eq!(command.route(), VirtualCommandRoute::FocusRequired);
-    }
-}
-
-#[test]
-fn marks_cut_and_paste_as_post_focus_only() {
-    assert!(VirtualInputCommand::Cut.requires_post_focus());
-    assert!(VirtualInputCommand::Paste("x".to_string()).requires_post_focus());
-    assert!(!VirtualInputCommand::Copy.requires_post_focus());
-    assert!(!VirtualInputCommand::InsertText("x".to_string()).requires_post_focus());
-}
-
-#[test]
 fn dedupes_copy_and_cut_from_key_and_event_streams() {
     let events = vec![
         key_event(
@@ -538,103 +547,231 @@ fn dedupes_copy_and_cut_from_key_and_event_streams() {
 }
 
 #[test]
-fn platform_specific_word_delete_and_vertical_selection_mappings() {
+fn platform_keymap_matrix_covers_arrows_boundaries_deletion_and_insertion() {
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
     let cases = vec![
-        (
-            vec![
-                key_event(
-                    egui::Key::Backspace,
-                    egui::Modifiers {
-                        ctrl: true,
-                        command: true,
-                        ..Default::default()
-                    },
-                ),
-                key_event(
-                    egui::Key::Delete,
-                    egui::Modifiers {
-                        ctrl: true,
-                        command: true,
-                        ..Default::default()
-                    },
-                ),
+        PlatformCommandCase {
+            name: "other plain arrows",
+            events: vec![
+                key_event(egui::Key::ArrowLeft, egui::Modifiers::default()),
+                key_event(egui::Key::ArrowRight, egui::Modifiers::default()),
+                key_event(egui::Key::ArrowUp, egui::Modifiers::default()),
+                key_event(egui::Key::ArrowDown, egui::Modifiers::default()),
             ],
-            PlatformFlavor::Other,
-            vec![
-                VirtualInputCommand::Backspace { word: true },
-                VirtualInputCommand::DeleteForward { word: true },
+            platform: PlatformFlavor::Other,
+            expected: vec![
+                VirtualInputCommand::MoveLeft {
+                    select: false,
+                    word: false,
+                },
+                VirtualInputCommand::MoveRight {
+                    select: false,
+                    word: false,
+                },
+                VirtualInputCommand::MoveUp { select: false },
+                VirtualInputCommand::MoveDown { select: false },
             ],
-        ),
-        (
-            vec![
-                key_event(
-                    egui::Key::Backspace,
-                    egui::Modifiers {
-                        alt: true,
-                        ..Default::default()
-                    },
-                ),
-                key_event(
-                    egui::Key::Delete,
-                    egui::Modifiers {
-                        alt: true,
-                        ..Default::default()
-                    },
-                ),
+        },
+        PlatformCommandCase {
+            name: "other shift arrows",
+            events: vec![
+                key_event(egui::Key::ArrowLeft, shift),
+                key_event(egui::Key::ArrowDown, shift),
             ],
-            PlatformFlavor::Mac,
-            vec![
-                VirtualInputCommand::Backspace { word: true },
-                VirtualInputCommand::DeleteForward { word: true },
-            ],
-        ),
-        (
-            vec![
-                key_event(
-                    egui::Key::ArrowUp,
-                    egui::Modifiers {
-                        shift: true,
-                        ..Default::default()
-                    },
-                ),
-                key_event(
-                    egui::Key::ArrowDown,
-                    egui::Modifiers {
-                        shift: true,
-                        ..Default::default()
-                    },
-                ),
-            ],
-            PlatformFlavor::Other,
-            vec![
-                VirtualInputCommand::MoveUp { select: true },
+            platform: PlatformFlavor::Other,
+            expected: vec![
+                VirtualInputCommand::MoveLeft {
+                    select: true,
+                    word: false,
+                },
                 VirtualInputCommand::MoveDown { select: true },
             ],
-        ),
-        (
-            vec![
-                key_event(
-                    egui::Key::ArrowUp,
-                    egui::Modifiers {
-                        command: true,
-                        shift: true,
-                        ..Default::default()
-                    },
-                ),
-                key_event(
-                    egui::Key::ArrowDown,
-                    egui::Modifiers {
-                        shift: true,
-                        ..Default::default()
-                    },
-                ),
+        },
+        PlatformCommandCase {
+            name: "other ctrl horizontal arrows are word movement",
+            events: vec![
+                key_event(egui::Key::ArrowLeft, non_mac_ctrl()),
+                key_event(egui::Key::ArrowRight, non_mac_ctrl_shift()),
             ],
-            PlatformFlavor::Mac,
-            vec![
-                VirtualInputCommand::MoveDocHome { select: true },
+            platform: PlatformFlavor::Other,
+            expected: vec![
+                VirtualInputCommand::MoveLeft {
+                    select: false,
+                    word: true,
+                },
+                VirtualInputCommand::MoveRight {
+                    select: true,
+                    word: true,
+                },
+            ],
+        },
+        PlatformCommandCase {
+            name: "other ctrl vertical arrows stay vertical",
+            events: vec![
+                key_event(egui::Key::ArrowUp, non_mac_ctrl()),
+                key_event(egui::Key::ArrowDown, non_mac_ctrl_shift()),
+            ],
+            platform: PlatformFlavor::Other,
+            expected: vec![
+                VirtualInputCommand::MoveUp { select: false },
                 VirtualInputCommand::MoveDown { select: true },
             ],
-        ),
+        },
+        PlatformCommandCase {
+            name: "other home end line and document boundaries",
+            events: vec![
+                key_event(egui::Key::Home, egui::Modifiers::default()),
+                key_event(egui::Key::End, shift),
+                key_event(egui::Key::Home, non_mac_ctrl()),
+                key_event(egui::Key::End, non_mac_ctrl_shift()),
+            ],
+            platform: PlatformFlavor::Other,
+            expected: vec![
+                VirtualInputCommand::MoveLineHome { select: false },
+                VirtualInputCommand::MoveLineEnd { select: true },
+                VirtualInputCommand::MoveDocHome { select: false },
+                VirtualInputCommand::MoveDocEnd { select: true },
+            ],
+        },
+        PlatformCommandCase {
+            name: "other paging deletion and insertion",
+            events: vec![
+                key_event(egui::Key::PageUp, egui::Modifiers::default()),
+                key_event(egui::Key::PageDown, shift),
+                key_event(egui::Key::Backspace, egui::Modifiers::default()),
+                key_event(egui::Key::Delete, non_mac_ctrl()),
+                key_event(egui::Key::Enter, egui::Modifiers::default()),
+                key_event(egui::Key::Tab, egui::Modifiers::default()),
+            ],
+            platform: PlatformFlavor::Other,
+            expected: vec![
+                VirtualInputCommand::PageUp { select: false },
+                VirtualInputCommand::PageDown { select: true },
+                VirtualInputCommand::Backspace { word: false },
+                VirtualInputCommand::DeleteForward { word: true },
+                VirtualInputCommand::InsertNewline,
+                VirtualInputCommand::InsertTab,
+            ],
+        },
+        PlatformCommandCase {
+            name: "mac plain arrows",
+            events: vec![
+                key_event(egui::Key::ArrowLeft, egui::Modifiers::default()),
+                key_event(egui::Key::ArrowRight, egui::Modifiers::default()),
+                key_event(egui::Key::ArrowUp, egui::Modifiers::default()),
+                key_event(egui::Key::ArrowDown, egui::Modifiers::default()),
+            ],
+            platform: PlatformFlavor::Mac,
+            expected: vec![
+                VirtualInputCommand::MoveLeft {
+                    select: false,
+                    word: false,
+                },
+                VirtualInputCommand::MoveRight {
+                    select: false,
+                    word: false,
+                },
+                VirtualInputCommand::MoveUp { select: false },
+                VirtualInputCommand::MoveDown { select: false },
+            ],
+        },
+        PlatformCommandCase {
+            name: "mac option horizontal arrows are word movement",
+            events: vec![
+                key_event(egui::Key::ArrowLeft, mac_option()),
+                key_event(egui::Key::ArrowRight, mac_option_shift()),
+            ],
+            platform: PlatformFlavor::Mac,
+            expected: vec![
+                VirtualInputCommand::MoveLeft {
+                    select: false,
+                    word: true,
+                },
+                VirtualInputCommand::MoveRight {
+                    select: true,
+                    word: true,
+                },
+            ],
+        },
+        PlatformCommandCase {
+            name: "mac command arrows are line and document boundaries",
+            events: vec![
+                key_event(egui::Key::ArrowLeft, mac_cmd()),
+                key_event(egui::Key::ArrowRight, mac_cmd_shift()),
+                key_event(egui::Key::ArrowUp, mac_cmd()),
+                key_event(egui::Key::ArrowDown, mac_cmd_shift()),
+            ],
+            platform: PlatformFlavor::Mac,
+            expected: vec![
+                VirtualInputCommand::MoveLineHome { select: false },
+                VirtualInputCommand::MoveLineEnd { select: true },
+                VirtualInputCommand::MoveDocHome { select: false },
+                VirtualInputCommand::MoveDocEnd { select: true },
+            ],
+        },
+        PlatformCommandCase {
+            name: "mac home end are document boundaries",
+            events: vec![
+                key_event(egui::Key::Home, egui::Modifiers::default()),
+                key_event(egui::Key::End, shift),
+            ],
+            platform: PlatformFlavor::Mac,
+            expected: vec![
+                VirtualInputCommand::MoveDocHome { select: false },
+                VirtualInputCommand::MoveDocEnd { select: true },
+            ],
+        },
+        PlatformCommandCase {
+            name: "mac paging deletion and insertion",
+            events: vec![
+                key_event(egui::Key::PageUp, egui::Modifiers::default()),
+                key_event(egui::Key::PageDown, shift),
+                key_event(egui::Key::Backspace, mac_option()),
+                key_event(egui::Key::Delete, mac_cmd()),
+                key_event(egui::Key::Enter, egui::Modifiers::default()),
+                key_event(egui::Key::Tab, egui::Modifiers::default()),
+            ],
+            platform: PlatformFlavor::Mac,
+            expected: vec![
+                VirtualInputCommand::PageUp { select: false },
+                VirtualInputCommand::PageDown { select: true },
+                VirtualInputCommand::Backspace { word: true },
+                VirtualInputCommand::DeleteToLineEnd,
+                VirtualInputCommand::InsertNewline,
+                VirtualInputCommand::InsertTab,
+            ],
+        },
+        PlatformCommandCase {
+            name: "mac ctrl emacs editing",
+            events: vec![
+                key_event(egui::Key::A, mac_ctrl_shift()),
+                key_event(egui::Key::E, mac_ctrl()),
+                key_event(egui::Key::B, mac_ctrl()),
+                key_event(egui::Key::F, mac_ctrl_shift()),
+                key_event(egui::Key::P, mac_ctrl()),
+                key_event(egui::Key::N, mac_ctrl_shift()),
+                key_event(egui::Key::K, mac_ctrl()),
+            ],
+            platform: PlatformFlavor::Mac,
+            expected: vec![
+                VirtualInputCommand::MoveLineHome { select: true },
+                VirtualInputCommand::MoveLineEnd { select: false },
+                VirtualInputCommand::MoveLeft {
+                    select: false,
+                    word: false,
+                },
+                VirtualInputCommand::MoveRight {
+                    select: true,
+                    word: false,
+                },
+                VirtualInputCommand::MoveUp { select: false },
+                VirtualInputCommand::MoveDown { select: true },
+                VirtualInputCommand::DeleteToLineEnd,
+            ],
+        },
     ];
     assert_platform_commands_matrix(cases.as_slice());
 }
@@ -654,31 +791,4 @@ fn unfocused_key_navigation_and_delete_are_dropped() {
     ];
     let commands = commands_from_events_for_platform(&events, false, PlatformFlavor::Other);
     assert!(commands.is_empty());
-}
-
-#[test]
-fn tab_is_excluded_from_focus_retention_but_navigation_is_not() {
-    assert!(!VirtualInputCommand::InsertTab.should_retain_editor_focus());
-    assert!(VirtualInputCommand::MoveLineHome { select: true }.should_retain_editor_focus());
-    assert!(VirtualInputCommand::Backspace { word: true }.should_retain_editor_focus());
-}
-
-#[test]
-fn frame_focus_retention_command_detection_ignores_tab_only_frames() {
-    let tab_only = vec![key_event(egui::Key::Tab, egui::Modifiers::default())];
-    assert!(!frame_contains_focus_retaining_editor_command(
-        tab_only.as_slice()
-    ));
-
-    let selection = vec![key_event(
-        egui::Key::ArrowLeft,
-        egui::Modifiers {
-            command: cfg!(target_os = "macos"),
-            shift: true,
-            ..Default::default()
-        },
-    )];
-    assert!(frame_contains_focus_retaining_editor_command(
-        selection.as_slice()
-    ));
 }

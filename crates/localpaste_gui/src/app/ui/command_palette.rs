@@ -1,5 +1,6 @@
 //! Command palette rendering and quick actions.
 
+use super::super::shortcuts::{runtime_shortcut_label, RuntimeShortcutAction};
 use super::super::*;
 use crate::backend::CoreCmd;
 use eframe::egui::{self, RichText};
@@ -53,6 +54,7 @@ impl LocalPasteApp {
                 let mut query_buf = self.command_palette_query.clone();
                 let query_resp = ui.add(
                     egui::TextEdit::singleline(&mut query_buf)
+                        .id(egui::Id::new(COMMAND_PALETTE_INPUT_ID))
                         .hint_text("Run a command or search pastes..."),
                 );
                 query_resp.request_focus();
@@ -271,23 +273,23 @@ impl LocalPasteApp {
 
         items.push(CommandPaletteItem {
             label: "New paste".to_string(),
-            hint: "(Ctrl/Cmd+N)".to_string(),
+            hint: shortcut_hint(RuntimeShortcutAction::NewPaste),
             action: CommandPaletteAction::NewPaste,
         });
         items.push(CommandPaletteItem {
             label: "Paste as new paste".to_string(),
-            hint: "(Ctrl/Cmd+Shift+V)".to_string(),
+            hint: shortcut_hint(RuntimeShortcutAction::PasteAsNew),
             action: CommandPaletteAction::PasteAsNew,
         });
         if self.selected_id.is_some() {
             items.push(CommandPaletteItem {
                 label: "Delete selected".to_string(),
-                hint: "(Ctrl/Cmd+Delete)".to_string(),
+                hint: shortcut_hint(RuntimeShortcutAction::DeleteSelected),
                 action: CommandPaletteAction::DeleteSelected,
             });
             items.push(CommandPaletteItem {
                 label: "Save now".to_string(),
-                hint: "(Ctrl/Cmd+S)".to_string(),
+                hint: shortcut_hint(RuntimeShortcutAction::Save),
                 action: CommandPaletteAction::SaveNow,
             });
             items.push(CommandPaletteItem {
@@ -308,12 +310,12 @@ impl LocalPasteApp {
         }
         items.push(CommandPaletteItem {
             label: "Focus sidebar search".to_string(),
-            hint: "(Ctrl/Cmd+F)".to_string(),
+            hint: shortcut_hint(RuntimeShortcutAction::FocusSearch),
             action: CommandPaletteAction::FocusSearch,
         });
         items.push(CommandPaletteItem {
             label: "Toggle properties".to_string(),
-            hint: "(Ctrl/Cmd+I)".to_string(),
+            hint: shortcut_hint(RuntimeShortcutAction::ToggleProperties),
             action: CommandPaletteAction::ToggleProperties,
         });
         items.push(CommandPaletteItem {
@@ -365,7 +367,7 @@ impl LocalPasteApp {
             return;
         }
 
-        if self.backend.cmd_tx.send(CoreCmd::GetPaste { id }).is_err() {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPaste { id }) {
             self.pending_copy_action = None;
             self.set_status("Load paste for copy failed: backend unavailable.");
             return;
@@ -393,4 +395,8 @@ impl LocalPasteApp {
             self.command_palette_open = false;
         }
     }
+}
+
+fn shortcut_hint(action: RuntimeShortcutAction) -> String {
+    format!("({})", runtime_shortcut_label(action))
 }

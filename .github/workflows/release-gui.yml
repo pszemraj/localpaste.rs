@@ -40,7 +40,7 @@ jobs:
       source_mode: ${{ steps.resolve.outputs.source_mode }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -118,7 +118,7 @@ jobs:
           echo "source_ref=${SOURCE_REF}" >> "$GITHUB_OUTPUT"
           echo "resolved mode=${MODE} tag=${TAG} source_ref=${SOURCE_REF}"
       - name: Checkout resolved source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -150,17 +150,17 @@ jobs:
       SOURCE_REF: ${{ needs.resolve_tag.outputs.source_ref }}
     steps:
       - name: Checkout resolved source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           fetch-tags: true
           ref: ${{ env.SOURCE_REF }}
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9  # master @ 2026-02-23
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master @ 2026-02-23
         with:
           toolchain: 1.89.0
       - name: Cache Rust build artifacts
-        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330  # v2.7.8
+        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
       - name: Build smoke binaries
         shell: bash
         run: |
@@ -263,7 +263,7 @@ jobs:
       RUST_BACKTRACE: "1"
     steps:
       - name: Checkout build source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -280,7 +280,7 @@ jobs:
             echo "resolved_tag=${RESOLVED_TAG}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
       - name: Determine macOS signing/notarization availability
@@ -329,12 +329,12 @@ jobs:
             echo "missing=" >> "$GITHUB_OUTPUT"
           fi
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9  # master @ 2026-02-23
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master @ 2026-02-23
         with:
           toolchain: 1.89.0
           targets: ${{ matrix.target }}
       - name: Cache Rust build artifacts
-        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330  # v2.7.8
+        uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           key: release-gui-${{ matrix.target }}
       - name: Install Linux build dependencies
@@ -476,10 +476,15 @@ jobs:
             --packager-config "${{ matrix.packager_config }}"
             --runner-os "${{ runner.os }}"
           )
-          if python .github/scripts/release_gui_prepare.py --help 2>&1 | grep -q -- "--expected-wix-major"; then
-            prepare_args+=(--expected-wix-major 3)
+          prepare_help="$(
+            python .github/scripts/release_gui_prepare.py --help
+          )"
+          wix_major_flag="--expected-wix-major"
+          if grep -q -- "${wix_major_flag}" <<<"${prepare_help}"; then
+            prepare_args+=("${wix_major_flag}" 3)
           else
-            echo "release_gui_prepare.py does not support --expected-wix-major; skipping explicit WiX major assertion"
+            echo "release_gui_prepare.py lacks ${wix_major_flag};" \
+              "skipping WiX assertion for checked-out source."
           fi
           python .github/scripts/release_gui_prepare.py "${prepare_args[@]}"
       - name: Build installer packages
@@ -671,7 +676,7 @@ jobs:
             --asset-suffix "${{ matrix.asset_suffix }}" \
             --runner-os "${{ runner.os }}"
       - name: Upload release assets
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1  # v4.6.1
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: release-assets-${{ matrix.asset_suffix }}
           path: dist/release/${{ matrix.asset_suffix }}/*
@@ -688,7 +693,7 @@ jobs:
       contents: write
     steps:
       - name: Download packaged assets
-        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806  # v4.1.9
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           pattern: release-assets-*
           path: dist/release-assets
@@ -713,7 +718,7 @@ jobs:
         id: publish_release
         # Keep v2+ here: `overwrite_files` is not supported by older major tags.
 
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: ${{ needs.resolve_tag.outputs.resolved_tag }}
           overwrite_files: true

@@ -1,6 +1,7 @@
 //! Integration tests for version-history API edge cases.
 
-mod support;
+/// Shared real-listener server harness for version-history API tests.
+pub mod support;
 
 use axum::http::StatusCode;
 use localpaste_core::env::{env_lock, EnvGuard};
@@ -12,8 +13,8 @@ use tempfile::TempDir;
 #[allow(clippy::await_holding_lock)]
 async fn test_duplicate_version_accepts_empty_body_and_uses_generated_name() {
     let _env_lock = env_lock().lock().expect("env lock");
-    let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
-    let (server, _temp, _locks) = setup_test_server();
+    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
+    let (server, _locks) = setup_test_server();
 
     let create_response = server
         .post("/api/paste")
@@ -64,6 +65,83 @@ async fn test_duplicate_version_accepts_empty_body_and_uses_generated_name() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn test_version_retention_cap_is_enforced_through_api_updates() {
+    let _env_lock = env_lock().lock().expect("env lock");
+    let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
+    let _retention_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
+    let (server, _locks) = setup_test_server();
+
+    let create_response = server
+        .post("/api/paste")
+        .json(&json!({
+            "content": "v1",
+            "name": "retention-api"
+        }))
+        .await;
+    assert_eq!(create_response.status_code(), StatusCode::OK);
+    let created: serde_json::Value = create_response.json();
+    let paste_id = created["id"].as_str().unwrap().to_string();
+
+    let mut pruned_version_id = None;
+    for content in ["v2", "v3", "v4"] {
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        let update_response = server
+            .put(&format!("/api/paste/{}", paste_id))
+            .json(&json!({ "content": content }))
+            .await;
+        assert_eq!(update_response.status_code(), StatusCode::OK);
+
+        if content == "v2" {
+            let versions_response = server
+                .get(&format!("/api/paste/{}/versions?limit=20", paste_id))
+                .await;
+            assert_eq!(versions_response.status_code(), StatusCode::OK);
+            let versions: Vec<serde_json::Value> = versions_response.json();
+            pruned_version_id = versions[0]["version_id_ms"].as_u64();
+        }
+    }
+
+    let versions_response = server
+        .get(&format!("/api/paste/{}/versions?limit=20", paste_id))
+        .await;
+    assert_eq!(versions_response.status_code(), StatusCode::OK);
+    let versions: Vec<serde_json::Value> = versions_response.json();
+    assert_eq!(versions.len(), 2);
+
+    let newest_snapshot_response = server
+        .get(&format!(
+            "/api/paste/{}/versions/{}",
+            paste_id,
+            versions[0]["version_id_ms"].as_u64().unwrap()
+        ))
+        .await;
+    assert_eq!(newest_snapshot_response.status_code(), StatusCode::OK);
+    let newest_snapshot: serde_json::Value = newest_snapshot_response.json();
+    assert_eq!(newest_snapshot["content"], "v3");
+
+    let older_snapshot_response = server
+        .get(&format!(
+            "/api/paste/{}/versions/{}",
+            paste_id,
+            versions[1]["version_id_ms"].as_u64().unwrap()
+        ))
+        .await;
+    assert_eq!(older_snapshot_response.status_code(), StatusCode::OK);
+    let older_snapshot: serde_json::Value = older_snapshot_response.json();
+    assert_eq!(older_snapshot["content"], "v2");
+
+    let pruned_response = server
+        .get(&format!(
+            "/api/paste/{}/versions/{}",
+            paste_id,
+            pruned_version_id.expect("first archived version id")
+        ))
+        .await;
+    assert_eq!(pruned_response.status_code(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn test_version_mutations_reject_historical_snapshots_exceeding_current_size_limit() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("version-size-limit.db");
@@ -100,6 +178,7 @@ async fn test_version_mutations_reject_historical_snapshots_exceeding_current_si
         assert_eq!(list_versions_response.status_code(), StatusCode::OK);
         let versions: Vec<serde_json::Value> = list_versions_response.json();
         version_id = versions[0]["version_id_ms"].as_u64().unwrap();
+        server.shutdown().await;
     }
 
     {

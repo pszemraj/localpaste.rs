@@ -126,7 +126,6 @@ Current policy constants (virtual editor):
   - tiny edits (`<=4` changed chars, `<=2` touched lines): `15ms`
   - medium edits: `35ms`
   - larger supported buffers (`>=64KB`): `50ms`
-  - async highlighting disabled: `0ms` (synchronous/no debounce path)
 - plain rendering guardrail: `>=256KB` content
 
 Primary implementation:
@@ -147,7 +146,11 @@ Reference: [`../.env.example`](../.env.example)
 
 ## YAML Refinement Guardrail
 
-YAML auto-detection keeps single-line mappings valid (for example, `key: value`) while still rejecting obvious non-YAML noise when refining model output.
+YAML auto-detection requires YAML-distinctive structure before accepting a mapping-heavy sample.
+Single-line and prose-like flat mappings remain ambiguous because they also match notes,
+logs, and email or HTTP headers. YAML is accepted when the sample has a document marker,
+nested indentation, flow collections, block scalars, anchors, structured sequence items,
+or multiple config-shaped flat mapping lines.
 
 Primary implementation:
 

@@ -1,8 +1,8 @@
 # GUI Notes
 
 GUI runtime flags and interaction contracts.
-Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md).
-Perf validation steps and gates: [docs/dev/gui-perf-protocol.md](gui-perf-protocol.md).
+Detection/normalization/highlight behavior: [language-detection.md](../language-detection.md).
+Perf validation steps and gates: [gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Runtime Flags
 
@@ -11,8 +11,14 @@ Perf validation steps and gates: [docs/dev/gui-perf-protocol.md](gui-perf-protoc
 - `LOCALPASTE_EDITOR_INPUT_TRACE=1`: virtual input routing trace.
 - `LOCALPASTE_HIGHLIGHT_TRACE=1`: highlight request/apply/drop lifecycle trace.
 - `LOCALPASTE_LOG_FILE=<path>`: append GUI tracing logs to a file (useful on Windows release builds where no console is shown).
-- Boolean flags accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
-- Unrecognized flag values emit a warning and are treated as unset/false (shared parser behavior across core/server/gui env flags).
+- `LOCALPASTE_LINUX_DESKTOP_ENTRY=force|off`: Linux-only desktop-entry setup override. `force` writes the managed user entry; `off`/`skip`/`disabled` disables desktop-entry setup for isolated probe or test launches.
+- `LOCALPASTE_NAV_PROBE_LOG=<path>`: enables per-frame NDJSON navigation probe logging.
+- `LOCALPASTE_NAV_PROBE_SCENARIO=<id>`: labels probe frames for runner assertions.
+- `LOCALPASTE_NAV_PROBE_SEED_TEXT=<text>`, `LOCALPASTE_NAV_PROBE_SEED_NAME=<name>`, `LOCALPASTE_NAV_PROBE_SEED_CURSOR=<char|line:col>`: seed the disposable in-memory probe paste and initial caret.
+- `LOCALPASTE_NAV_PROBE_FOCUS_EDITOR=1`: keeps requesting virtual-editor focus until the probe sees it.
+- `LOCALPASTE_NAV_PROBE_PYTHON=<path>`: runner/assertion Python executable override.
+- Shared boolean flags above accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
+- Unrecognized shared boolean values emit a warning and are treated as unset/false.
 
 ## Keyboard And Navigation Contract
 
@@ -25,6 +31,9 @@ Shortcut contract:
 - `Ctrl/Cmd+Shift+P`: toggle command palette.
 - `Ctrl/Cmd+K`: toggle command palette (legacy alias).
 - `Ctrl/Cmd+I`: toggle Properties drawer.
+- `F1`: toggle keyboard shortcut help.
+- `Ctrl/Cmd+A/C/X/Z/Y`: standard virtual-editor select-all/copy/cut/undo/redo when editor owns focus.
+- `Ctrl/Cmd+Shift+Z`: redo editor edit when editor owns focus.
 - `Ctrl/Cmd+V`: insert when editor is focused; create new paste from clipboard when editor is not focused.
 - `Ctrl/Cmd+Shift+V`: explicit "force paste as new" fallback.
 
@@ -35,17 +44,69 @@ Navigation/selection contract:
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
 - Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
 
+## Navigation Probe
+
+The navigation probe writes per-frame NDJSON for native keyboard focus and caret checks. The OS-specific runner scripts set the probe environment variables listed in [Runtime Flags](#runtime-flags); set them directly only for local debugging or manual Wayland checks.
+
+Probe contract and tooling:
+
+- Scenario contract: [nav_contract.json](nav_contract.json)
+- Assertion checker: [../../tools/nav_probe_assert.py](../../tools/nav_probe_assert.py)
+- Linux X11 runner: [../../tools/nav_probe_run_linux_x11.sh](../../tools/nav_probe_run_linux_x11.sh)
+- macOS runner: [../../tools/nav_probe_run_macos.sh](../../tools/nav_probe_run_macos.sh)
+- Windows runner: [../../tools/nav_probe_run_windows.ps1](../../tools/nav_probe_run_windows.ps1)
+
+All automated runners launch a disposable probe DB under `target/`, seed the editor, wait for a probe frame showing virtual-editor keyboard focus, inject native key chords, and write NDJSON evidence. They terminate the child GUI process after the evidence frame by default so disposable probe runs do not fail on normal window-close shutdown races. Use `--help` / `Get-Help` on the runner for timing and filtering options.
+
+Linux automation is X11-only and requires `xdotool`; Wayland must be checked manually with the same probe environment variables because compositor policy restricts synthetic input.
+
+```bash
+tools/nav_probe_run_linux_x11.sh --build --assert --only ctrl_home_from_middle
+tools/nav_probe_run_linux_x11.sh --assert --ctrl-only --summary
+tools/nav_probe_run_linux_x11.sh --assert
+```
+
+The Linux runner sets `LOCALPASTE_LINUX_DESKTOP_ENTRY=off` for probe launches so contract runs do not touch user desktop-integration paths.
+It also defaults probe launches to `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_BACKEND=gl` to avoid host GPU/EGL startup noise; set either variable before running the script to override that default.
+
+macOS automation uses `tools/nav_probe_run_macos.sh` and requires Accessibility permission for the terminal running the script, because native key injection goes through the Swift/CoreGraphics helper built from `tools/nav_probe_macos_driver.swift`:
+
+```bash
+tools/nav_probe_run_macos.sh --build --assert --only cmd_up_from_middle --summary
+tools/nav_probe_run_macos.sh --build --assert --summary
+tools/nav_probe_run_macos.sh --list
+```
+
+Windows automation uses `tools/nav_probe_run_windows.ps1` from Windows PowerShell 5.1 or PowerShell 7 and defaults to the low-level `SendInput` path for navigation chords. Use `-UseSendKeys` only as a fallback when debugging the driver itself:
+
+```powershell
+tools\nav_probe_run_windows.ps1 -Build -Assert -Only ctrl_home_from_middle
+tools\nav_probe_run_windows.ps1 -Build -Assert -CtrlOnly -Summary
+tools\nav_probe_run_windows.ps1 -Build -Assert -CtrlOnly -Summary -RepeatCount 3
+tools\nav_probe_run_windows.ps1 -Assert
+```
+
+Use `-RepeatCount` for flake hunting. When assertions are enabled, repeated runs log each repetition under a unique scenario label and assert it immediately against the base contract so a later passing run cannot hide an earlier failed chord.
+Windows runs also write a manifest next to the NDJSON log by default (`*.manifest.json`) with scenario selection, repeat labels, completed runs, input driver, shutdown mode, log path, and final assertion status. Use `-Manifest <path>` to override it.
+Runs with `-Assert` self-verify the final manifest before exiting. New manifests record `-Only` selections, so a `-CtrlOnly` manifest without `-Only` must cover every Windows ctrl scenario in the current contract for every repeat.
+Re-verify a completed Windows artifact bundle with `python tools/nav_probe_assert.py --manifest target/<run>.manifest.json --summary`; pass explicit `LOG SPEC` positional paths before `--manifest` if the manifest was copied from another checkout.
+For the full Windows ctrl-navigation proof, re-verify the final artifact with `python tools/nav_probe_assert.py --manifest target/<run>.manifest.json --require-full-windows-ctrl --min-repeat-count 3 --summary`.
+
+Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --windows-runner tools/nav_probe_run_windows.ps1 --self-test` to lint scenario ids, driver chord syntax, macOS key-code entries, Windows runner key support, and manifest-completeness checks without launching the GUI.
+
 ## Stable Behavior Notes
 
 - Paste rows use `selectable_label`; keep this if adjusting row styling to preserve reliable click targets.
 - Collections scope controls are rendered as smart filters in the sidebar (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) with compact chips and overflow under `...`.
 - Language filtering is rendered in the sidebar under smart filters and always includes an explicit `All languages` clear option.
 - Language filtering stacks with the active smart collection instead of replacing it.
-- Sidebar list refresh and sidebar search run on metadata projections (`name/tags/language/folder`) and do not deserialize full paste content.
+- Sidebar list refresh runs on metadata projections (`name/tags/language/folder`); sidebar search and command-palette paste discovery run full-content substring search and return metadata summaries.
+- Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar full-content search primes this in-paste find bar when the sidebar query appears in the paste body.
+- Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.
+- App-level shortcut dispatch, command-palette hints, and keyboard shortcut help share the runtime shortcut registry. The shortcut help intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
 - Command palette is action-first (`Commands` section first; `Pastes` section is secondary search/open context).
-- Large buffers (`>= 256KB`) intentionally use plain-text rendering.
 - Virtual-editor highlight debounce/staging policy is defined in
-  [docs/language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
+  [language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
 - Language display behavior is explicit: auto + unset -> `auto`; manual + unset -> `plain`.
 - Rename/title edits commit on `Enter` and on title-field blur.
 - Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
@@ -61,8 +122,9 @@ Navigation/selection contract:
   - loading a comparison target does not change current selection or paste locks.
 - History is detached and read-only:
   - `Current working copy` is index `0`,
-  - stored snapshots are older-only entries,
-  - reset restores the selected snapshot and then prunes that snapshot and newer entries from stored history.
+  - stored snapshots are normally older-only entries,
+  - reset restores the selected snapshot and archives the outgoing head as a recoverable snapshot.
+  - dirty save-and-reset saves local edits before reset so the just-saved outgoing head is recoverable.
 - History, Diff, and reset-confirm windows fence background mutations:
   - create/delete/paste-as-new and other destructive workflow shortcuts are blocked while a version window is open,
   - autosave and explicit save still persist already-dirty content/metadata while a version window is open,
@@ -90,7 +152,7 @@ Run this checklist when touching detection/highlight/filter code.
    - Set active language filter to `cs`; verify both `csharp` and `cs` pastes remain visible.
    - Set active language filter to `shell`; verify `bash`/`sh` labeled content matches.
 8. Validate syntax resolver behavior against the matrix in
-   [docs/language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
+   [language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.
 9. Validate large-buffer guardrail:
@@ -105,8 +167,8 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
 
 ### Preflight Commands
 
-- Build/run commands: [docs/dev/devlog.md](devlog.md).
-- Perf-oriented dataset + trace runbook: [docs/dev/gui-perf-protocol.md#runbook](gui-perf-protocol.md#runbook).
+- Build/run commands: [devlog.md](devlog.md).
+- Perf-oriented dataset + trace runbook: [gui-perf-protocol.md#runbook](gui-perf-protocol.md#runbook).
 - Virtual editor mode is the default editable path; no separate kill-switch flag is supported.
 
 ### Manual Checklist
@@ -130,6 +192,8 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Open history and diff modals from palette queries (`history`, `diff`) when a paste is selected.
 6. Search and filters:
    - Sidebar query narrows results and clearing query restores list.
+   - Opening a paste from a sidebar body-text search selects and scrolls to the first matching substring in the editor.
+   - Editor toolbar `Find` locates substrings within the selected paste; `Next`/`Prev` wrap through all matches and the `Case` toggle narrows matching.
    - Smart collections (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) re-scope results.
    - Sidebar language filter (`All languages` + detected languages) stacks with active collection (not replacing it).
 7. Metadata/properties:
@@ -137,6 +201,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Rename in the editor header applies on `Enter` and on blur (without requiring Apply click).
 8. Clipboard/editing baseline:
    - `Ctrl/Cmd+C`, `Ctrl/Cmd+X`, `Ctrl/Cmd+V`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Y` behave correctly in virtual editor mode.
+   - Paste a 20-30 line block near the bottom of the visible editor; expected: the inserted tail/caret scrolls into view.
    - `Ctrl/Cmd+V` outside editor focus creates a new paste from clipboard.
    - `Ctrl/Cmd+Shift+V` can still be used as explicit force-new fallback.
    - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not switch sidebar filters.

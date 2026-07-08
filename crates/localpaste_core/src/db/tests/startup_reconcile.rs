@@ -1,7 +1,13 @@
 //! Startup behavior and invariant repair tests.
 
 use super::*;
-use crate::db::tables::REDB_FILE_NAME;
+use crate::db::paste::META_SCHEMA_VERSION_KEY;
+use crate::db::tables::{
+    DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META, PASTES,
+    PASTES_META_STATE, REDB_FILE_NAME,
+};
+use redb::ReadableDatabase;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 fn setup_temp_db_path(name: &str) -> (TempDir, String) {
@@ -9,6 +15,22 @@ fn setup_temp_db_path(name: &str) -> (TempDir, String) {
     let db_path = temp_dir.path().join(name);
     let db_path_str = db_path.to_str().expect("db path").to_string();
     (temp_dir, db_path_str)
+}
+
+fn startup_backup_files(db_path: &Path) -> Vec<PathBuf> {
+    let prefix = format!("{REDB_FILE_NAME}.backup.");
+
+    let mut paths = std::fs::read_dir(db_path)
+        .expect("read db dir")
+        .map(|entry| entry.expect("backup entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".redb"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 #[test]
@@ -22,6 +44,200 @@ fn database_new_reports_error_for_non_directory_db_path() {
         matches!(result, Err(AppError::StorageMessage(_))),
         "opening a non-directory DB_PATH should fail"
     );
+}
+
+#[test]
+fn database_new_creates_backup_before_existing_schema_repair() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    std::fs::create_dir_all(&db_path).expect("create db dir");
+    let db_file = db_path.join(REDB_FILE_NAME);
+
+    let raw_db = redb::Database::create(&db_file).expect("create raw old db");
+    let paste = Paste::new("important text".to_string(), "saved paste".to_string());
+    let encoded = bincode::serialize(&paste).expect("serialize paste");
+    let write_txn = raw_db.begin_write().expect("begin write");
+    {
+        let mut pastes = write_txn.open_table(PASTES).expect("open pastes");
+        pastes
+            .insert(paste.id.as_str(), encoded.as_slice())
+            .expect("insert paste");
+    }
+    write_txn.commit().expect("commit raw old db");
+    drop(raw_db);
+
+    assert!(
+        startup_backup_files(&db_path).is_empty(),
+        "test setup should start without backup files"
+    );
+
+    let db = open_test_database(db_path.to_str().expect("db path"));
+    assert!(
+        db.pastes
+            .get(paste.id.as_str())
+            .expect("load paste")
+            .is_some(),
+        "startup repair must preserve canonical paste rows"
+    );
+    drop(db);
+
+    let backup_files = startup_backup_files(&db_path);
+    assert_eq!(
+        backup_files.len(),
+        1,
+        "existing databases that need schema repair must be snapshotted first"
+    );
+
+    let backup_db = redb::Database::create(&backup_files[0]).expect("open backup");
+    let read_txn = backup_db.begin_read().expect("begin backup read");
+    let pastes = read_txn.open_table(PASTES).expect("open backup pastes");
+    assert!(
+        pastes
+            .get(paste.id.as_str())
+            .expect("backup paste lookup")
+            .is_some(),
+        "startup backup must contain pre-repair paste rows"
+    );
+}
+
+#[test]
+fn database_new_does_not_backup_current_schema_on_normal_reopen() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("db");
+    let db_path = Path::new(&db_path_str).to_path_buf();
+
+    let db = open_test_database(&db_path_str);
+    drop(db);
+    assert!(
+        startup_backup_files(&db_path).is_empty(),
+        "new database creation should not create a compatibility backup"
+    );
+
+    let reopened = open_test_database(&db_path_str);
+    let read_txn = reopened.db.begin_read().expect("begin read");
+    let meta_state = read_txn
+        .open_table(PASTES_META_STATE)
+        .expect("open meta state");
+    assert!(
+        meta_state
+            .get(META_SCHEMA_VERSION_KEY)
+            .expect("schema lookup")
+            .is_some(),
+        "schema marker should be current after initial startup"
+    );
+    drop(read_txn);
+    drop(reopened);
+
+    assert!(
+        startup_backup_files(&db_path).is_empty(),
+        "current-schema reopen should not create a compatibility backup"
+    );
+}
+
+#[test]
+fn database_new_discards_persisted_deleted_paste_undo_on_restart() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("db");
+    let db = open_test_database(&db_path_str);
+    let expired_paste = Paste::new("old head".to_string(), "expired staged undo".to_string());
+    let expired_paste_id = expired_paste.id.clone();
+    db.pastes
+        .create(&expired_paste)
+        .expect("create expired paste");
+    db.pastes
+        .update(
+            &expired_paste_id,
+            UpdatePasteRequest {
+                content: Some("current head".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: None,
+                tags: None,
+            },
+        )
+        .expect("update paste")
+        .expect("paste exists");
+    assert!(TransactionOps::delete_paste_with_folder_staged_undo(
+        &db,
+        &expired_paste_id,
+        "expired-token",
+        10
+    )
+    .expect("stage expired undo"));
+
+    let live_paste = Paste::new("old head".to_string(), "live staged undo".to_string());
+    let live_paste_id = live_paste.id.clone();
+    db.pastes.create(&live_paste).expect("create live paste");
+    db.pastes
+        .update(
+            &live_paste_id,
+            UpdatePasteRequest {
+                content: Some("current head".to_string()),
+                name: None,
+                language: None,
+                language_is_manual: None,
+                folder_id: None,
+                tags: None,
+            },
+        )
+        .expect("update paste")
+        .expect("paste exists");
+    assert!(TransactionOps::delete_paste_with_folder_staged_undo(
+        &db,
+        &live_paste_id,
+        "live-token",
+        i64::MAX
+    )
+    .expect("stage live undo"));
+    drop(db);
+
+    let reopened = open_test_database(&db_path_str);
+    assert_staged_undo_token(&reopened, "expired-token", false);
+    assert_staged_undo_token(&reopened, "live-token", false);
+    assert!(reopened
+        .pastes
+        .get(&expired_paste_id)
+        .expect("expired paste lookup")
+        .is_none());
+    assert!(reopened
+        .pastes
+        .get(&live_paste_id)
+        .expect("live paste lookup")
+        .is_none());
+}
+
+#[test]
+fn database_new_prunes_unreadable_deleted_paste_undo_on_restart() {
+    let (_temp_dir, db_path_str) = setup_temp_db_path("db");
+    let db = open_test_database(&db_path_str);
+    let token = "corrupt-startup-undo";
+
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut deleted_pastes = write_txn
+            .open_table(DELETED_PASTES)
+            .expect("open deleted pastes");
+        let mut deleted_versions_meta = write_txn
+            .open_table(DELETED_PASTE_VERSIONS_META)
+            .expect("open deleted version meta");
+        let mut deleted_versions_content = write_txn
+            .open_table(DELETED_PASTE_VERSIONS_CONTENT)
+            .expect("open deleted version content");
+        deleted_pastes
+            .insert(token, &[][..])
+            .expect("insert unreadable tombstone");
+        deleted_versions_meta
+            .insert(token, b"not-version-metadata".as_slice())
+            .expect("insert unreadable version metadata");
+        deleted_versions_content
+            .insert((token, 1), b"staged-content".as_slice())
+            .expect("insert staged version content");
+    }
+    write_txn.commit().expect("commit unreadable tombstone");
+    assert_staged_undo_token(&db, token, true);
+    drop(db);
+
+    let reopened = open_test_database(&db_path_str);
+    assert_staged_undo_token(&reopened, token, false);
 }
 
 #[test]

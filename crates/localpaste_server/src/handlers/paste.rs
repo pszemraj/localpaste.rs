@@ -1,7 +1,7 @@
 //! Paste HTTP handlers.
 
 use super::deprecation::maybe_with_folder_deprecation_headers;
-use super::normalize::{normalize_optional_for_create, normalize_optional_for_update};
+use super::normalize::normalize_optional_for_update;
 use crate::{error::HttpError, models::paste::*, naming, AppError, AppState};
 use axum::{
     extract::{Path, Query, State},
@@ -9,8 +9,11 @@ use axum::{
     response::Response,
     Json,
 };
+use localpaste_core::detection::detect_language;
 use localpaste_core::diff::{DiffRequest, DiffResponse, EqualResponse};
 use localpaste_core::folder_ops::map_missing_folder_for_optional_request;
+use localpaste_core::text::normalize_optional_nonempty;
+use localpaste_core::validation::ensure_paste_content_size;
 
 const RESPONSE_SHAPE_HEADER: &str = "x-localpaste-response-shape";
 const META_RESPONSE_SHAPE: &str = "meta-only";
@@ -28,7 +31,7 @@ fn normalized_limit(limit: Option<usize>) -> usize {
 }
 
 fn normalize_folder_filter_for_query(folder_id: Option<String>) -> (Option<String>, bool) {
-    let normalized = normalize_optional_for_create(folder_id);
+    let normalized = normalize_optional_nonempty(folder_id);
     let used = normalized.is_some();
     (normalized, used)
 }
@@ -37,7 +40,7 @@ fn normalize_search_filters_for_query(
     query: &SearchQuery,
 ) -> (usize, Option<String>, Option<String>, bool) {
     let limit = normalized_limit(query.limit);
-    let normalized_language = normalize_optional_for_create(query.language.clone());
+    let normalized_language = normalize_optional_nonempty(query.language.clone());
     let (normalized_folder_id, folder_filter_used) =
         normalize_folder_filter_for_query(query.folder_id.clone());
     (
@@ -76,7 +79,7 @@ fn build_paste_for_create(
         name,
         language,
         language_is_manual,
-        localpaste_core::models::paste::detect_language,
+        detect_language,
     )
 }
 
@@ -147,20 +150,29 @@ fn search_meta_response(
 ) -> Result<Response, HttpError> {
     let (limit, normalized_folder_id, normalized_language, folder_filter_used) =
         normalize_search_filters_for_query(&query);
+    let options = SearchOptions {
+        case_sensitive: query
+            .case_sensitive
+            .unwrap_or(state.config.search_case_sensitive),
+    };
     let items = match mode {
         SearchMode::Canonical => {
             // Preserve content-match semantics from canonical search while returning
             // metadata rows to avoid large full-content responses.
-            state
-                .db
-                .pastes
-                .search(&query.q, limit, normalized_folder_id, normalized_language)?
+            state.db.pastes.search_with_options(
+                &query.q,
+                limit,
+                normalized_folder_id,
+                normalized_language,
+                options,
+            )?
         }
-        SearchMode::MetaOnly => state.db.pastes.search_meta(
+        SearchMode::MetaOnly => state.db.pastes.search_meta_with_options(
             &query.q,
             limit,
             normalized_folder_id,
             normalized_language,
+            options,
         )?,
     };
     let response =
@@ -207,16 +219,9 @@ pub async fn create_paste(
         tags,
         name,
     } = req;
-    let normalized_folder_id = normalize_optional_for_create(folder_id);
+    let normalized_folder_id = normalize_optional_nonempty(folder_id);
 
-    // Check paste size limit
-    if content.len() > state.config.max_paste_size {
-        return Err(AppError::BadRequest(format!(
-            "Paste size exceeds maximum of {} bytes",
-            state.config.max_paste_size
-        ))
-        .into());
-    }
+    ensure_paste_content_size(&content, state.config.max_paste_size)?;
 
     let name = name.unwrap_or_else(naming::generate_name);
     let mut paste = build_paste_for_create(content, name, language, language_is_manual);
@@ -437,15 +442,8 @@ pub async fn update_paste(
     let folder_field_used = req.folder_id.is_some();
     req.folder_id = normalize_optional_for_update(req.folder_id);
 
-    // Check size limit if content is being updated
     if let Some(ref content) = req.content {
-        if content.len() > state.config.max_paste_size {
-            return Err(AppError::BadRequest(format!(
-                "Paste size exceeds maximum of {} bytes",
-                state.config.max_paste_size
-            ))
-            .into());
-        }
+        ensure_paste_content_size(content, state.config.max_paste_size)?;
     }
 
     let updated = if req.folder_id.is_some() {
@@ -643,6 +641,7 @@ mod tests {
                 max_paste_size: 1024 * 1024,
                 auto_save_interval: 500,
                 auto_backup: false,
+                search_case_sensitive: false,
             },
             db,
         );

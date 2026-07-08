@@ -53,47 +53,58 @@ fn assert_sections_use_char_boundaries(job: &LayoutJob) {
     }
 }
 
-#[test]
-fn virtual_line_job_fills_gaps_for_partial_stale_spans() {
+fn assert_virtual_line_segment_gaps(
+    text: &str,
+    render_line: HighlightRenderLine,
+    visible_range: Range<usize>,
+    expected_gaps: &[Range<usize>],
+) {
     egui::__run_test_ctx(|ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             let font = egui::FontId::monospace(14.0);
-            let render_line = HighlightRenderLine {
-                len: 6,
-                spans: vec![test_span(0..2), test_span(4..5)],
-            };
-            let job = build_virtual_line_job(ui, "abcdef", &font, Some(&render_line), false);
+            let job = build_virtual_line_segment_job_owned(
+                ui,
+                text.to_string(),
+                &font,
+                Some(&render_line),
+                false,
+                visible_range.clone(),
+            );
 
-            assert_sections_cover(&job, 6);
-            assert_has_section(&job, 2..4);
-            assert_has_section(&job, 5..6);
+            assert_sections_cover(&job, text.len());
+            for expected in expected_gaps {
+                assert_has_section(&job, expected.clone());
+            }
         });
     });
 }
 
 #[test]
-fn virtual_line_segment_job_fills_prefix_and_suffix_gaps() {
-    egui::__run_test_ctx(|ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let font = egui::FontId::monospace(14.0);
-            let render_line = HighlightRenderLine {
+fn virtual_line_segment_job_fills_unstyled_gaps() {
+    let cases = [
+        (
+            "abcdef",
+            HighlightRenderLine {
+                len: 6,
+                spans: vec![test_span(0..2), test_span(4..5)],
+            },
+            0..6,
+            vec![2..4, 5..6],
+        ),
+        (
+            "bcde",
+            HighlightRenderLine {
                 len: 6,
                 spans: vec![test_span(2..3)],
-            };
-            let job = build_virtual_line_segment_job_owned(
-                ui,
-                "bcde".to_string(),
-                &font,
-                Some(&render_line),
-                false,
-                1..5,
-            );
+            },
+            1..5,
+            vec![0..1, 2..4],
+        ),
+    ];
 
-            assert_sections_cover(&job, 4);
-            assert_has_section(&job, 0..1);
-            assert_has_section(&job, 2..4);
-        });
-    });
+    for (text, render_line, visible_range, expected_gaps) in cases {
+        assert_virtual_line_segment_gaps(text, render_line, visible_range, &expected_gaps);
+    }
 }
 
 #[test]

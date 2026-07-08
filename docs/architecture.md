@@ -13,6 +13,7 @@
 - [9) GUI Save Pipeline](#9-gui-save-pipeline)
 - [10) Discovery And Trust](#10-discovery-and-trust)
 - [11) Validation Strategy](#11-validation-strategy)
+
 ## 1) System At A Glance
 
 LocalPaste is a local-first paste manager with a shared core and multiple frontends:
@@ -73,12 +74,7 @@ CLI behavior in this mode:
 3. Binds HTTP listener (`BIND` or loopback default).
 4. Serves API requests until shutdown.
 
-Important invariant:
-
-- Do not run standalone `localpaste` and `localpaste-gui` against the same `DB_PATH` concurrently.
-
-> [!IMPORTANT]
-> LocalPaste enforces a single writer per `DB_PATH`. Run GUI and standalone server on separate DB paths when both are needed.
+DB ownership rules for both topologies are in [storage.md#operational-expectations](storage.md#operational-expectations).
 
 ```mermaid
 sequenceDiagram
@@ -107,29 +103,7 @@ sequenceDiagram
 
 ## 3) Storage Design
 
-Storage contract and compatibility policy are defined in
-[storage.md](storage.md).
-Architecture summary:
-
-Primary tables:
-
-- `pastes`: authoritative full paste rows.
-- `folders`: authoritative folder rows.
-- `folders_deleting`: in-progress delete markers for folder-tree operations.
-
-Derived/index tables:
-
-- `pastes_meta`: metadata projection for list/search.
-- `pastes_by_updated`: recency ordering index keyed by `(reverse_millis, paste_id)`.
-- `paste_versions_meta`: newest-first historical snapshot metadata per paste.
-- `paste_versions_content`: historical snapshot content keyed by `(paste_id, version_id_ms)`.
-
-`pastes_meta` carries the search/list projection, including derived retrieval
-metadata (`kind`, compact `handle`, top `terms`). `pastes_meta_state` stores the
-projection schema version; startup rebuilds the projection from authoritative
-paste rows when that marker is missing or stale.
-
-Primary implementation:
+Storage layout, projection tables, version-history storage, durability, and compatibility policy are defined in [storage.md](storage.md).
 
 - [`../crates/localpaste_core/src/db/mod.rs`](../crates/localpaste_core/src/db/mod.rs)
 - [`../crates/localpaste_core/src/db/paste/mod.rs`](../crates/localpaste_core/src/db/paste/mod.rs)
@@ -137,7 +111,7 @@ Primary implementation:
 
 ## 4) Consistency Model
 
-redb write transactions are atomic across all opened tables, so LocalPaste now uses:
+redb write transactions are atomic across all opened tables, so LocalPaste uses:
 
 - single-write-transaction mutations for paste/meta/index/folder updates,
 - no metadata fault markers or reconcile state machine,
@@ -170,14 +144,14 @@ Write surfaces:
 - GUI backend worker (`localpaste_gui`),
 - tooling (`localpaste_tools`).
 
-The project centralizes sensitive folder assignment/delete logic in shared core helpers so API and GUI backend paths enforce equivalent invariants.
+Folder API pathways remain for compatibility and emit deprecation headers; the GUI organizes pastes through smart filters and search. Folder assignment/delete invariants stay in shared core helpers so API and GUI backend paths enforce equivalent behavior.
 
 Version and diff surfaces:
 
 - `/api/paste/:id/versions*` supports list/get/reset-hard/duplicate for historical snapshots.
 - `/api/diff` compares head or historical paste references and rejects combined
   diff sources above 1 MiB with `413 Payload Too Large`.
-- Content-changing writes may persist an older-head snapshot based on `LOCALPASTE_VERSION_INTERVAL_SECS`.
+- Content-changing writes may persist an older-head snapshot. Snapshot interval and retention behavior are defined in [storage.md#version-history-storage](storage.md#version-history-storage).
 
 Read behavior:
 
@@ -208,25 +182,11 @@ Axum router and middleware live in:
 
 - [`../crates/localpaste_server/src/lib.rs`](../crates/localpaste_server/src/lib.rs)
 
-Current boundary rules:
-
-- strict mode binds loopback unless public access is explicitly enabled,
-- strict CORS is loopback + listener-port scoped (not any loopback origin),
-- security headers are always set (`CSP`, `X-Frame-Options`, `X-Content-Type-Options`),
-- server identity header (`x-localpaste-server: 1`) is set for trust checks.
+Security defaults, public-bind policy, CORS behavior, request-size limits, and browser security headers are defined in [security.md](security.md).
 
 ## 8) Language Detection And Highlighting
 
-Detection/highlight behavior is defined in
-[language-detection.md](language-detection.md).
-Architecture-level summary:
-
-- Detection is centralized in `localpaste_core::detection`.
-- `localpaste_core` keeps `magika` opt-in; GUI/server enable it by default, CLI remains heuristic-only by default.
-- Auto-detect flow is `Magika -> heuristic fallback`, with label normalization before persistence/filtering.
-- Manual language mode bypasses auto re-detection on content edits.
-- GUI highlighting resolves syntaxes via a multi-step resolver and falls back to plain text when no safe grammar match exists.
-- Virtual-editor async highlight debounce/staging/patch behavior is defined in [language-detection.md](language-detection.md#virtual-editor-async-highlight-flow).
+Detection, normalization, manual-language behavior, syntax resolution, and virtual-editor highlight staging are defined in [language-detection.md](language-detection.md).
 
 ## 9) GUI Save Pipeline
 
@@ -267,7 +227,7 @@ Embedded server discovery path:
 - CLI may consume it only when no explicit endpoint override is set.
 - CLI validates:
   - scheme/loopback constraints,
-  - LocalPaste response fingerprint (including `x-localpaste-server` header).
+  - LocalPaste response fingerprint (`x-localpaste-server: 1`).
 
 Relevant code:
 
@@ -275,8 +235,6 @@ Relevant code:
 - [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)
 
 ## 11) Validation Strategy
-
-Validation references:
 
 - [dev/devlog.md#validation-loop](dev/devlog.md#validation-loop)
 - [dev/devlog.md#runtime-smoke-test-server-cli](dev/devlog.md#runtime-smoke-test-server-cli)

@@ -221,6 +221,7 @@ impl LocalPasteApp {
                     if ui
                         .add(
                             egui::TextEdit::singleline(&mut self.edit_name)
+                                .id(egui::Id::new(PROPERTIES_NAME_INPUT_ID))
                                 .desired_width(f32::INFINITY),
                         )
                         .changed()
@@ -263,6 +264,7 @@ impl LocalPasteApp {
                     if ui
                         .add(
                             egui::TextEdit::singleline(&mut self.edit_tags)
+                                .id(egui::Id::new(PROPERTIES_TAGS_INPUT_ID))
                                 .desired_width(f32::INFINITY)
                                 .hint_text("comma,separated,tags"),
                         )

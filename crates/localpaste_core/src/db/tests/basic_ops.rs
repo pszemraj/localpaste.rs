@@ -6,34 +6,6 @@ use crate::env::{env_lock, EnvGuard};
 use redb::ReadableDatabase;
 use std::time::Duration;
 
-fn update_request(
-    content: Option<&str>,
-    name: Option<&str>,
-    language: Option<&str>,
-    language_is_manual: Option<bool>,
-) -> UpdatePasteRequest {
-    UpdatePasteRequest {
-        content: content.map(ToString::to_string),
-        name: name.map(ToString::to_string),
-        language: language.map(ToString::to_string),
-        language_is_manual,
-        folder_id: None,
-        tags: None,
-    }
-}
-
-fn update_existing_paste(
-    db: &Database,
-    paste_id: &str,
-    request: UpdatePasteRequest,
-    context: &str,
-) -> Paste {
-    db.pastes
-        .update(paste_id, request)
-        .expect(context)
-        .expect("paste exists")
-}
-
 fn create_source_with_manual_language_snapshot(
     db: &Database,
     initial_content: &str,
@@ -90,19 +62,36 @@ fn from_shared_reuses_folder_transaction_lock_for_same_shared_db() {
 }
 
 #[test]
-fn database_new_uses_default_version_interval_on_invalid_env_in_permissive_callers() {
+fn database_new_uses_default_version_settings_on_invalid_env_in_permissive_callers() {
     let _lock = env_lock().lock().expect("env lock");
-    let (db, _temp_dir) = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "invalid");
-        let temp_dir = tempfile::TempDir::new().expect("temp dir");
-        let db_path = temp_dir.path().join("db");
-        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
-        (db, temp_dir)
-    });
-    assert_eq!(
-        db.pastes.version_interval_secs(),
-        crate::constants::DEFAULT_PASTE_VERSION_INTERVAL_SECS
-    );
+
+    {
+        let (db, _temp_dir) = with_db_init_test_lock(|| {
+            let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "invalid");
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let db_path = temp_dir.path().join("db");
+            let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+            (db, temp_dir)
+        });
+        assert_eq!(
+            db.pastes.version_interval_secs(),
+            crate::constants::DEFAULT_PASTE_VERSION_INTERVAL_SECS
+        );
+    }
+
+    {
+        let (db, _temp_dir) = with_db_init_test_lock(|| {
+            let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "invalid");
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let db_path = temp_dir.path().join("db");
+            let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+            (db, temp_dir)
+        });
+        assert_eq!(
+            db.pastes.version_retention_limit(),
+            crate::constants::DEFAULT_PASTE_VERSION_RETENTION_LIMIT
+        );
+    }
 }
 
 #[test]
@@ -152,7 +141,7 @@ fn create_starts_without_stored_version_snapshots() {
 fn content_update_respects_version_interval_and_hash_dedupe() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "3600");
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "3600");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");
         let db = Database::new(db_path.to_str().expect("db path")).expect("db");
@@ -204,7 +193,7 @@ fn content_update_respects_version_interval_and_hash_dedupe() {
 fn content_update_archives_middle_version_after_wait_since_last_archive() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");
         let db = Database::new(db_path.to_str().expect("db path")).expect("db");
@@ -257,10 +246,83 @@ fn content_update_archives_middle_version_after_wait_since_last_archive() {
 }
 
 #[test]
+fn content_update_prunes_versions_past_retention_limit() {
+    let _lock = env_lock().lock().expect("env lock");
+    let (db, _temp) = with_db_init_test_lock(|| {
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
+        let _limit_guard = EnvGuard::set("LOCALPASTE_VERSION_RETENTION_LIMIT", "2");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("db");
+        let db = Database::new(db_path.to_str().expect("db path")).expect("db");
+        (db, temp_dir)
+    });
+
+    let paste = Paste::new("v1".to_string(), "retention-direct".to_string());
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v2"), None, None, None),
+        "update to v2",
+    );
+    let pruned_version_id = db
+        .pastes
+        .list_versions(&paste_id, Some(1))
+        .expect("list versions after first update")
+        .expect("paste exists")[0]
+        .version_id_ms;
+
+    std::thread::sleep(Duration::from_millis(1100));
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v3"), None, None, None),
+        "update to v3",
+    );
+
+    std::thread::sleep(Duration::from_millis(1100));
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("v4"), None, None, None),
+        "update to v4",
+    );
+
+    let versions = db
+        .pastes
+        .list_versions(&paste_id, Some(10))
+        .expect("list versions")
+        .expect("paste exists");
+    assert_eq!(versions.len(), 2);
+
+    let newest = db
+        .pastes
+        .get_version(&paste_id, versions[0].version_id_ms)
+        .expect("load newest version")
+        .expect("newest version exists");
+    let older_retained = db
+        .pastes
+        .get_version(&paste_id, versions[1].version_id_ms)
+        .expect("load older retained version")
+        .expect("older retained version exists");
+    assert_eq!(newest.content, "v3");
+    assert_eq!(older_retained.content, "v2");
+    assert!(
+        db.pastes
+            .get_version(&paste_id, pruned_version_id)
+            .expect("load pruned version")
+            .is_none(),
+        "pruned metadata/content should no longer be addressable"
+    );
+}
+
+#[test]
 fn reset_hard_prunes_newer_versions() {
     let _lock = env_lock().lock().expect("env lock");
     let (db, _temp) = with_db_init_test_lock(|| {
-        let _interval_guard = EnvGuard::set("LOCALPASTE_PASTE_VERSION_INTERVAL_SECS", "1");
+        let _interval_guard = EnvGuard::set("LOCALPASTE_VERSION_INTERVAL_SECS", "1");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let db_path = temp_dir.path().join("db");
         let db = Database::new(db_path.to_str().expect("db path")).expect("db");
@@ -365,6 +427,59 @@ fn delete_removes_version_rows() {
     assert!(versions_content
         .get((paste_id.as_str(), version_id))
         .expect("get versions content")
+        .is_none());
+}
+
+#[test]
+fn delete_does_not_require_version_content_payloads() {
+    let (db, _temp) = setup_test_db();
+    let paste = Paste::new(
+        "delete-me".to_string(),
+        "delete-missing-version-content".to_string(),
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+    update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("delete-me-updated"), None, None, None),
+        "create snapshot before delete",
+    );
+
+    let version_id = db
+        .pastes
+        .list_versions(&paste_id, Some(1))
+        .expect("list versions")
+        .expect("paste exists")[0]
+        .version_id_ms;
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut versions_content = write_txn
+            .open_table(PASTE_VERSIONS_CONTENT)
+            .expect("open versions content");
+        let removed = versions_content
+            .remove((paste_id.as_str(), version_id))
+            .expect("remove version content");
+        assert!(removed.is_some());
+    }
+    write_txn.commit().expect("commit missing content row");
+
+    assert!(db.pastes.delete(&paste_id).expect("delete"));
+    assert!(
+        db.pastes
+            .list_versions(&paste_id, None)
+            .expect("list versions after delete")
+            .is_none(),
+        "deleted paste should have no version listing"
+    );
+
+    let read_txn = db.db.begin_read().expect("begin read");
+    let versions_meta = read_txn
+        .open_table(PASTE_VERSIONS_META)
+        .expect("open versions meta");
+    assert!(versions_meta
+        .get(paste_id.as_str())
+        .expect("get versions meta")
         .is_none());
 }
 
@@ -671,17 +786,6 @@ fn folder_crud_and_duplicate_rejection() {
 
     assert!(db.folders.delete(&folder_id).expect("delete"));
     assert!(db.folders.get(&folder_id).expect("get").is_none());
-}
-
-#[test]
-fn update_count_returns_not_found_for_missing_folder() {
-    let (db, _temp) = setup_test_db();
-
-    let result = db.folders.update_count("missing-folder-id", 1);
-    assert!(
-        matches!(result, Err(AppError::NotFound)),
-        "missing folder should return NotFound"
-    );
 }
 
 #[test]

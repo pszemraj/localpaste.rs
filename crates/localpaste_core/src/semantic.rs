@@ -1,10 +1,10 @@
 //! Lightweight locally-derived semantic metadata for retrieval.
 
 use crate::detection::canonical::canonicalize;
+use crate::text::{utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-const SAMPLE_MAX_BYTES: usize = 64 * 1024;
 const SAMPLE_MAX_LINES: usize = 256;
 const MAX_TERMS: usize = 4;
 const MAX_HANDLE_CHARS: usize = 48;
@@ -81,11 +81,7 @@ fn sample_prefix(content: &str) -> &str {
         return trimmed;
     }
 
-    let mut end = trimmed.len().min(SAMPLE_MAX_BYTES);
-    while end > 0 && !trimmed.is_char_boundary(end) {
-        end -= 1;
-    }
-    let prefix = &trimmed[..end];
+    let prefix = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
 
     let mut line_end = prefix.len();
     let mut seen = 0usize;
@@ -187,29 +183,49 @@ fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
 }
 
 fn extract_definition_handle(sample: &str, language: Option<&str>) -> Option<String> {
+    sample
+        .lines()
+        .find_map(|line| extract_definition_handle_from_line(line, language))
+}
+
+/// Extract a compact definition handle from one source line.
+///
+/// # Arguments
+/// - `line`: Source line to inspect.
+/// - `language`: Optional language label used to select supported definition patterns.
+///
+/// # Returns
+/// A code-facing handle such as `fn run` or `export function render`, when the
+/// line starts with a supported definition pattern for `language`.
+fn extract_definition_handle_from_line(line: &str, language: Option<&str>) -> Option<String> {
     let lang = canonicalize(language.unwrap_or_default().trim());
     let patterns: &[&str] = match lang.as_str() {
         "rust" => &["fn ", "struct ", "enum ", "trait ", "impl "],
         "python" => &["def ", "class ", "async def "],
-        "javascript" | "typescript" => &["function ", "class ", "const ", "export function "],
+        "javascript" | "typescript" => &[
+            "function ",
+            "class ",
+            "const ",
+            "export function ",
+            "export class ",
+            "export const ",
+        ],
         "go" => &["func ", "type ", "package "],
         _ => return None,
     };
 
-    for line in sample.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
-            continue;
-        }
-        for pattern in patterns {
-            if let Some(rest) = trimmed.strip_prefix(pattern) {
-                let ident: String = rest
-                    .chars()
-                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-                    .collect();
-                if !ident.is_empty() {
-                    return Some(format!("{} {}", pattern.trim_end(), ident));
-                }
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
+        return None;
+    }
+    for pattern in patterns {
+        if let Some(rest) = trimmed.strip_prefix(pattern) {
+            let ident: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect();
+            if !ident.is_empty() {
+                return Some(format!("{} {}", pattern.trim_end(), ident));
             }
         }
     }
@@ -451,7 +467,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive, PasteKind};
+    use super::{derive, extract_definition_handle_from_line, PasteKind};
 
     #[test]
     fn derive_matrix_covers_code_config_log_link_and_other() {
@@ -492,5 +508,29 @@ mod tests {
         assert!(derived.terms.iter().any(|term| term == "fsdp2"));
         assert!(derived.terms.iter().any(|term| term == "validation"));
         assert!(derived.terms.iter().any(|term| term == "cublaslt"));
+    }
+
+    #[test]
+    fn definition_handle_extracts_exported_js_ts_declarations() {
+        let cases = [
+            (
+                "export const renderPanel = () => {};",
+                Some("typescript"),
+                Some("export const renderPanel"),
+            ),
+            (
+                "export class WorkspacePanel {}",
+                Some("javascript"),
+                Some("export class WorkspacePanel"),
+            ),
+        ];
+
+        for (line, language, expected) in cases {
+            assert_eq!(
+                extract_definition_handle_from_line(line, language).as_deref(),
+                expected,
+                "line: {line}"
+            );
+        }
     }
 }

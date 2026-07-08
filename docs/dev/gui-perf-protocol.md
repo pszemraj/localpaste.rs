@@ -6,9 +6,8 @@ Release-gate evidence and regression checks for GUI perf.
 
 - English-first editor workflows only.
 - Runtime topology for this protocol: the GUI owns the DB lock and runs the embedded API endpoint in-process.
-- Keep exactly one writer process per `DB_PATH` during perf runs
-  (storage contract: [docs/storage.md](../storage.md)).
-- Detection/highlight behavior definitions (including virtual-editor async debounce/staging policy) are maintained in [docs/language-detection.md](../language-detection.md).
+- DB ownership rules: [storage.md#operational-expectations](../storage.md#operational-expectations).
+- Detection/highlight behavior definitions, including virtual-editor async debounce/staging policy: [language-detection.md](../language-detection.md).
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
   - average FPS `>= 45`
@@ -18,8 +17,7 @@ Release-gate evidence and regression checks for GUI perf.
   - p95 frame time `<= 16 ms` once post-change measurements are captured and reviewed.
   - Until that measurement evidence is captured, keep the current `<= 25 ms` release gate.
 
-> [!IMPORTANT]
-> Reuse of a shared `DB_PATH` with another writer invalidates perf results and can introduce lock contention artifacts.
+Perf runs require an isolated `DB_PATH`; shared writers invalidate the measurements.
 
 ## Automated Test Budget (CI/Headless)
 
@@ -50,7 +48,7 @@ $env:LOCALPASTE_BACKEND_PERF_LOG = "1"
 $env:LOCALPASTE_EDITOR_INPUT_TRACE = "1"
 $env:LOCALPASTE_HIGHLIGHT_TRACE = "1"
 
-cargo run -p localpaste_tools --bin generate-test-data -- --clear --count 10000 --folders 50
+cargo run -p localpaste_tools --bin generate-test-data -- --clear --yes --count 10000 --folders 50
 cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
@@ -65,7 +63,7 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 - 10k pastes by default (configurable with `--count`)
 - weighted content-size distribution (small/medium/large/very large)
 - language-diverse snippets plus folder/tag metadata
-- GUI sidebar list/search path reads metadata/index projections (content loads only on paste open)
+- GUI sidebar list reads metadata/index projections; sidebar search and command-palette paste discovery scan full paste content and return metadata summaries.
 - Sidebar list window is capped by `DEFAULT_LIST_PASTES_LIMIT` (`512`); command palette and search are the global discovery paths.
 
 ## Manual Verification Checklist
@@ -88,6 +86,6 @@ Perf gating in this protocol is based on the checks below:
 ## Related Docs
 
 - Editor flags and trace env vars: [gui-notes.md](gui-notes.md)
-- Detection/normalization/highlight behavior: [docs/language-detection.md](../language-detection.md)
+- Detection/normalization/highlight behavior: [language-detection.md](../language-detection.md)
 - Open perf follow-ups: [backlog.md](backlog.md)
-- System architecture context: [docs/architecture.md](../architecture.md)
+- System architecture context: [architecture.md](../architecture.md)

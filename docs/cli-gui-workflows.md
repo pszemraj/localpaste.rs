@@ -3,7 +3,7 @@
 `lpaste` is the terminal-side companion to the desktop app. It talks to the same localhost API that the GUI exposes, so you can inspect, export, diff, or automate work without leaving the editor.
 
 > [!IMPORTANT]
-> GitHub Releases currently ship GUI assets only. To use `lpaste`, build it from source with Cargo, for example:
+> GitHub release asset scope is listed in [README.md#releases](../README.md#releases). To use `lpaste`, build it from source with Cargo:
 >
 > ```bash
 > cargo build -p localpaste_cli --bin lpaste
@@ -37,7 +37,7 @@ $env:LP_SERVER = "http://127.0.0.1:38411"
 lpaste list --limit 20
 ```
 
-Do not run the standalone `localpaste` server and the GUI against the same `DB_PATH` at the same time. Use the GUI's embedded API when you want terminal access to the same local store.
+For terminal access to a GUI-owned store, follow [storage operational expectations](storage.md#operational-expectations).
 
 ## Useful complementary workflows
 
@@ -52,6 +52,14 @@ Search metadata only. This is usually the fastest way to find a paste from the t
 ```bash
 lpaste search-meta validation
 lpaste search-meta cublaslt
+```
+
+Search inherits the server's default case behavior, including `LOCALPASTE_SEARCH_CASE_SENSITIVE`.
+Use an explicit flag when a script needs deterministic matching:
+
+```bash
+lpaste search --case-sensitive Needle
+lpaste search-meta --case-insensitive needle
 ```
 
 Fetch the current content of a paste into a local file:

@@ -3,6 +3,35 @@
 use super::*;
 
 #[test]
+fn paste_created_clean_visible_focuses_virtual_editor_on_next_render() {
+    let mut harness = make_app();
+
+    let mut created = Paste::new("new-content".to_string(), "new-note".to_string());
+    created.id = "new-id".to_string();
+
+    harness
+        .app
+        .apply_event(CoreEvent::PasteCreated { paste: created });
+
+    assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
+    assert!(
+        harness.app.focus_editor_next,
+        "clean visible paste creation should queue a virtual-editor focus request"
+    );
+
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    run_editor_panel_once(&mut harness.app, &ctx, egui::RawInput::default());
+
+    let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+    assert!(ctx.memory(|m| m.has_focus(editor_id)));
+    assert!(
+        !harness.app.focus_editor_next,
+        "virtual editor should consume the one-frame focus request"
+    );
+}
+
+#[test]
 fn paste_created_hidden_by_active_filter_keeps_visible_selection_and_projection() {
     let mut harness = make_app();
     harness.app.all_pastes = vec![test_summary("alpha", "Alpha", Some("rust"), 7)];
@@ -39,6 +68,7 @@ fn paste_created_hidden_by_active_filter_keeps_visible_selection_and_projection(
         "visible projection should continue honoring the active language filter"
     );
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(!harness.app.focus_editor_next);
     assert_eq!(
         harness
             .app
@@ -88,6 +118,7 @@ fn paste_created_during_active_search_keeps_visible_projection_and_invalidates_s
         "active search results should remain the visible projection until refreshed"
     );
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(!harness.app.focus_editor_next);
     assert!(
         harness.app.search_last_sent.is_empty(),
         "create should invalidate active-search cache"

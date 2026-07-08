@@ -16,14 +16,16 @@ localpaste_server = { path = "../localpaste_server", default-features = false }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 crossbeam-channel = "0.5"
-eframe = { version = "0.33", features = ["wgpu", "persistence"] }
-egui_extras = { version = "0.33", features = ["syntect"] }
+eframe = { version = "0.33.3", features = ["wgpu", "persistence"] }
+egui_extras = { version = "0.33.3", features = ["syntect"] }
 syntect = "5.3"
 ropey = "1.6"
 unicode-segmentation = "1.11"
 unicode-width = "0.2"
 chrono = { workspace = true, features = ["serde"] }
 rfd = "0.17.2"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 
 [features]
 default = ["magika"]
@@ -35,5 +37,4 @@ winresource = "0.1"
 [dev-dependencies]
 tempfile.workspace = true
 reqwest = { workspace = true, features = ["json", "blocking"] }
-serde_json.workspace = true
 bincode = "1.3"

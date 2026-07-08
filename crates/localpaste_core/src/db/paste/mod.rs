@@ -2,19 +2,23 @@
 
 mod compare;
 mod helpers;
+mod version_reset;
 
 use crate::{
-    config::paste_version_interval_secs_from_env_or_default,
+    config::{
+        paste_version_interval_secs_from_env_or_default,
+        paste_version_retention_limit_from_env_or_default,
+    },
     db::{
         tables::*,
         versioning::{
-            decode_version_meta_list, encode_version_meta_list, next_version_meta_for_content,
-            should_record_version,
+            decode_version_meta_list, next_version_meta_for_content, should_record_version,
         },
     },
     error::AppError,
     models::paste::*,
     naming,
+    validation::ensure_paste_content_size,
 };
 use chrono::{DateTime, Utc};
 use redb::{ReadTransaction, ReadableDatabase, ReadableTable};
@@ -26,12 +30,17 @@ use self::helpers::{
     score_paste_match,
 };
 
+pub(crate) use self::helpers::discard_paste_versions_for_delete;
+pub(crate) use self::helpers::prune_and_persist_version_meta;
+#[cfg(test)]
+pub(crate) use self::helpers::remove_paste_versions_for_delete_capped;
 pub(crate) use self::helpers::{apply_update_request, deserialize_paste, reverse_timestamp_key};
 
 /// Accessor for paste-related redb tables.
 pub struct PasteDb {
     db: Arc<redb::Database>,
     version_interval_secs: u64,
+    version_retention_limit: usize,
 }
 
 const DEFAULT_VERSION_LIST_LIMIT: usize = 50;
@@ -42,22 +51,9 @@ pub(crate) const META_SCHEMA_VERSION_KEY: &str = "__schema_version";
 ///
 /// Bump this whenever the persisted `PasteMeta` projection contract changes,
 /// including semantic-derived fields produced by [`PasteMeta::from`].
-pub(crate) const CURRENT_PASTES_META_SCHEMA_VERSION: u64 = 1;
+pub(crate) const CURRENT_PASTES_META_SCHEMA_VERSION: u64 = 2;
 
 impl PasteDb {
-    fn ensure_content_within_size_limit(
-        content: &str,
-        max_paste_size: usize,
-    ) -> Result<(), AppError> {
-        if content.len() > max_paste_size {
-            return Err(AppError::BadRequest(format!(
-                "Paste size exceeds maximum of {} bytes",
-                max_paste_size
-            )));
-        }
-        Ok(())
-    }
-
     fn reject_direct_folder_operation(
         violates: bool,
         message: &'static str,
@@ -80,6 +76,7 @@ impl PasteDb {
         // init. GUI/tool callers intentionally use permissive config loading, so
         // PasteDb follows the same fallback-to-default behavior here.
         let version_interval_secs = paste_version_interval_secs_from_env_or_default();
+        let version_retention_limit = paste_version_retention_limit_from_env_or_default();
         let write_txn = db.begin_write()?;
         write_txn.open_table(PASTES)?;
         write_txn.open_table(PASTES_META)?;
@@ -87,10 +84,14 @@ impl PasteDb {
         write_txn.open_table(PASTES_BY_UPDATED)?;
         write_txn.open_table(PASTE_VERSIONS_META)?;
         write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
+        write_txn.open_table(DELETED_PASTES)?;
+        write_txn.open_table(DELETED_PASTE_VERSIONS_META)?;
+        write_txn.open_table(DELETED_PASTE_VERSIONS_CONTENT)?;
         write_txn.commit()?;
         Ok(Self {
             db,
             version_interval_secs,
+            version_retention_limit,
         })
     }
 
@@ -100,6 +101,14 @@ impl PasteDb {
     /// Minimum elapsed seconds required between persisted snapshots.
     pub(crate) fn version_interval_secs(&self) -> u64 {
         self.version_interval_secs
+    }
+
+    /// Effective maximum number of historical snapshots retained per paste.
+    ///
+    /// # Returns
+    /// Newest-first snapshot retention cap.
+    pub(crate) fn version_retention_limit(&self) -> usize {
+        self.version_retention_limit
     }
 
     /// Rebuild the persisted metadata projection from canonical paste rows.
@@ -248,28 +257,32 @@ impl PasteDb {
     /// # Errors
     /// Returns an error when storage access or serialization fails.
     pub fn update(&self, id: &str, update: UpdatePasteRequest) -> Result<Option<Paste>, AppError> {
-        self.update_inner(id, None, update)
+        self.update_inner(id, None, update, None)
     }
 
-    /// Update a paste only when current folder id matches `expected_folder_id`.
+    /// Update a paste while preserving one historical version during retention pruning.
+    ///
+    /// Normal updates should call [`Self::update`]. This opt-in path exists for
+    /// save-before-reset workflows where the user already confirmed a reset
+    /// target and the current save may otherwise prune that target first.
     ///
     /// # Arguments
     /// - `id`: Paste id to update.
-    /// - `expected_folder_id`: Expected current folder id.
     /// - `update`: Update payload.
+    /// - `protected_version_id_ms`: Historical version id that must survive this update.
     ///
     /// # Returns
-    /// `Ok(Some(paste))` when updated, `Ok(None)` when missing or folder does not match.
+    /// `Ok(Some(paste))` when updated, `Ok(None)` when missing.
     ///
     /// # Errors
     /// Returns an error when storage access or serialization fails.
-    pub fn update_if_folder_matches(
+    pub fn update_preserving_version(
         &self,
         id: &str,
-        expected_folder_id: Option<&str>,
         update: UpdatePasteRequest,
+        protected_version_id_ms: u64,
     ) -> Result<Option<Paste>, AppError> {
-        self.update_inner(id, Some(expected_folder_id), update)
+        self.update_inner(id, None, update, Some(protected_version_id_ms))
     }
 
     fn update_inner(
@@ -277,6 +290,7 @@ impl PasteDb {
         id: &str,
         expected_folder: Option<Option<&str>>,
         update: UpdatePasteRequest,
+        protected_version_id_ms: Option<u64>,
     ) -> Result<Option<Paste>, AppError> {
         Self::reject_direct_folder_operation(
             update.folder_id.is_some(),
@@ -311,6 +325,7 @@ impl PasteDb {
             let mut version_items = decode_version_meta_list(
                 versions_meta.get(id)?.as_ref().map(|value| value.value()),
             )?;
+            let mut version_meta_dirty = false;
             apply_update_request(&mut paste, &update);
             let content_changed = paste.content != old_content;
 
@@ -330,9 +345,21 @@ impl PasteDb {
                     versions_content
                         .insert((id, next.version_id_ms), encoded_content.as_slice())?;
                     version_items.insert(0, next);
-                    let encoded_versions = encode_version_meta_list(&version_items)?;
-                    versions_meta.insert(id, encoded_versions.as_slice())?;
+                    version_meta_dirty = true;
                 }
+            }
+            if version_items.len() > self.version_retention_limit() {
+                version_meta_dirty = true;
+            }
+            if version_meta_dirty {
+                prune_and_persist_version_meta(
+                    &mut versions_meta,
+                    &mut versions_content,
+                    id,
+                    &mut version_items,
+                    self.version_retention_limit(),
+                    protected_version_id_ms,
+                )?;
             }
 
             let encoded_paste = bincode::serialize(&paste)?;
@@ -354,17 +381,14 @@ impl PasteDb {
         Ok(updated_paste)
     }
 
-    /// Delete a paste and return the deleted canonical row.
-    ///
-    /// This API only supports unfiled deletes. Use
-    /// [`crate::db::TransactionOps::delete_paste_with_folder`] for foldered rows.
+    /// Delete a paste by id.
     ///
     /// # Returns
-    /// `Ok(Some(paste))` when deleted, `Ok(None)` when missing.
+    /// `true` when a row was deleted, otherwise `false`.
     ///
     /// # Errors
-    /// Returns an error when storage access or deserialization fails.
-    pub fn delete_and_return(&self, id: &str) -> Result<Option<Paste>, AppError> {
+    /// Returns an error when storage or deserialization fails.
+    pub fn delete(&self, id: &str) -> Result<bool, AppError> {
         let write_txn = self.db.begin_write()?;
         let deleted = {
             let mut pastes = write_txn.open_table(PASTES)?;
@@ -374,12 +398,13 @@ impl PasteDb {
             let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
 
             let Some(old_guard) = pastes.get(id)? else {
-                return Ok(None);
+                return Ok(false);
             };
             let paste = deserialize_paste(old_guard.value())?;
             Self::reject_direct_folder_operation(
                 paste.folder_id.is_some(),
-                "Direct deletion of foldered pastes via PasteDb::delete is not allowed; use TransactionOps::delete_paste_with_folder",
+                "Direct deletion of foldered pastes via PasteDb::delete is not allowed; \
+                 use TransactionOps::delete_paste_with_folder",
             )?;
             let recency_key = reverse_timestamp_key(paste.updated_at);
             drop(old_guard);
@@ -387,29 +412,12 @@ impl PasteDb {
             let _ = updated.remove((recency_key, id))?;
             let _ = pastes.remove(id)?;
             let _ = metas.remove(id)?;
-            let version_items = decode_version_meta_list(
-                versions_meta.get(id)?.as_ref().map(|value| value.value()),
-            )?;
-            for version in version_items {
-                let _ = versions_content.remove((id, version.version_id_ms))?;
-            }
-            let _ = versions_meta.remove(id)?;
-            Some(paste)
+            discard_paste_versions_for_delete(&mut versions_meta, &mut versions_content, id)?;
+            true
         };
 
         write_txn.commit()?;
         Ok(deleted)
-    }
-
-    /// Delete a paste by id.
-    ///
-    /// # Returns
-    /// `true` when a row was deleted, otherwise `false`.
-    ///
-    /// # Errors
-    /// Returns an error when storage or deserialization fails.
-    pub fn delete(&self, id: &str) -> Result<bool, AppError> {
-        Ok(self.delete_and_return(id)?.is_some())
     }
 
     fn normalized_version_limit(limit: Option<usize>) -> usize {
@@ -518,102 +526,6 @@ impl PasteDb {
         }))
     }
 
-    /// Reset current paste content to a historical version and prune newer snapshots.
-    ///
-    /// # Arguments
-    /// - `paste_id`: Canonical paste id.
-    /// - `version_id_ms`: Target historical version id.
-    /// - `max_paste_size`: Maximum allowed content size for the restored head row.
-    ///
-    /// # Returns
-    /// `Ok(Some(updated))` when reset succeeds, `Ok(None)` when paste/version is missing.
-    ///
-    /// # Errors
-    /// Returns an error when storage access or serialization fails.
-    pub fn reset_hard_to_version(
-        &self,
-        paste_id: &str,
-        version_id_ms: u64,
-        max_paste_size: usize,
-    ) -> Result<Option<Paste>, AppError> {
-        let write_txn = self.db.begin_write()?;
-        let updated_paste = {
-            let mut pastes = write_txn.open_table(PASTES)?;
-            let mut metas = write_txn.open_table(PASTES_META)?;
-            let mut updated = write_txn.open_table(PASTES_BY_UPDATED)?;
-            let mut versions_meta = write_txn.open_table(PASTE_VERSIONS_META)?;
-            let mut versions_content = write_txn.open_table(PASTE_VERSIONS_CONTENT)?;
-
-            let Some(paste_guard) = pastes.get(paste_id)? else {
-                return Ok(None);
-            };
-            let mut paste = deserialize_paste(paste_guard.value())?;
-            let old_recency_key = reverse_timestamp_key(paste.updated_at);
-            drop(paste_guard);
-
-            let mut version_items = decode_version_meta_list(
-                versions_meta
-                    .get(paste_id)?
-                    .as_ref()
-                    .map(|value| value.value()),
-            )?;
-            let Some(target_meta) = version_items
-                .iter()
-                .find(|item| item.version_id_ms == version_id_ms)
-                .cloned()
-            else {
-                return Ok(None);
-            };
-
-            let Some(content_guard) = versions_content.get((paste_id, version_id_ms))? else {
-                return Ok(None);
-            };
-            let target_content: String = bincode::deserialize(content_guard.value())?;
-            drop(content_guard);
-            Self::ensure_content_within_size_limit(&target_content, max_paste_size)?;
-
-            // Reset must restore the exact stored snapshot semantics. Reusing
-            // `apply_update_request` here is incorrect because it can re-run
-            // auto-detection and silently mutate `language` / `language_is_manual`
-            // instead of replaying the persisted historical state.
-            paste.content = target_content;
-            paste.is_markdown = is_markdown_content(&paste.content);
-            paste.language = target_meta.language.clone();
-            paste.language_is_manual = target_meta.language_is_manual;
-            paste.updated_at = Utc::now();
-
-            let encoded_paste = bincode::serialize(&paste)?;
-            let encoded_meta = bincode::serialize(&PasteMeta::from(&paste))?;
-            let new_recency_key = reverse_timestamp_key(paste.updated_at);
-            pastes.insert(paste_id, encoded_paste.as_slice())?;
-            metas.insert(paste_id, encoded_meta.as_slice())?;
-            let _ = updated.remove((old_recency_key, paste_id))?;
-            updated.insert((new_recency_key, paste_id), ())?;
-
-            let mut removed_versions = Vec::new();
-            version_items.retain(|item| {
-                // Historical table stores only snapshots older than current head.
-                // After reset, the target snapshot becomes the new head, so drop it
-                // and everything newer.
-                let keep = item.version_id_ms < version_id_ms;
-                if !keep {
-                    removed_versions.push(item.version_id_ms);
-                }
-                keep
-            });
-            for removed in removed_versions {
-                let _ = versions_content.remove((paste_id, removed))?;
-            }
-            let encoded_versions = encode_version_meta_list(&version_items)?;
-            versions_meta.insert(paste_id, encoded_versions.as_slice())?;
-
-            Some(paste)
-        };
-
-        write_txn.commit()?;
-        Ok(updated_paste)
-    }
-
     /// Create a new paste from a historical version snapshot.
     ///
     /// # Arguments
@@ -637,7 +549,7 @@ impl PasteDb {
         let Some(snapshot) = self.get_version(paste_id, version_id_ms)? else {
             return Ok(None);
         };
-        Self::ensure_content_within_size_limit(&snapshot.content, max_paste_size)?;
+        ensure_paste_content_size(&snapshot.content, max_paste_size)?;
         let duplicate_name = name
             .as_deref()
             .map(str::trim)
@@ -828,12 +740,36 @@ impl PasteDb {
         folder_id: Option<String>,
         language: Option<String>,
     ) -> Result<Vec<PasteMeta>, AppError> {
+        self.search_with_options(query, limit, folder_id, language, SearchOptions::default())
+    }
+
+    /// Search canonical paste data with explicit search behavior flags.
+    ///
+    /// # Arguments
+    /// - `query`: Search query string.
+    /// - `limit`: Maximum rows to return.
+    /// - `folder_id`: Optional folder filter.
+    /// - `language`: Optional language filter.
+    /// - `options`: Search behavior flags.
+    ///
+    /// # Returns
+    /// Ranked metadata matches (name/tags/content scoring).
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn search_with_options(
+        &self,
+        query: &str,
+        limit: usize,
+        folder_id: Option<String>,
+        language: Option<String>,
+        options: SearchOptions,
+    ) -> Result<Vec<PasteMeta>, AppError> {
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
 
-        let query_lower = query.to_lowercase();
         let language_filter = normalize_language_filter(language.as_deref());
         let read_txn = self.db.begin_read()?;
         let pastes_table = read_txn.open_table(PASTES)?;
@@ -852,9 +788,9 @@ impl PasteDb {
                 continue;
             }
 
-            let score = score_paste_match(&paste, &query_lower);
+            let meta = PasteMeta::from(&paste);
+            let score = score_paste_match(&paste, &meta, query, options.case_sensitive);
             if score > 0 {
-                let meta = PasteMeta::from(&paste);
                 push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }
         }
@@ -882,12 +818,36 @@ impl PasteDb {
         folder_id: Option<String>,
         language: Option<String>,
     ) -> Result<Vec<PasteMeta>, AppError> {
+        self.search_meta_with_options(query, limit, folder_id, language, SearchOptions::default())
+    }
+
+    /// Search metadata-only fields with explicit search behavior flags.
+    ///
+    /// # Arguments
+    /// - `query`: Search query string.
+    /// - `limit`: Maximum rows to return.
+    /// - `folder_id`: Optional folder filter.
+    /// - `language`: Optional language filter.
+    /// - `options`: Search behavior flags.
+    ///
+    /// # Returns
+    /// Ranked metadata matches (name/tags/language scoring).
+    ///
+    /// # Errors
+    /// Returns an error when storage access or deserialization fails.
+    pub fn search_meta_with_options(
+        &self,
+        query: &str,
+        limit: usize,
+        folder_id: Option<String>,
+        language: Option<String>,
+        options: SearchOptions,
+    ) -> Result<Vec<PasteMeta>, AppError> {
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
 
-        let query_lower = query.to_lowercase();
         let language_filter = normalize_language_filter(language.as_deref());
         let read_txn = self.db.begin_read()?;
         let meta_table = read_txn.open_table(PASTES_META)?;
@@ -899,7 +859,7 @@ impl PasteDb {
             if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref()) {
                 continue;
             }
-            let score = score_meta_match(&meta, &query_lower);
+            let score = score_meta_match(&meta, query, options.case_sensitive);
             if score > 0 {
                 push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }

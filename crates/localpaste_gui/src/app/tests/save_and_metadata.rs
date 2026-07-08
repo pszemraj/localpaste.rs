@@ -2,33 +2,15 @@
 
 use super::*;
 use crate::backend::CoreErrorSource;
+use localpaste_core::env::{env_lock, EnvGuard};
 
 #[test]
 fn paste_meta_saved_refilters_when_selected_paste_leaves_active_scope() {
     let mut harness = make_app();
-    let now = Utc::now();
     harness.app.apply_event(CoreEvent::PasteList {
         items: vec![
-            PasteSummary {
-                id: "alpha".to_string(),
-                name: "Alpha".to_string(),
-                language: Some("rust".to_string()),
-                content_len: 7,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
-            PasteSummary {
-                id: "beta".to_string(),
-                name: "Beta".to_string(),
-                language: Some("rust".to_string()),
-                content_len: 7,
-                updated_at: now,
-                folder_id: None,
-                tags: Vec::new(),
-                derived: Default::default(),
-            },
+            test_summary("alpha", "Alpha", Some("rust"), 7),
+            test_summary("beta", "Beta", Some("rust"), 7),
         ],
     });
     harness
@@ -232,16 +214,7 @@ fn metadata_save_ack_updates_visible_search_row_before_backend_redispatch() {
     let mut harness = make_app();
     harness.app.search_query = "alpha".to_string();
     harness.app.search_last_sent = "alpha".to_string();
-    harness.app.pastes = vec![PasteSummary {
-        id: "alpha".to_string(),
-        name: "Alpha".to_string(),
-        language: Some("rust".to_string()),
-        content_len: 7,
-        updated_at: Utc::now(),
-        folder_id: None,
-        tags: Vec::new(),
-        derived: Default::default(),
-    }];
+    harness.app.pastes = vec![test_summary("alpha", "Alpha", Some("rust"), 7)];
     harness.app.all_pastes = harness.app.pastes.clone();
 
     let mut saved = Paste::new("updated body".to_string(), "Alpha-renamed".to_string());
@@ -291,10 +264,7 @@ fn content_save_error_does_not_clear_metadata_in_flight() {
     harness.app.save_metadata_now();
     let _ = recv_cmd(&harness.cmd_rx);
 
-    harness
-        .app
-        .selected_content
-        .reset("edited-content".to_string());
+    set_active_content(&mut harness.app, "edited-content");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.last_edit_at =
         Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
@@ -325,10 +295,7 @@ fn content_save_error_does_not_clear_metadata_in_flight() {
 #[test]
 fn save_and_autosave_emit_update_commands_at_expected_times() {
     let mut harness = make_app();
-    harness
-        .app
-        .selected_content
-        .reset("manual-save".to_string());
+    set_active_content(&mut harness.app, "manual-save");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.save_in_flight = false;
     harness.app.save_now();
@@ -336,16 +303,16 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
     assert!(matches!(harness.app.save_status, SaveStatus::Saving));
     assert!(harness.app.save_in_flight);
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePaste { id, content } => {
+        CoreCmd::UpdatePasteVirtual { id, content, .. } => {
             assert_eq!(id, "alpha");
-            assert_eq!(content, "manual-save");
+            assert_eq!(content.to_string(), "manual-save");
         }
         other => panic!("unexpected command: {:?}", other),
     }
 
     harness.app.save_in_flight = false;
     harness.app.save_status = SaveStatus::Dirty;
-    harness.app.selected_content.reset("auto-save".to_string());
+    set_active_content(&mut harness.app, "auto-save");
     harness.app.last_edit_at = Some(Instant::now());
     harness.app.maybe_autosave();
     assert!(matches!(
@@ -357,17 +324,18 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
         Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
     harness.app.maybe_autosave();
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePaste { id, content } => {
+        CoreCmd::UpdatePasteVirtual { id, content, .. } => {
             assert_eq!(id, "alpha");
-            assert_eq!(content, "auto-save");
+            assert_eq!(content.to_string(), "auto-save");
         }
         other => panic!("unexpected command: {:?}", other),
     }
 
+    let auto_save_len = harness.app.virtual_editor_buffer.len_chars();
     harness
         .app
-        .selected_content
-        .reset("edited-during-save".to_string());
+        .virtual_editor_buffer
+        .replace_char_range(0..auto_save_len, "edited-during-save");
     harness.app.mark_dirty();
     assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
     assert!(harness.app.last_edit_at.is_some());
@@ -381,13 +349,12 @@ fn save_and_autosave_emit_update_commands_at_expected_times() {
     assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
     assert!(!harness.app.save_in_flight);
     assert!(harness.app.last_edit_at.is_some());
-    assert_eq!(harness.app.selected_content.as_str(), "edited-during-save");
+    assert_eq!(harness.app.active_snapshot(), "edited-during-save");
 }
 
 #[test]
 fn virtual_editor_autosave_dispatches_rope_snapshot_command() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.virtual_editor_buffer.reset("virtual-content");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.save_in_flight = false;
@@ -398,7 +365,7 @@ fn virtual_editor_autosave_dispatches_rope_snapshot_command() {
     assert!(matches!(harness.app.save_status, SaveStatus::Saving));
     assert!(harness.app.save_in_flight);
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePasteVirtual { id, content } => {
+        CoreCmd::UpdatePasteVirtual { id, content, .. } => {
             assert_eq!(id, "alpha");
             assert_eq!(content.to_string(), "virtual-content");
         }
@@ -407,9 +374,43 @@ fn virtual_editor_autosave_dispatches_rope_snapshot_command() {
 }
 
 #[test]
+fn nav_probe_seed_blocks_content_save_dispatch() {
+    let _lock = env_lock().lock().expect("env lock");
+    let log_dir = TempDir::new().expect("nav probe temp dir");
+    let log_path = log_dir.path().join("probe.jsonl");
+    let _log = EnvGuard::set(
+        "LOCALPASTE_NAV_PROBE_LOG",
+        log_path.to_str().expect("utf-8 log path"),
+    );
+    let mut harness = make_app();
+    harness.app.nav_probe = nav_probe::NavProbe::from_env();
+    assert!(harness.app.nav_probe.is_some());
+    harness.app.selected_id = Some(NAV_PROBE_PASTE_ID.to_string());
+    set_active_content(&mut harness.app, "probe dirty content");
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.last_edit_at =
+        Some(Instant::now() - harness.app.autosave_delay - Duration::from_millis(5));
+
+    harness.app.maybe_autosave();
+    assert!(!harness.app.save_in_flight);
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+
+    harness.app.save_now();
+    assert!(!harness.app.save_in_flight);
+    assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
+}
+
+#[test]
 fn virtual_save_ack_without_revision_keeps_dirty_state_when_buffer_diverged() {
     let mut harness = make_app();
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.virtual_editor_buffer.reset("local-newer");
     harness.app.save_status = SaveStatus::Saving;
     harness.app.save_in_flight = true;
@@ -435,8 +436,6 @@ fn real_backend_virtual_save_error_updates_ui_state() {
     let db_path = dir.path().join("db");
     let db = Database::new(db_path.to_str().expect("db path")).expect("db");
     harness.app.backend = crate::backend::spawn_backend(db, 8);
-
-    harness.app.editor_mode = EditorMode::VirtualEditor;
     harness.app.virtual_editor_buffer.reset("123456789");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.save_in_flight = false;
@@ -494,7 +493,7 @@ fn select_paste_dirty_or_metadata_dirty_defers_switch_until_save_ack() {
 
         match kind {
             DeferredKind::Content => {
-                harness.app.selected_content.reset("edited".to_string());
+                set_active_content(&mut harness.app, "edited");
                 harness.app.save_status = SaveStatus::Dirty;
                 harness.app.last_edit_at = Some(Instant::now());
             }
@@ -510,9 +509,9 @@ fn select_paste_dirty_or_metadata_dirty_defers_switch_until_save_ack() {
         assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
 
         match (kind, recv_cmd(&harness.cmd_rx)) {
-            (DeferredKind::Content, CoreCmd::UpdatePaste { id, content }) => {
+            (DeferredKind::Content, CoreCmd::UpdatePasteVirtual { id, content, .. }) => {
                 assert_eq!(id, "alpha");
-                assert_eq!(content, "edited");
+                assert_eq!(content.to_string(), "edited");
             }
             (DeferredKind::Metadata, CoreCmd::UpdatePasteMeta { id, .. }) => {
                 assert_eq!(id, "alpha");
@@ -620,7 +619,7 @@ fn paste_created_without_unsaved_state_selects_inline_without_get_roundtrip() {
         .apply_event(CoreEvent::PasteCreated { paste: created });
 
     assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
-    assert_eq!(harness.app.selected_content.as_str(), "new-content");
+    assert_eq!(harness.app.active_snapshot(), "new-content");
     assert_eq!(
         harness
             .app
@@ -638,7 +637,7 @@ fn paste_created_without_unsaved_state_selects_inline_without_get_roundtrip() {
 #[test]
 fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() {
     let mut harness = make_app();
-    harness.app.selected_content.reset("edited-old".to_string());
+    set_active_content(&mut harness.app, "edited-old");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.last_edit_at = Some(Instant::now());
 
@@ -650,14 +649,14 @@ fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() 
 
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("new-id"));
-    assert_eq!(harness.app.selected_content.as_str(), "edited-old");
+    assert_eq!(harness.app.active_snapshot(), "edited-old");
     assert!(matches!(harness.app.save_status, SaveStatus::Saving));
     assert!(harness.app.save_in_flight);
 
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::UpdatePaste { id, content } => {
+        CoreCmd::UpdatePasteVirtual { id, content, .. } => {
             assert_eq!(id, "alpha");
-            assert_eq!(content, "edited-old");
+            assert_eq!(content.to_string(), "edited-old");
         }
         other => panic!("unexpected command: {:?}", other),
     }
@@ -782,7 +781,7 @@ fn selection_switch_paths_keep_current_selection_when_new_lock_acquire_fails() {
     for path in paths {
         let mut harness = make_app();
         let baseline_selected_id = harness.app.selected_id.clone().expect("selected id");
-        let baseline_selected_content = harness.app.selected_content.as_str().to_string();
+        let baseline_selected_content = harness.app.active_snapshot();
         let baseline_selected_paste_id = harness
             .app
             .selected_paste
@@ -829,7 +828,7 @@ fn selection_switch_paths_keep_current_selection_when_new_lock_acquire_fails() {
             Some(baseline_selected_id.as_str())
         );
         assert_eq!(
-            harness.app.selected_content.as_str(),
+            harness.app.active_snapshot(),
             baseline_selected_content.as_str()
         );
         assert_eq!(
@@ -895,7 +894,7 @@ fn save_error_clears_pending_selection_and_keeps_current_selection() {
         .all_pastes
         .push(test_summary("beta", "Beta", None, 4));
     harness.app.pastes = harness.app.all_pastes.clone();
-    harness.app.selected_content.reset("edited".to_string());
+    set_active_content(&mut harness.app, "edited");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.last_edit_at = Some(Instant::now());
 
@@ -945,7 +944,7 @@ fn save_dispatch_send_failure_restores_dirty_state_for_manual_and_autosave_paths
         } = make_app();
         drop(cmd_rx);
 
-        app.selected_content.reset(case.content.to_string());
+        set_active_content(&mut app, case.content);
         app.save_status = SaveStatus::Dirty;
         app.save_in_flight = false;
 

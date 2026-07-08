@@ -1,10 +1,11 @@
-//! Central editor panel rendering for virtual preview and virtual editor modes.
+//! Central editor panel rendering for the virtual editor.
 
 use super::super::*;
 use super::editor_panel_virtual::VirtualEditorRenderOptions;
 use super::properties_drawer::{
     apply_language_choice, auto_language_choice_key, render_language_choice_combo,
 };
+use crate::app::util::parse_tags_csv;
 use eframe::egui;
 
 impl LocalPasteApp {
@@ -18,12 +19,14 @@ impl LocalPasteApp {
 
             if let Some(id) = selected_meta {
                 let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-                let editor_had_virtual_focus = self.editor_mode == EditorMode::VirtualEditor
-                    && (self.virtual_editor_state.has_focus
-                        || ctx.memory(|m| m.has_focus(editor_id)));
+                let editor_had_virtual_focus =
+                    ctx.memory(|m| m.has_focus(editor_id)) || self.virtual_editor_state.has_focus;
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
-                let visible_tags = compact_header_tags(self.edit_tags.as_str());
+                let visible_tags = parse_tags_csv(self.edit_tags.as_str())
+                    .into_iter()
+                    .take(4)
+                    .collect::<Vec<_>>();
                 let mutation_block_reason = self.mutation_shortcut_block_reason();
                 let save_blocked = self.save_block_reason().is_some();
                 let background_mutation_blocked = mutation_block_reason.is_some();
@@ -34,6 +37,7 @@ impl LocalPasteApp {
                 let mut copy_link_requested = false;
                 let mut duplicate_requested = false;
                 let mut export_requested = false;
+                let mut find_requested = false;
                 let mut open_properties = false;
                 let mut delete_requested = false;
                 ui.scope(|ui| {
@@ -43,6 +47,7 @@ impl LocalPasteApp {
                             let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
                             let name_response = ui.add(
                                 egui::TextEdit::singleline(&mut self.edit_name)
+                                    .id(egui::Id::new(TITLE_INPUT_ID))
                                     .font(egui::TextStyle::Button)
                                     .desired_width(title_width)
                                     .hint_text("Untitled paste"),
@@ -133,6 +138,9 @@ impl LocalPasteApp {
                             export_requested = true;
                             preserve_virtual_editor_focus |= editor_had_virtual_focus;
                         }
+                        if non_focusable_small_toolbar_button(ui, "Find").clicked() {
+                            find_requested = true;
+                        }
                         if non_focusable_small_toolbar_button(ui, "Properties").clicked() {
                             open_properties = true;
                         }
@@ -168,11 +176,19 @@ impl LocalPasteApp {
                 if export_requested {
                     self.export_selected_paste();
                 }
+                if find_requested {
+                    self.open_editor_find();
+                }
                 if open_properties {
                     self.properties_drawer_open = true;
                 }
                 if delete_requested {
                     self.delete_selected();
+                }
+
+                self.render_editor_find_bar(ui);
+                if self.editor_find.open {
+                    ui.add_space(4.0);
                 }
 
                 ui.label(
@@ -213,11 +229,7 @@ impl LocalPasteApp {
                     // staged/current highlight state so large buffers stay plain.
                     self.clear_highlight_state();
                 }
-                let use_virtual_preview = self.editor_mode == EditorMode::VirtualPreview;
-                let use_virtual_editor = self.editor_mode == EditorMode::VirtualEditor;
-                let needs_worker_render = use_virtual_preview || use_virtual_editor;
-                let async_mode =
-                    !is_large && (text_len >= HIGHLIGHT_DEBOUNCE_MIN_BYTES || needs_worker_render);
+                let async_mode = !is_large;
                 let debounce_window = self.highlight_debounce_window(text_len, async_mode);
                 let debounce_active = self
                     .last_edit_at
@@ -231,11 +243,8 @@ impl LocalPasteApp {
                         id.as_str(),
                     );
                 if should_request {
-                    let request_text = if self.is_virtual_editor_mode() {
-                        HighlightRequestText::Rope(self.virtual_editor_buffer.rope().clone())
-                    } else {
-                        HighlightRequestText::Owned(self.selected_content.to_string())
-                    };
+                    let request_text =
+                        HighlightRequestText::Rope(self.virtual_editor_buffer.rope().clone());
                     self.dispatch_highlight_request(
                         revision,
                         request_text,
@@ -280,16 +289,9 @@ impl LocalPasteApp {
                     .as_ref()
                     .filter(|render| render.matches_context(id.as_str(), &language_hint, theme_key))
                     .is_some();
-                // `is_large` and `should_request_highlight` share the same
-                // threshold guard; once large, we force plain rendering and do
-                // not allow context-only highlight fallback.
-                let use_plain = if is_large {
-                    true
-                } else if async_mode {
-                    !(has_context_render || has_staged_context)
-                } else {
-                    debounce_active && !has_render
-                };
+                // Once large, force plain rendering and do not allow
+                // context-only highlight fallback.
+                let use_plain = is_large || !(has_context_render || has_staged_context);
                 if self.highlight_trace_enabled {
                     self.trace_highlight(
                         "frame",
@@ -320,7 +322,7 @@ impl LocalPasteApp {
                         )
                     })
                     .or_else(|| {
-                        if async_mode && !is_large {
+                        if async_mode {
                             highlight_render.as_ref().filter(|render| {
                                 render.matches_context(id.as_str(), &language_hint, theme_key)
                             })
@@ -329,47 +331,22 @@ impl LocalPasteApp {
                         }
                     });
                 let row_height = ui.text_style_height(&editor_style);
-                if preserve_virtual_editor_focus {
-                    self.focus_editor_next = true;
-                }
-
-                let scroll = egui::ScrollArea::vertical()
-                    .id_salt("editor_scroll")
-                    .max_height(editor_height)
-                    .auto_shrink([false; 2]);
-                if use_virtual_preview {
-                    self.render_virtual_preview_panel(
-                        ui,
-                        row_height,
-                        editor_height,
-                        &editor_font,
+                self.render_virtual_editor_panel(
+                    ui,
+                    row_height,
+                    editor_height,
+                    &editor_font,
+                    VirtualEditorRenderOptions {
                         highlight_render_match,
                         use_plain,
-                    );
-                } else if use_virtual_editor {
-                    self.render_virtual_editor_panel(
-                        ui,
-                        row_height,
-                        editor_height,
-                        &editor_font,
-                        VirtualEditorRenderOptions {
-                            highlight_render_match,
-                            use_plain,
-                            preserve_focus_from_editor_chrome: preserve_virtual_editor_focus,
-                        },
-                    );
-                } else {
-                    // Defensive fallback for impossible mode values.
-                    self.virtual_editor_active = false;
-                    scroll.show(ui, |_| {});
-                }
+                        preserve_focus_from_editor_chrome: preserve_virtual_editor_focus,
+                    },
+                );
                 self.highlight_render = highlight_render;
                 self.render_version_dialogs(ctx);
             } else if self.selected_id.is_some() {
-                self.virtual_editor_active = false;
                 ui.label(RichText::new("Loading paste...").color(COLOR_TEXT_MUTED));
             } else {
-                self.virtual_editor_active = false;
                 ui.label(RichText::new("Select a paste from the sidebar.").color(COLOR_TEXT_MUTED));
             }
         });
@@ -385,27 +362,6 @@ fn non_focusable_small_toolbar_button(
     label: impl Into<egui::WidgetText>,
 ) -> egui::Response {
     ui.add(toolbar_button(label).small())
-}
-
-fn compact_header_tags(input: &str) -> Vec<String> {
-    let mut tags = Vec::new();
-    for tag in input.split(',') {
-        let trimmed = tag.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if tags
-            .iter()
-            .any(|existing: &String| existing.eq_ignore_ascii_case(trimmed))
-        {
-            continue;
-        }
-        tags.push(trimmed.to_string());
-        if tags.len() >= 4 {
-            break;
-        }
-    }
-    tags
 }
 
 fn apply_compact_meta_row_style(ui: &mut egui::Ui) {
