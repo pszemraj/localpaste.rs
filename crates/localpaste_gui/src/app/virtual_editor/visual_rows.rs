@@ -355,6 +355,7 @@ impl VisualRowLayoutCache {
     ///
     /// # Returns
     /// Effective wrap columns, clamped to at least `1`.
+    #[cfg(test)]
     pub(crate) fn wrap_columns(&self) -> usize {
         self.wrap_cols.max(1)
     }
@@ -383,6 +384,7 @@ impl VisualRowLayoutCache {
     ///
     /// # Returns
     /// Display-column width for `line` under unicode width rules.
+    #[cfg(test)]
     pub(crate) fn line_columns(&self, buffer: &RopeBuffer, line: usize) -> usize {
         if line >= buffer.line_count() {
             return 0;

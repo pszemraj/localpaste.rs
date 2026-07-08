@@ -9,18 +9,6 @@ use eframe::egui;
 use std::ops::Range;
 use std::time::Instant;
 
-#[derive(Clone, Copy, Debug)]
-struct VirtualCursorWrapMetrics {
-    line: usize,
-    display_col: usize,
-    line_cols: usize,
-    wrap_cols: usize,
-}
-
-fn is_internal_wrap_boundary(display_col: usize, wrap_cols: usize, line_cols: usize) -> bool {
-    display_col > 0 && display_col % wrap_cols == 0 && display_col < line_cols
-}
-
 impl LocalPasteApp {
     /// Clamps the active cursor after layout changes that shorten renderable line spans.
     ///
@@ -79,22 +67,88 @@ impl LocalPasteApp {
         }
     }
 
-    fn virtual_cursor_wrap_metrics(&self, cursor: usize) -> VirtualCursorWrapMetrics {
-        let cursor = self.clamp_virtual_cursor_for_render(cursor);
-        let (line, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
-        let display_col =
-            self.virtual_layout
-                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
-        let wrap_cols = self.virtual_layout.wrap_columns().max(1);
-        let line_cols = self
-            .virtual_layout
-            .line_columns(&self.virtual_editor_buffer, line);
-        VirtualCursorWrapMetrics {
-            line,
-            display_col,
-            line_cols,
-            wrap_cols,
+    fn virtual_line_row_range(&self, line: usize, row_in_line: usize) -> Range<usize> {
+        if line >= self.virtual_editor_buffer.line_count() {
+            let eof = self.virtual_editor_buffer.len_chars();
+            return eof..eof;
         }
+
+        let rows = self.virtual_layout.line_visual_rows(line).max(1);
+        let row_in_line = row_in_line.min(rows.saturating_sub(1));
+        let global_row = self
+            .virtual_layout
+            .line_start_row(line)
+            .saturating_add(row_in_line);
+        let range = self
+            .virtual_layout
+            .row_char_range(&self.virtual_editor_buffer, global_row);
+        let line_start = self.virtual_editor_buffer.line_col_to_char(line, 0);
+        let line_end = self
+            .virtual_editor_buffer
+            .line_col_to_char(line, self.virtual_line_render_chars(line));
+        let start = range.start.max(line_start).min(line_end);
+        let end = range.end.max(start).min(line_end);
+        start..end
+    }
+
+    fn virtual_line_row_display_bounds(
+        &self,
+        line: usize,
+        row_in_line: usize,
+    ) -> (Range<usize>, usize, usize) {
+        let range = self.virtual_line_row_range(line, row_in_line);
+        let line_start = self.virtual_editor_buffer.line_col_to_char(line, 0);
+        let line_len = self.virtual_line_render_chars(line);
+        let start_col = range.start.saturating_sub(line_start).min(line_len);
+        let end_col = range.end.saturating_sub(line_start).min(line_len);
+        let start_display = self.virtual_layout.line_char_to_display_column(
+            &self.virtual_editor_buffer,
+            line,
+            start_col,
+        );
+        let end_display = self.virtual_layout.line_char_to_display_column(
+            &self.virtual_editor_buffer,
+            line,
+            end_col,
+        );
+        (range, start_display, end_display.max(start_display))
+    }
+
+    fn virtual_cursor_line_row(
+        &self,
+        cursor: usize,
+        boundary_affinity: WrapBoundaryAffinity,
+    ) -> (usize, usize) {
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
+        let (line, _) = self.virtual_editor_buffer.char_to_line_col(cursor);
+        let rows = self.virtual_layout.line_visual_rows(line).max(1);
+        let mut fallback_row = rows.saturating_sub(1);
+
+        for row_in_line in 0..rows {
+            let range = self.virtual_line_row_range(line, row_in_line);
+            if range.start == range.end {
+                if cursor <= range.start {
+                    return (line, row_in_line);
+                }
+                fallback_row = row_in_line;
+                continue;
+            }
+            if cursor < range.start {
+                return (line, row_in_line.saturating_sub(1));
+            }
+            if cursor < range.end {
+                return (line, row_in_line);
+            }
+            if cursor == range.end {
+                if row_in_line + 1 >= rows || boundary_affinity == WrapBoundaryAffinity::Upstream {
+                    return (line, row_in_line);
+                }
+                return (line, row_in_line + 1);
+            }
+            fallback_row = row_in_line;
+        }
+
+        (line, fallback_row)
     }
 
     /// Returns the global visual-row index containing `cursor`.
@@ -105,28 +159,9 @@ impl LocalPasteApp {
     /// # Panics
     /// This helper does not intentionally panic.
     pub(super) fn virtual_cursor_row_index(&self, cursor: usize) -> usize {
-        let metrics = self.virtual_cursor_wrap_metrics(cursor);
-        if metrics.wrap_cols == 0 {
-            return 0;
-        }
-
-        let mut row_in_line = metrics.display_col / metrics.wrap_cols;
-        if is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols)
-            && self.virtual_editor_state.wrap_boundary_affinity() == WrapBoundaryAffinity::Upstream
-        {
-            row_in_line = row_in_line.saturating_sub(1);
-        }
-
-        let at_eol_wrap_boundary = metrics.display_col == metrics.line_cols
-            && metrics.display_col > 0
-            && metrics.display_col % metrics.wrap_cols == 0;
-        if at_eol_wrap_boundary {
-            row_in_line = row_in_line.saturating_sub(1);
-        }
-
-        let line_rows = self.virtual_layout.line_visual_rows(metrics.line).max(1);
-        row_in_line = row_in_line.min(line_rows.saturating_sub(1));
-        self.virtual_layout.line_start_row(metrics.line) + row_in_line
+        let (line, row_in_line) = self
+            .virtual_cursor_line_row(cursor, self.virtual_editor_state.wrap_boundary_affinity());
+        self.virtual_layout.line_start_row(line) + row_in_line
     }
 
     /// Derives preferred wrapped-row column for subsequent vertical cursor moves.
@@ -137,20 +172,15 @@ impl LocalPasteApp {
     /// # Panics
     /// Panics only if wrap metrics become inconsistent with cached layout state.
     pub(super) fn virtual_preferred_column_for_cursor(&self, cursor: usize) -> usize {
-        let metrics = self.virtual_cursor_wrap_metrics(cursor);
-        if metrics.display_col == metrics.line_cols
-            && metrics.display_col > 0
-            && metrics.display_col % metrics.wrap_cols == 0
-        {
-            metrics.wrap_cols
-        } else {
-            metrics.display_col % metrics.wrap_cols
-        }
-    }
-
-    fn virtual_is_internal_wrap_boundary_cursor(&self, cursor: usize) -> bool {
-        let metrics = self.virtual_cursor_wrap_metrics(cursor);
-        is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols)
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
+        let (line, row_in_line) = self
+            .virtual_cursor_line_row(cursor, self.virtual_editor_state.wrap_boundary_affinity());
+        let (_, row_start_display, _) = self.virtual_line_row_display_bounds(line, row_in_line);
+        let (_, col) = self.virtual_editor_buffer.char_to_line_col(cursor);
+        let cursor_display =
+            self.virtual_layout
+                .line_char_to_display_column(&self.virtual_editor_buffer, line, col);
+        cursor_display.saturating_sub(row_start_display)
     }
 
     /// Resolves wrap-boundary affinity after a vertical cursor move.
@@ -168,13 +198,23 @@ impl LocalPasteApp {
         desired_col_in_row: usize,
         up: bool,
     ) -> WrapBoundaryAffinity {
-        let cols = self.virtual_layout.wrap_columns().max(1);
-        if desired_col_in_row == cols && self.virtual_is_internal_wrap_boundary_cursor(cursor) && up
-        {
-            WrapBoundaryAffinity::Upstream
-        } else {
-            WrapBoundaryAffinity::Downstream
+        if !up {
+            return WrapBoundaryAffinity::Downstream;
         }
+
+        let cursor = self.clamp_virtual_cursor_for_render(cursor);
+        let (line, _) = self.virtual_editor_buffer.char_to_line_col(cursor);
+        let rows = self.virtual_layout.line_visual_rows(line).max(1);
+        for row_in_line in 0..rows.saturating_sub(1) {
+            let (range, row_start_display, row_end_display) =
+                self.virtual_line_row_display_bounds(line, row_in_line);
+            let row_width = row_end_display.saturating_sub(row_start_display);
+            if cursor == range.end && desired_col_in_row >= row_width {
+                return WrapBoundaryAffinity::Upstream;
+            }
+        }
+
+        WrapBoundaryAffinity::Downstream
     }
 
     /// Resets virtual editor buffer/state/caches to match a fresh text snapshot.
@@ -399,30 +439,24 @@ impl LocalPasteApp {
         boundary_affinity: WrapBoundaryAffinity,
     ) -> usize {
         let cursor = self.clamp_virtual_cursor_for_render(cursor);
-        let metrics = self.virtual_cursor_wrap_metrics(cursor);
-        let rows = self.virtual_layout.line_visual_rows(metrics.line).max(1);
-        let on_internal_wrap_boundary =
-            is_internal_wrap_boundary(metrics.display_col, metrics.wrap_cols, metrics.line_cols);
-        let mut row = (metrics.display_col / metrics.wrap_cols).min(rows.saturating_sub(1));
-        if on_internal_wrap_boundary && boundary_affinity == WrapBoundaryAffinity::Upstream {
-            row = row.saturating_sub(1);
-        }
+        let (line, row) = self.virtual_cursor_line_row(cursor, boundary_affinity);
+        let rows = self.virtual_layout.line_visual_rows(line).max(1);
         let line_count = self.virtual_editor_buffer.line_count();
 
         let target_line_and_row: Option<(usize, usize)> = if up {
             if row > 0 {
-                Some((metrics.line, row - 1))
-            } else if metrics.line > 0 {
-                let prev_line = metrics.line - 1;
+                Some((line, row - 1))
+            } else if line > 0 {
+                let prev_line = line - 1;
                 let prev_rows = self.virtual_layout.line_visual_rows(prev_line).max(1);
                 Some((prev_line, prev_rows.saturating_sub(1)))
             } else {
                 None
             }
         } else if row + 1 < rows {
-            Some((metrics.line, row + 1))
-        } else if metrics.line + 1 < line_count {
-            Some((metrics.line + 1, 0usize))
+            Some((line, row + 1))
+        } else if line + 1 < line_count {
+            Some((line + 1, 0usize))
         } else {
             None
         };
@@ -434,28 +468,19 @@ impl LocalPasteApp {
                 self.virtual_editor_buffer.len_chars()
             };
         };
-        let target_line_cols = self
-            .virtual_layout
-            .line_columns(&self.virtual_editor_buffer, target_line);
-        let row_start = target_row.saturating_mul(metrics.wrap_cols);
-        let desired_col_in_row = desired_col_in_row.min(metrics.wrap_cols);
-        let target_display_col = if row_start >= target_line_cols {
-            target_line_cols
-        } else {
-            // Clamp to the target row boundary so vertical navigation can land at
-            // end-of-row for shorter rows instead of one column early.
-            let row_len = target_line_cols
-                .saturating_sub(row_start)
-                .min(metrics.wrap_cols);
-            row_start + desired_col_in_row.min(row_len)
-        };
+        let (target_range, row_start_display, row_end_display) =
+            self.virtual_line_row_display_bounds(target_line, target_row);
+        let row_width = row_end_display.saturating_sub(row_start_display);
+        let target_display_col = row_start_display + desired_col_in_row.min(row_width);
         let target_line_char = self.virtual_layout.line_display_column_to_char(
             &self.virtual_editor_buffer,
             target_line,
             target_display_col,
         );
-        self.virtual_editor_buffer
-            .line_col_to_char(target_line, target_line_char)
+        let target = self
+            .virtual_editor_buffer
+            .line_col_to_char(target_line, target_line_char);
+        target.max(target_range.start).min(target_range.end)
     }
 
     /// Returns local selection bounds for a rendered line segment, if selected.

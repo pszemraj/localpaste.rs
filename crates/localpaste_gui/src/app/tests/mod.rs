@@ -125,6 +125,21 @@ pub(super) fn set_virtual_cursor_at(app: &mut LocalPasteApp, line: usize, col: u
     app.virtual_editor_state.set_cursor(pos, len);
 }
 
+/// Asserts the virtual editor cursor's logical line/column coordinates.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `expected`: Expected zero-based `(line, column)` cursor coordinates.
+///
+/// # Panics
+/// Panics when the actual cursor coordinates do not match `expected`.
+pub(super) fn assert_cursor_line_col(app: &LocalPasteApp, expected: (usize, usize)) {
+    let line_col = app
+        .virtual_editor_buffer
+        .char_to_line_col(app.virtual_editor_state.cursor());
+    assert_eq!(line_col, expected);
+}
+
 /// Replaces the active editor buffer through the live rope-backed path.
 ///
 /// # Arguments

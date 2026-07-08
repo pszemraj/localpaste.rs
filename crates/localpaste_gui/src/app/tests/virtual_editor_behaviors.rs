@@ -1,6 +1,7 @@
 //! Virtual editor input/editing tests including IME and selection behavior.
 
 use super::*;
+use crate::app::virtual_editor::PlatformFlavor;
 
 fn run_virtual_editor_frame(
     app: &mut LocalPasteApp,
@@ -361,6 +362,55 @@ fn virtual_editor_shift_arrow_in_focused_frame_extends_selection() {
         harness.app.virtual_editor_state.selection_range(),
         Some(0..1)
     );
+}
+
+#[test]
+fn focused_end_key_does_not_break_follow_on_vertical_arrows() {
+    with_platform(PlatformFlavor::Other, || {
+        let mut harness = make_app();
+        configure_virtual_editor_with_wrap(
+            &mut harness.app,
+            "0123456789\nshort\nabcdefghij\n",
+            400.0,
+        );
+
+        let ctx = egui::Context::default();
+        configure_virtual_editor_test_ctx(&ctx);
+        let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
+        ctx.memory_mut(|m| m.request_focus(editor_id));
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::End, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert!(ctx.memory(|m| m.has_focus(editor_id)));
+        assert_cursor_line_col(&harness.app, (1, 5));
+
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowUp, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (0, 5));
+
+        set_virtual_cursor_at(&mut harness.app, 1, 2);
+        let _ = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::End, egui::Modifiers::default())],
+        );
+        let focus_active_pre = run_virtual_editor_frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowDown, egui::Modifiers::default())],
+        );
+        assert!(focus_active_pre);
+        assert_cursor_line_col(&harness.app, (2, 5));
+    });
 }
 
 #[test]
