@@ -135,6 +135,7 @@ struct FocusSnapshot {
     virtual_editor: bool,
     sidebar_search: bool,
     editor_title: bool,
+    editor_find: bool,
     command_palette_query: bool,
     properties_name: bool,
     properties_tags: bool,
@@ -166,6 +167,10 @@ struct EditorSnapshot {
     wrap_width: f32,
     pending_scroll_offset_y: Option<f32>,
     follow_cursor_next_frame: bool,
+    caret_visible: bool,
+    viewport_bounds: Option<[f32; 4]>,
+    caret_bounds: Option<[f32; 4]>,
+    scroll_offset_y: f32,
 }
 
 #[derive(Debug, Serialize)]
@@ -294,6 +299,7 @@ impl LocalPasteApp {
                 || self.virtual_editor_state.has_focus,
             sidebar_search: memory.has_focus(egui::Id::new(SEARCH_INPUT_ID)),
             editor_title: memory.has_focus(egui::Id::new(TITLE_INPUT_ID)),
+            editor_find: memory.has_focus(egui::Id::new(super::EDITOR_FIND_INPUT_ID)),
             command_palette_query: memory.has_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID)),
             properties_name: memory.has_focus(egui::Id::new(PROPERTIES_NAME_INPUT_ID)),
             properties_tags: memory.has_focus(egui::Id::new(PROPERTIES_TAGS_INPUT_ID)),
@@ -340,7 +346,17 @@ impl LocalPasteApp {
                 line_height: self.virtual_line_height,
                 wrap_width: self.virtual_wrap_width,
                 pending_scroll_offset_y: self.virtual_pending_scroll_offset_y,
-                follow_cursor_next_frame: self.virtual_follow_cursor_next_frame,
+                follow_cursor_next_frame: self.virtual_cursor_reveal.is_some(),
+                caret_visible: self.virtual_viewport.caret_visible(),
+                viewport_bounds: self
+                    .virtual_viewport
+                    .rect
+                    .map(|r| [r.min.x, r.min.y, r.max.x, r.max.y]),
+                caret_bounds: self
+                    .virtual_viewport
+                    .caret
+                    .map(|r| [r.min.x, r.min.y, r.max.x, r.max.y]),
+                scroll_offset_y: self.virtual_viewport.offset_y,
             },
             app: AppSnapshot {
                 selected_id: self.selected_id.clone(),

@@ -40,6 +40,30 @@ impl VirtualEditorState {
         self.cursor
     }
 
+    /// Returns the selection anchor, preserving its direction relative to the caret.
+    ///
+    /// # Returns
+    /// Global character index of the anchor, if a selection is active.
+    pub(crate) fn anchor(&self) -> Option<usize> {
+        self.anchor
+    }
+
+    /// Restores a directional selection after a block edit or undo/redo.
+    ///
+    /// # Arguments
+    /// - `cursor`: Active selection endpoint.
+    /// - `anchor`: Fixed endpoint, if selected.
+    /// - `text_len`: Character count used to clamp both endpoints.
+    pub(crate) fn restore_selection(
+        &mut self,
+        cursor: usize,
+        anchor: Option<usize>,
+        text_len: usize,
+    ) {
+        self.set_cursor(cursor, text_len);
+        self.anchor = anchor.map(|index| index.min(text_len));
+    }
+
     /// Returns the preferred visual column for vertical movement.
     ///
     /// # Returns

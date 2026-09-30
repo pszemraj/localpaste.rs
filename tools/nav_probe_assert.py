@@ -25,7 +25,7 @@ WINDOWS_SEND_KEY_RE = re.compile(
 )
 WINDOWS_RUNNER_SWITCH_RE = re.compile(r'^\s*"([A-Z0-9_]+)"\s*\{', re.MULTILINE)
 MACOS_ALLOWED_MODIFIERS = {"command", "option", "shift", "control"}
-MACOS_KNOWN_KEY_CODES = {51, 115, 116, 117, 119, 121, 123, 124, 125, 126}
+MACOS_KNOWN_KEY_CODES = {6, 48, 51, 115, 116, 117, 119, 121, 123, 124, 125, 126}
 
 
 def host() -> str:
@@ -131,6 +131,7 @@ def focus_summary(frame) -> str:
             "virtual_editor",
             "sidebar_search",
             "editor_title",
+            "editor_find",
             "command_palette_query",
             "properties_name",
             "properties_tags",
@@ -180,6 +181,7 @@ def scenario_summary(scenario_id: str, event_frame, state_frame) -> str:
             command_summary(event_frame, "applied_commands"),
             focus_summary(state_frame),
             cursor_summary(state_frame),
+            "caret_visible=" + str(state_frame.get("editor", {}).get("caret_visible", "?")),
             selection_summary(state_frame),
         ]
     )

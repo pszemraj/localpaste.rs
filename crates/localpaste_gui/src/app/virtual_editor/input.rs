@@ -33,6 +33,7 @@ pub(crate) enum VirtualInputCommand {
     InsertText(String),
     InsertNewline,
     InsertTab,
+    Unindent,
 
     // Clipboard + history
     SelectAll,
@@ -293,7 +294,11 @@ fn map_navigation_key(
 
         // --- Insertion ---
         egui::Key::Enter => Some(VirtualInputCommand::InsertNewline),
-        egui::Key::Tab => Some(VirtualInputCommand::InsertTab),
+        egui::Key::Tab => Some(if modifiers.shift {
+            VirtualInputCommand::Unindent
+        } else {
+            VirtualInputCommand::InsertTab
+        }),
 
         _ => None,
     }

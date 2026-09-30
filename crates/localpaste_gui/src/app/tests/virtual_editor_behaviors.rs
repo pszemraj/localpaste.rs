@@ -254,13 +254,10 @@ fn focused_large_paste_queues_post_edit_scroll_follow() {
         },
     );
 
-    assert!(
-        harness.app.virtual_pending_scroll_offset_y.is_some(),
-        "large focused paste must queue cursor-follow scroll from the post-paste cursor"
-    );
-    assert!(
-        !harness.app.virtual_follow_cursor_next_frame,
-        "same-frame post-edit scroll queuing should not leave a redundant delayed follow pass"
+    assert_eq!(
+        harness.app.virtual_cursor_reveal,
+        Some(CursorReveal::Minimal),
+        "large paste requests a reveal after the new layout has been rendered"
     );
     assert!(
         output

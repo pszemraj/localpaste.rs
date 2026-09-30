@@ -7,6 +7,7 @@
       "driver": {"windows": {"send_keys": ["{LEFT}"]}, "linux_x11": {"keys": ["Left"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -31,6 +32,7 @@
       "driver": {"windows": {"send_keys": ["+{RIGHT}"]}, "linux_x11": {"keys": ["shift+Right"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -56,6 +58,7 @@
       "driver": {"windows": {"send_keys": ["^{LEFT}"]}, "linux_x11": {"keys": ["ctrl+Left"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -80,6 +83,7 @@
       "driver": {"windows": {"send_keys": ["^{RIGHT}"]}, "linux_x11": {"keys": ["ctrl+Right"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -104,6 +108,7 @@
       "driver": {"windows": {"send_keys": ["^+{LEFT}"]}, "linux_x11": {"keys": ["ctrl+shift+Left"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -129,6 +134,7 @@
       "driver": {"windows": {"send_keys": ["^+{RIGHT}"]}, "linux_x11": {"keys": ["ctrl+shift+Right"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -154,6 +160,7 @@
       "driver": {"windows": {"send_keys": ["^{UP}"]}, "linux_x11": {"keys": ["ctrl+Up"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -178,6 +185,7 @@
       "driver": {"windows": {"send_keys": ["^{DOWN}"]}, "linux_x11": {"keys": ["ctrl+Down"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -202,6 +210,7 @@
       "driver": {"windows": {"send_keys": ["^+{UP}"]}, "linux_x11": {"keys": ["ctrl+shift+Up"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -227,6 +236,7 @@
       "driver": {"windows": {"send_keys": ["^+{DOWN}"]}, "linux_x11": {"keys": ["ctrl+shift+Down"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -252,6 +262,7 @@
       "driver": {"windows": {"send_keys": ["{HOME}"]}, "linux_x11": {"keys": ["Home"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -276,6 +287,7 @@
       "driver": {"windows": {"send_keys": ["{END}"]}, "linux_x11": {"keys": ["End"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -300,6 +312,7 @@
       "driver": {"windows": {"send_keys": ["+{HOME}"]}, "linux_x11": {"keys": ["shift+Home"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -325,6 +338,7 @@
       "driver": {"windows": {"send_keys": ["+{END}"]}, "linux_x11": {"keys": ["shift+End"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -350,6 +364,7 @@
       "driver": {"windows": {"send_keys": ["^{HOME}"]}, "linux_x11": {"keys": ["ctrl+Home"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -374,6 +389,7 @@
       "driver": {"windows": {"send_keys": ["^{END}"]}, "linux_x11": {"keys": ["ctrl+End"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -398,6 +414,7 @@
       "driver": {"windows": {"send_keys": ["^+{HOME}"]}, "linux_x11": {"keys": ["ctrl+shift+Home"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -423,6 +440,7 @@
       "driver": {"windows": {"send_keys": ["^+{END}"]}, "linux_x11": {"keys": ["ctrl+shift+End"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -448,6 +466,7 @@
       "driver": {"windows": {"send_keys": ["{PGUP}"]}, "linux_x11": {"keys": ["Page_Up"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -472,6 +491,7 @@
       "driver": {"windows": {"send_keys": ["{PGDN}"]}, "linux_x11": {"keys": ["Page_Down"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -496,6 +516,7 @@
       "driver": {"windows": {"send_keys": ["^{PGUP}"]}, "linux_x11": {"keys": ["ctrl+Page_Up"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -520,6 +541,7 @@
       "driver": {"windows": {"send_keys": ["^{PGDN}"]}, "linux_x11": {"keys": ["ctrl+Page_Down"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -544,6 +566,7 @@
       "driver": {"windows": {"send_keys": ["^+{PGUP}"]}, "linux_x11": {"keys": ["ctrl+shift+Page_Up"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -569,6 +592,7 @@
       "driver": {"windows": {"send_keys": ["^+{PGDN}"]}, "linux_x11": {"keys": ["ctrl+shift+Page_Down"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -594,6 +618,7 @@
       "driver": {"windows": {"send_keys": ["^{BACKSPACE}"]}, "linux_x11": {"keys": ["ctrl+BackSpace"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -620,6 +645,7 @@
       "driver": {"windows": {"send_keys": ["^+{BACKSPACE}"]}, "linux_x11": {"keys": ["ctrl+shift+BackSpace"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -646,6 +672,7 @@
       "driver": {"windows": {"send_keys": ["^{DEL}"]}, "linux_x11": {"keys": ["ctrl+Delete"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -672,6 +699,7 @@
       "driver": {"windows": {"send_keys": ["^+{DEL}"]}, "linux_x11": {"keys": ["ctrl+shift+Delete"]}},
       "expect": {
         "focus.virtual_editor": true,
+        "editor.caret_visible": true,
         "focus.sidebar_search": false,
         "focus.editor_title": false,
         "focus.command_palette_query": false,
@@ -696,7 +724,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 123, "modifiers": []}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 4, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 4, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveLeft", "applied_commands": "MoveLeft"},
       "expect_events": [{"kind": "key", "key": "ArrowLeft", "pressed": true}]
     },
@@ -705,7 +734,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 124, "modifiers": ["shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 6, "selection.start": 16, "selection.end": 17},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 6, "selection.start": 16, "selection.end": 17},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveRight", "applied_commands": "MoveRight"},
       "expect_events": [{"kind": "key", "key": "ArrowRight", "pressed": true, "modifiers.shift": true}]
     },
@@ -714,7 +744,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:6"},
       "driver": {"macos": {"keys": [{"key_code": 123, "modifiers": ["option"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveLeft { select: false, word: true }", "applied_commands": "MoveLeft { select: false, word: true }"},
       "expect_events": [{"kind": "key", "key": "ArrowLeft", "pressed": true, "modifiers.alt": true}]
     },
@@ -723,7 +754,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
       "driver": {"macos": {"keys": [{"key_code": 124, "modifiers": ["option"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 6, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 6, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveRight { select: false, word: true }", "applied_commands": "MoveRight { select: false, word: true }"},
       "expect_events": [{"kind": "key", "key": "ArrowRight", "pressed": true, "modifiers.alt": true}]
     },
@@ -732,7 +764,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:6"},
       "driver": {"macos": {"keys": [{"key_code": 123, "modifiers": ["option", "shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "selection.start": 11, "selection.end": 17},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "selection.start": 11, "selection.end": 17},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveLeft { select: true, word: true }", "applied_commands": "MoveLeft { select: true, word: true }"},
       "expect_events": [{"kind": "key", "key": "ArrowLeft", "pressed": true, "modifiers.alt": true, "modifiers.shift": true}]
     },
@@ -741,7 +774,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
       "driver": {"macos": {"keys": [{"key_code": 124, "modifiers": ["option", "shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 6, "selection.start": 11, "selection.end": 17},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 6, "selection.start": 11, "selection.end": 17},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveRight { select: true, word: true }", "applied_commands": "MoveRight { select: true, word: true }"},
       "expect_events": [{"kind": "key", "key": "ArrowRight", "pressed": true, "modifiers.alt": true, "modifiers.shift": true}]
     },
@@ -750,7 +784,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 123, "modifiers": ["command"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveLineHome", "applied_commands": "MoveLineHome"},
       "expect_events": [{"kind": "key", "key": "ArrowLeft", "pressed": true, "modifiers.command": true}]
     },
@@ -759,7 +794,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 124, "modifiers": ["command"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 11, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 11, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveLineEnd", "applied_commands": "MoveLineEnd"},
       "expect_events": [{"kind": "key", "key": "ArrowRight", "pressed": true, "modifiers.command": true}]
     },
@@ -768,7 +804,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 123, "modifiers": ["command", "shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "selection.start": 11, "selection.end": 16},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "selection.start": 11, "selection.end": 16},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveLineHome", "applied_commands": "MoveLineHome"},
       "expect_events": [{"kind": "key", "key": "ArrowLeft", "pressed": true, "modifiers.command": true, "modifiers.shift": true}]
     },
@@ -777,7 +814,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 124, "modifiers": ["command", "shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 11, "selection.start": 16, "selection.end": 22},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 11, "selection.start": 16, "selection.end": 22},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveLineEnd", "applied_commands": "MoveLineEnd"},
       "expect_events": [{"kind": "key", "key": "ArrowRight", "pressed": true, "modifiers.command": true, "modifiers.shift": true}]
     },
@@ -786,7 +824,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 126, "modifiers": ["command"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveDocHome", "applied_commands": "MoveDocHome"},
       "expect_events": [{"kind": "key", "key": "ArrowUp", "pressed": true, "modifiers.command": true}]
     },
@@ -795,7 +834,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 125, "modifiers": ["command"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveDocEnd", "applied_commands": "MoveDocEnd"},
       "expect_events": [{"kind": "key", "key": "ArrowDown", "pressed": true, "modifiers.command": true}]
     },
@@ -804,7 +844,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 126, "modifiers": ["command", "shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection.start": 0, "selection.end": 16},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection.start": 0, "selection.end": 16},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveDocHome", "applied_commands": "MoveDocHome"},
       "expect_events": [{"kind": "key", "key": "ArrowUp", "pressed": true, "modifiers.command": true, "modifiers.shift": true}]
     },
@@ -813,7 +854,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 125, "modifiers": ["command", "shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection.start": 16, "selection.end": 36},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection.start": 16, "selection.end": 36},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveDocEnd", "applied_commands": "MoveDocEnd"},
       "expect_events": [{"kind": "key", "key": "ArrowDown", "pressed": true, "modifiers.command": true, "modifiers.shift": true}]
     },
@@ -822,7 +864,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 115, "modifiers": []}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveDocHome", "applied_commands": "MoveDocHome"},
       "expect_events": [{"kind": "key", "key": "Home", "pressed": true}]
     },
@@ -831,7 +874,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 119, "modifiers": []}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveDocEnd", "applied_commands": "MoveDocEnd"},
       "expect_events": [{"kind": "key", "key": "End", "pressed": true}]
     },
@@ -840,7 +884,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 115, "modifiers": ["shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection.start": 0, "selection.end": 16},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection.start": 0, "selection.end": 16},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveDocHome", "applied_commands": "MoveDocHome"},
       "expect_events": [{"kind": "key", "key": "Home", "pressed": true, "modifiers.shift": true}]
     },
@@ -849,7 +894,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:5"},
       "driver": {"macos": {"keys": [{"key_code": 119, "modifiers": ["shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection.start": 16, "selection.end": 36},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection.start": 16, "selection.end": 36},
       "expect_contains": {"candidate_commands_if_editor_focused": "MoveDocEnd", "applied_commands": "MoveDocEnd"},
       "expect_events": [{"kind": "key", "key": "End", "pressed": true, "modifiers.shift": true}]
     },
@@ -858,7 +904,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "2:5"},
       "driver": {"macos": {"keys": [{"key_code": 116, "modifiers": []}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "PageUp", "applied_commands": "PageUp"},
       "expect_events": [{"kind": "key", "key": "PageUp", "pressed": true}]
     },
@@ -867,7 +914,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "0:5"},
       "driver": {"macos": {"keys": [{"key_code": 121, "modifiers": []}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "PageDown", "applied_commands": "PageDown"},
       "expect_events": [{"kind": "key", "key": "PageDown", "pressed": true}]
     },
@@ -876,7 +924,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "2:5"},
       "driver": {"macos": {"keys": [{"key_code": 116, "modifiers": ["shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection.start": 0, "selection.end": 28},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 0, "cursor.col": 0, "selection.start": 0, "selection.end": 28},
       "expect_contains": {"candidate_commands_if_editor_focused": "PageUp", "applied_commands": "PageUp"},
       "expect_events": [{"kind": "key", "key": "PageUp", "pressed": true, "modifiers.shift": true}]
     },
@@ -885,7 +934,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "0:5"},
       "driver": {"macos": {"keys": [{"key_code": 121, "modifiers": ["shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection.start": 5, "selection.end": 36},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 3, "cursor.col": 0, "selection.start": 5, "selection.end": 36},
       "expect_contains": {"candidate_commands_if_editor_focused": "PageDown", "applied_commands": "PageDown"},
       "expect_events": [{"kind": "key", "key": "PageDown", "pressed": true, "modifiers.shift": true}]
     },
@@ -894,7 +944,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:6"},
       "driver": {"macos": {"keys": [{"key_code": 51, "modifiers": ["option"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "Backspace { word: true }", "applied_commands": "Backspace { word: true }"},
       "expect_events": [{"kind": "key", "key": "Backspace", "pressed": true, "modifiers.alt": true}]
     },
@@ -903,7 +954,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:6"},
       "driver": {"macos": {"keys": [{"key_code": 51, "modifiers": ["option", "shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "Backspace { word: true }", "applied_commands": "Backspace { word: true }"},
       "expect_events": [{"kind": "key", "key": "Backspace", "pressed": true, "modifiers.alt": true, "modifiers.shift": true}]
     },
@@ -912,7 +964,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
       "driver": {"macos": {"keys": [{"key_code": 117, "modifiers": ["option"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "DeleteForward { word: true }", "applied_commands": "DeleteForward { word: true }"},
       "expect_events": [{"kind": "key", "key": "Delete", "pressed": true, "modifiers.alt": true}]
     },
@@ -921,7 +974,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
       "driver": {"macos": {"keys": [{"key_code": 117, "modifiers": ["option", "shift"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "DeleteForward { word: true }", "applied_commands": "DeleteForward { word: true }"},
       "expect_events": [{"kind": "key", "key": "Delete", "pressed": true, "modifiers.alt": true, "modifiers.shift": true}]
     },
@@ -930,7 +984,8 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:6"},
       "driver": {"macos": {"keys": [{"key_code": 51, "modifiers": ["command"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 30, "editor.buffer_len_chars": 30, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "DeleteToLineStart", "applied_commands": "DeleteToLineStart"},
       "expect_events": [{"kind": "key", "key": "Backspace", "pressed": true, "modifiers.command": true}]
     },
@@ -939,9 +994,13 @@
       "platforms": ["macos"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
       "driver": {"macos": {"keys": [{"key_code": 117, "modifiers": ["command"]}]}},
-      "expect": {"focus.virtual_editor": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 25, "editor.buffer_len_chars": 25, "selection": null},
+      "expect": {"focus.virtual_editor": true,
+        "editor.caret_visible": true, "focus.sidebar_search": false, "focus.editor_title": false, "focus.command_palette_query": false, "focus.properties_name": false, "focus.properties_tags": false, "focus.diff_query": false, "app.selected_id": "__nav_probe__", "cursor.line": 1, "cursor.col": 0, "cursor.buffer_len_chars": 25, "editor.buffer_len_chars": 25, "selection": null},
       "expect_contains": {"candidate_commands_if_editor_focused": "DeleteToLineEnd", "applied_commands": "DeleteToLineEnd"},
       "expect_events": [{"kind": "key", "key": "Delete", "pressed": true, "modifiers.command": true}]
-    }
+    },
+    {"id": "mac_shift_tab_unindents", "platforms": ["macos"], "seed": {"text": "    alpha\nnext\n", "cursor": "0:9"}, "driver": {"macos": {"keys": [{"key_code": 48, "modifiers": ["shift"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 0, "cursor.col": 5, "editor.buffer_len_chars": 11}, "expect_contains": {"applied_commands": "Unindent"}},
+    {"id": "mac_indent_selection_undo", "platforms": ["macos"], "seed": {"text": "alpha\nbeta\n", "cursor": "0:0"}, "driver": {"macos": {"keys": [{"key_code": 125, "modifiers": ["command", "shift"]}, {"key_code": 48, "modifiers": []}, {"key_code": 6, "modifiers": ["command"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 2, "cursor.col": 0, "editor.buffer_len_chars": 11, "selection.start": 0, "selection.end": 11}, "expect_contains": {"applied_commands": "Undo"}},
+    {"id": "mac_wrapped_eof_visible", "platforms": ["macos"], "seed": {"text": "wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α \nEND", "cursor": "0:0"}, "driver": {"macos": {"keys": [{"key_code": 125, "modifiers": ["command"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 1, "cursor.col": 3}, "expect_contains": {"applied_commands": "MoveDocEnd"}}
   ]
 }

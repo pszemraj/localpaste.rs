@@ -50,15 +50,26 @@ impl RuntimeShortcut {
     }
 
     fn pressed(self, input: &egui::InputState) -> bool {
-        match self.chord {
-            ShortcutChord::PlainCommand(key) => {
-                is_plain_command_shortcut(input.modifiers) && input.key_pressed(key)
+        input.events.iter().any(|event| {
+            let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            else {
+                return false;
+            };
+            match self.chord {
+                ShortcutChord::PlainCommand(expected) => {
+                    *key == expected && is_plain_command_shortcut(*modifiers)
+                }
+                ShortcutChord::CommandShift(expected) => {
+                    *key == expected && is_command_shift_shortcut(*modifiers)
+                }
+                ShortcutChord::AnyModifier(expected) => *key == expected,
             }
-            ShortcutChord::CommandShift(key) => {
-                is_command_shift_shortcut(input.modifiers) && input.key_pressed(key)
-            }
-            ShortcutChord::AnyModifier(key) => input.key_pressed(key),
-        }
+        })
     }
 }
 

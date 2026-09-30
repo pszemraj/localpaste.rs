@@ -4,6 +4,7 @@ mod deferred_saves;
 mod delete_flow;
 mod editor;
 mod editor_find;
+mod editor_reveal;
 mod highlight;
 mod highlight_flow;
 mod interaction_helpers;
@@ -23,6 +24,7 @@ mod ui;
 mod util;
 mod version_ui;
 mod virtual_editor;
+mod virtual_indent;
 mod virtual_ops;
 mod virtual_ops_apply;
 mod window_bounds;
@@ -30,6 +32,7 @@ mod window_bounds;
 use crate::backend::{
     spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary, DELETE_UNDO_LIMIT,
 };
+use editor_reveal::{CursorReveal, EditorViewport};
 use eframe::egui::{self, text::CCursor, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
 use highlight::{
@@ -111,7 +114,8 @@ pub(crate) struct LocalPasteApp {
     virtual_line_height: f32,
     virtual_wrap_width: f32,
     virtual_pending_scroll_offset_y: Option<f32>,
-    virtual_follow_cursor_next_frame: bool,
+    virtual_cursor_reveal: Option<CursorReveal>,
+    virtual_viewport: EditorViewport,
     virtual_paste_applied_this_frame: bool,
     version_history_limit: usize,
     version_ui: VersionUiState,
@@ -435,7 +439,8 @@ impl LocalPasteApp {
             virtual_line_height: 1.0,
             virtual_wrap_width: 0.0,
             virtual_pending_scroll_offset_y: None,
-            virtual_follow_cursor_next_frame: false,
+            virtual_cursor_reveal: None,
+            virtual_viewport: EditorViewport::default(),
             virtual_paste_applied_this_frame: false,
             version_history_limit,
             version_ui: VersionUiState::default(),
@@ -596,6 +601,7 @@ impl eframe::App for LocalPasteApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.blur_deactivated_editor(ctx);
         self.track_frame_metrics();
         self.virtual_paste_applied_this_frame = false;
         self.nav_probe_begin_frame(ctx);

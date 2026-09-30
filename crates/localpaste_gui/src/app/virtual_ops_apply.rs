@@ -4,7 +4,7 @@ use super::highlight::VirtualEditHint;
 use super::virtual_editor::{
     EditIntent, RecordedEdit, VirtualEditDelta, VirtualInputCommand, WrapLayoutCache,
 };
-use super::{LocalPasteApp, VirtualApplyResult};
+use super::{CursorReveal, LocalPasteApp, VirtualApplyResult};
 use eframe::egui;
 use std::ops::Range;
 use std::time::Instant;
@@ -172,6 +172,7 @@ impl LocalPasteApp {
         let mut result = VirtualApplyResult::default();
         let now = Instant::now();
         for command in commands {
+            self.request_navigation_reveal(command);
             let cursor_before = self.virtual_editor_state.cursor();
             let changed_before = result.changed;
             match command {
@@ -239,15 +240,12 @@ impl LocalPasteApp {
                         self.replace_virtual_range(range, "\n", EditIntent::Insert, true, now);
                     self.virtual_editor_state.clear_preferred_column();
                 }
-                VirtualInputCommand::InsertTab => {
+                VirtualInputCommand::InsertTab | VirtualInputCommand::Unindent => {
                     result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    let cursor = self.virtual_editor_state.cursor();
-                    let range = self
-                        .virtual_editor_state
-                        .selection_range()
-                        .unwrap_or(cursor..cursor);
-                    result.changed |=
-                        self.replace_virtual_range(range, "    ", EditIntent::Insert, true, now);
+                    result.changed |= self.indent_virtual_lines(
+                        matches!(command, VirtualInputCommand::Unindent),
+                        now,
+                    );
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::Backspace { word } => {
@@ -674,6 +672,10 @@ impl LocalPasteApp {
             if self.virtual_editor_state.cursor() != cursor_before {
                 result.cursor_moved = true;
             }
+        }
+        if result.changed {
+            self.virtual_cursor_reveal
+                .get_or_insert(CursorReveal::Minimal);
         }
         result
     }

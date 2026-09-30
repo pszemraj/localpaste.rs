@@ -18,7 +18,7 @@ fn editor_find_selects_first_match_and_wraps_navigation() {
         harness.app.virtual_editor_state.selection_range(),
         Some(6..12)
     );
-    assert!(harness.app.virtual_follow_cursor_next_frame);
+    assert!(harness.app.virtual_cursor_reveal.is_some());
 
     harness.app.editor_find_next();
     assert_eq!(harness.app.editor_find.active_match, Some(1));

@@ -330,7 +330,7 @@ impl LocalPasteApp {
                             None
                         }
                     });
-                let row_height = ui.text_style_height(&editor_style);
+                let row_height = ui.fonts_mut(|fonts| fonts.row_height(&editor_font));
                 self.render_virtual_editor_panel(
                     ui,
                     row_height,

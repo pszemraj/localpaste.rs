@@ -40,6 +40,8 @@ Shortcut contract:
 Navigation/selection contract:
 
 - Global sidebar navigation via `Up`/`Down` is bare-arrow only; modified arrows (`Ctrl`/`Alt`/`Shift`/`Cmd`) stay in editor-selection semantics.
+- `Tab` indents selected lines; without a selection it inserts four spaces. `Shift+Tab` removes one leading tab or up to four spaces from each affected line. Directional selections survive indentation and undo/redo; each indentation is one undo step.
+- Window deactivation releases editor keyboard ownership without losing caret or selection. Click the editor to resume editing.
 - Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
 - Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
@@ -55,6 +57,8 @@ Probe contract and tooling:
 - Linux X11 runner: [../../tools/nav_probe_run_linux_x11.sh](../../tools/nav_probe_run_linux_x11.sh)
 - macOS runner: [../../tools/nav_probe_run_macos.sh](../../tools/nav_probe_run_macos.sh)
 - Windows runner: [../../tools/nav_probe_run_windows.ps1](../../tools/nav_probe_run_windows.ps1)
+
+Probe snapshots include actual viewport/caret bounds, visible-caret status, Find focus, and scroll offset. Native contracts assert visibility as well as cursor indices.
 
 All automated runners launch a disposable probe DB under `target/`, seed the editor, wait for a probe frame showing virtual-editor keyboard focus, inject native key chords, and write NDJSON evidence. They terminate the child GUI process after the evidence frame by default so disposable probe runs do not fail on normal window-close shutdown races. Use `--help` / `Get-Help` on the runner for timing and filtering options.
 
@@ -102,6 +106,8 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Language filtering stacks with the active smart collection instead of replacing it.
 - Sidebar list refresh runs on metadata projections (`name/tags/language/folder`); sidebar search and command-palette paste discovery run full-content substring search and return metadata summaries.
 - Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar full-content search primes this in-paste find bar when the sidebar query appears in the paste body.
+- Find keeps query focus on `Enter`/`Shift+Enter` and advances to the next/previous match. Buttons and document jumps center the caret independently of editor focus.
+- Typing and paste reveal the caret with minimal scrolling; manual scrolling stays where you leave it until another edit or navigation action. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
 - Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.
 - App-level shortcut dispatch, command-palette hints, and keyboard shortcut help share the runtime shortcut registry. The shortcut help intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
 - Command palette is action-first (`Commands` section first; `Pastes` section is secondary search/open context).

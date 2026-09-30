@@ -115,6 +115,7 @@ impl LocalPasteApp {
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut query)
                         .id(egui::Id::new(EDITOR_FIND_INPUT_ID))
+                        .return_key(None)
                         .desired_width((ui.available_width() * 0.38).clamp(180.0, 420.0))
                         .hint_text("Search current paste"),
                 );
@@ -124,17 +125,13 @@ impl LocalPasteApp {
                 }
                 query_changed |= response.changed();
                 if response.has_focus() {
-                    ui.input(|input| {
-                        if input.key_pressed(egui::Key::Enter) {
-                            if input.modifiers.shift {
-                                previous_requested = true;
-                            } else {
-                                next_requested = true;
-                            }
-                        }
-                        if input.key_pressed(egui::Key::Escape) {
-                            close_requested = true;
-                        }
+                    ui.input_mut(|input| {
+                        previous_requested |=
+                            input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter);
+                        next_requested |=
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                        close_requested |=
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
                     });
                 }
 
@@ -277,7 +274,7 @@ impl LocalPasteApp {
         self.virtual_editor_state.set_cursor(start, len);
         self.virtual_editor_state.move_cursor(end, len, true);
         self.virtual_editor_state.clear_preferred_column();
-        self.virtual_follow_cursor_next_frame = true;
+        self.virtual_cursor_reveal = Some(CursorReveal::Center);
         self.reset_virtual_caret_blink();
     }
 }

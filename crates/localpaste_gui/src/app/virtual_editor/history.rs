@@ -29,6 +29,8 @@ struct EditRecord {
     intent: EditIntent,
     before_cursor: usize,
     after_cursor: usize,
+    before_anchor: Option<usize>,
+    after_anchor: Option<usize>,
     at: Instant,
 }
 
@@ -114,6 +116,8 @@ impl VirtualEditorHistory {
             intent: edit.intent,
             before_cursor: edit.before_cursor,
             after_cursor: edit.after_cursor,
+            before_anchor: None,
+            after_anchor: None,
             at: edit.at,
         };
         if let Some(last) = self.undo.back_mut() {
@@ -129,6 +133,25 @@ impl VirtualEditorHistory {
         self.undo_bytes = self.undo_bytes.saturating_add(op_bytes(&incoming));
         self.undo.push_back(incoming);
         self.trim_undo();
+    }
+
+    /// Attach directional selection endpoints to the last indivisible block edit.
+    ///
+    /// # Arguments
+    /// - `before`: Selection anchor before the edit.
+    /// - `after`: Selection anchor after the edit.
+    /// - `cursor`: Caret after the edit.
+    pub(crate) fn finish_selection_edit(
+        &mut self,
+        before: Option<usize>,
+        after: Option<usize>,
+        cursor: usize,
+    ) {
+        if let Some(edit) = self.undo.back_mut() {
+            edit.before_anchor = before;
+            edit.after_anchor = after;
+            edit.after_cursor = cursor;
+        }
     }
 
     fn can_coalesce(previous: &EditRecord, next: &EditRecord, window: Duration) -> bool {
@@ -212,7 +235,7 @@ impl VirtualEditorHistory {
         let inserted_chars = op.inserted.chars().count();
         let end = op.start.saturating_add(inserted_chars);
         let delta = buffer.replace_char_range(op.start..end, op.deleted.as_str());
-        state.set_cursor(op.before_cursor, buffer.len_chars());
+        state.restore_selection(op.before_cursor, op.before_anchor, buffer.len_chars());
         self.redo.push(op);
         delta
     }
@@ -238,7 +261,7 @@ impl VirtualEditorHistory {
         let deleted_chars = op.deleted.chars().count();
         let end = op.start.saturating_add(deleted_chars);
         let delta = buffer.replace_char_range(op.start..end, op.inserted.as_str());
-        state.set_cursor(op.after_cursor, buffer.len_chars());
+        state.restore_selection(op.after_cursor, op.after_anchor, buffer.len_chars());
         self.undo_bytes = self.undo_bytes.saturating_add(op_bytes(&op));
         self.undo.push_back(op);
         self.trim_undo();

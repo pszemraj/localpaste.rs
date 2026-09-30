@@ -39,7 +39,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Add schema-repair backup retention/rotation so repeated upgrades cannot accumulate unbounded snapshots in the DB directory.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
 - [ ] Triage the current `check-ast-dupes --root crates` likely-dead and visibility-tighten candidates; separate test-only false positives from real cleanup before changing helper visibility or deleting symbols.
-- [ ] Revisit the remaining `check-ast-dupes --include-tests` near-miss pair only if a measured cleanup reduces LOC or clarifies behavior: `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` covers distinct cursor semantics that should stay explicit unless a better structure preserves the invariants.
+- [ ] Revisit `check-ast-dupes --include-tests` duplicate/near-miss navigation pairs only if a measured cleanup reduces LOC or clarifies behavior: `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` covers distinct cursor semantics that should stay explicit unless a better structure preserves the invariants.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
 - [ ] Expand standalone `verify-gui-packaging.yml` beyond macOS (at least Linux x64) so packaging script regressions are caught before release-tag runs.
 - [ ] Revisit `TransactionOps` create/delete/move wrapper consolidation with a lock-safe transaction template only if we can preserve operation-specific invariants and error semantics without reducing readability.
@@ -53,3 +53,5 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Extract `render_virtual_editor_panel` into smaller focused helpers when the virtual-input pipeline work lands; keep the current monolithic method stable until then.
 - [ ] Decide whether YAML alias-only markers (`*alias`) should count as distinctive YAML structure or remain rejected as ambiguous prose.
 - [x] Add explicit `Paste as new paste` UX (`Ctrl/Cmd+Shift+V` + command palette action) so new-paste clipboard flow does not depend on editor blur/focus heuristics.
+
+- [ ] Consolidate the paired sidebar-to-Find tests in `crates/localpaste_gui/src/app/tests/editor_find.rs` if a table keeps the contrasting body-match and metadata-only assertions readable. The duplicate-code audit reports shared setup; behavior is intentionally distinct.

@@ -360,7 +360,8 @@ fn make_app() -> TestHarness {
         virtual_line_height: 1.0,
         virtual_wrap_width: 0.0,
         virtual_pending_scroll_offset_y: None,
-        virtual_follow_cursor_next_frame: false,
+        virtual_cursor_reveal: None,
+        virtual_viewport: EditorViewport::default(),
         virtual_paste_applied_this_frame: false,
         version_history_limit: db.paste_version_retention_limit(),
         version_ui: super::version_ui::VersionUiState::default(),
@@ -442,6 +443,7 @@ mod backend_dispatch;
 mod collections_and_search;
 mod creation_and_projection;
 mod editor_find;
+mod editor_ux_regressions;
 mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod history_reset;

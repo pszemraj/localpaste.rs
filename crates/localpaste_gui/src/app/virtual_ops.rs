@@ -229,7 +229,7 @@ impl LocalPasteApp {
         self.highlight_edit_hint = None;
         self.virtual_drag_active = false;
         self.virtual_pending_scroll_offset_y = None;
-        self.virtual_follow_cursor_next_frame = false;
+        self.virtual_cursor_reveal = None;
         self.invalidate_editor_find_matches();
         self.reset_virtual_click_streak();
     }
