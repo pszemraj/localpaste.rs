@@ -18,6 +18,7 @@ pub enum PasteKind {
     Config,
     Log,
     Link,
+    Document,
 }
 
 impl PasteKind {
@@ -32,6 +33,7 @@ impl PasteKind {
             Self::Config => "Config",
             Self::Log => "Log",
             Self::Link => "Link",
+            Self::Document => "Document",
         }
     }
 }
@@ -97,9 +99,24 @@ fn sample_prefix(content: &str) -> &str {
     &prefix[..line_end]
 }
 
+/// Whether a stored language explicitly identifies a prose/document format.
+///
+/// # Returns
+/// True for Markdown, reStructuredText, or LaTeX (including canonical aliases).
+pub fn is_document_language(language: Option<&str>) -> bool {
+    matches!(
+        canonicalize(language.unwrap_or_default()).as_str(),
+        "markdown" | "rst" | "latex"
+    )
+}
+
 fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
     let lang = canonicalize(language.unwrap_or_default().trim());
     let lower = sample.to_ascii_lowercase();
+
+    if is_document_language(language) {
+        return PasteKind::Document;
+    }
 
     if looks_like_single_url(sample) {
         return PasteKind::Link;
@@ -179,7 +196,11 @@ fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Config;
     }
 
-    PasteKind::Other
+    if lang.is_empty() || lang == "text" {
+        PasteKind::Document
+    } else {
+        PasteKind::Other
+    }
 }
 
 fn extract_definition_handle(sample: &str, language: Option<&str>) -> Option<String> {
@@ -470,6 +491,27 @@ mod tests {
     use super::{derive, extract_definition_handle_from_line, PasteKind};
 
     #[test]
+    fn explicit_documents_override_code_and_log_signals() {
+        for language in ["markdown", "md", "rst", "restructuredtext", "latex", "tex"] {
+            assert_eq!(
+                derive(
+                    "# Notes\n```rust\nfn main() {}\n```\nerror: panic caused by: bad input",
+                    Some(language)
+                )
+                .kind,
+                PasteKind::Document,
+                "{language}"
+            );
+        }
+        assert_eq!(
+            derive("A short prose note to keep for later.", None).kind,
+            PasteKind::Document
+        );
+        assert_eq!(derive("", None).kind, PasteKind::Other);
+        assert_eq!(derive("fn main() {}", Some("rust")).kind, PasteKind::Code);
+    }
+
+    #[test]
     fn derive_matrix_covers_code_config_log_link_and_other() {
         let code = derive("fn handle_request(input: &str) {}\n", Some("rust"));
         assert_eq!(code.kind, PasteKind::Code);
@@ -495,7 +537,7 @@ mod tests {
         assert_eq!(link.handle.as_deref(), Some("example.com"));
 
         let other = derive("hi", Some("text"));
-        assert_eq!(other.kind, PasteKind::Other);
+        assert_eq!(other.kind, PasteKind::Document);
         assert!(other.handle.is_none());
     }
 

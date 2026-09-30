@@ -490,6 +490,35 @@ mod resolver_tests {
     }
 
     #[test]
+    fn markdown_fence_edit_updates_downstream_highlights_like_a_cold_parse() {
+        let settings = SyntectSettings::default();
+        let mut cache = HighlightWorkerCache::default();
+        let before = "# Note\n```rust\nfn main() {}\n```\nprose after fence\n";
+        let after = before.replacen("```\nprose", "~~~\nprose", 1);
+        let mut first = rust_request(1, before, None, None);
+        first.language_hint = "markdown".into();
+        let HighlightWorkerResult::Render(mut base) =
+            highlight_in_worker(&settings, &mut cache, first)
+        else {
+            panic!("cold render")
+        };
+        let mut next = rust_request(2, &after, Some(1), Some(before.len()));
+        next.language_hint = "markdown".into();
+        match highlight_in_worker(&settings, &mut cache, next) {
+            HighlightWorkerResult::Render(render) => base = render,
+            HighlightWorkerResult::Patch(patch) => {
+                base.lines.splice(patch.line_range, patch.lines);
+            }
+        }
+        let cold = render_for_label(&settings, "markdown", &after);
+        assert!(
+            base.lines == cold.lines,
+            "incremental result must match a fresh parse after fence removal"
+        );
+        assert!(base.lines != render_for_label(&settings, "markdown", before).lines);
+    }
+
+    #[test]
     fn resolve_syntax_handles_common_canonical_labels() {
         let settings = SyntectSettings::default();
         let cases = [

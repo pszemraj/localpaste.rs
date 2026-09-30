@@ -461,6 +461,7 @@ mod persistence;
 mod save_and_metadata;
 mod selected_delete;
 mod shutdown_behavior;
+mod startup_styles;
 mod state_basics;
 mod state_toasts;
 mod time_filters;

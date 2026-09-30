@@ -1,5 +1,6 @@
 //! Syntax highlighting caches and worker support for the native GUI editor.
 
+mod markdown;
 mod reuse;
 mod syntax;
 #[cfg(test)]
@@ -520,10 +521,7 @@ pub(super) struct SyntectSettings {
 
 impl Default for SyntectSettings {
     fn default() -> Self {
-        Self {
-            ps: SyntaxSet::load_defaults_newlines(),
-            ts: ThemeSet::load_defaults(),
-        }
+        markdown::settings()
     }
 }
 

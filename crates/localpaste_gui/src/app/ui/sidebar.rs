@@ -309,6 +309,7 @@ impl LocalPasteApp {
             (SidebarCollection::Week, "This Week"),
             (SidebarCollection::Recent, "Recent (30d)"),
             (SidebarCollection::Unfiled, "Unfiled"),
+            (SidebarCollection::Documents, "Documents"),
             (SidebarCollection::Code, "Code"),
             (SidebarCollection::Config, "Config"),
             (SidebarCollection::Logs, "Logs"),

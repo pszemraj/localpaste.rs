@@ -33,7 +33,6 @@ const CODE_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
         "css",
         "scss",
         "sass",
-        "markdown",
         "dart",
         "zig",
         "lua",
@@ -232,7 +231,13 @@ fn summary_matches_kind_pattern_and_name(
 /// `true` when derived kind or legacy summary heuristics match the requested
 /// semantic collection bucket.
 fn matches_semantic_collection(item: &PasteSummary, collection: SidebarCollection) -> bool {
+    let document = item.derived.kind == PasteKind::Document
+        || localpaste_core::semantic::is_document_language(item.language.as_deref());
+    if document {
+        return collection == SidebarCollection::Documents;
+    }
     match collection {
+        SidebarCollection::Documents => false,
         SidebarCollection::Code => summary_matches_kind_pattern_and_name(
             item,
             PasteKind::Code,
@@ -290,6 +295,7 @@ pub(in crate::app) fn matches_active_filters(
         SidebarCollection::Recent => item.updated_at >= recent_cutoff,
         SidebarCollection::Unfiled => item.folder_id.is_none(),
         SidebarCollection::Code
+        | SidebarCollection::Documents
         | SidebarCollection::Config
         | SidebarCollection::Logs
         | SidebarCollection::Links => matches_semantic_collection(item, active_collection.clone()),
@@ -315,46 +321,7 @@ pub(in crate::app) fn matches_active_filters(
 /// # Returns
 /// Extension without leading dot, defaulting to `"txt"`.
 pub(super) fn language_extension(language: Option<&str>) -> &'static str {
-    let canonical =
-        localpaste_core::detection::canonical::canonicalize(language.unwrap_or_default().trim());
-    match canonical.as_str() {
-        "rust" => "rs",
-        "python" => "py",
-        "javascript" => "js",
-        "typescript" => "ts",
-        "json" => "json",
-        "yaml" => "yaml",
-        "toml" => "toml",
-        "markdown" => "md",
-        "html" => "html",
-        "css" => "css",
-        "scss" => "scss",
-        "sass" => "sass",
-        "sql" => "sql",
-        "shell" => "sh",
-        "cs" => "cs",
-        "cpp" => "cpp",
-        "c" => "c",
-        "go" => "go",
-        "java" => "java",
-        "kotlin" => "kt",
-        "swift" => "swift",
-        "ruby" => "rb",
-        "php" => "php",
-        "perl" => "pl",
-        "lua" => "lua",
-        "r" => "r",
-        "scala" => "scala",
-        "dart" => "dart",
-        "elixir" => "ex",
-        "haskell" => "hs",
-        "zig" => "zig",
-        "xml" => "xml",
-        "dockerfile" => "dockerfile",
-        "makefile" => "makefile",
-        "powershell" => "ps1",
-        _ => "txt",
-    }
+    localpaste_core::detection::preferred_extension(language)
 }
 
 /// Sanitizes a filename candidate for cross-platform export compatibility.
@@ -380,6 +347,35 @@ pub(super) fn sanitize_filename(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn documents_exclude_code_even_with_code_titles_tags_and_legacy_kind() {
+        let mut item = PasteSummary {
+            id: "doc".into(),
+            name: "function snippet.rs".into(),
+            language: Some("markdown".into()),
+            content_len: 30,
+            updated_at: Utc::now(),
+            folder_id: None,
+            tags: vec!["code".into()],
+            derived: localpaste_core::semantic::DerivedMeta {
+                kind: PasteKind::Code,
+                ..Default::default()
+            },
+        };
+        assert!(matches_semantic_collection(
+            &item,
+            SidebarCollection::Documents
+        ));
+        assert!(!matches_semantic_collection(&item, SidebarCollection::Code));
+        item.language = None;
+        item.derived.kind = PasteKind::Document;
+        assert!(matches_semantic_collection(
+            &item,
+            SidebarCollection::Documents
+        ));
+        assert!(!matches_semantic_collection(&item, SidebarCollection::Code));
+    }
 
     #[test]
     fn language_extension_maps_known_and_unknown_languages() {

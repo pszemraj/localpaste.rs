@@ -57,6 +57,8 @@ Normalization maps legacy aliases and user-entered variants to stable labels (ex
 - `js` -> `javascript`
 - `ts` -> `typescript`
 - `md` -> `markdown`
+- `tex` -> `latex`
+- `restructuredtext`, `restructured text` -> `rst`
 - `plaintext`, `plain text`, `plain`, `txt` -> `text`
 
 Unknown values pass through in lowercase.
@@ -74,9 +76,17 @@ This preserves interoperability across legacy and current labels (for example, `
 
 Search ranking also checks normalized language values to avoid losing metadata relevance as stored labels evolve.
 
+The Documents collection includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Explicit document languages take precedence over embedded code and misleading titles/tags. Markdown is excluded from Code. The derived `Document` kind is rebuilt through the [storage projection repair policy](storage.md#compatibility-policy).
+
+## Text Export Extensions
+
+[`preferred_extension`](../crates/localpaste_core/src/detection/extensions.rs) centrally maps recognized text formats to conventional extensions, independently of grammar support. CSV and TSV export as `.csv` and `.tsv`; document aliases resolve to `.md`, `.rst`, or `.tex`. Unsupported highlighting does not force `.txt`; unknown formats still use `.txt`. Export writes the current editor content unchanged.
+
 ## GUI Highlight Resolution
 
-GUI highlight resolution uses a multi-step strategy instead of a fixed name table:
+Markdown uses the project-owned [LocalPaste Markdown grammar](../crates/localpaste_gui/assets/LocalPaste-Markdown.sublime-syntax). Footnote markers end at the reference/definition boundary so body text remains readable. Backtick and tilde fences retain their opening delimiter; matching or longer closing fences terminate the block. Fenced bodies use one existing string color, with no embedded-language highlighting. Scope mappings use the current theme's foreground, string, and keyword colors.
+
+Other GUI highlight resolution uses a multi-step strategy instead of a fixed name table:
 
 1. exact syntax name
 2. exact extension

@@ -1,0 +1,49 @@
+%YAML 1.2
+---
+name: LocalPaste Markdown
+file_extensions: [md, markdown]
+scope: text.html.markdown.localpaste
+contexts:
+  main:
+    # Capture the opening delimiter so shorter or different fences cannot close it.
+    - match: '^ {0,3}(`{3,})[^`\n]*$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push:
+        - meta_scope: markup.raw.block.markdown.localpaste
+        - match: '^ {0,3}\1`*[ \t]*\r?$'
+          scope: punctuation.definition.raw.markdown.localpaste
+          pop: true
+    - match: '^ {0,3}(~{3,})[^\n]*$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push:
+        - meta_scope: markup.raw.block.markdown.localpaste
+        - match: '^ {0,3}\1~*[ \t]*\r?$'
+          scope: punctuation.definition.raw.markdown.localpaste
+          pop: true
+    # A definition marker ends at the colon. Its body remains normal prose.
+    - match: '^ {0,3}\[\^[^\]\n]+\]:'
+      scope: constant.other.reference.link.markdown.localpaste
+    - match: '\[\^[^\]\n]+\]'
+      scope: constant.other.reference.link.markdown.localpaste
+    - match: '^ {0,3}#{1,6}[ \t]+.*$'
+      scope: markup.heading.markdown
+    - match: '^ {0,3}(?:={3,}|-{3,})[ \t]*$'
+      scope: markup.heading.markdown
+    - match: '^ {0,3}>[ \t]?'
+      scope: punctuation.definition.blockquote.markdown
+    - match: '^\s*(?:[-+*]|\d+[.)])[ \t]+'
+      scope: punctuation.definition.list.markdown
+    - match: '(`+)(?!`)'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push:
+        - meta_scope: markup.raw.inline.markdown.localpaste
+        - match: '(?<!`)\1(?!`)'
+          pop: true
+    - match: '\*\*[^*\n]+\*\*|__[^_\n]+__'
+      scope: markup.bold.markdown
+    - match: '\*[^*\n]+\*|_[^_\n]+_'
+      scope: markup.italic.markdown
+    - match: '!?\[[^\]\n]*\]\([^\)\n]*\)'
+      scope: markup.underline.link.markdown
+    - match: '^ {0,3}\[[^\]\n]+\]:[ \t]*\S+'
+      scope: markup.underline.link.markdown

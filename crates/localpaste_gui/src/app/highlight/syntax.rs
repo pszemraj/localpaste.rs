@@ -98,6 +98,11 @@ pub(crate) fn resolve_syntax<'a>(ps: &'a SyntaxSet, hint: &str) -> &'a SyntaxRef
     }
 
     let hint_lower = hint_trimmed.to_ascii_lowercase();
+    if hint_lower == "markdown" {
+        if let Some(syntax) = ps.find_syntax_by_name("LocalPaste Markdown") {
+            return syntax;
+        }
+    }
     if matches!(hint_lower.as_str(), "text" | "txt" | "plain" | "plaintext") {
         return ps.find_syntax_plain_text();
     }

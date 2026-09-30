@@ -2,6 +2,8 @@
 
 /// Language canonicalization and manual UI option tables.
 pub mod canonical;
+mod extensions;
+pub use extensions::preferred_extension;
 mod heuristic;
 #[cfg(feature = "magika")]
 mod magika;

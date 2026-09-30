@@ -146,6 +146,7 @@ pub(super) fn assert_staged_undo_token(db: &Database, token: &str, expected: boo
 mod basic_ops;
 mod concurrency;
 mod delete_undo_lifecycle;
+mod document_projection;
 mod folder_transactions;
 mod row_compat;
 mod search_and_meta;

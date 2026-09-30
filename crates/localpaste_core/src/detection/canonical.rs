@@ -147,6 +147,8 @@ pub fn canonicalize(language: &str) -> String {
         "js" => "javascript".to_string(),
         "ts" => "typescript".to_string(),
         "md" => "markdown".to_string(),
+        "tex" => "latex".to_string(),
+        "restructuredtext" | "restructured text" => "rst".to_string(),
         "plaintext" | "plain text" | "plain" | "txt" => "text".to_string(),
         "py" => "python".to_string(),
         "rs" => "rust".to_string(),
