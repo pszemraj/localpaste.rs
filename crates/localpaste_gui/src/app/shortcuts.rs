@@ -12,6 +12,7 @@ pub(crate) enum RuntimeShortcutAction {
     FocusSearch,
     ToggleCommandPalette,
     ToggleCommandPaletteLegacy,
+    TogglePastePicker,
     ToggleProperties,
     PlainPaste,
     PasteAsNew,
@@ -120,7 +121,15 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
         chord: ShortcutChord::PlainCommand(egui::Key::K),
         help: ShortcutHelpEntry {
             keys: "Ctrl/Cmd+K",
-            description: "Toggle command palette (legacy)",
+            description: "Toggle command palette",
+        },
+    },
+    RuntimeShortcut {
+        action: RuntimeShortcutAction::TogglePastePicker,
+        chord: ShortcutChord::CommandShift(egui::Key::K),
+        help: ShortcutHelpEntry {
+            keys: "Ctrl/Cmd+Shift+K",
+            description: "Toggle paste picker",
         },
     },
     RuntimeShortcut {
@@ -184,6 +193,110 @@ pub(crate) fn runtime_shortcut_label(action: RuntimeShortcutAction) -> &'static 
         .map(|shortcut| shortcut.help.keys)
         .expect("runtime shortcut action must be registered")
 }
+
+/// A group of shared navigation/editing shortcut descriptions.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ShortcutSection {
+    pub(crate) title: &'static str,
+    pub(crate) entries: &'static [ShortcutHelpEntry],
+}
+
+const NAVIGATION_SHORTCUTS: &[ShortcutHelpEntry] = &[
+    ShortcutHelpEntry {
+        keys: "Arrow Up/Down",
+        description: "Navigate paste list, palette, and history rows",
+    },
+    ShortcutHelpEntry {
+        keys: "Enter",
+        description: "Run selected command or open selected paste",
+    },
+    ShortcutHelpEntry {
+        keys: "Esc",
+        description: "Close palette, picker, or window",
+    },
+    ShortcutHelpEntry {
+        keys: "Home/End (Win/Linux) or Cmd+Left/Right (macOS)",
+        description: "Move caret to line start/end",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl+Home/End (Win/Linux) or Cmd+Up/Down/Home/End (macOS)",
+        description: "Move caret to document start/end",
+    },
+    ShortcutHelpEntry {
+        keys: "Page Up/Down",
+        description: "Move caret by visible editor page",
+    },
+];
+
+const EDITING_SHORTCUTS: &[ShortcutHelpEntry] = &[
+    ShortcutHelpEntry {
+        keys: "Tab / Shift+Tab",
+        description: "Indent / unindent selected lines",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl/Cmd+A",
+        description: "Select all editor text",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl/Cmd+C",
+        description: "Copy selected text",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl/Cmd+X",
+        description: "Cut selected text",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl/Cmd+Z",
+        description: "Undo editor edit",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z",
+        description: "Redo editor edit",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl+Left/Right (Win/Linux) or Option+Left/Right (macOS)",
+        description: "Move caret by word",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl+Backspace/Delete (Win/Linux) or Option+Backspace/Delete (macOS)",
+        description: "Delete one word backward/forward",
+    },
+    ShortcutHelpEntry {
+        keys: "Cmd+Backspace / Ctrl+K (macOS)",
+        description: "Delete to line start / end",
+    },
+];
+
+const FIND_SHORTCUTS: &[ShortcutHelpEntry] = &[
+    ShortcutHelpEntry {
+        keys: "Enter",
+        description: "Find next match while Find field is focused",
+    },
+    ShortcutHelpEntry {
+        keys: "Shift+Enter",
+        description: "Find previous match while Find field is focused",
+    },
+    ShortcutHelpEntry {
+        keys: "Esc",
+        description: "Close Find field",
+    },
+];
+
+/// Non-global editor and navigation chords shared by shortcut discovery.
+pub(crate) const STATIC_SHORTCUT_SECTIONS: &[ShortcutSection] = &[
+    ShortcutSection {
+        title: "Navigation",
+        entries: NAVIGATION_SHORTCUTS,
+    },
+    ShortcutSection {
+        title: "Editing",
+        entries: EDITING_SHORTCUTS,
+    },
+    ShortcutSection {
+        title: "Find",
+        entries: FIND_SHORTCUTS,
+    },
+];
 
 #[cfg(test)]
 mod tests {

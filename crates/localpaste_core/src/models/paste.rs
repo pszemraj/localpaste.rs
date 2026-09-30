@@ -75,6 +75,20 @@ pub struct SearchQuery {
     pub case_sensitive: Option<bool>,
 }
 
+/// Fields inspected by an in-process search. HTTP and CLI searches keep their existing contract.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum SearchScope {
+    /// Match titles, metadata, and raw body content using the existing ranking.
+    #[default]
+    All,
+    /// Match only the user-visible title without loading bodies.
+    Title,
+    /// Match the stored metadata projection, including derived search terms.
+    Metadata,
+    /// Match only raw body content.
+    Body,
+}
+
 /// Search behavior flags shared by full-content and metadata-only search.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SearchOptions {

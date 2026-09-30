@@ -265,6 +265,7 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             true
         }
         CoreCmd::SearchPastes {
+            scope,
             query,
             limit,
             folder_id,
@@ -278,11 +279,16 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
                 },
                 query,
                 limit,
+                scope,
             );
             true
         }
-        CoreCmd::SearchPalette { query, limit } => {
-            query::handle_search(state, query::SearchRoute::Palette, query, limit);
+        CoreCmd::SearchPalette {
+            query,
+            limit,
+            scope,
+        } => {
+            query::handle_search(state, query::SearchRoute::Palette, query, limit, scope);
             true
         }
         CoreCmd::GetPaste { id } => {

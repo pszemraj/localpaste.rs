@@ -172,14 +172,14 @@ fn delete_selected_with_in_flight_stale_save_dispatches_newer_save_before_delete
 #[test]
 fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediate() {
     let mut selected = make_app();
-    selected.app.command_palette_open = true;
+    selected.app.paste_picker_open = true;
     set_active_content(&mut selected.app, "palette dirty");
     selected.app.save_status = SaveStatus::Dirty;
 
     selected.app.send_palette_delete("alpha".to_string());
 
     assert!(
-        !selected.app.command_palette_open,
+        !selected.app.paste_picker_open,
         "accepted deferred delete should close the palette"
     );
     match recv_cmd(&selected.cmd_rx) {
@@ -194,7 +194,7 @@ fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediat
     }
 
     let mut nonselected = make_app();
-    nonselected.app.command_palette_open = true;
+    nonselected.app.paste_picker_open = true;
     set_active_content(&mut nonselected.app, "dirty selected");
     nonselected.app.save_status = SaveStatus::Dirty;
 

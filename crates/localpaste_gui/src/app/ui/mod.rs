@@ -10,8 +10,12 @@ pub(super) mod editor_panel;
 pub(super) mod editor_panel_virtual;
 /// Detached version-history modal for historical snapshots/reset.
 pub(super) mod history_modal;
+/// Separate paste discovery and result actions.
+pub(super) mod paste_picker;
 /// Right-side properties drawer.
 pub(super) mod properties_drawer;
+/// Shared search-scope controls.
+pub(super) mod search_scope;
 /// Keyboard shortcut help window.
 pub(super) mod shortcut_help;
 /// Top bar and left sidebar surfaces.

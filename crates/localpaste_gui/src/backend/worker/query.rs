@@ -2,7 +2,7 @@
 
 use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent, PasteSummary};
-use localpaste_core::models::paste::SearchOptions;
+use localpaste_core::models::paste::{SearchOptions, SearchScope};
 use std::time::{Duration, Instant};
 use tracing::{error, info};
 
@@ -19,6 +19,7 @@ struct SearchCacheKey {
     folder_id: Option<String>,
     language: Option<String>,
     case_sensitive: bool,
+    scope: SearchScope,
 }
 
 #[derive(Debug)]
@@ -206,6 +207,7 @@ fn handle_search_variant<E>(
     query: String,
     limit: usize,
     variant: SearchVariant,
+    scope: SearchScope,
     to_event: E,
 ) where
     E: Fn(String, Option<String>, Option<String>, Vec<PasteSummary>) -> CoreEvent,
@@ -222,6 +224,7 @@ fn handle_search_variant<E>(
         folder_id: folder_id.clone(),
         language: language.clone(),
         case_sensitive: state.search_case_sensitive,
+        scope,
     };
     let query_for_fetch = query.clone();
     let folder_for_fetch = folder_id.clone();
@@ -238,12 +241,13 @@ fn handle_search_variant<E>(
             worker
                 .db
                 .pastes
-                .search_with_options(
+                .search_scoped_with_options(
                     &query_for_fetch,
                     limit,
                     folder_for_fetch,
                     language_for_fetch,
                     options,
+                    scope,
                 )
                 .map(|metas| metas.iter().map(PasteSummary::from_meta).collect())
                 .map_err(|err| err.to_string())
@@ -325,6 +329,7 @@ pub(super) fn handle_search(
     route: SearchRoute,
     query: String,
     limit: usize,
+    scope: SearchScope,
 ) {
     match route {
         SearchRoute::Standard {
@@ -340,7 +345,9 @@ pub(super) fn handle_search(
                 op: "search",
                 error_prefix: "Search",
             },
-            |query, folder_id, language, items| CoreEvent::SearchResults {
+            scope,
+            move |query, folder_id, language, items| CoreEvent::SearchResults {
+                scope,
                 query,
                 folder_id,
                 language,
@@ -357,7 +364,12 @@ pub(super) fn handle_search(
                 op: "palette_search",
                 error_prefix: "Palette search",
             },
-            |query, _folder_id, _language, items| CoreEvent::PaletteSearchResults { query, items },
+            scope,
+            move |query, _folder_id, _language, items| CoreEvent::PaletteSearchResults {
+                query,
+                items,
+                scope,
+            },
         ),
     }
 }

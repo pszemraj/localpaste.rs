@@ -620,7 +620,16 @@ fn contains_case_insensitive(haystack: &str, query_lower: &str) -> bool {
     haystack.to_lowercase().contains(query_lower)
 }
 
-fn contains_search(haystack: &str, query: &str, case_sensitive: bool) -> bool {
+/// Match a literal substring; callers lowercase the query for insensitive matching.
+///
+/// # Arguments
+/// - `haystack`: Candidate text.
+/// - `query`: Query, lowercased when insensitive.
+/// - `case_sensitive`: Whether casing must match exactly.
+///
+/// # Returns
+/// True when the substring occurs under the requested case policy.
+pub(super) fn contains_search(haystack: &str, query: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         haystack.contains(query)
     } else {

@@ -221,6 +221,7 @@ impl LocalPasteApp {
         virtual_paste_consumed: bool,
     ) -> bool {
         if self.mutation_shortcut_block_reason().is_some()
+            || self.keyboard_overlay_open()
             || editor_focus_active
             || wants_keyboard_input
             || virtual_paste_consumed
@@ -253,6 +254,9 @@ impl LocalPasteApp {
         focus_state: KeyboardFocusState,
         saw_virtual_paste: bool,
     ) -> (bool, bool) {
+        if self.keyboard_overlay_open() {
+            return (false, false);
+        }
         match focus_state {
             KeyboardFocusState::EditorFocused => (!saw_virtual_paste, false),
             // Respect focused non-editor text inputs (search, palette query, metadata fields).

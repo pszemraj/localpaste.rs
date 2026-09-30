@@ -331,6 +331,8 @@ fn make_app() -> TestHarness {
         metadata_save_request: None,
         editor_find: EditorFindState::default(),
         search_query: String::new(),
+        search_scope: SearchScope::All,
+        search_sent_scope: SearchScope::All,
         search_last_input_at: None,
         search_last_sent: String::new(),
         search_focus_requested: false,
@@ -340,6 +342,11 @@ fn make_app() -> TestHarness {
         command_palette_open: false,
         command_palette_query: String::new(),
         command_palette_selected: 0,
+        paste_picker_open: false,
+        paste_picker_query: String::new(),
+        paste_picker_selected: 0,
+        paste_picker_scope: SearchScope::All,
+        paste_picker_sent_scope: SearchScope::All,
         palette_search_results: Vec::new(),
         palette_search_last_sent: String::new(),
         palette_search_last_input_at: None,
@@ -388,6 +395,7 @@ fn make_app() -> TestHarness {
         save_request_revision: None,
         autosave_delay: Duration::from_millis(2000),
         shortcut_help_open: false,
+        shortcut_help_query: String::new(),
         focus_editor_next: false,
         style_applied: false,
         window_shown_once: false,
@@ -442,6 +450,7 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 mod backend_dispatch;
 mod collections_and_search;
 mod creation_and_projection;
+mod discovery_scopes;
 mod editor_find;
 mod editor_ux_regressions;
 mod focus_and_paste_routing;

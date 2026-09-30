@@ -36,6 +36,7 @@ fn search_results_respect_collection_filter() {
     let unfiled = test_summary("b", "unfiled", Some("rust"), 10);
 
     harness.app.apply_event(CoreEvent::SearchResults {
+        scope: localpaste_core::models::paste::SearchScope::All,
         query: "rust".to_string(),
         folder_id: None,
         language: None,
@@ -48,6 +49,7 @@ fn search_results_respect_collection_filter() {
     let stale = test_summary("stale", "stale-result", Some("rust"), 2);
     harness.app.set_search_query(String::new());
     harness.app.apply_event(CoreEvent::SearchResults {
+        scope: localpaste_core::models::paste::SearchScope::All,
         query: "rust".to_string(),
         folder_id: None,
         language: None,
@@ -69,7 +71,10 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
-            query, language, ..
+            scope: localpaste_core::models::paste::SearchScope::All,
+            query,
+            language,
+            ..
         } => {
             assert_eq!(query, "term");
             assert_eq!(language.as_deref(), Some("rust"));
@@ -79,6 +84,7 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
 
     let stale = test_summary("stale", "stale-python", Some("python"), 10);
     harness.app.apply_event(CoreEvent::SearchResults {
+        scope: localpaste_core::models::paste::SearchScope::All,
         query: "term".to_string(),
         folder_id: None,
         language: Some("python".to_string()),
@@ -96,6 +102,7 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
 
     let fresh = test_summary("fresh", "fresh-rust", Some("rust"), 12);
     harness.app.apply_event(CoreEvent::SearchResults {
+        scope: localpaste_core::models::paste::SearchScope::All,
         query: "term".to_string(),
         folder_id: None,
         language: Some("rust".to_string()),
@@ -127,6 +134,7 @@ fn selected_paste_summary_prefers_visible_search_result_over_stale_cache() {
         ..test_summary_at("alpha", "Fresh", Some("rust"), 9, now)
     };
     harness.app.apply_event(CoreEvent::SearchResults {
+        scope: localpaste_core::models::paste::SearchScope::All,
         query: "alpha".to_string(),
         folder_id: None,
         language: None,
@@ -197,17 +205,19 @@ fn paste_saved_reprojects_non_search_results_for_active_language_filter() {
 #[test]
 fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
     let mut harness = make_app();
-    harness.app.command_palette_open = true;
-    harness.app.set_command_palette_query("legacy".to_string());
+    harness.app.paste_picker_open = true;
+    harness.app.set_paste_picker_query("legacy".to_string());
     harness.app.all_pastes = vec![test_summary("alpha", "Alpha", None, 7)];
 
     harness.app.apply_event(CoreEvent::PaletteSearchResults {
+        scope: localpaste_core::models::paste::SearchScope::All,
         query: "other".to_string(),
         items: vec![test_summary("stale", "Stale", None, 1)],
     });
     assert!(harness.app.palette_search_results.is_empty());
 
     harness.app.apply_event(CoreEvent::PaletteSearchResults {
+        scope: localpaste_core::models::paste::SearchScope::All,
         query: "legacy".to_string(),
         items: vec![test_summary("old-id", "Legacy note", None, 8)],
     });
@@ -217,44 +227,40 @@ fn palette_search_results_are_query_scoped_and_can_exceed_list_window() {
 }
 
 #[test]
-fn palette_search_result_updates_keep_absolute_selection_space() {
+fn picker_result_updates_clamp_only_within_paste_results() {
     let mut harness = make_app();
-    harness.app.command_palette_open = true;
-    harness.app.set_command_palette_query("new".to_string());
-    let action_count = harness.app.command_palette_action_count();
-    assert!(
-        action_count > 0,
-        "query should retain at least one command row"
-    );
-
-    harness.app.command_palette_selected = action_count + 1;
+    harness.app.paste_picker_open = true;
+    harness.app.set_paste_picker_query("new".to_string());
+    harness.app.paste_picker_selected = 1;
     harness.app.apply_event(CoreEvent::PaletteSearchResults {
+        scope: localpaste_core::models::paste::SearchScope::All,
         query: "new".to_string(),
         items: vec![
             test_summary("p1", "one", None, 4),
             test_summary("p2", "two", None, 4),
         ],
     });
-    assert_eq!(harness.app.command_palette_selected, action_count + 1);
+    assert_eq!(harness.app.paste_picker_selected, 1);
 
     harness.app.apply_event(CoreEvent::PaletteSearchResults {
+        scope: localpaste_core::models::paste::SearchScope::All,
         query: "new".to_string(),
         items: vec![test_summary("p1", "one", None, 4)],
     });
-    assert_eq!(harness.app.command_palette_selected, action_count);
+    assert_eq!(harness.app.paste_picker_selected, 0);
 }
 
 #[test]
 fn palette_query_change_clears_stale_results_immediately() {
     let mut harness = make_app();
-    harness.app.command_palette_open = true;
-    harness.app.command_palette_query = "legacy".to_string();
+    harness.app.paste_picker_open = true;
+    harness.app.paste_picker_query = "legacy".to_string();
     harness.app.palette_search_last_sent = "legacy".to_string();
     harness.app.palette_search_results = vec![test_summary("old-id", "legacy row", None, 8)];
 
-    harness.app.set_command_palette_query("new".to_string());
+    harness.app.set_paste_picker_query("new".to_string());
 
-    assert_eq!(harness.app.command_palette_selected, 0);
+    assert_eq!(harness.app.paste_picker_selected, 0);
     assert!(harness.app.palette_search_last_sent.is_empty());
     assert!(
         harness.app.palette_search_results.is_empty(),
@@ -267,29 +273,29 @@ fn palette_version_actions_are_available_only_when_selection_exists() {
     let mut harness = make_app();
     harness.app.selected_id = None;
 
-    harness.app.set_command_palette_query("diff".to_string());
+    harness.app.command_palette_query = "diff".to_string();
     assert_eq!(
-        harness.app.command_palette_action_count(),
+        harness.app.command_palette_actions().len(),
         0,
         "diff modal action should not appear without a selected paste"
     );
-    harness.app.set_command_palette_query("history".to_string());
+    harness.app.command_palette_query = "history".to_string();
     assert_eq!(
-        harness.app.command_palette_action_count(),
+        harness.app.command_palette_actions().len(),
         0,
         "history modal action should not appear without a selected paste"
     );
 
     harness.app.selected_id = Some("alpha".to_string());
-    harness.app.set_command_palette_query("diff".to_string());
+    harness.app.command_palette_query = "diff".to_string();
     assert_eq!(
-        harness.app.command_palette_action_count(),
+        harness.app.command_palette_actions().len(),
         1,
         "diff query should resolve to the diff modal action"
     );
-    harness.app.set_command_palette_query("history".to_string());
+    harness.app.command_palette_query = "history".to_string();
     assert_eq!(
-        harness.app.command_palette_action_count(),
+        harness.app.command_palette_actions().len(),
         1,
         "history query should resolve to the history modal action"
     );
@@ -333,8 +339,8 @@ fn failed_sidebar_search_dispatch_is_debounced_and_status_deduped() {
 #[test]
 fn failed_palette_search_dispatch_is_debounced_and_status_deduped() {
     let mut harness = make_app();
-    harness.app.command_palette_open = true;
-    harness.app.set_command_palette_query("alpha".to_string());
+    harness.app.paste_picker_open = true;
+    harness.app.set_paste_picker_query("alpha".to_string());
     let (dead_cmd_tx, dead_cmd_rx) = unbounded::<CoreCmd>();
     drop(dead_cmd_rx);
     let (_evt_tx, evt_rx) = unbounded();
@@ -344,7 +350,7 @@ fn failed_palette_search_dispatch_is_debounced_and_status_deduped() {
         Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
     harness.app.maybe_dispatch_palette_search();
 
-    let expected = "Command palette search failed: backend unavailable.";
+    let expected = "Paste picker search failed: backend unavailable.";
     assert_eq!(
         harness
             .app
@@ -375,8 +381,8 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
         let mut harness = make_app();
         match kind {
             DispatchKind::PaletteSearch => {
-                harness.app.command_palette_open = true;
-                harness.app.set_command_palette_query("alpha".to_string());
+                harness.app.paste_picker_open = true;
+                harness.app.set_paste_picker_query("alpha".to_string());
 
                 harness.app.palette_search_last_input_at = Some(Instant::now());
                 harness.app.maybe_dispatch_palette_search();
@@ -389,7 +395,11 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
                     Some(Instant::now() - SEARCH_DEBOUNCE - Duration::from_millis(10));
                 harness.app.maybe_dispatch_palette_search();
                 match recv_cmd(&harness.cmd_rx) {
-                    CoreCmd::SearchPalette { query, limit } => {
+                    CoreCmd::SearchPalette {
+                        scope: localpaste_core::models::paste::SearchScope::All,
+                        query,
+                        limit,
+                    } => {
                         assert_eq!(query, "alpha");
                         assert_eq!(limit, PALETTE_SEARCH_LIMIT);
                     }
@@ -417,6 +427,7 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
                 harness.app.maybe_dispatch_search();
                 match recv_cmd(&harness.cmd_rx) {
                     CoreCmd::SearchPastes {
+                        scope: localpaste_core::models::paste::SearchScope::All,
                         query,
                         limit,
                         folder_id,
@@ -449,7 +460,11 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
 
                 harness.app.maybe_dispatch_search();
                 match recv_cmd(&harness.cmd_rx) {
-                    CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "rust"),
+                    CoreCmd::SearchPastes {
+                        scope: localpaste_core::models::paste::SearchScope::All,
+                        query,
+                        ..
+                    } => assert_eq!(query, "rust"),
                     other => panic!("unexpected command: {:?}", other),
                 }
             }
@@ -467,6 +482,7 @@ fn maybe_dispatch_search_applies_collection_filters() {
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
+            scope: localpaste_core::models::paste::SearchScope::All,
             folder_id,
             language,
             ..
@@ -487,6 +503,7 @@ fn maybe_dispatch_search_applies_collection_filters() {
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
+            scope: localpaste_core::models::paste::SearchScope::All,
             folder_id,
             language,
             ..
@@ -507,6 +524,7 @@ fn maybe_dispatch_search_applies_collection_filters() {
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
+            scope: localpaste_core::models::paste::SearchScope::All,
             folder_id,
             language,
             ..
@@ -590,7 +608,11 @@ fn language_filter_input_is_normalized_before_search_dispatch() {
 
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::SearchPastes { language, .. } => {
+        CoreCmd::SearchPastes {
+            scope: localpaste_core::models::paste::SearchScope::All,
+            language,
+            ..
+        } => {
             assert_eq!(language.as_deref(), Some("python"));
         }
         other => panic!("unexpected command: {:?}", other),

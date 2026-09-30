@@ -167,6 +167,9 @@ impl LocalPasteApp {
                 if search_resp.changed() {
                     self.set_search_query(search_buf);
                 }
+                let scope =
+                    super::search_scope::scope_selector(ui, "sidebar_scope", self.search_scope);
+                self.set_search_scope(scope);
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {

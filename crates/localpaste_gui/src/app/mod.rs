@@ -7,6 +7,7 @@ mod editor_find;
 mod editor_reveal;
 mod highlight;
 mod highlight_flow;
+mod initialization;
 mod interaction_helpers;
 mod nav_probe;
 mod paste_intent;
@@ -46,7 +47,7 @@ pub(super) use interaction_helpers::{
     should_route_sidebar_arrows,
 };
 use localpaste_core::config::env_flag_enabled;
-use localpaste_core::models::paste::Paste;
+use localpaste_core::models::paste::{Paste, SearchScope};
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
 use perf_trace::VirtualInputPerfStats;
@@ -85,6 +86,8 @@ pub(crate) struct LocalPasteApp {
     metadata_save_request: Option<MetadataDraftSnapshot>,
     editor_find: EditorFindState,
     search_query: String,
+    search_scope: SearchScope,
+    search_sent_scope: SearchScope,
     search_last_input_at: Option<Instant>,
     search_last_sent: String,
     search_focus_requested: bool,
@@ -94,6 +97,11 @@ pub(crate) struct LocalPasteApp {
     command_palette_open: bool,
     command_palette_query: String,
     command_palette_selected: usize,
+    paste_picker_open: bool,
+    paste_picker_query: String,
+    paste_picker_selected: usize,
+    paste_picker_scope: SearchScope,
+    paste_picker_sent_scope: SearchScope,
     palette_search_results: Vec<PasteSummary>,
     palette_search_last_sent: String,
     palette_search_last_input_at: Option<Instant>,
@@ -148,6 +156,7 @@ pub(crate) struct LocalPasteApp {
     save_request_revision: Option<u64>,
     autosave_delay: Duration,
     shortcut_help_open: bool,
+    shortcut_help_query: String,
     focus_editor_next: bool,
     style_applied: bool,
     window_shown_once: bool,
@@ -265,6 +274,7 @@ const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const EDITOR_FIND_INPUT_ID: &str = "editor_find_input";
 const TITLE_INPUT_ID: &str = "editor_title_input";
+const PASTE_PICKER_INPUT_ID: &str = "paste_picker_query_input";
 const COMMAND_PALETTE_INPUT_ID: &str = "command_palette_query_input";
 const PROPERTIES_NAME_INPUT_ID: &str = "properties_name_input";
 const PROPERTIES_TAGS_INPUT_ID: &str = "properties_tags_input";
@@ -356,145 +366,6 @@ struct InputTraceFrame<'a> {
 }
 
 impl LocalPasteApp {
-    /// Construct a new app instance from the current environment config.
-    ///
-    /// Opens the embedded database, spawns the backend worker thread, and kicks
-    /// off the initial list request so the UI has data to render on first paint.
-    ///
-    /// # Returns
-    /// The initialized [`LocalPasteApp`] ready to be handed to `eframe`.
-    ///
-    /// # Errors
-    /// Returns an error if the database path is invalid or the underlying store
-    /// cannot be opened.
-    pub(crate) fn new() -> Result<Self, localpaste_core::AppError> {
-        let config = Config::from_env();
-        let db_path = config.db_path.clone();
-        let autosave_delay = Duration::from_millis(config.auto_save_interval);
-        let db = Database::new(&config.db_path)?;
-        let version_history_limit = db.paste_version_retention_limit();
-        info!("native GUI opened database at {}", config.db_path);
-
-        let locks = Arc::new(PasteLockManager::default());
-        let server_db = db.share()?;
-        let state = AppState::with_locks(config.clone(), server_db, locks.clone());
-        let allow_public = localpaste_core::config::env_flag_enabled("ALLOW_PUBLIC_ACCESS");
-        if allow_public {
-            warn!("Public access enabled - server will accept requests from any origin");
-        }
-        let server = EmbeddedServer::start(state, allow_public)?;
-        let server_addr = server.addr();
-        let server_used_fallback = server.used_fallback();
-
-        let lock_owner_id = crate::lock_owner::next_lock_owner_id("gui");
-        let backend = spawn_backend_with_locks_and_owner(
-            db,
-            config.max_paste_size,
-            locks.clone(),
-            lock_owner_id.clone(),
-        );
-        let highlight_worker = spawn_highlight_worker();
-
-        let mut app = Self {
-            backend,
-            all_pastes: Vec::new(),
-            pastes: Vec::new(),
-            selected_id: None,
-            selected_paste: None,
-            edit_name: String::new(),
-            edit_language: None,
-            edit_language_is_manual: false,
-            edit_tags: String::new(),
-            metadata_dirty: false,
-            metadata_save_in_flight: false,
-            metadata_save_request: None,
-            editor_find: EditorFindState::default(),
-            search_query: String::new(),
-            search_last_input_at: None,
-            search_last_sent: String::new(),
-            search_focus_requested: false,
-            active_collection: SidebarCollection::All,
-            active_language_filter: None,
-            properties_drawer_open: false,
-            command_palette_open: false,
-            command_palette_query: String::new(),
-            command_palette_selected: 0,
-            palette_search_results: Vec::new(),
-            palette_search_last_sent: String::new(),
-            palette_search_last_input_at: None,
-            pending_copy_action: None,
-            pending_selection_id: None,
-            pending_delete_id: None,
-            clipboard_outgoing: None,
-            active_buffer_epoch: 0,
-            virtual_editor_buffer: RopeBuffer::new(""),
-            virtual_editor_state: VirtualEditorState::default(),
-            virtual_editor_history: VirtualEditorHistory::default(),
-            virtual_layout: WrapLayoutCache::default(),
-            virtual_galley_cache: VirtualGalleyCache::default(),
-            virtual_line_scratch: String::new(),
-            virtual_caret_phase_start: Instant::now(),
-            virtual_drag_active: false,
-            virtual_viewport_height: 0.0,
-            virtual_line_height: 1.0,
-            virtual_wrap_width: 0.0,
-            virtual_pending_scroll_offset_y: None,
-            virtual_cursor_reveal: None,
-            virtual_viewport: EditorViewport::default(),
-            virtual_paste_applied_this_frame: false,
-            version_history_limit,
-            version_ui: VersionUiState::default(),
-            highlight_worker,
-            highlight_pending: None,
-            highlight_render: None,
-            highlight_staged: None,
-            highlight_staged_invalidation: None,
-            highlight_version: 0,
-            highlight_edit_hint: None,
-            db_path,
-            locks,
-            lock_owner_id,
-            _server: server,
-            server_addr,
-            server_used_fallback,
-            status: None,
-            toasts: VecDeque::with_capacity(TOAST_LIMIT),
-            pending_undo_restore_tokens: HashSet::new(),
-            export_result_rx: None,
-            save_status: SaveStatus::Saved,
-            last_edit_at: None,
-            save_in_flight: false,
-            save_request_revision: None,
-            autosave_delay,
-            shortcut_help_open: false,
-            focus_editor_next: false,
-            style_applied: false,
-            window_shown_once: false,
-            window_checked: false,
-            last_refresh_at: Instant::now(),
-            backend_event_poll_until: None,
-            query_perf: QueryPerfCounters::default(),
-            perf_log_enabled: env_flag_enabled("LOCALPASTE_EDITOR_PERF_LOG"),
-            frame_samples: VecDeque::with_capacity(PERF_SAMPLE_CAP),
-            last_frame_at: None,
-            last_perf_log_at: Instant::now(),
-            last_interaction_at: None,
-            last_virtual_click_at: None,
-            last_virtual_click_pos: None,
-            last_virtual_click_count: 0,
-            paste_as_new_pending_frames: 0,
-            paste_as_new_clipboard_requested_at: None,
-            editor_input_trace_enabled: env_flag_enabled("LOCALPASTE_EDITOR_INPUT_TRACE"),
-            highlight_trace_enabled: env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE"),
-            nav_probe: nav_probe::NavProbe::from_env(),
-            nav_probe_applied_commands: Vec::new(),
-        };
-        if !app.apply_nav_probe_seed_from_env() {
-            app.request_refresh();
-        }
-        Ok(app)
-    }
-
     fn acquire_paste_lock(&mut self, id: &str) -> bool {
         match self.locks.acquire(id, &self.lock_owner_id) {
             Ok(()) => true,
@@ -686,9 +557,16 @@ impl eframe::App for LocalPasteApp {
                         self.command_palette_open = !self.command_palette_open;
                         self.command_palette_query.clear();
                         self.command_palette_selected = 0;
-                        self.palette_search_results.clear();
-                        self.palette_search_last_sent.clear();
-                        self.palette_search_last_input_at = None;
+                        self.paste_picker_open = false;
+                    }
+                    RuntimeShortcutAction::TogglePastePicker => {
+                        self.paste_picker_open = !self.paste_picker_open;
+                        if self.paste_picker_open {
+                            self.palette_search_last_sent.clear();
+                            self.palette_search_last_input_at =
+                                Some(Instant::now() - SEARCH_DEBOUNCE);
+                        }
+                        self.command_palette_open = false;
                     }
                     RuntimeShortcutAction::ToggleProperties => {
                         self.properties_drawer_open = !self.properties_drawer_open;
@@ -717,9 +595,11 @@ impl eframe::App for LocalPasteApp {
             }
             // These fallback shortcuts bypass the primary event-to-command path, so they
             // must honor the same modal/reset fence as the main virtual-editor extractor.
-            if input.modifiers.command
-                && input.key_pressed(egui::Key::C)
-                && !editor_shortcuts_blocked_pre
+            if input.events.iter().any(|event| {
+                matches!(event, egui::Event::Key {
+                key: egui::Key::C, pressed: true, modifiers, ..
+            } if modifiers.command)
+            }) && !editor_shortcuts_blocked_pre
                 && !virtual_editor_focus_active_pre
                 && has_virtual_selection_pre
                 && !wants_keyboard_input_before
@@ -731,19 +611,29 @@ impl eframe::App for LocalPasteApp {
                     Self::merge_pasted_text(&mut pasted_text, text.as_str());
                 }
             }
-            if should_route_sidebar_arrows(
-                wants_keyboard_input_before,
-                input.modifiers,
-                !self.pastes.is_empty(),
-                virtual_editor_focus_active_pre,
-                self.command_palette_open,
-                version_overlay_open,
-                self.shortcut_help_open,
-            ) {
-                if input.key_pressed(egui::Key::ArrowDown) {
-                    sidebar_direction = 1;
-                } else if input.key_pressed(egui::Key::ArrowUp) {
-                    sidebar_direction = -1;
+            for event in &input.events {
+                if let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } = event
+                {
+                    if should_route_sidebar_arrows(
+                        wants_keyboard_input_before,
+                        *modifiers,
+                        !self.pastes.is_empty(),
+                        virtual_editor_focus_active_pre,
+                        self.command_palette_open || self.paste_picker_open,
+                        version_overlay_open,
+                        self.shortcut_help_open,
+                    ) {
+                        match key {
+                            egui::Key::ArrowDown => sidebar_direction = 1,
+                            egui::Key::ArrowUp => sidebar_direction = -1,
+                            _ => {}
+                        }
+                    }
                 }
             }
         });
@@ -762,6 +652,7 @@ impl eframe::App for LocalPasteApp {
         self.render_properties_drawer(ctx);
         self.render_editor_panel(ctx);
         self.render_command_palette(ctx);
+        self.render_paste_picker(ctx);
         self.render_shortcut_help(ctx);
 
         let virtual_editor_focus_post =

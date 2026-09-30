@@ -29,6 +29,9 @@ impl LocalPasteApp {
 
     /// Reuses the sidebar search query as an in-paste finder when it matches the loaded body.
     pub(super) fn prime_editor_find_from_sidebar_query(&mut self) {
+        if !matches!(self.search_scope, SearchScope::All | SearchScope::Body) {
+            return;
+        }
         if self.editor_find.open && !self.editor_find.query.is_empty() {
             return;
         }

@@ -619,6 +619,7 @@ fn backend_searches_full_content_and_lists_folders() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            scope: localpaste_core::models::paste::SearchScope::All,
             query: "SEARCHABLE BODY".to_string(),
             limit: 10,
             folder_id: None,
@@ -627,7 +628,12 @@ fn backend_searches_full_content_and_lists_folders() {
         .expect("send search");
 
     match recv_event(&backend.evt_rx) {
-        CoreEvent::SearchResults { query, items, .. } => {
+        CoreEvent::SearchResults {
+            scope: localpaste_core::models::paste::SearchScope::All,
+            query,
+            items,
+            ..
+        } => {
             assert_eq!(query, "SEARCHABLE BODY");
             assert_eq!(items.len(), 1);
             assert_eq!(items[0].name, "plain-title");
@@ -669,13 +675,18 @@ fn backend_palette_search_returns_content_matches() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPalette {
+            scope: localpaste_core::models::paste::SearchScope::All,
             query: "println!".to_string(),
             limit: 10,
         })
         .expect("send palette search");
 
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PaletteSearchResults { query, items } => {
+        CoreEvent::PaletteSearchResults {
+            scope: localpaste_core::models::paste::SearchScope::All,
+            query,
+            items,
+        } => {
             assert_eq!(query, "println!");
             assert_eq!(items.len(), 1);
             assert_eq!(items[0].name, "beta-entry");
@@ -824,3 +835,5 @@ fn backend_updates_paste_metadata() {
 }
 
 mod folder;
+
+mod search_scopes;

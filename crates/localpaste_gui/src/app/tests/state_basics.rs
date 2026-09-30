@@ -207,7 +207,10 @@ fn runtime_shortcuts_drive_full_update_state_and_commands() {
     assert!(palette.app.command_palette_open);
     assert!(palette.app.command_palette_query.is_empty());
     assert_eq!(palette.app.command_palette_selected, 0);
-    assert!(palette.app.palette_search_results.is_empty());
+    assert_eq!(
+        palette.app.palette_search_results[0].id, "beta",
+        "commands must preserve independent picker results"
+    );
 
     let mut legacy_palette = make_app();
     run_full_update_with_input(

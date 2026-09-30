@@ -29,9 +29,10 @@ Shortcut contract:
 - `Ctrl/Cmd+Delete`: delete selected paste when text input does not own focus.
 - `Ctrl/Cmd+F`: focus sidebar search.
 - `Ctrl/Cmd+Shift+P`: toggle command palette.
-- `Ctrl/Cmd+K`: toggle command palette (legacy alias).
+- `Ctrl/Cmd+K`: toggle the commands-only palette (also `Ctrl/Cmd+Shift+P`).
+- `Ctrl/Cmd+Shift+K`: toggle the separate paste picker.
 - `Ctrl/Cmd+I`: toggle Properties drawer.
-- `F1`: toggle keyboard shortcut help.
+- `F1`: toggle shortcut help; search descriptions or key combinations (for example `undo` or `Cmd+Shift+K`).
 - `Ctrl/Cmd+A/C/X/Z/Y`: standard virtual-editor select-all/copy/cut/undo/redo when editor owns focus.
 - `Ctrl/Cmd+Shift+Z`: redo editor edit when editor owns focus.
 - `Ctrl/Cmd+V`: insert when editor is focused; create new paste from clipboard when editor is not focused.
@@ -105,7 +106,10 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Language filtering is rendered in the sidebar under smart filters and always includes an explicit `All languages` clear option.
 - Language filtering stacks with the active smart collection instead of replacing it.
 - Sidebar list refresh runs on metadata projections (`name/tags/language/folder`); sidebar search and command-palette paste discovery run full-content substring search and return metadata summaries.
-- Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar full-content search primes this in-paste find bar when the sidebar query appears in the paste body.
+- The command palette searches actions only, including Export, Duplicate, Copy, Copy Link, Find, Properties, History, and Diff. The paste picker searches paste rows and retains Open, Copy, Copy Fenced, and Delete actions.
+- Sidebar and picker each retain their own session query and field scope: All fields (default), Title, Metadata, or Body. Metadata searches the existing title/tag/language/derived-term projection. Title and Metadata avoid loading bodies; every scope searches the full store before applying the result limit. HTTP and CLI search are unchanged.
+- Scope changes clear old results immediately; responses and backend cache keys carry the scope so delayed results cannot leak between contexts.
+- Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar All fields or Body search primes this in-paste find bar when the sidebar query appears in the paste body.
 - Find keeps query focus on `Enter`/`Shift+Enter` and advances to the next/previous match. Buttons and document jumps center the caret independently of editor focus.
 - Typing and paste reveal the caret with minimal scrolling; manual scrolling stays where you leave it until another edit or navigation action. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
 - Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.

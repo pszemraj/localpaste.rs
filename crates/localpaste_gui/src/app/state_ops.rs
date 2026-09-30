@@ -2,6 +2,7 @@
 
 /// Filter helpers for sidebar collections, languages, and export filenames.
 pub(super) mod filters;
+mod search;
 
 use super::deferred_saves::rollback_deferred_save_dispatches;
 use super::util::{format_fenced_code_block, parse_tags_csv};
@@ -253,6 +254,7 @@ impl LocalPasteApp {
                 self.try_apply_pending_selection();
             }
             CoreEvent::SearchResults {
+                scope,
                 query,
                 folder_id,
                 language,
@@ -266,6 +268,8 @@ impl LocalPasteApp {
                 if active_query.is_empty()
                     || query.trim() != active_query
                     || query.trim() != expected_sent_query
+                    || scope != self.search_scope
+                    || scope != self.search_sent_scope
                     || folder_id != expected_folder_id
                     || response_language != expected_language
                 {
@@ -282,19 +286,21 @@ impl LocalPasteApp {
                 self.pastes = self.filter_by_collection(&items);
                 self.ensure_selection_after_list_update();
             }
-            CoreEvent::PaletteSearchResults { query, items } => {
-                if !self.command_palette_open
-                    || self.command_palette_query.trim().is_empty()
-                    || query.trim() != self.command_palette_query.trim()
+            CoreEvent::PaletteSearchResults {
+                query,
+                items,
+                scope,
+            } => {
+                if !self.paste_picker_open
+                    || self.paste_picker_query.trim().is_empty()
+                    || query.trim() != self.paste_picker_query.trim()
+                    || scope != self.paste_picker_scope
+                    || scope != self.paste_picker_sent_scope
                 {
                     return;
                 }
                 self.palette_search_results = items;
-                // `command_palette_selected` is an absolute index across commands + results.
-                // Clamp in that same combined space so async result updates never remap into commands.
-                self.clamp_command_palette_selection_with_results_len(
-                    self.palette_search_results.len(),
-                );
+                self.clamp_paste_picker_selection(self.palette_search_results.len());
             }
             CoreEvent::PasteDeleted { id, undo_token } => {
                 let deleted_index = self.pastes.iter().position(|paste| paste.id == id);
@@ -469,164 +475,6 @@ impl LocalPasteApp {
         self.query_perf.list_requests_sent = self.query_perf.list_requests_sent.saturating_add(1);
         self.query_perf.list_last_sent_at = Some(sent_at);
         self.last_refresh_at = sent_at;
-    }
-
-    /// Updates the sidebar search query and starts debounce timing.
-    pub(super) fn set_search_query(&mut self, query: String) {
-        if self.search_query == query {
-            return;
-        }
-        self.search_query = query;
-        self.search_last_input_at = Some(Instant::now());
-    }
-
-    /// Updates command-palette query text and resets palette selection/search state.
-    pub(super) fn set_command_palette_query(&mut self, query: String) {
-        if self.command_palette_query == query {
-            return;
-        }
-        self.command_palette_query = query;
-        self.command_palette_selected = 0;
-        self.palette_search_last_input_at = Some(Instant::now());
-        // Never leave previous-query results visible/actionable after input changes.
-        self.palette_search_last_sent.clear();
-        self.palette_search_results.clear();
-    }
-
-    fn on_primary_filter_changed(&mut self) {
-        self.search_last_sent.clear();
-        if self.search_query.trim().is_empty() {
-            self.recompute_visible_pastes();
-            self.ensure_selection_after_list_update();
-        } else {
-            self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
-        }
-    }
-
-    /// Switches the active smart collection filter and triggers list/search refresh behavior.
-    pub(super) fn set_active_collection(&mut self, collection: SidebarCollection) {
-        if self.active_collection == collection {
-            return;
-        }
-        self.active_collection = collection;
-        self.on_primary_filter_changed();
-    }
-
-    /// Sets the active language filter after canonical normalization.
-    pub(super) fn set_active_language_filter(&mut self, language: Option<String>) {
-        let normalized = normalize_language_filter_value(language.as_deref());
-        if self.active_language_filter == normalized {
-            return;
-        }
-        self.active_language_filter = normalized;
-        self.on_primary_filter_changed();
-    }
-
-    /// Builds sorted language filter options from the currently known paste summaries.
-    /// # Returns
-    /// Canonicalized language values in ascending sort order.
-    pub(super) fn language_filter_options(&self) -> Vec<String> {
-        let mut langs: BTreeSet<String> = BTreeSet::new();
-        for paste in &self.all_pastes {
-            if let Some(lang) = normalize_language_filter_value(paste.language.as_deref()) {
-                langs.insert(lang);
-            }
-        }
-        langs.into_iter().collect()
-    }
-
-    /// Dispatches a debounced sidebar search request when inputs and filters are ready.
-    pub(super) fn maybe_dispatch_search(&mut self) {
-        let query = self.search_query.trim().to_string();
-        if query.is_empty() {
-            let should_restore_list =
-                self.search_last_input_at.take().is_some() || !self.search_last_sent.is_empty();
-            if should_restore_list {
-                self.search_last_sent.clear();
-                self.recompute_visible_pastes();
-                self.ensure_selection_after_list_update();
-            }
-            return;
-        }
-
-        if self.search_last_sent == query {
-            self.query_perf.search_skipped_cached =
-                self.query_perf.search_skipped_cached.saturating_add(1);
-            return;
-        }
-        let Some(last_input_at) = self.search_last_input_at else {
-            return;
-        };
-        if last_input_at.elapsed() < SEARCH_DEBOUNCE {
-            self.query_perf.search_skipped_debounce =
-                self.query_perf.search_skipped_debounce.saturating_add(1);
-            return;
-        }
-
-        let (folder_id, language) = self.search_backend_filters();
-        if !self.dispatch_backend_cmd(CoreCmd::SearchPastes {
-            query: query.clone(),
-            limit: DEFAULT_SEARCH_PASTES_LIMIT,
-            folder_id,
-            language,
-        }) {
-            // Avoid per-frame retry storms/toast spam while backend is unavailable.
-            // Re-arm debounce so we retry on a bounded cadence.
-            self.search_last_input_at = Some(Instant::now());
-            const SEARCH_UNAVAILABLE: &str = "Search failed: backend unavailable.";
-            if self.status.as_ref().map(|status| status.text.as_str()) != Some(SEARCH_UNAVAILABLE) {
-                self.set_status(SEARCH_UNAVAILABLE);
-            }
-            return;
-        }
-        self.search_last_sent = query;
-        self.query_perf.search_requests_sent =
-            self.query_perf.search_requests_sent.saturating_add(1);
-        self.query_perf.search_last_sent_at = Some(Instant::now());
-    }
-
-    /// Dispatches a debounced command-palette search request when applicable.
-    pub(super) fn maybe_dispatch_palette_search(&mut self) {
-        if !self.command_palette_open {
-            return;
-        }
-
-        let query = self.command_palette_query.trim().to_string();
-        if query.is_empty() {
-            if !self.palette_search_last_sent.is_empty() || !self.palette_search_results.is_empty()
-            {
-                self.palette_search_last_sent.clear();
-                self.palette_search_results.clear();
-            }
-            return;
-        }
-
-        if self.palette_search_last_sent == query {
-            return;
-        }
-        let Some(last_input_at) = self.palette_search_last_input_at else {
-            return;
-        };
-        if last_input_at.elapsed() < SEARCH_DEBOUNCE {
-            return;
-        }
-
-        if !self.dispatch_backend_cmd(CoreCmd::SearchPalette {
-            query: query.clone(),
-            limit: PALETTE_SEARCH_LIMIT,
-        }) {
-            // Mirror sidebar-search behavior: bounded retry cadence and deduped status.
-            self.palette_search_last_input_at = Some(Instant::now());
-            const PALETTE_SEARCH_UNAVAILABLE: &str =
-                "Command palette search failed: backend unavailable.";
-            if self.status.as_ref().map(|status| status.text.as_str())
-                != Some(PALETTE_SEARCH_UNAVAILABLE)
-            {
-                self.set_status(PALETTE_SEARCH_UNAVAILABLE);
-            }
-            return;
-        }
-        self.palette_search_last_sent = query;
     }
 
     /// Selects a paste by id, deferring selection when unsaved edits must be flushed first.

@@ -131,7 +131,11 @@ fn save_events_during_active_search_force_fresh_backend_search() {
 
         harness.app.maybe_dispatch_search();
         match recv_cmd(&harness.cmd_rx) {
-            CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "alpha"),
+            CoreCmd::SearchPastes {
+                scope: localpaste_core::models::paste::SearchScope::All,
+                query,
+                ..
+            } => assert_eq!(query, "alpha"),
             other => panic!("unexpected command: {:?}", other),
         }
     }

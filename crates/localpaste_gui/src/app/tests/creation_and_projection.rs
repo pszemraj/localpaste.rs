@@ -138,7 +138,11 @@ fn paste_created_during_active_search_keeps_visible_projection_and_invalidates_s
 
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "alpha"),
+        CoreCmd::SearchPastes {
+            scope: localpaste_core::models::paste::SearchScope::All,
+            query,
+            ..
+        } => assert_eq!(query, "alpha"),
         other => panic!("unexpected command: {:?}", other),
     }
 }

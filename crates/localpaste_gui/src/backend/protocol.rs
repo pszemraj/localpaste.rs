@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use localpaste_core::diff::DiffResponse;
 use localpaste_core::models::{
     folder::Folder,
-    paste::{Paste, PasteMeta, VersionMeta, VersionSnapshot},
+    paste::{Paste, PasteMeta, SearchScope, VersionMeta, VersionSnapshot},
 };
 use localpaste_core::semantic::DerivedMeta;
 use ropey::Rope;
@@ -24,13 +24,18 @@ pub enum CoreCmd {
     },
     /// Search pastes with optional folder/language filters.
     SearchPastes {
+        scope: SearchScope,
         query: String,
         limit: usize,
         folder_id: Option<String>,
         language: Option<String>,
     },
     /// Search metadata globally for command palette discovery.
-    SearchPalette { query: String, limit: usize },
+    SearchPalette {
+        scope: SearchScope,
+        query: String,
+        limit: usize,
+    },
     /// Load a single paste by id for display in the editor pane.
     GetPaste { id: String },
     /// Load a comparison target for the detached diff modal.
@@ -119,6 +124,7 @@ pub enum CoreEvent {
     PasteList { items: Vec<PasteSummary> },
     /// Response containing ranked search results.
     SearchResults {
+        scope: SearchScope,
         query: String,
         folder_id: Option<String>,
         language: Option<String>,
@@ -126,6 +132,7 @@ pub enum CoreEvent {
     },
     /// Response containing command palette search results.
     PaletteSearchResults {
+        scope: SearchScope,
         query: String,
         items: Vec<PasteSummary>,
     },
