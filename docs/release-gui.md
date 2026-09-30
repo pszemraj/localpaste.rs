@@ -7,6 +7,10 @@ Workflow and helper-script entrypoints:
 - [`.github/scripts/release_gui_prepare.py`](../.github/scripts/release_gui_prepare.py)
 - [`.github/scripts/release_gui_collect.py`](../.github/scripts/release_gui_collect.py)
 
+## Workflow triggers
+
+Release packaging runs on version tags or manual dispatch. Packaging verification is manual-only. Workflow lint and release-helper tests run on manual dispatch or an explicit PR review request, with workflow/script path filters. The existing lint job has a ten-minute timeout and cancels superseded validation runs. Ordinary PR pushes, main pushes, and schedules do not trigger these workflows.
+
 ## Modes
 
 `release-gui.yml` supports two source modes:
