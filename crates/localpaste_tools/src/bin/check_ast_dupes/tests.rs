@@ -106,7 +106,7 @@ fn parse_helpers_reject_out_of_range_values() {
 fn test_module_context_applies_to_inline_and_external_helpers() {
     let temp = TempDir::new().expect("temp dir");
     let root = temp.path().join("src");
-    fs::create_dir_all(root.join("support")).expect("create fixture directories");
+    fs::create_dir_all(&root).expect("create fixture directory");
     write_file(
         &root.join("lib.rs"),
         r#"
@@ -129,10 +129,7 @@ fn test_module_context_applies_to_inline_and_external_helpers() {
         &root.join("support.rs"),
         "mod nested; pub(crate) fn setup() { nested::setup_nested(); }",
     );
-    write_file(
-        &root.join("support/nested.rs"),
-        "pub(crate) fn setup_nested() {}",
-    );
+    write_file(&root.join("nested.rs"), "pub(crate) fn setup_nested() {}");
 
     let mut args = base_args(root.clone());
     args.fail_on_findings = true;
@@ -154,34 +151,66 @@ fn test_module_context_applies_to_inline_and_external_helpers() {
 }
 
 #[test]
-fn derive_attribute_callbacks_count_as_live_references() {
+fn attribute_callback_refs_preserve_live_callbacks_without_masking_unrelated_symbols() {
     let temp = TempDir::new().expect("temp dir");
     let root = temp.path().join("src");
     fs::create_dir_all(&root).expect("create fixture directory");
     write_file(
         &root.join("main.rs"),
         r#"
-        #[derive(Parser)]
+        #[derive(Default)]
+        struct Defaults;
+        #[allow(dead_code)]
+        struct Allowed;
         struct Args {
-            #[arg(value_parser = parse_limit)]
+            #[arg(value_parser = callbacks::parse_limit)]
             limit: usize,
-            #[arg(value_parser = parsers::parse_count)]
-            count: usize,
+            #[serde(default = "callbacks::parse_default")]
+            defaulted: usize,
         }
-        fn parse_limit(raw: &str) -> usize { parse_number(raw) }
-        fn parse_number(raw: &str) -> usize { raw.parse().unwrap() }
-        mod parsers;
+        #[cfg_attr(unix, serde(default = "callbacks::parse_cfg_default"))]
+        struct CfgDefault;
+        #[cfg(test)]
+        struct TestOnly {
+            #[arg(value_parser = only_test_callback)]
+            value: usize,
+        }
+        mod callbacks {
+            pub(crate) fn parse_limit(raw: &str) -> usize { raw.len() }
+            pub(crate) fn parse_default() -> usize { 1 }
+            pub(crate) fn parse_cfg_default() -> usize { 2 }
+        }
+        fn Default() {}
+        fn dead_code() {}
+        fn only_test_callback(raw: &str) -> usize { raw.len() }
         fn main() {}
         "#,
     );
-    write_file(
-        &root.join("parsers.rs"),
-        "pub(crate) fn parse_count(raw: &str) -> usize { raw.len() }
-         pub fn default_count() -> usize { parse_count(\"one\") }",
-    );
-    let mut args = base_args(root);
-    args.fail_on_findings = true;
-    run(args).expect("attribute callbacks and their callees must remain live");
+    let mut scan = scan_sources(temp.path(), collect_rust_files(&root).unwrap(), 5, false);
+    let callback_refs = HashSet::from([
+        "parse_cfg_default".to_string(),
+        "parse_default".to_string(),
+        "parse_limit".to_string(),
+    ]);
+    assert_eq!(scan.attribute_refs, callback_refs);
+    let include_tests = scan_sources(temp.path(), collect_rust_files(&root).unwrap(), 5, true);
+    assert_eq!(include_tests.attribute_refs, callback_refs);
+    for (id, function) in scan.functions.iter_mut().enumerate() {
+        function.id = id;
+    }
+    let args = base_args(root);
+    let resolved = resolve_callers(&scan.functions);
+    let dead = find_likely_dead_symbols(&scan.functions, &resolved, &scan.attribute_refs, &args);
+    let dead_names: HashSet<&str> = dead
+        .iter()
+        .map(|finding| scan.functions[finding.id].simple_name.as_str())
+        .collect();
+    assert!(dead_names.contains("Default"));
+    assert!(dead_names.contains("dead_code"));
+    assert!(dead_names.contains("only_test_callback"));
+    assert!(!dead_names.contains("parse_cfg_default"));
+    assert!(!dead_names.contains("parse_default"));
+    assert!(!dead_names.contains("parse_limit"));
 }
 
 #[test]
