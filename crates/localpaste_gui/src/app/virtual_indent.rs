@@ -41,11 +41,17 @@ impl LocalPasteApp {
         let mut replacement = String::new();
         let mut edits = Vec::new();
         let mut line_start = start;
-        // split_inclusive preserves the final newline without indenting the following line.
-        for line in original.split_inclusive('\n') {
+        // Use the buffer's line model (including CR and Unicode separators),
+        // retaining terminators without indenting the next unselected line.
+        for line in self
+            .virtual_editor_buffer
+            .rope()
+            .lines_at(first)
+            .take(last - first + 1)
+        {
             let removed = if !unindent {
                 0
-            } else if line.starts_with('\t') {
+            } else if line.chars().next() == Some('\t') {
                 1
             } else {
                 line.chars().take(4).take_while(|ch| *ch == ' ').count()
@@ -56,7 +62,7 @@ impl LocalPasteApp {
                 replacement.push_str("    ");
             }
             replacement.extend(line.chars().skip(removed));
-            line_start += line.chars().count();
+            line_start += line.len_chars();
         }
         if replacement == original {
             return false;

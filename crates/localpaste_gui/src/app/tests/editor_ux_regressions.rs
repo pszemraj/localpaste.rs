@@ -143,11 +143,14 @@ fn long_wrapped_document_reveals_jumps_eof_edits_and_distant_find_without_focus(
 
 #[test]
 fn indentation_preserves_direction_excludes_next_line_and_is_one_undo_step() {
-    for reverse in [false, true] {
+    for (ending, reverse) in ["\n", "\r\n", "\r", "\u{2028}", "\u{85}"]
+        .into_iter()
+        .flat_map(|ending| [false, true].map(|reverse| (ending, reverse)))
+    {
         let mut harness = make_app();
         let ctx = egui::Context::default();
-        let text = "  α\n\tβ\nuntouched\n";
-        harness.app.reset_virtual_editor(text);
+        let text = format!("  α{ending}\tβ{ending}untouched{ending}");
+        harness.app.reset_virtual_editor(&text);
         let end = harness.app.virtual_editor_buffer.line_col_to_char(2, 0);
         let (anchor, cursor) = if reverse { (end, 0) } else { (0, end) };
         harness.app.virtual_editor_state.restore_selection(
@@ -156,10 +159,13 @@ fn indentation_preserves_direction_excludes_next_line_and_is_one_undo_step() {
             text.chars().count(),
         );
         for (command, expected) in [
-            (VirtualInputCommand::Unindent, "α\nβ\nuntouched\n"),
+            (
+                VirtualInputCommand::Unindent,
+                format!("α{ending}β{ending}untouched{ending}"),
+            ),
             (
                 VirtualInputCommand::InsertTab,
-                "      α\n    \tβ\nuntouched\n",
+                format!("      α{ending}    \tβ{ending}untouched{ending}"),
             ),
         ] {
             harness.app.apply_virtual_commands(&ctx, &[command]);
@@ -242,9 +248,11 @@ fn native_deactivation_preserves_selection_and_releases_editor_ownership() {
             ..Default::default()
         },
     );
-    assert!(output.platform_output.commands.iter().any(
-        |command| matches!(command, egui::OutputCommand::CopyText(text) if text == "ont")
-    ));
+    assert!(output
+        .platform_output
+        .commands
+        .iter()
+        .any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text == "ont")));
     assert!(!harness.app.virtual_editor_state.has_focus);
     run_full_update(
         &mut harness.app,

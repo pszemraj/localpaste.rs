@@ -41,7 +41,7 @@ Shortcut contract:
 Navigation/selection contract:
 
 - Global sidebar navigation via `Up`/`Down` is bare-arrow only; modified arrows (`Ctrl`/`Alt`/`Shift`/`Cmd`) stay in editor-selection semantics.
-- `Tab` indents selected lines; without a selection it inserts four spaces. `Shift+Tab` removes one leading tab or up to four spaces from each affected line. Directional selections survive indentation and undo/redo; each indentation is one undo step.
+- `Tab` indents selected lines; without a selection it inserts four spaces. `Shift+Tab` removes one leading tab or up to four spaces from each affected line. This uses the buffer's line boundaries, including CR and Unicode separators, and preserves original line endings. Directional selections survive indentation and undo/redo; each indentation is one undo step.
 - Window deactivation releases editor keyboard ownership without losing caret or selection. `Cmd+C` still copies that selection when no other text input owns the keyboard; `Cmd+V` creates a new paste. Click the editor to resume editing.
 - Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
