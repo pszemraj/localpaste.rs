@@ -356,18 +356,60 @@ fn command_palette_arrows_keep_first_and_last_commands_visible() {
 
 #[test]
 fn paste_picker_reports_pending_searches_and_discards_closed_results() {
-    let mut harness = make_app();
+    let (mut harness, _event_tx) = make_app_with_event_tx();
     let ctx = egui::Context::default();
     harness.app.open_paste_picker();
     harness.app.set_paste_picker_query("needle".into());
     harness.app.palette_search_last_sent = "needle".into();
     harness.app.palette_search_pending = true;
 
-    let _ = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
-    let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    let picker_input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1100.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, picker_input());
+    let output = run_full_update_with_input(&mut harness.app, &ctx, picker_input());
     assert!(output.shapes.iter().any(|clipped| {
         matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.job.text.contains("Searching..."))
     }));
+
+    harness.app.apply_event(CoreEvent::PaletteSearchFailed {
+        query: "stale".into(),
+        scope: SearchScope::All,
+        message: "Palette search failed: stale request".into(),
+    });
+    assert!(harness.app.palette_search_pending);
+    assert!(harness.app.status.is_none());
+
+    harness.app.apply_event(CoreEvent::PaletteSearchFailed {
+        query: "needle".into(),
+        scope: SearchScope::All,
+        message: "Palette search failed: disk unavailable".into(),
+    });
+    assert!(!harness.app.palette_search_pending);
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Palette search failed: disk unavailable")
+    );
+
+    harness.app.palette_search_pending = true;
+    harness.app.handle_backend_event_channel_disconnected();
+    assert!(!harness.app.palette_search_pending);
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Paste picker search canceled: backend unavailable.")
+    );
 
     harness.app.apply_event(CoreEvent::PaletteSearchResults {
         query: "needle".into(),
@@ -375,8 +417,8 @@ fn paste_picker_reports_pending_searches_and_discards_closed_results() {
         items: Vec::new(),
     });
     assert!(!harness.app.palette_search_pending);
-    let _ = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
-    let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, picker_input());
+    let output = run_full_update_with_input(&mut harness.app, &ctx, picker_input());
     assert!(output.shapes.iter().any(|clipped| {
         matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.job.text.contains("No matching pastes"))
     }));

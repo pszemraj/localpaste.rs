@@ -162,16 +162,18 @@ fn store_search_items_in_cache(
     items
 }
 
-fn run_cached_search<F, E>(
+fn run_cached_search<F, E, X>(
     state: &mut WorkerState,
     key: SearchCacheKey,
     op: &str,
     error_prefix: &str,
     fetch_items: F,
     to_event: E,
+    to_error: X,
 ) where
     F: FnOnce(&WorkerState) -> Result<Vec<PasteSummary>, String>,
     E: Fn(Vec<PasteSummary>) -> CoreEvent,
+    X: Fn(String) -> CoreEvent,
 {
     let started = Instant::now();
     if let Some(items) = try_cached_search_items(state, &key, op, started) {
@@ -187,11 +189,9 @@ fn run_cached_search<F, E>(
         }
         Err(err) => {
             error!("backend {} failed: {}", op, err);
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("{} failed: {}", error_prefix, err),
-            );
+            let _ = state
+                .evt_tx
+                .send(to_error(format!("{} failed: {}", error_prefix, err)));
         }
     }
 }
@@ -204,15 +204,17 @@ struct SearchVariant {
     error_prefix: &'static str,
 }
 
-fn handle_search_variant<E>(
+fn handle_search_variant<E, X>(
     state: &mut WorkerState,
     query: String,
     limit: usize,
     variant: SearchVariant,
     scope: SearchScope,
     to_event: E,
+    to_error: X,
 ) where
     E: Fn(String, Option<String>, Option<String>, Vec<PasteSummary>) -> CoreEvent,
+    X: Fn(String) -> CoreEvent,
 {
     let SearchVariant {
         collection,
@@ -272,6 +274,7 @@ fn handle_search_variant<E>(
                 .map_err(|err| err.to_string())
         },
         move |items| to_event(query.clone(), folder_id.clone(), language.clone(), items),
+        to_error,
     );
 }
 
@@ -376,24 +379,36 @@ pub(super) fn handle_search(
                 language,
                 items,
             },
-        ),
-        SearchRoute::Palette => handle_search_variant(
-            state,
-            query,
-            limit,
-            SearchVariant {
-                collection: SidebarCollection::All,
-                folder_id: None,
-                language: None,
-                op: "palette_search",
-                error_prefix: "Palette search",
+            |message| CoreEvent::Error {
+                source: CoreErrorSource::Other,
+                message,
             },
-            scope,
-            move |query, _folder_id, _language, items| CoreEvent::PaletteSearchResults {
+        ),
+        SearchRoute::Palette => {
+            let error_query = query.clone();
+            handle_search_variant(
+                state,
                 query,
-                items,
+                limit,
+                SearchVariant {
+                    collection: SidebarCollection::All,
+                    folder_id: None,
+                    language: None,
+                    op: "palette_search",
+                    error_prefix: "Palette search",
+                },
                 scope,
-            },
-        ),
+                move |query, _folder_id, _language, items| CoreEvent::PaletteSearchResults {
+                    query,
+                    items,
+                    scope,
+                },
+                move |message| CoreEvent::PaletteSearchFailed {
+                    query: error_query.clone(),
+                    scope,
+                    message,
+                },
+            )
+        }
     }
 }

@@ -139,6 +139,12 @@ pub enum CoreEvent {
         query: String,
         items: Vec<PasteSummary>,
     },
+    /// A paste-picker search could not complete.
+    PaletteSearchFailed {
+        scope: SearchScope,
+        query: String,
+        message: String,
+    },
     /// Response containing the full paste payload requested by id.
     PasteLoaded { paste: Paste },
     /// Loading a specific paste failed due to backend/storage error.

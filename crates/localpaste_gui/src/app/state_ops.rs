@@ -75,11 +75,13 @@ impl LocalPasteApp {
 
     /// Clears UI state that can only complete via backend events after the event channel closes.
     pub(super) fn handle_backend_event_channel_disconnected(&mut self) {
-        if self.pending_undo_restore_tokens.is_empty() {
-            return;
+        let picker_search_pending = std::mem::take(&mut self.palette_search_pending);
+        if !self.pending_undo_restore_tokens.is_empty() {
+            self.pending_undo_restore_tokens.clear();
+            self.set_status("Undo delete canceled: backend unavailable.");
+        } else if picker_search_pending {
+            self.set_status("Paste picker search canceled: backend unavailable.");
         }
-        self.pending_undo_restore_tokens.clear();
-        self.set_status("Undo delete canceled: backend unavailable.");
     }
 
     fn send_update_paste_or_mark_failed(&mut self, command: CoreCmd, mode: &str) -> bool {
@@ -303,6 +305,21 @@ impl LocalPasteApp {
                 self.palette_search_pending = false;
                 self.palette_search_results = items;
                 self.clamp_paste_picker_selection(self.palette_search_results.len());
+            }
+            CoreEvent::PaletteSearchFailed {
+                scope,
+                query,
+                message,
+            } => {
+                if !self.paste_picker_open
+                    || scope != self.paste_picker_scope
+                    || query != self.paste_picker_query.trim()
+                    || self.palette_search_last_sent != query
+                {
+                    return;
+                }
+                self.palette_search_pending = false;
+                self.set_status(message);
             }
             CoreEvent::PasteDeleted { id, undo_token } => {
                 let deleted_index = self.pastes.iter().position(|paste| paste.id == id);
