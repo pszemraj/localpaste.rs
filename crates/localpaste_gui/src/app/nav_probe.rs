@@ -82,15 +82,24 @@ impl NavProbe {
     }
 
     fn write_frame(&mut self, frame: &NavProbeFrame) {
-        if let Err(err) = serde_json::to_writer(&mut self.file, frame) {
-            warn!("failed to serialize navigation probe frame: {err}");
-            return;
-        }
-        if let Err(err) = self.file.write_all(b"\n").and_then(|_| self.file.flush()) {
+        let record = match serialize_frame_record(frame) {
+            Ok(record) => record,
+            Err(err) => {
+                warn!("failed to serialize navigation probe frame: {err}");
+                return;
+            }
+        };
+        if let Err(err) = self.file.write_all(&record).and_then(|_| self.file.flush()) {
             warn!("failed to write navigation probe frame: {err}");
         }
         self.frame_index = self.frame_index.saturating_add(1);
     }
+}
+
+fn serialize_frame_record(frame: &NavProbeFrame) -> Result<Vec<u8>, serde_json::Error> {
+    let mut record = serde_json::to_vec(frame)?;
+    record.push(b'\n');
+    Ok(record)
 }
 
 #[derive(Debug, Serialize)]
@@ -504,5 +513,83 @@ mod tests {
         );
         assert_eq!(parse_nav_probe_seed_cursor("", &buffer), None);
         assert_eq!(parse_nav_probe_seed_cursor("bad", &buffer), None);
+    }
+
+    #[test]
+    fn frame_record_is_a_self_contained_ndjson_line() {
+        let frame = NavProbeFrame {
+            event: "nav_probe_frame",
+            scenario: Some("scenario\nlabel".to_string()),
+            platform: "macos",
+            frame_index: 4,
+            elapsed_ms: 12,
+            raw_events: vec![ProbeEvent {
+                kind: "key".to_string(),
+                key: Some("ArrowUp".to_string()),
+                physical_key: None,
+                pressed: Some(true),
+                repeat: Some(false),
+                modifiers: ModifierSnapshot::default(),
+                text_chars: None,
+            }],
+            candidate_commands_if_editor_focused: vec!["MoveUp".to_string()],
+            applied_commands: vec!["MoveUp".to_string()],
+            focus: FocusSnapshot {
+                virtual_editor: true,
+                sidebar_search: false,
+                editor_title: false,
+                editor_find: false,
+                command_palette_query: false,
+                properties_name: false,
+                properties_tags: false,
+                diff_query: false,
+                wants_keyboard_input: true,
+            },
+            cursor: CursorSnapshot {
+                char_index: 0,
+                line: 0,
+                col: 0,
+                buffer_len_chars: 0,
+            },
+            selection: None,
+            editor: EditorSnapshot {
+                buffer_hash: "0000000000000000".to_string(),
+                buffer_len_chars: 0,
+                buffer_revision: 0,
+                viewport_height: 0.0,
+                line_height: 0.0,
+                wrap_width: 0.0,
+                pending_scroll_offset_y: None,
+                follow_cursor_next_frame: false,
+                caret_visible: true,
+                viewport_bounds: None,
+                caret_bounds: None,
+                scroll_offset_y: 0.0,
+            },
+            app: AppSnapshot {
+                selected_id: None,
+                search_query_len: 0,
+                search_query_hash: "0000000000000000".to_string(),
+                edit_name_len: 0,
+                edit_name_hash: "0000000000000000".to_string(),
+                edit_tags_len: 0,
+                edit_tags_hash: "0000000000000000".to_string(),
+                command_palette_query_len: 0,
+                command_palette_query_hash: "0000000000000000".to_string(),
+                command_palette_open: false,
+                properties_drawer_open: false,
+                shortcut_help_open: false,
+                history_modal_open: false,
+                diff_modal_open: false,
+            },
+        };
+
+        let record = serialize_frame_record(&frame).expect("serializes frame");
+        assert_eq!(record.last(), Some(&b'\n'));
+        assert!(!record[..record.len() - 1].contains(&b'\n'));
+        let decoded: serde_json::Value =
+            serde_json::from_slice(&record[..record.len() - 1]).expect("valid JSON record");
+        assert_eq!(decoded["event"], "nav_probe_frame");
+        assert_eq!(decoded["scenario"], "scenario\nlabel");
     }
 }
