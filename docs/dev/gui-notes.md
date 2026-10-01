@@ -107,7 +107,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Language filtering stacks with the active smart collection instead of replacing it.
 - Sidebar list refresh reads metadata projections; scoped sidebar and paste-picker searches return metadata summaries.
 - The Documents smart filter groups Markdown, prose notes, reStructuredText, and LaTeX. Document classification, Markdown scopes, and text-export extensions follow [Language Detection And Highlighting](../language-detection.md).
-- Editor geometry uses the resolved font even if a native style change removes the named Editor text style. Startup, first creation, and populated restart have regression coverage without test-only style registration.
+- The app selects its dark theme before installing custom fonts and spacing, including on systems using a light theme. Editor geometry uses the resolved font even if a later style change removes the named Editor text style. Startup, first creation, and populated restart have regression coverage with light-system input and without test-only style registration.
 - The command palette searches actions only, including Export, Duplicate, Copy, Copy Link, Find, Properties, History, and Diff. The paste picker searches paste rows and retains Open, Copy, Copy Fenced, and Delete actions.
 - Command palette, paste picker, and shortcut help are mutually exclusive: opening one closes the other two so its query owns keyboard input.
 - Command-palette keyboard navigation and query changes reveal the selected command within the scroll area.

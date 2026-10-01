@@ -10,7 +10,23 @@ fn pump_until(
 ) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        run_full_update(app, ctx, vec![]);
+        run_full_update_with_input(
+            app,
+            ctx,
+            egui::RawInput {
+                system_theme: Some(egui::Theme::Light),
+                ..Default::default()
+            },
+        );
+        let style = ctx.style();
+        assert!(
+            style.visuals.dark_mode,
+            "system theme must not replace app styling"
+        );
+        assert!(style
+            .text_styles
+            .contains_key(&egui::TextStyle::Name(EDITOR_TEXT_STYLE.into())));
+        assert_eq!(style.spacing.item_spacing, egui::vec2(12.0, 8.0));
         if ready(app) {
             return;
         }
