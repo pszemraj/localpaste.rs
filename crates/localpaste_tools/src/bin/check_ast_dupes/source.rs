@@ -244,7 +244,10 @@ impl<'ast> Visit<'ast> for ModuleLinks {
                         ),
                     ]
                 },
-                |path| vec![(path, self.path_attr_dir.clone())],
+                |path| {
+                    let module_dir = path.parent().unwrap_or(&self.path_attr_dir).to_path_buf();
+                    vec![(path, module_dir)]
+                },
             );
             for (path, module_dir) in candidates {
                 if let Ok(path) = path.canonicalize() {

@@ -106,7 +106,7 @@ fn parse_helpers_reject_out_of_range_values() {
 fn test_module_context_applies_to_inline_and_external_helpers() {
     let temp = TempDir::new().expect("temp dir");
     let root = temp.path().join("src");
-    fs::create_dir_all(&root).expect("create fixture directory");
+    fs::create_dir_all(root.join("fixtures")).expect("create fixture directory");
     write_file(
         &root.join("lib.rs"),
         r#"
@@ -116,7 +116,7 @@ fn test_module_context_applies_to_inline_and_external_helpers() {
             #[test] fn uses_helper() { test_helper(); }
         }
         #[cfg(test)]
-        #[path = "support.rs"]
+        #[path = "fixtures/support.rs"]
         mod fixture_support;
         pub struct State;
         #[cfg(test)]
@@ -126,10 +126,13 @@ fn test_module_context_applies_to_inline_and_external_helpers() {
         "#,
     );
     write_file(
-        &root.join("support.rs"),
+        &root.join("fixtures/support.rs"),
         "mod nested; pub(crate) fn setup() { nested::setup_nested(); }",
     );
-    write_file(&root.join("nested.rs"), "pub(crate) fn setup_nested() {}");
+    write_file(
+        &root.join("fixtures/nested.rs"),
+        "pub(crate) fn setup_nested() {}",
+    );
 
     let mut args = base_args(root.clone());
     args.fail_on_findings = true;
