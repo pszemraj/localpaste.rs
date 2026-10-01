@@ -353,6 +353,7 @@ fn make_app() -> TestHarness {
         palette_search_pending: false,
         pending_copy_action: None,
         pending_selection_id: None,
+        picker_selection_pin: None,
         pending_delete_id: None,
         clipboard_outgoing: None,
         active_buffer_epoch: 0,

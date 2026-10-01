@@ -481,3 +481,156 @@ fn paste_picker_uses_sidebar_language_guardrail_and_reveals_keyboard_selection()
         other => panic!("unexpected picker action: {other:?}"),
     }
 }
+
+#[test]
+fn paste_picker_copy_loads_the_requested_result() {
+    let mut harness = make_app();
+    harness.app.open_paste_picker();
+    harness.app.queue_palette_copy("picked".into(), false);
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "picked"),
+        other => panic!("unexpected picker copy action: {other:?}"),
+    }
+
+    let mut picked = Paste::new("copied content".into(), "Picked".into());
+    picked.id = "picked".into();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteLoaded { paste: picked });
+    assert_eq!(
+        harness.app.clipboard_outgoing.as_deref(),
+        Some("copied content")
+    );
+    assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
+fn picker_open_and_copy_keep_off_sidebar_selection_until_sidebar_context_changes() {
+    for copy in [false, true] {
+        let mut harness = make_app();
+        harness.app.search_query = "sidebar".into();
+        harness.app.search_last_sent = "sidebar".into();
+        harness.app.all_pastes = vec![test_summary("alpha", "Alpha", None, 10)];
+        harness.app.pastes = vec![test_summary("alpha", "Alpha", None, 10)];
+        harness.app.open_paste_picker();
+        if copy {
+            harness.app.queue_palette_copy("picked".into(), false);
+        } else {
+            harness.app.open_palette_selection("picked".into());
+        }
+        assert_eq!(
+            harness.app.picker_selection_pin.as_deref(),
+            Some("picked"),
+            "copy={copy}"
+        );
+        match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::GetPaste { id } => assert_eq!(id, "picked"),
+            other => panic!("unexpected picker action: {other:?}"),
+        }
+
+        let mut picked = Paste::new("picked content".into(), "Picked".into());
+        picked.id = "picked".into();
+        picked.language = Some("rust".into());
+        harness
+            .app
+            .apply_event(CoreEvent::PasteLoaded { paste: picked });
+        let mut autosaved = Paste::new("picked content".into(), "Picked".into());
+        autosaved.id = "picked".into();
+        autosaved.language = Some("rust".into());
+        harness
+            .app
+            .apply_event(CoreEvent::PasteSaved { paste: autosaved });
+        harness.app.apply_event(CoreEvent::PasteList {
+            items: vec![test_summary("alpha", "Alpha", None, 10)],
+        });
+        assert!(
+            harness
+                .app
+                .all_pastes
+                .iter()
+                .all(|summary| summary.id != "picked"),
+            "bounded sidebar refresh must not revoke a picker selection"
+        );
+        harness.app.search_last_sent = "sidebar".into();
+        harness.app.apply_event(CoreEvent::SearchResults {
+            collection: crate::backend::SidebarCollection::All,
+            query: "sidebar".into(),
+            scope: SearchScope::All,
+            folder_id: None,
+            language: None,
+            items: vec![test_summary("alpha", "Alpha", None, 10)],
+        });
+        assert_eq!(harness.app.selected_id.as_deref(), Some("picked"));
+
+        harness.app.set_search_query("changed".into());
+        assert!(harness.app.picker_selection_pin.is_none());
+        harness.app.search_last_sent = "changed".into();
+        harness.app.apply_event(CoreEvent::SearchResults {
+            collection: crate::backend::SidebarCollection::All,
+            query: "changed".into(),
+            scope: SearchScope::All,
+            folder_id: None,
+            language: None,
+            items: vec![test_summary("alpha", "Alpha", None, 10)],
+        });
+        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    }
+}
+
+#[test]
+fn picker_selection_pin_survives_deferred_open_and_clears_after_target_failure() {
+    let mut harness = make_app();
+    harness.app.search_query = "sidebar".into();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("picked", "Picked", None, 10));
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.open_paste_picker();
+    harness.app.open_palette_selection("picked".into());
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("picked"));
+    assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("picked"));
+
+    let mut saved = Paste::new("saved alpha".into(), "Alpha".into());
+    saved.id = "alpha".into();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+    assert_eq!(harness.app.selected_id.as_deref(), Some("picked"));
+    assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("picked"));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePasteVirtual { id, .. } => assert_eq!(id, "alpha"),
+        other => panic!("unexpected deferred save command: {other:?}"),
+    }
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "picked"),
+        other => panic!("unexpected deferred picker command: {other:?}"),
+    }
+
+    harness.app.apply_event(CoreEvent::PasteLoadFailed {
+        id: "picked".into(),
+        message: "picked no longer exists".into(),
+    });
+    assert!(harness.app.picker_selection_pin.is_none());
+    assert!(harness.app.selected_id.is_none());
+}
+
+#[test]
+fn picker_selection_pin_clears_when_the_target_is_deleted() {
+    let mut harness = make_app();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("picked", "Picked", None, 10));
+    harness.app.open_paste_picker();
+    harness.app.open_palette_selection("picked".into());
+    assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("picked"));
+    let _ = recv_cmd(&harness.cmd_rx);
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "picked".into(),
+        undo_token: None,
+    });
+    assert!(harness.app.picker_selection_pin.is_none());
+    assert!(harness.app.selected_id.is_none());
+}

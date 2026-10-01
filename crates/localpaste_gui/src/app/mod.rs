@@ -109,6 +109,7 @@ pub(crate) struct LocalPasteApp {
     palette_search_pending: bool,
     pending_copy_action: Option<PaletteCopyAction>,
     pending_selection_id: Option<String>,
+    picker_selection_pin: Option<String>,
     pending_delete_id: Option<String>,
     clipboard_outgoing: Option<String>,
     active_buffer_epoch: u64,

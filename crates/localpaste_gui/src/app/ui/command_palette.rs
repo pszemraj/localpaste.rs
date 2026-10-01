@@ -338,9 +338,12 @@ impl LocalPasteApp {
                 self.pending_copy_action = None;
                 return;
             }
+            self.picker_selection_pin = Some(id);
             self.set_status("Loading paste for copy...");
             return;
         }
+
+        self.picker_selection_pin = Some(id.clone());
 
         if self.selected_paste.is_some() {
             self.try_complete_pending_copy();
@@ -364,7 +367,8 @@ impl LocalPasteApp {
 
     /// Opens the selected palette result in the main editor view.
     pub(crate) fn open_palette_selection(&mut self, id: String) {
-        if self.select_paste(id) {
+        if self.select_paste(id.clone()) {
+            self.picker_selection_pin = Some(id);
             self.close_paste_picker();
         }
     }

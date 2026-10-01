@@ -310,6 +310,7 @@ impl LocalPasteApp {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_pending_copy_for(id.as_str());
+                self.clear_picker_selection_pin_for(id.as_str());
                 if was_selected {
                     let adjacent_id = deleted_index.and_then(|index| {
                         self.pastes
@@ -383,6 +384,7 @@ impl LocalPasteApp {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_pending_copy_for(id.as_str());
+                self.clear_picker_selection_pin_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                     self.set_status("Selected paste was deleted; list refreshed.");
@@ -397,6 +399,7 @@ impl LocalPasteApp {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_pending_copy_for(id.as_str());
+                self.clear_picker_selection_pin_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                     self.set_status("Selected paste was deleted; list refreshed.");
@@ -408,6 +411,7 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteLoadFailed { id, message } => {
                 self.clear_pending_copy_for(id.as_str());
+                self.clear_picker_selection_pin_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                 }
@@ -483,6 +487,7 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when selection was applied or successfully deferred, otherwise `false`.
     pub(super) fn select_paste(&mut self, id: String) -> bool {
+        self.picker_selection_pin = None;
         if self.selected_id.as_deref() == Some(id.as_str()) {
             return true;
         }
@@ -629,6 +634,7 @@ impl LocalPasteApp {
 
     /// Clears active/pending selection and releases any held paste lock.
     pub(super) fn clear_selection(&mut self) {
+        self.picker_selection_pin = None;
         self.clear_pending_selection_request();
         self.cancel_pending_delete();
         if let Some(prev) = self.selected_id.take() {
@@ -882,6 +888,15 @@ impl LocalPasteApp {
         if selection_valid {
             return;
         }
+        let picker_selection_remains_valid =
+            self.picker_selection_pin.as_deref().is_some_and(|id| {
+                self.selected_id.as_deref() == Some(id)
+                    || self.pending_selection_id.as_deref() == Some(id)
+            });
+        if picker_selection_remains_valid {
+            return;
+        }
+        self.picker_selection_pin = None;
         if let Some(first) = self.pastes.first() {
             self.select_paste(first.id.clone());
         } else {
@@ -957,6 +972,12 @@ impl LocalPasteApp {
         );
         if should_clear {
             self.pending_copy_action = None;
+        }
+    }
+
+    fn clear_picker_selection_pin_for(&mut self, id: &str) {
+        if self.picker_selection_pin.as_deref() == Some(id) {
+            self.picker_selection_pin = None;
         }
     }
 }
