@@ -158,3 +158,62 @@ fn help_focus_and_unfocused_modals_never_create_background_pastes() {
         .try_iter()
         .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })));
 }
+
+#[test]
+fn discovery_overlays_transfer_keyboard_ownership_when_switching() {
+    for picker in [false, true] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
+        );
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Text("undo".into())],
+        );
+        assert_eq!(harness.app.shortcut_help_query, "undo");
+
+        let modifiers = egui::Modifiers {
+            shift: picker,
+            ..primary_command_modifiers()
+        };
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::K, modifiers)],
+        );
+        assert!(!harness.app.shortcut_help_open);
+        assert_eq!(harness.app.paste_picker_open, picker);
+        assert_eq!(harness.app.command_palette_open, !picker);
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Text("needle".into())],
+        );
+        let query = if picker {
+            &harness.app.paste_picker_query
+        } else {
+            &harness.app.command_palette_query
+        };
+        assert_eq!(query, "needle");
+
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
+        );
+        assert!(harness.app.shortcut_help_open);
+        assert!(!harness.app.paste_picker_open);
+        assert!(!harness.app.command_palette_open);
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Text(" again".into())],
+        );
+        assert_eq!(harness.app.shortcut_help_query, "undo again");
+        assert_eq!(harness.app.active_snapshot(), "content");
+    }
+}

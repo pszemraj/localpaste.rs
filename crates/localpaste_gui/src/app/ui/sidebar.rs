@@ -130,7 +130,7 @@ impl LocalPasteApp {
                             )
                             .clicked()
                         {
-                            self.shortcut_help_open = true;
+                            self.open_shortcut_help();
                         }
                     });
                 });

@@ -160,6 +160,7 @@ impl LocalPasteApp {
             }
             CommandPaletteAction::PastePicker => {
                 self.command_palette_open = false;
+                self.shortcut_help_open = false;
                 self.paste_picker_open = true;
             }
             CommandPaletteAction::NewPaste => {

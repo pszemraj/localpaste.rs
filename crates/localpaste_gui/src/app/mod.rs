@@ -561,6 +561,7 @@ impl eframe::App for LocalPasteApp {
                         self.command_palette_query.clear();
                         self.command_palette_selected = 0;
                         self.paste_picker_open = false;
+                        self.shortcut_help_open = false;
                     }
                     RuntimeShortcutAction::TogglePastePicker => {
                         self.paste_picker_open = !self.paste_picker_open;
@@ -570,6 +571,7 @@ impl eframe::App for LocalPasteApp {
                                 Some(Instant::now() - SEARCH_DEBOUNCE);
                         }
                         self.command_palette_open = false;
+                        self.shortcut_help_open = false;
                     }
                     RuntimeShortcutAction::ToggleProperties => {
                         self.properties_drawer_open = !self.properties_drawer_open;
@@ -592,7 +594,11 @@ impl eframe::App for LocalPasteApp {
                         }
                     }
                     RuntimeShortcutAction::ToggleShortcutHelp => {
-                        self.shortcut_help_open = !self.shortcut_help_open;
+                        if self.shortcut_help_open {
+                            self.shortcut_help_open = false;
+                        } else {
+                            self.open_shortcut_help();
+                        }
                     }
                 }
             }
