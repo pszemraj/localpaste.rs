@@ -101,6 +101,7 @@ impl LocalPasteApp {
             scope: self.search_scope,
             query: query.clone(),
             limit: DEFAULT_SEARCH_PASTES_LIMIT,
+            collection: self.active_collection.clone(),
             folder_id,
             language,
         }) {

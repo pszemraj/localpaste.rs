@@ -139,6 +139,7 @@ fn paste_created_during_active_search_keeps_visible_projection_and_invalidates_s
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             query,
             ..

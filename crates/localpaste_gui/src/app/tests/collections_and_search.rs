@@ -36,6 +36,7 @@ fn search_results_respect_collection_filter() {
     let unfiled = test_summary("b", "unfiled", Some("rust"), 10);
 
     harness.app.apply_event(CoreEvent::SearchResults {
+        collection: SidebarCollection::Unfiled,
         scope: localpaste_core::models::paste::SearchScope::All,
         query: "rust".to_string(),
         folder_id: None,
@@ -49,6 +50,7 @@ fn search_results_respect_collection_filter() {
     let stale = test_summary("stale", "stale-result", Some("rust"), 2);
     harness.app.set_search_query(String::new());
     harness.app.apply_event(CoreEvent::SearchResults {
+        collection: SidebarCollection::Unfiled,
         scope: localpaste_core::models::paste::SearchScope::All,
         query: "rust".to_string(),
         folder_id: None,
@@ -71,6 +73,7 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             query,
             language,
@@ -84,6 +87,7 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
 
     let stale = test_summary("stale", "stale-python", Some("python"), 10);
     harness.app.apply_event(CoreEvent::SearchResults {
+        collection: crate::backend::SidebarCollection::All,
         scope: localpaste_core::models::paste::SearchScope::All,
         query: "term".to_string(),
         folder_id: None,
@@ -100,8 +104,24 @@ fn stale_search_results_with_old_language_filter_are_dropped() {
         "stale result set must not be applied"
     );
 
+    harness.app.apply_event(CoreEvent::SearchResults {
+        collection: SidebarCollection::Documents,
+        scope: SearchScope::All,
+        query: "term".into(),
+        folder_id: None,
+        language: Some("rust".into()),
+        items: vec![test_summary("wrong-collection", "notes", Some("rust"), 10)],
+    });
+    assert_eq!(harness.app.query_perf.search_stale_drops, 2);
+    assert!(!harness
+        .app
+        .pastes
+        .iter()
+        .any(|item| item.id == "wrong-collection"));
+
     let fresh = test_summary("fresh", "fresh-rust", Some("rust"), 12);
     harness.app.apply_event(CoreEvent::SearchResults {
+        collection: crate::backend::SidebarCollection::All,
         scope: localpaste_core::models::paste::SearchScope::All,
         query: "term".to_string(),
         folder_id: None,
@@ -134,6 +154,7 @@ fn selected_paste_summary_prefers_visible_search_result_over_stale_cache() {
         ..test_summary_at("alpha", "Fresh", Some("rust"), 9, now)
     };
     harness.app.apply_event(CoreEvent::SearchResults {
+        collection: crate::backend::SidebarCollection::All,
         scope: localpaste_core::models::paste::SearchScope::All,
         query: "alpha".to_string(),
         folder_id: None,
@@ -427,6 +448,7 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
                 harness.app.maybe_dispatch_search();
                 match recv_cmd(&harness.cmd_rx) {
                     CoreCmd::SearchPastes {
+                        collection: crate::backend::SidebarCollection::All,
                         scope: localpaste_core::models::paste::SearchScope::All,
                         query,
                         limit,
@@ -461,6 +483,7 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
                 harness.app.maybe_dispatch_search();
                 match recv_cmd(&harness.cmd_rx) {
                     CoreCmd::SearchPastes {
+                        collection: crate::backend::SidebarCollection::All,
                         scope: localpaste_core::models::paste::SearchScope::All,
                         query,
                         ..
@@ -482,6 +505,7 @@ fn maybe_dispatch_search_applies_collection_filters() {
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::Code,
             scope: localpaste_core::models::paste::SearchScope::All,
             folder_id,
             language,
@@ -503,6 +527,7 @@ fn maybe_dispatch_search_applies_collection_filters() {
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             folder_id,
             language,
@@ -524,6 +549,7 @@ fn maybe_dispatch_search_applies_collection_filters() {
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::Logs,
             scope: localpaste_core::models::paste::SearchScope::All,
             folder_id,
             language,
@@ -609,6 +635,7 @@ fn language_filter_input_is_normalized_before_search_dispatch() {
     harness.app.maybe_dispatch_search();
     match recv_cmd(&harness.cmd_rx) {
         CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             language,
             ..

@@ -265,6 +265,7 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             true
         }
         CoreCmd::SearchPastes {
+            collection,
             scope,
             query,
             limit,
@@ -274,6 +275,7 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             query::handle_search(
                 state,
                 query::SearchRoute::Standard {
+                    collection,
                     folder_id,
                     language,
                 },

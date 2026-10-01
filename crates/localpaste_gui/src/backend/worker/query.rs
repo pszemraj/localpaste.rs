@@ -1,8 +1,8 @@
 //! Metadata list and full-content search command handlers for the GUI backend worker.
 
 use super::{send_error, WorkerState};
-use crate::backend::{CoreErrorSource, CoreEvent, PasteSummary};
-use localpaste_core::models::paste::{SearchOptions, SearchScope};
+use crate::backend::{CoreErrorSource, CoreEvent, PasteSummary, SidebarCollection};
+use localpaste_core::models::paste::{PasteMeta, ScopedSearchFilter, SearchOptions, SearchScope};
 use std::time::{Duration, Instant};
 use tracing::{error, info};
 
@@ -14,6 +14,7 @@ struct ListCacheKey {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SearchCacheKey {
+    collection: SidebarCollection,
     query: String,
     limit: usize,
     folder_id: Option<String>,
@@ -196,6 +197,7 @@ fn run_cached_search<F, E>(
 }
 
 struct SearchVariant {
+    collection: SidebarCollection,
     folder_id: Option<String>,
     language: Option<String>,
     op: &'static str,
@@ -213,12 +215,14 @@ fn handle_search_variant<E>(
     E: Fn(String, Option<String>, Option<String>, Vec<PasteSummary>) -> CoreEvent,
 {
     let SearchVariant {
+        collection,
         folder_id,
         language,
         op,
         error_prefix,
     } = variant;
     let key = SearchCacheKey {
+        collection: collection.clone(),
         query: query.clone(),
         limit,
         folder_id: folder_id.clone(),
@@ -232,22 +236,37 @@ fn handle_search_variant<E>(
     let options = SearchOptions {
         case_sensitive: state.search_case_sensitive,
     };
+    let (today, week, recent) = crate::backend::collections::current_filter_cutoffs();
     run_cached_search(
         state,
         key,
         op,
         error_prefix,
         move |worker| {
+            let collection_filter = |meta: &PasteMeta| {
+                collection == SidebarCollection::All
+                    || crate::backend::collections::matches_active_filters(
+                        &PasteSummary::from_meta(meta),
+                        &collection,
+                        None,
+                        today,
+                        week,
+                        recent,
+                    )
+            };
             worker
                 .db
                 .pastes
-                .search_scoped_with_options(
+                .search_scoped_filtered_with_options(
                     &query_for_fetch,
                     limit,
                     folder_for_fetch,
                     language_for_fetch,
                     options,
-                    scope,
+                    ScopedSearchFilter {
+                        scope,
+                        predicate: &collection_filter,
+                    },
                 )
                 .map(|metas| metas.iter().map(PasteSummary::from_meta).collect())
                 .map_err(|err| err.to_string())
@@ -259,6 +278,7 @@ fn handle_search_variant<E>(
 /// Logical search pathways supported by backend query handlers.
 pub(super) enum SearchRoute {
     Standard {
+        collection: SidebarCollection,
         folder_id: Option<String>,
         language: Option<String>,
     },
@@ -333,6 +353,7 @@ pub(super) fn handle_search(
 ) {
     match route {
         SearchRoute::Standard {
+            collection,
             folder_id,
             language,
         } => handle_search_variant(
@@ -340,6 +361,7 @@ pub(super) fn handle_search(
             query,
             limit,
             SearchVariant {
+                collection: collection.clone(),
                 folder_id,
                 language,
                 op: "search",
@@ -347,6 +369,7 @@ pub(super) fn handle_search(
             },
             scope,
             move |query, folder_id, language, items| CoreEvent::SearchResults {
+                collection: collection.clone(),
                 scope,
                 query,
                 folder_id,
@@ -359,6 +382,7 @@ pub(super) fn handle_search(
             query,
             limit,
             SearchVariant {
+                collection: SidebarCollection::All,
                 folder_id: None,
                 language: None,
                 op: "palette_search",

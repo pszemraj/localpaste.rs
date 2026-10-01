@@ -619,6 +619,7 @@ fn backend_searches_full_content_and_lists_folders() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             query: "SEARCHABLE BODY".to_string(),
             limit: 10,
@@ -629,6 +630,7 @@ fn backend_searches_full_content_and_lists_folders() {
 
     match recv_event(&backend.evt_rx) {
         CoreEvent::SearchResults {
+            collection: crate::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             query,
             items,

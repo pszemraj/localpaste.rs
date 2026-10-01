@@ -1,5 +1,6 @@
 //! Protocol types for the native GUI backend worker.
 
+use super::SidebarCollection;
 use chrono::{DateTime, Utc};
 use localpaste_core::diff::DiffResponse;
 use localpaste_core::models::{
@@ -24,6 +25,7 @@ pub enum CoreCmd {
     },
     /// Search pastes with optional folder/language filters.
     SearchPastes {
+        collection: SidebarCollection,
         scope: SearchScope,
         query: String,
         limit: usize,
@@ -124,6 +126,7 @@ pub enum CoreEvent {
     PasteList { items: Vec<PasteSummary> },
     /// Response containing ranked search results.
     SearchResults {
+        collection: SidebarCollection,
         scope: SearchScope,
         query: String,
         folder_id: Option<String>,

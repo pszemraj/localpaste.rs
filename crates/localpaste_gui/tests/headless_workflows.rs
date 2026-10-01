@@ -546,6 +546,7 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: localpaste_gui::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             query: "script".to_string(),
             limit: 10,
@@ -594,6 +595,7 @@ fn backend_search_matches_full_content_and_derived_metadata() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: localpaste_gui::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             query: "SEARCHABLE EXACT SUBSTRING".to_string(),
             limit: 10,
@@ -614,6 +616,7 @@ fn backend_search_matches_full_content_and_derived_metadata() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: localpaste_gui::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             query: "fsdp2 cublaslt".to_string(),
             limit: 10,
@@ -671,6 +674,7 @@ fn list_and_search_latency_stay_within_reasonable_headless_budget() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: localpaste_gui::backend::SidebarCollection::All,
             scope: localpaste_core::models::paste::SearchScope::All,
             query: "needle".to_string(),
             limit: 32,

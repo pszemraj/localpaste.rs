@@ -12,6 +12,7 @@ fn sidebar_and_picker_reject_stale_scopes_and_keep_independent_queries() {
     assert!(matches!(
         recv_cmd(&harness.cmd_rx),
         CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::All,
             scope: SearchScope::Title,
             ..
         }
@@ -29,6 +30,7 @@ fn sidebar_and_picker_reject_stale_scopes_and_keep_independent_queries() {
     ));
     for scope in [SearchScope::All, SearchScope::Body, SearchScope::Metadata] {
         harness.app.apply_event(CoreEvent::SearchResults {
+            collection: crate::backend::SidebarCollection::All,
             query: "sidebar".into(),
             scope,
             folder_id: None,
@@ -59,6 +61,7 @@ fn sidebar_and_picker_reject_stale_scopes_and_keep_independent_queries() {
     assert!(matches!(
         recv_cmd(&harness.cmd_rx),
         CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::All,
             scope: SearchScope::Metadata,
             ..
         }

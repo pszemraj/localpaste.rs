@@ -31,7 +31,8 @@ mod virtual_ops_apply;
 mod window_bounds;
 
 use crate::backend::{
-    spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary, DELETE_UNDO_LIMIT,
+    spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary, SidebarCollection,
+    DELETE_UNDO_LIMIT,
 };
 use editor_reveal::{CursorReveal, EditorViewport};
 use eframe::egui::{self, text::CCursor, RichText, Stroke, TextStyle};
@@ -186,53 +187,6 @@ struct StagedHighlightInvalidation {
     base_text_len: usize,
     line_ranges: Vec<Range<usize>>,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum SidebarCollection {
-    All,
-    Today,
-    Week,
-    Recent,
-    Unfiled,
-    Code,
-    Documents,
-    Config,
-    Logs,
-    Links,
-}
-
-impl SidebarCollection {
-    fn storage_value(&self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::Today => "today",
-            Self::Week => "week",
-            Self::Recent => "recent",
-            Self::Unfiled => "unfiled",
-            Self::Code => "code",
-            Self::Documents => "documents",
-            Self::Config => "config",
-            Self::Logs => "logs",
-            Self::Links => "links",
-        }
-    }
-
-    fn from_storage_value(value: &str) -> Option<Self> {
-        match value {
-            "all" => Some(Self::All),
-            "today" => Some(Self::Today),
-            "week" => Some(Self::Week),
-            "recent" => Some(Self::Recent),
-            "unfiled" => Some(Self::Unfiled),
-            "code" => Some(Self::Code),
-            "documents" => Some(Self::Documents),
-            "config" => Some(Self::Config),
-            "logs" => Some(Self::Logs),
-            "links" => Some(Self::Links),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 enum PaletteCopyAction {
     Raw(String),

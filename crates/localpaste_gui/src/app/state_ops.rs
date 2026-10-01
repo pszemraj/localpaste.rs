@@ -12,7 +12,6 @@ use super::{
     PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
-use chrono::{Duration as ChronoDuration, Local, Utc};
 use localpaste_core::{
     models::paste::Paste, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
 };
@@ -254,6 +253,7 @@ impl LocalPasteApp {
                 self.try_apply_pending_selection();
             }
             CoreEvent::SearchResults {
+                collection,
                 scope,
                 query,
                 folder_id,
@@ -266,6 +266,7 @@ impl LocalPasteApp {
                 let (expected_folder_id, expected_language) = self.search_backend_filters();
                 let response_language = normalize_language_filter_value(language.as_deref());
                 if active_query.is_empty()
+                    || collection != self.active_collection
                     || query.trim() != active_query
                     || query.trim() != expected_sent_query
                     || scope != self.search_scope
@@ -810,20 +811,12 @@ impl LocalPasteApp {
         (None, self.active_language_filter.clone())
     }
 
-    fn current_filter_cutoffs() -> (chrono::NaiveDate, chrono::NaiveDate, chrono::DateTime<Utc>) {
-        let local_now = Local::now();
-        let now = local_now.with_timezone(&Utc);
-        let today_local = local_now.date_naive();
-        let week_cutoff_day = today_local - ChronoDuration::days(7);
-        let recent_cutoff = now - ChronoDuration::days(30);
-        (today_local, week_cutoff_day, recent_cutoff)
-    }
-
     /// Filters sidebar summaries through the active collection/language state.
     /// # Returns
     /// Visible sidebar rows preserving the input ordering of `items`.
     pub(super) fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
-        let (today_local, week_cutoff_day, recent_cutoff) = Self::current_filter_cutoffs();
+        let (today_local, week_cutoff_day, recent_cutoff) =
+            crate::backend::collections::current_filter_cutoffs();
         let active_language_filter = self.active_language_filter.as_deref();
         items
             .iter()
@@ -842,7 +835,8 @@ impl LocalPasteApp {
     }
 
     fn retain_search_results_for_active_filters(&mut self) {
-        let (today_local, week_cutoff_day, recent_cutoff) = Self::current_filter_cutoffs();
+        let (today_local, week_cutoff_day, recent_cutoff) =
+            crate::backend::collections::current_filter_cutoffs();
         let active_collection = self.active_collection.clone();
         let active_language_filter = self.active_language_filter.clone();
         self.pastes.retain(|item| {
