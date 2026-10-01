@@ -75,6 +75,17 @@ fn editor_find_reopen_with_saved_query_selects_active_match() {
         harness.app.virtual_editor_state.selection_range(),
         Some(6..12)
     );
+    let ctx = egui::Context::default();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert!(!harness.app.editor_find.open);
+    assert_eq!(harness.app.editor_find.query, "needle");
+    harness.app.open_editor_find();
+    assert_eq!(harness.app.editor_find.active_match, Some(0));
 }
 
 #[test]

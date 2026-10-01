@@ -115,7 +115,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Scope changes clear old results immediately; responses and backend cache keys carry the scope so delayed results cannot leak between contexts.
 - Opening the paste picker from its shortcut or the command palette refreshes its retained query and scope; responses discarded while it was closed cannot leave it stuck with empty results.
 - Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar All fields or Body search primes this in-paste find bar when the sidebar query appears in the paste body.
-- Find keeps query focus on `Enter`/`Shift+Enter` and advances to the next/previous match. Buttons and document jumps center the caret independently of editor focus.
+- Find keeps query focus on `Enter`/`Shift+Enter` and advances to the next/previous match. `Escape` from its query closes the bar and retains the query for reopening. Buttons and document jumps center the caret independently of editor focus.
 - Typing and paste reveal the caret with minimal scrolling; manual scrolling stays where you leave it until another edit or navigation action. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
 - Loading another paste starts at its first line, including when the previous paste was scrolled to its end.
 - Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.

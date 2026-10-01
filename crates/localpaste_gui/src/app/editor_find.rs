@@ -108,7 +108,11 @@ impl LocalPasteApp {
         let mut case_changed = false;
         let mut previous_requested = false;
         let mut next_requested = false;
-        let mut close_requested = false;
+        // Egui clears focus on Escape before rendering widgets. Route it using
+        // the previous frame's owner instead of the TextEdit response.
+        let find_id = egui::Id::new(EDITOR_FIND_INPUT_ID);
+        let mut close_requested = ui.memory(|memory| memory.had_focus_last_frame(find_id))
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let mut clear_focus_request = false;
 
         ui.scope(|ui| {
@@ -117,7 +121,7 @@ impl LocalPasteApp {
                 ui.label(RichText::new("Find").small().color(COLOR_TEXT_MUTED));
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut query)
-                        .id(egui::Id::new(EDITOR_FIND_INPUT_ID))
+                        .id(find_id)
                         .return_key(None)
                         .desired_width((ui.available_width() * 0.38).clamp(180.0, 420.0))
                         .hint_text("Search current paste"),
@@ -133,8 +137,6 @@ impl LocalPasteApp {
                             input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter);
                         next_requested |=
                             input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
-                        close_requested |=
-                            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
                     });
                 }
 
