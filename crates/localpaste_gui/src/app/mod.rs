@@ -106,6 +106,7 @@ pub(crate) struct LocalPasteApp {
     palette_search_results: Vec<PasteSummary>,
     palette_search_last_sent: String,
     palette_search_last_input_at: Option<Instant>,
+    palette_search_pending: bool,
     pending_copy_action: Option<PaletteCopyAction>,
     pending_selection_id: Option<String>,
     pending_delete_id: Option<String>,
@@ -514,12 +515,12 @@ impl eframe::App for LocalPasteApp {
                         self.command_palette_open = !self.command_palette_open;
                         self.command_palette_query.clear();
                         self.command_palette_selected = 0;
-                        self.paste_picker_open = false;
+                        self.close_paste_picker();
                         self.shortcut_help_open = false;
                     }
                     RuntimeShortcutAction::TogglePastePicker => {
                         if self.paste_picker_open {
-                            self.paste_picker_open = false;
+                            self.close_paste_picker();
                         } else {
                             self.open_paste_picker();
                         }
@@ -556,7 +557,8 @@ impl eframe::App for LocalPasteApp {
             // These fallback shortcuts bypass the primary event-to-command path, so they
             // must honor the same modal/reset fence as the main virtual-editor extractor.
             if input.events.iter().any(|event| {
-                matches!(event, egui::Event::Copy) || matches!(event, egui::Event::Key {
+                matches!(event, egui::Event::Copy)
+                    || matches!(event, egui::Event::Key {
                 key: egui::Key::C, pressed: true, modifiers, ..
             } if modifiers.command)
             }) && !editor_shortcuts_blocked_pre

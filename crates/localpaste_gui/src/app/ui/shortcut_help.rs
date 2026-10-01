@@ -8,7 +8,7 @@ impl LocalPasteApp {
     /// Open shortcut help as the sole keyboard-owning discovery surface.
     pub(in crate::app) fn open_shortcut_help(&mut self) {
         self.command_palette_open = false;
-        self.paste_picker_open = false;
+        self.close_paste_picker();
         self.shortcut_help_open = true;
     }
 

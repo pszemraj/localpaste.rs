@@ -300,6 +300,7 @@ impl LocalPasteApp {
                 {
                     return;
                 }
+                self.palette_search_pending = false;
                 self.palette_search_results = items;
                 self.clamp_paste_picker_selection(self.palette_search_results.len());
             }

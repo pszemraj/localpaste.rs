@@ -9,9 +9,21 @@ impl LocalPasteApp {
         self.command_palette_open = false;
         self.shortcut_help_open = false;
         self.paste_picker_open = true;
+        self.paste_picker_selected = 0;
         self.palette_search_results.clear();
         self.palette_search_last_sent.clear();
         self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+        self.palette_search_pending = false;
+    }
+
+    /// Close paste discovery and discard its stale result projection.
+    pub(in crate::app) fn close_paste_picker(&mut self) {
+        self.paste_picker_open = false;
+        self.paste_picker_selected = 0;
+        self.palette_search_results.clear();
+        self.palette_search_last_sent.clear();
+        self.palette_search_last_input_at = None;
+        self.palette_search_pending = false;
     }
 
     /// Keep the selected result within the current paste-only result list.
@@ -55,7 +67,7 @@ impl LocalPasteApp {
                 );
                 self.set_paste_picker_scope(scope);
                 if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                    self.paste_picker_open = false;
+                    self.close_paste_picker();
                     return;
                 }
                 let results: Vec<_> = if self.paste_picker_query.trim().is_empty() {
@@ -65,7 +77,9 @@ impl LocalPasteApp {
                 };
                 if results.is_empty() {
                     ui.label(
-                        if self.palette_search_last_sent != self.paste_picker_query.trim() {
+                        if self.palette_search_pending
+                            || self.palette_search_last_sent != self.paste_picker_query.trim()
+                        {
                             "Searching..."
                         } else {
                             "No matching pastes"
@@ -106,7 +120,7 @@ impl LocalPasteApp {
                                     RichText::new(display_language_label(
                                         item.language.as_deref(),
                                         false,
-                                        false,
+                                        item.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
                                     ))
                                     .small()
                                     .color(COLOR_TEXT_MUTED),

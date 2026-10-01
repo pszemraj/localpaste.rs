@@ -72,7 +72,13 @@ fn sidebar_and_picker_reject_stale_scopes_and_keep_independent_queries() {
 #[test]
 fn command_palette_has_toolbar_actions_and_never_dispatches_paste_search() {
     let mut harness = make_app();
-    harness.app.command_palette_open = true;
+    let ctx = egui::Context::default();
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![command_key_event(egui::Key::K)],
+    );
+    assert!(harness.app.command_palette_open);
     for query in [
         "Export",
         "Duplicate",
@@ -89,9 +95,13 @@ fn command_palette_has_toolbar_actions_and_never_dispatches_paste_search() {
             "missing {query}"
         );
     }
-    harness.app.command_palette_query = "body-only-needle".into();
-    harness.app.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
-    harness.app.maybe_dispatch_palette_search();
+    harness.app.command_palette_query.clear();
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Text("body-only-needle".into())],
+    );
+    assert_eq!(harness.app.command_palette_query, "body-only-needle");
     assert!(harness.app.command_palette_actions().is_empty());
     assert!(harness.cmd_rx.try_recv().is_err());
 }
@@ -341,5 +351,133 @@ fn command_palette_arrows_keep_first_and_last_commands_visible() {
             }),
             "keyboard-selected command {label:?} must be fully visible"
         );
+    }
+}
+
+#[test]
+fn paste_picker_reports_pending_searches_and_discards_closed_results() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.open_paste_picker();
+    harness.app.set_paste_picker_query("needle".into());
+    harness.app.palette_search_last_sent = "needle".into();
+    harness.app.palette_search_pending = true;
+
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    assert!(output.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.job.text.contains("Searching..."))
+    }));
+
+    harness.app.apply_event(CoreEvent::PaletteSearchResults {
+        query: "needle".into(),
+        scope: SearchScope::All,
+        items: Vec::new(),
+    });
+    assert!(!harness.app.palette_search_pending);
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    assert!(output.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.job.text.contains("No matching pastes"))
+    }));
+
+    harness.app.selected_id = Some("picked".into());
+    harness.app.all_pastes = vec![test_summary("picked", "Fresh", Some("rust"), 10)];
+    harness.app.palette_search_results = vec![test_summary("picked", "Stale", Some("python"), 10)];
+    harness.app.paste_picker_selected = 1;
+    run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            events: vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+            ..Default::default()
+        },
+    );
+    assert!(!harness.app.paste_picker_open);
+    assert_eq!(harness.app.paste_picker_selected, 0);
+    assert!(harness.app.palette_search_results.is_empty());
+    assert_eq!(
+        harness
+            .app
+            .selected_paste_summary()
+            .map(|summary| summary.name.as_str()),
+        Some("Fresh")
+    );
+}
+
+#[test]
+fn paste_picker_uses_sidebar_language_guardrail_and_reveals_keyboard_selection() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.open_paste_picker();
+    harness.app.set_paste_picker_query("all".into());
+    harness.app.palette_search_results = (0..40)
+        .map(|index| {
+            test_summary(
+                &format!("paste-{index}"),
+                &format!("Paste {index}"),
+                Some("rust"),
+                if index == 0 {
+                    HIGHLIGHT_PLAIN_THRESHOLD
+                } else {
+                    1
+                },
+            )
+        })
+        .collect();
+    harness.app.palette_search_last_sent = "all".into();
+    let mut time = 0.0;
+    let mut render = |app: &mut LocalPasteApp, events| {
+        time += 0.5;
+        run_full_update_with_input(
+            app,
+            &ctx,
+            egui::RawInput {
+                time: Some(time),
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            },
+        )
+    };
+
+    let _ = render(&mut harness.app, vec![]);
+    let initial = render(&mut harness.app, vec![]);
+    assert!(initial.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.job.text.starts_with("plain"))
+    }));
+    for _ in 0..39 {
+        render(
+            &mut harness.app,
+            vec![key_event(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+    }
+    render(&mut harness.app, vec![]);
+    let output = render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.paste_picker_selected, 39);
+    assert!(
+        output.shapes.iter().any(|clipped| {
+            if let egui::Shape::Text(text) = &clipped.shape {
+                text.galley.job.text.starts_with("Paste 39")
+                    && clipped
+                        .clip_rect
+                        .contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size()))
+            } else {
+                false
+            }
+        }),
+        "keyboard-selected picker row must be fully visible"
+    );
+    render(
+        &mut harness.app,
+        vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    assert!(!harness.app.paste_picker_open);
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "paste-39"),
+        other => panic!("unexpected picker action: {other:?}"),
     }
 }

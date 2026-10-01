@@ -358,14 +358,14 @@ impl LocalPasteApp {
     /// Sends a delete command for a palette-selected paste and closes palette.
     pub(crate) fn send_palette_delete(&mut self, id: String) {
         if self.send_delete_paste(id) {
-            self.paste_picker_open = false;
+            self.close_paste_picker();
         }
     }
 
     /// Opens the selected palette result in the main editor view.
     pub(crate) fn open_palette_selection(&mut self, id: String) {
         if self.select_paste(id) {
-            self.paste_picker_open = false;
+            self.close_paste_picker();
         }
     }
 }

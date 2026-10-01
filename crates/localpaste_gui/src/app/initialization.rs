@@ -76,6 +76,7 @@ impl LocalPasteApp {
             palette_search_results: Vec::new(),
             palette_search_last_sent: String::new(),
             palette_search_last_input_at: None,
+            palette_search_pending: false,
             pending_copy_action: None,
             pending_selection_id: None,
             pending_delete_id: None,

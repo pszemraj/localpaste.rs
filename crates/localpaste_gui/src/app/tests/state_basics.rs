@@ -195,6 +195,8 @@ fn runtime_shortcuts_drive_full_update_state_and_commands() {
     let mut palette = make_app();
     palette.app.command_palette_query = "stale".to_string();
     palette.app.command_palette_selected = 4;
+    palette.app.paste_picker_query = "needle".to_string();
+    palette.app.paste_picker_scope = SearchScope::Body;
     palette
         .app
         .palette_search_results
@@ -207,10 +209,9 @@ fn runtime_shortcuts_drive_full_update_state_and_commands() {
     assert!(palette.app.command_palette_open);
     assert!(palette.app.command_palette_query.is_empty());
     assert_eq!(palette.app.command_palette_selected, 0);
-    assert_eq!(
-        palette.app.palette_search_results[0].id, "beta",
-        "commands must preserve independent picker results"
-    );
+    assert!(palette.app.palette_search_results.is_empty());
+    assert_eq!(palette.app.paste_picker_query, "needle");
+    assert_eq!(palette.app.paste_picker_scope, SearchScope::Body);
 
     let mut legacy_palette = make_app();
     run_full_update_with_input(

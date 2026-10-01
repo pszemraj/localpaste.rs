@@ -23,6 +23,7 @@ impl LocalPasteApp {
         // Never leave previous-query results visible/actionable after input changes.
         self.palette_search_last_sent.clear();
         self.palette_search_results.clear();
+        self.palette_search_pending = false;
     }
 
     /// Invalidate old query context and dispatch or restore the current projection.
@@ -134,6 +135,7 @@ impl LocalPasteApp {
                 self.palette_search_last_sent.clear();
                 self.palette_search_results.clear();
             }
+            self.palette_search_pending = false;
             return;
         }
 
@@ -155,6 +157,7 @@ impl LocalPasteApp {
             limit: PALETTE_SEARCH_LIMIT,
         }) {
             // Mirror sidebar-search behavior: bounded retry cadence and deduped status.
+            self.palette_search_pending = false;
             self.palette_search_last_input_at = Some(Instant::now());
             const PALETTE_SEARCH_UNAVAILABLE: &str =
                 "Paste picker search failed: backend unavailable.";
@@ -167,6 +170,7 @@ impl LocalPasteApp {
         }
         self.palette_search_last_sent = query;
         self.paste_picker_sent_scope = self.paste_picker_scope;
+        self.palette_search_pending = true;
     }
 
     /// Updates sidebar scope and discards results from the previous field context.
@@ -185,6 +189,7 @@ impl LocalPasteApp {
             self.palette_search_results.clear();
             self.palette_search_last_sent.clear();
             self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+            self.palette_search_pending = false;
             self.paste_picker_selected = 0;
         }
     }
