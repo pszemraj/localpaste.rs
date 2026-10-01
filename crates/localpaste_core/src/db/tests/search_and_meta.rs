@@ -707,6 +707,53 @@ fn database_new_rebuilds_stale_schema_meta_rows_for_semantic_handle_changes() {
 }
 
 #[test]
+fn database_new_rebuilds_v3_document_classification() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let db_path_str = db_path.to_str().expect("db path").to_string();
+
+    let db = open_test_database(&db_path_str);
+    let paste = Paste::new_with_language(
+        "name,age\nAda,37".to_string(),
+        "contacts.csv".to_string(),
+        Some("text".to_string()),
+        true,
+    );
+    let paste_id = paste.id.clone();
+    db.pastes.create(&paste).expect("create");
+
+    let mut stale_meta = PasteMeta::from(&paste);
+    stale_meta.derived.kind = crate::semantic::PasteKind::Document;
+    let encoded_meta = bincode::serialize(&stale_meta).expect("serialize meta");
+    let v3_schema_version = bincode::serialize(&3u64).expect("serialize v3 schema version");
+    let write_txn = db.db.begin_write().expect("begin write");
+    {
+        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
+        let mut meta_state = write_txn
+            .open_table(PASTES_META_STATE)
+            .expect("open meta state");
+        metas
+            .insert(paste_id.as_str(), encoded_meta.as_slice())
+            .expect("overwrite stale meta");
+        meta_state
+            .insert(META_SCHEMA_VERSION_KEY, v3_schema_version.as_slice())
+            .expect("stamp v3 schema version");
+    }
+    write_txn.commit().expect("commit");
+    drop(db);
+
+    let reopened = open_test_database(&db_path_str);
+    let meta = reopened
+        .pastes
+        .list_meta(10, None)
+        .expect("list")
+        .into_iter()
+        .find(|meta| meta.id == paste_id)
+        .expect("meta row");
+    assert_eq!(meta.derived.kind, crate::semantic::PasteKind::Other);
+}
+
+#[test]
 fn database_from_shared_rebuilds_markerless_current_meta_rows() {
     let (db, _temp) = setup_test_db();
     let paste = Paste::new(

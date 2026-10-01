@@ -76,7 +76,7 @@ This preserves interoperability across legacy and current labels (for example, `
 
 Search ranking also checks normalized language values to avoid losing metadata relevance as stored labels evolve.
 
-The Documents collection includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Explicit document languages take precedence over embedded code and misleading titles/tags. Markdown is excluded from Code. The derived `Document` kind is rebuilt through the [storage projection repair policy](storage.md#compatibility-policy).
+The Documents collection includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Explicit document languages take precedence over embedded code and misleading titles/tags. Untyped text is a document only when it appears prose-like; delimited records, hexadecimal blobs, recognized commands, and log-level lines stay out of Documents. Markdown is excluded from Code. The derived `Document` kind is rebuilt through the [storage projection repair policy](storage.md#compatibility-policy).
 
 ## Text Export Extensions
 
@@ -84,7 +84,7 @@ The Documents collection includes Markdown, reStructuredText, LaTeX, and prose n
 
 ## GUI Highlight Resolution
 
-Markdown uses the project-owned [LocalPaste Markdown grammar](../crates/localpaste_gui/assets/LocalPaste-Markdown.sublime-syntax). Footnote markers end at the reference/definition boundary so body text remains readable. Backtick and tilde fences retain their opening delimiter; matching or longer closing fences terminate the block. Inline-code spans retain their matching delimiter across content lines, but an unmatched span ends at a blank paragraph boundary. Fenced bodies use one existing string color, with no embedded-language highlighting. Scope mappings use the current theme's foreground, string, and keyword colors.
+Markdown uses the project-owned [LocalPaste Markdown grammar](../crates/localpaste_gui/assets/LocalPaste-Markdown.sublime-syntax). Footnote markers end at the reference/definition boundary so body text remains readable. Indented, list, and blockquote fence prefixes are recognized; matching or longer closing fences terminate the block. Inline-code spans retain their matching delimiter across content lines, but an unmatched span ends at a blank paragraph boundary. Fenced bodies use one existing string color, with no embedded-language highlighting. Scope mappings use the current theme's foreground, string, and keyword colors.
 
 Other GUI highlight resolution uses a multi-step strategy instead of a fixed name table:
 

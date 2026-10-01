@@ -163,6 +163,10 @@ fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Log;
     }
 
+    if starts_with_log_level(sample) {
+        return PasteKind::Log;
+    }
+
     let log_hits = [
         "traceback",
         "stack trace",
@@ -196,11 +200,66 @@ fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Config;
     }
 
-    if lang.is_empty() || lang == "text" {
+    if (lang.is_empty() || lang == "text") && looks_like_prose(sample) {
         PasteKind::Document
     } else {
         PasteKind::Other
     }
+}
+
+/// Returns whether the first non-empty line starts with a log-level marker.
+///
+/// A leading marker is a stronger log signal than generic prose, even when a
+/// short snippet does not contain enough independent markers for the broader
+/// log heuristic.
+fn starts_with_log_level(sample: &str) -> bool {
+    let Some(first_line) = sample
+        .lines()
+        .map(str::trim_start)
+        .find(|line| !line.is_empty())
+    else {
+        return false;
+    };
+    let lower = first_line.to_ascii_lowercase();
+    [
+        "trace:", "debug:", "info:", "warn:", "warning:", "error:", "fatal:",
+    ]
+    .iter()
+    .any(|marker| lower.starts_with(marker))
+}
+
+/// Returns whether untyped text resembles prose rather than a compact data blob.
+///
+/// This deliberately rejects only the structural forms that would otherwise be
+/// misclassified as prose. Broader language detection remains the detector's
+/// responsibility.
+fn looks_like_prose(sample: &str) -> bool {
+    !looks_like_delimited_records(sample)
+        && !looks_like_hex_blob(sample)
+        && sample.chars().any(|ch| ch.is_alphabetic())
+}
+
+/// Returns whether multiple non-empty rows share a common delimited-record shape.
+fn looks_like_delimited_records(sample: &str) -> bool {
+    let rows: Vec<&str> = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    rows.len() >= 2
+        && [',', '\t', ';']
+            .iter()
+            .any(|delimiter| rows.iter().all(|row| row.contains(*delimiter)))
+}
+
+/// Returns whether text is a long whitespace-separated hexadecimal blob.
+fn looks_like_hex_blob(sample: &str) -> bool {
+    let compact: String = sample
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
+    let hex = compact.strip_prefix("0x").unwrap_or(compact.as_str());
+    hex.len() >= 16 && hex.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn extract_definition_handle(sample: &str, language: Option<&str>) -> Option<String> {
@@ -256,8 +315,8 @@ fn extract_definition_handle_from_line(line: &str, language: Option<&str>) -> Op
 
 fn extract_command_handle(sample: &str) -> Option<String> {
     const COMMANDS: &[&str] = &[
-        "cargo", "git", "docker", "kubectl", "python", "pytest", "uv", "pip", "npm", "pnpm",
-        "yarn", "make", "just", "curl", "wget", "ssh", "torchrun",
+        "brew", "cargo", "git", "docker", "kubectl", "python", "pytest", "uv", "pip", "npm",
+        "pnpm", "yarn", "make", "just", "curl", "wget", "ssh", "torchrun",
     ];
 
     for line in sample.lines() {
@@ -512,6 +571,24 @@ mod tests {
     }
 
     #[test]
+    fn untyped_structural_content_does_not_default_to_document() {
+        let cases = [
+            ("name,age\nAda,37", PasteKind::Other),
+            ("deadbeefcafebabe0123456789abcdef", PasteKind::Other),
+            ("brew install localpaste", PasteKind::Code),
+            ("error: unable to open database", PasteKind::Log),
+        ];
+
+        for (content, expected) in cases {
+            assert_eq!(derive(content, None).kind, expected, "{content}");
+        }
+        assert_eq!(
+            derive("A short prose note to keep for later.", Some("text")).kind,
+            PasteKind::Document
+        );
+    }
+
+    #[test]
     fn derive_matrix_covers_code_config_log_link_and_other() {
         let code = derive("fn handle_request(input: &str) {}\n", Some("rust"));
         assert_eq!(code.kind, PasteKind::Code);
@@ -536,9 +613,9 @@ mod tests {
         assert_eq!(link.kind, PasteKind::Link);
         assert_eq!(link.handle.as_deref(), Some("example.com"));
 
-        let other = derive("hi", Some("text"));
-        assert_eq!(other.kind, PasteKind::Document);
-        assert!(other.handle.is_none());
+        let document = derive("hi", Some("text"));
+        assert_eq!(document.kind, PasteKind::Document);
+        assert!(document.handle.is_none());
     }
 
     #[test]
