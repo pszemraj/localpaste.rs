@@ -234,6 +234,18 @@ fn native_deactivation_preserves_selection_and_releases_editor_ownership() {
         harness.app.virtual_editor_state.selection_range(),
         Some(1..4)
     );
+    let output = run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            events: vec![egui::Event::WindowFocused(true), egui::Event::Copy],
+            ..Default::default()
+        },
+    );
+    assert!(output.platform_output.commands.iter().any(
+        |command| matches!(command, egui::OutputCommand::CopyText(text) if text == "ont")
+    ));
+    assert!(!harness.app.virtual_editor_state.has_focus);
     run_full_update(
         &mut harness.app,
         &ctx,

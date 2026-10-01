@@ -602,7 +602,7 @@ impl eframe::App for LocalPasteApp {
             // These fallback shortcuts bypass the primary event-to-command path, so they
             // must honor the same modal/reset fence as the main virtual-editor extractor.
             if input.events.iter().any(|event| {
-                matches!(event, egui::Event::Key {
+                matches!(event, egui::Event::Copy) || matches!(event, egui::Event::Key {
                 key: egui::Key::C, pressed: true, modifiers, ..
             } if modifiers.command)
             }) && !editor_shortcuts_blocked_pre
