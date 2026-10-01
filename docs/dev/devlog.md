@@ -228,6 +228,11 @@ Remove-Item -Recurse -Force $env:DB_PATH
 
 ### `check-ast-dupes`
 
+- Audit scope:
+  - default scans production bodies; `--include-tests` also compares test bodies
+  - test context follows enclosing `cfg(test)` modules, including out-of-line modules and `#[path]` declarations
+  - test-only helpers are excluded from dead-symbol and visibility findings
+  - identifiers referenced in attribute arguments (such as derive-macro callbacks) conservatively count as usage; the audit does not expand procedural macros
 - Parse-time validation:
   - `--threshold` in `[0.0, 1.0]`
   - `--near-miss-threshold` in `[0.0, 1.0]`

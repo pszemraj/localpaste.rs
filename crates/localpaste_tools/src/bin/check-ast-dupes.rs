@@ -17,13 +17,14 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::{collections::hash_map::DefaultHasher, ffi::OsStr};
-use syn::visit::Visit;
-use syn::{Attribute, File, ImplItem, ItemFn, ItemImpl, ItemMod, Visibility};
+use syn::{Attribute, Visibility};
 use walkdir::WalkDir;
 
 #[path = "check_ast_dupes/normalize.rs"]
 mod normalize;
-use normalize::{collect_call_refs, AstNormalizer};
+#[path = "check_ast_dupes/source.rs"]
+mod source;
+use source::scan_sources;
 #[path = "check_ast_dupes/similarity.rs"]
 mod similarity;
 use similarity::{find_similarity_pairs, print_duplicate_findings, print_near_miss_findings};
@@ -166,15 +167,12 @@ fn run(args: Args) -> Result<(), String> {
         ));
     }
 
-    let files = collect_rust_files(scan_root.as_path(), args.include_tests)?;
-    let mut functions = Vec::new();
-    let mut parse_errors = Vec::new();
-    for file in files {
-        match parse_file_functions(&cwd, file.as_path(), args.k, args.include_tests) {
-            Ok(mut parsed) => functions.append(&mut parsed),
-            Err(err) => parse_errors.push(err),
-        }
-    }
+    // Read module declarations before filtering tests so out-of-line helpers
+    // inherit the same test-only context as their declaring module.
+    let files = collect_rust_files(scan_root.as_path())?;
+    let scan = scan_sources(&cwd, files, args.k, args.include_tests);
+    let mut functions = scan.functions;
+    let parse_errors = scan.parse_errors;
 
     functions.sort_by(|left, right| {
         left.file
@@ -189,8 +187,9 @@ fn run(args: Args) -> Result<(), String> {
 
     let (duplicates, near_misses) = find_similarity_pairs(&functions, &args);
     let resolved_calls = resolve_callers(&functions);
-    let dead = find_likely_dead_symbols(&functions, &resolved_calls, &args);
-    let visibility_tighten = find_visibility_tighten_candidates(&functions, &resolved_calls);
+    let dead = find_likely_dead_symbols(&functions, &resolved_calls, &scan.attribute_refs, &args);
+    let visibility_tighten =
+        find_visibility_tighten_candidates(&functions, &resolved_calls, &scan.attribute_refs);
 
     println!(
         "scanned {} Rust files under {}",
@@ -233,7 +232,7 @@ fn run(args: Args) -> Result<(), String> {
     Ok(())
 }
 
-fn collect_rust_files(root: &Path, include_tests: bool) -> Result<Vec<PathBuf>, String> {
+fn collect_rust_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     let walker = WalkDir::new(root).into_iter().filter_entry(|entry| {
         if !entry.file_type().is_dir() {
@@ -243,19 +242,13 @@ fn collect_rust_files(root: &Path, include_tests: bool) -> Result<Vec<PathBuf>, 
         if name == OsStr::new("target") || name == OsStr::new(".git") {
             return false;
         }
-        if !include_tests && name == OsStr::new("tests") {
-            return false;
-        }
         true
     });
 
     for entry in walker {
         let entry = entry.map_err(|err| err.to_string())?;
         let path = entry.path();
-        if entry.file_type().is_file()
-            && path.extension().and_then(OsStr::to_str) == Some("rs")
-            && (include_tests || !path_has_tests_segment(path))
-        {
+        if entry.file_type().is_file() && path.extension().and_then(OsStr::to_str) == Some("rs") {
             out.push(path.to_path_buf());
         }
     }
@@ -263,27 +256,10 @@ fn collect_rust_files(root: &Path, include_tests: bool) -> Result<Vec<PathBuf>, 
     Ok(out)
 }
 
-fn parse_file_functions(
-    cwd: &Path,
-    file: &Path,
-    k: usize,
-    include_tests: bool,
-) -> Result<Vec<FunctionInfo>, String> {
-    let src =
-        fs::read_to_string(file).map_err(|err| format!("{}: {}", normalize_path(file), err))?;
-    let ast = syn::parse_file(src.as_str())
-        .map_err(|err| format!("{}: failed to parse: {}", normalize_path(file), err))?;
-
-    let rel = file.strip_prefix(cwd).unwrap_or(file).to_path_buf();
-    let base_module = infer_base_module(rel.as_path());
-    let mut collector = AstCollector::new(rel, base_module, k, include_tests);
-    collector.visit_file(&ast);
-    Ok(collector.functions)
-}
-
 fn find_likely_dead_symbols(
     functions: &[FunctionInfo],
     resolved: &[ResolvedCall],
+    attribute_refs: &HashSet<String>,
     args: &Args,
 ) -> Vec<DeadFinding> {
     let mut incoming_total = vec![0usize; functions.len()];
@@ -306,6 +282,7 @@ fn find_likely_dead_symbols(
     for info in functions {
         if eligible_for_dead_check(info, args)
             && !unresolved_name_hits.contains_key(info.simple_name.as_str())
+            && !attribute_refs.contains(&info.simple_name)
         {
             eligible_ids[info.id] = true;
         }
@@ -356,6 +333,7 @@ fn find_likely_dead_symbols(
 fn find_visibility_tighten_candidates(
     functions: &[FunctionInfo],
     resolved: &[ResolvedCall],
+    attribute_refs: &HashSet<String>,
 ) -> Vec<DeadFinding> {
     let mut incoming_total = vec![0usize; functions.len()];
     let mut incoming_outside_module = vec![0usize; functions.len()];
@@ -374,7 +352,7 @@ fn find_visibility_tighten_candidates(
 
     let mut out = Vec::new();
     for info in functions {
-        if is_test_or_cfg_symbol(info) {
+        if is_test_or_cfg_symbol(info) || attribute_refs.contains(&info.simple_name) {
             continue;
         }
         if info.is_method || info.is_trait_impl_method || info.allow_dead_code {
@@ -623,131 +601,6 @@ fn count_unique_files(functions: &[FunctionInfo]) -> usize {
     seen.len()
 }
 
-struct AstCollector {
-    functions: Vec<FunctionInfo>,
-    module_path: Vec<String>,
-    file: PathBuf,
-    include_tests: bool,
-    k: usize,
-}
-
-impl AstCollector {
-    fn new(file: PathBuf, base_module: Vec<String>, k: usize, include_tests: bool) -> Self {
-        Self {
-            functions: Vec::new(),
-            module_path: base_module,
-            file,
-            include_tests,
-            k,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn push_function(
-        &mut self,
-        name: String,
-        owner_type: Option<String>,
-        vis: VisibilityKind,
-        is_method: bool,
-        is_trait_impl_method: bool,
-        attrs: &[Attribute],
-        body: &syn::Block,
-        span: proc_macro2::Span,
-    ) {
-        let has_cfg = has_cfg_attr(attrs);
-        let is_test = has_test_attr(attrs);
-        if !self.include_tests && (has_cfg || is_test) {
-            return;
-        }
-
-        let mut normalizer = AstNormalizer::default();
-        normalizer.visit_block(body);
-        let normalized_nodes = normalizer.nodes;
-        let shingles = build_shingles(normalized_nodes.as_slice(), self.k);
-        let calls = collect_call_refs(body);
-
-        let mut symbol = self.module_path.join("::");
-        if !symbol.is_empty() {
-            symbol.push_str("::");
-        }
-        if let Some(owner) = owner_type.as_ref() {
-            symbol.push_str(owner);
-            symbol.push_str("::");
-        }
-        symbol.push_str(name.as_str());
-
-        self.functions.push(FunctionInfo {
-            id: 0,
-            symbol,
-            module_path: self.module_path.clone(),
-            simple_name: name,
-            file: self.file.clone(),
-            line: span.start().line,
-            vis,
-            is_method,
-            is_trait_impl_method,
-            has_cfg,
-            is_test,
-            allow_dead_code: allows_dead_code(attrs),
-            normalized_nodes,
-            shingles,
-            call_refs: calls,
-        });
-    }
-}
-
-impl<'ast> Visit<'ast> for AstCollector {
-    fn visit_item_mod(&mut self, node: &'ast ItemMod) {
-        if let Some((_, items)) = node.content.as_ref() {
-            self.module_path.push(node.ident.to_string());
-            for item in items {
-                self.visit_item(item);
-            }
-            self.module_path.pop();
-        }
-    }
-
-    fn visit_item_fn(&mut self, node: &'ast ItemFn) {
-        let vis = classify_visibility(&node.vis);
-        self.push_function(
-            node.sig.ident.to_string(),
-            None,
-            vis,
-            false,
-            false,
-            node.attrs.as_slice(),
-            node.block.as_ref(),
-            node.sig.ident.span(),
-        );
-    }
-
-    fn visit_item_impl(&mut self, node: &'ast ItemImpl) {
-        let owner = normalize_type_name(node.self_ty.as_ref());
-        let trait_impl = node.trait_.is_some();
-        for item in &node.items {
-            if let ImplItem::Fn(method) = item {
-                let vis = classify_visibility(&method.vis);
-                self.push_function(
-                    method.sig.ident.to_string(),
-                    Some(owner.clone()),
-                    vis,
-                    true,
-                    trait_impl,
-                    method.attrs.as_slice(),
-                    &method.block,
-                    method.sig.ident.span(),
-                );
-            }
-        }
-    }
-
-    fn visit_file(&mut self, node: &'ast File) {
-        for item in &node.items {
-            self.visit_item(item);
-        }
-    }
-}
-
 fn build_shingles(tokens: &[String], k: usize) -> HashSet<u64> {
     if tokens.len() < k {
         return HashSet::new();
@@ -885,7 +738,49 @@ fn has_attr_meta_contains(attrs: &[Attribute], attr_name: &str, needle: &str) ->
 }
 
 fn has_cfg_attr(attrs: &[Attribute]) -> bool {
-    has_attr_meta_contains(attrs, "cfg", "test")
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("cfg")
+            && attr
+                .parse_args::<syn::Meta>()
+                .is_ok_and(|meta| cfg_without_test(&meta) == Some(false))
+    })
+}
+
+/// Evaluates cfg with `test` disabled, leaving platform/feature predicates unknown.
+fn cfg_without_test(meta: &syn::Meta) -> Option<bool> {
+    match meta {
+        syn::Meta::Path(path) if path.is_ident("test") => Some(false),
+        syn::Meta::List(list) => {
+            let args = list
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+                .ok()?;
+            let values: Vec<Option<bool>> = args.iter().map(cfg_without_test).collect();
+            if list.path.is_ident("all") {
+                if values.contains(&Some(false)) {
+                    Some(false)
+                } else if values.iter().all(|value| *value == Some(true)) {
+                    Some(true)
+                } else {
+                    None
+                }
+            } else if list.path.is_ident("any") {
+                if values.contains(&Some(true)) {
+                    Some(true)
+                } else if values.iter().all(|value| *value == Some(false)) {
+                    Some(false)
+                } else {
+                    None
+                }
+            } else if list.path.is_ident("not") && values.len() == 1 {
+                values[0].map(|value| !value)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 fn allows_dead_code(attrs: &[Attribute]) -> bool {

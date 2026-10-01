@@ -38,7 +38,7 @@ Status uses the same checklist markers as other dev docs:
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add schema-repair backup retention/rotation so repeated upgrades cannot accumulate unbounded snapshots in the DB directory.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
-- [ ] Triage the current `check-ast-dupes --root crates` likely-dead and visibility-tighten candidates; separate test-only false positives from real cleanup before changing helper visibility or deleting symbols.
+- [x] Resolve the `check-ast-dupes --root crates` candidates: preserve enclosing test context and attribute callback references in the audit, retain live test helpers, and make the module-local language filter helper private.
 - [ ] Revisit `check-ast-dupes --include-tests` duplicate/near-miss navigation pairs only if a measured cleanup reduces LOC or clarifies behavior: `localpaste_gui/src/app/tests/keyboard_navigation_audit.rs` covers distinct cursor semantics that should stay explicit unless a better structure preserves the invariants.
 - [ ] Add doc/help contract checks in CI (verify key `--help` sections and command examples stay synchronized with behavior).
 - [ ] Expand standalone `verify-gui-packaging.yml` beyond macOS (at least Linux x64) so packaging script regressions are caught before release-tag runs.

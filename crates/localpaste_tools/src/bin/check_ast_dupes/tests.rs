@@ -101,3 +101,121 @@ fn parse_helpers_reject_out_of_range_values() {
     assert!(parse_unit_interval("1.1").is_err());
     assert!(parse_positive_usize("0").is_err());
 }
+
+#[test]
+fn test_module_context_applies_to_inline_and_external_helpers() {
+    let temp = TempDir::new().expect("temp dir");
+    let root = temp.path().join("src");
+    fs::create_dir_all(root.join("support")).expect("create fixture directories");
+    write_file(
+        &root.join("lib.rs"),
+        r#"
+        #[cfg(test)]
+        mod resolver_checks {
+            fn test_helper() {}
+            #[test] fn uses_helper() { test_helper(); }
+        }
+        #[cfg(test)]
+        #[path = "support.rs"]
+        mod fixture_support;
+        pub struct State;
+        #[cfg(test)]
+        impl State {
+            fn test_method() { fixture_support::setup(); }
+        }
+        "#,
+    );
+    write_file(
+        &root.join("support.rs"),
+        "mod nested; pub(crate) fn setup() { nested::setup_nested(); }",
+    );
+    write_file(
+        &root.join("support/nested.rs"),
+        "pub(crate) fn setup_nested() {}",
+    );
+
+    let mut args = base_args(root.clone());
+    args.fail_on_findings = true;
+    run(args).expect("test-only helpers must not appear in the production audit");
+    let files = collect_rust_files(&root).expect("collect fixtures");
+    let scan = scan_sources(temp.path(), files.clone(), 5, false);
+    assert!(scan.functions.is_empty());
+    let scan = scan_sources(temp.path(), files, 5, true);
+    assert_eq!(scan.functions.len(), 5);
+    assert!(scan.functions.iter().all(|info| info.has_cfg));
+
+    write_file(&root.join("unused.rs"), "fn unused_production_helper() {}");
+    let mut args = base_args(root);
+    args.fail_on_findings = true;
+    assert!(
+        run(args).is_err(),
+        "real unreferenced helpers must still fail"
+    );
+}
+
+#[test]
+fn derive_attribute_callbacks_count_as_live_references() {
+    let temp = TempDir::new().expect("temp dir");
+    let root = temp.path().join("src");
+    fs::create_dir_all(&root).expect("create fixture directory");
+    write_file(
+        &root.join("main.rs"),
+        r#"
+        #[derive(Parser)]
+        struct Args {
+            #[arg(value_parser = parse_limit)]
+            limit: usize,
+            #[arg(value_parser = parsers::parse_count)]
+            count: usize,
+        }
+        fn parse_limit(raw: &str) -> usize { parse_number(raw) }
+        fn parse_number(raw: &str) -> usize { raw.parse().unwrap() }
+        mod parsers;
+        fn main() {}
+        "#,
+    );
+    write_file(
+        &root.join("parsers.rs"),
+        "pub(crate) fn parse_count(raw: &str) -> usize { raw.len() }
+         pub fn default_count() -> usize { parse_count(\"one\") }",
+    );
+    let mut args = base_args(root);
+    args.fail_on_findings = true;
+    run(args).expect("attribute callbacks and their callees must remain live");
+}
+
+#[test]
+fn production_declaration_keeps_shared_test_support_in_the_audit() {
+    let temp = TempDir::new().expect("temp dir");
+    let root = temp.path();
+    write_file(
+        &root.join("lib.rs"),
+        r#"
+        #[cfg(test)] #[path = "shared.rs"] mod checks;
+        #[path = "shared.rs"] mod production;
+    "#,
+    );
+    write_file(&root.join("shared.rs"), "fn unused_shared_helper() {}");
+    let scan = scan_sources(root, collect_rust_files(root).unwrap(), 5, false);
+    assert_eq!(scan.functions.len(), 1);
+    assert!(!scan.functions[0].has_cfg);
+    let mut args = base_args(root.to_path_buf());
+    args.fail_on_findings = true;
+    assert!(run(args).is_err());
+}
+
+#[test]
+fn test_cfg_detection_preserves_possible_production_code() {
+    for (predicate, test_only) in [
+        ("test", true),
+        ("all(test, unix)", true),
+        ("any(test, all(test, windows))", true),
+        ("not(test)", false),
+        ("any(test, unix)", false),
+        ("feature = \"test-support\"", false),
+    ] {
+        let item: syn::ItemFn = syn::parse_str(&format!("#[cfg({predicate})] fn sample() {{}}"))
+            .expect("parse cfg fixture");
+        assert_eq!(has_cfg_attr(&item.attrs), test_only, "{predicate}");
+    }
+}
