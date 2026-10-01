@@ -27,6 +27,25 @@ impl LocalPasteApp {
         self.palette_search_pending = false;
     }
 
+    /// Checks whether a paste-picker response belongs to the active request.
+    ///
+    /// # Arguments
+    /// - `scope`: Scope recorded on the backend response.
+    /// - `query`: Query recorded on the backend response.
+    ///
+    /// # Returns
+    /// `true` when the picker remains open and its active query and scope match
+    /// the response.
+    pub(super) fn palette_search_response_is_current(
+        &self,
+        scope: super::super::SearchScope,
+        query: &str,
+    ) -> bool {
+        self.paste_picker_open
+            && scope == self.paste_picker_scope
+            && query.trim() == self.paste_picker_query.trim()
+    }
+
     /// Invalidate old query context and dispatch or restore the current projection.
     pub(super) fn on_primary_filter_changed(&mut self) {
         self.search_last_sent.clear();

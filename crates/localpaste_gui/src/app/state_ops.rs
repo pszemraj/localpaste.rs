@@ -294,10 +294,8 @@ impl LocalPasteApp {
                 items,
                 scope,
             } => {
-                if !self.paste_picker_open
-                    || self.paste_picker_query.trim().is_empty()
-                    || query.trim() != self.paste_picker_query.trim()
-                    || scope != self.paste_picker_scope
+                if self.paste_picker_query.trim().is_empty()
+                    || !self.palette_search_response_is_current(scope, query.as_str())
                     || scope != self.paste_picker_sent_scope
                 {
                     return;
@@ -311,9 +309,7 @@ impl LocalPasteApp {
                 query,
                 message,
             } => {
-                if !self.paste_picker_open
-                    || scope != self.paste_picker_scope
-                    || query != self.paste_picker_query.trim()
+                if !self.palette_search_response_is_current(scope, query.as_str())
                     || self.palette_search_last_sent != query
                 {
                     return;
