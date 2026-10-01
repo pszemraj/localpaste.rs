@@ -37,6 +37,9 @@ contexts:
       scope: punctuation.definition.raw.markdown.localpaste
       push:
         - meta_scope: markup.raw.inline.markdown.localpaste
+        # An inline span can cross a content line, but never a paragraph boundary.
+        - match: '^[ \t]*\r?\n'
+          pop: true
         - match: '(?<!`)\1(?!`)'
           pop: true
     - match: '\*\*[^*\n]+\*\*|__[^_\n]+__'

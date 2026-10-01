@@ -93,4 +93,47 @@ mod tests {
                 .all(|(color, _)| *color == prose));
         }
     }
+
+    #[test]
+    fn inline_code_recovers_at_blank_paragraphs_without_breaking_multiline_spans() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let prose = Highlighter::new(theme).get_default().foreground;
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        let colors = |lines: &mut HighlightLines<'_>, text: &str| {
+            lines
+                .highlight_line(text, &settings.ps)
+                .unwrap()
+                .into_iter()
+                .filter(|(_, text)| !text.trim().is_empty())
+                .map(|(style, text)| (style.foreground, text.to_string()))
+                .collect::<Vec<_>>()
+        };
+
+        let mut unmatched = HighlightLines::new(syntax, theme);
+        colors(&mut unmatched, "unmatched `code\n");
+        assert!(colors(&mut unmatched, "still inline code\n")
+            .iter()
+            .all(|(color, _)| *color == code));
+        colors(&mut unmatched, "\n");
+        assert!(colors(&mut unmatched, "ordinary prose\n")
+            .iter()
+            .all(|(color, _)| *color == prose));
+
+        let mut matched = HighlightLines::new(syntax, theme);
+        colors(&mut matched, "``first line\n");
+        assert!(colors(&mut matched, "`shorter delimiter stays code\n")
+            .iter()
+            .all(|(color, _)| *color == code));
+        let closing = colors(&mut matched, "second line`` after\n");
+        assert!(closing
+            .iter()
+            .any(|(color, text)| *color == code && text.contains("second line")));
+        assert!(closing
+            .iter()
+            .any(|(color, text)| *color == prose && text.contains("after")));
+    }
 }
