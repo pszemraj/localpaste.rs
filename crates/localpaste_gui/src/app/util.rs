@@ -49,7 +49,15 @@ pub(super) fn display_language_label(
 /// Markdown fenced-code representation.
 pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) -> String {
     let lang = language.unwrap_or("text");
-    format!("```{}\n{}\n```", lang, content)
+    let fence_len = content
+        .split(|ch| ch != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or_default()
+        .max(2)
+        + 1;
+    let fence = "`".repeat(fence_len);
+    format!("{fence}{lang}\n{content}\n{fence}")
 }
 
 /// Parses comma-separated tags, trimming whitespace and removing case-insensitive duplicates.
@@ -188,6 +196,18 @@ mod tests {
         assert_eq!(
             format_fenced_code_block("print('hi')", None),
             "```text\nprint('hi')\n```"
+        );
+    }
+
+    #[test]
+    fn format_fenced_code_block_uses_a_delimiter_longer_than_content_runs() {
+        assert_eq!(
+            format_fenced_code_block("before\n```\nafter", Some("markdown")),
+            "````markdown\nbefore\n```\nafter\n````"
+        );
+        assert_eq!(
+            format_fenced_code_block("`````", None),
+            "``````text\n`````\n``````"
         );
     }
 
