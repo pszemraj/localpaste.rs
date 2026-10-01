@@ -564,14 +564,11 @@ impl eframe::App for LocalPasteApp {
                         self.shortcut_help_open = false;
                     }
                     RuntimeShortcutAction::TogglePastePicker => {
-                        self.paste_picker_open = !self.paste_picker_open;
                         if self.paste_picker_open {
-                            self.palette_search_last_sent.clear();
-                            self.palette_search_last_input_at =
-                                Some(Instant::now() - SEARCH_DEBOUNCE);
+                            self.paste_picker_open = false;
+                        } else {
+                            self.open_paste_picker();
                         }
-                        self.command_palette_open = false;
-                        self.shortcut_help_open = false;
                     }
                     RuntimeShortcutAction::ToggleProperties => {
                         self.properties_drawer_open = !self.properties_drawer_open;

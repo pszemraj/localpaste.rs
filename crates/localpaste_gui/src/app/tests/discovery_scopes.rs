@@ -217,3 +217,71 @@ fn discovery_overlays_transfer_keyboard_ownership_when_switching() {
         assert_eq!(harness.app.active_snapshot(), "content");
     }
 }
+
+#[test]
+fn reopening_picker_retries_search_discarded_while_closed() {
+    for from_command in [true, false] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        let picker_shortcut = || {
+            key_event(
+                egui::Key::K,
+                egui::Modifiers {
+                    shift: true,
+                    ..primary_command_modifiers()
+                },
+            )
+        };
+        run_full_update(&mut harness.app, &ctx, vec![picker_shortcut()]);
+        harness.app.set_paste_picker_query("needle".into());
+        harness.app.set_paste_picker_scope(SearchScope::Body);
+        harness.app.maybe_dispatch_palette_search();
+        assert!(matches!(
+            recv_cmd(&harness.cmd_rx),
+            CoreCmd::SearchPalette { .. }
+        ));
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        let response = || CoreEvent::PaletteSearchResults {
+            query: "needle".into(),
+            scope: SearchScope::Body,
+            items: vec![test_summary("match", "needle", None, 10)],
+        };
+        harness.app.apply_event(response());
+        assert!(!harness.app.paste_picker_open);
+        assert!(harness.app.palette_search_results.is_empty());
+
+        if from_command {
+            run_full_update(
+                &mut harness.app,
+                &ctx,
+                vec![command_key_event(egui::Key::K)],
+            );
+            run_full_update(
+                &mut harness.app,
+                &ctx,
+                vec![egui::Event::Text("Open paste picker".into())],
+            );
+            run_full_update(
+                &mut harness.app,
+                &ctx,
+                vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+        } else {
+            run_full_update(&mut harness.app, &ctx, vec![picker_shortcut()]);
+        }
+        assert!(harness.app.paste_picker_open);
+        assert!(
+            harness.cmd_rx.try_iter().any(|cmd| matches!(
+                cmd,
+                CoreCmd::SearchPalette { query, scope: SearchScope::Body, .. } if query == "needle"
+            )),
+            "reopening from command={from_command} must retry the retained query and scope"
+        );
+        harness.app.apply_event(response());
+        assert_eq!(harness.app.palette_search_results[0].id, "match");
+    }
+}

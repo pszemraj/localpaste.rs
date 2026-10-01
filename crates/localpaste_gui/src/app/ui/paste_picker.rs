@@ -4,6 +4,16 @@ use super::super::*;
 use super::command_palette::CommandPaletteAction;
 
 impl LocalPasteApp {
+    /// Open paste discovery and refresh its retained query after any closed-session results.
+    pub(in crate::app) fn open_paste_picker(&mut self) {
+        self.command_palette_open = false;
+        self.shortcut_help_open = false;
+        self.paste_picker_open = true;
+        self.palette_search_results.clear();
+        self.palette_search_last_sent.clear();
+        self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+    }
+
     /// Keep the selected result within the current paste-only result list.
     pub(in crate::app) fn clamp_paste_picker_selection(&mut self, results_len: usize) {
         self.paste_picker_selected = self
