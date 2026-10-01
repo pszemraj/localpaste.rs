@@ -139,14 +139,17 @@ impl PasteDb {
         options: SearchOptions,
         scope: SearchScope,
     ) -> Result<Vec<PasteMeta>, AppError> {
+        let include_all = |_: &PasteMeta| true;
         self.search_scoped_filtered_with_options(
             query,
             limit,
             folder_id,
             language,
             options,
-            scope,
-            |_| true,
+            ScopedSearchFilter {
+                scope,
+                predicate: &include_all,
+            },
         )
     }
 
@@ -162,32 +165,28 @@ impl PasteDb {
     /// - `folder_id`: Optional folder restriction.
     /// - `language`: Optional canonical language restriction.
     /// - `options`: Case-sensitivity policy.
-    /// - `scope`: Fields eligible to match.
-    /// - `matches`: Additional metadata predicate for each candidate.
+    /// - `filter`: Field scope and additional metadata predicate.
     ///
     /// # Returns
     /// Ranked metadata rows from the complete store that satisfy all filters.
     ///
     /// # Errors
     /// Returns storage or row-deserialization errors.
-    pub fn search_scoped_filtered_with_options<F>(
+    pub fn search_scoped_filtered_with_options(
         &self,
         query: &str,
         limit: usize,
         folder_id: Option<String>,
         language: Option<String>,
         options: SearchOptions,
-        scope: SearchScope,
-        matches: F,
-    ) -> Result<Vec<PasteMeta>, AppError>
-    where
-        F: Fn(&PasteMeta) -> bool,
-    {
+        filter: ScopedSearchFilter<'_>,
+    ) -> Result<Vec<PasteMeta>, AppError> {
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
         let language_filter = normalize_language_filter(language.as_deref());
+        let scope = filter.scope;
         let metadata_only = matches!(scope, SearchScope::Title | SearchScope::Metadata);
         let read_txn = self.db.begin_read()?;
         let metas = read_txn.open_table(PASTES_META)?;
@@ -203,7 +202,7 @@ impl PasteDb {
                 let (_, value) = row?;
                 let meta = deserialize_meta(value.value())?;
                 if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref())
-                    || !matches(&meta)
+                    || !(filter.predicate)(&meta)
                 {
                     continue;
                 }
@@ -226,7 +225,7 @@ impl PasteDb {
                 let (key, value) = row?;
                 let meta = deserialize_meta(value.value())?;
                 if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref())
-                    || !matches(&meta)
+                    || !(filter.predicate)(&meta)
                 {
                     continue;
                 }

@@ -95,6 +95,17 @@ pub struct SearchOptions {
     pub case_sensitive: bool,
 }
 
+/// Field scope and caller-defined metadata filter for a scoped search.
+///
+/// The predicate runs before canonical bodies are loaded, scored, or included
+/// in the result limit.
+pub struct ScopedSearchFilter<'a> {
+    /// Fields eligible to match the query.
+    pub scope: SearchScope,
+    /// Additional metadata constraint applied before body reads and ranking.
+    pub predicate: &'a dyn Fn(&PasteMeta) -> bool,
+}
+
 /// Query parameters for listing pastes.
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {

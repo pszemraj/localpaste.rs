@@ -145,6 +145,7 @@ fn caller_filter_runs_before_body_load_and_top_k() {
         .unwrap();
     txn.commit().unwrap();
 
+    let included_language = |meta: &PasteMeta| meta.language.as_deref() == Some("rust");
     for scope in [SearchScope::All, SearchScope::Body] {
         let hits = db
             .search_scoped_filtered_with_options(
@@ -153,8 +154,10 @@ fn caller_filter_runs_before_body_load_and_top_k() {
                 None,
                 None,
                 SearchOptions::default(),
-                scope,
-                |meta| meta.language.as_deref() == Some("rust"),
+                ScopedSearchFilter {
+                    scope,
+                    predicate: &included_language,
+                },
             )
             .unwrap();
         assert_eq!(hits.len(), 1);
