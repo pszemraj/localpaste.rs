@@ -231,13 +231,22 @@ fn summary_matches_kind_pattern_and_name(
 /// `true` when derived kind or legacy summary heuristics match the requested
 /// semantic collection bucket.
 fn matches_semantic_collection(item: &PasteSummary, collection: SidebarCollection) -> bool {
-    let document = item.derived.kind == PasteKind::Document
-        || localpaste_core::semantic::is_document_language(item.language.as_deref());
-    if document {
+    if localpaste_core::semantic::is_document_language(item.language.as_deref()) {
         return collection == SidebarCollection::Documents;
     }
     match collection {
-        SidebarCollection::Documents => false,
+        // A prose fallback is weaker than an explicit filename or tag signal.
+        SidebarCollection::Documents => {
+            item.derived.kind == PasteKind::Document
+                && ![
+                    SidebarCollection::Code,
+                    SidebarCollection::Config,
+                    SidebarCollection::Logs,
+                    SidebarCollection::Links,
+                ]
+                .into_iter()
+                .any(|collection| matches_semantic_collection(item, collection))
+        }
         SidebarCollection::Code => summary_matches_kind_pattern_and_name(
             item,
             PasteKind::Code,
@@ -370,6 +379,13 @@ mod tests {
         assert!(!matches_semantic_collection(&item, SidebarCollection::Code));
         item.language = None;
         item.derived.kind = PasteKind::Document;
+        assert!(matches_semantic_collection(&item, SidebarCollection::Code));
+        assert!(!matches_semantic_collection(
+            &item,
+            SidebarCollection::Documents
+        ));
+        item.name = "notes".into();
+        item.tags.clear();
         assert!(matches_semantic_collection(
             &item,
             SidebarCollection::Documents
@@ -396,7 +412,7 @@ mod tests {
 
     #[test]
     fn smart_summary_heuristics_cover_suffixes_commands_and_urls() {
-        let base = PasteSummary {
+        let mut base = PasteSummary {
             id: "id".to_string(),
             name: "sample".to_string(),
             language: None,
@@ -406,6 +422,33 @@ mod tests {
             tags: Vec::new(),
             derived: Default::default(),
         };
+        base.derived.kind = PasteKind::Document;
+
+        let explicit_document = PasteSummary {
+            name: "deploy.log".to_string(),
+            language: Some("markdown".to_string()),
+            ..base.clone()
+        };
+        assert!(matches_semantic_collection(
+            &explicit_document,
+            SidebarCollection::Documents
+        ));
+        assert!(!matches_semantic_collection(
+            &explicit_document,
+            SidebarCollection::Logs
+        ));
+        let tagged_log = PasteSummary {
+            tags: vec!["logs".to_string()],
+            ..base.clone()
+        };
+        assert!(matches_semantic_collection(
+            &tagged_log,
+            SidebarCollection::Logs
+        ));
+        assert!(!matches_semantic_collection(
+            &tagged_log,
+            SidebarCollection::Documents
+        ));
 
         let code = PasteSummary {
             name: "cargo test --workspace".to_string(),
@@ -431,6 +474,12 @@ mod tests {
         ));
         assert!(matches_semantic_collection(&log, SidebarCollection::Logs));
         assert!(matches_semantic_collection(&link, SidebarCollection::Links));
+        for item in [code, config, log, link] {
+            assert!(!matches_semantic_collection(
+                &item,
+                SidebarCollection::Documents
+            ));
+        }
     }
 
     #[test]

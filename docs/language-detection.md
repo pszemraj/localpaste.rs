@@ -76,7 +76,7 @@ This preserves interoperability across legacy and current labels (for example, `
 
 Search ranking also checks normalized language values to avoid losing metadata relevance as stored labels evolve.
 
-The Documents collection includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Explicit document languages take precedence over embedded code and misleading titles/tags. Untyped text is a document only when it appears prose-like; delimited records, hexadecimal blobs, recognized commands, and log-level lines stay out of Documents. Markdown is excluded from Code. The derived `Document` kind is rebuilt through the [storage projection repair policy](storage.md#compatibility-policy).
+The Documents collection includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Explicit document languages take precedence over embedded code and misleading titles/tags. A fallback prose classification yields to filename and tag collection rules, such as `deploy.log` or a `logs` tag. Untyped text is a document only when it appears prose-like; delimited records, hexadecimal blobs, recognized commands, and log-level lines stay out of Documents. Markdown is excluded from Code. The derived `Document` kind is rebuilt through the [storage projection repair policy](storage.md#compatibility-policy).
 
 ## Text Export Extensions
 
