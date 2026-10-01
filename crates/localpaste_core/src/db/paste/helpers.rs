@@ -236,7 +236,7 @@ pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
 ///
 /// # Returns
 /// `true` when no filter is set or when canonicalized labels match.
-pub(super) fn language_matches_filter(language: Option<&str>, filter: Option<&str>) -> bool {
+fn language_matches_filter(language: Option<&str>, filter: Option<&str>) -> bool {
     let Some(filter) = filter else {
         return true;
     };
