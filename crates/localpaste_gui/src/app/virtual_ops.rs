@@ -228,7 +228,8 @@ impl LocalPasteApp {
         self.reset_virtual_caret_blink();
         self.highlight_edit_hint = None;
         self.virtual_drag_active = false;
-        self.virtual_pending_scroll_offset_y = None;
+        // The scroll area retains its state across paste selection changes.
+        self.virtual_pending_scroll_offset_y = Some(0.0);
         self.virtual_cursor_reveal = None;
         self.invalidate_editor_find_matches();
         self.reset_virtual_click_streak();

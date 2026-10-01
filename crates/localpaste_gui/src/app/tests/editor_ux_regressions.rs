@@ -46,6 +46,27 @@ fn missing_named_editor_style_renders_with_resolved_fallback_font() {
 }
 
 #[test]
+fn loading_another_paste_resets_the_previous_scroll_position_without_focus() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.reset_virtual_editor(&"long line\n".repeat(900));
+    harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDocEnd { select: false }]);
+    render_frames(&mut harness.app, &ctx, 1000.0);
+    assert!(harness.app.virtual_viewport.offset_y > 1000.0);
+
+    harness
+        .app
+        .reset_virtual_editor(&"short paste\n".repeat(18));
+    render_frames(&mut harness.app, &ctx, 1000.0);
+    assert!(!harness.app.virtual_editor_state.has_focus);
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+    assert_eq!(harness.app.virtual_viewport.offset_y, 0.0);
+    assert_visible(&harness.app);
+}
+
+#[test]
 fn long_wrapped_document_reveals_jumps_eof_edits_and_distant_find_without_focus() {
     let mut harness = make_app();
     let ctx = egui::Context::default();

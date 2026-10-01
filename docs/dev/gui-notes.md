@@ -102,10 +102,10 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 ## Stable Behavior Notes
 
 - Paste rows use `selectable_label`; keep this if adjusting row styling to preserve reliable click targets.
-- Collections scope controls are rendered as smart filters in the sidebar (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) with compact chips and overflow under `...`.
+- Collections scope controls are rendered as smart filters in the sidebar (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Documents`, `Code`, `Config`, `Logs`, `Links`) with compact chips and overflow under `...`.
 - Language filtering is rendered in the sidebar under smart filters and always includes an explicit `All languages` clear option.
 - Language filtering stacks with the active smart collection instead of replacing it.
-- Sidebar list refresh runs on metadata projections (`name/tags/language/folder`); sidebar search and command-palette paste discovery run full-content substring search and return metadata summaries.
+- Sidebar list refresh reads metadata projections; scoped sidebar and paste-picker searches return metadata summaries.
 - The Documents smart filter groups Markdown, prose notes, reStructuredText, and LaTeX. Document classification, Markdown scopes, and text-export extensions follow [Language Detection And Highlighting](../language-detection.md).
 - Editor geometry uses the resolved font even if a native style change removes the named Editor text style. Startup, first creation, and populated restart have regression coverage without test-only style registration.
 - The command palette searches actions only, including Export, Duplicate, Copy, Copy Link, Find, Properties, History, and Diff. The paste picker searches paste rows and retains Open, Copy, Copy Fenced, and Delete actions.
@@ -114,9 +114,9 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar All fields or Body search primes this in-paste find bar when the sidebar query appears in the paste body.
 - Find keeps query focus on `Enter`/`Shift+Enter` and advances to the next/previous match. Buttons and document jumps center the caret independently of editor focus.
 - Typing and paste reveal the caret with minimal scrolling; manual scrolling stays where you leave it until another edit or navigation action. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
+- Loading another paste starts at its first line, including when the previous paste was scrolled to its end.
 - Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.
 - App-level shortcut dispatch, command-palette hints, and keyboard shortcut help share the runtime shortcut registry. The shortcut help intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
-- Command palette is action-first (`Commands` section first; `Pastes` section is secondary search/open context).
 - Virtual-editor highlight debounce/staging policy is defined in
   [language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
 - Language display behavior is explicit: auto + unset -> `auto`; manual + unset -> `plain`.
@@ -197,16 +197,18 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Verify all contracts in
      [Keyboard And Navigation Contract](#keyboard-and-navigation-contract).
    - Confirm save transitions dirty -> saved after `Ctrl/Cmd+S`.
-5. Command palette actions:
-   - Open selected paste from palette.
-   - Delete from palette and confirm list removal.
-   - Copy raw/copy fenced commands complete and close/open behavior is correct.
+5. Commands and paste discovery:
+   - `Cmd+K` lists commands; a paste-body query does not produce paste rows.
+   - `Cmd+Shift+K` opens the paste picker; open a result and confirm its body is shown from the first line.
+   - Copy and Copy Fenced work from picker results; deleting a disposable result removes its row.
    - Open history and diff modals from palette queries (`history`, `diff`) when a paste is selected.
+   - `F1` help finds shortcuts by description and by key combination, including `Cmd+Shift+K`.
 6. Search and filters:
    - Sidebar query narrows results and clearing query restores list.
+   - Check Title, Metadata, and Body with field-specific fixtures; sidebar and picker retain independent queries and scopes.
    - Opening a paste from a sidebar body-text search selects and scrolls to the first matching substring in the editor.
    - Editor toolbar `Find` locates substrings within the selected paste; `Next`/`Prev` wrap through all matches and the `Case` toggle narrows matching.
-   - Smart collections (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Code`, `Config`, `Logs`, `Links`) re-scope results.
+   - Smart collections re-scope results; Markdown with fenced code appears under Documents and is excluded from Code.
    - Sidebar language filter (`All languages` + detected languages) stacks with active collection (not replacing it).
 7. Metadata/properties:
    - Open Properties drawer, edit name/tags/language, save, and confirm list projection updates.
