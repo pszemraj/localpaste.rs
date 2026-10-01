@@ -285,3 +285,58 @@ fn reopening_picker_retries_search_discarded_while_closed() {
         assert_eq!(harness.app.palette_search_results[0].id, "match");
     }
 }
+
+#[test]
+fn command_palette_arrows_keep_first_and_last_commands_visible() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.command_palette_open = true;
+    let mut time = 0.0;
+    let mut render = |app: &mut LocalPasteApp, events| {
+        time += 0.5; // Advance egui's scrolling animation without wall-clock sleeps.
+        run_full_update_with_input(
+            app,
+            &ctx,
+            egui::RawInput {
+                time: Some(time),
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            },
+        )
+    };
+    for _ in 0..3 {
+        render(&mut harness.app, vec![]);
+    }
+    let count = harness.app.command_palette_actions().len();
+    for (key, selected, label) in [
+        (egui::Key::ArrowDown, count - 1, "Refresh list  "),
+        (egui::Key::ArrowUp, 0, "New paste  "),
+    ] {
+        for _ in 0..count {
+            render(
+                &mut harness.app,
+                vec![key_event(key, egui::Modifiers::NONE)],
+            );
+        }
+        render(&mut harness.app, vec![]);
+        let output = render(&mut harness.app, vec![]);
+        assert_eq!(harness.app.command_palette_selected, selected);
+        assert!(
+            output.shapes.iter().any(|clipped| {
+                if let egui::Shape::Text(text) = &clipped.shape {
+                    text.galley.job.text.starts_with(label)
+                        && clipped
+                            .clip_rect
+                            .contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                } else {
+                    false
+                }
+            }),
+            "keyboard-selected command {label:?} must be fully visible"
+        );
+    }
+}

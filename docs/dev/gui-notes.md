@@ -110,6 +110,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Editor geometry uses the resolved font even if a native style change removes the named Editor text style. Startup, first creation, and populated restart have regression coverage without test-only style registration.
 - The command palette searches actions only, including Export, Duplicate, Copy, Copy Link, Find, Properties, History, and Diff. The paste picker searches paste rows and retains Open, Copy, Copy Fenced, and Delete actions.
 - Command palette, paste picker, and shortcut help are mutually exclusive: opening one closes the other two so its query owns keyboard input.
+- Command-palette keyboard navigation and query changes reveal the selected command within the scroll area.
 - Sidebar and picker each retain their own session query and field scope: All fields (default), Title, Metadata, or Body. Metadata searches the existing title/tag/language/derived-term projection. Title and Metadata avoid loading bodies; every scope searches the full store before applying the result limit. HTTP and CLI search are unchanged.
 - Scope changes clear old results immediately; responses and backend cache keys carry the scope so delayed results cannot leak between contexts.
 - Opening the paste picker from its shortcut or the command palette refreshes its retained query and scope; responses discarded while it was closed cannot leave it stuck with empty results.

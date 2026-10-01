@@ -75,14 +75,16 @@ impl LocalPasteApp {
                     ui.label("No matching commands");
                     return;
                 }
-                if ui.input_mut(|input| {
+                let down = ui.input_mut(|input| {
                     input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-                }) {
+                });
+                let up = ui.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+                });
+                if down {
                     self.command_palette_selected += 1;
                 }
-                if ui
-                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp))
-                {
+                if up {
                     self.command_palette_selected = self.command_palette_selected.saturating_sub(1);
                 }
                 self.command_palette_selected =
@@ -95,11 +97,17 @@ impl LocalPasteApp {
                     .max_height(400.0)
                     .show(ui, |ui| {
                         for (index, item) in actions.iter().enumerate() {
-                            let response = ui.selectable_label(
-                                index == self.command_palette_selected,
+                            let selected = index == self.command_palette_selected;
+                            let row = ui.selectable_label(
+                                selected,
                                 format!("{}  {}", item.label, item.hint),
                             );
-                            if response.clicked() {
+                            if selected
+                                && (down || up || response.changed() || response.gained_focus())
+                            {
+                                row.scroll_to_me(None);
+                            }
+                            if row.clicked() {
                                 pending = Some(item.action.clone());
                             }
                         }
