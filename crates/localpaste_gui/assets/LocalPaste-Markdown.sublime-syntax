@@ -6,18 +6,18 @@ scope: text.html.markdown.localpaste
 contexts:
   main:
     # Capture the opening delimiter so shorter or different fences cannot close it.
-    - match: '^ {0,3}(`{3,})[^`\n]*$'
+    - match: '^[ \t]*(?:>[ \t]*)?(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,})[^`\n]*$'
       scope: punctuation.definition.raw.markdown.localpaste
       push:
         - meta_scope: markup.raw.block.markdown.localpaste
-        - match: '^ {0,3}\1`*[ \t]*\r?$'
+        - match: '^[ \t]*(?:>[ \t]*)?(?:(?:[-+*]|\d+[.)])[ \t]+)?\1`*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
-    - match: '^ {0,3}(~{3,})[^\n]*$'
+    - match: '^[ \t]*(?:>[ \t]*)?(?:(?:[-+*]|\d+[.)])[ \t]+)?(~{3,})[^\n]*$'
       scope: punctuation.definition.raw.markdown.localpaste
       push:
         - meta_scope: markup.raw.block.markdown.localpaste
-        - match: '^ {0,3}\1~*[ \t]*\r?$'
+        - match: '^[ \t]*(?:>[ \t]*)?(?:(?:[-+*]|\d+[.)])[ \t]+)?\1~*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
     # A definition marker ends at the colon. Its body remains normal prose.
@@ -44,7 +44,7 @@ contexts:
           pop: true
     - match: '\*\*[^*\n]+\*\*|__[^_\n]+__'
       scope: markup.bold.markdown
-    - match: '\*[^*\n]+\*|_[^_\n]+_'
+    - match: '\*[^*\n]+\*|(?<![\p{L}\p{N}_])_[^_\n]+_(?![\p{L}\p{N}_])'
       scope: markup.italic.markdown
     - match: '!?\[[^\]\n]*\]\([^\)\n]*\)'
       scope: markup.underline.link.markdown
