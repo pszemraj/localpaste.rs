@@ -475,7 +475,7 @@ fn language_matches_query(
 }
 
 fn kind_matches_query(kind: PasteKind, query: &str, case_sensitive: bool) -> bool {
-    if kind == PasteKind::Other {
+    if matches!(kind, PasteKind::Other | PasteKind::Document) {
         return false;
     }
     let query = query.trim();

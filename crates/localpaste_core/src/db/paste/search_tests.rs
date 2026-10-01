@@ -1,6 +1,7 @@
 //! Scoped search fixtures, including proof that metadata scopes never read bodies.
 
 use super::*;
+use chrono::{Duration, Utc};
 use tempfile::TempDir;
 
 #[test]
@@ -72,4 +73,91 @@ fn title_and_metadata_scopes_do_not_deserialize_canonical_bodies() {
             SearchScope::Body
         )
         .is_err());
+}
+
+#[test]
+fn document_kind_does_not_match_partial_kind_labels() {
+    let dir = TempDir::new().unwrap();
+    let db = crate::Database::new(dir.path().to_str().unwrap()).unwrap();
+    let document = Paste::new_with_language(
+        "A private note for later.".into(),
+        "untitled".into(),
+        Some("text".into()),
+        true,
+    );
+    db.pastes.create(&document).unwrap();
+    assert_eq!(
+        db.pastes.list_meta(1, None).unwrap()[0].derived.kind,
+        crate::semantic::PasteKind::Document
+    );
+
+    for scope in [SearchScope::All, SearchScope::Metadata] {
+        for query in ["doc", "ment", "cum"] {
+            assert!(
+                db.pastes
+                    .search_scoped_with_options(
+                        query,
+                        10,
+                        None,
+                        None,
+                        SearchOptions::default(),
+                        scope,
+                    )
+                    .unwrap()
+                    .is_empty(),
+                "{query} unexpectedly matched the Document kind in {scope:?} scope"
+            );
+        }
+    }
+}
+
+#[test]
+fn caller_filter_runs_before_body_load_and_top_k() {
+    let dir = TempDir::new().unwrap();
+    let raw = Arc::new(redb::Database::create(dir.path().join("test.redb")).unwrap());
+    let db = PasteDb::new(raw.clone()).unwrap();
+    let mut target = Paste::new_with_language(
+        "needle in the included body".into(),
+        "included".into(),
+        Some("rust".into()),
+        true,
+    );
+    target.updated_at = Utc::now() - Duration::days(1);
+    let excluded = Paste::new_with_language(
+        "needle in a newer excluded body".into(),
+        "excluded".into(),
+        Some("python".into()),
+        true,
+    );
+    let corrupt = Paste::new_with_language(
+        "this row should never be deserialized".into(),
+        "corrupt".into(),
+        Some("python".into()),
+        true,
+    );
+    for paste in [&target, &excluded, &corrupt] {
+        db.create(paste).unwrap();
+    }
+    let txn = raw.begin_write().unwrap();
+    txn.open_table(PASTES)
+        .unwrap()
+        .insert(corrupt.id.as_str(), &[255_u8][..])
+        .unwrap();
+    txn.commit().unwrap();
+
+    for scope in [SearchScope::All, SearchScope::Body] {
+        let hits = db
+            .search_scoped_filtered_with_options(
+                "needle",
+                1,
+                None,
+                None,
+                SearchOptions::default(),
+                scope,
+                |meta| meta.language.as_deref() == Some("rust"),
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, target.id);
+    }
 }

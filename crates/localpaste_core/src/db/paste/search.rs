@@ -139,6 +139,50 @@ impl PasteDb {
         options: SearchOptions,
         scope: SearchScope,
     ) -> Result<Vec<PasteMeta>, AppError> {
+        self.search_scoped_filtered_with_options(
+            query,
+            limit,
+            folder_id,
+            language,
+            options,
+            scope,
+            |_| true,
+        )
+    }
+
+    /// Search the full store within an explicit field scope and caller filter.
+    ///
+    /// The caller filter runs against persisted metadata before canonical bodies
+    /// are loaded or ranked. This lets smart collections constrain a full-store
+    /// search without losing matches beyond an unfiltered result limit.
+    ///
+    /// # Arguments
+    /// - `query`: Search text, trimmed before matching.
+    /// - `limit`: Maximum number of results.
+    /// - `folder_id`: Optional folder restriction.
+    /// - `language`: Optional canonical language restriction.
+    /// - `options`: Case-sensitivity policy.
+    /// - `scope`: Fields eligible to match.
+    /// - `matches`: Additional metadata predicate for each candidate.
+    ///
+    /// # Returns
+    /// Ranked metadata rows from the complete store that satisfy all filters.
+    ///
+    /// # Errors
+    /// Returns storage or row-deserialization errors.
+    pub fn search_scoped_filtered_with_options<F>(
+        &self,
+        query: &str,
+        limit: usize,
+        folder_id: Option<String>,
+        language: Option<String>,
+        options: SearchOptions,
+        scope: SearchScope,
+        matches: F,
+    ) -> Result<Vec<PasteMeta>, AppError>
+    where
+        F: Fn(&PasteMeta) -> bool,
+    {
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
@@ -146,7 +190,7 @@ impl PasteDb {
         let language_filter = normalize_language_filter(language.as_deref());
         let metadata_only = matches!(scope, SearchScope::Title | SearchScope::Metadata);
         let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(if metadata_only { PASTES_META } else { PASTES })?;
+        let metas = read_txn.open_table(PASTES_META)?;
         let query_lower = query.to_lowercase();
         let literal_query = if options.case_sensitive {
             query
@@ -154,10 +198,15 @@ impl PasteDb {
             &query_lower
         };
         let mut results = Vec::new();
-        for row in table.iter()? {
-            let (_, value) = row?;
-            let (meta, score) = if metadata_only {
+        if metadata_only {
+            for row in metas.iter()? {
+                let (_, value) = row?;
                 let meta = deserialize_meta(value.value())?;
+                if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref())
+                    || !matches(&meta)
+                {
+                    continue;
+                }
                 let score = if scope == SearchScope::Title {
                     i32::from(helpers::contains_search(
                         &meta.name,
@@ -167,10 +216,24 @@ impl PasteDb {
                 } else {
                     score_meta_match(&meta, query, options.case_sensitive)
                 };
-                (meta, score)
-            } else {
+                if score > 0 {
+                    push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
+                }
+            }
+        } else {
+            let pastes = read_txn.open_table(PASTES)?;
+            for row in metas.iter()? {
+                let (key, value) = row?;
+                let meta = deserialize_meta(value.value())?;
+                if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref())
+                    || !matches(&meta)
+                {
+                    continue;
+                }
+                let Some(value) = pastes.get(key.value())? else {
+                    continue;
+                };
                 let paste = deserialize_paste(value.value())?;
-                let meta = PasteMeta::from(&paste);
                 let score = if scope == SearchScope::Body {
                     i32::from(helpers::contains_search(
                         &paste.content,
@@ -180,12 +243,9 @@ impl PasteDb {
                 } else {
                     score_paste_match(&paste, &meta, query, options.case_sensitive)
                 };
-                (meta, score)
-            };
-            if score > 0
-                && meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref())
-            {
-                push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
+                if score > 0 {
+                    push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
+                }
             }
         }
         Ok(finalize_meta_search_results(results, limit))
