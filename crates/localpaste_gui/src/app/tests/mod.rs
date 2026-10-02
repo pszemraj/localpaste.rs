@@ -286,10 +286,11 @@ pub(super) fn run_full_update(
 pub(super) fn run_full_update_with_input(
     app: &mut LocalPasteApp,
     ctx: &egui::Context,
-    input: egui::RawInput,
+    mut input: egui::RawInput,
 ) -> egui::FullOutput {
     app.ensure_style(ctx);
     let mut frame = eframe::Frame::_new_kittest();
+    app.raw_input_hook(ctx, &mut input);
     ctx.run(input, |ctx| {
         app.update(ctx, &mut frame);
     })
@@ -404,6 +405,7 @@ fn make_app() -> TestHarness {
         shortcut_help_query: String::new(),
         shortcut_help_focus_requested: false,
         discovery_return_focus: None,
+        deferred_discovery_events: Vec::new(),
         focus_editor_next: false,
         style_applied: false,
         window_shown_once: false,
@@ -458,6 +460,7 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 mod backend_dispatch;
 mod collections_and_search;
 mod creation_and_projection;
+mod discovery_input_order;
 mod discovery_keyboard;
 mod discovery_scopes;
 mod editor_find;

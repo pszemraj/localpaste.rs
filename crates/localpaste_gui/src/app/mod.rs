@@ -166,6 +166,8 @@ pub(crate) struct LocalPasteApp {
     shortcut_help_query: String,
     shortcut_help_focus_requested: bool,
     discovery_return_focus: Option<egui::Id>,
+    /// Native events waiting for the discovery focus boundary's next rendered frame.
+    deferred_discovery_events: Vec<egui::Event>,
     focus_editor_next: bool,
     style_applied: bool,
     window_shown_once: bool,
@@ -441,11 +443,20 @@ impl LocalPasteApp {
 }
 
 impl eframe::App for LocalPasteApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        self.stage_discovery_input(ctx, input);
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.save_gui_storage(storage);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.current_pass_index() > 0 {
+            // Repeated sizing/discard passes redraw the same native slice;
+            // its keyboard actions and edits have already been applied.
+            ctx.input_mut(|input| input.events.clear());
+        }
         self.blur_deactivated_editor(ctx);
         self.track_frame_metrics();
         self.virtual_paste_applied_this_frame = false;
@@ -491,6 +502,8 @@ impl eframe::App for LocalPasteApp {
         let virtual_editor_focus_active_pre =
             egui_focus_pre || self.virtual_editor_state.has_focus || self.focus_editor_next;
         let version_overlay_open = self.version_overlay_open();
+        let discovery_open_pre =
+            self.command_palette_open || self.paste_picker_open || self.shortcut_help_open;
         let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
@@ -506,6 +519,14 @@ impl eframe::App for LocalPasteApp {
         // Actions may change egui focus, so dispatch after releasing the input lock.
         let runtime_actions =
             ctx.input(|input| pressed_runtime_shortcuts(input).collect::<Vec<_>>());
+        // Staging isolates a dismissal from input on either side, so its
+        // original owner finishes before focus returns for the next slice.
+        let runtime_events = ctx.input(|input| input.events.clone());
+        for event in &runtime_events {
+            if self.dismiss_discovery_on_escape(ctx, event) {
+                break;
+            }
+        }
         // TextEdit treats Ctrl+K (including Shift) as delete-to-paragraph-end.
         // Consume the shifted chord first: egui's plain pattern accepts extra Shift.
         ctx.input_mut(|input| {
@@ -558,6 +579,7 @@ impl eframe::App for LocalPasteApp {
                         self.command_palette_selected = 0;
                         self.close_paste_picker();
                         self.shortcut_help_open = false;
+                        self.focus_discovery_input(ctx);
                     }
                 }
                 RuntimeShortcutAction::TogglePastePicker => {
@@ -567,6 +589,7 @@ impl eframe::App for LocalPasteApp {
                     } else if !self.version_overlay_open() {
                         self.remember_discovery_focus(ctx);
                         self.open_paste_picker();
+                        self.focus_discovery_input(ctx);
                     }
                 }
                 RuntimeShortcutAction::ToggleProperties => {
@@ -764,6 +787,22 @@ impl eframe::App for LocalPasteApp {
             repaint_after = repaint_after.min(until);
         }
         ctx.request_repaint_after(repaint_after);
+        if !self.deferred_discovery_events.is_empty() {
+            ctx.request_repaint();
+        }
+        // Queued input received before deactivation still belongs to its
+        // original widget. Finish those edits, then leave editor ownership
+        // blurred without activating the native window.
+        if discovery_open_pre
+            && !self.command_palette_open
+            && !self.paste_picker_open
+            && !self.shortcut_help_open
+            && !ui::shortcut_help::native_window_has_focus(ctx)
+        {
+            self.virtual_editor_state.has_focus = false;
+            self.focus_editor_next = false;
+            ctx.memory_mut(|memory| memory.surrender_focus(focus_id));
+        }
         self.nav_probe_write_frame(ctx);
     }
 

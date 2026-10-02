@@ -50,27 +50,25 @@ impl RuntimeShortcut {
         self.help
     }
 
-    fn pressed(self, input: &egui::InputState) -> bool {
-        input.events.iter().any(|event| {
-            let egui::Event::Key {
-                key,
-                pressed: true,
-                modifiers,
-                ..
-            } = event
-            else {
-                return false;
-            };
-            match self.chord {
-                ShortcutChord::PlainCommand(expected) => {
-                    *key == expected && is_plain_command_shortcut(*modifiers)
-                }
-                ShortcutChord::CommandShift(expected) => {
-                    *key == expected && is_command_shift_shortcut(*modifiers)
-                }
-                ShortcutChord::AnyModifier(expected) => *key == expected,
+    fn matches_event(self, event: &egui::Event) -> bool {
+        let egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            return false;
+        };
+        match self.chord {
+            ShortcutChord::PlainCommand(expected) => {
+                *key == expected && is_plain_command_shortcut(*modifiers)
             }
-        })
+            ShortcutChord::CommandShift(expected) => {
+                *key == expected && is_command_shift_shortcut(*modifiers)
+            }
+            ShortcutChord::AnyModifier(expected) => *key == expected,
+        }
     }
 }
 
@@ -173,9 +171,17 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
 pub(crate) fn pressed_runtime_shortcuts(
     input: &egui::InputState,
 ) -> impl Iterator<Item = RuntimeShortcutAction> + '_ {
+    input.events.iter().filter_map(runtime_shortcut_action)
+}
+
+/// Matches one native event without changing the order or multiplicity of chords.
+///
+/// # Returns
+/// The registered action for a pressed shortcut event, or `None` for other input.
+pub(crate) fn runtime_shortcut_action(event: &egui::Event) -> Option<RuntimeShortcutAction> {
     RUNTIME_SHORTCUTS
         .iter()
-        .filter(|shortcut| shortcut.pressed(input))
+        .find(|shortcut| shortcut.matches_event(event))
         .map(|shortcut| shortcut.action)
 }
 
@@ -292,6 +298,40 @@ mod tests {
             shift: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn runtime_shortcuts_preserve_native_order_and_repeated_actions() {
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+        let modifiers = command_modifiers();
+        let events = [egui::Key::S, egui::Key::N, egui::Key::S]
+            .into_iter()
+            .map(|key| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            })
+            .collect();
+        let _ = ctx.run(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                actions = ctx.input(|input| pressed_runtime_shortcuts(input).collect());
+            },
+        );
+        assert_eq!(
+            actions,
+            vec![
+                RuntimeShortcutAction::Save,
+                RuntimeShortcutAction::NewPaste,
+                RuntimeShortcutAction::Save
+            ]
+        );
     }
 
     #[test]

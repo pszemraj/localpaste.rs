@@ -5,6 +5,126 @@ use super::super::*;
 use eframe::egui;
 
 impl LocalPasteApp {
+    /// Render ordered native event slices on either side of discovery focus changes.
+    ///
+    /// Earlier input must finish in its current widget before an opening or
+    /// dismissal chord transfers ownership. Deferred events precede newly arrived
+    /// events, and each rendered slice consumes at least one queued event.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context used to request the next ordered frame.
+    /// - `input`: Native batch edited before egui derives focus or pointer state.
+    pub(in crate::app) fn stage_discovery_input(
+        &mut self,
+        ctx: &egui::Context,
+        input: &mut egui::RawInput,
+    ) {
+        let mut events = std::mem::take(&mut self.deferred_discovery_events);
+        events.append(&mut input.events);
+        let first_boundary = events.iter().position(|event| {
+            discovery_toggle(event) || (self.discovery_open() && discovery_escape(event))
+        });
+        // Opening needs a rendered sizing pass before its query accepts input.
+        // Dismissal can immediately deliver its suffix to the existing opener.
+        let split_at = first_boundary.and_then(|index| {
+            if index > 0 {
+                Some(index)
+            } else if events
+                .first()
+                .is_some_and(|event| self.discovery_boundary_closes(event))
+            {
+                events
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .find_map(|(index, event)| {
+                        (discovery_toggle(event) || discovery_escape(event)).then_some(index)
+                    })
+            } else {
+                Some(1)
+            }
+        });
+        if let Some(index) = split_at {
+            for event in events.split_off(index) {
+                if matches!(event, egui::Event::WindowFocused(_)) {
+                    // Native activation is current machine state. Preserve it
+                    // alongside RawInput.focused even while edits are queued.
+                    events.push(event);
+                } else {
+                    self.deferred_discovery_events.push(event);
+                }
+            }
+            if !self.deferred_discovery_events.is_empty() {
+                ctx.request_repaint();
+            }
+        }
+        input.events = events;
+    }
+
+    /// Whether a discovery query owns keyboard input independently of version dialogs.
+    fn discovery_open(&self) -> bool {
+        self.command_palette_open || self.paste_picker_open || self.shortcut_help_open
+    }
+
+    /// Whether this boundary dismisses the currently open discovery workflow.
+    fn discovery_boundary_closes(&self, event: &egui::Event) -> bool {
+        discovery_escape(event) && self.discovery_open()
+            || match super::super::shortcuts::runtime_shortcut_action(event) {
+                Some(
+                    super::super::shortcuts::RuntimeShortcutAction::ToggleCommandPalette
+                    | super::super::shortcuts::RuntimeShortcutAction::ToggleCommandPaletteLegacy,
+                ) => self.command_palette_open,
+                Some(super::super::shortcuts::RuntimeShortcutAction::TogglePastePicker) => {
+                    self.paste_picker_open
+                }
+                Some(super::super::shortcuts::RuntimeShortcutAction::ToggleShortcutHelp) => {
+                    self.shortcut_help_open
+                }
+                _ => false,
+            }
+    }
+
+    /// Transfer focus before background inputs can consume this slice's query text.
+    pub(in crate::app) fn focus_discovery_input(&self, ctx: &egui::Context) {
+        let input_id = if self.command_palette_open {
+            COMMAND_PALETTE_INPUT_ID
+        } else if self.paste_picker_open {
+            PASTE_PICKER_INPUT_ID
+        } else if self.shortcut_help_open {
+            "shortcut_help_query"
+        } else {
+            return;
+        };
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(input_id)));
+    }
+
+    /// Dismiss discovery at the start of its ordered slice, before the opener renders.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context whose focus and current Escape event are updated.
+    /// - `event`: The current ordered native event.
+    ///
+    /// # Returns
+    /// `true` when Escape dismissed an open discovery surface.
+    pub(in crate::app) fn dismiss_discovery_on_escape(
+        &mut self,
+        ctx: &egui::Context,
+        event: &egui::Event,
+    ) -> bool {
+        if !self.discovery_open() || !discovery_escape(event) {
+            return false;
+        }
+        self.command_palette_open = false;
+        self.close_paste_picker();
+        self.shortcut_help_open = false;
+        self.shortcut_help_focus_requested = false;
+        ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+        });
+        self.restore_discovery_focus(ctx);
+        true
+    }
+
     /// Preserve the original input when opening or switching discovery surfaces.
     pub(in crate::app) fn remember_discovery_focus(&mut self, ctx: &egui::Context) {
         if !self.command_palette_open && !self.paste_picker_open && !self.shortcut_help_open {
@@ -33,6 +153,7 @@ impl LocalPasteApp {
         self.close_paste_picker();
         self.shortcut_help_focus_requested = true;
         self.shortcut_help_open = true;
+        self.focus_discovery_input(ctx);
     }
 
     /// Dismiss help and return keyboard ownership to the input that opened it.
@@ -113,6 +234,47 @@ impl LocalPasteApp {
             self.close_shortcut_help(ctx);
         }
     }
+}
+
+/// Whether the event starts, ends, or switches a discovery input workflow.
+fn discovery_toggle(event: &egui::Event) -> bool {
+    matches!(
+        super::super::shortcuts::runtime_shortcut_action(event),
+        Some(
+            super::super::shortcuts::RuntimeShortcutAction::ToggleCommandPalette
+                | super::super::shortcuts::RuntimeShortcutAction::ToggleCommandPaletteLegacy
+                | super::super::shortcuts::RuntimeShortcutAction::TogglePastePicker
+                | super::super::shortcuts::RuntimeShortcutAction::ToggleShortcutHelp
+        )
+    )
+}
+
+/// Whether an unmodified Escape press dismisses discovery.
+fn discovery_escape(event: &egui::Event) -> bool {
+    matches!(event, egui::Event::Key {
+        key: egui::Key::Escape,
+        pressed: true,
+        modifiers,
+        ..
+    } if modifiers.is_none())
+}
+
+/// Current native activation, honoring the final focus event in synthetic/native batches.
+///
+/// # Returns
+/// Whether the native window can receive keyboard focus at this point in the frame.
+pub(in crate::app) fn native_window_has_focus(ctx: &egui::Context) -> bool {
+    ctx.input(|input| {
+        input
+            .events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                egui::Event::WindowFocused(focused) => Some(*focused),
+                _ => None,
+            })
+            .unwrap_or(input.focused)
+    })
 }
 
 fn render_shortcut_sections(ui: &mut egui::Ui, query: &str) {

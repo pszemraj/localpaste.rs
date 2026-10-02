@@ -129,6 +129,7 @@ impl LocalPasteApp {
             shortcut_help_query: String::new(),
             shortcut_help_focus_requested: false,
             discovery_return_focus: None,
+            deferred_discovery_events: Vec::new(),
             focus_editor_next: false,
             style_applied: false,
             window_shown_once: false,
