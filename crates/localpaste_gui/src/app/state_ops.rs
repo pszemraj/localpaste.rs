@@ -142,7 +142,12 @@ impl LocalPasteApp {
                 }
             }
             CoreEvent::PasteLoaded { paste } => {
-                if self.selected_id.as_deref() == Some(paste.id.as_str()) {
+                // Selection setup clears `selected_paste` before requesting its
+                // body. A repeated same-id reply must not replace edits made
+                // after an earlier reply already initialized that selection.
+                if self.selected_id.as_deref() == Some(paste.id.as_str())
+                    && self.selected_paste.is_none()
+                {
                     self.select_loaded_paste(paste);
                 }
             }
@@ -511,6 +516,7 @@ impl LocalPasteApp {
         self.pending_picker_open = None;
         self.picker_selection_pin = None;
         if self.selected_id.as_deref() == Some(id.as_str()) {
+            self.clear_pending_selection_request();
             return true;
         }
         self.cancel_pending_delete();
@@ -888,7 +894,8 @@ impl LocalPasteApp {
     /// Ensures the current selection still exists in the visible sidebar list.
     ///
     /// When the active item no longer matches the current filters, this selects
-    /// the first remaining visible paste or clears selection if none remain.
+    /// the first remaining visible paste or clears a fully saved selection if
+    /// none remain. Drafts and outstanding saves retain their editor and lock.
     pub(super) fn ensure_selection_after_list_update(&mut self) {
         if self.selection_transition_block_reason().is_some() {
             return;
@@ -927,6 +934,13 @@ impl LocalPasteApp {
         if let Some(first) = self.pastes.first() {
             self.select_paste(first.id.clone());
         } else {
+            if self.save_status != SaveStatus::Saved
+                || self.metadata_dirty
+                || self.save_in_flight
+                || self.metadata_save_in_flight
+            {
+                return;
+            }
             self.clear_selection();
         }
     }

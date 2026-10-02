@@ -471,6 +471,7 @@ mod picker_find;
 mod picker_scroll;
 mod save_and_metadata;
 mod selected_delete;
+mod selection_guard_regressions;
 mod shortcut_help;
 mod shutdown_behavior;
 mod startup_styles;

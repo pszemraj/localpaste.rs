@@ -106,6 +106,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Language filtering is rendered in the sidebar under smart filters and always includes an explicit `All languages` clear option.
 - Language filtering stacks with the active smart collection instead of replacing it.
 - Sidebar list refresh reads metadata projections; scoped sidebar and paste-picker searches return metadata summaries.
+- Empty filtered results retain unsaved content, metadata, and pending saves with the edit lock until saving completes. Selecting the active paste cancels a queued switch, and repeated load replies cannot replace an initialized editor draft.
 - The Documents smart filter groups Markdown, prose notes, reStructuredText, and LaTeX. Document classification, Markdown scopes, and text-export extensions follow [Language Detection And Highlighting](../language-detection.md).
 - The app selects its dark theme before installing custom fonts and spacing, including on systems using a light theme. Editor geometry uses the resolved font even if a later style change removes the named Editor text style. Startup, first creation, and populated restart have regression coverage with light-system input and without test-only style registration.
 - The command palette searches actions only, including Export, Duplicate, Copy, Copy Link, Find, Properties, History, and Diff. The paste picker searches paste rows and retains Open, Copy, Copy Fenced, and Delete actions.
