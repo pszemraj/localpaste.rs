@@ -53,6 +53,45 @@ impl LocalPasteApp {
         self.select_editor_find_match(0);
     }
 
+    /// Consumes an accepted picker open and reveals its first literal body match.
+    ///
+    /// # Returns
+    /// `true` when the loaded paste belongs to the picker open, including metadata-only hits.
+    pub(super) fn prime_editor_find_from_picker_open(&mut self) -> bool {
+        let Some(opening) = self.pending_picker_open.take() else {
+            return false;
+        };
+        if self.selected_id.as_deref() != Some(opening.id.as_str()) {
+            return false;
+        }
+        if !matches!(opening.scope, SearchScope::All | SearchScope::Body)
+            || opening.query.is_empty()
+        {
+            return true;
+        }
+
+        let matches = find_text_ranges(
+            self.active_snapshot().as_str(),
+            opening.query.as_str(),
+            opening.case_sensitive,
+        );
+        if matches.is_empty() {
+            return true;
+        }
+        self.editor_find = EditorFindState {
+            open: true,
+            query: opening.query,
+            matches,
+            active_match: Some(0),
+            case_sensitive: opening.case_sensitive,
+            focus_requested: false,
+            last_buffer_epoch: Some(self.active_buffer_epoch),
+            last_buffer_revision: Some(self.active_revision()),
+        };
+        self.select_editor_find_match(0);
+        true
+    }
+
     /// Replaces the current-paste find query and selects the first matching range.
     pub(super) fn set_editor_find_query(&mut self, query: String) {
         self.update_editor_find(EditorFindUpdate::Query(query));

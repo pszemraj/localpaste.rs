@@ -79,6 +79,7 @@ impl LocalPasteApp {
             palette_search_pending: false,
             pending_copy_action: None,
             pending_selection_id: None,
+            pending_picker_open: None,
             picker_selection_pin: None,
             pending_delete_id: None,
             clipboard_outgoing: None,

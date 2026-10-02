@@ -115,11 +115,12 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Scope changes clear old results immediately; responses and backend cache keys carry the scope and collection so delayed results cannot leak between contexts. Collection rules apply in the backend before the search result limit, including when a matching collection row is older than the first 512 unfiltered results.
 - Opening the paste picker from its shortcut or the command palette refreshes its retained query and scope; responses discarded while it was closed cannot leave it stuck with empty results.
 - The paste picker shows `Searching...` while a scoped request is in flight. Closing it discards displayed results and resets selection while retaining its query and scope. Language labels follow the sidebar's large-buffer plain-rendering rule.
+- Picker All fields and Body results show a compact excerpt around the first literal body match. Title and Metadata results use metadata alone and have no body excerpts.
 - Opening a picker result outside current sidebar results preserves that selection through background refreshes until sidebar navigation, search, or filters change. Copying a picker result leaves the current editor selection and draft intact.
-- Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar All fields or Body search primes this in-paste find bar when the sidebar query appears in the paste body.
+- Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar or picker All fields or Body search primes this in-paste find bar when that search query appears in the paste body. Picker opens retain their originating query through loading and save-before-switch, including when reopening the active draft. Metadata-only picker hits preserve the existing Find query.
 - Find keeps query focus on `Enter`/`Shift+Enter` and advances to the next/previous match. `Escape` from its query or `Close` returns focus to the editor while preserving the matched selection and the query for reopening. Buttons and document jumps center the caret independently of editor focus.
 - Typing and paste reveal the caret with minimal scrolling; manual scrolling stays where you leave it until another edit or navigation action. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
-- Loading another paste starts at its first line, including when the previous paste was scrolled to its end.
+- Loading another paste resets the previous viewport to the first line before applying any search-match reveal, including when the previous paste was scrolled to its end.
 - Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.
 - App-level shortcut dispatch, command-palette hints, and keyboard shortcut help share the runtime shortcut registry. The shortcut help intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
 - Virtual-editor highlight debounce/staging policy is defined in
@@ -204,7 +205,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Confirm save transitions dirty -> saved after `Ctrl/Cmd+S`.
 5. Commands and paste discovery:
    - `Cmd+K` lists commands; a paste-body query does not produce paste rows.
-   - `Cmd+Shift+K` opens the paste picker; open a result and confirm its body is shown from the first line.
+   - `Cmd+Shift+K` opens the paste picker. With an empty query, open a different paste and confirm its body starts at the first line. With a Body query near the end of a long paste, confirm the result shows a matching excerpt; open it and confirm Find selects and reveals that passage.
    - Copy and Copy Fenced work from picker results without changing the active editor or its unsaved draft; deleting a disposable result removes its row.
    - Open history and diff modals from palette queries (`history`, `diff`) when a paste is selected.
    - `F1` help finds shortcuts by description and by key combination, including `Cmd+Shift+K`.

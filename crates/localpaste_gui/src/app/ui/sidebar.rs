@@ -446,6 +446,7 @@ mod tests {
             folder_id: None,
             tags: Vec::new(),
             derived: localpaste_core::semantic::DerivedMeta::default(),
+            match_excerpt: None,
         }
     }
 
@@ -580,6 +581,7 @@ mod tests {
                 handle: Some("fn handle_request".to_string()),
                 terms: vec!["fsdp2".to_string(), "cublaslt".to_string()],
             },
+            match_excerpt: None,
         };
         let tooltip = sidebar_hover_text(&summary);
         assert!(tooltip.contains("untamed-tundra"));

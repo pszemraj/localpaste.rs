@@ -404,6 +404,7 @@ mod tests {
                 kind: PasteKind::Code,
                 ..Default::default()
             },
+            match_excerpt: None,
         };
         assert!(matches_semantic_collection(
             &item,
@@ -437,6 +438,7 @@ mod tests {
             folder_id: None,
             tags: Vec::new(),
             derived: Default::default(),
+            match_excerpt: None,
         };
         base.derived.kind = PasteKind::Document;
 
@@ -509,6 +511,7 @@ mod tests {
             folder_id: None,
             tags: Vec::new(),
             derived: Default::default(),
+            match_excerpt: None,
         };
 
         let code = PasteSummary {

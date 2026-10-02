@@ -75,6 +75,7 @@ impl LocalPasteApp {
 
     /// Clears UI state that can only complete via backend events after the event channel closes.
     pub(super) fn handle_backend_event_channel_disconnected(&mut self) {
+        self.pending_picker_open = None;
         let picker_search_pending = std::mem::take(&mut self.palette_search_pending);
         let picker_copy_pending = self.pending_copy_action.take().is_some();
         if !self.pending_undo_restore_tokens.is_empty() {
@@ -331,7 +332,7 @@ impl LocalPasteApp {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_pending_palette_copy_for(id.as_str());
-                self.clear_picker_selection_pin_for(id.as_str());
+                self.clear_picker_selection_context_for(id.as_str());
                 if was_selected {
                     let adjacent_id = deleted_index.and_then(|index| {
                         self.pastes
@@ -404,7 +405,7 @@ impl LocalPasteApp {
             CoreEvent::PasteMissing { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
-                self.clear_picker_selection_pin_for(id.as_str());
+                self.clear_picker_selection_context_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                     self.set_status("Selected paste was deleted; list refreshed.");
@@ -418,7 +419,7 @@ impl LocalPasteApp {
                     self.version_ui.diff_target_id.as_deref() == Some(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
-                self.clear_picker_selection_pin_for(id.as_str());
+                self.clear_picker_selection_context_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                     self.set_status("Selected paste was deleted; list refreshed.");
@@ -429,7 +430,7 @@ impl LocalPasteApp {
                 self.request_refresh();
             }
             CoreEvent::PasteLoadFailed { id, message } => {
-                self.clear_picker_selection_pin_for(id.as_str());
+                self.clear_picker_selection_context_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                 }
@@ -458,7 +459,7 @@ impl LocalPasteApp {
                         self.metadata_dirty = true;
                         self.metadata_save_in_flight = false;
                         self.metadata_save_request = None;
-                        self.pending_selection_id = None;
+                        self.clear_pending_selection_request();
                         if message.to_ascii_lowercase().contains("metadata") {
                             self.set_status(message);
                         } else {
@@ -473,7 +474,7 @@ impl LocalPasteApp {
                         }
                         self.save_in_flight = false;
                         self.save_request_revision = None;
-                        self.pending_selection_id = None;
+                        self.clear_pending_selection_request();
                         self.set_status(message);
                     }
                     _ => self.set_status(message),
@@ -501,6 +502,7 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when selection was applied or successfully deferred, otherwise `false`.
     pub(super) fn select_paste(&mut self, id: String) -> bool {
+        self.pending_picker_open = None;
         self.picker_selection_pin = None;
         if self.selected_id.as_deref() == Some(id.as_str()) {
             return true;
@@ -526,7 +528,7 @@ impl LocalPasteApp {
             let metadata_save_dispatched = !metadata_save_needed || self.metadata_save_in_flight;
             if !content_save_dispatched || !metadata_save_dispatched {
                 rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
-                self.pending_selection_id = None;
+                self.clear_pending_selection_request();
                 return false;
             }
             self.set_status("Saving current paste before switching...");
@@ -544,6 +546,13 @@ impl LocalPasteApp {
     }
 
     fn queue_pending_selection(&mut self, id: String) {
+        if self
+            .pending_picker_open
+            .as_ref()
+            .is_some_and(|opening| opening.id != id)
+        {
+            self.pending_picker_open = None;
+        }
         if self.pending_selection_id.as_deref() == Some(id.as_str()) {
             return;
         }
@@ -553,6 +562,7 @@ impl LocalPasteApp {
     /// Cancels any queued selection switch that has not been applied yet.
     pub(super) fn clear_pending_selection_request(&mut self) {
         self.pending_selection_id = None;
+        self.pending_picker_open = None;
     }
 
     /// Applies a fully loaded paste into editor state and resets transient edit caches.
@@ -560,6 +570,7 @@ impl LocalPasteApp {
         let id = paste.id.clone();
         if self.selected_id.as_deref() != Some(id.as_str()) {
             if !self.acquire_paste_lock(id.as_str()) {
+                self.pending_picker_open = None;
                 return;
             }
             if let Some(prev) = self.selected_id.replace(id.clone()) {
@@ -571,7 +582,9 @@ impl LocalPasteApp {
         self.reset_virtual_editor(paste.content.as_str());
         self.clear_highlight_state();
         self.selected_paste = Some(paste);
-        self.prime_editor_find_from_sidebar_query();
+        if !self.prime_editor_find_from_picker_open() {
+            self.prime_editor_find_from_sidebar_query();
+        }
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
@@ -605,6 +618,7 @@ impl LocalPasteApp {
         // Acquire target lock before releasing current selection lock so failed
         // switches never drop the currently editable paste unexpectedly.
         if !self.acquire_paste_lock(id.as_str()) {
+            self.pending_picker_open = None;
             return false;
         }
         if let Some(prev) = self.selected_id.replace(id.clone()) {
@@ -935,9 +949,16 @@ impl LocalPasteApp {
         self.metadata_dirty = false;
     }
 
-    fn clear_picker_selection_pin_for(&mut self, id: &str) {
+    fn clear_picker_selection_context_for(&mut self, id: &str) {
         if self.picker_selection_pin.as_deref() == Some(id) {
             self.picker_selection_pin = None;
+        }
+        if self
+            .pending_picker_open
+            .as_ref()
+            .is_some_and(|opening| opening.id == id)
+        {
+            self.pending_picker_open = None;
         }
     }
 }

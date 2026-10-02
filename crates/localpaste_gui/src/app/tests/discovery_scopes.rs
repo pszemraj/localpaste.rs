@@ -537,6 +537,37 @@ fn paste_picker_uses_sidebar_language_guardrail_and_reveals_keyboard_selection()
 }
 
 #[test]
+fn paste_picker_renders_body_match_excerpt() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.open_paste_picker();
+    harness.app.set_paste_picker_query("needle".into());
+    harness.app.set_paste_picker_scope(SearchScope::Body);
+    harness.app.palette_search_results = vec![PasteSummary {
+        match_excerpt: Some(format!("{}Needle", "context ".repeat(18))),
+        ..test_summary("body-hit", "Body hit", Some("text"), 150)
+    }];
+    harness.app.palette_search_last_sent = "needle".into();
+
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1100.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, input());
+    let output = run_full_update_with_input(&mut harness.app, &ctx, input());
+    assert!(output.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.job.text.contains("Needle"))
+    }));
+    assert!(output.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.job.text.starts_with("Copy Fenced")
+            && clipped.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))
+    }));
+}
+
+#[test]
 fn paste_picker_copy_loads_the_requested_result() {
     let mut harness = make_app();
     harness.app.open_paste_picker();

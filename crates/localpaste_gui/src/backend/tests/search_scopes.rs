@@ -1,6 +1,7 @@
 //! Scoped search through worker requests, cache keys, and echoed response context.
 
 use super::*;
+use localpaste_core::db::tables::PASTES;
 use localpaste_core::models::paste::SearchScope;
 
 #[test]
@@ -110,7 +111,58 @@ fn worker_cache_separates_scopes_and_searches_beyond_the_loaded_list() {
                 ids.sort();
                 expected.sort();
                 assert_eq!(ids, expected);
+                if picker && matches!(scope, SearchScope::All | SearchScope::Body) {
+                    assert!(items
+                        .iter()
+                        .find(|item| item.id == body.id)
+                        .and_then(|item| item.match_excerpt.as_deref())
+                        .is_some_and(|excerpt| excerpt.contains("Needle")));
+                    if scope == SearchScope::All {
+                        assert!(items
+                            .iter()
+                            .filter(|item| item.id != body.id)
+                            .all(|item| item.match_excerpt.is_none()));
+                    }
+                } else {
+                    assert!(items.iter().all(|item| item.match_excerpt.is_none()));
+                }
             }
+        }
+    }
+}
+
+#[test]
+fn picker_metadata_scopes_do_not_deserialize_canonical_bodies() {
+    let TestDb { _dir: _guard, db } = setup_db();
+    let mut paste = Paste::new("ordinary body".into(), "Needle title".into());
+    paste.tags = vec!["needle tag".into()];
+    db.pastes.create(&paste).unwrap();
+
+    let write_txn = db.db.begin_write().unwrap();
+    write_txn
+        .open_table(PASTES)
+        .unwrap()
+        .insert(paste.id.as_str(), &[255_u8][..])
+        .unwrap();
+    write_txn.commit().unwrap();
+
+    let backend = spawn_backend(db, 10 * 1024 * 1024);
+    for scope in [SearchScope::Title, SearchScope::Metadata] {
+        backend
+            .cmd_tx
+            .send(CoreCmd::SearchPalette {
+                query: "needle".into(),
+                scope,
+                limit: 10,
+            })
+            .unwrap();
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PaletteSearchResults { items, .. } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].id, paste.id);
+                assert!(items[0].match_excerpt.is_none());
+            }
+            other => panic!("unexpected {other:?}"),
         }
     }
 }

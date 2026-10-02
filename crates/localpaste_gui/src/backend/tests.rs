@@ -718,6 +718,10 @@ fn backend_palette_search_returns_content_matches() {
             assert_eq!(query, "println!");
             assert_eq!(items.len(), 1);
             assert_eq!(items[0].name, "beta-entry");
+            assert!(items[0]
+                .match_excerpt
+                .as_deref()
+                .is_some_and(|excerpt| excerpt.contains("println!")));
         }
         other => panic!("unexpected event: {:?}", other),
     }

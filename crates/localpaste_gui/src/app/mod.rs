@@ -109,6 +109,7 @@ pub(crate) struct LocalPasteApp {
     palette_search_pending: bool,
     pending_copy_action: Option<PaletteCopyAction>,
     pending_selection_id: Option<String>,
+    pending_picker_open: Option<PendingPickerOpen>,
     picker_selection_pin: Option<String>,
     pending_delete_id: Option<String>,
     clipboard_outgoing: Option<String>,
@@ -193,6 +194,15 @@ struct StagedHighlightInvalidation {
 enum PaletteCopyAction {
     Raw(String),
     Fenced(String),
+}
+
+/// Picker search context retained until its accepted paste selection finishes loading.
+#[derive(Debug, Clone)]
+struct PendingPickerOpen {
+    id: String,
+    query: String,
+    scope: SearchScope,
+    case_sensitive: bool,
 }
 
 // GUI-owned writes refresh immediately through backend events. This fallback is

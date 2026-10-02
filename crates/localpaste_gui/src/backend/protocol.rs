@@ -239,6 +239,10 @@ pub struct PasteSummary {
     pub folder_id: Option<String>,
     pub tags: Vec<String>,
     pub derived: DerivedMeta,
+    /// Compact raw-body context for a matching paste-picker result.
+    ///
+    /// List and sidebar projections leave this unset so they remain metadata-only.
+    pub match_excerpt: Option<String>,
 }
 
 impl PasteSummary {
@@ -264,6 +268,7 @@ impl PasteSummary {
             folder_id: meta.folder_id.clone(),
             tags: meta.tags.clone(),
             derived: meta.derived.clone(),
+            match_excerpt: None,
         }
     }
 }

@@ -106,38 +106,61 @@ impl LocalPasteApp {
                     .max_height(360.0)
                     .show(ui, |ui| {
                         for (index, item) in results.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                let selected = self.paste_picker_selected == index;
-                                let response = ui.selectable_label(selected, &item.name);
-                                if selected && (down || up) {
-                                    response.scroll_to_me(None);
-                                }
-                                if response.clicked() {
-                                    pending =
-                                        Some(CommandPaletteAction::OpenPaste(item.id.clone()));
-                                }
-                                ui.label(
-                                    RichText::new(display_language_label(
-                                        item.language.as_deref(),
-                                        false,
-                                        item.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
-                                    ))
-                                    .small()
-                                    .color(COLOR_TEXT_MUTED),
-                                );
-                                for (label, action) in [
-                                    ("Copy", CommandPaletteAction::CopyPasteRaw(item.id.clone())),
-                                    (
-                                        "Copy Fenced",
-                                        CommandPaletteAction::CopyPasteFenced(item.id.clone()),
-                                    ),
-                                    ("Delete", CommandPaletteAction::DeletePaste(item.id.clone())),
-                                ] {
-                                    if ui.small_button(label).clicked() {
-                                        pending = Some(action);
+                            let selected = self.paste_picker_selected == index;
+                            let row_response = ui
+                                .vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        let response = ui.selectable_label(selected, &item.name);
+                                        if response.clicked() {
+                                            pending = Some(CommandPaletteAction::OpenPaste(
+                                                item.id.clone(),
+                                            ));
+                                        }
+                                        ui.label(
+                                            RichText::new(display_language_label(
+                                                item.language.as_deref(),
+                                                false,
+                                                item.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
+                                            ))
+                                            .small()
+                                            .color(COLOR_TEXT_MUTED),
+                                        );
+                                        for (label, action) in [
+                                            (
+                                                "Copy",
+                                                CommandPaletteAction::CopyPasteRaw(item.id.clone()),
+                                            ),
+                                            (
+                                                "Copy Fenced",
+                                                CommandPaletteAction::CopyPasteFenced(
+                                                    item.id.clone(),
+                                                ),
+                                            ),
+                                            (
+                                                "Delete",
+                                                CommandPaletteAction::DeletePaste(item.id.clone()),
+                                            ),
+                                        ] {
+                                            if ui.small_button(label).clicked() {
+                                                pending = Some(action);
+                                            }
+                                        }
+                                    });
+                                    if let Some(excerpt) = item.match_excerpt.as_deref() {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(excerpt)
+                                                    .small()
+                                                    .color(COLOR_TEXT_MUTED),
+                                            )
+                                            .wrap(),
+                                        );
                                     }
-                                }
-                            });
+                                })
+                                .response;
+                            if selected && (down || up) {
+                                row_response.scroll_to_me(None);
+                            }
                         }
                     });
             });

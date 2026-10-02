@@ -49,6 +49,7 @@ fn test_summary_at(
         folder_id: None,
         tags: Vec::new(),
         derived: Default::default(),
+        match_excerpt: None,
     }
 }
 
@@ -353,6 +354,7 @@ fn make_app() -> TestHarness {
         palette_search_pending: false,
         pending_copy_action: None,
         pending_selection_id: None,
+        pending_picker_open: None,
         picker_selection_pin: None,
         pending_delete_id: None,
         clipboard_outgoing: None,
@@ -460,6 +462,7 @@ mod highlight_behaviors;
 mod history_reset;
 mod keyboard_navigation_audit;
 mod persistence;
+mod picker_find;
 mod save_and_metadata;
 mod selected_delete;
 mod shutdown_behavior;

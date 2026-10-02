@@ -3,7 +3,10 @@
 use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent, PasteSummary, SidebarCollection};
 use localpaste_core::models::paste::{PasteMeta, ScopedSearchFilter, SearchOptions, SearchScope};
-use std::time::{Duration, Instant};
+use std::{
+    ops::Range,
+    time::{Duration, Instant},
+};
 use tracing::{error, info};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +24,7 @@ struct SearchCacheKey {
     language: Option<String>,
     case_sensitive: bool,
     scope: SearchScope,
+    include_match_excerpt: bool,
 }
 
 #[derive(Debug)]
@@ -202,6 +206,7 @@ struct SearchVariant {
     language: Option<String>,
     op: &'static str,
     error_prefix: &'static str,
+    include_body_match_excerpt: bool,
 }
 
 fn handle_search_variant<E, X>(
@@ -222,7 +227,10 @@ fn handle_search_variant<E, X>(
         language,
         op,
         error_prefix,
+        include_body_match_excerpt,
     } = variant;
+    let include_match_excerpt =
+        include_body_match_excerpt && matches!(scope, SearchScope::All | SearchScope::Body);
     let key = SearchCacheKey {
         collection: collection.clone(),
         query: query.clone(),
@@ -231,8 +239,10 @@ fn handle_search_variant<E, X>(
         language: language.clone(),
         case_sensitive: state.search_case_sensitive,
         scope,
+        include_match_excerpt,
     };
     let query_for_fetch = query.clone();
+    let query_for_excerpt = query.clone();
     let folder_for_fetch = folder_id.clone();
     let language_for_fetch = language.clone();
     let options = SearchOptions {
@@ -270,7 +280,25 @@ fn handle_search_variant<E, X>(
                         predicate: &collection_filter,
                     },
                 )
-                .map(|metas| metas.iter().map(PasteSummary::from_meta).collect())
+                .and_then(|metas| {
+                    metas
+                        .into_iter()
+                        .map(|meta| {
+                            let mut item = PasteSummary::from_meta(&meta);
+                            if include_match_excerpt {
+                                item.match_excerpt =
+                                    worker.db.pastes.get(meta.id.as_str())?.and_then(|paste| {
+                                        body_match_excerpt(
+                                            paste.content.as_str(),
+                                            query_for_excerpt.as_str(),
+                                            options.case_sensitive,
+                                        )
+                                    });
+                            }
+                            Ok(item)
+                        })
+                        .collect()
+                })
                 .map_err(|err| err.to_string())
         },
         move |items| to_event(query.clone(), folder_id.clone(), language.clone(), items),
@@ -369,6 +397,7 @@ pub(super) fn handle_search(
                 language,
                 op: "search",
                 error_prefix: "Search",
+                include_body_match_excerpt: false,
             },
             scope,
             move |query, folder_id, language, items| CoreEvent::SearchResults {
@@ -396,6 +425,7 @@ pub(super) fn handle_search(
                     language: None,
                     op: "palette_search",
                     error_prefix: "Palette search",
+                    include_body_match_excerpt: true,
                 },
                 scope,
                 move |query, _folder_id, _language, items| CoreEvent::PaletteSearchResults {
@@ -410,5 +440,164 @@ pub(super) fn handle_search(
                 },
             )
         }
+    }
+}
+
+const MATCH_EXCERPT_MAX_CHARS: usize = 160;
+const MATCH_EXCERPT_CONTEXT_CHARS: usize = 48;
+const MATCH_EXCERPT_MATCH_CHARS: usize =
+    MATCH_EXCERPT_MAX_CHARS - 2 * MATCH_EXCERPT_CONTEXT_CHARS - 2;
+
+/// Builds a compact, original-text excerpt around the first raw-body match.
+///
+/// The case policy mirrors canonical scoped search. The returned text is capped
+/// by character count so slicing never splits a Unicode scalar value.
+fn body_match_excerpt(content: &str, query: &str, case_sensitive: bool) -> Option<String> {
+    let range = find_search_range(content, query.trim(), case_sensitive)?;
+    let before = &content[..range.start];
+    let matched = &content[range.clone()];
+    let after = &content[range.end..];
+    let prefix = take_last_chars(before, MATCH_EXCERPT_CONTEXT_CHARS);
+    let match_text = take_first_chars(matched, MATCH_EXCERPT_MATCH_CHARS);
+    let suffix = if match_text.len() == matched.len() {
+        take_first_chars(after, MATCH_EXCERPT_CONTEXT_CHARS)
+    } else {
+        String::new()
+    };
+    let prefix_clipped = before
+        .chars()
+        .rev()
+        .nth(MATCH_EXCERPT_CONTEXT_CHARS)
+        .is_some();
+    let match_clipped = match_text.len() < matched.len();
+    let suffix_clipped = match_clipped || after.chars().nth(MATCH_EXCERPT_CONTEXT_CHARS).is_some();
+
+    let mut excerpt = String::with_capacity(MATCH_EXCERPT_MAX_CHARS);
+    if prefix_clipped {
+        excerpt.push('…');
+    }
+    append_compact_text(&mut excerpt, prefix.as_str());
+    append_compact_text(&mut excerpt, match_text.as_str());
+    append_compact_text(&mut excerpt, suffix.as_str());
+    if suffix_clipped {
+        excerpt.push('…');
+    }
+    Some(excerpt)
+}
+
+/// Finds the source-text byte range that canonical body search treats as a match.
+fn find_search_range(content: &str, query: &str, case_sensitive: bool) -> Option<Range<usize>> {
+    if query.is_empty() {
+        return None;
+    }
+    if case_sensitive {
+        return content.find(query).map(|start| start..start + query.len());
+    }
+
+    let normalized_query = query.to_lowercase();
+    if normalized_query.is_ascii() {
+        let needle = normalized_query.as_bytes();
+        let haystack = content.as_bytes();
+        if needle.len() > haystack.len() {
+            return None;
+        }
+        for start in 0..=haystack.len() - needle.len() {
+            if haystack[start..start + needle.len()]
+                .iter()
+                .map(u8::to_ascii_lowercase)
+                .eq(needle.iter().copied())
+            {
+                return Some(start..start + needle.len());
+            }
+        }
+        return None;
+    }
+
+    let normalized_content = content.to_lowercase();
+    let normalized_start = normalized_content.find(normalized_query.as_str())?;
+    let normalized_end = normalized_start + normalized_query.len();
+    Some(source_range_for_normalized_match(
+        content,
+        normalized_start,
+        normalized_end,
+    ))
+}
+
+/// Maps a lowercased string range back to source-character boundaries.
+fn source_range_for_normalized_match(
+    content: &str,
+    normalized_start: usize,
+    normalized_end: usize,
+) -> Range<usize> {
+    let mut normalized_offset = 0;
+    let mut source_start = None;
+    for (source_offset, ch) in content.char_indices() {
+        let normalized_width = ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        let next_normalized_offset = normalized_offset + normalized_width;
+        if source_start.is_none() && normalized_start < next_normalized_offset {
+            source_start = Some(source_offset);
+        }
+        if normalized_end <= next_normalized_offset {
+            return source_start.unwrap_or(source_offset)..source_offset + ch.len_utf8();
+        }
+        normalized_offset = next_normalized_offset;
+    }
+    content.len()..content.len()
+}
+
+/// Returns the final `max_chars` Unicode scalar values from `text`.
+fn take_last_chars(text: &str, max_chars: usize) -> String {
+    let mut chars: Vec<_> = text.chars().rev().take(max_chars).collect();
+    chars.reverse();
+    chars.into_iter().collect()
+}
+
+/// Returns the initial `max_chars` Unicode scalar values from `text`.
+fn take_first_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
+}
+
+/// Appends text as one visual line while preserving its matching content.
+fn append_compact_text(output: &mut String, text: &str) {
+    let mut previous_was_whitespace = output.chars().last().is_some_and(char::is_whitespace);
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !previous_was_whitespace {
+                output.push(' ');
+                previous_was_whitespace = true;
+            }
+        } else {
+            output.push(ch);
+            previous_was_whitespace = false;
+        }
+    }
+}
+
+#[cfg(test)]
+mod excerpt_tests {
+    use super::{body_match_excerpt, MATCH_EXCERPT_MAX_CHARS};
+
+    #[test]
+    fn body_excerpt_preserves_unicode_case_and_compacts_newlines() {
+        let excerpt = body_match_excerpt("before\nÉCOLE after", "école", false)
+            .expect("Unicode case-insensitive match");
+        assert!(excerpt.contains("ÉCOLE"));
+        assert!(!excerpt.contains('\n'));
+    }
+
+    #[test]
+    fn body_excerpt_keeps_ascii_matching_compatible_with_canonical_search() {
+        assert!(body_match_excerpt("İstanbul", "i", false).is_none());
+    }
+
+    #[test]
+    fn body_excerpt_is_bounded_while_retaining_the_match() {
+        let content = format!("{}Needle{}", "a".repeat(400), "b".repeat(400));
+        let excerpt =
+            body_match_excerpt(content.as_str(), "needle", false).expect("case-insensitive match");
+        assert!(excerpt.contains("Needle"));
+        assert!(excerpt.chars().count() <= MATCH_EXCERPT_MAX_CHARS);
+        assert!(excerpt.starts_with('…'));
+        assert!(excerpt.ends_with('…'));
     }
 }

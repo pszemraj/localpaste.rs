@@ -424,7 +424,17 @@ impl LocalPasteApp {
 
     /// Opens the selected palette result in the main editor view.
     pub(crate) fn open_palette_selection(&mut self, id: String) {
+        let opening = PendingPickerOpen {
+            id: id.clone(),
+            query: self.paste_picker_query.trim().to_owned(),
+            scope: self.paste_picker_scope,
+            case_sensitive: env_flag_enabled("LOCALPASTE_SEARCH_CASE_SENSITIVE"),
+        };
         if self.select_paste(id.clone()) {
+            self.pending_picker_open = Some(opening);
+            if self.selected_id.as_deref() == Some(id.as_str()) && self.selected_paste.is_some() {
+                self.prime_editor_find_from_picker_open();
+            }
             self.picker_selection_pin = Some(id);
             self.close_paste_picker();
         }
