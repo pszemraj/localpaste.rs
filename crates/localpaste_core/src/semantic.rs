@@ -163,10 +163,6 @@ fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Log;
     }
 
-    if starts_with_log_level(sample) {
-        return PasteKind::Log;
-    }
-
     let log_hits = [
         "traceback",
         "stack trace",
@@ -200,6 +196,10 @@ fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Config;
     }
 
+    if starts_with_log_level(sample) {
+        return PasteKind::Log;
+    }
+
     if (lang.is_empty() || lang == "text") && looks_like_prose(sample) {
         PasteKind::Document
     } else {
@@ -207,11 +207,10 @@ fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
     }
 }
 
-/// Returns whether the first non-empty line starts with a log-level marker.
+/// Returns whether the first non-empty line starts with a machine-style log level.
 ///
-/// A leading marker is a stronger log signal than generic prose, even when a
-/// short snippet does not contain enough independent markers for the broader
-/// log heuristic.
+/// Uniform lowercase or uppercase levels are a log signal. Sentence-style
+/// headings such as `Warning:` are ambiguous prose and need other log evidence.
 fn starts_with_log_level(sample: &str) -> bool {
     let Some(first_line) = sample
         .lines()
@@ -220,23 +219,45 @@ fn starts_with_log_level(sample: &str) -> bool {
     else {
         return false;
     };
-    let lower = first_line.to_ascii_lowercase();
-    [
-        "trace:", "debug:", "info:", "warn:", "warning:", "error:", "fatal:",
-    ]
-    .iter()
-    .any(|marker| lower.starts_with(marker))
+    let Some((level, _)) = first_line.split_once(':') else {
+        return false;
+    };
+    let lower = level.to_ascii_lowercase();
+    (level == lower || level == level.to_ascii_uppercase())
+        && [
+            "trace:", "debug:", "info:", "warn:", "warning:", "error:", "fatal:",
+        ]
+        .iter()
+        .any(|marker| marker.strip_suffix(':') == Some(lower.as_str()))
 }
 
 /// Returns whether untyped text resembles prose rather than a compact data blob.
 ///
-/// This deliberately rejects only the structural forms that would otherwise be
-/// misclassified as prose. Broader language detection remains the detector's
-/// responsibility.
+/// Require several words and mostly letters; compact tokens and symbol-heavy
+/// snippets have too little evidence to become documents without a language hint.
 fn looks_like_prose(sample: &str) -> bool {
-    !looks_like_delimited_records(sample)
-        && !looks_like_hex_blob(sample)
-        && sample.chars().any(|ch| ch.is_alphabetic())
+    if looks_like_delimited_records(sample) || looks_like_hex_blob(sample) {
+        return false;
+    }
+    let words = sample
+        .split_whitespace()
+        .filter(|token| {
+            let word = token.trim_matches(|ch: char| !ch.is_alphabetic());
+            !word.is_empty()
+                && word
+                    .chars()
+                    .all(|ch| ch.is_alphabetic() || matches!(ch, '\'' | '’' | '-'))
+        })
+        .count();
+    let mut letters = 0usize;
+    let mut symbols = 0usize;
+    let mut total = 0usize;
+    for ch in sample.chars().filter(|ch| !ch.is_whitespace()) {
+        total += 1;
+        letters += usize::from(ch.is_alphabetic());
+        symbols += usize::from(!ch.is_alphanumeric());
+    }
+    words >= 3 && letters * 100 >= total * 70 && symbols * 100 <= total * 20
 }
 
 /// Returns whether multiple non-empty rows share a common delimited-record shape.
@@ -247,9 +268,30 @@ fn looks_like_delimited_records(sample: &str) -> bool {
         .filter(|line| !line.is_empty())
         .collect();
     rows.len() >= 2
-        && [',', '\t', ';']
-            .iter()
-            .any(|delimiter| rows.iter().all(|row| row.contains(*delimiter)))
+        && [',', '\t', ';'].iter().any(|delimiter| {
+            let count = rows[0].matches(*delimiter).count();
+            if count == 0
+                || rows
+                    .iter()
+                    .any(|row| row.matches(*delimiter).count() != count)
+            {
+                return false;
+            }
+            // Commas and semicolons are common in prose. Compact/quoted fields or
+            // numeric data distinguish record rows from punctuated sentences.
+            *delimiter == '\t'
+                || rows.iter().all(|row| {
+                    row.split(*delimiter).all(|field| {
+                        let field = field.trim();
+                        !field.contains(char::is_whitespace)
+                            || (field.starts_with('"') && field.ends_with('"'))
+                    })
+                })
+                || rows.iter().any(|row| {
+                    row.split(*delimiter)
+                        .any(|field| field.trim().parse::<f64>().is_ok())
+                })
+        })
 }
 
 /// Returns whether text is a long whitespace-separated hexadecimal blob.
@@ -316,7 +358,7 @@ fn extract_definition_handle_from_line(line: &str, language: Option<&str>) -> Op
 fn extract_command_handle(sample: &str) -> Option<String> {
     const COMMANDS: &[&str] = &[
         "brew", "cargo", "git", "docker", "kubectl", "python", "pytest", "uv", "pip", "npm",
-        "pnpm", "yarn", "make", "just", "curl", "wget", "ssh", "torchrun",
+        "pnpm", "yarn", "make", "just", "curl", "wget", "ssh", "torchrun", "ls",
     ];
 
     for line in sample.lines() {
@@ -330,6 +372,16 @@ fn extract_command_handle(sample: &str) -> Option<String> {
             continue;
         };
         if !COMMANDS.iter().any(|known| *known == cmd) {
+            continue;
+        }
+        // `make` and `just` also begin ordinary sentences. Only treat their
+        // lowercase recipe invocation as a command, not a sentence with an article.
+        if matches!(cmd.as_str(), "make" | "just")
+            && (parts[0] != cmd
+                || parts
+                    .get(1)
+                    .is_some_and(|part| ["a", "an", "the"].contains(part)))
+        {
             continue;
         }
 
@@ -574,13 +626,47 @@ mod tests {
     fn untyped_structural_content_does_not_default_to_document() {
         let cases = [
             ("name,age\nAda,37", PasteKind::Other),
+            ("name,age,city", PasteKind::Other),
             ("deadbeefcafebabe0123456789abcdef", PasteKind::Other),
+            ("550e8400-e29b-41d4-a716-446655440000", PasteKind::Other),
+            ("VGhpcyBpcyBhIHNlY3JldCB0b2tlbg==", PasteKind::Other),
+            ("aLongAlphabeticTokenWithoutSpaces", PasteKind::Other),
+            ("ls -la /var/log", PasteKind::Code),
             ("brew install localpaste", PasteKind::Code),
+            ("just build", PasteKind::Code),
+            ("make test", PasteKind::Code),
             ("error: unable to open database", PasteKind::Log),
+            ("WARNING: database connection unavailable", PasteKind::Log),
+            ("debug: true\nname: foo", PasteKind::Config),
+            (
+                "Warning: do not touch the deployment settings.",
+                PasteKind::Document,
+            ),
+            ("Hello, Bob\nSee you soon, Alice", PasteKind::Document),
+            (
+                "First, check the plan, then confirm it.\nNext, send it.",
+                PasteKind::Document,
+            ),
+            ("Just a reminder to save your work.", PasteKind::Document),
+            ("just a reminder to save your work", PasteKind::Document),
+            ("Make a note of the deployment window.", PasteKind::Document),
+            ("first name,age\nAda Lovelace,37", PasteKind::Other),
+            ("name;age\nAda;37", PasteKind::Other),
+            ("name\tage\nAda Lovelace\t37", PasteKind::Other),
+            (
+                "Bonjour à tous, à demain pour la réunion.",
+                PasteKind::Document,
+            ),
         ];
 
         for (content, expected) in cases {
-            assert_eq!(derive(content, None).kind, expected, "{content}");
+            for language in [None, Some("text")] {
+                assert_eq!(
+                    derive(content, language).kind,
+                    expected,
+                    "{content}: {language:?}"
+                );
+            }
         }
         assert_eq!(
             derive("A short prose note to keep for later.", Some("text")).kind,
@@ -613,9 +699,9 @@ mod tests {
         assert_eq!(link.kind, PasteKind::Link);
         assert_eq!(link.handle.as_deref(), Some("example.com"));
 
-        let document = derive("hi", Some("text"));
-        assert_eq!(document.kind, PasteKind::Document);
-        assert!(document.handle.is_none());
+        let short_text = derive("hi", Some("text"));
+        assert_eq!(short_text.kind, PasteKind::Other);
+        assert!(short_text.handle.is_none());
     }
 
     #[test]

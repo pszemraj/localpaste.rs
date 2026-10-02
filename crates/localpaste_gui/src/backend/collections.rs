@@ -189,7 +189,7 @@ const CODE_FILE_SUFFIXES: &[&str] = &[
 const CONFIG_FILE_SUFFIXES: &[&str] = &[
     ".json", ".yml", ".yaml", ".toml", ".xml", ".ini", ".cfg", ".conf", ".env",
 ];
-const LOG_FILE_SUFFIXES: &[&str] = &[".log", ".out", ".err", ".trace"];
+const LOG_FILE_SUFFIXES: &[&str] = &[".log", ".out", ".err", ".trace", ".stdout", ".stderr"];
 const COMMAND_NAME_PREFIXES: &[&str] = &[
     "cargo ",
     "pytest ",
@@ -282,6 +282,42 @@ fn summary_matches_kind_pattern_and_name(
     summary_has_kind(item, kind) || summary_matches_pattern(item, pattern) || extra_name_match
 }
 
+/// Tests document overrides using explicit metadata rather than title fragments.
+fn document_override_matches(item: &PasteSummary, collection: SidebarCollection) -> bool {
+    let name = item.name.trim().to_ascii_lowercase();
+    let (pattern, name_match) = match collection {
+        SidebarCollection::Code => (
+            &CODE_SUMMARY_PATTERN,
+            name_has_suffix_ci(&item.name, CODE_FILE_SUFFIXES)
+                // These two command names also introduce ordinary prose titles;
+                // a command-shaped body still supplies the authoritative Code kind.
+                || COMMAND_NAME_PREFIXES.iter().any(|prefix|
+                    !matches!(*prefix, "make " | "just ") && name.starts_with(prefix)),
+        ),
+        SidebarCollection::Config => (
+            &CONFIG_SUMMARY_PATTERN,
+            name_has_suffix_ci(&item.name, CONFIG_FILE_SUFFIXES)
+                || matches!(name.as_str(), "dockerfile" | "makefile"),
+        ),
+        SidebarCollection::Logs => (
+            &LOG_SUMMARY_PATTERN,
+            name_has_suffix_ci(&item.name, LOG_FILE_SUFFIXES),
+        ),
+        SidebarCollection::Links => (&LINK_SUMMARY_PATTERN, looks_like_url_name(&item.name)),
+        _ => return false,
+    };
+    name_match
+        || language_in_set(item.language.as_deref(), pattern.languages)
+        || item.tags.iter().any(|tag| {
+            tag.split(|ch: char| !ch.is_alphanumeric()).any(|word| {
+                pattern
+                    .tag_needles
+                    .iter()
+                    .any(|needle| word.eq_ignore_ascii_case(needle))
+            })
+        })
+}
+
 /// Returns whether a summary matches one of the semantic sidebar collections.
 ///
 /// # Arguments
@@ -295,19 +331,22 @@ fn matches_semantic_collection(item: &PasteSummary, collection: SidebarCollectio
     if localpaste_core::semantic::is_document_language(item.language.as_deref()) {
         return collection == SidebarCollection::Documents;
     }
+    if summary_has_kind(item, PasteKind::Document) {
+        return if collection == SidebarCollection::Documents {
+            ![
+                SidebarCollection::Code,
+                SidebarCollection::Config,
+                SidebarCollection::Logs,
+                SidebarCollection::Links,
+            ]
+            .into_iter()
+            .any(|collection| document_override_matches(item, collection))
+        } else {
+            document_override_matches(item, collection)
+        };
+    }
     match collection {
-        // A prose fallback is weaker than an explicit filename or tag signal.
-        SidebarCollection::Documents => {
-            item.derived.kind == PasteKind::Document
-                && ![
-                    SidebarCollection::Code,
-                    SidebarCollection::Config,
-                    SidebarCollection::Logs,
-                    SidebarCollection::Links,
-                ]
-                .into_iter()
-                .any(|collection| matches_semantic_collection(item, collection))
-        }
+        SidebarCollection::Documents => false,
         SidebarCollection::Code => summary_matches_kind_pattern_and_name(
             item,
             PasteKind::Code,
@@ -389,6 +428,60 @@ pub(crate) fn matches_active_filters(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prose_documents_ignore_title_fragments_and_partial_tags() {
+        let mut item = PasteSummary {
+            id: "prose".into(),
+            name: "notes".into(),
+            language: None,
+            content_len: 30,
+            updated_at: Utc::now(),
+            folder_id: None,
+            tags: vec!["blog".into(), "transcript".into()],
+            derived: localpaste_core::semantic::DerivedMeta {
+                kind: PasteKind::Document,
+                ..Default::default()
+            },
+            match_excerpt: None,
+        };
+        for title in [
+            "holographic-otter",
+            "analog-badger",
+            "Blog draft",
+            "Changelog",
+            "Technology notes",
+            "Meeting transcript",
+            "Product description",
+            "Things to make tomorrow",
+            "just notes",
+            "make a note",
+        ] {
+            item.name = title.into();
+            assert!(
+                matches_semantic_collection(&item, SidebarCollection::Documents),
+                "{title}"
+            );
+            for collection in [
+                SidebarCollection::Code,
+                SidebarCollection::Config,
+                SidebarCollection::Logs,
+                SidebarCollection::Links,
+            ] {
+                assert!(
+                    !matches_semantic_collection(&item, collection.clone()),
+                    "{title}: {collection:?}"
+                );
+            }
+        }
+        item.name = "notes".into();
+        item.tags = vec!["server-logs".into()];
+        assert!(matches_semantic_collection(&item, SidebarCollection::Logs));
+        assert!(!matches_semantic_collection(
+            &item,
+            SidebarCollection::Documents
+        ));
+    }
 
     #[test]
     fn documents_exclude_code_even_with_code_titles_tags_and_legacy_kind() {

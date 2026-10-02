@@ -43,7 +43,7 @@ GUI delete undo is intentionally small and bounded. It moves the paste row and i
 - Do not add broad pre-stable row-shape migrations just because an older development build wrote different bincode bytes. Prefer current schemas and fresh `DB_PATH` directories unless there is a narrow active-development reason to keep a reader fallback.
 - A temporary reader fallback must stay local to the decode helper, have regression coverage, define deterministic defaults for new fields, and remain cheap enough that deleting it later is straightforward.
 - Current narrow exceptions are the bincode reader fallbacks for `pastes`, `pastes_meta`, and `paste_versions_meta` rows that predate the language/manual/derived metadata fields. They protect active development databases only; they are not a general compatibility guarantee.
-- Derived metadata projection version 4 refines `Document` classification for untyped structural text. Canonical paste rows remain unchanged; older projections are rebuilt from those rows.
+- Derived metadata projection version 5 refines prose, command, config, and log classification. Canonical paste rows remain unchanged; older projections are rebuilt from those rows.
 - When an existing redb database needs startup schema or projection repair, startup creates a pre-repair redb backup inside the DB directory as `data.redb.backup.<timestamp>.redb` before mutating derived/index tables; backup failure aborts startup instead of repairing in place without a snapshot.
 - This project does not provide a sled-to-redb migration path.
 - Existing sled-era artifacts are considered incompatible with current runtime.

@@ -61,3 +61,95 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
         PasteKind::Document
     );
 }
+
+#[test]
+fn semantic_kinds_rebuild_from_version_four_and_survive_restart() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let path = temp.path().join("db");
+    let db = open_test_database(path.to_str().unwrap());
+    let cases = [
+        (
+            "VGhpcyBpcyBhIHNlY3JldCB0b2tlbg==",
+            PasteKind::Document,
+            PasteKind::Other,
+        ),
+        ("debug: true\nname: foo", PasteKind::Log, PasteKind::Config),
+        (
+            "Warning: do not touch the deployment settings.",
+            PasteKind::Log,
+            PasteKind::Document,
+        ),
+        (
+            "Hello, Bob\nSee you soon, Alice",
+            PasteKind::Other,
+            PasteKind::Document,
+        ),
+        (
+            "Just a reminder to save your work.",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+    ];
+    let pastes: Vec<_> = cases
+        .iter()
+        .map(|(content, _, _)| {
+            Paste::new_with_language(
+                (*content).into(),
+                "review notes".into(),
+                Some("text".into()),
+                true,
+            )
+        })
+        .collect();
+    for paste in &pastes {
+        db.pastes.create(paste).unwrap();
+    }
+    let txn = db.db.begin_write().unwrap();
+    {
+        let mut metas = txn.open_table(PASTES_META).unwrap();
+        for (paste, (_, stale_kind, _)) in pastes.iter().zip(&cases) {
+            let mut stale = PasteMeta::from(paste);
+            stale.derived.kind = *stale_kind;
+            metas
+                .insert(
+                    paste.id.as_str(),
+                    bincode::serialize(&stale).unwrap().as_slice(),
+                )
+                .unwrap();
+        }
+    }
+    txn.open_table(PASTES_META_STATE)
+        .unwrap()
+        .insert(
+            META_SCHEMA_VERSION_KEY,
+            bincode::serialize(&4_u64).unwrap().as_slice(),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+    drop(db);
+
+    for _ in 0..2 {
+        let reopened = open_test_database(path.to_str().unwrap());
+        let metas = reopened.pastes.list_meta(10, None).unwrap();
+        for (paste, (_, _, expected)) in pastes.iter().zip(&cases) {
+            assert_eq!(
+                metas
+                    .iter()
+                    .find(|meta| meta.id == paste.id)
+                    .unwrap()
+                    .derived
+                    .kind,
+                *expected
+            );
+            assert_eq!(
+                reopened.pastes.get(&paste.id).unwrap().unwrap().content,
+                paste.content
+            );
+        }
+    }
+    assert!(std::fs::read_dir(&path).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .contains(".backup.")));
+}
