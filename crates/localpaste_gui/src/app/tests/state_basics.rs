@@ -33,6 +33,7 @@ fn paste_missing_updates_selection_and_list_matrix() {
 
     for case in [MissingCase::Selected, MissingCase::NonSelected] {
         let mut harness = make_app();
+        harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("copy-target".into()));
         match case {
             MissingCase::Selected => {
                 harness.app.apply_event(CoreEvent::PasteMissing {
@@ -61,6 +62,10 @@ fn paste_missing_updates_selection_and_list_matrix() {
                 assert!(harness.app.selected_paste.is_some());
             }
         }
+        assert!(matches!(
+            harness.app.pending_copy_action,
+            Some(PaletteCopyAction::Raw(ref id)) if id == "copy-target"
+        ));
     }
 }
 
@@ -73,6 +78,7 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
 
     for case in [LoadFailedCase::Selected, LoadFailedCase::Stale] {
         let mut harness = make_app();
+        harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("copy-target".into()));
         match case {
             LoadFailedCase::Selected => {
                 harness
@@ -80,8 +86,6 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                     .locks
                     .acquire("alpha", &harness.app.lock_owner_id)
                     .expect("acquire alpha lock");
-                harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
-
                 harness.app.apply_event(CoreEvent::PasteLoadFailed {
                     id: "alpha".to_string(),
                     message: "Get failed: injected".to_string(),
@@ -93,7 +97,6 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                 );
                 assert!(harness.app.selected_id.is_none());
                 assert!(harness.app.selected_paste.is_none());
-                assert!(harness.app.pending_copy_action.is_none());
                 assert_eq!(
                     harness
                         .app
@@ -112,8 +115,6 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                     .locks
                     .acquire("beta", &harness.app.lock_owner_id)
                     .expect("acquire beta lock");
-                harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
-
                 harness.app.apply_event(CoreEvent::PasteLoadFailed {
                     id: "alpha".to_string(),
                     message: "Get failed: stale".to_string(),
@@ -124,7 +125,6 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                     "stale load failure should not unlock current selection"
                 );
                 assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
-                assert!(harness.app.pending_copy_action.is_none());
                 assert_eq!(
                     harness
                         .app
@@ -135,6 +135,10 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                 );
             }
         }
+        assert!(matches!(
+            harness.app.pending_copy_action,
+            Some(PaletteCopyAction::Raw(ref id)) if id == "copy-target"
+        ));
     }
 }
 
@@ -687,30 +691,31 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
 }
 
 #[test]
-fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
+fn palette_copy_send_failure_keeps_active_selection_and_lock() {
     let TestHarness {
         _dir: _guard,
         mut app,
         cmd_rx,
     } = make_app();
-    app.selected_id = None;
-    app.selected_paste = None;
-    app.pending_copy_action = None;
+    app.locks
+        .acquire("alpha", &app.lock_owner_id)
+        .expect("acquire active lock");
     drop(cmd_rx);
 
-    app.queue_palette_copy("alpha".to_string(), true);
+    app.queue_palette_copy("beta".to_string(), true);
 
     assert_eq!(
         app.status.as_ref().map(|status| status.text.as_str()),
-        Some("Get paste failed: backend unavailable.")
+        Some("Load paste for copy failed: backend unavailable.")
     );
     assert!(app.pending_copy_action.is_none());
     assert!(
-        !app.locks.is_locked("alpha").expect("is_locked"),
-        "failed reselect should not leak a stale lock"
+        app.locks.is_locked("alpha").expect("is_locked"),
+        "copy dispatch failure must not release the active lock"
     );
-    assert!(
-        app.selected_id.is_none(),
-        "failed reselect should clear stale selection state"
-    );
+    assert!(!app.locks.is_locked("beta").expect("is_locked"));
+    assert_eq!(app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(app.active_snapshot(), "content");
+    assert!(app.pending_selection_id.is_none());
+    assert!(app.picker_selection_pin.is_none());
 }

@@ -297,6 +297,10 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             paste::handle_get_paste(state, id);
             true
         }
+        CoreCmd::GetPasteForCopy { id } => {
+            paste::handle_get_paste_for_copy(state, id);
+            true
+        }
         CoreCmd::GetDiffTargetPaste { id } => {
             paste::handle_get_diff_target_paste(state, id);
             true

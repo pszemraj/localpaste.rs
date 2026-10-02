@@ -320,7 +320,7 @@ impl LocalPasteApp {
             .collect()
     }
 
-    /// Queues a copy action for a palette result, loading selection if needed.
+    /// Copies a picker result without changing the editor selection.
     ///
     /// # Arguments
     /// - `id`: Paste id targeted by the copy action.
@@ -331,31 +331,88 @@ impl LocalPasteApp {
         } else {
             PaletteCopyAction::Raw(id.clone())
         };
+
+        if self.selected_id.as_deref() == Some(id.as_str()) && self.selected_paste.is_some() {
+            // An immediate active-buffer copy supersedes an earlier detached request.
+            // Its eventual response must not overwrite the newer clipboard value.
+            self.pending_copy_action = None;
+            let language = self.edit_language.clone().or_else(|| {
+                self.selected_paste
+                    .as_ref()
+                    .and_then(|paste| paste.language.clone())
+            });
+            self.complete_palette_copy(action, self.active_snapshot(), language);
+            return;
+        }
+
         self.pending_copy_action = Some(action);
-
-        if self.selected_id.as_deref() != Some(id.as_str()) {
-            if !self.select_paste(id.clone()) {
-                self.pending_copy_action = None;
-                return;
-            }
-            self.picker_selection_pin = Some(id);
-            self.set_status("Loading paste for copy...");
-            return;
-        }
-
-        self.picker_selection_pin = Some(id.clone());
-
-        if self.selected_paste.is_some() {
-            self.try_complete_pending_copy();
-            return;
-        }
-
-        if !self.dispatch_backend_cmd(CoreCmd::GetPaste { id }) {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPasteForCopy { id }) {
             self.pending_copy_action = None;
             self.set_status("Load paste for copy failed: backend unavailable.");
             return;
         }
         self.set_status("Loading paste for copy...");
+    }
+
+    /// Applies a detached picker-copy response when it matches the latest copy request.
+    pub(crate) fn apply_palette_copy_loaded(&mut self, paste: Paste) {
+        let Some(action) = self.take_pending_palette_copy_for(paste.id.as_str()) else {
+            return;
+        };
+        self.complete_palette_copy(action, paste.content, paste.language);
+    }
+
+    /// Clears the latest picker-copy request when its target no longer exists.
+    pub(crate) fn apply_palette_copy_missing(&mut self, id: String) {
+        if self.take_pending_palette_copy_for(id.as_str()).is_some() {
+            self.set_status("Paste is no longer available to copy.");
+        }
+    }
+
+    /// Clears the latest picker-copy request when its detached load fails.
+    ///
+    /// # Arguments
+    /// - `id`: Paste id whose copy load failed.
+    /// - `message`: Backend failure text displayed for the current copy request.
+    pub(crate) fn apply_palette_copy_load_failed(&mut self, id: String, message: String) {
+        if self.take_pending_palette_copy_for(id.as_str()).is_some() {
+            self.set_status(message);
+        }
+    }
+
+    /// Clears a picker-copy request when its target is deleted before the response arrives.
+    pub(crate) fn clear_pending_palette_copy_for(&mut self, id: &str) {
+        let _ = self.take_pending_palette_copy_for(id);
+    }
+
+    fn complete_palette_copy(
+        &mut self,
+        action: PaletteCopyAction,
+        content: String,
+        language: Option<String>,
+    ) {
+        match action {
+            PaletteCopyAction::Raw(_) => {
+                self.clipboard_outgoing = Some(content);
+                self.set_status("Copied paste content.");
+            }
+            PaletteCopyAction::Fenced(_) => {
+                self.clipboard_outgoing = Some(super::super::util::format_fenced_code_block(
+                    content.as_str(),
+                    language.as_deref(),
+                ));
+                self.set_status("Copied fenced code block.");
+            }
+        }
+    }
+
+    fn take_pending_palette_copy_for(&mut self, id: &str) -> Option<PaletteCopyAction> {
+        let matches = matches!(
+            self.pending_copy_action.as_ref(),
+            Some(PaletteCopyAction::Raw(action_id) | PaletteCopyAction::Fenced(action_id))
+                if action_id == id
+        );
+        matches.then(|| self.pending_copy_action.take()).flatten()
     }
 
     /// Sends a delete command for a palette-selected paste and closes palette.

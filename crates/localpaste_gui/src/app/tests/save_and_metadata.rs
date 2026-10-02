@@ -573,7 +573,7 @@ fn select_paste_while_content_save_in_flight_queues_pending_without_switching() 
 }
 
 #[test]
-fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_intent() {
+fn in_flight_selection_uses_latest_pending_target() {
     let mut harness = make_app();
     harness
         .app
@@ -586,17 +586,10 @@ fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_inten
     harness.app.pastes = harness.app.all_pastes.clone();
     harness.app.save_status = SaveStatus::Saving;
     harness.app.save_in_flight = true;
-    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("beta".to_string()));
-
     assert!(harness.app.select_paste("beta".to_string()));
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
-    assert!(harness.app.pending_copy_action.is_some());
     assert!(harness.app.select_paste("gamma".to_string()));
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("gamma"));
-    assert!(
-        harness.app.pending_copy_action.is_none(),
-        "replacing pending target should clear copy intent bound to replaced id"
-    );
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
 
     let mut saved = Paste::new("content".to_string(), "Alpha".to_string());

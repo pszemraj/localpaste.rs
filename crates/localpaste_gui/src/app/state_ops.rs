@@ -5,11 +5,11 @@ pub(super) mod filters;
 mod search;
 
 use super::deferred_saves::rollback_deferred_save_dispatches;
-use super::util::{format_fenced_code_block, parse_tags_csv};
+use super::util::parse_tags_csv;
 use super::{
-    ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
-    SidebarCollection, ToastAction, BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW,
-    PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
+    ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, SaveStatus, SidebarCollection,
+    ToastAction, BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW, PALETTE_SEARCH_LIMIT,
+    SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use localpaste_core::{
@@ -76,9 +76,12 @@ impl LocalPasteApp {
     /// Clears UI state that can only complete via backend events after the event channel closes.
     pub(super) fn handle_backend_event_channel_disconnected(&mut self) {
         let picker_search_pending = std::mem::take(&mut self.palette_search_pending);
+        let picker_copy_pending = self.pending_copy_action.take().is_some();
         if !self.pending_undo_restore_tokens.is_empty() {
             self.pending_undo_restore_tokens.clear();
             self.set_status("Undo delete canceled: backend unavailable.");
+        } else if picker_copy_pending {
+            self.set_status("Paste copy canceled: backend unavailable.");
         } else if picker_search_pending {
             self.set_status("Paste picker search canceled: backend unavailable.");
         }
@@ -138,6 +141,11 @@ impl LocalPasteApp {
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
                     self.select_loaded_paste(paste);
                 }
+            }
+            CoreEvent::PasteCopyLoaded { paste } => self.apply_palette_copy_loaded(paste),
+            CoreEvent::PasteCopyMissing { id } => self.apply_palette_copy_missing(id),
+            CoreEvent::PasteCopyLoadFailed { id, message } => {
+                self.apply_palette_copy_load_failed(id, message);
             }
             CoreEvent::DiffPreviewComputed { request_id, diff } => {
                 self.apply_diff_preview_response(request_id, diff);
@@ -322,7 +330,7 @@ impl LocalPasteApp {
                 let was_selected = self.selected_id.as_deref() == Some(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
-                self.clear_pending_copy_for(id.as_str());
+                self.clear_pending_palette_copy_for(id.as_str());
                 self.clear_picker_selection_pin_for(id.as_str());
                 if was_selected {
                     let adjacent_id = deleted_index.and_then(|index| {
@@ -396,7 +404,6 @@ impl LocalPasteApp {
             CoreEvent::PasteMissing { id } => {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
-                self.clear_pending_copy_for(id.as_str());
                 self.clear_picker_selection_pin_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
@@ -411,7 +418,6 @@ impl LocalPasteApp {
                     self.version_ui.diff_target_id.as_deref() == Some(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
-                self.clear_pending_copy_for(id.as_str());
                 self.clear_picker_selection_pin_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
@@ -423,7 +429,6 @@ impl LocalPasteApp {
                 self.request_refresh();
             }
             CoreEvent::PasteLoadFailed { id, message } => {
-                self.clear_pending_copy_for(id.as_str());
                 self.clear_picker_selection_pin_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
@@ -453,9 +458,7 @@ impl LocalPasteApp {
                         self.metadata_dirty = true;
                         self.metadata_save_in_flight = false;
                         self.metadata_save_request = None;
-                        if let Some(pending) = self.pending_selection_id.take() {
-                            self.clear_pending_copy_for(pending.as_str());
-                        }
+                        self.pending_selection_id = None;
                         if message.to_ascii_lowercase().contains("metadata") {
                             self.set_status(message);
                         } else {
@@ -470,9 +473,7 @@ impl LocalPasteApp {
                         }
                         self.save_in_flight = false;
                         self.save_request_revision = None;
-                        if let Some(pending) = self.pending_selection_id.take() {
-                            self.clear_pending_copy_for(pending.as_str());
-                        }
+                        self.pending_selection_id = None;
                         self.set_status(message);
                     }
                     _ => self.set_status(message),
@@ -525,9 +526,7 @@ impl LocalPasteApp {
             let metadata_save_dispatched = !metadata_save_needed || self.metadata_save_in_flight;
             if !content_save_dispatched || !metadata_save_dispatched {
                 rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
-                if let Some(pending) = self.pending_selection_id.take() {
-                    self.clear_pending_copy_for(pending.as_str());
-                }
+                self.pending_selection_id = None;
                 return false;
             }
             self.set_status("Saving current paste before switching...");
@@ -548,16 +547,12 @@ impl LocalPasteApp {
         if self.pending_selection_id.as_deref() == Some(id.as_str()) {
             return;
         }
-        if let Some(replaced) = self.pending_selection_id.replace(id) {
-            self.clear_pending_copy_for(replaced.as_str());
-        }
+        self.pending_selection_id = Some(id);
     }
 
     /// Cancels any queued selection switch that has not been applied yet.
     pub(super) fn clear_pending_selection_request(&mut self) {
-        if let Some(pending) = self.pending_selection_id.take() {
-            self.clear_pending_copy_for(pending.as_str());
-        }
+        self.pending_selection_id = None;
     }
 
     /// Applies a fully loaded paste into editor state and resets transient edit caches.
@@ -577,7 +572,6 @@ impl LocalPasteApp {
         self.clear_highlight_state();
         self.selected_paste = Some(paste);
         self.prime_editor_find_from_sidebar_query();
-        self.try_complete_pending_copy();
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
@@ -939,53 +933,6 @@ impl LocalPasteApp {
         self.edit_language_is_manual = paste.language_is_manual;
         self.edit_tags = paste.tags.join(", ");
         self.metadata_dirty = false;
-    }
-
-    /// Completes deferred command-palette copy actions once target content is available.
-    pub(super) fn try_complete_pending_copy(&mut self) {
-        let Some(action) = self.pending_copy_action.clone() else {
-            return;
-        };
-        let Some(paste) = self.selected_paste.as_ref() else {
-            return;
-        };
-        match action {
-            PaletteCopyAction::Raw(id) if id == paste.id => {
-                let content = if self.selected_id.as_deref() == Some(id.as_str()) {
-                    self.active_snapshot()
-                } else {
-                    paste.content.clone()
-                };
-                self.clipboard_outgoing = Some(content);
-                self.pending_copy_action = None;
-                self.set_status("Copied paste content.");
-            }
-            PaletteCopyAction::Fenced(id) if id == paste.id => {
-                let (content, language) = if self.selected_id.as_deref() == Some(id.as_str()) {
-                    (
-                        self.active_snapshot(),
-                        self.edit_language.as_deref().or(paste.language.as_deref()),
-                    )
-                } else {
-                    (paste.content.clone(), paste.language.as_deref())
-                };
-                self.clipboard_outgoing = Some(format_fenced_code_block(&content, language));
-                self.pending_copy_action = None;
-                self.set_status("Copied fenced code block.");
-            }
-            _ => {}
-        }
-    }
-
-    fn clear_pending_copy_for(&mut self, id: &str) {
-        let should_clear = matches!(
-            self.pending_copy_action.as_ref(),
-            Some(PaletteCopyAction::Raw(action_id) | PaletteCopyAction::Fenced(action_id))
-                if action_id == id
-        );
-        if should_clear {
-            self.pending_copy_action = None;
-        }
     }
 
     fn clear_picker_selection_pin_for(&mut self, id: &str) {

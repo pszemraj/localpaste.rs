@@ -411,6 +411,18 @@ fn paste_picker_reports_pending_searches_and_discards_closed_results() {
         Some("Paste picker search canceled: backend unavailable.")
     );
 
+    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("picked".into()));
+    harness.app.handle_backend_event_channel_disconnected();
+    assert!(harness.app.pending_copy_action.is_none());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Paste copy canceled: backend unavailable.")
+    );
+
     harness.app.apply_event(CoreEvent::PaletteSearchResults {
         query: "needle".into(),
         scope: SearchScope::All,
@@ -530,7 +542,7 @@ fn paste_picker_copy_loads_the_requested_result() {
     harness.app.open_paste_picker();
     harness.app.queue_palette_copy("picked".into(), false);
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "picked"),
+        CoreCmd::GetPasteForCopy { id } => assert_eq!(id, "picked"),
         other => panic!("unexpected picker copy action: {other:?}"),
     }
 
@@ -538,84 +550,232 @@ fn paste_picker_copy_loads_the_requested_result() {
     picked.id = "picked".into();
     harness
         .app
-        .apply_event(CoreEvent::PasteLoaded { paste: picked });
+        .apply_event(CoreEvent::PasteCopyLoaded { paste: picked });
     assert_eq!(
         harness.app.clipboard_outgoing.as_deref(),
         Some("copied content")
     );
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.active_snapshot(), "content");
+    assert!(harness.app.picker_selection_pin.is_none());
     assert!(harness.app.pending_copy_action.is_none());
 }
 
 #[test]
-fn picker_open_and_copy_keep_off_sidebar_selection_until_sidebar_context_changes() {
-    for copy in [false, true] {
-        let mut harness = make_app();
-        harness.app.search_query = "sidebar".into();
-        harness.app.search_last_sent = "sidebar".into();
-        harness.app.all_pastes = vec![test_summary("alpha", "Alpha", None, 10)];
-        harness.app.pastes = vec![test_summary("alpha", "Alpha", None, 10)];
-        harness.app.open_paste_picker();
-        if copy {
-            harness.app.queue_palette_copy("picked".into(), false);
-        } else {
-            harness.app.open_palette_selection("picked".into());
-        }
-        assert_eq!(
-            harness.app.picker_selection_pin.as_deref(),
-            Some("picked"),
-            "copy={copy}"
-        );
-        match recv_cmd(&harness.cmd_rx) {
-            CoreCmd::GetPaste { id } => assert_eq!(id, "picked"),
-            other => panic!("unexpected picker action: {other:?}"),
-        }
+fn picker_copy_of_active_result_cancels_a_stale_detached_request() {
+    let mut harness = make_app();
+    set_active_content(&mut harness.app, "dirty alpha");
+    harness.app.open_paste_picker();
+    harness.app.queue_palette_copy("beta".into(), false);
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::GetPasteForCopy { ref id } if id == "beta"
+    ));
 
-        let mut picked = Paste::new("picked content".into(), "Picked".into());
-        picked.id = "picked".into();
-        picked.language = Some("rust".into());
+    harness.app.queue_palette_copy("alpha".into(), false);
+    assert_eq!(
+        harness.app.clipboard_outgoing.as_deref(),
+        Some("dirty alpha")
+    );
+    assert!(harness.app.pending_copy_action.is_none());
+
+    let mut beta = Paste::new("stale beta".into(), "Beta".into());
+    beta.id = "beta".into();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteCopyLoaded { paste: beta });
+    assert_eq!(
+        harness.app.clipboard_outgoing.as_deref(),
+        Some("dirty alpha")
+    );
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.active_snapshot(), "dirty alpha");
+}
+
+#[test]
+fn picker_open_keeps_off_sidebar_selection_until_sidebar_context_changes() {
+    let mut harness = make_app();
+    harness.app.search_query = "sidebar".into();
+    harness.app.search_last_sent = "sidebar".into();
+    harness.app.all_pastes = vec![test_summary("alpha", "Alpha", None, 10)];
+    harness.app.pastes = vec![test_summary("alpha", "Alpha", None, 10)];
+    harness.app.open_paste_picker();
+    harness.app.open_palette_selection("picked".into());
+    assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("picked"));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id } => assert_eq!(id, "picked"),
+        other => panic!("unexpected picker action: {other:?}"),
+    }
+
+    let mut picked = Paste::new("picked content".into(), "Picked".into());
+    picked.id = "picked".into();
+    picked.language = Some("rust".into());
+    harness
+        .app
+        .apply_event(CoreEvent::PasteLoaded { paste: picked });
+    let mut autosaved = Paste::new("picked content".into(), "Picked".into());
+    autosaved.id = "picked".into();
+    autosaved.language = Some("rust".into());
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: autosaved });
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![test_summary("alpha", "Alpha", None, 10)],
+    });
+    assert!(
         harness
             .app
-            .apply_event(CoreEvent::PasteLoaded { paste: picked });
-        let mut autosaved = Paste::new("picked content".into(), "Picked".into());
-        autosaved.id = "picked".into();
-        autosaved.language = Some("rust".into());
+            .all_pastes
+            .iter()
+            .all(|summary| summary.id != "picked"),
+        "bounded sidebar refresh must not revoke a picker selection"
+    );
+    harness.app.search_last_sent = "sidebar".into();
+    harness.app.apply_event(CoreEvent::SearchResults {
+        collection: crate::backend::SidebarCollection::All,
+        query: "sidebar".into(),
+        scope: SearchScope::All,
+        folder_id: None,
+        language: None,
+        items: vec![test_summary("alpha", "Alpha", None, 10)],
+    });
+    assert_eq!(harness.app.selected_id.as_deref(), Some("picked"));
+
+    harness.app.set_search_query("changed".into());
+    assert!(harness.app.picker_selection_pin.is_none());
+    harness.app.search_last_sent = "changed".into();
+    harness.app.apply_event(CoreEvent::SearchResults {
+        collection: crate::backend::SidebarCollection::All,
+        query: "changed".into(),
+        scope: SearchScope::All,
+        folder_id: None,
+        language: None,
+        items: vec![test_summary("alpha", "Alpha", None, 10)],
+    });
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+}
+
+#[test]
+fn picker_copy_preserves_dirty_editor_and_drops_stale_responses() {
+    let mut harness = make_app();
+    set_active_content(&mut harness.app, "dirty alpha");
+    harness.app.save_status = SaveStatus::Dirty;
+    harness
+        .app
+        .locks
+        .acquire("alpha", &harness.app.lock_owner_id)
+        .expect("acquire active lock");
+    harness.app.open_paste_picker();
+    harness.app.queue_palette_copy("beta".into(), false);
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPasteForCopy { id } => assert_eq!(id, "beta"),
+        other => panic!("unexpected first picker copy command: {other:?}"),
+    }
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.active_snapshot(), "dirty alpha");
+    assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+    assert!(harness.app.pending_selection_id.is_none());
+    assert!(harness.app.picker_selection_pin.is_none());
+    assert!(harness.app.locks.is_locked("alpha").expect("active lock"));
+    assert!(!harness.app.locks.is_locked("beta").expect("target lock"));
+
+    harness.app.queue_palette_copy("gamma".into(), true);
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPasteForCopy { id } => assert_eq!(id, "gamma"),
+        other => panic!("unexpected second picker copy command: {other:?}"),
+    }
+    let mut stale = Paste::new("stale content".into(), "Beta".into());
+    stale.id = "beta".into();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteCopyLoaded { paste: stale });
+    harness.app.apply_event(CoreEvent::PasteCopyLoadFailed {
+        id: "beta".into(),
+        message: "Copy failed: stale".into(),
+    });
+    assert!(harness.app.clipboard_outgoing.is_none());
+    assert!(matches!(
+        harness.app.pending_copy_action,
+        Some(PaletteCopyAction::Fenced(ref id)) if id == "gamma"
+    ));
+    assert_eq!(
         harness
             .app
-            .apply_event(CoreEvent::PasteSaved { paste: autosaved });
-        harness.app.apply_event(CoreEvent::PasteList {
-            items: vec![test_summary("alpha", "Alpha", None, 10)],
-        });
-        assert!(
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Loading paste for copy...")
+    );
+
+    let mut gamma = Paste::new("gamma content".into(), "Gamma".into());
+    gamma.id = "gamma".into();
+    gamma.language = Some("rust".into());
+    harness
+        .app
+        .apply_event(CoreEvent::PasteCopyLoaded { paste: gamma });
+    assert_eq!(
+        harness.app.clipboard_outgoing.as_deref(),
+        Some("```rust\ngamma content\n```")
+    );
+    assert!(harness.app.pending_copy_action.is_none());
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.active_snapshot(), "dirty alpha");
+    assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+    assert!(harness.app.locks.is_locked("alpha").expect("active lock"));
+    assert!(!harness.app.locks.is_locked("gamma").expect("target lock"));
+}
+
+#[test]
+fn picker_copy_terminal_errors_preserve_the_active_editor() {
+    for missing in [false, true] {
+        let mut harness = make_app();
+        set_active_content(&mut harness.app, "dirty alpha");
+        harness.app.save_status = SaveStatus::Dirty;
+        harness
+            .app
+            .locks
+            .acquire("alpha", &harness.app.lock_owner_id)
+            .expect("acquire active lock");
+        harness.app.open_paste_picker();
+        harness.app.queue_palette_copy("beta".into(), false);
+        let _ = recv_cmd(&harness.cmd_rx);
+
+        if missing {
             harness
                 .app
-                .all_pastes
-                .iter()
-                .all(|summary| summary.id != "picked"),
-            "bounded sidebar refresh must not revoke a picker selection"
-        );
-        harness.app.search_last_sent = "sidebar".into();
-        harness.app.apply_event(CoreEvent::SearchResults {
-            collection: crate::backend::SidebarCollection::All,
-            query: "sidebar".into(),
-            scope: SearchScope::All,
-            folder_id: None,
-            language: None,
-            items: vec![test_summary("alpha", "Alpha", None, 10)],
-        });
-        assert_eq!(harness.app.selected_id.as_deref(), Some("picked"));
+                .apply_event(CoreEvent::PasteCopyMissing { id: "beta".into() });
+        } else {
+            harness.app.apply_event(CoreEvent::PasteCopyLoadFailed {
+                id: "beta".into(),
+                message: "Copy failed: injected".into(),
+            });
+        }
 
-        harness.app.set_search_query("changed".into());
-        assert!(harness.app.picker_selection_pin.is_none());
-        harness.app.search_last_sent = "changed".into();
-        harness.app.apply_event(CoreEvent::SearchResults {
-            collection: crate::backend::SidebarCollection::All,
-            query: "changed".into(),
-            scope: SearchScope::All,
-            folder_id: None,
-            language: None,
-            items: vec![test_summary("alpha", "Alpha", None, 10)],
-        });
+        assert!(
+            harness.app.pending_copy_action.is_none(),
+            "missing={missing}"
+        );
         assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+        assert_eq!(harness.app.active_snapshot(), "dirty alpha");
+        assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+        assert!(harness.app.pending_selection_id.is_none());
+        assert!(harness.app.picker_selection_pin.is_none());
+        assert!(harness.app.locks.is_locked("alpha").expect("active lock"));
+        assert!(!harness.app.locks.is_locked("beta").expect("target lock"));
+        let expected = if missing {
+            "Paste is no longer available to copy."
+        } else {
+            "Copy failed: injected"
+        };
+        assert_eq!(
+            harness
+                .app
+                .status
+                .as_ref()
+                .map(|status| status.text.as_str()),
+            Some(expected),
+            "missing={missing}"
+        );
     }
 }
 

@@ -19,6 +19,7 @@ use tracing::{error, warn};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PasteLoadRoute {
     Selection,
+    Copy,
     DiffTarget,
 }
 
@@ -40,6 +41,15 @@ pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
     handle_get_paste_for_route(state, id, PasteLoadRoute::Selection);
 }
 
+/// Fetches a paste body for a picker copy action without loading it into the editor.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Paste id to load for copying.
+pub(super) fn handle_get_paste_for_copy(state: &mut WorkerState, id: String) {
+    handle_get_paste_for_route(state, id, PasteLoadRoute::Copy);
+}
+
 /// Fetches a detached diff target paste by id and emits diff-specific events.
 ///
 /// # Arguments
@@ -54,6 +64,7 @@ fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteL
         Ok(Some(paste)) => {
             let event = match route {
                 PasteLoadRoute::Selection => CoreEvent::PasteLoaded { paste },
+                PasteLoadRoute::Copy => CoreEvent::PasteCopyLoaded { paste },
                 PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetLoaded { paste },
             };
             let _ = state.evt_tx.send(event);
@@ -61,6 +72,7 @@ fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteL
         Ok(None) => {
             let event = match route {
                 PasteLoadRoute::Selection => CoreEvent::PasteMissing { id },
+                PasteLoadRoute::Copy => CoreEvent::PasteCopyMissing { id },
                 PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetMissing { id },
             };
             let _ = state.evt_tx.send(event);
@@ -72,6 +84,13 @@ fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteL
                     CoreEvent::PasteLoadFailed {
                         id,
                         message: format!("Get failed: {}", err),
+                    },
+                ),
+                PasteLoadRoute::Copy => (
+                    "backend copy get failed",
+                    CoreEvent::PasteCopyLoadFailed {
+                        id,
+                        message: format!("Copy failed: {}", err),
                     },
                 ),
                 PasteLoadRoute::DiffTarget => (

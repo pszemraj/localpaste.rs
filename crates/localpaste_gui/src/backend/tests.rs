@@ -46,6 +46,7 @@ fn expect_error_contains(rx: &crossbeam_channel::Receiver<CoreEvent>, expected_f
 #[derive(Debug, Clone, Copy)]
 enum GetPasteRouteCase {
     Selection,
+    Copy,
     DiffTarget,
 }
 
@@ -63,6 +64,12 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
                 id: paste_id.clone(),
             })
             .expect("send get"),
+        GetPasteRouteCase::Copy => backend
+            .cmd_tx
+            .send(CoreCmd::GetPasteForCopy {
+                id: paste_id.clone(),
+            })
+            .expect("send copy get"),
         GetPasteRouteCase::DiffTarget => backend
             .cmd_tx
             .send(CoreCmd::GetDiffTargetPaste {
@@ -73,12 +80,16 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
 
     match (case, recv_event(&backend.evt_rx)) {
         (GetPasteRouteCase::Selection, CoreEvent::PasteLoaded { paste })
+        | (GetPasteRouteCase::Copy, CoreEvent::PasteCopyLoaded { paste })
         | (GetPasteRouteCase::DiffTarget, CoreEvent::DiffTargetLoaded { paste }) => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.content, "gamma");
         }
         (GetPasteRouteCase::Selection, other) => {
             panic!("unexpected selection event: {:?}", other)
+        }
+        (GetPasteRouteCase::Copy, other) => {
+            panic!("unexpected copy event: {:?}", other)
         }
         (GetPasteRouteCase::DiffTarget, other) => {
             panic!("unexpected diff-target event: {:?}", other)
@@ -93,6 +104,12 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
                 id: missing_id.clone(),
             })
             .expect("send missing"),
+        GetPasteRouteCase::Copy => backend
+            .cmd_tx
+            .send(CoreCmd::GetPasteForCopy {
+                id: missing_id.clone(),
+            })
+            .expect("send missing copy"),
         GetPasteRouteCase::DiffTarget => backend
             .cmd_tx
             .send(CoreCmd::GetDiffTargetPaste {
@@ -103,11 +120,15 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
 
     match (case, recv_event(&backend.evt_rx)) {
         (GetPasteRouteCase::Selection, CoreEvent::PasteMissing { id })
+        | (GetPasteRouteCase::Copy, CoreEvent::PasteCopyMissing { id })
         | (GetPasteRouteCase::DiffTarget, CoreEvent::DiffTargetMissing { id }) => {
             assert_eq!(id, missing_id);
         }
         (GetPasteRouteCase::Selection, other) => {
             panic!("unexpected missing-selection event: {:?}", other)
+        }
+        (GetPasteRouteCase::Copy, other) => {
+            panic!("unexpected missing-copy event: {:?}", other)
         }
         (GetPasteRouteCase::DiffTarget, other) => {
             panic!("unexpected missing-diff-target event: {:?}", other)
@@ -196,6 +217,11 @@ fn backend_list_cache_refreshes_after_external_update() {
 #[test]
 fn backend_gets_paste_and_reports_missing() {
     assert_get_paste_route(GetPasteRouteCase::Selection);
+}
+
+#[test]
+fn backend_gets_picker_copy_target_without_selection_events() {
+    assert_get_paste_route(GetPasteRouteCase::Copy);
 }
 
 #[test]
