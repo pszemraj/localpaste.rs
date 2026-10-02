@@ -19,7 +19,7 @@ impl LocalPasteApp {
             return;
         }
         self.paste_picker_query = query;
-        self.paste_picker_selected = 0;
+        self.reset_paste_picker_selection();
         self.palette_search_last_input_at = Some(Instant::now());
         // Never leave previous-query results visible/actionable after input changes.
         self.palette_search_last_sent.clear();
@@ -211,7 +211,7 @@ impl LocalPasteApp {
             self.palette_search_last_sent.clear();
             self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
             self.palette_search_pending = false;
-            self.paste_picker_selected = 0;
+            self.reset_paste_picker_selection();
         }
     }
 }

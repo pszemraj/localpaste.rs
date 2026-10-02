@@ -346,6 +346,7 @@ fn make_app() -> TestHarness {
         paste_picker_open: false,
         paste_picker_query: String::new(),
         paste_picker_selected: 0,
+        paste_picker_scroll_reset_pending: false,
         paste_picker_scope: SearchScope::All,
         paste_picker_sent_scope: SearchScope::All,
         palette_search_results: Vec::new(),
@@ -465,6 +466,7 @@ mod history_reset;
 mod keyboard_navigation_audit;
 mod persistence;
 mod picker_find;
+mod picker_scroll;
 mod save_and_metadata;
 mod selected_delete;
 mod shortcut_help;

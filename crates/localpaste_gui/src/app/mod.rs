@@ -101,6 +101,8 @@ pub(crate) struct LocalPasteApp {
     paste_picker_open: bool,
     paste_picker_query: String,
     paste_picker_selected: usize,
+    /// Reset the picker viewport when rows are available after a selection reset.
+    paste_picker_scroll_reset_pending: bool,
     paste_picker_scope: SearchScope,
     paste_picker_sent_scope: SearchScope,
     palette_search_results: Vec<PasteSummary>,

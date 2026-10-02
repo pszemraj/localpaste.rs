@@ -3,13 +3,16 @@
 use super::super::*;
 use super::command_palette::CommandPaletteAction;
 
+/// Stable salt used to render and reset the picker results' retained scroll state.
+const RESULTS_SCROLL_ID: &str = "paste_picker_results";
+
 impl LocalPasteApp {
     /// Open paste discovery and refresh its retained query after any closed-session results.
     pub(in crate::app) fn open_paste_picker(&mut self) {
         self.command_palette_open = false;
         self.shortcut_help_open = false;
         self.paste_picker_open = true;
-        self.paste_picker_selected = 0;
+        self.reset_paste_picker_selection();
         self.palette_search_results.clear();
         self.palette_search_last_sent.clear();
         self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
@@ -19,11 +22,17 @@ impl LocalPasteApp {
     /// Close paste discovery and discard its stale result projection.
     pub(in crate::app) fn close_paste_picker(&mut self) {
         self.paste_picker_open = false;
-        self.paste_picker_selected = 0;
+        self.reset_paste_picker_selection();
         self.palette_search_results.clear();
         self.palette_search_last_sent.clear();
         self.palette_search_last_input_at = None;
         self.palette_search_pending = false;
+    }
+
+    /// Reset selection and defer the viewport reset until results can render.
+    pub(in crate::app) fn reset_paste_picker_selection(&mut self) {
+        self.paste_picker_selected = 0;
+        self.paste_picker_scroll_reset_pending = true;
     }
 
     /// Keep the selected result within the current paste-only result list.
@@ -102,7 +111,14 @@ impl LocalPasteApp {
                         results[self.paste_picker_selected].id.clone(),
                     ));
                 }
+                // Loading frames return above without consuming this one-shot reset.
+                if std::mem::take(&mut self.paste_picker_scroll_reset_pending) {
+                    // Clear animation targets and momentum along with the old offset.
+                    let id = ui.make_persistent_id(egui::Id::new(RESULTS_SCROLL_ID));
+                    egui::scroll_area::State::default().store(ctx, id);
+                }
                 egui::ScrollArea::vertical()
+                    .id_salt(RESULTS_SCROLL_ID)
                     .max_height(360.0)
                     .show(ui, |ui| {
                         for (index, item) in results.iter().enumerate() {
