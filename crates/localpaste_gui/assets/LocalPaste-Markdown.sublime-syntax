@@ -5,6 +5,9 @@ file_extensions: [md, markdown]
 scope: text.html.markdown.localpaste
 contexts:
   main:
+    # Consume escaped punctuation before it can open inline markup. Code
+    # contexts deliberately do not include this rule: backslashes are literal.
+    - match: '\\[[:punct:]]'
     # Capture the opening delimiter so shorter or different fences cannot close it.
     - match: '^[ \t]*(?:>[ \t]*)?(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,})[^`\n]*$'
       scope: punctuation.definition.raw.markdown.localpaste

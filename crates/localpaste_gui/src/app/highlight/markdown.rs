@@ -83,6 +83,43 @@ mod tests {
     }
 
     #[test]
+    fn escaped_punctuation_stays_prose_without_disabling_real_markup() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let prose = Highlighter::new(theme).get_default().foreground;
+        let mut lines = HighlightLines::new(syntax, theme);
+        for text in [
+            "Use \\` to write a literal backtick.\n",
+            "Escaped \\*stars\\* and \\_underscores\\_ and \\[link](url).\n",
+        ] {
+            assert!(styled_segments(&settings, &mut lines, text)
+                .iter()
+                .all(|(style, _)| style.foreground == prose && style.font_style.is_empty()));
+        }
+        let segments = styled_segments(
+            &settings,
+            &mut lines,
+            "Next prose line with **bold** emphasis.\n",
+        );
+        assert_eq!(segments.first().unwrap().0.foreground, prose);
+        assert!(segments.iter().any(|(style, text)| {
+            text.contains("bold") && style.font_style.contains(FontStyle::BOLD)
+        }));
+
+        // An escaped backslash leaves the following delimiter active. Escapes
+        // inside code are literal and must not prevent its closing delimiter.
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        let segments = styled_segments(&settings, &mut lines, "Use \\\\`code\\` after.\n");
+        assert!(segments
+            .iter()
+            .any(|(style, text)| text.contains("code") && style.foreground == code));
+        assert_eq!(segments.last().unwrap().0.foreground, prose);
+    }
+
+    #[test]
     fn footnotes_are_readable_and_fences_end_at_matching_delimiters() {
         let settings = settings();
         let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
