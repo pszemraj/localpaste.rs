@@ -126,7 +126,7 @@ Flow:
 2. Worker coalesces queued requests and computes either:
    - full render (`HighlightRender`), or
    - changed-range patch (`HighlightPatch`) when the UI base snapshot matches the worker cache base.
-   A single-edit pass checks every touched line before reusing a matching tail; unchanged interior lines do not end a multiline edit.
+   A single-edit pass checks every touched line before reusing a matching tail; unchanged interior lines do not end a multiline edit. Bare CR and Unicode line separators use hash alignment because editor and syntax-parser line indices differ.
 3. UI merges matching patches into staged/current highlight state.
 4. Staged highlight applies:
    - immediately only when there is no current render,

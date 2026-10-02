@@ -172,6 +172,9 @@ fn highlight_in_worker(
         patch_base_revision,
         patch_base_text_len,
     } = req;
+    let editor_line_count = match &text {
+        super::HighlightRequestText::Rope(rope) => rope.len_lines(),
+    };
     let text = text.into_string();
     let text_len = text.len();
 
@@ -232,6 +235,9 @@ fn highlight_in_worker(
     let mut changed_end: usize = 0;
     let same_len_single_step = had_cached_lines
         && old_cached_lines.len() == lines.len()
+        // Rope line indices also count bare CR and Unicode separators; syntect
+        // splits only at LF. Use hash alignment when their coordinates differ.
+        && editor_line_count == lines.len() + usize::from(text.ends_with('\n'))
         && patch_base_revision == cache_base_revision
         && patch_base_text_len == cache_base_text_len
         && cache_base_revision
@@ -523,6 +529,36 @@ mod resolver_tests {
             base.lines == cold.lines,
             "block edits must match a cold parse"
         );
+    }
+
+    #[test]
+    fn editor_line_hints_remain_safe_with_non_lf_line_breaks() {
+        let settings = SyntectSettings::default();
+        for separator in ["\r", "\u{2028}", "\r\n"] {
+            let before = format!("let a = 1;{separator}let b = 2;\n");
+            let after = before.replace('2', "200");
+            let mut cache = HighlightWorkerCache::default();
+            let HighlightWorkerResult::Render(mut base) =
+                highlight_in_worker(&settings, &mut cache, rust_request(1, &before, None, None))
+            else {
+                panic!("cold render")
+            };
+            let mut next = rust_request(2, &after, Some(1), Some(before.len()));
+            next.edit_hint = Some(super::super::VirtualEditHint {
+                start_line: Rope::from_str(&before).byte_to_line(before.find('2').unwrap()),
+                touched_lines: 1,
+                inserted_chars: 3,
+                deleted_chars: 1,
+            });
+            match highlight_in_worker(&settings, &mut cache, next) {
+                HighlightWorkerResult::Render(render) => base = render,
+                HighlightWorkerResult::Patch(patch) => {
+                    base.lines.splice(patch.line_range, patch.lines);
+                }
+            }
+            let cold = render_for_label(&settings, "rust", &after);
+            assert!(base.lines == cold.lines, "line separator {separator:?}");
+        }
     }
 
     #[test]
