@@ -8,6 +8,22 @@ contexts:
     # Consume escaped punctuation before it can open inline markup. Code
     # contexts deliberately do not include this rule: backslashes are literal.
     - match: '\\[[:punct:]]'
+    # Top-level fences have at most three spaces before a closing delimiter.
+    # Indented or container-prefixed fence-looking lines remain literal code.
+    - match: '^ {0,3}(`{3,})[^`\n]*$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push:
+        - meta_scope: markup.raw.block.markdown.localpaste
+        - match: '^ {0,3}\1`*[ \t]*\r?$'
+          scope: punctuation.definition.raw.markdown.localpaste
+          pop: true
+    - match: '^ {0,3}(~{3,})[^\n]*$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push:
+        - meta_scope: markup.raw.block.markdown.localpaste
+        - match: '^ {0,3}\1~*[ \t]*\r?$'
+          scope: punctuation.definition.raw.markdown.localpaste
+          pop: true
     # Capture the quote marker and delimiter independently. A quoted fence
     # ends before the next unquoted line; an empty marker disables that rule.
     - match: '^[ \t]*(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,})[^`\n]*$'
@@ -16,7 +32,7 @@ contexts:
         - meta_scope: markup.raw.block.markdown.localpaste
         - match: '^(?![ \t]*\1)'
           pop: true
-        - match: '^[ \t]*\1[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?\2`*[ \t]*\r?$'
+        - match: '^[ \t]*\1[ \t]*\2`*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
     - match: '^[ \t]*(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(~{3,})[^\n]*$'
@@ -25,7 +41,7 @@ contexts:
         - meta_scope: markup.raw.block.markdown.localpaste
         - match: '^(?![ \t]*\1)'
           pop: true
-        - match: '^[ \t]*\1[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?\2~*[ \t]*\r?$'
+        - match: '^[ \t]*\1[ \t]*\2~*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
     # A definition marker ends at the colon. Its body remains normal prose.
@@ -35,7 +51,7 @@ contexts:
       scope: constant.other.reference.link.markdown.localpaste
     - match: '^ {0,3}#{1,6}[ \t]+.*$'
       scope: markup.heading.markdown
-    - match: '^ {0,3}(?:={3,}|-{3,})[ \t]*$'
+    - match: '^ {0,3}(?:={3,}|-{3,})[ \t]*\r?$'
       scope: markup.heading.markdown
     - match: '^ {0,3}>[ \t]?'
       scope: punctuation.definition.blockquote.markdown
@@ -47,6 +63,9 @@ contexts:
         - meta_scope: markup.raw.inline.markdown.localpaste
         # An inline span can cross a content line, but never a paragraph boundary.
         - match: '^[ \t]*\r?\n'
+          pop: true
+        # Block structure interrupts a paragraph before inline-code parsing.
+        - match: '^(?= {0,3}(?:#{1,6}(?:[ \t]+|\r?$)|`{3,}[^`\n]*$|~{3,}|(?:={3,}|-{3,})[ \t]*\r?$))'
           pop: true
         - match: '(?<!`)\1(?!`)'
           pop: true

@@ -156,6 +156,22 @@ mod tests {
                     "{text}"
                 );
             }
+            // Fence-looking literals inside a top-level block are body text,
+            // not closers, when indented four columns or prefixed as containers.
+            let delimiter = if open.starts_with('`') {
+                "`````"
+            } else {
+                "~~~~~"
+            };
+            for prefix in ["    ", "\t", "> ", "- ", "1. "] {
+                colors(&mut lines, &format!("{prefix}{delimiter}\n"));
+                assert!(
+                    colors(&mut lines, "**still code**\n")
+                        .iter()
+                        .all(|(color, _)| *color == code),
+                    "{prefix:?}{delimiter}"
+                );
+            }
             colors(&mut lines, close);
             assert!(colors(&mut lines, "ordinary prose after fence\n")
                 .iter()
@@ -204,6 +220,36 @@ mod tests {
         assert!(closing
             .iter()
             .any(|(color, text)| *color == prose && text.contains("after")));
+
+        let heading = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("keyword").unwrap()])
+            .foreground;
+        for (boundary, expected, closer) in [
+            ("# Heading\n", heading, None),
+            ("---\r\n", heading, None),
+            ("```rust\n", heading, Some("```\n")),
+            ("~~~rust\n", heading, Some("~~~\n")),
+        ] {
+            let mut lines = HighlightLines::new(syntax, theme);
+            colors(&mut lines, "unmatched `code\n");
+            let boundary_colors = colors(&mut lines, boundary);
+            assert!(
+                boundary_colors.iter().all(|(color, _)| *color == expected),
+                "{boundary:?}: {boundary_colors:?} expected {expected:?}"
+            );
+            if let Some(closer) = closer {
+                assert!(colors(&mut lines, "**literal code body**\n")
+                    .iter()
+                    .all(|(color, _)| *color == code));
+                colors(&mut lines, closer);
+            }
+            assert!(
+                colors(&mut lines, "ordinary prose\n")
+                    .iter()
+                    .all(|(color, _)| *color == prose),
+                "after {boundary:?}"
+            );
+        }
     }
 
     #[test]
