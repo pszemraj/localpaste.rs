@@ -9,6 +9,9 @@ const RESULTS_SCROLL_ID: &str = "paste_picker_results";
 impl LocalPasteApp {
     /// Open paste discovery and refresh its retained query after any closed-session results.
     pub(in crate::app) fn open_paste_picker(&mut self) {
+        if self.version_overlay_open() {
+            return;
+        }
         self.command_palette_open = false;
         self.shortcut_help_open = false;
         self.paste_picker_open = true;
@@ -17,6 +20,7 @@ impl LocalPasteApp {
         self.palette_search_last_sent.clear();
         self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
         self.palette_search_pending = false;
+        self.palette_search_error = None;
     }
 
     /// Close paste discovery and discard its stale result projection.
@@ -27,6 +31,7 @@ impl LocalPasteApp {
         self.palette_search_last_sent.clear();
         self.palette_search_last_input_at = None;
         self.palette_search_pending = false;
+        self.palette_search_error = None;
     }
 
     /// Reset selection and defer the viewport reset until results can render.
@@ -77,6 +82,7 @@ impl LocalPasteApp {
                 self.set_paste_picker_scope(scope);
                 if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                     self.close_paste_picker();
+                    self.restore_discovery_focus(ctx);
                     return;
                 }
                 let results: Vec<_> = if self.paste_picker_query.trim().is_empty() {
@@ -85,6 +91,17 @@ impl LocalPasteApp {
                     self.palette_search_results.clone()
                 };
                 if results.is_empty() {
+                    if let Some(error) = &self.palette_search_error {
+                        ui.label(error);
+                        if ui
+                            .add_enabled(!self.palette_search_pending, egui::Button::new("Retry"))
+                            .clicked()
+                        {
+                            self.palette_search_last_input_at =
+                                Some(Instant::now() - SEARCH_DEBOUNCE);
+                        }
+                        return;
+                    }
                     ui.label(
                         if self.palette_search_pending
                             || self.palette_search_last_sent != self.paste_picker_query.trim()

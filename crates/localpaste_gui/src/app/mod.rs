@@ -109,6 +109,7 @@ pub(crate) struct LocalPasteApp {
     palette_search_last_sent: String,
     palette_search_last_input_at: Option<Instant>,
     palette_search_pending: bool,
+    palette_search_error: Option<String>,
     pending_copy_action: Option<PaletteCopyAction>,
     pending_selection_id: Option<String>,
     pending_picker_open: Option<PendingPickerOpen>,
@@ -164,7 +165,7 @@ pub(crate) struct LocalPasteApp {
     shortcut_help_open: bool,
     shortcut_help_query: String,
     shortcut_help_focus_requested: bool,
-    shortcut_help_return_focus: Option<egui::Id>,
+    discovery_return_focus: Option<egui::Id>,
     focus_editor_next: bool,
     style_applied: bool,
     window_shown_once: bool,
@@ -505,7 +506,28 @@ impl eframe::App for LocalPasteApp {
         // Actions may change egui focus, so dispatch after releasing the input lock.
         let runtime_actions =
             ctx.input(|input| pressed_runtime_shortcuts(input).collect::<Vec<_>>());
+        // TextEdit treats Ctrl+K (including Shift) as delete-to-paragraph-end.
+        // Consume the shifted chord first: egui's plain pattern accepts extra Shift.
+        ctx.input_mut(|input| {
+            input.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::K,
+            );
+            input.consume_key(egui::Modifiers::COMMAND, egui::Key::K);
+        });
         for action in runtime_actions {
+            if self.keyboard_overlay_open()
+                && matches!(
+                    action,
+                    RuntimeShortcutAction::NewPaste
+                        | RuntimeShortcutAction::Save
+                        | RuntimeShortcutAction::DeleteSelected
+                        | RuntimeShortcutAction::ToggleProperties
+                        | RuntimeShortcutAction::FocusSearch
+                )
+            {
+                continue;
+            }
             match action {
                 RuntimeShortcutAction::NewPaste => {
                     if mutation_shortcut_blocked.is_some() {
@@ -526,16 +548,24 @@ impl eframe::App for LocalPasteApp {
                 }
                 RuntimeShortcutAction::ToggleCommandPalette
                 | RuntimeShortcutAction::ToggleCommandPaletteLegacy => {
-                    self.command_palette_open = !self.command_palette_open;
-                    self.command_palette_query.clear();
-                    self.command_palette_selected = 0;
-                    self.close_paste_picker();
-                    self.shortcut_help_open = false;
+                    if self.command_palette_open {
+                        self.command_palette_open = false;
+                        self.restore_discovery_focus(ctx);
+                    } else if !self.version_overlay_open() {
+                        self.remember_discovery_focus(ctx);
+                        self.command_palette_open = true;
+                        self.command_palette_query.clear();
+                        self.command_palette_selected = 0;
+                        self.close_paste_picker();
+                        self.shortcut_help_open = false;
+                    }
                 }
                 RuntimeShortcutAction::TogglePastePicker => {
                     if self.paste_picker_open {
                         self.close_paste_picker();
-                    } else {
+                        self.restore_discovery_focus(ctx);
+                    } else if !self.version_overlay_open() {
+                        self.remember_discovery_focus(ctx);
                         self.open_paste_picker();
                     }
                 }
@@ -704,6 +734,17 @@ impl eframe::App for LocalPasteApp {
         } else {
             EXTERNAL_REFRESH_INTERVAL
         };
+        if self.paste_picker_open
+            && !self.palette_search_pending
+            && !self.paste_picker_query.trim().is_empty()
+            && self.palette_search_last_sent != self.paste_picker_query.trim()
+        {
+            if let Some(last_input_at) = self.palette_search_last_input_at {
+                // Retrying must not depend on a new key press or the next refresh poll.
+                repaint_after =
+                    repaint_after.min(SEARCH_DEBOUNCE.saturating_sub(last_input_at.elapsed()));
+            }
+        }
         if let Some(status) = &self.status {
             let until = status.expires_at.saturating_duration_since(Instant::now());
             repaint_after = repaint_after.min(until);

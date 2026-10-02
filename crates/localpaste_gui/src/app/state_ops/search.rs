@@ -25,6 +25,19 @@ impl LocalPasteApp {
         self.palette_search_last_sent.clear();
         self.palette_search_results.clear();
         self.palette_search_pending = false;
+        self.palette_search_error = None;
+    }
+
+    /// Retain a picker failure in the picker and re-arm its debounced retry.
+    pub(super) fn fail_palette_search(&mut self, message: String) {
+        self.palette_search_pending = false;
+        self.palette_search_results.clear();
+        self.palette_search_last_sent.clear();
+        self.palette_search_last_input_at = Some(Instant::now());
+        self.palette_search_error = Some(message.clone());
+        if self.status.as_ref().map(|status| status.text.as_str()) != Some(message.as_str()) {
+            self.set_status(message);
+        }
     }
 
     /// Checks whether a paste-picker response belongs to the active request.
@@ -157,6 +170,7 @@ impl LocalPasteApp {
                 self.palette_search_results.clear();
             }
             self.palette_search_pending = false;
+            self.palette_search_error = None;
             return;
         }
 
@@ -178,15 +192,9 @@ impl LocalPasteApp {
             limit: PALETTE_SEARCH_LIMIT,
         }) {
             // Mirror sidebar-search behavior: bounded retry cadence and deduped status.
-            self.palette_search_pending = false;
-            self.palette_search_last_input_at = Some(Instant::now());
             const PALETTE_SEARCH_UNAVAILABLE: &str =
                 "Paste picker search failed: backend unavailable.";
-            if self.status.as_ref().map(|status| status.text.as_str())
-                != Some(PALETTE_SEARCH_UNAVAILABLE)
-            {
-                self.set_status(PALETTE_SEARCH_UNAVAILABLE);
-            }
+            self.fail_palette_search(PALETTE_SEARCH_UNAVAILABLE.into());
             return;
         }
         self.palette_search_last_sent = query;
@@ -211,6 +219,7 @@ impl LocalPasteApp {
             self.palette_search_last_sent.clear();
             self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
             self.palette_search_pending = false;
+            self.palette_search_error = None;
             self.reset_paste_picker_selection();
         }
     }

@@ -538,7 +538,7 @@ fn paste_picker_uses_sidebar_language_guardrail_and_reveals_keyboard_selection()
 
 #[test]
 fn paste_picker_renders_body_match_excerpt() {
-    let mut harness = make_app();
+    let (mut harness, _events) = make_app_with_event_tx();
     let ctx = egui::Context::default();
     harness.app.open_paste_picker();
     harness.app.set_paste_picker_query("needle".into());
@@ -548,6 +548,7 @@ fn paste_picker_renders_body_match_excerpt() {
         ..test_summary("body-hit", "Body hit", Some("text"), 150)
     }];
     harness.app.palette_search_last_sent = "needle".into();
+    harness.app.paste_picker_sent_scope = SearchScope::Body;
 
     let input = || egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(

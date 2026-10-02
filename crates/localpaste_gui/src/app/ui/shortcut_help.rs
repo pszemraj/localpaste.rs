@@ -5,15 +5,32 @@ use super::super::*;
 use eframe::egui;
 
 impl LocalPasteApp {
+    /// Preserve the original input when opening or switching discovery surfaces.
+    pub(in crate::app) fn remember_discovery_focus(&mut self, ctx: &egui::Context) {
+        if !self.command_palette_open && !self.paste_picker_open && !self.shortcut_help_open {
+            self.discovery_return_focus = ctx.memory(|memory| memory.focused());
+        }
+    }
+
+    /// Return keyboard ownership after dismissing a discovery surface.
+    pub(in crate::app) fn restore_discovery_focus(&mut self, ctx: &egui::Context) {
+        if let Some(id) = self.discovery_return_focus.take() {
+            if id == egui::Id::new(VIRTUAL_EDITOR_ID) {
+                self.focus_editor_next = true;
+            }
+            ctx.memory_mut(|memory| memory.request_focus(id));
+        }
+    }
+
     /// Open shortcut help as the sole keyboard-owning discovery surface.
     pub(in crate::app) fn open_shortcut_help(&mut self, ctx: &egui::Context) {
         if self.shortcut_help_open {
             self.shortcut_help_focus_requested = true;
             return;
         }
+        self.remember_discovery_focus(ctx);
         self.command_palette_open = false;
         self.close_paste_picker();
-        self.shortcut_help_return_focus = ctx.memory(|memory| memory.focused());
         self.shortcut_help_focus_requested = true;
         self.shortcut_help_open = true;
     }
@@ -22,12 +39,7 @@ impl LocalPasteApp {
     pub(in crate::app) fn close_shortcut_help(&mut self, ctx: &egui::Context) {
         self.shortcut_help_open = false;
         self.shortcut_help_focus_requested = false;
-        if let Some(id) = self.shortcut_help_return_focus.take() {
-            if id == egui::Id::new(VIRTUAL_EDITOR_ID) {
-                self.focus_editor_next = true;
-            }
-            ctx.memory_mut(|memory| memory.request_focus(id));
-        }
+        self.restore_discovery_focus(ctx);
     }
 
     /// Renders the keyboard shortcut help window.

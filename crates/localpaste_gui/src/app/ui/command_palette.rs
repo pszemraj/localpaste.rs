@@ -68,6 +68,7 @@ impl LocalPasteApp {
                 if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
                 {
                     self.command_palette_open = false;
+                    self.restore_discovery_focus(ctx);
                     return;
                 }
                 let actions = self.command_palette_actions();
@@ -141,6 +142,21 @@ impl LocalPasteApp {
             self.set_mutation_shortcut_blocked_status();
             return;
         }
+        // These actions intentionally move focus into a different workflow.
+        let restore_focus = !matches!(
+            action,
+            CommandPaletteAction::Find
+                | CommandPaletteAction::FocusSearch
+                | CommandPaletteAction::PastePicker
+                | CommandPaletteAction::NewPaste
+                | CommandPaletteAction::Duplicate
+                | CommandPaletteAction::PasteAsNew
+                | CommandPaletteAction::OpenPaste(_)
+                | CommandPaletteAction::DeleteSelected
+                | CommandPaletteAction::DeletePaste(_)
+                | CommandPaletteAction::OpenDiffModal
+                | CommandPaletteAction::OpenHistoryModal
+        );
         match action {
             CommandPaletteAction::Export => {
                 self.export_selected_paste();
@@ -221,6 +237,13 @@ impl LocalPasteApp {
             }
             CommandPaletteAction::CopyPasteFenced(id) => {
                 self.queue_palette_copy(id, true);
+            }
+        }
+        if !self.command_palette_open && !self.paste_picker_open && !self.shortcut_help_open {
+            if restore_focus {
+                self.restore_discovery_focus(ctx);
+            } else {
+                self.discovery_return_focus = None;
             }
         }
     }

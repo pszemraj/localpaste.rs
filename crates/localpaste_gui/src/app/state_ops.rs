@@ -77,6 +77,9 @@ impl LocalPasteApp {
     pub(super) fn handle_backend_event_channel_disconnected(&mut self) {
         self.pending_picker_open = None;
         let picker_search_pending = std::mem::take(&mut self.palette_search_pending);
+        if picker_search_pending {
+            self.fail_palette_search("Paste picker search canceled: backend unavailable.".into());
+        }
         let picker_copy_pending = self.pending_copy_action.take().is_some();
         if !self.pending_undo_restore_tokens.is_empty() {
             self.pending_undo_restore_tokens.clear();
@@ -310,6 +313,9 @@ impl LocalPasteApp {
                     return;
                 }
                 self.palette_search_pending = false;
+                self.palette_search_error = None;
+                self.palette_search_last_sent = query;
+                self.paste_picker_sent_scope = scope;
                 self.palette_search_results = items;
                 self.clamp_paste_picker_selection(self.palette_search_results.len());
             }
@@ -320,11 +326,11 @@ impl LocalPasteApp {
             } => {
                 if !self.palette_search_response_is_current(scope, query.as_str())
                     || self.palette_search_last_sent != query
+                    || scope != self.paste_picker_sent_scope
                 {
                     return;
                 }
-                self.palette_search_pending = false;
-                self.set_status(message);
+                self.fail_palette_search(message);
             }
             CoreEvent::PasteDeleted { id, undo_token } => {
                 let deleted_index = self.pastes.iter().position(|paste| paste.id == id);

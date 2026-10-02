@@ -353,6 +353,7 @@ fn make_app() -> TestHarness {
         palette_search_last_sent: String::new(),
         palette_search_last_input_at: None,
         palette_search_pending: false,
+        palette_search_error: None,
         pending_copy_action: None,
         pending_selection_id: None,
         pending_picker_open: None,
@@ -402,7 +403,7 @@ fn make_app() -> TestHarness {
         shortcut_help_open: false,
         shortcut_help_query: String::new(),
         shortcut_help_focus_requested: false,
-        shortcut_help_return_focus: None,
+        discovery_return_focus: None,
         focus_editor_next: false,
         style_applied: false,
         window_shown_once: false,
@@ -457,6 +458,7 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 mod backend_dispatch;
 mod collections_and_search;
 mod creation_and_projection;
+mod discovery_keyboard;
 mod discovery_scopes;
 mod editor_find;
 mod editor_ux_regressions;
