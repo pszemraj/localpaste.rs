@@ -63,7 +63,13 @@ impl CursorReveal {
 impl LocalPasteApp {
     /// Drop editor ownership on native deactivation without disturbing the selection.
     pub(super) fn blur_deactivated_editor(&mut self, ctx: &egui::Context) {
-        if ctx.input(|input| input.events.contains(&egui::Event::WindowFocused(false))) {
+        let last_focus = ctx.input(|input| {
+            input.events.iter().rev().find_map(|event| match event {
+                egui::Event::WindowFocused(focused) => Some(*focused),
+                _ => None,
+            })
+        });
+        if last_focus == Some(false) {
             self.virtual_editor_state.has_focus = false;
             self.focus_editor_next = false;
             ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));

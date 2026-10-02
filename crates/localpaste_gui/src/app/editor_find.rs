@@ -292,7 +292,12 @@ impl LocalPasteApp {
         let active = previous_active
             .filter(|index| *index < self.editor_find.matches.len())
             .unwrap_or_else(|| {
-                let cursor = self.virtual_editor_state.cursor();
+                // Query growth should refine the selected hit rather than start
+                // after it (the caret normally sits at the selection's end).
+                let cursor = self
+                    .virtual_editor_state
+                    .selection_range()
+                    .map_or_else(|| self.virtual_editor_state.cursor(), |range| range.start);
                 self.editor_find
                     .matches
                     .iter()

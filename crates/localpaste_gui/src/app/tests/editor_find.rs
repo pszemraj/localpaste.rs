@@ -10,7 +10,15 @@ fn editor_find_selects_first_match_and_wraps_navigation() {
         .reset_virtual_editor("alpha needle beta needle gamma");
 
     harness.app.open_editor_find();
-    harness.app.set_editor_find_query("needle".to_string());
+    for query in ["n", "ne", "nee", "need", "needl", "needle"] {
+        harness.app.set_editor_find_query(query.to_string());
+        assert_eq!(harness.app.editor_find.active_match, Some(0), "{query}");
+        assert_eq!(
+            harness.app.virtual_editor_state.selection_range(),
+            Some(6..6 + query.len()),
+            "growing a query must retain the match at its selection start"
+        );
+    }
 
     assert_eq!(harness.app.editor_find.matches, vec![6..12, 18..24]);
     assert_eq!(harness.app.editor_find.active_match, Some(0));

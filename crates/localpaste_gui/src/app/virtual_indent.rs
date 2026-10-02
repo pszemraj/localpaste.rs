@@ -56,9 +56,15 @@ impl LocalPasteApp {
             } else {
                 line.chars().take(4).take_while(|ch| *ch == ' ').count()
             };
-            let added = if unindent { 0 } else { 4 };
+            // Block indentation must not add trailing whitespace to blank lines.
+            // Single-caret Tab still inserts spaces through the path above.
+            let added = if unindent || line.chars().all(char::is_whitespace) {
+                0
+            } else {
+                4
+            };
             edits.push((line_start, removed, added));
-            if !unindent {
+            if added > 0 {
                 replacement.push_str("    ");
             }
             replacement.extend(line.chars().skip(removed));

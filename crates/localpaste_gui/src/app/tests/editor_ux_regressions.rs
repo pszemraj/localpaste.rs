@@ -118,6 +118,14 @@ fn long_wrapped_document_reveals_jumps_eof_edits_and_distant_find_without_focus(
         harness.app.editor_find_next();
         render_frames(&mut harness.app, &ctx, 950.0);
         assert_visible(&harness.app);
+        if harness.app.editor_find.active_match != Some(0) {
+            let viewport = &harness.app.virtual_viewport;
+            assert!(
+                (viewport.caret.unwrap().center().y - viewport.rect.unwrap().center().y).abs()
+                    < 2.0,
+                "interior Find matches must be centered, not merely visible"
+            );
+        }
         assert!(ctx.memory(|m| m.has_focus(egui::Id::new(EDITOR_FIND_INPUT_ID))));
         assert!(!harness.app.virtual_editor_state.has_focus);
     }
@@ -149,9 +157,9 @@ fn indentation_preserves_direction_excludes_next_line_and_is_one_undo_step() {
     {
         let mut harness = make_app();
         let ctx = egui::Context::default();
-        let text = format!("  α{ending}\tβ{ending}untouched{ending}");
+        let text = format!("  α{ending}{ending}\tβ{ending}untouched{ending}");
         harness.app.reset_virtual_editor(&text);
-        let end = harness.app.virtual_editor_buffer.line_col_to_char(2, 0);
+        let end = harness.app.virtual_editor_buffer.line_col_to_char(3, 0);
         let (anchor, cursor) = if reverse { (end, 0) } else { (0, end) };
         harness.app.virtual_editor_state.restore_selection(
             cursor,
@@ -161,11 +169,11 @@ fn indentation_preserves_direction_excludes_next_line_and_is_one_undo_step() {
         for (command, expected) in [
             (
                 VirtualInputCommand::Unindent,
-                format!("α{ending}β{ending}untouched{ending}"),
+                format!("α{ending}{ending}β{ending}untouched{ending}"),
             ),
             (
                 VirtualInputCommand::InsertTab,
-                format!("      α{ending}    \tβ{ending}untouched{ending}"),
+                format!("      α{ending}{ending}    \tβ{ending}untouched{ending}"),
             ),
         ] {
             harness.app.apply_virtual_commands(&ctx, &[command]);
@@ -232,7 +240,20 @@ fn native_deactivation_preserves_selection_and_releases_editor_ownership() {
     run_full_update(
         &mut harness.app,
         &ctx,
-        vec![egui::Event::WindowFocused(false)],
+        vec![
+            egui::Event::WindowFocused(false),
+            egui::Event::WindowFocused(true),
+        ],
+    );
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::WindowFocused(true),
+            egui::Event::WindowFocused(false),
+        ],
     );
     assert!(!harness.app.virtual_editor_state.has_focus);
     assert!(!ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
