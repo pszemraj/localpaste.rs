@@ -73,6 +73,7 @@ Each GUI app instance uses a stable lock owner ID for its session lifetime:
 
 - Acquire on selection/open.
 - Release on deselection/drop.
+- Selection reads carry the current editor epoch. Loaded, missing, and failed replies from an earlier selection are ignored, including when the same paste is revisited after its lock was released.
 - Primary paths:
   - [`../../crates/localpaste_gui/src/app/mod.rs`](../../crates/localpaste_gui/src/app/mod.rs)
   - [`../../crates/localpaste_gui/src/app/state_ops.rs`](../../crates/localpaste_gui/src/app/state_ops.rs)

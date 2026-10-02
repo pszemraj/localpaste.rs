@@ -14,6 +14,7 @@ fn backend_command_dispatch_arms_bounded_event_polling() {
     );
 
     assert!(harness.app.dispatch_backend_cmd(CoreCmd::GetPaste {
+        selection_epoch: harness.app.active_buffer_epoch,
         id: "alpha".to_string(),
     }));
     assert!(matches!(

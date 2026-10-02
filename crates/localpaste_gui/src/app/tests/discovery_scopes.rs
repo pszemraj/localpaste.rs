@@ -531,7 +531,7 @@ fn paste_picker_uses_sidebar_language_guardrail_and_reveals_keyboard_selection()
     );
     assert!(!harness.app.paste_picker_open);
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "paste-39"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "paste-39"),
         other => panic!("unexpected picker action: {other:?}"),
     }
 }
@@ -635,16 +635,17 @@ fn picker_open_keeps_off_sidebar_selection_until_sidebar_context_changes() {
     harness.app.open_palette_selection("picked".into());
     assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("picked"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "picked"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "picked"),
         other => panic!("unexpected picker action: {other:?}"),
     }
 
     let mut picked = Paste::new("picked content".into(), "Picked".into());
     picked.id = "picked".into();
     picked.language = Some("rust".into());
-    harness
-        .app
-        .apply_event(CoreEvent::PasteLoaded { paste: picked });
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: picked,
+        selection_epoch: harness.app.active_buffer_epoch,
+    });
     let mut autosaved = Paste::new("picked content".into(), "Picked".into());
     autosaved.id = "picked".into();
     autosaved.language = Some("rust".into());
@@ -837,11 +838,12 @@ fn picker_selection_pin_survives_deferred_open_and_clears_after_target_failure()
         other => panic!("unexpected deferred save command: {other:?}"),
     }
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "picked"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "picked"),
         other => panic!("unexpected deferred picker command: {other:?}"),
     }
 
     harness.app.apply_event(CoreEvent::PasteLoadFailed {
+        selection_epoch: harness.app.active_buffer_epoch,
         id: "picked".into(),
         message: "picked no longer exists".into(),
     });

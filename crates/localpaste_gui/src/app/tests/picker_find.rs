@@ -14,7 +14,7 @@ fn picker_find_uses_the_opening_query_and_reveals_a_distant_match() {
     harness.app.set_paste_picker_query("needle_at_end".into());
     harness.app.set_paste_picker_scope(SearchScope::Body);
     harness.app.open_palette_selection("picked".into());
-    assert!(matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id } if id == "picked"));
+    assert!(matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id, .. } if id == "picked"));
     harness.app.set_paste_picker_query("next search".into());
     harness.app.set_paste_picker_scope(SearchScope::Title);
 
@@ -25,7 +25,10 @@ fn picker_find_uses_the_opening_query_and_reveals_a_distant_match() {
     let match_start = "unrelated line\n".chars().count() * 100;
     let mut paste = Paste::new(content, "Picked".into());
     paste.id = "picked".into();
-    harness.app.apply_event(CoreEvent::PasteLoaded { paste });
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste,
+        selection_epoch: harness.app.active_buffer_epoch,
+    });
 
     assert_eq!(harness.app.editor_find.query, "needle_at_end");
     assert!(!harness.app.editor_find.case_sensitive);
@@ -101,12 +104,13 @@ fn picker_find_survives_the_save_before_switching() {
     harness
         .app
         .apply_event(CoreEvent::PasteSaved { paste: saved });
-    assert!(matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id } if id == "picked"));
+    assert!(matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id, .. } if id == "picked"));
     let mut picked = Paste::new("before needle after".into(), "Picked".into());
     picked.id = "picked".into();
-    harness
-        .app
-        .apply_event(CoreEvent::PasteLoaded { paste: picked });
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: picked,
+        selection_epoch: harness.app.active_buffer_epoch,
+    });
 
     assert_eq!(harness.app.editor_find.query, "needle");
     assert_eq!(
@@ -133,9 +137,10 @@ fn picker_find_keeps_existing_find_for_metadata_only_hits() {
         let _ = recv_cmd(&harness.cmd_rx);
         let mut picked = Paste::new(body.into(), "Needle title".into());
         picked.id = "picked".into();
-        harness
-            .app
-            .apply_event(CoreEvent::PasteLoaded { paste: picked });
+        harness.app.apply_event(CoreEvent::PasteLoaded {
+            paste: picked,
+            selection_epoch: harness.app.active_buffer_epoch,
+        });
 
         assert_eq!(
             harness.app.editor_find.query, "retained find",
@@ -161,27 +166,16 @@ fn picker_find_discards_superseded_and_failed_opens() {
 
     let mut stale = Paste::new("needle".into(), "Picked".into());
     stale.id = "picked".into();
-    harness
-        .app
-        .apply_event(CoreEvent::PasteLoaded { paste: stale });
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: stale,
+        selection_epoch: harness.app.active_buffer_epoch,
+    });
     assert_eq!(harness.app.selected_id.as_deref(), Some("other"));
     assert_eq!(harness.app.editor_find.query, "retained find");
 
-    for event in [
-        CoreEvent::PasteMissing {
-            id: "picked".into(),
-        },
-        CoreEvent::PasteLoadFailed {
-            id: "picked".into(),
-            message: "Load failed".into(),
-        },
-        CoreEvent::Error {
-            source: CoreErrorSource::SaveContent,
-            message: "Save failed".into(),
-        },
-    ] {
+    for failure in 0..3 {
         let mut harness = make_app();
-        if matches!(event, CoreEvent::Error { .. }) {
+        if failure == 2 {
             harness.app.save_status = SaveStatus::Dirty;
         }
         harness.app.open_paste_picker();
@@ -189,6 +183,21 @@ fn picker_find_discards_superseded_and_failed_opens() {
         harness.app.open_palette_selection("picked".into());
         let _ = recv_cmd(&harness.cmd_rx);
         assert!(harness.app.pending_picker_open.is_some());
+        let event = match failure {
+            0 => CoreEvent::PasteSelectionMissing {
+                id: "picked".into(),
+                selection_epoch: harness.app.active_buffer_epoch,
+            },
+            1 => CoreEvent::PasteLoadFailed {
+                id: "picked".into(),
+                selection_epoch: harness.app.active_buffer_epoch,
+                message: "Load failed".into(),
+            },
+            _ => CoreEvent::Error {
+                source: CoreErrorSource::SaveContent,
+                message: "Save failed".into(),
+            },
+        };
         harness.app.apply_event(event);
         assert!(harness.app.pending_picker_open.is_none());
     }

@@ -18,7 +18,7 @@ use tracing::{error, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PasteLoadRoute {
-    Selection,
+    Selection(u64),
     Copy,
     DiffTarget,
 }
@@ -37,8 +37,9 @@ fn delete_undo_staging_can_fallback(err: &AppError) -> bool {
 /// # Arguments
 /// - `state`: Worker state containing db and event channel handles.
 /// - `id`: Paste id to load.
-pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
-    handle_get_paste_for_route(state, id, PasteLoadRoute::Selection);
+/// - `selection_epoch`: Editor epoch echoed on every selection-load outcome.
+pub(super) fn handle_get_paste(state: &mut WorkerState, id: String, selection_epoch: u64) {
+    handle_get_paste_for_route(state, id, PasteLoadRoute::Selection(selection_epoch));
 }
 
 /// Fetches a paste body for a picker copy action without loading it into the editor.
@@ -63,7 +64,10 @@ fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteL
     match state.db.pastes.get(&id) {
         Ok(Some(paste)) => {
             let event = match route {
-                PasteLoadRoute::Selection => CoreEvent::PasteLoaded { paste },
+                PasteLoadRoute::Selection(selection_epoch) => CoreEvent::PasteLoaded {
+                    paste,
+                    selection_epoch,
+                },
                 PasteLoadRoute::Copy => CoreEvent::PasteCopyLoaded { paste },
                 PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetLoaded { paste },
             };
@@ -71,7 +75,10 @@ fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteL
         }
         Ok(None) => {
             let event = match route {
-                PasteLoadRoute::Selection => CoreEvent::PasteMissing { id },
+                PasteLoadRoute::Selection(selection_epoch) => CoreEvent::PasteSelectionMissing {
+                    id,
+                    selection_epoch,
+                },
                 PasteLoadRoute::Copy => CoreEvent::PasteCopyMissing { id },
                 PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetMissing { id },
             };
@@ -79,10 +86,11 @@ fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteL
         }
         Err(err) => {
             let (log_label, event) = match route {
-                PasteLoadRoute::Selection => (
+                PasteLoadRoute::Selection(selection_epoch) => (
                     "backend get failed",
                     CoreEvent::PasteLoadFailed {
                         id,
+                        selection_epoch,
                         message: format!("Get failed: {}", err),
                     },
                 ),

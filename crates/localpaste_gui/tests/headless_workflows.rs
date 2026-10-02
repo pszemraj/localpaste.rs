@@ -289,10 +289,11 @@ fn backend_delete_rejects_foreign_lock_holder_and_preserves_paste() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("send get after rejected delete");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => assert_eq!(paste.id, paste_id),
+        CoreEvent::PasteLoaded { paste, .. } => assert_eq!(paste.id, paste_id),
         other => panic!("unexpected event: {:?}", other),
     }
 
@@ -369,10 +370,11 @@ fn backend_update_paths_reject_foreign_lock_holder_and_preserve_paste() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("send get after rejected updates");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.content, baseline.content);
             assert_eq!(paste.name, baseline.name);
@@ -457,10 +459,11 @@ fn locked_descendant_blocks_backend_folder_delete() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("get locked paste");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.folder_id.as_deref(), Some(folder_id.as_str()));
         }

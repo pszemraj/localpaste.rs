@@ -26,9 +26,8 @@ use self::filters::{
 impl LocalPasteApp {
     /// Sends a backend command and arms short-term event polling for its reply.
     ///
-    /// The fallback external refresh timer is intentionally slow, but commands
-    /// dispatched near the end of a quiet frame still need prompt repainting so
-    /// worker responses are drained without waiting for that fallback interval.
+    /// Commands sent in quiet frames arm prompt repainting so worker responses
+    /// are drained before the slow external refresh interval.
     ///
     /// # Returns
     /// `true` when the command was queued and short polling was armed.
@@ -120,6 +119,28 @@ impl LocalPasteApp {
 
     /// Applies a backend event and synchronizes app state, selection, and save flags.
     pub(super) fn apply_event(&mut self, event: CoreEvent) {
+        let selection_load = match &event {
+            CoreEvent::PasteLoaded {
+                paste,
+                selection_epoch,
+            } => Some((paste.id.as_str(), *selection_epoch)),
+            CoreEvent::PasteSelectionMissing {
+                id,
+                selection_epoch,
+            }
+            | CoreEvent::PasteLoadFailed {
+                id,
+                selection_epoch,
+                ..
+            } => Some((id.as_str(), *selection_epoch)),
+            _ => None,
+        };
+        // A revisited id may have replies queued from before its edit lock was released.
+        if selection_load.is_some_and(|(id, epoch)| {
+            self.selected_id.as_deref() != Some(id) || self.active_buffer_epoch != epoch
+        }) {
+            return;
+        }
         self.on_version_event(&event);
         match event {
             CoreEvent::PasteList { items } => {
@@ -141,15 +162,8 @@ impl LocalPasteApp {
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
             }
-            CoreEvent::PasteLoaded { paste } => {
-                // Selection setup clears `selected_paste` before requesting its
-                // body. A repeated same-id reply must not replace edits made
-                // after an earlier reply already initialized that selection.
-                if self.selected_id.as_deref() == Some(paste.id.as_str())
-                    && self.selected_paste.is_none()
-                {
-                    self.select_loaded_paste(paste);
-                }
+            CoreEvent::PasteLoaded { paste, .. } => {
+                self.select_loaded_paste(paste);
             }
             CoreEvent::PasteCopyLoaded { paste } => self.apply_palette_copy_loaded(paste),
             CoreEvent::PasteCopyMissing { id } => self.apply_palette_copy_missing(id),
@@ -413,7 +427,7 @@ impl LocalPasteApp {
                 self.pending_undo_restore_tokens.remove(&undo_token);
                 self.remove_undo_toast(&undo_token);
             }
-            CoreEvent::PasteMissing { id } => {
+            CoreEvent::PasteMissing { id } | CoreEvent::PasteSelectionMissing { id, .. } => {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_picker_selection_context_for(id.as_str());
@@ -440,11 +454,9 @@ impl LocalPasteApp {
                 }
                 self.request_refresh();
             }
-            CoreEvent::PasteLoadFailed { id, message } => {
+            CoreEvent::PasteLoadFailed { id, message, .. } => {
                 self.clear_picker_selection_context_for(id.as_str());
-                if self.selected_id.as_deref() == Some(id.as_str()) {
-                    self.clear_selection();
-                }
+                self.clear_selection();
                 self.set_status(message);
             }
             CoreEvent::PasteVersionsLoaded { .. }
@@ -637,7 +649,10 @@ impl LocalPasteApp {
             self.release_paste_lock(prev.as_str());
         }
         self.reset_selection_editor_state();
-        if !self.dispatch_backend_cmd(CoreCmd::GetPaste { id }) {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPaste {
+            id,
+            selection_epoch: self.active_buffer_epoch,
+        }) {
             self.clear_selection();
             self.set_status("Get paste failed: backend unavailable.");
             return false;

@@ -3,6 +3,91 @@
 use super::*;
 
 #[test]
+fn revisiting_paste_ignores_snapshot_from_previous_selection_lock() {
+    let mut harness = make_app();
+    let dir = TempDir::new().expect("temporary database");
+    let path = dir.path().join("db");
+    let db = Database::new(path.to_str().unwrap()).expect("database");
+    for (id, content) in [("alpha", "alpha body"), ("beta", "old beta body")] {
+        let mut paste =
+            Paste::new_with_language(content.into(), id.into(), Some("text".into()), true);
+        paste.id = id.into();
+        db.pastes.create(&paste).unwrap();
+    }
+    let config = Config {
+        db_path: path.to_string_lossy().into_owned(),
+        port: 0,
+        max_paste_size: 10 * 1024 * 1024,
+        auto_save_interval: 2000,
+        auto_backup: false,
+        search_case_sensitive: false,
+    };
+    let state = AppState::with_locks(config, db.share().unwrap(), harness.app.locks.clone());
+    let server = EmbeddedServer::start(state, false).unwrap();
+    let mut backend = crate::backend::spawn_backend_with_locks_and_owner(
+        db.share().unwrap(),
+        10 * 1024 * 1024,
+        harness.app.locks.clone(),
+        harness.app.lock_owner_id.clone(),
+    );
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", Some("text"), 13));
+    harness.app.pastes = harness.app.all_pastes.clone();
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    let receive = || backend.evt_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    assert!(harness.app.select_paste("beta".into()));
+    backend.cmd_tx.send(recv_cmd(&harness.cmd_rx)).unwrap();
+    // The real worker read completes, but the UI has not drained its reply yet.
+    let old_beta = receive();
+    assert!(
+        matches!(&old_beta, CoreEvent::PasteLoaded { paste, .. } if paste.content == "old beta body")
+    );
+    assert!(harness.app.select_paste("alpha".into()));
+    backend.cmd_tx.send(recv_cmd(&harness.cmd_rx)).unwrap();
+    let alpha = receive();
+    assert!(!harness.app.locks.is_locked("beta").unwrap());
+    // The embedded API legitimately updates beta while its GUI edit lock is released.
+    let url = format!("http://{}/api/paste/beta", server.addr());
+    let response = reqwest::blocking::Client::new()
+        .put(url)
+        .json(&serde_json::json!({ "content": "latest beta body" }))
+        .send()
+        .unwrap();
+    assert!(response.status().is_success());
+    assert!(harness.app.select_paste("beta".into()));
+    backend.cmd_tx.send(recv_cmd(&harness.cmd_rx)).unwrap();
+    let latest_beta = receive();
+    assert!(
+        matches!(&latest_beta, CoreEvent::PasteLoaded { paste, .. } if paste.content == "latest beta body")
+    );
+
+    // Preserve actual FIFO response order; no local edit occurs between replies.
+    for reply in [old_beta, alpha, latest_beta] {
+        harness.app.apply_event(reply);
+    }
+    insert_active_text(&mut harness.app, "local edit ", 0);
+    harness.app.mark_dirty();
+    harness.app.save_now();
+    backend.cmd_tx.send(recv_cmd(&harness.cmd_rx)).unwrap();
+    assert!(matches!(receive(), CoreEvent::PasteSaved { .. }));
+    backend
+        .shutdown_and_join(true, Duration::from_secs(5))
+        .unwrap();
+    drop(backend);
+    drop(server);
+    drop(db);
+    let reopened = Database::new(path.to_str().unwrap()).unwrap();
+    let persisted = reopened.pastes.get("beta").unwrap().unwrap().content;
+    assert_eq!(
+        persisted, "local edit latest beta body",
+        "stale selection reply overwrote the API update"
+    );
+}
+
+#[test]
 fn empty_search_preserves_dirty_content() {
     let mut harness = make_app();
     assert!(harness.app.acquire_paste_lock("alpha"));
@@ -170,32 +255,92 @@ fn repeated_target_load_does_not_replace_new_draft() {
         Paste::new_with_language("beta body".into(), "Beta".into(), Some("text".into()), true);
     beta.id = "beta".into();
     assert!(harness.app.select_paste("beta".into()));
+    let old_beta_epoch = harness.app.active_buffer_epoch;
     assert!(harness.app.select_paste("alpha".into()));
+    let alpha_epoch = harness.app.active_buffer_epoch;
     assert!(harness.app.select_paste("beta".into()));
+    let beta_epoch = harness.app.active_buffer_epoch;
     for id in ["beta", "alpha", "beta"] {
         assert!(
-            matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id: received } if received == id)
+            matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id: received, .. } if received == id)
         );
     }
-    // Backend replies stay in request order. The first beta reply reaches a UI
-    // frame before the other two loads complete, and the user starts editing it.
+    // Older requests cannot initialize the revisited selection.
     harness.app.apply_event(CoreEvent::PasteLoaded {
         paste: beta.clone(),
+        selection_epoch: old_beta_epoch,
+    });
+    assert!(harness.app.selected_paste.is_none());
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: alpha,
+        selection_epoch: alpha_epoch,
+    });
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: beta.clone(),
+        selection_epoch: beta_epoch,
     });
     insert_active_text(&mut harness.app, "new draft ", 0);
     harness.app.mark_dirty();
-    harness
-        .app
-        .apply_event(CoreEvent::PasteLoaded { paste: alpha });
-    harness
-        .app
-        .apply_event(CoreEvent::PasteLoaded { paste: beta });
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: beta,
+        selection_epoch: beta_epoch,
+    });
     assert_eq!(
         harness.app.active_snapshot(),
         "new draft beta body",
         "a duplicate same-id load destroyed the new draft"
     );
     assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+}
+
+#[test]
+fn stale_selection_failures_preserve_revisited_paste_and_its_draft() {
+    for missing in [false, true] {
+        let mut harness = make_app();
+        harness
+            .app
+            .all_pastes
+            .push(test_summary("beta", "Beta", Some("text"), 9));
+        harness.app.pastes = harness.app.all_pastes.clone();
+        assert!(harness.app.select_paste("beta".into()));
+        let old_epoch = harness.app.active_buffer_epoch;
+        assert!(harness.app.select_paste("alpha".into()));
+        assert!(harness.app.select_paste("beta".into()));
+        let current_epoch = harness.app.active_buffer_epoch;
+        let mut beta = Paste::new("beta body".into(), "Beta".into());
+        beta.id = "beta".into();
+        harness.app.apply_event(CoreEvent::PasteLoaded {
+            paste: beta,
+            selection_epoch: current_epoch,
+        });
+        insert_active_text(&mut harness.app, "draft ", 0);
+        harness.app.mark_dirty();
+        // Cover both an older request and a duplicate outcome after initialization.
+        for selection_epoch in [old_epoch, current_epoch] {
+            let event = if missing {
+                CoreEvent::PasteSelectionMissing {
+                    id: "beta".into(),
+                    selection_epoch,
+                }
+            } else {
+                CoreEvent::PasteLoadFailed {
+                    id: "beta".into(),
+                    selection_epoch,
+                    message: "late failure".into(),
+                }
+            };
+            harness.app.apply_event(event);
+            assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+            assert_eq!(harness.app.active_snapshot(), "draft beta body");
+            assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+            assert!(harness.app.locks.is_locked("beta").unwrap());
+            assert!(harness
+                .app
+                .all_pastes
+                .iter()
+                .any(|paste| paste.id == "beta"));
+        }
+    }
 }
 
 #[test]

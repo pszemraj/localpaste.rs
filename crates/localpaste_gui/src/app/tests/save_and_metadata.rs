@@ -546,7 +546,7 @@ fn select_paste_dirty_or_metadata_dirty_defers_switch_until_save_ack() {
         assert!(harness.app.pending_selection_id.is_none());
         assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
         match recv_cmd(&harness.cmd_rx) {
-            CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+            CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
             other => panic!("unexpected command: {:?}", other),
         }
     }
@@ -601,7 +601,7 @@ fn in_flight_selection_uses_latest_pending_target() {
     assert!(harness.app.pending_selection_id.is_none());
     assert_eq!(harness.app.selected_id.as_deref(), Some("gamma"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "gamma"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "gamma"),
         other => panic!("unexpected command: {:?}", other),
     }
 }
@@ -668,7 +668,7 @@ fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() 
     assert!(harness.app.pending_selection_id.is_none());
     assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "new-id"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "new-id"),
         other => panic!("unexpected command: {:?}", other),
     }
 }

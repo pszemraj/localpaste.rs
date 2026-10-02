@@ -87,6 +87,7 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                     .acquire("alpha", &harness.app.lock_owner_id)
                     .expect("acquire alpha lock");
                 harness.app.apply_event(CoreEvent::PasteLoadFailed {
+                    selection_epoch: harness.app.active_buffer_epoch,
                     id: "alpha".to_string(),
                     message: "Get failed: injected".to_string(),
                 });
@@ -116,6 +117,7 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                     .acquire("beta", &harness.app.lock_owner_id)
                     .expect("acquire beta lock");
                 harness.app.apply_event(CoreEvent::PasteLoadFailed {
+                    selection_epoch: harness.app.active_buffer_epoch,
                     id: "alpha".to_string(),
                     message: "Get failed: stale".to_string(),
                 });
@@ -131,7 +133,7 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                         .status
                         .as_ref()
                         .map(|status| status.text.as_str()),
-                    Some("Get failed: stale")
+                    None
                 );
             }
         }

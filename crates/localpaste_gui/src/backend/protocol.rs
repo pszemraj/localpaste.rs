@@ -39,7 +39,7 @@ pub enum CoreCmd {
         limit: usize,
     },
     /// Load a single paste by id for display in the editor pane.
-    GetPaste { id: String },
+    GetPaste { id: String, selection_epoch: u64 },
     /// Load a paste body for a picker copy action without changing editor selection.
     GetPasteForCopy { id: String },
     /// Load a comparison target for the detached diff modal.
@@ -148,9 +148,15 @@ pub enum CoreEvent {
         message: String,
     },
     /// Response containing the full paste payload requested by id.
-    PasteLoaded { paste: Paste },
+    PasteLoaded { paste: Paste, selection_epoch: u64 },
+    /// A paste requested by this selection epoch no longer exists.
+    PasteSelectionMissing { id: String, selection_epoch: u64 },
     /// Loading a specific paste failed due to backend/storage error.
-    PasteLoadFailed { id: String, message: String },
+    PasteLoadFailed {
+        id: String,
+        selection_epoch: u64,
+        message: String,
+    },
     /// Response containing a paste body requested only for copying from the picker.
     PasteCopyLoaded { paste: Paste },
     /// A paste requested for picker copy no longer exists in the database.

@@ -62,6 +62,7 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
             .cmd_tx
             .send(CoreCmd::GetPaste {
                 id: paste_id.clone(),
+                selection_epoch: 42,
             })
             .expect("send get"),
         GetPasteRouteCase::Copy => backend
@@ -79,7 +80,13 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
     }
 
     match (case, recv_event(&backend.evt_rx)) {
-        (GetPasteRouteCase::Selection, CoreEvent::PasteLoaded { paste })
+        (
+            GetPasteRouteCase::Selection,
+            CoreEvent::PasteLoaded {
+                paste,
+                selection_epoch: 42,
+            },
+        )
         | (GetPasteRouteCase::Copy, CoreEvent::PasteCopyLoaded { paste })
         | (GetPasteRouteCase::DiffTarget, CoreEvent::DiffTargetLoaded { paste }) => {
             assert_eq!(paste.id, paste_id);
@@ -102,6 +109,7 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
             .cmd_tx
             .send(CoreCmd::GetPaste {
                 id: missing_id.clone(),
+                selection_epoch: 42,
             })
             .expect("send missing"),
         GetPasteRouteCase::Copy => backend
@@ -119,7 +127,13 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
     }
 
     match (case, recv_event(&backend.evt_rx)) {
-        (GetPasteRouteCase::Selection, CoreEvent::PasteMissing { id })
+        (
+            GetPasteRouteCase::Selection,
+            CoreEvent::PasteSelectionMissing {
+                id,
+                selection_epoch: 42,
+            },
+        )
         | (GetPasteRouteCase::Copy, CoreEvent::PasteCopyMissing { id })
         | (GetPasteRouteCase::DiffTarget, CoreEvent::DiffTargetMissing { id }) => {
             assert_eq!(id, missing_id);
@@ -528,10 +542,11 @@ fn backend_rejects_oversize_create_and_update() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: created_id.clone(),
+            selection_epoch: 42,
         })
         .expect("send get");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert_eq!(paste.id, created_id);
             assert_eq!(paste.content, "ok");
         }
@@ -803,10 +818,11 @@ fn backend_updates_paste_metadata() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("send get paste");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.language.as_deref(), Some("python"));
             assert!(paste.language_is_manual);

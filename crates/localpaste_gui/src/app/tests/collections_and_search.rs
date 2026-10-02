@@ -218,7 +218,7 @@ fn paste_saved_reprojects_non_search_results_for_active_language_filter() {
     assert_eq!(harness.app.pastes[0].id, "beta");
     assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
         other => panic!("unexpected command: {:?}", other),
     }
 }

@@ -190,7 +190,7 @@ fn reset_to_version_reprojects_sidebar_filters_without_search_query() {
     );
     assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
         other => panic!("expected GetPaste command, got {:?}", other),
     }
 }
@@ -532,7 +532,7 @@ fn history_reset_in_flight_blocks_selection_switches_until_matching_ack() {
 
     assert!(harness.app.select_paste("beta".to_string()));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
         other => panic!("expected GetPaste command, got {:?}", other),
     }
 }

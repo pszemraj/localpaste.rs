@@ -123,7 +123,7 @@ fn closing_version_overlays_reconciles_hidden_selection_back_to_visible_projecti
             "closing a detached version workflow should restore a visible main-view selection"
         );
         match recv_cmd(&harness.cmd_rx) {
-            CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+            CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
             other => panic!("expected GetPaste command, got {:?}", other),
         }
     }
@@ -230,7 +230,7 @@ fn paste_created_during_version_overlay_defers_selection_until_overlay_closes() 
     assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
     assert!(harness.app.pending_selection_id.is_none());
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "new-id"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "new-id"),
         other => panic!("expected GetPaste command, got {:?}", other),
     }
 }
