@@ -245,6 +245,9 @@ fn highlight_in_worker(
             .map(|hint| hint.start_line)
             .unwrap_or(0)
             .min(lines.len());
+        let edit_end_line = edit_hint
+            .map(|hint| hint.start_line.saturating_add(hint.touched_lines))
+            .unwrap_or(lines.len());
 
         for old_line_slot in old_lines.iter_mut().take(start_line) {
             let old_line = old_line_slot
@@ -272,7 +275,9 @@ fn highlight_in_worker(
                     line.hash
                 });
             if can_reuse {
-                if changed_start.is_some() {
+                // Matching an interior line (for example a blank line during
+                // block indentation) does not prove the rest of the edit is unchanged.
+                if changed_start.is_some() && idx >= edit_end_line {
                     for old_line_slot in old_lines.iter_mut().take(lines.len()).skip(idx) {
                         let old_line = old_line_slot
                             .take()
@@ -490,6 +495,37 @@ mod resolver_tests {
     }
 
     #[test]
+    fn multiline_edit_rechecks_changed_lines_after_unchanged_interior_line() {
+        let settings = SyntectSettings::default();
+        let before = "let a = 1;\n\nlet b = 2;\nlet c = 3;\n";
+        let after = "    let a = 1;\n\n    let b = 2;\nlet c = 3;\n";
+        let mut cache = HighlightWorkerCache::default();
+        let HighlightWorkerResult::Render(mut base) =
+            highlight_in_worker(&settings, &mut cache, rust_request(1, before, None, None))
+        else {
+            panic!("cold render")
+        };
+        let mut next = rust_request(2, after, Some(1), Some(before.len()));
+        next.edit_hint = Some(super::super::VirtualEditHint {
+            start_line: 0,
+            touched_lines: 3,
+            inserted_chars: after.find("let c").unwrap(),
+            deleted_chars: before.find("let c").unwrap(),
+        });
+        match highlight_in_worker(&settings, &mut cache, next) {
+            HighlightWorkerResult::Render(render) => base = render,
+            HighlightWorkerResult::Patch(patch) => {
+                base.lines.splice(patch.line_range, patch.lines);
+            }
+        }
+        let cold = render_for_label(&settings, "rust", after);
+        assert!(
+            base.lines == cold.lines,
+            "block edits must match a cold parse"
+        );
+    }
+
+    #[test]
     fn markdown_fence_edit_updates_downstream_highlights_like_a_cold_parse() {
         let settings = SyntectSettings::default();
         for (before, old, new) in [
@@ -515,6 +551,12 @@ mod resolver_tests {
             };
             let mut next = rust_request(2, &after, Some(1), Some(before.len()));
             next.language_hint = "markdown".into();
+            next.edit_hint = Some(super::super::VirtualEditHint {
+                start_line: before[..before.find(old).unwrap()].matches('\n').count(),
+                touched_lines: old.matches('\n').count().max(new.matches('\n').count()) + 1,
+                inserted_chars: new.chars().count(),
+                deleted_chars: old.chars().count(),
+            });
             match highlight_in_worker(&settings, &mut cache, next) {
                 HighlightWorkerResult::Render(render) => base = render,
                 HighlightWorkerResult::Patch(patch) => {
