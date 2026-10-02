@@ -125,6 +125,8 @@ impl LocalPasteApp {
             autosave_delay,
             shortcut_help_open: false,
             shortcut_help_query: String::new(),
+            shortcut_help_focus_requested: false,
+            shortcut_help_return_focus: None,
             focus_editor_next: false,
             style_applied: false,
             window_shown_once: false,

@@ -1051,6 +1051,9 @@ impl LocalPasteApp {
 
     /// Renders detached history and diff modal dialogs.
     pub(super) fn render_version_dialogs(&mut self, ctx: &egui::Context) {
+        if self.shortcut_help_open {
+            return;
+        }
         self.render_history_modal(ctx);
         self.render_diff_modal(ctx);
     }

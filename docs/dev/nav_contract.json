@@ -1026,6 +1026,40 @@
       },
       "expect_contains": {"applied_commands": "InsertText"}
     },
+    {
+      "id": "mac_help_escape_resumes_editing",
+      "platforms": ["macos"],
+      "seed": {"text": "alpha beta", "cursor": "0:5"},
+      "driver": {"macos": {"keys": [
+        {"key_code": 122, "modifiers": []},
+        {"key_code": 14, "modifiers": []},
+        {"key_code": 53, "modifiers": []},
+        {"key_code": 7, "modifiers": []}
+      ]}},
+      "expect": {
+        "focus.virtual_editor": true, "app.shortcut_help_open": false,
+        "editor.caret_visible": true, "cursor.line": 0, "cursor.col": 6,
+        "editor.buffer_len_chars": 11, "selection": null
+      },
+      "expect_contains": {"applied_commands": "InsertText"}
+    },
+    {
+      "id": "mac_help_f1_resumes_editing",
+      "platforms": ["macos"],
+      "seed": {"text": "alpha beta", "cursor": "0:5"},
+      "driver": {"macos": {"keys": [
+        {"key_code": 122, "modifiers": []},
+        {"key_code": 14, "modifiers": []},
+        {"key_code": 122, "modifiers": []},
+        {"key_code": 7, "modifiers": []}
+      ]}},
+      "expect": {
+        "focus.virtual_editor": true, "app.shortcut_help_open": false,
+        "editor.caret_visible": true, "cursor.line": 0, "cursor.col": 6,
+        "editor.buffer_len_chars": 11, "selection": null
+      },
+      "expect_contains": {"applied_commands": "InsertText"}
+    },
     {"id": "mac_shift_tab_unindents", "platforms": ["macos"], "seed": {"text": "    alpha\nnext\n", "cursor": "0:9"}, "driver": {"macos": {"keys": [{"key_code": 48, "modifiers": ["shift"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 0, "cursor.col": 5, "editor.buffer_len_chars": 11}, "expect_contains": {"applied_commands": "Unindent"}},
     {"id": "mac_indent_selection_undo", "platforms": ["macos"], "seed": {"text": "alpha\nbeta\n", "cursor": "0:0"}, "driver": {"macos": {"keys": [{"key_code": 125, "modifiers": ["command", "shift"]}, {"key_code": 48, "modifiers": []}, {"key_code": 6, "modifiers": ["command"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 2, "cursor.col": 0, "editor.buffer_len_chars": 11, "selection.start": 0, "selection.end": 11}, "expect_contains": {"applied_commands": "Undo"}},
     {"id": "mac_wrapped_eof_visible", "platforms": ["macos"], "seed": {"text": "wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α \nEND", "cursor": "0:0"}, "driver": {"macos": {"keys": [{"key_code": 125, "modifiers": ["command"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 1, "cursor.col": 3}, "expect_contains": {"applied_commands": "MoveDocEnd"}}

@@ -400,6 +400,8 @@ fn make_app() -> TestHarness {
         autosave_delay: Duration::from_millis(2000),
         shortcut_help_open: false,
         shortcut_help_query: String::new(),
+        shortcut_help_focus_requested: false,
+        shortcut_help_return_focus: None,
         focus_editor_next: false,
         style_applied: false,
         window_shown_once: false,
@@ -465,6 +467,7 @@ mod persistence;
 mod picker_find;
 mod save_and_metadata;
 mod selected_delete;
+mod shortcut_help;
 mod shutdown_behavior;
 mod startup_styles;
 mod state_basics;

@@ -145,7 +145,7 @@ fn paste_picker_shortcut_and_modal_input_leave_editor_unchanged() {
 fn help_focus_and_unfocused_modals_never_create_background_pastes() {
     let mut harness = make_app();
     let ctx = egui::Context::default();
-    harness.app.shortcut_help_open = true;
+    harness.app.open_shortcut_help(&ctx);
     run_full_update(&mut harness.app, &ctx, vec![]);
     run_full_update(
         &mut harness.app,

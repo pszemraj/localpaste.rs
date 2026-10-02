@@ -25,10 +25,10 @@ WINDOWS_SEND_KEY_RE = re.compile(
 )
 WINDOWS_RUNNER_SWITCH_RE = re.compile(r'^\s*"([A-Z0-9_]+)"\s*\{', re.MULTILINE)
 MACOS_ALLOWED_MODIFIERS = {"command", "option", "shift", "control"}
-# Find regression types "find", "needle", and "x", with Cmd+K, Return, and Escape.
+# Find and help regressions type queries and "x", with Cmd+K, F1, Return, and Escape.
 MACOS_KNOWN_KEY_CODES = {
     2, 3, 6, 7, 14, 34, 36, 37, 40, 45, 48, 51, 53,
-    115, 116, 117, 119, 121, 123, 124, 125, 126,
+    115, 116, 117, 119, 121, 122, 123, 124, 125, 126,
 }
 
 
