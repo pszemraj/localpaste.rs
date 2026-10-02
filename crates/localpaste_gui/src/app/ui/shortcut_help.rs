@@ -21,6 +21,7 @@ impl LocalPasteApp {
     ) {
         let mut events = std::mem::take(&mut self.deferred_discovery_events);
         events.append(&mut input.events);
+        self.retain_pending_picker_input(&mut events);
         let first_boundary = events.iter().enumerate().find_map(|(index, event)| {
             (discovery_toggle(event)
                 || (self.discovery_open() && discovery_escape(event))
@@ -59,6 +60,69 @@ impl LocalPasteApp {
             }
         }
         input.events = events;
+    }
+
+    /// Holds editor events with their accepted picker selection until its load completes.
+    fn retain_pending_picker_input(&mut self, events: &mut Vec<egui::Event>) {
+        if self.discovery_open() || self.pending_picker_open.is_none() {
+            return;
+        }
+        let mut retaining = true;
+        events.retain(|event| {
+            let action = super::super::shortcuts::runtime_shortcut_action(event);
+            let transfers_input = discovery_escape(event)
+                || matches!(event, egui::Event::PointerButton { pressed: true, .. })
+                || action.is_some_and(|action| {
+                    !matches!(
+                        action,
+                        RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::Save
+                    )
+                });
+            if transfers_input {
+                self.pending_picker_open = None;
+                retaining = false;
+            }
+            let editor_event = action == Some(RuntimeShortcutAction::PlainPaste)
+                || (action.is_none()
+                    && !commands_from_events(std::slice::from_ref(event), true).is_empty());
+            // Native activation remains current immediately; keep its ordered
+            // tail too so delayed editor input finishes with the same ownership.
+            if retaining && matches!(event, egui::Event::WindowFocused(_)) {
+                if let Some(opening) = &mut self.pending_picker_open {
+                    opening.input_events.push(event.clone());
+                }
+            }
+            if retaining && editor_event {
+                if let Some(opening) = &mut self.pending_picker_open {
+                    opening.input_events.push(event.clone());
+                    return false;
+                }
+            }
+            true
+        });
+    }
+
+    /// Replays a loaded picker's input only after all backend outcomes are reconciled.
+    pub(in crate::app) fn replay_pending_picker_input(&mut self, ctx: &egui::Context) {
+        let ready = self.pending_picker_open.as_ref().is_some_and(|opening| {
+            opening.input_ready
+                && self.selected_id.as_deref() == Some(opening.id.as_str())
+                && self.selected_paste.is_some()
+        });
+        if !ready {
+            return;
+        }
+        let Some(opening) = self.pending_picker_open.take() else {
+            return;
+        };
+        self.focus_editor_next = true;
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+        ctx.input_mut(|input| {
+            input
+                .events
+                .splice(0..0, opening.input_events)
+                .for_each(drop)
+        });
     }
 
     /// Whether a discovery query owns keyboard input independently of version dialogs.

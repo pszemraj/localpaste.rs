@@ -4,6 +4,47 @@ use super::*;
 use crate::backend::CoreErrorSource;
 
 #[test]
+fn opening_picker_result_focuses_editor_for_typing_and_paste() {
+    for id in ["alpha", "picked"] {
+        let (mut harness, _events) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        let input = |events| egui::RawInput {
+            screen_rect: Some(super::virtual_editor_focus_support::screen_rect()),
+            events,
+            ..Default::default()
+        };
+        harness.app.open_paste_picker();
+        run_full_update_with_input(&mut harness.app, &ctx, input(vec![]));
+        harness.app.open_palette_selection(id.into());
+        if id == "picked" {
+            let mut paste = Paste::new("content".into(), "Picked".into());
+            paste.id = id.into();
+            harness.app.apply_event(CoreEvent::PasteLoaded {
+                paste,
+                selection_epoch: harness.app.active_buffer_epoch,
+            });
+        }
+        run_full_update_with_input(&mut harness.app, &ctx, input(vec![]));
+        super::virtual_editor_focus_support::assert_editor_focus(&ctx);
+        while harness.cmd_rx.try_recv().is_ok() {}
+        run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            input(vec![
+                egui::Event::Text("typed ".into()),
+                egui::Event::Paste("pasted ".into()),
+            ]),
+        );
+        assert_eq!(harness.app.active_snapshot(), "typed pasted content");
+        assert_eq!(harness.app.selected_id.as_deref(), Some(id));
+        assert!(!harness
+            .cmd_rx
+            .try_iter()
+            .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })));
+    }
+}
+
+#[test]
 fn picker_find_uses_the_opening_query_and_reveals_a_distant_match() {
     let mut harness = make_app();
     harness.app.search_query = "sidebar".into();

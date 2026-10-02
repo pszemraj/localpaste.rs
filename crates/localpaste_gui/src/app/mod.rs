@@ -212,6 +212,10 @@ struct PendingPickerOpen {
     query: String,
     scope: SearchScope,
     case_sensitive: bool,
+    /// Editor input retained until this accepted selection finishes loading.
+    input_events: Vec<egui::Event>,
+    /// Matching load has completed and the retained input may enter its editor.
+    input_ready: bool,
 }
 
 // GUI-owned writes refresh immediately through backend events. This fallback is
@@ -485,6 +489,7 @@ impl eframe::App for LocalPasteApp {
             }
         }
         self.poll_export_result();
+        self.replay_pending_picker_input(ctx);
 
         if let Some(text) = self.clipboard_outgoing.take() {
             ctx.send_cmd(egui::OutputCommand::CopyText(text));

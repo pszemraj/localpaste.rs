@@ -677,3 +677,174 @@ fn selected_text_ime_commit_is_one_undoable_edit_after_preedit_updates() {
         }
     }
 }
+
+#[test]
+fn picker_enter_suffix_waits_for_delayed_selection_load() {
+    for (suffix, dirty, focus_tail) in [
+        (egui::Event::Paste("pasted ".into()), false, vec![]),
+        (egui::Event::Text("typed ".into()), false, vec![]),
+        (egui::Event::Text("typed ".into()), true, vec![]),
+        (egui::Event::Paste("pasted ".into()), true, vec![false]),
+        (egui::Event::Text("typed ".into()), false, vec![false]),
+        (egui::Event::Text("typed ".into()), false, vec![false, true]),
+    ] {
+        let (mut harness, _events) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness
+            .app
+            .all_pastes
+            .insert(0, test_summary("picked", "Picked", None, 7));
+        harness.app.focus_editor_next = true;
+        frame(&mut harness.app, &ctx, vec![]);
+        frame(&mut harness.app, &ctx, vec![discovery_chord(true)]);
+        if dirty {
+            harness.app.save_status = SaveStatus::Dirty;
+        }
+        while harness.cmd_rx.try_recv().is_ok() {}
+        let mut events = vec![
+            key_event(egui::Key::Enter, egui::Modifiers::NONE),
+            suffix.clone(),
+        ];
+        events.extend(focus_tail.iter().copied().map(egui::Event::WindowFocused));
+        frame(&mut harness.app, &ctx, events);
+        if focus_tail.is_empty() {
+            frame(
+                &mut harness.app,
+                &ctx,
+                vec![
+                    key_event(egui::Key::End, egui::Modifiers::NONE),
+                    egui::Event::Text("tail".into()),
+                ],
+            );
+        }
+        let mut dispatched: Vec<_> = harness.cmd_rx.try_iter().collect();
+        if dirty {
+            assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+            assert_eq!(harness.app.active_snapshot(), "content");
+            let mut saved = Paste::new("content".into(), "Alpha".into());
+            saved.id = "alpha".into();
+            harness
+                .app
+                .apply_event(CoreEvent::PasteSaved { paste: saved });
+            dispatched.extend(harness.cmd_rx.try_iter());
+        }
+        assert_eq!(harness.app.selected_id.as_deref(), Some("picked"));
+        assert!(harness.app.selected_paste.is_none());
+        let mut picked = Paste::new("content".into(), "Picked".into());
+        picked.id = "picked".into();
+        harness.app.apply_event(CoreEvent::PasteLoaded {
+            paste: picked,
+            selection_epoch: harness.app.active_buffer_epoch,
+        });
+        frame(&mut harness.app, &ctx, vec![]);
+        let prefix = match suffix {
+            egui::Event::Text(_) => "typed content",
+            _ => "pasted content",
+        };
+        let expected = if focus_tail.is_empty() {
+            format!("{prefix}tail")
+        } else {
+            prefix.to_owned()
+        };
+        assert_eq!(
+            harness.app.active_snapshot(),
+            expected,
+            "dispatched={dispatched:?}"
+        );
+        assert!(
+            !dispatched
+                .iter()
+                .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })),
+            "{dispatched:?}"
+        );
+        let expected_focus = focus_tail.last().copied().unwrap_or(true);
+        assert_eq!(harness.app.virtual_editor_state.has_focus, expected_focus);
+        assert_eq!(
+            ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))),
+            expected_focus
+        );
+    }
+}
+
+#[test]
+fn pending_picker_input_is_discarded_on_failure_reselection_or_workflow_cancel() {
+    for outcome in [
+        "failed",
+        "missing",
+        "save failed",
+        "reselected",
+        "escape",
+        "discovery",
+    ] {
+        let (mut harness, _events) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        frame(&mut harness.app, &ctx, vec![discovery_chord(true)]);
+        if outcome == "save failed" {
+            harness.app.save_status = SaveStatus::Dirty;
+        }
+        harness.app.open_palette_selection("picked".into());
+        frame(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Paste("discard me".into())],
+        );
+        assert!(!harness
+            .app
+            .pending_picker_open
+            .as_ref()
+            .unwrap()
+            .input_events
+            .is_empty());
+        match outcome {
+            "failed" => harness.app.apply_event(CoreEvent::PasteLoadFailed {
+                id: "picked".into(),
+                selection_epoch: harness.app.active_buffer_epoch,
+                message: "Load failed".into(),
+            }),
+            "missing" => harness.app.apply_event(CoreEvent::PasteSelectionMissing {
+                id: "picked".into(),
+                selection_epoch: harness.app.active_buffer_epoch,
+            }),
+            "save failed" => harness.app.apply_event(CoreEvent::Error {
+                source: crate::backend::CoreErrorSource::SaveContent,
+                message: "Save failed".into(),
+            }),
+            "reselected" => {
+                harness.app.select_paste("other".into());
+            }
+            "escape" => frame(
+                &mut harness.app,
+                &ctx,
+                vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+            ),
+            _ => frame(&mut harness.app, &ctx, vec![discovery_chord(false)]),
+        }
+        assert!(harness.app.pending_picker_open.is_none(), "{outcome}");
+        if outcome == "save failed" {
+            let mut saved = Paste::new("content".into(), "Alpha".into());
+            saved.id = "alpha".into();
+            harness
+                .app
+                .apply_event(CoreEvent::PasteSaved { paste: saved });
+        }
+        if harness.app.selected_id.as_deref() != Some("other") {
+            harness.app.select_paste("other".into());
+        }
+        let mut paste = Paste::new("other content".into(), "Other".into());
+        paste.id = "other".into();
+        harness.app.apply_event(CoreEvent::PasteLoaded {
+            paste,
+            selection_epoch: harness.app.active_buffer_epoch,
+        });
+        frame(&mut harness.app, &ctx, vec![]);
+        assert_eq!(harness.app.active_snapshot(), "other content", "{outcome}");
+        assert!(!harness.app.command_palette_query.contains("discard me"));
+        assert!(
+            !harness
+                .cmd_rx
+                .try_iter()
+                .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })),
+            "{outcome}"
+        );
+    }
+}

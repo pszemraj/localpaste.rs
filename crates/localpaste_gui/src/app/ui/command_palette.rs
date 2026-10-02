@@ -483,6 +483,8 @@ impl LocalPasteApp {
             query: self.paste_picker_query.trim().to_owned(),
             scope: self.paste_picker_scope,
             case_sensitive: env_flag_enabled("LOCALPASTE_SEARCH_CASE_SENSITIVE"),
+            input_events: Vec::new(),
+            input_ready: false,
         };
         if self.select_paste(id.clone()) {
             self.pending_picker_open = Some(opening);

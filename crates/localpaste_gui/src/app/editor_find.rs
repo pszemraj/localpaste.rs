@@ -58,32 +58,38 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when the loaded paste belongs to the picker open, including metadata-only hits.
     pub(super) fn prime_editor_find_from_picker_open(&mut self) -> bool {
-        let Some(opening) = self.pending_picker_open.take() else {
+        let Some(mut opening) = self.pending_picker_open.take() else {
             return false;
         };
         if self.selected_id.as_deref() != Some(opening.id.as_str()) {
             return false;
         }
-        if !matches!(opening.scope, SearchScope::All | SearchScope::Body)
-            || opening.query.is_empty()
-        {
+        self.focus_editor_next = true;
+        let query = opening.query.clone();
+        let scope = opening.scope;
+        let case_sensitive = opening.case_sensitive;
+        if !opening.input_events.is_empty() {
+            opening.input_ready = true;
+            self.pending_picker_open = Some(opening);
+        }
+        if !matches!(scope, SearchScope::All | SearchScope::Body) || query.is_empty() {
             return true;
         }
 
         let matches = find_text_ranges(
             self.active_snapshot().as_str(),
-            opening.query.as_str(),
-            opening.case_sensitive,
+            query.as_str(),
+            case_sensitive,
         );
         if matches.is_empty() {
             return true;
         }
         self.editor_find = EditorFindState {
             open: true,
-            query: opening.query,
+            query,
             matches,
             active_match: Some(0),
-            case_sensitive: opening.case_sensitive,
+            case_sensitive,
             focus_requested: false,
             last_buffer_epoch: Some(self.active_buffer_epoch),
             last_buffer_revision: Some(self.active_revision()),
