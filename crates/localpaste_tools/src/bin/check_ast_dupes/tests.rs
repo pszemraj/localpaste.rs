@@ -228,12 +228,92 @@ fn production_declaration_keeps_shared_test_support_in_the_audit() {
     "#,
     );
     write_file(&root.join("shared.rs"), "fn unused_shared_helper() {}");
-    let scan = scan_sources(root, collect_rust_files(root).unwrap(), 5, false);
-    assert_eq!(scan.functions.len(), 1);
-    assert!(!scan.functions[0].has_cfg);
+    let mut files = collect_rust_files(root).unwrap();
+    for _ in 0..2 {
+        let scan = scan_sources(root, files.clone(), 5, false);
+        assert_eq!(scan.functions.len(), 1);
+        assert!(!scan.functions[0].has_cfg);
+        files.reverse();
+    }
     let mut args = base_args(root.to_path_buf());
     args.fail_on_findings = true;
     assert!(run(args).is_err());
+}
+
+#[test]
+fn external_mod_file_inherits_test_context_without_becoming_a_root() {
+    let temp = TempDir::new().expect("temp dir");
+    let root = temp.path();
+    fs::create_dir_all(root.join("support")).unwrap();
+    write_file(&root.join("lib.rs"), "#[cfg(test)] mod support;");
+    write_file(&root.join("support/mod.rs"), "fn support_helper() {}");
+    let mut files = collect_rust_files(root).unwrap();
+    for _ in 0..2 {
+        assert!(scan_sources(root, files.clone(), 5, false)
+            .functions
+            .is_empty());
+        let scan = scan_sources(root, files.clone(), 5, true);
+        assert_eq!(scan.functions.len(), 1);
+        assert!(scan.functions[0].has_cfg);
+        files.reverse();
+    }
+
+    write_file(
+        &root.join("lib.rs"),
+        "#[cfg(test)] mod support; #[path = \"support/mod.rs\"] mod production;",
+    );
+    let scan = scan_sources(root, files, 5, false);
+    assert_eq!(scan.functions.len(), 1);
+    assert!(!scan.functions[0].has_cfg);
+}
+
+#[test]
+fn standalone_bin_modules_resolve_next_to_the_entrypoint() {
+    let temp = TempDir::new().expect("temp dir");
+    let root = temp.path().join("src/bin");
+    fs::create_dir_all(&root).unwrap();
+    write_file(&root.join("a.rs"), "#[cfg(test)] mod support; fn main() {}");
+    write_file(&root.join("support.rs"), "fn support_helper() {}");
+    let mut files = collect_rust_files(&root).unwrap();
+    for _ in 0..2 {
+        let production = scan_sources(temp.path(), files.clone(), 5, false);
+        assert_eq!(production.functions.len(), 1);
+        assert_eq!(production.functions[0].simple_name, "main");
+        let with_tests = scan_sources(temp.path(), files.clone(), 5, true);
+        assert_eq!(with_tests.functions.len(), 2);
+        assert!(
+            with_tests
+                .functions
+                .iter()
+                .find(|info| info.simple_name == "support_helper")
+                .unwrap()
+                .has_cfg
+        );
+        files.reverse();
+    }
+}
+
+#[test]
+fn orphan_root_discovery_follows_path_modules_before_seeding_children() {
+    let temp = TempDir::new().expect("temp dir");
+    let root = temp.path().join("src");
+    fs::create_dir_all(root.join("fixtures")).unwrap();
+    write_file(
+        &root.join("z_driver.rs"),
+        "#[cfg(test)] #[path = \"fixtures/support.rs\"] mod support;",
+    );
+    write_file(&root.join("fixtures/support.rs"), "mod nested;");
+    write_file(&root.join("fixtures/nested.rs"), "fn nested_helper() {}");
+    let mut files = collect_rust_files(&root).unwrap();
+    for _ in 0..2 {
+        assert!(scan_sources(temp.path(), files.clone(), 5, false)
+            .functions
+            .is_empty());
+        let scan = scan_sources(temp.path(), files.clone(), 5, true);
+        assert_eq!(scan.functions.len(), 1);
+        assert!(scan.functions[0].has_cfg);
+        files.reverse();
+    }
 }
 
 #[test]

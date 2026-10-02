@@ -86,19 +86,19 @@ fn test_only_files(sources: &[SourceFile]) -> Vec<bool> {
         .enumerate()
         .map(|(id, source)| (source.path.as_path(), id))
         .collect();
-    let mut referenced = HashSet::new();
+    let referenced = declared_module_targets(sources, &by_path);
     let mut contexts = vec![[false; 2]; sources.len()];
     let mut seen = HashSet::new();
     let mut queue = VecDeque::new();
 
-    // Crate roots establish module-resolution context. Remaining files are
-    // roots too, but are queued after declared modules so path-loaded children
-    // do not become spurious production roots.
+    // Discover incoming links before choosing standalone roots. A declared
+    // mod.rs inherits its parent's context instead of becoming production.
     for (id, source) in sources.iter().enumerate() {
         if matches!(
             source.path.file_name().and_then(|name| name.to_str()),
-            Some("lib.rs" | "main.rs" | "mod.rs")
-        ) {
+            Some("lib.rs" | "main.rs")
+        ) || !referenced.contains(&id)
+        {
             queue.push_back((id, false, ModuleLinks::new(&source.path).module_dir));
         }
     }
@@ -113,20 +113,23 @@ fn test_only_files(sources: &[SourceFile]) -> Vec<bool> {
                 module_dir,
                 sources,
                 &by_path,
-                &mut referenced,
                 &mut contexts,
                 &mut queue,
             );
             continue;
         }
-        if let Some((id, source)) = sources
+        // Disconnected cycles or unresolved layouts have no identifiable root.
+        // Keep all their files in the conservative production audit.
+        let remaining: Vec<_> = sources
             .iter()
             .enumerate()
-            .find(|(id, _)| !referenced.contains(id) && contexts[*id] == [false; 2])
-        {
-            queue.push_back((id, false, ModuleLinks::new(&source.path).module_dir));
-        } else {
+            .filter(|(id, _)| contexts[*id] == [false; 2])
+            .collect();
+        if remaining.is_empty() {
             break;
+        }
+        for (id, source) in remaining {
+            queue.push_back((id, false, ModuleLinks::new(&source.path).module_dir));
         }
     }
     contexts
@@ -135,15 +138,46 @@ fn test_only_files(sources: &[SourceFile]) -> Vec<bool> {
         .collect()
 }
 
+/// Discovers incoming module links in every declared resolution context.
+///
+/// Follow `#[path]` children before selecting roots because their module
+/// directory can differ from the ordinary file-stem layout.
+fn declared_module_targets(
+    sources: &[SourceFile],
+    by_path: &HashMap<&Path, usize>,
+) -> HashSet<usize> {
+    let mut referenced = HashSet::new();
+    let mut seen = HashSet::new();
+    let mut queue: VecDeque<_> = sources
+        .iter()
+        .enumerate()
+        .map(|(id, source)| (id, ModuleLinks::new(&source.path).module_dir))
+        .collect();
+    while let Some((id, module_dir)) = queue.pop_front() {
+        if !seen.insert((id, module_dir.clone())) {
+            continue;
+        }
+        let source = &sources[id];
+        let Ok(ast) = &source.ast else { continue };
+        let mut collector = ModuleLinks::with_module_dir(&source.path, module_dir);
+        collector.visit_file(ast);
+        for link in collector.links {
+            if let Some(&target) = by_path.get(link.path.as_path()) {
+                referenced.insert(target);
+                queue.push_back((target, link.module_dir));
+            }
+        }
+    }
+    referenced
+}
+
 // Keep traversal state explicit so module links are resolved in their declaration context.
-#[allow(clippy::too_many_arguments)]
 fn visit_module_context(
     id: usize,
     inherited_test: bool,
     module_dir: PathBuf,
     sources: &[SourceFile],
     by_path: &HashMap<&Path, usize>,
-    referenced: &mut HashSet<usize>,
     contexts: &mut [[bool; 2]],
     queue: &mut VecDeque<(usize, bool, PathBuf)>,
 ) {
@@ -160,7 +194,6 @@ fn visit_module_context(
     collector.visit_file(ast);
     for link in collector.links {
         if let Some(&target) = by_path.get(link.path.as_path()) {
-            referenced.insert(target);
             queue.push_back((target, test_only || link.test_only, link.module_dir));
         }
     }
@@ -183,7 +216,13 @@ impl ModuleLinks {
     fn new(file: &Path) -> Self {
         let parent = file.parent().unwrap_or(Path::new(""));
         let stem = file.file_stem().unwrap_or_default();
-        let module_dir = if matches!(stem.to_str(), Some("lib" | "main" | "mod")) {
+        let standalone_bin = parent.file_name().is_some_and(|name| name == "bin")
+            && parent
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "src");
+        let module_dir = if standalone_bin || matches!(stem.to_str(), Some("lib" | "main" | "mod"))
+        {
             parent.to_path_buf()
         } else {
             parent.join(stem)

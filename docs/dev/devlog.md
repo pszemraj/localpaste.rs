@@ -231,6 +231,8 @@ Remove-Item -Recurse -Force $env:DB_PATH
 - Audit scope:
   - default scans production bodies; `--include-tests` also compares test bodies
   - test context follows enclosing `cfg(test)` modules, including out-of-line modules and `#[path]` declarations
+  - module links are discovered before standalone roots, independent of source-file ordering; declared `mod.rs` files inherit context, and `src/bin/*.rs` entrypoints resolve child modules beside the entrypoint
+  - files shared by test and production declarations remain in the production audit; disconnected or unresolved files are audited conservatively without Cargo target metadata
   - test-only helpers are excluded from dead-symbol and visibility findings
   - recognized callback paths in attribute arguments (for example, Clap `value_parser` and Serde callback values) count as usage; the audit does not expand procedural macros
 - Parse-time validation:
