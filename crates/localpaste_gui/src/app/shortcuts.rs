@@ -203,18 +203,6 @@ pub(crate) struct ShortcutSection {
 
 const NAVIGATION_SHORTCUTS: &[ShortcutHelpEntry] = &[
     ShortcutHelpEntry {
-        keys: "Arrow Up/Down",
-        description: "Navigate paste list, palette, and history rows",
-    },
-    ShortcutHelpEntry {
-        keys: "Enter",
-        description: "Run selected command or open selected paste",
-    },
-    ShortcutHelpEntry {
-        keys: "Esc",
-        description: "Close palette, picker, or window",
-    },
-    ShortcutHelpEntry {
         keys: "Home/End (Win/Linux) or Cmd+Left/Right (macOS)",
         description: "Move caret to line start/end",
     },
@@ -222,36 +210,12 @@ const NAVIGATION_SHORTCUTS: &[ShortcutHelpEntry] = &[
         keys: "Ctrl+Home/End (Win/Linux) or Cmd+Up/Down/Home/End (macOS)",
         description: "Move caret to document start/end",
     },
-    ShortcutHelpEntry {
-        keys: "Page Up/Down",
-        description: "Move caret by visible editor page",
-    },
 ];
 
 const EDITING_SHORTCUTS: &[ShortcutHelpEntry] = &[
     ShortcutHelpEntry {
         keys: "Tab / Shift+Tab",
         description: "Indent / unindent selected lines",
-    },
-    ShortcutHelpEntry {
-        keys: "Ctrl/Cmd+A",
-        description: "Select all editor text",
-    },
-    ShortcutHelpEntry {
-        keys: "Ctrl/Cmd+C",
-        description: "Copy selected text",
-    },
-    ShortcutHelpEntry {
-        keys: "Ctrl/Cmd+X",
-        description: "Cut selected text",
-    },
-    ShortcutHelpEntry {
-        keys: "Ctrl/Cmd+Z",
-        description: "Undo editor edit",
-    },
-    ShortcutHelpEntry {
-        keys: "Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z",
-        description: "Redo editor edit",
     },
     ShortcutHelpEntry {
         keys: "Ctrl+Left/Right (Win/Linux) or Option+Left/Right (macOS)",
@@ -267,20 +231,10 @@ const EDITING_SHORTCUTS: &[ShortcutHelpEntry] = &[
     },
 ];
 
-const FIND_SHORTCUTS: &[ShortcutHelpEntry] = &[
-    ShortcutHelpEntry {
-        keys: "Enter",
-        description: "Find next match while Find field is focused",
-    },
-    ShortcutHelpEntry {
-        keys: "Shift+Enter",
-        description: "Find previous match while Find field is focused",
-    },
-    ShortcutHelpEntry {
-        keys: "Esc",
-        description: "Close Find field",
-    },
-];
+const FIND_SHORTCUTS: &[ShortcutHelpEntry] = &[ShortcutHelpEntry {
+    keys: "Enter / Shift+Enter",
+    description: "Next / previous match in Find",
+}];
 
 /// Non-global editor and navigation chords shared by shortcut discovery.
 pub(crate) const STATIC_SHORTCUT_SECTIONS: &[ShortcutSection] = &[

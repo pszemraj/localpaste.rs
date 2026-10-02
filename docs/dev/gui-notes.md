@@ -32,7 +32,7 @@ Shortcut contract:
 - `Ctrl/Cmd+K`: toggle the commands-only palette (also `Ctrl/Cmd+Shift+P`).
 - `Ctrl/Cmd+Shift+K`: toggle the separate paste picker.
 - `Ctrl/Cmd+I`: toggle Properties drawer.
-- `F1`: toggle shortcut help; search descriptions or key combinations (for example `undo` or `Cmd+Shift+K`).
+- `F1`: toggle shortcut help; search descriptions or key combinations (for example `picker` or `Cmd+Shift+K`).
 - `Ctrl/Cmd+A/C/X/Z/Y`: standard virtual-editor select-all/copy/cut/undo/redo when editor owns focus.
 - `Ctrl/Cmd+Shift+Z`: redo editor edit when editor owns focus.
 - `Ctrl/Cmd+V`: insert when editor is focused; create new paste from clipboard when editor is not focused.
@@ -123,6 +123,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Loading another paste resets the previous viewport to the first line before applying any search-match reveal, including when the previous paste was scrolled to its end.
 - Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.
 - App-level shortcut dispatch, command-palette hints, and keyboard shortcut help share the runtime shortcut registry. The shortcut help intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
+- Help lists app bindings and selected editor combinations. Basic navigation and standard select/copy/cut/undo/redo instructions are omitted.
 - F1 help uses a stable, scrollable layout with aligned native-platform key labels. Search omits empty sections, reports no matches, and returns to the first result when edited. Clear keeps search focus; Escape, F1, and Close return focus to the input that opened help. Opening a different discovery surface transfers focus to that surface instead.
 - F1 help temporarily hides History or Diff while keeping its version workflow intact. Closing help returns to that dialog; Escape dismisses only help.
 - Virtual-editor highlight debounce/staging policy is defined in
@@ -210,7 +211,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - `Cmd+Shift+K` opens the paste picker. With an empty query, open a different paste and confirm its body starts at the first line. With a Body query near the end of a long paste, confirm the result shows a matching excerpt; open it and confirm Find selects and reveals that passage.
    - Copy and Copy Fenced work from picker results without changing the active editor or its unsaved draft; deleting a disposable result removes its row.
    - Open history and diff modals from palette queries (`history`, `diff`) when a paste is selected.
-   - `F1` help shows Mac key names and finds shortcuts by description and by key combination, including `Cmd+Shift+K`. Try an unmatched query and confirm the no-match hint appears without resizing the window; Clear restores all shortcuts. Open help from the editor, then close with `Esc`, `F1`, or Close and confirm typing resumes at the same selection. Repeat from sidebar search and confirm typing resumes in its query.
+   - `F1` help shows Mac key names and finds shortcuts by description and by key combination, including `Cmd+Shift+K`. Try an unmatched query and confirm the no-match message appears without resizing the window; Clear restores all shortcuts. Open help from the editor, then close with `Esc`, `F1`, or Close and confirm typing resumes at the same selection. Repeat from sidebar search and confirm typing resumes in its query.
    - Open History, press `F1`, then `Esc`: help closes and History returns at the same snapshot. Repeat from Diff and confirm its comparison is retained.
 6. Search and filters:
    - Sidebar query narrows results and clearing query restores list.

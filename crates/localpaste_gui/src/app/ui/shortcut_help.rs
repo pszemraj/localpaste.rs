@@ -56,7 +56,7 @@ impl LocalPasteApp {
                             [ui.available_width() - 84.0, ui.spacing().interact_size.y],
                             egui::TextEdit::singleline(&mut self.shortcut_help_query)
                                 .id(egui::Id::new("shortcut_help_query"))
-                                .hint_text("Search actions or keys, e.g. undo")
+                                .hint_text("Search shortcuts...")
                                 .return_key(None),
                         );
                         if self.shortcut_help_focus_requested {
@@ -74,15 +74,6 @@ impl LocalPasteApp {
                             response.request_focus();
                         }
                     });
-                    ui.label(
-                        egui::RichText::new(if cfg!(target_os = "macos") {
-                            "Mac shortcuts. Search by action (undo) or keys (Cmd+Shift+K)."
-                        } else {
-                            "Search by action (undo) or keys (Ctrl+Shift+K)."
-                        })
-                        .small()
-                        .color(COLOR_TEXT_SECONDARY),
-                    );
                     let mut scroll = egui::ScrollArea::vertical()
                         .id_salt("shortcut_help_results")
                         .auto_shrink([false, false])
@@ -165,12 +156,6 @@ fn render_shortcut_sections(ui: &mut egui::Ui, query: &str) {
     }
     if !shown_section {
         ui.label("No matching shortcuts.");
-        ui.label(
-            egui::RichText::new(
-                "Try an action such as undo, or clear the search to see all shortcuts.",
-            )
-            .color(COLOR_TEXT_SECONDARY),
-        );
     }
 }
 
