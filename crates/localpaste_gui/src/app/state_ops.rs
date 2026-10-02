@@ -3,6 +3,7 @@
 /// Filter helpers for sidebar collections, languages, and export filenames.
 pub(super) mod filters;
 mod search;
+mod selection_load;
 
 use super::deferred_saves::rollback_deferred_save_dispatches;
 use super::util::parse_tags_csv;
@@ -119,26 +120,7 @@ impl LocalPasteApp {
 
     /// Applies a backend event and synchronizes app state, selection, and save flags.
     pub(super) fn apply_event(&mut self, event: CoreEvent) {
-        let selection_load = match &event {
-            CoreEvent::PasteLoaded {
-                paste,
-                selection_epoch,
-            } => Some((paste.id.as_str(), *selection_epoch)),
-            CoreEvent::PasteSelectionMissing {
-                id,
-                selection_epoch,
-            }
-            | CoreEvent::PasteLoadFailed {
-                id,
-                selection_epoch,
-                ..
-            } => Some((id.as_str(), *selection_epoch)),
-            _ => None,
-        };
-        // A revisited id may have replies queued from before its edit lock was released.
-        if selection_load.is_some_and(|(id, epoch)| {
-            self.selected_id.as_deref() != Some(id) || self.active_buffer_epoch != epoch
-        }) {
+        if !self.selection_load_is_current(&event) {
             return;
         }
         self.on_version_event(&event);
@@ -165,10 +147,18 @@ impl LocalPasteApp {
             CoreEvent::PasteLoaded { paste, .. } => {
                 self.select_loaded_paste(paste);
             }
-            CoreEvent::PasteCopyLoaded { paste } => self.apply_palette_copy_loaded(paste),
-            CoreEvent::PasteCopyMissing { id } => self.apply_palette_copy_missing(id),
-            CoreEvent::PasteCopyLoadFailed { id, message } => {
-                self.apply_palette_copy_load_failed(id, message);
+            CoreEvent::PasteCopyLoaded { paste, request_id } => {
+                self.apply_palette_copy_loaded(paste, request_id)
+            }
+            CoreEvent::PasteCopyMissing { id, request_id } => {
+                self.apply_palette_copy_missing(id, request_id)
+            }
+            CoreEvent::PasteCopyLoadFailed {
+                id,
+                request_id,
+                message,
+            } => {
+                self.apply_palette_copy_load_failed(id, request_id, message);
             }
             CoreEvent::DiffPreviewComputed { request_id, diff } => {
                 self.apply_diff_preview_response(request_id, diff);

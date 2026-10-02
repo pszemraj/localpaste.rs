@@ -68,6 +68,7 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
         GetPasteRouteCase::Copy => backend
             .cmd_tx
             .send(CoreCmd::GetPasteForCopy {
+                request_id: 42,
                 id: paste_id.clone(),
             })
             .expect("send copy get"),
@@ -87,7 +88,13 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
                 selection_epoch: 42,
             },
         )
-        | (GetPasteRouteCase::Copy, CoreEvent::PasteCopyLoaded { paste })
+        | (
+            GetPasteRouteCase::Copy,
+            CoreEvent::PasteCopyLoaded {
+                paste,
+                request_id: 42,
+            },
+        )
         | (GetPasteRouteCase::DiffTarget, CoreEvent::DiffTargetLoaded { paste }) => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.content, "gamma");
@@ -115,6 +122,7 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
         GetPasteRouteCase::Copy => backend
             .cmd_tx
             .send(CoreCmd::GetPasteForCopy {
+                request_id: 42,
                 id: missing_id.clone(),
             })
             .expect("send missing copy"),
@@ -134,7 +142,7 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
                 selection_epoch: 42,
             },
         )
-        | (GetPasteRouteCase::Copy, CoreEvent::PasteCopyMissing { id })
+        | (GetPasteRouteCase::Copy, CoreEvent::PasteCopyMissing { id, request_id: 42 })
         | (GetPasteRouteCase::DiffTarget, CoreEvent::DiffTargetMissing { id }) => {
             assert_eq!(id, missing_id);
         }

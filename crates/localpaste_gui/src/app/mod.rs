@@ -111,6 +111,8 @@ pub(crate) struct LocalPasteApp {
     palette_search_pending: bool,
     palette_search_error: Option<String>,
     pending_copy_action: Option<PaletteCopyAction>,
+    /// Latest detached picker-copy request identity, advanced before each dispatch.
+    palette_copy_request_id: u64,
     pending_selection_id: Option<String>,
     pending_picker_open: Option<PendingPickerOpen>,
     picker_selection_pin: Option<String>,

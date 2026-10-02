@@ -356,6 +356,7 @@ fn make_app() -> TestHarness {
         palette_search_pending: false,
         palette_search_error: None,
         pending_copy_action: None,
+        palette_copy_request_id: 0,
         pending_selection_id: None,
         pending_picker_open: None,
         picker_selection_pin: None,
@@ -470,6 +471,7 @@ mod highlight_behaviors;
 mod history_reset;
 mod keyboard_navigation_audit;
 mod persistence;
+mod picker_copy;
 mod picker_find;
 mod picker_scroll;
 mod save_and_metadata;

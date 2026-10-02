@@ -368,8 +368,12 @@ impl LocalPasteApp {
             return;
         }
 
+        self.palette_copy_request_id = self.palette_copy_request_id.wrapping_add(1);
         self.pending_copy_action = Some(action);
-        if !self.dispatch_backend_cmd(CoreCmd::GetPasteForCopy { id }) {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPasteForCopy {
+            id,
+            request_id: self.palette_copy_request_id,
+        }) {
             self.pending_copy_action = None;
             self.set_status("Load paste for copy failed: backend unavailable.");
             return;
@@ -378,16 +382,27 @@ impl LocalPasteApp {
     }
 
     /// Applies a detached picker-copy response when it matches the latest copy request.
-    pub(crate) fn apply_palette_copy_loaded(&mut self, paste: Paste) {
-        let Some(action) = self.take_pending_palette_copy_for(paste.id.as_str()) else {
+    ///
+    /// # Arguments
+    /// - `paste`: Detached snapshot returned by the backend.
+    /// - `request_id`: Identity of the copy request that produced this snapshot.
+    pub(crate) fn apply_palette_copy_loaded(&mut self, paste: Paste, request_id: u64) {
+        let Some(action) = self.take_pending_palette_copy_for(paste.id.as_str(), request_id) else {
             return;
         };
         self.complete_palette_copy(action, paste.content, paste.language);
     }
 
     /// Clears the latest picker-copy request when its target no longer exists.
-    pub(crate) fn apply_palette_copy_missing(&mut self, id: String) {
-        if self.take_pending_palette_copy_for(id.as_str()).is_some() {
+    ///
+    /// # Arguments
+    /// - `id`: Paste id whose detached load found no row.
+    /// - `request_id`: Identity of the copy request whose target is missing.
+    pub(crate) fn apply_palette_copy_missing(&mut self, id: String, request_id: u64) {
+        if self
+            .take_pending_palette_copy_for(id.as_str(), request_id)
+            .is_some()
+        {
             self.set_status("Paste is no longer available to copy.");
         }
     }
@@ -396,16 +411,25 @@ impl LocalPasteApp {
     ///
     /// # Arguments
     /// - `id`: Paste id whose copy load failed.
+    /// - `request_id`: Identity of the copy request that failed.
     /// - `message`: Backend failure text displayed for the current copy request.
-    pub(crate) fn apply_palette_copy_load_failed(&mut self, id: String, message: String) {
-        if self.take_pending_palette_copy_for(id.as_str()).is_some() {
+    pub(crate) fn apply_palette_copy_load_failed(
+        &mut self,
+        id: String,
+        request_id: u64,
+        message: String,
+    ) {
+        if self
+            .take_pending_palette_copy_for(id.as_str(), request_id)
+            .is_some()
+        {
             self.set_status(message);
         }
     }
 
     /// Clears a picker-copy request when its target is deleted before the response arrives.
     pub(crate) fn clear_pending_palette_copy_for(&mut self, id: &str) {
-        let _ = self.take_pending_palette_copy_for(id);
+        let _ = self.take_pending_palette_copy_for(id, self.palette_copy_request_id);
     }
 
     fn complete_palette_copy(
@@ -429,7 +453,14 @@ impl LocalPasteApp {
         }
     }
 
-    fn take_pending_palette_copy_for(&mut self, id: &str) -> Option<PaletteCopyAction> {
+    fn take_pending_palette_copy_for(
+        &mut self,
+        id: &str,
+        request_id: u64,
+    ) -> Option<PaletteCopyAction> {
+        if request_id != self.palette_copy_request_id {
+            return None;
+        }
         let matches = matches!(
             self.pending_copy_action.as_ref(),
             Some(PaletteCopyAction::Raw(action_id) | PaletteCopyAction::Fenced(action_id))

@@ -41,7 +41,8 @@ pub enum CoreCmd {
     /// Load a single paste by id for display in the editor pane.
     GetPaste { id: String, selection_epoch: u64 },
     /// Load a paste body for a picker copy action without changing editor selection.
-    GetPasteForCopy { id: String },
+    /// The worker echoes `request_id` on every outcome to reject superseded copies.
+    GetPasteForCopy { id: String, request_id: u64 },
     /// Load a comparison target for the detached diff modal.
     GetDiffTargetPaste { id: String },
     /// Create a new paste with the provided content.
@@ -158,11 +159,15 @@ pub enum CoreEvent {
         message: String,
     },
     /// Response containing a paste body requested only for copying from the picker.
-    PasteCopyLoaded { paste: Paste },
+    PasteCopyLoaded { paste: Paste, request_id: u64 },
     /// A paste requested for picker copy no longer exists in the database.
-    PasteCopyMissing { id: String },
+    PasteCopyMissing { id: String, request_id: u64 },
     /// Loading a paste for picker copy failed due to backend/storage error.
-    PasteCopyLoadFailed { id: String, message: String },
+    PasteCopyLoadFailed {
+        id: String,
+        request_id: u64,
+        message: String,
+    },
     /// Response containing the detached diff target payload requested by id.
     DiffTargetLoaded { paste: Paste },
     /// The requested detached diff target id no longer exists in the database.
