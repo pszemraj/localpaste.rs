@@ -117,7 +117,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - The paste picker shows `Searching...` while a scoped request is in flight. Closing it discards displayed results and resets selection while retaining its query and scope. Language labels follow the sidebar's large-buffer plain-rendering rule.
 - Opening or copying a picker result outside current sidebar results preserves that selection through background refreshes until sidebar navigation, search, or filters change.
 - Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar All fields or Body search primes this in-paste find bar when the sidebar query appears in the paste body.
-- Find keeps query focus on `Enter`/`Shift+Enter` and advances to the next/previous match. `Escape` from its query closes the bar and retains the query for reopening. Buttons and document jumps center the caret independently of editor focus.
+- Find keeps query focus on `Enter`/`Shift+Enter` and advances to the next/previous match. `Escape` from its query or `Close` returns focus to the editor while preserving the matched selection and the query for reopening. Buttons and document jumps center the caret independently of editor focus.
 - Typing and paste reveal the caret with minimal scrolling; manual scrolling stays where you leave it until another edit or navigation action. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
 - Loading another paste starts at its first line, including when the previous paste was scrolled to its end.
 - Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.
@@ -213,6 +213,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Check Title, Metadata, and Body with field-specific fixtures; sidebar and picker retain independent queries and scopes.
    - Opening a paste from a sidebar body-text search selects and scrolls to the first matching substring in the editor.
    - Editor toolbar `Find` locates substrings within the selected paste; `Next`/`Prev` wrap through all matches and the `Case` toggle narrows matching.
+   - Close Find with `Escape` or `Close`, then type; the matched selection is replaced in the editor without another click.
    - Smart collections re-scope results; Markdown with fenced code appears under Documents and is excluded from Code.
    - Sidebar language filter (`All languages` + detected languages) stacks with active collection (not replacing it).
 7. Metadata/properties:

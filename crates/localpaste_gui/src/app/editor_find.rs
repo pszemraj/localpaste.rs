@@ -13,10 +13,11 @@ impl LocalPasteApp {
         }
     }
 
-    /// Closes the current-paste find bar without clearing the saved query.
+    /// Closes Find and returns keyboard ownership to the editor, preserving query and selection.
     pub(super) fn close_editor_find(&mut self) {
         self.editor_find.open = false;
         self.editor_find.focus_requested = false;
+        self.focus_editor_next = true;
     }
 
     /// Marks cached current-paste match ranges stale after a buffer replacement.

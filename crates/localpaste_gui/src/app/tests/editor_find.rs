@@ -89,6 +89,37 @@ fn editor_find_reopen_with_saved_query_selects_active_match() {
 }
 
 #[test]
+fn editor_find_escape_returns_focus_and_allows_replacing_the_match() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("alpha needle beta");
+    harness.app.open_editor_find();
+    harness.app.set_editor_find_query("needle".to_string());
+    let ctx = egui::Context::default();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::new(EDITOR_FIND_INPUT_ID))));
+
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+
+    assert!(!harness.app.editor_find.open);
+    assert_eq!(harness.app.editor_find.query, "needle");
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(6..12)
+    );
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Text("replacement".to_string())],
+    );
+    assert_eq!(harness.app.active_snapshot(), "alpha replacement beta");
+}
+
+#[test]
 fn sidebar_full_text_query_primes_current_paste_find() {
     let mut harness = make_app();
     harness.app.search_query = "target".to_string();
