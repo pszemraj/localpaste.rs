@@ -8,6 +8,12 @@ pub(crate) struct ImeState {
     pub(crate) enabled: bool,
     pub(crate) preedit_range: Option<Range<usize>>,
     pub(crate) preedit_text: String,
+    /// Text displaced by the first preedit, retained until commit or cancellation.
+    pub(crate) original_text: String,
+    /// Caret before temporary composition text replaced the selection.
+    pub(crate) original_cursor: usize,
+    /// Selection anchor before the first preedit, preserving selection direction.
+    pub(crate) original_anchor: Option<usize>,
 }
 
 /// Affinity for caret positions that land exactly on internal wrap boundaries.

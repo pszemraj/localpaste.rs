@@ -459,7 +459,6 @@ impl eframe::App for LocalPasteApp {
             // its keyboard actions and edits have already been applied.
             ctx.input_mut(|input| input.events.clear());
         }
-        self.blur_deactivated_editor(ctx);
         self.track_frame_metrics();
         self.virtual_paste_applied_this_frame = false;
         self.nav_probe_begin_frame(ctx);
@@ -504,8 +503,6 @@ impl eframe::App for LocalPasteApp {
         let virtual_editor_focus_active_pre =
             egui_focus_pre || self.virtual_editor_state.has_focus || self.focus_editor_next;
         let version_overlay_open = self.version_overlay_open();
-        let discovery_open_pre =
-            self.command_palette_open || self.paste_picker_open || self.shortcut_help_open;
         let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
@@ -739,6 +736,9 @@ impl eframe::App for LocalPasteApp {
         );
         let _ = paste_as_new_consumed;
 
+        // Finish edits received before native deactivation in their current owner.
+        self.blur_deactivated_editor(ctx);
+
         self.render_status_bar(ctx);
         self.render_toasts(ctx);
         if !self.window_shown_once {
@@ -791,19 +791,6 @@ impl eframe::App for LocalPasteApp {
         ctx.request_repaint_after(repaint_after);
         if !self.deferred_discovery_events.is_empty() {
             ctx.request_repaint();
-        }
-        // Queued input received before deactivation still belongs to its
-        // original widget. Finish those edits, then leave editor ownership
-        // blurred without activating the native window.
-        if discovery_open_pre
-            && !self.command_palette_open
-            && !self.paste_picker_open
-            && !self.shortcut_help_open
-            && !ui::shortcut_help::native_window_has_focus(ctx)
-        {
-            self.virtual_editor_state.has_focus = false;
-            self.focus_editor_next = false;
-            ctx.memory_mut(|memory| memory.surrender_focus(focus_id));
         }
         self.nav_probe_write_frame(ctx);
     }

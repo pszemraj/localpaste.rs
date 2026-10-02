@@ -42,18 +42,31 @@ impl LocalPasteApp {
         rebuilt
     }
 
-    fn cancel_virtual_ime_preedit_if_active(&mut self, now: Instant) -> bool {
-        let had_preedit = self.virtual_editor_state.ime.preedit_range.is_some()
-            || !self.virtual_editor_state.ime.preedit_text.is_empty();
+    /// Restores text displaced by uncommitted composition on cancellation.
+    ///
+    /// # Arguments
+    /// - `now`: Timestamp used to update the buffer and caret after cancellation.
+    ///
+    /// # Returns
+    /// Whether the active buffer changed after cancelling its preedit range.
+    pub(super) fn cancel_virtual_ime_preedit_if_active(&mut self, now: Instant) -> bool {
         let changed = if let Some(range) = self.virtual_editor_state.ime.preedit_range.take() {
-            self.replace_virtual_range(range, "", EditIntent::Other, false, now)
+            let original = std::mem::take(&mut self.virtual_editor_state.ime.original_text);
+            let cursor = self.virtual_editor_state.ime.original_cursor;
+            let anchor = self.virtual_editor_state.ime.original_anchor;
+            let changed =
+                self.replace_virtual_range(range, &original, EditIntent::Other, false, now);
+            self.virtual_editor_state.restore_selection(
+                cursor,
+                anchor,
+                self.virtual_editor_buffer.len_chars(),
+            );
+            changed
         } else {
             false
         };
-        if had_preedit {
-            self.virtual_editor_state.ime.preedit_text.clear();
-            self.virtual_editor_state.ime.enabled = false;
-        }
+        self.virtual_editor_state.ime.preedit_text.clear();
+        self.virtual_editor_state.ime.enabled = false;
         changed
     }
 
@@ -608,12 +621,12 @@ impl LocalPasteApp {
                 }
                 VirtualInputCommand::ImePreedit(text) => {
                     self.virtual_editor_state.ime.enabled = true;
-                    let existing_preedit_range =
-                        self.virtual_editor_state.ime.preedit_range.clone();
-                    if text.is_empty() && existing_preedit_range.is_none() {
-                        self.virtual_editor_state.ime.preedit_text.clear();
+                    if text.is_empty() {
+                        result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                         continue;
                     }
+                    let existing_preedit_range =
+                        self.virtual_editor_state.ime.preedit_range.clone();
                     let cursor = self.virtual_editor_state.cursor();
                     let range = existing_preedit_range
                         .clone()
@@ -624,6 +637,13 @@ impl LocalPasteApp {
                     {
                         continue;
                     }
+                    if existing_preedit_range.is_none() {
+                        self.virtual_editor_state.ime.original_text =
+                            self.virtual_editor_buffer.slice_chars(range.clone());
+                        self.virtual_editor_state.ime.original_cursor = cursor;
+                        self.virtual_editor_state.ime.original_anchor =
+                            self.virtual_editor_state.anchor();
+                    }
                     result.changed |= self.replace_virtual_range(
                         range.clone(),
                         text,
@@ -632,26 +652,30 @@ impl LocalPasteApp {
                         now,
                     );
                     self.virtual_editor_state.clear_preferred_column();
-                    if text.is_empty() {
-                        self.virtual_editor_state.ime.preedit_range = None;
-                        self.virtual_editor_state.ime.preedit_text.clear();
-                        continue;
-                    }
                     let end = range.start.saturating_add(text.chars().count());
                     self.virtual_editor_state.ime.preedit_range = Some(range.start..end);
                     self.virtual_editor_state.ime.preedit_text = text.clone();
                 }
                 VirtualInputCommand::ImeCommit(text) => {
+                    // Record the committed replacement against the original selection,
+                    // so undo cannot resurrect a temporary preedit string.
+                    result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let cursor = self.virtual_editor_state.cursor();
+                    let anchor = self.virtual_editor_state.anchor();
                     let range = self
                         .virtual_editor_state
-                        .ime
-                        .preedit_range
-                        .clone()
-                        .or_else(|| self.virtual_editor_state.selection_range())
+                        .selection_range()
                         .unwrap_or(cursor..cursor);
-                    result.changed |=
+                    let committed =
                         self.replace_virtual_range(range, text, EditIntent::ImeCommit, true, now);
+                    result.changed |= committed;
+                    if committed {
+                        self.virtual_editor_history.finish_selection_edit(
+                            anchor,
+                            None,
+                            self.virtual_editor_state.cursor(),
+                        );
+                    }
                     self.virtual_editor_state.ime.preedit_range = None;
                     self.virtual_editor_state.ime.preedit_text.clear();
                     self.virtual_editor_state.ime.enabled = false;

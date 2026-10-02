@@ -70,6 +70,9 @@ impl LocalPasteApp {
             })
         });
         if last_focus == Some(false) {
+            if self.cancel_virtual_ime_preedit_if_active(std::time::Instant::now()) {
+                self.mark_dirty();
+            }
             self.virtual_editor_state.has_focus = false;
             self.focus_editor_next = false;
             ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));

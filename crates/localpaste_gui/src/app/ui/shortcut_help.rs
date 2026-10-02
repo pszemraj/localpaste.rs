@@ -21,8 +21,11 @@ impl LocalPasteApp {
     ) {
         let mut events = std::mem::take(&mut self.deferred_discovery_events);
         events.append(&mut input.events);
-        let first_boundary = events.iter().position(|event| {
-            discovery_toggle(event) || (self.discovery_open() && discovery_escape(event))
+        let first_boundary = events.iter().enumerate().find_map(|(index, event)| {
+            (discovery_toggle(event)
+                || (self.discovery_open() && discovery_escape(event))
+                || self.discovery_accepts_enter(ctx, event, index > 0))
+            .then_some(index)
         });
         // Opening needs a rendered sizing pass before its query accepts input.
         // Dismissal can immediately deliver its suffix to the existing opener.
@@ -38,22 +41,19 @@ impl LocalPasteApp {
                     .enumerate()
                     .skip(1)
                     .find_map(|(index, event)| {
-                        (discovery_toggle(event) || discovery_escape(event)).then_some(index)
+                        (discovery_toggle(event)
+                            || discovery_escape(event)
+                            || self.discovery_accepts_enter(ctx, event, true))
+                        .then_some(index)
                     })
             } else {
                 Some(1)
             }
         });
         if let Some(index) = split_at {
-            for event in events.split_off(index) {
-                if matches!(event, egui::Event::WindowFocused(_)) {
-                    // Native activation is current machine state. Preserve it
-                    // alongside RawInput.focused even while edits are queued.
-                    events.push(event);
-                } else {
-                    self.deferred_discovery_events.push(event);
-                }
-            }
+            // Logical ownership follows event order even if RawInput.focused
+            // already reports the native window's newer activation state.
+            self.deferred_discovery_events = events.split_off(index);
             if !self.deferred_discovery_events.is_empty() {
                 ctx.request_repaint();
             }
@@ -64,6 +64,38 @@ impl LocalPasteApp {
     /// Whether a discovery query owns keyboard input independently of version dialogs.
     fn discovery_open(&self) -> bool {
         self.command_palette_open || self.paste_picker_open || self.shortcut_help_open
+    }
+
+    /// Whether Enter can transfer a focused query into an available command or result.
+    /// Earlier edits must render first before availability can be evaluated.
+    fn discovery_accepts_enter(
+        &self,
+        ctx: &egui::Context,
+        event: &egui::Event,
+        has_earlier_events: bool,
+    ) -> bool {
+        if !matches!(event, egui::Event::Key {
+            key: egui::Key::Enter, pressed: true, modifiers, ..
+        } if modifiers.is_none())
+        {
+            return false;
+        }
+        if self.command_palette_open
+            && ctx.memory(|memory| memory.has_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID)))
+        {
+            return has_earlier_events || !self.command_palette_actions().is_empty();
+        }
+        if self.paste_picker_open
+            && ctx.memory(|memory| memory.has_focus(egui::Id::new(PASTE_PICKER_INPUT_ID)))
+        {
+            return has_earlier_events
+                || if self.paste_picker_query.trim().is_empty() {
+                    !self.all_pastes.is_empty()
+                } else {
+                    !self.palette_search_results.is_empty()
+                };
+        }
+        false
     }
 
     /// Whether this boundary dismisses the currently open discovery workflow.
@@ -85,7 +117,7 @@ impl LocalPasteApp {
     }
 
     /// Transfer focus before background inputs can consume this slice's query text.
-    pub(in crate::app) fn focus_discovery_input(&self, ctx: &egui::Context) {
+    pub(in crate::app) fn focus_discovery_input(&mut self, ctx: &egui::Context) {
         let input_id = if self.command_palette_open {
             COMMAND_PALETTE_INPUT_ID
         } else if self.paste_picker_open {
@@ -95,6 +127,9 @@ impl LocalPasteApp {
         } else {
             return;
         };
+        if self.cancel_virtual_ime_preedit_if_active(Instant::now()) {
+            self.mark_dirty();
+        }
         ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(input_id)));
     }
 
@@ -257,24 +292,6 @@ fn discovery_escape(event: &egui::Event) -> bool {
         modifiers,
         ..
     } if modifiers.is_none())
-}
-
-/// Current native activation, honoring the final focus event in synthetic/native batches.
-///
-/// # Returns
-/// Whether the native window can receive keyboard focus at this point in the frame.
-pub(in crate::app) fn native_window_has_focus(ctx: &egui::Context) -> bool {
-    ctx.input(|input| {
-        input
-            .events
-            .iter()
-            .rev()
-            .find_map(|event| match event {
-                egui::Event::WindowFocused(focused) => Some(*focused),
-                _ => None,
-            })
-            .unwrap_or(input.focused)
-    })
 }
 
 fn render_shortcut_sections(ui: &mut egui::Ui, query: &str) {

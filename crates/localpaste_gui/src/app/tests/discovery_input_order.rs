@@ -387,3 +387,293 @@ fn queued_dismissal_preserves_paste_before_native_deactivation_and_finishes_blur
     assert!(!harness.app.virtual_editor_state.has_focus);
     assert!(!ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
 }
+
+#[test]
+fn pre_boundary_editor_text_survives_native_deactivation() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.focus_editor_next = true;
+    frame(&mut harness.app, &ctx, vec![]);
+    let end = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(end, end);
+    let _ = run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect()),
+            focused: false,
+            events: vec![
+                egui::Event::Text("before".into()),
+                discovery_chord(false),
+                egui::Event::WindowFocused(false),
+            ],
+            ..Default::default()
+        },
+    );
+    assert_eq!(harness.app.active_snapshot(), "contentbefore");
+    frame(&mut harness.app, &ctx, vec![]);
+    assert_eq!(harness.app.active_snapshot(), "contentbefore");
+    assert!(harness.app.deferred_discovery_events.is_empty());
+    assert!(!harness.app.virtual_editor_state.has_focus);
+}
+
+#[test]
+fn ime_disabled_during_discovery_does_not_poison_editor_typing() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.focus_editor_next = true;
+    frame(&mut harness.app, &ctx, vec![]);
+    let end = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(end, end);
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::Ime(egui::ImeEvent::Enabled),
+            egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
+        ],
+    );
+    assert!(harness.app.virtual_editor_state.ime.preedit_range.is_some());
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
+    );
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Ime(egui::ImeEvent::Disabled)],
+    );
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    frame(&mut harness.app, &ctx, vec![egui::Event::Text("x".into())]);
+    assert!(
+        harness.app.active_snapshot().ends_with('x'),
+        "{}",
+        harness.app.active_snapshot()
+    );
+}
+
+#[test]
+fn palette_enter_keeps_later_text_out_of_query() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.focus_editor_next = true;
+    frame(&mut harness.app, &ctx, vec![]);
+    let end = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(end, end);
+    frame(&mut harness.app, &ctx, vec![discovery_chord(false)]);
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::Text("copy".into()),
+            key_event(egui::Key::Enter, egui::Modifiers::NONE),
+            egui::Event::Text("x".into()),
+        ],
+    );
+    assert_eq!(harness.app.command_palette_query, "copy");
+    assert!(!harness.app.command_palette_open);
+    assert_eq!(harness.app.active_snapshot(), "contentx");
+}
+
+#[test]
+fn ime_disabled_after_native_deactivation_does_not_poison_editor_typing() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.focus_editor_next = true;
+    frame(&mut harness.app, &ctx, vec![]);
+    let end = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(end, end);
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::Ime(egui::ImeEvent::Enabled),
+            egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
+        ],
+    );
+    assert!(harness.app.virtual_editor_state.ime.preedit_range.is_some());
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::WindowFocused(false),
+            egui::Event::Ime(egui::ImeEvent::Disabled),
+        ],
+    );
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::WindowFocused(true)],
+    );
+    harness.app.focus_editor_next = true;
+    frame(&mut harness.app, &ctx, vec![]);
+    frame(&mut harness.app, &ctx, vec![egui::Event::Text("x".into())]);
+    assert!(
+        harness.app.active_snapshot().ends_with('x'),
+        "{}",
+        harness.app.active_snapshot()
+    );
+}
+
+#[test]
+fn editor_paste_before_native_deactivation_is_applied_without_global_creation() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.focus_editor_next = true;
+    frame(&mut harness.app, &ctx, vec![]);
+    let end = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(end, end);
+    while harness.cmd_rx.try_recv().is_ok() {}
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::Paste("before".into()),
+            egui::Event::WindowFocused(false),
+        ],
+    );
+    assert_eq!(harness.app.active_snapshot(), "contentbefore");
+    assert!(!harness.app.virtual_editor_state.has_focus);
+    assert!(!harness
+        .cmd_rx
+        .try_iter()
+        .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })));
+}
+
+#[test]
+fn unmatched_palette_enter_keeps_its_suffix_in_the_query() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    frame(&mut harness.app, &ctx, vec![discovery_chord(false)]);
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Text("no_such_command".into())],
+    );
+    one_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            key_event(egui::Key::Enter, egui::Modifiers::NONE),
+            egui::Event::Text("x".into()),
+        ],
+    );
+    assert!(harness.app.command_palette_open);
+    assert_eq!(harness.app.command_palette_query, "no_such_commandx");
+    assert!(harness.app.deferred_discovery_events.is_empty());
+}
+
+#[test]
+fn correcting_an_unmatched_query_before_enter_accepts_the_corrected_command() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.focus_editor_next = true;
+    frame(&mut harness.app, &ctx, vec![]);
+    let end = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(end, end);
+    frame(&mut harness.app, &ctx, vec![discovery_chord(false)]);
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Text("no_such_command".into())],
+    );
+    frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            command_key_event(egui::Key::A),
+            egui::Event::Text("copy".into()),
+            key_event(egui::Key::Enter, egui::Modifiers::NONE),
+            egui::Event::Text("x".into()),
+        ],
+    );
+    assert_eq!(harness.app.command_palette_query, "copy");
+    assert!(!harness.app.command_palette_open);
+    assert_eq!(harness.app.active_snapshot(), "contentx");
+}
+
+#[test]
+fn canceling_selected_text_ime_on_discovery_preserves_original_text() {
+    for boundary in [
+        key_event(egui::Key::F1, egui::Modifiers::NONE),
+        discovery_chord(false),
+        discovery_chord(true),
+        egui::Event::WindowFocused(false),
+    ] {
+        let (mut harness, _events) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness.app.focus_editor_next = true;
+        frame(&mut harness.app, &ctx, vec![]);
+        let original = harness.app.active_snapshot();
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        harness.app.virtual_editor_state.select_all(len);
+        frame(
+            &mut harness.app,
+            &ctx,
+            vec![
+                egui::Event::Ime(egui::ImeEvent::Enabled),
+                egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
+            ],
+        );
+        assert_eq!(harness.app.active_snapshot(), "に");
+        frame(&mut harness.app, &ctx, vec![boundary]);
+        assert_eq!(harness.app.active_snapshot(), original);
+        assert_eq!(
+            harness.app.virtual_editor_state.selection_range(),
+            Some(0..len)
+        );
+        assert_eq!(harness.app.virtual_editor_history.perf_stats().undo_len, 0);
+    }
+}
+
+#[test]
+fn selected_text_ime_commit_is_one_undoable_edit_after_preedit_updates() {
+    for clear_preedit in [false, true] {
+        for backwards in [false, true] {
+            let (mut harness, _events) = make_app_with_event_tx();
+            let ctx = egui::Context::default();
+            harness.app.focus_editor_next = true;
+            frame(&mut harness.app, &ctx, vec![]);
+            let original = harness.app.active_snapshot();
+            let len = harness.app.virtual_editor_buffer.len_chars();
+            let (cursor, anchor) = if backwards { (0, len) } else { (len, 0) };
+            harness
+                .app
+                .virtual_editor_state
+                .restore_selection(cursor, Some(anchor), len);
+            let mut events = vec![
+                egui::Event::Ime(egui::ImeEvent::Enabled),
+                egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
+                egui::Event::Ime(egui::ImeEvent::Preedit("にほん".into())),
+            ];
+            if clear_preedit {
+                events.push(egui::Event::Ime(egui::ImeEvent::Preedit(String::new())));
+            }
+            events.extend([
+                egui::Event::Ime(egui::ImeEvent::Commit("日本".into())),
+                egui::Event::Ime(egui::ImeEvent::Disabled),
+            ]);
+            frame(&mut harness.app, &ctx, events);
+            assert_eq!(harness.app.active_snapshot(), "日本");
+            assert_eq!(harness.app.virtual_editor_history.perf_stats().undo_len, 1);
+            frame(
+                &mut harness.app,
+                &ctx,
+                vec![command_key_event(egui::Key::Z)],
+            );
+            assert_eq!(harness.app.active_snapshot(), original);
+            assert_eq!(harness.app.virtual_editor_state.cursor(), cursor);
+            assert_eq!(harness.app.virtual_editor_state.anchor(), Some(anchor));
+            let mut redo = primary_command_modifiers();
+            redo.shift = true;
+            frame(&mut harness.app, &ctx, vec![key_event(egui::Key::Z, redo)]);
+            assert_eq!(harness.app.active_snapshot(), "日本");
+            assert_eq!(harness.app.virtual_editor_state.selection_range(), None);
+        }
+    }
+}
