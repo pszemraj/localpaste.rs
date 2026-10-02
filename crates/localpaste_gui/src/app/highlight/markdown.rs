@@ -248,6 +248,47 @@ mod tests {
     }
 
     #[test]
+    fn quoted_fences_end_with_the_containing_blockquote() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        let heading = highlighter
+            .style_for_stack(&[Scope::new("keyword").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~"] {
+            for boundary in ["", "\n", "\r\n"] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                non_empty_colors(&settings, &mut lines, &format!("> {fence}text\n"));
+                // A quoted blank line stays inside the fence, even when the
+                // quote marker's indentation changes on the following line.
+                non_empty_colors(&settings, &mut lines, ">\n");
+                assert!(
+                    non_empty_colors(&settings, &mut lines, "  > **literal code**\n")
+                        .iter()
+                        .all(|(color, _)| *color == code)
+                );
+                if !boundary.is_empty() {
+                    non_empty_colors(&settings, &mut lines, boundary);
+                }
+                assert!(
+                    non_empty_colors(&settings, &mut lines, "# Outside heading\n")
+                        .iter()
+                        .all(|(color, _)| *color == heading),
+                    "{fence:?}, {boundary:?}"
+                );
+                assert!(non_empty_colors(&settings, &mut lines, "Outside prose\n")
+                    .iter()
+                    .all(|(color, _)| *color == prose));
+            }
+        }
+    }
+
+    #[test]
     fn structural_markdown_scopes_use_readable_theme_colors() {
         let settings = settings();
         let syntax = super::super::resolve_syntax(&settings.ps, "markdown");

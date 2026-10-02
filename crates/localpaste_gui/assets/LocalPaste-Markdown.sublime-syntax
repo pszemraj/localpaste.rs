@@ -8,19 +8,24 @@ contexts:
     # Consume escaped punctuation before it can open inline markup. Code
     # contexts deliberately do not include this rule: backslashes are literal.
     - match: '\\[[:punct:]]'
-    # Capture the opening delimiter so shorter or different fences cannot close it.
-    - match: '^[ \t]*(?:>[ \t]*)?(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,})[^`\n]*$'
+    # Capture the quote marker and delimiter independently. A quoted fence
+    # ends before the next unquoted line; an empty marker disables that rule.
+    - match: '^[ \t]*(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,})[^`\n]*$'
       scope: punctuation.definition.raw.markdown.localpaste
       push:
         - meta_scope: markup.raw.block.markdown.localpaste
-        - match: '^[ \t]*(?:>[ \t]*)?(?:(?:[-+*]|\d+[.)])[ \t]+)?\1`*[ \t]*\r?$'
+        - match: '^(?![ \t]*\1)'
+          pop: true
+        - match: '^[ \t]*\1[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?\2`*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
-    - match: '^[ \t]*(?:>[ \t]*)?(?:(?:[-+*]|\d+[.)])[ \t]+)?(~{3,})[^\n]*$'
+    - match: '^[ \t]*(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(~{3,})[^\n]*$'
       scope: punctuation.definition.raw.markdown.localpaste
       push:
         - meta_scope: markup.raw.block.markdown.localpaste
-        - match: '^[ \t]*(?:>[ \t]*)?(?:(?:[-+*]|\d+[.)])[ \t]+)?\1~*[ \t]*\r?$'
+        - match: '^(?![ \t]*\1)'
+          pop: true
+        - match: '^[ \t]*\1[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?\2~*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
     # A definition marker ends at the colon. Its body remains normal prose.
