@@ -15,7 +15,7 @@ Perf validation steps and gates: [gui-perf-protocol.md](gui-perf-protocol.md).
 - `LOCALPASTE_NAV_PROBE_LOG=<path>`: enables per-frame NDJSON navigation probe logging.
 - `LOCALPASTE_NAV_PROBE_SCENARIO=<id>`: labels probe frames for runner assertions.
 - `LOCALPASTE_NAV_PROBE_SEED_TEXT=<text>`, `LOCALPASTE_NAV_PROBE_SEED_NAME=<name>`, `LOCALPASTE_NAV_PROBE_SEED_CURSOR=<char|line:col>`: seed the disposable in-memory probe paste and initial caret.
-- `LOCALPASTE_NAV_PROBE_FOCUS_EDITOR=1`: keeps requesting virtual-editor focus until the probe sees it.
+- `LOCALPASTE_NAV_PROBE_FOCUS_EDITOR=1`: requests initial virtual-editor focus until the active native window acquires it; later focus changes follow normal app behavior.
 - `LOCALPASTE_NAV_PROBE_PYTHON=<path>`: runner/assertion Python executable override.
 - Shared boolean flags above accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
 - Unrecognized shared boolean values emit a warning and are treated as unset/false.

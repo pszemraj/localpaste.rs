@@ -225,6 +225,13 @@ impl LocalPasteApp {
         if self.nav_probe.is_none() {
             return;
         }
+        if ctx.input(|input| input.focused)
+            && ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)))
+        {
+            if let Some(probe) = self.nav_probe.as_mut() {
+                probe.focus_editor_until_acquired = false;
+            }
+        }
         if self
             .nav_probe
             .as_ref()
