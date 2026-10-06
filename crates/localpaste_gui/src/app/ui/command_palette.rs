@@ -230,7 +230,7 @@ impl LocalPasteApp {
                 self.open_palette_selection(id);
             }
             CommandPaletteAction::DeletePaste(id) => {
-                self.send_palette_delete(id);
+                self.send_palette_delete(ctx, id);
             }
             CommandPaletteAction::CopyPasteRaw(id) => {
                 self.queue_palette_copy(id, false);
@@ -469,11 +469,27 @@ impl LocalPasteApp {
         matches.then(|| self.pending_copy_action.take()).flatten()
     }
 
-    /// Sends a delete command for a palette-selected paste and closes palette.
-    pub(crate) fn send_palette_delete(&mut self, id: String) {
+    /// Deletes a picker result while retaining a safe keyboard destination.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context used to restore the originating input's focus.
+    /// - `id`: Paste being deleted.
+    pub(crate) fn send_palette_delete(&mut self, ctx: &egui::Context, id: String) {
+        let deleting_selected = self.selected_id.as_deref() == Some(id.as_str());
         if self.send_delete_paste(id) {
-            self.close_paste_picker();
-            self.focus_editor_next = self.selected_paste.is_some();
+            if deleting_selected {
+                // The editor is about to be removed asynchronously. Keep typing in
+                // the picker rather than accepting edits into that doomed buffer.
+                self.focus_editor_next = false;
+                ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(PASTE_PICKER_INPUT_ID)));
+            } else {
+                self.close_paste_picker();
+                if self.discovery_return_focus.is_some() {
+                    self.restore_discovery_focus(ctx);
+                } else {
+                    self.focus_editor_next = self.selected_paste.is_some();
+                }
+            }
         }
     }
 

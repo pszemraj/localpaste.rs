@@ -307,6 +307,10 @@ fn toolbar_version_opens_close_discovery_and_allow_save_with_blocked_mutation_fe
                 .try_iter()
                 .any(|cmd| matches!(cmd, CoreCmd::UpdatePasteVirtual { .. })));
             for key in [egui::Key::N, egui::Key::Delete] {
+                harness.app.status = None;
+                if let Some(id) = ctx.memory(|memory| memory.focused()) {
+                    ctx.memory_mut(|memory| memory.surrender_focus(id));
+                }
                 run_full_update(&mut harness.app, &ctx, vec![command_key_event(key)]);
                 assert!(harness
                     .app
@@ -327,5 +331,38 @@ fn toolbar_version_opens_close_discovery_and_allow_save_with_blocked_mutation_fe
             );
             assert!(!harness.app.version_overlay_open());
         }
+    }
+}
+
+#[test]
+fn diff_open_focuses_query_once_for_toolbar_and_palette() {
+    for palette in [false, true] {
+        let (mut harness, _event_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        if palette {
+            harness.app.command_palette_open = true;
+            harness.app.command_palette_query = "open diff".into();
+            run_full_update(&mut harness.app, &ctx, vec![]);
+            run_full_update(
+                &mut harness.app,
+                &ctx,
+                vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+        } else {
+            harness.app.open_diff_modal();
+        }
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(DIFF_QUERY_INPUT_ID))));
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Text("beta".into())],
+        );
+        assert_eq!(harness.app.version_ui.diff_query, "beta");
+        assert_eq!(harness.app.active_snapshot(), "content");
+        ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new(DIFF_QUERY_INPUT_ID)));
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        assert!(!ctx.memory(|memory| memory.has_focus(egui::Id::new(DIFF_QUERY_INPUT_ID))));
     }
 }

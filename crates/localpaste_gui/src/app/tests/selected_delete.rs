@@ -176,11 +176,14 @@ fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediat
     set_active_content(&mut selected.app, "palette dirty");
     selected.app.save_status = SaveStatus::Dirty;
 
-    selected.app.send_palette_delete("alpha".to_string());
+    let selected_ctx = egui::Context::default();
+    selected
+        .app
+        .send_palette_delete(&selected_ctx, "alpha".to_string());
 
     assert!(
-        !selected.app.paste_picker_open,
-        "accepted deferred delete should close the palette"
+        selected.app.paste_picker_open,
+        "typing needs a safe destination during deferred deletion"
     );
     match recv_cmd(&selected.cmd_rx) {
         CoreCmd::UpdatePasteVirtual { id, content, .. } => {
@@ -193,13 +196,49 @@ fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediat
         ),
     }
 
+    run_full_update(&mut selected.app, &selected_ctx, vec![]);
+    run_full_update(
+        &mut selected.app,
+        &selected_ctx,
+        vec![egui::Event::Text("keep".into())],
+    );
+    assert_eq!(selected.app.paste_picker_query, "keep");
+    assert_eq!(selected.app.active_snapshot(), "palette dirty");
+    let mut saved = Paste::new("palette dirty".into(), "Alpha".into());
+    saved.id = "alpha".into();
+    selected
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+    assert!(selected
+        .cmd_rx
+        .try_iter()
+        .any(|cmd| matches!(cmd, CoreCmd::DeletePaste { id } if id == "alpha")));
+    selected.app.palette_search_results = vec![test_summary("alpha", "Alpha", None, 7)];
+    selected.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".into(),
+        undo_token: None,
+    });
+    run_full_update(
+        &mut selected.app,
+        &selected_ctx,
+        vec![egui::Event::Text(" typing".into())],
+    );
+    assert_eq!(selected.app.paste_picker_query, "keep typing");
+    assert!(selected
+        .app
+        .palette_search_results
+        .iter()
+        .all(|paste| paste.id != "alpha"));
+
     let mut nonselected = make_app();
     let ctx = egui::Context::default();
     nonselected.app.paste_picker_open = true;
     set_active_content(&mut nonselected.app, "dirty selected");
     nonselected.app.save_status = SaveStatus::Dirty;
 
-    nonselected.app.send_palette_delete("beta".to_string());
+    nonselected
+        .app
+        .send_palette_delete(&egui::Context::default(), "beta".to_string());
 
     match recv_cmd(&nonselected.cmd_rx) {
         CoreCmd::DeletePaste { id } => assert_eq!(id, "beta"),
@@ -223,6 +262,20 @@ fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediat
         vec![egui::Event::Text("R".into())],
     );
     assert_eq!(nonselected.app.active_snapshot(), "Rdirty selected");
+    let mut sidebar = make_app();
+    run_full_update(&mut sidebar.app, &ctx, vec![]);
+    ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(SEARCH_INPUT_ID)));
+    sidebar.app.remember_discovery_focus(&ctx);
+    sidebar.app.open_paste_picker();
+    run_full_update(&mut sidebar.app, &ctx, vec![]);
+    sidebar.app.send_palette_delete(&ctx, "beta".into());
+    run_full_update(
+        &mut sidebar.app,
+        &ctx,
+        vec![egui::Event::Text("search".into())],
+    );
+    assert_eq!(sidebar.app.search_query, "search");
+    assert_eq!(sidebar.app.active_snapshot(), "content");
 }
 
 #[test]

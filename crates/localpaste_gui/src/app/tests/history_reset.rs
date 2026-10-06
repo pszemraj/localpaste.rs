@@ -615,7 +615,9 @@ fn history_reset_in_flight_blocks_create_delete_and_paste_as_new_requests() {
         .app
         .create_new_paste_with_content("hello".to_string());
     harness.app.delete_selected();
-    harness.app.send_palette_delete("alpha".to_string());
+    harness
+        .app
+        .send_palette_delete(&egui::Context::default(), "alpha".to_string());
     harness.app.request_paste_as_new(&ctx);
 
     assert_eq!(harness.app.paste_as_new_pending_frames, 0);

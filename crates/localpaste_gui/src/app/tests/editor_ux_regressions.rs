@@ -462,7 +462,7 @@ fn find_mouse_navigation_retains_query_focus_for_enter_paste_and_escape() {
 
 #[test]
 fn floating_help_buttons_preserve_the_underlying_caret_and_selection() {
-    for button in ["Clear", "Close"] {
+    for button in ["Clear", "Close", "left edge", "right edge"] {
         let (mut harness, _event_tx) = make_app_with_event_tx();
         let ctx = egui::Context::default();
         let text = "editor text below help\n".repeat(80);
@@ -479,11 +479,22 @@ fn floating_help_buttons_preserve_the_underlying_caret_and_selection() {
             review_frame(&mut harness.app, &ctx, vec![]);
         }
         let output = review_frame(&mut harness.app, &ctx, vec![]);
-        review_click(
-            &mut harness.app,
-            &ctx,
-            rendered_label_center(&output, button),
-        );
+        let pos = if button.ends_with("edge") {
+            let window = ctx
+                .memory(|memory| memory.area_rect(egui::Id::new("Keyboard Shortcuts")))
+                .unwrap();
+            egui::pos2(
+                if button == "left edge" {
+                    window.left() + 2.0
+                } else {
+                    window.right() - 2.0
+                },
+                window.center().y,
+            )
+        } else {
+            rendered_label_center(&output, button)
+        };
+        review_click(&mut harness.app, &ctx, pos);
         assert_eq!(
             (
                 harness.app.virtual_editor_state.cursor(),
@@ -502,31 +513,70 @@ fn floating_help_buttons_preserve_the_underlying_caret_and_selection() {
 
 #[test]
 fn shift_click_extends_editor_selection_from_its_existing_anchor() {
-    let (mut harness, _event_tx) = make_app_with_event_tx();
-    let ctx = egui::Context::default();
-    harness
-        .app
-        .reset_virtual_editor("alpha beta gamma\nnext line\n");
-    for _ in 0..3 {
-        review_frame(&mut harness.app, &ctx, vec![]);
-    }
-    let pos = harness.app.virtual_viewport.caret.unwrap().center() + egui::vec2(60.0, 0.0);
-    harness.app.virtual_editor_state.set_cursor(1, 27);
-    for pressed in [true, false] {
-        review_frame(
-            &mut harness.app,
-            &ctx,
-            vec![
-                egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton {
-                    pos,
+    for (cursor, anchor) in [(1, None), (8, Some(2)), (2, Some(8))] {
+        for (drag, shift) in [(false, true), (true, true), (true, false)] {
+            let (mut harness, _event_tx) = make_app_with_event_tx();
+            let ctx = egui::Context::default();
+            let text = "alpha beta gamma\nnext line\n";
+            harness.app.reset_virtual_editor(text);
+            for _ in 0..3 {
+                review_frame(&mut harness.app, &ctx, vec![]);
+            }
+            let pos = harness.app.virtual_viewport.caret.unwrap().center() + egui::vec2(105.0, 0.0);
+            let mut expected_anchor = anchor.unwrap_or(cursor);
+            harness
+                .app
+                .virtual_editor_state
+                .restore_selection(cursor, anchor, text.len());
+            review_frame(
+                &mut harness.app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: if shift {
+                            egui::Modifiers::SHIFT
+                        } else {
+                            egui::Modifiers::NONE
+                        },
+                    },
+                ],
+            );
+            if !shift {
+                expected_anchor = harness.app.virtual_editor_state.cursor();
+            }
+            if drag {
+                // Shift is released before egui recognizes the drag start.
+                review_frame(
+                    &mut harness.app,
+                    &ctx,
+                    vec![egui::Event::PointerMoved(pos + egui::vec2(25.0, 0.0))],
+                );
+            }
+            let end = if drag {
+                pos + egui::vec2(25.0, 0.0)
+            } else {
+                pos
+            };
+            review_frame(
+                &mut harness.app,
+                &ctx,
+                vec![egui::Event::PointerButton {
+                    pos: end,
                     button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::SHIFT,
-                },
-            ],
-        );
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            assert_eq!(
+                harness.app.virtual_editor_state.anchor(),
+                Some(expected_anchor),
+                "cursor={cursor}, anchor={anchor:?}, drag={drag}"
+            );
+            assert!(harness.app.virtual_editor_state.cursor() > expected_anchor);
+        }
     }
-    assert_eq!(harness.app.virtual_editor_state.anchor(), Some(1));
-    assert!(harness.app.virtual_editor_state.cursor() > 1);
 }

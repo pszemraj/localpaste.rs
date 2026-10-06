@@ -603,6 +603,31 @@ mod tests {
                 SidebarCollection::Logs,
             ),
             (
+                "info about the current project",
+                PasteKind::Document,
+                SidebarCollection::Documents,
+            ),
+            (
+                "echo chamber is a common metaphor",
+                PasteKind::Document,
+                SidebarCollection::Documents,
+            ),
+            (
+                "Dear team,\nsudo is required only in some environments.",
+                PasteKind::Document,
+                SidebarCollection::Documents,
+            ),
+            (
+                "```\nhello world this is a plain note\n```",
+                PasteKind::Document,
+                SidebarCollection::Documents,
+            ),
+            (
+                "```text\nhello world\n```",
+                PasteKind::Document,
+                SidebarCollection::Documents,
+            ),
+            (
                 "Python 3.12 is now installed on the workstation.",
                 PasteKind::Document,
                 SidebarCollection::Documents,

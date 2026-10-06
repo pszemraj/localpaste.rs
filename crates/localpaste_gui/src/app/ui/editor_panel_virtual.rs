@@ -47,6 +47,23 @@ impl LocalPasteApp {
             scroll = scroll.vertical_scroll_offset(offset.max(0.0));
         }
 
+        // A gesture belongs to the surface under its press, with that event's
+        // modifiers. Frame modifiers may already have changed by release/drag.
+        let primary_press = ui.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers,
+                } => Some((*pos, *modifiers)),
+                _ => None,
+            })
+        });
+        if primary_press.is_some() {
+            self.virtual_pointer_press_modifiers = None;
+            self.virtual_drag_active = false;
+        }
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         let focus_editor_requested = self.focus_editor_next;
         let editor_shortcuts_unblocked_for_frame = !self.editor_shortcuts_blocked();
@@ -268,23 +285,24 @@ impl LocalPasteApp {
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                         }
-                        let (primary_pressed_on_row, current_pointer_pos) = ui.input(|input| {
-                            let pointer_pos = input
-                                .pointer
-                                .interact_pos()
-                                .or_else(|| input.pointer.latest_pos());
-                            let pressed_on_row =
-                                input.pointer.button_pressed(egui::PointerButton::Primary)
-                                    && response.contains_pointer();
-                            (pressed_on_row, pointer_pos)
+                        let primary_pressed_on_row = primary_press.filter(|(pos, _)| {
+                            rect.contains(*pos) && ui.ctx().layer_id_at(*pos) == Some(ui.layer_id())
                         });
+                        if let Some((_, modifiers)) = primary_pressed_on_row {
+                            self.virtual_pointer_press_modifiers = Some(modifiers);
+                        }
+                        let pointer_pos = primary_pressed_on_row
+                            .map(|(pos, _)| pos)
+                            .or_else(|| response.interact_pointer_pos());
+                        let owns_pointer = pointer_pos
+                            .is_some_and(|pos| ui.ctx().layer_id_at(pos) == Some(ui.layer_id()));
                         if pending_action.is_none()
+                            && owns_pointer
+                            && self.virtual_pointer_press_modifiers.is_some()
                             && (response.drag_started()
                                 || response.clicked()
-                                || primary_pressed_on_row)
+                                || primary_pressed_on_row.is_some())
                         {
-                            let pointer_pos =
-                                response.interact_pointer_pos().or(current_pointer_pos);
                             if let Some(pointer_pos) = pointer_pos {
                                 let clamped_x =
                                     pointer_pos.x.clamp(text_rect.min.x, text_rect.max.x);
@@ -350,7 +368,8 @@ impl LocalPasteApp {
                                 self.virtual_editor_state.move_cursor(
                                     global,
                                     self.virtual_editor_buffer.len_chars(),
-                                    ui.input(|input| input.modifiers.shift),
+                                    self.virtual_pointer_press_modifiers
+                                        .is_some_and(|mods| mods.shift),
                                 );
                                 self.virtual_editor_state.clear_preferred_column();
                                 self.reset_virtual_caret_blink();
@@ -397,10 +416,8 @@ impl LocalPasteApp {
                                 self.reset_virtual_caret_blink();
                             }
                             RowAction::DragStart { global } => {
-                                if !ui.input(|input| input.modifiers.shift) {
-                                    self.virtual_editor_state
-                                        .set_cursor(global, self.virtual_editor_buffer.len_chars());
-                                }
+                                // The press already established the anchor. Preserve
+                                // it when movement first crosses egui's drag threshold.
                                 self.virtual_editor_state.move_cursor(
                                     global,
                                     self.virtual_editor_buffer.len_chars(),
@@ -422,7 +439,9 @@ impl LocalPasteApp {
                     });
                     let pointer_down = ui.input(|input| input.pointer.primary_down());
                     if pointer_down && self.virtual_drag_active {
-                        if let Some(pointer_pos) = pointer_pos {
+                        if let Some(pointer_pos) = pointer_pos
+                            .filter(|pos| ui.ctx().layer_id_at(*pos) == Some(ui.layer_id()))
+                        {
                             let viewport_rect = ui.clip_rect();
                             let target_row = rows
                                 .iter()
@@ -595,14 +614,8 @@ impl LocalPasteApp {
         // Treat any primary click inside the editor viewport as an explicit focus
         // claim, even when no row hit-test action fired (e.g. empty space below
         // the last visual row).
-        let primary_pressed =
-            ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary));
-        let pointer_press_pos = ui.input(|input| {
-            input
-                .pointer
-                .interact_pos()
-                .or_else(|| input.pointer.latest_pos())
-        });
+        let primary_pressed = primary_press.is_some();
+        let pointer_press_pos = primary_press.map(|(pos, _)| pos);
         let clicked_inside_editor = pointer_press_pos
             .map(|pos| {
                 primary_pressed
@@ -614,6 +627,7 @@ impl LocalPasteApp {
             .map(|pos| primary_pressed && scroll_output.inner_rect.contains(pos))
             .unwrap_or(false);
         if clicked_inside_editor {
+            self.virtual_pointer_press_modifiers = primary_press.map(|(_, modifiers)| modifiers);
             self.virtual_editor_state.has_focus = true;
             request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
             egui_focus = true;
@@ -623,13 +637,17 @@ impl LocalPasteApp {
                 self.virtual_editor_state.move_cursor(
                     eof,
                     self.virtual_editor_buffer.len_chars(),
-                    ui.input(|input| input.modifiers.shift),
+                    self.virtual_pointer_press_modifiers
+                        .is_some_and(|mods| mods.shift),
                 );
                 self.virtual_editor_state.clear_preferred_column();
                 self.reset_virtual_click_streak();
                 self.reset_virtual_caret_blink();
                 ui.ctx().request_repaint();
             }
+        }
+        if !ui.input(|input| input.pointer.primary_down()) {
+            self.virtual_pointer_press_modifiers = None;
         }
         let clicked_outside_editor = pointer_press_pos
             .map(|pos| primary_pressed && !interaction_rect.contains(pos))

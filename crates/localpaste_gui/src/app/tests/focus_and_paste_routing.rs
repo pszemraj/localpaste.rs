@@ -12,25 +12,6 @@ fn output_has_request_paste(output: &egui::FullOutput) -> bool {
 }
 
 #[test]
-fn sidebar_arrow_target_is_empty_list_safe() {
-    let mut harness = make_app();
-    harness.app.selected_id = Some("alpha".to_string());
-    harness.app.pastes.clear();
-
-    assert_eq!(harness.app.sidebar_arrow_target_id(1), None);
-    assert_eq!(harness.app.sidebar_arrow_target_id(-1), None);
-
-    harness.app.pastes = vec![
-        test_summary("alpha", "Alpha", None, 1),
-        test_summary("beta", "Beta", None, 1),
-    ];
-    assert_eq!(
-        harness.app.sidebar_arrow_target_id(1),
-        Some("beta".to_string())
-    );
-}
-
-#[test]
 fn focused_virtual_editor_requests_repaint_after_text_input() {
     let mut harness = make_app();
     harness.app.reset_virtual_editor("alpha");
@@ -683,49 +664,6 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
 }
 
 #[test]
-fn delete_shortcut_guard_preserves_editor_delete_ownership_and_global_unfocused_behavior() {
-    struct Case {
-        name: &'static str,
-        wants_keyboard_input: bool,
-        virtual_editor_focus_active: bool,
-        expected: bool,
-    }
-
-    let cases = [
-        Case {
-            name: "text input owns keyboard",
-            wants_keyboard_input: true,
-            virtual_editor_focus_active: false,
-            expected: false,
-        },
-        Case {
-            name: "virtual editor focused",
-            wants_keyboard_input: false,
-            virtual_editor_focus_active: true,
-            expected: false,
-        },
-        Case {
-            name: "non editor context",
-            wants_keyboard_input: false,
-            virtual_editor_focus_active: false,
-            expected: true,
-        },
-    ];
-
-    for case in cases {
-        let harness = make_app();
-        let focus_state = LocalPasteApp::keyboard_focus_state(
-            case.virtual_editor_focus_active,
-            case.wants_keyboard_input,
-        );
-        let actual = harness
-            .app
-            .should_route_delete_selected_shortcut(focus_state);
-        assert_eq!(actual, case.expected, "case '{}'", case.name);
-    }
-}
-
-#[test]
 fn keyboard_overlay_open_excludes_properties_drawer_but_includes_modal_overlays() {
     let mut harness = make_app();
     assert!(!harness.app.keyboard_overlay_open());
@@ -779,7 +717,9 @@ fn version_overlay_blocks_background_destructive_dispatches() {
         .app
         .create_new_paste_with_content("hello".to_string());
     harness.app.delete_selected();
-    harness.app.send_palette_delete("alpha".to_string());
+    harness
+        .app
+        .send_palette_delete(&egui::Context::default(), "alpha".to_string());
 
     assert_eq!(
         harness

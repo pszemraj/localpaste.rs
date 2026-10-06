@@ -747,41 +747,74 @@ fn picker_reopen_selects_the_retained_query_for_replacement() {
 
 #[test]
 fn sidebar_scope_changes_keep_the_loaded_document_and_reading_position() {
-    let (mut harness, _event_tx) = make_app_with_event_tx();
-    harness.app.set_search_query("body-only".into());
-    harness
-        .app
-        .virtual_editor_state
-        .restore_selection(6, Some(2), 7);
-    let epoch = harness.app.active_buffer_epoch;
-    let content = harness.app.active_snapshot();
-    for scope in [SearchScope::Title, SearchScope::Body] {
-        harness.app.set_search_scope(scope);
-        harness.app.apply_event(CoreEvent::SearchResults {
-            collection: crate::backend::SidebarCollection::All,
-            query: "body-only".into(),
-            scope,
-            folder_id: None,
-            language: None,
-            items: if scope == SearchScope::Body {
-                vec![test_summary("alpha", "Alpha", None, 7)]
-            } else {
-                vec![]
-            },
-        });
-        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
-        assert_eq!(harness.app.active_buffer_epoch, epoch);
-        assert_eq!(harness.app.active_snapshot(), content);
-        assert_eq!(
-            (
-                harness.app.virtual_editor_state.cursor(),
-                harness.app.virtual_editor_state.anchor()
-            ),
-            (6, Some(2))
-        );
-        assert!(!harness
-            .cmd_rx
-            .try_iter()
-            .any(|cmd| matches!(cmd, CoreCmd::GetPaste { .. })));
+    for query in ["", "body-only"] {
+        let (mut harness, _event_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        let content = "long document body-only line\n".repeat(180);
+        harness.app.reset_virtual_editor(&content);
+        harness
+            .app
+            .virtual_editor_state
+            .restore_selection(606, Some(602), content.len());
+        harness.app.picker_selection_pin = Some("alpha".into());
+        // The open document is intentionally hidden by the sidebar filter.
+        harness.app.active_language_filter = Some("rust".into());
+        harness.app.all_pastes = vec![test_summary("beta", "Beta", Some("rust"), 7)];
+        harness.app.set_search_query(query.into());
+        harness.app.picker_selection_pin = Some("alpha".into());
+        let render = |app: &mut LocalPasteApp| {
+            run_full_update_with_input(
+                app,
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 900.0),
+                    )),
+                    ..Default::default()
+                },
+            );
+        };
+        for _ in 0..3 {
+            render(&mut harness.app);
+        }
+        harness.app.virtual_pending_scroll_offset_y = Some(700.0);
+        for _ in 0..3 {
+            render(&mut harness.app);
+        }
+        let offset = harness.app.virtual_viewport.offset_y;
+        assert!(offset > 600.0);
+        let epoch = harness.app.active_buffer_epoch;
+        for scope in [SearchScope::Title, SearchScope::Body] {
+            harness.app.set_search_scope(scope);
+            if !query.is_empty() {
+                harness.app.apply_event(CoreEvent::SearchResults {
+                    collection: crate::backend::SidebarCollection::All,
+                    query: query.into(),
+                    scope,
+                    folder_id: None,
+                    language: Some("rust".into()),
+                    items: vec![],
+                });
+            }
+            for _ in 0..3 {
+                render(&mut harness.app);
+            }
+            assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+            assert_eq!(harness.app.active_buffer_epoch, epoch);
+            assert_eq!(harness.app.active_snapshot(), content);
+            assert_eq!(
+                (
+                    harness.app.virtual_editor_state.cursor(),
+                    harness.app.virtual_editor_state.anchor()
+                ),
+                (606, Some(602))
+            );
+            assert!((harness.app.virtual_viewport.offset_y - offset).abs() < 1.0);
+            assert!(!harness
+                .cmd_rx
+                .try_iter()
+                .any(|cmd| matches!(cmd, CoreCmd::GetPaste { .. })));
+        }
     }
 }

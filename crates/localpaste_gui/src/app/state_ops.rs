@@ -347,6 +347,11 @@ impl LocalPasteApp {
                 let was_selected = self.selected_id.as_deref() == Some(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
+                self.palette_search_results.retain(|paste| paste.id != id);
+                if self.paste_picker_open {
+                    self.palette_search_last_sent.clear();
+                    self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+                }
                 self.clear_pending_palette_copy_for(id.as_str());
                 self.clear_picker_selection_context_for(id.as_str());
                 if was_selected {

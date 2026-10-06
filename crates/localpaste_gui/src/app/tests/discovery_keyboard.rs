@@ -344,3 +344,101 @@ fn failed_picker_search_stays_visible_until_explicit_retry() {
     assert!(harness.app.palette_search_error.is_none());
     assert_eq!(harness.app.palette_search_results[0].id, "found");
 }
+
+#[test]
+fn sidebar_arrow_target_is_empty_list_safe() {
+    let mut harness = make_app();
+    harness.app.selected_id = Some("alpha".to_string());
+    harness.app.pastes.clear();
+
+    assert_eq!(harness.app.sidebar_arrow_target_id(1), None);
+    assert_eq!(harness.app.sidebar_arrow_target_id(-1), None);
+
+    harness.app.pastes = vec![
+        test_summary("alpha", "Alpha", None, 1),
+        test_summary("beta", "Beta", None, 1),
+    ];
+    assert_eq!(
+        harness.app.sidebar_arrow_target_id(1),
+        Some("beta".to_string())
+    );
+    for selected in [None, Some("hidden".to_string())] {
+        harness.app.selected_id = selected;
+        for direction in [-1, 1] {
+            assert_eq!(
+                harness.app.sidebar_arrow_target_id(direction),
+                Some("alpha".into())
+            );
+        }
+    }
+    harness.app.selected_id = Some("beta".into());
+    assert_eq!(harness.app.sidebar_arrow_target_id(1), None);
+    assert_eq!(
+        harness.app.sidebar_arrow_target_id(-1),
+        Some("alpha".into())
+    );
+}
+
+#[test]
+fn delete_shortcut_guard_preserves_editor_delete_ownership_and_global_unfocused_behavior() {
+    struct Case {
+        name: &'static str,
+        wants_keyboard_input: bool,
+        virtual_editor_focus_active: bool,
+        expected: bool,
+    }
+
+    let cases = [
+        Case {
+            name: "text input owns keyboard",
+            wants_keyboard_input: true,
+            virtual_editor_focus_active: false,
+            expected: false,
+        },
+        Case {
+            name: "virtual editor focused",
+            wants_keyboard_input: false,
+            virtual_editor_focus_active: true,
+            expected: false,
+        },
+        Case {
+            name: "non editor context",
+            wants_keyboard_input: false,
+            virtual_editor_focus_active: false,
+            expected: true,
+        },
+    ];
+
+    for case in cases {
+        let harness = make_app();
+        let focus_state = LocalPasteApp::keyboard_focus_state(
+            case.virtual_editor_focus_active,
+            case.wants_keyboard_input,
+        );
+        let actual = harness
+            .app
+            .should_route_delete_selected_shortcut(focus_state);
+        assert_eq!(actual, case.expected, "case '{}'", case.name);
+    }
+    for focused in [false, true] {
+        let (mut harness, _event_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness.app.version_ui.history_reset_in_flight_paste_id = Some("alpha".into());
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        if focused {
+            ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(SEARCH_INPUT_ID)));
+            run_full_update(&mut harness.app, &ctx, vec![]);
+        }
+        harness.app.status = None;
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![command_key_event(egui::Key::Delete)],
+        );
+        assert_eq!(harness.app.status.is_some(), !focused);
+        assert!(!harness
+            .cmd_rx
+            .try_iter()
+            .any(|cmd| matches!(cmd, CoreCmd::DeletePaste { .. })));
+    }
+}

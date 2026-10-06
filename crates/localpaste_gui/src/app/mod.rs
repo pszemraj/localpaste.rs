@@ -129,6 +129,8 @@ pub(crate) struct LocalPasteApp {
     virtual_line_scratch: String,
     virtual_caret_phase_start: Instant,
     virtual_drag_active: bool,
+    /// Modifiers of the primary press accepted by the editor for the current gesture.
+    virtual_pointer_press_modifiers: Option<egui::Modifiers>,
     virtual_viewport_height: f32,
     virtual_line_height: f32,
     virtual_wrap_width: f32,
@@ -577,11 +579,7 @@ impl eframe::App for LocalPasteApp {
                     self.save_metadata_now();
                 }
                 RuntimeShortcutAction::DeleteSelected => {
-                    if mutation_shortcut_blocked.is_some() {
-                        self.set_mutation_shortcut_blocked_status();
-                    } else {
-                        delete_selected_shortcut_pressed = true;
-                    }
+                    delete_selected_shortcut_pressed = true;
                 }
                 RuntimeShortcutAction::FocusSearch => {
                     self.search_focus_requested = true;

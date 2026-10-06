@@ -22,7 +22,10 @@ impl LocalPasteApp {
         if direction == 0 {
             return None;
         }
-        let current = self.selected_index().unwrap_or(0) as i32;
+        let Some(current) = self.selected_index() else {
+            return self.pastes.first().map(|paste| paste.id.clone());
+        };
+        let current = current as i32;
         let max_index = self.pastes.len().checked_sub(1)? as i32;
         let next = (current + direction).clamp(0, max_index) as usize;
         if self.selected_index() == Some(next) {

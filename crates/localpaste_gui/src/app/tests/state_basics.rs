@@ -441,7 +441,9 @@ fn delete_actions_keep_lock_until_delete_event_matrix() {
 
         match action {
             DeleteAction::Selected => harness.app.delete_selected(),
-            DeleteAction::Palette => harness.app.send_palette_delete("alpha".to_string()),
+            DeleteAction::Palette => harness
+                .app
+                .send_palette_delete(&egui::Context::default(), "alpha".to_string()),
         }
         assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
 
@@ -577,7 +579,7 @@ fn create_new_paste_send_failure_shows_error_status() {
 fn delete_send_failure_keeps_lock_and_shows_error_status_matrix() {
     assert_delete_send_failure_keeps_lock_and_status(|app| app.delete_selected());
     assert_delete_send_failure_keeps_lock_and_status(|app| {
-        app.send_palette_delete("alpha".to_string())
+        app.send_palette_delete(&egui::Context::default(), "alpha".to_string())
     });
 }
 

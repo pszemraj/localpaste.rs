@@ -61,8 +61,13 @@ impl LocalPasteApp {
 
     /// Invalidate old query context and dispatch or restore the current projection.
     pub(super) fn on_primary_filter_changed(&mut self) {
-        self.search_last_sent.clear();
         self.picker_selection_pin = None;
+        self.refresh_search_projection();
+    }
+
+    /// Refreshes search rows after filters change, respecting a retained document pin.
+    fn refresh_search_projection(&mut self) {
+        self.search_last_sent.clear();
         if self.search_query.trim().is_empty() {
             self.recompute_visible_pastes();
             self.ensure_selection_after_list_update();
@@ -208,9 +213,9 @@ impl LocalPasteApp {
             let selection = self.selected_id.clone();
             self.search_scope = scope;
             self.pastes.clear();
-            self.on_primary_filter_changed();
-            // Refining search fields changes rows, not the document being read.
+            // Install the pin before an empty query can recompute and select rows.
             self.picker_selection_pin = selection;
+            self.refresh_search_projection();
         }
     }
 

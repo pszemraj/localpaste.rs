@@ -96,6 +96,7 @@ impl LocalPasteApp {
             virtual_line_scratch: String::new(),
             virtual_caret_phase_start: Instant::now(),
             virtual_drag_active: false,
+            virtual_pointer_press_modifiers: None,
             virtual_viewport_height: 0.0,
             virtual_line_height: 1.0,
             virtual_wrap_width: 0.0,

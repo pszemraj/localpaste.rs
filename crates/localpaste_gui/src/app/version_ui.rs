@@ -75,6 +75,8 @@ pub(crate) struct VersionUiState {
     pub(super) history_preview_lines: EditorLineIndex,
     pub(super) diff_modal_open: bool,
     pub(super) diff_query: String,
+    /// One-shot query focus request, retained until the diff window is rendered.
+    pub(super) diff_query_focus_requested: bool,
     pub(super) diff_target_id: Option<String>,
     pub(super) diff_target_paste: Option<Paste>,
     pub(super) diff_loading_target: bool,
@@ -185,6 +187,7 @@ impl VersionUiState {
     /// Clears diff-target selection state.
     pub(super) fn clear_diff_selection(&mut self) {
         self.diff_query.clear();
+        self.diff_query_focus_requested = false;
         self.clear_diff_target_state();
     }
 
@@ -351,6 +354,7 @@ impl LocalPasteApp {
         }
         self.version_ui.diff_modal_open = true;
         self.version_ui.clear_diff_selection();
+        self.version_ui.diff_query_focus_requested = true;
     }
 
     /// Requests version metadata rows for the currently selected paste.
