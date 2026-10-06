@@ -216,15 +216,25 @@ fn canonicalization_matrix_handles_aliases() {
 
 #[test]
 fn json_lines_keep_format_identity_through_detection_and_export() {
-    let content = "{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n";
-    assert_eq!(heuristic::detect(content).as_deref(), Some("jsonl"));
-    let language = detect_language(content).unwrap();
-    assert_eq!(language, "jsonl");
-    assert_eq!(super::preferred_extension(Some(&language)), "jsonl");
-    assert_eq!(
-        crate::semantic::derive(content, Some(&language)).kind,
-        crate::semantic::PasteKind::Config
-    );
+    for content in [
+        "{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n",
+        "{\"a\":1}\n{\"a\":2}\n",
+    ] {
+        assert_eq!(heuristic::detect(content).as_deref(), Some("jsonl"));
+        for label in ["json", "jsonl"] {
+            assert_eq!(
+                refine_magika_label(label, content).as_deref(),
+                Some("jsonl")
+            );
+        }
+        let language = detect_language(content).unwrap();
+        assert_eq!(language, "jsonl");
+        assert_eq!(super::preferred_extension(Some(&language)), "jsonl");
+        assert_eq!(
+            crate::semantic::derive(content, Some(&language)).kind,
+            crate::semantic::PasteKind::Config
+        );
+    }
     assert_eq!(
         heuristic::detect("{\n\"name\":\"Ada\"\n}").as_deref(),
         Some("json")

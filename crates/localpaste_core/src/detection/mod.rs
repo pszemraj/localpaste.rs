@@ -158,10 +158,14 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return None;
     }
 
-    // Magika can label even one ordinary JSON object as jsonl. Preserve the
-    // record format only when the sample establishes multiple valid records.
-    if label == "jsonl" && !heuristic::looks_like_json_lines(content) {
-        return Some("json".to_string());
+    // Magika uses either JSON label for both single values and record streams.
+    // Establish the record format from multiple valid lines in the sample.
+    if matches!(label, "json" | "jsonl") {
+        return Some(if heuristic::looks_like_json_lines(content) {
+            "jsonl".to_string()
+        } else {
+            "json".to_string()
+        });
     }
 
     Some(label.to_string())

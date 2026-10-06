@@ -83,7 +83,7 @@ Untyped prose needs at least three whitespace-separated words, at least 70% lett
 
 ## Text Export Extensions
 
-[`preferred_extension`](../crates/localpaste_core/src/detection/extensions.rs) centrally maps recognized text formats to conventional extensions, independently of grammar support. CSV and TSV export as `.csv` and `.tsv`; JSON Lines keeps its `jsonl` label and exports as `.jsonl` while sharing JSON highlighting. Document aliases resolve to `.md`, `.rst`, or `.tex`. Unsupported highlighting does not force `.txt`; unknown formats still use `.txt`. Export writes the current editor content unchanged.
+[`preferred_extension`](../crates/localpaste_core/src/detection/extensions.rs) centrally maps recognized text formats to conventional extensions, independently of grammar support. CSV and TSV export as `.csv` and `.tsv`; JSON Lines keeps its `jsonl` label and exports as `.jsonl` while sharing JSON highlighting. Both Magika JSON labels are refined by checking for multiple valid line records. Document aliases resolve to `.md`, `.rst`, or `.tex`. Unsupported highlighting does not force `.txt`; unknown formats still use `.txt`. Export writes the current editor content unchanged.
 
 ## GUI Highlight Resolution
 
