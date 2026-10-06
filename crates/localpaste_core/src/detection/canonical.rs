@@ -143,7 +143,6 @@ pub fn canonicalize(language: &str) -> String {
         "bash" | "sh" | "zsh" => "shell".to_string(),
         "pwsh" | "ps1" => "powershell".to_string(),
         "yml" => "yaml".to_string(),
-        "jsonl" => "json".to_string(),
         "js" => "javascript".to_string(),
         "ts" => "typescript".to_string(),
         "md" => "markdown".to_string(),

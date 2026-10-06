@@ -61,7 +61,7 @@ pub fn derive(content: &str, language: Option<&str>) -> DerivedMeta {
         return DerivedMeta::default();
     }
 
-    let kind = classify_kind(sample, language);
+    let kind = classify_kind(content, language);
     let terms = extract_terms(sample, language);
     let handle = extract_definition_handle(sample, language)
         .or_else(|| extract_command_handle(sample))
@@ -110,9 +110,31 @@ pub fn is_document_language(language: Option<&str>) -> bool {
     )
 }
 
-fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
+fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
+    let sample = sample_prefix(content);
     let lang = canonicalize(language.unwrap_or_default().trim());
     let lower = sample.to_ascii_lowercase();
+
+    // Highlight language describes the wrapper; retrieval kind describes what
+    // the standalone fence contains. Prose plus fences remains a document.
+    if lang == "markdown" {
+        if let Some((info, body)) = crate::detection::standalone_fenced_block(content) {
+            let inner_language = canonicalize(info);
+            if !is_document_language(Some(&inner_language)) {
+                let detected = inner_language
+                    .is_empty()
+                    .then(|| crate::detection::detect_language(body))
+                    .flatten();
+                return match classify_kind(
+                    body,
+                    detected.as_deref().or(Some(inner_language.as_str())),
+                ) {
+                    PasteKind::Document | PasteKind::Other => PasteKind::Code,
+                    kind => kind,
+                };
+            }
+        }
+    }
 
     if is_document_language(language) {
         return PasteKind::Document;
@@ -154,7 +176,7 @@ fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
 
     if matches!(
         lang.as_str(),
-        "json" | "yaml" | "toml" | "xml" | "dockerfile" | "makefile"
+        "json" | "jsonl" | "yaml" | "toml" | "xml" | "dockerfile" | "makefile"
     ) {
         return PasteKind::Config;
     }
@@ -196,7 +218,7 @@ fn classify_kind(sample: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Config;
     }
 
-    if starts_with_log_level(sample) {
+    if starts_with_log_level(sample) || crate::detection::looks_like_rust_panic(sample) {
         return PasteKind::Log;
     }
 
@@ -219,8 +241,13 @@ fn starts_with_log_level(sample: &str) -> bool {
     else {
         return false;
     };
-    let Some((level, _)) = first_line.split_once(':') else {
-        return false;
+    let level = if let Some(bracketed) = first_line.strip_prefix('[') {
+        let Some((level, _)) = bracketed.split_once(']') else {
+            return false;
+        };
+        level
+    } else {
+        first_line.split([':', ' ', '\t']).next().unwrap_or("")
     };
     let lower = level.to_ascii_lowercase();
     (level == lower || level == level.to_ascii_uppercase())
@@ -357,8 +384,29 @@ fn extract_definition_handle_from_line(line: &str, language: Option<&str>) -> Op
 
 fn extract_command_handle(sample: &str) -> Option<String> {
     const COMMANDS: &[&str] = &[
-        "brew", "cargo", "git", "docker", "kubectl", "python", "pytest", "uv", "pip", "npm",
-        "pnpm", "yarn", "make", "just", "curl", "wget", "ssh", "torchrun", "ls",
+        "brew",
+        "cargo",
+        "git",
+        "docker",
+        "kubectl",
+        "python",
+        "pytest",
+        "uv",
+        "pip",
+        "npm",
+        "pnpm",
+        "yarn",
+        "make",
+        "just",
+        "curl",
+        "wget",
+        "ssh",
+        "torchrun",
+        "ls",
+        "sudo",
+        "echo",
+        "printf",
+        "systemctl",
     ];
 
     for line in sample.lines() {
@@ -371,16 +419,15 @@ fn extract_command_handle(sample: &str) -> Option<String> {
         let Some(cmd) = parts.first().map(|part| part.to_ascii_lowercase()) else {
             continue;
         };
-        if !COMMANDS.iter().any(|known| *known == cmd) {
+        if parts[0] != cmd || !COMMANDS.iter().any(|known| *known == cmd) {
             continue;
         }
-        // `make` and `just` also begin ordinary sentences. Only treat their
-        // lowercase recipe invocation as a command, not a sentence with an article.
+        // Commands use their case-sensitive executable name. `make` and `just`
+        // also begin ordinary lowercase sentences with an article.
         if matches!(cmd.as_str(), "make" | "just")
-            && (parts[0] != cmd
-                || parts
-                    .get(1)
-                    .is_some_and(|part| ["a", "an", "the"].contains(part)))
+            && parts
+                .get(1)
+                .is_some_and(|part| ["a", "an", "the"].contains(part))
         {
             continue;
         }
@@ -620,6 +667,32 @@ mod tests {
         );
         assert_eq!(derive("", None).kind, PasteKind::Other);
         assert_eq!(derive("fn main() {}", Some("rust")).kind, PasteKind::Code);
+        for (content, expected) in [
+            ("```python\nprint('hello')\n```", PasteKind::Code),
+            ("```json\n{\"name\":\"Ada\"}\n```", PasteKind::Config),
+            ("\n  ~~~sh\necho hello world\n  ~~~~\n", PasteKind::Code),
+            ("```\necho hello world\n```", PasteKind::Code),
+            ("```text\nINFO Starting the server\n```", PasteKind::Log),
+            ("```markdown\n# Read me\n```", PasteKind::Document),
+            (
+                "Notes before the example\n```python\nprint('hello')\n```",
+                PasteKind::Document,
+            ),
+            (
+                "```python\nprint('hello')\n```\nNotes after the example",
+                PasteKind::Document,
+            ),
+            ("```python\nprint('hello')", PasteKind::Document),
+            ("```python\nprint('hello')\n~~~", PasteKind::Document),
+        ] {
+            assert_eq!(
+                derive(content, Some("markdown")).kind,
+                expected,
+                "{content}"
+            );
+        }
+        let large_fence = format!("```python\n{}\n```", "print('hello')\n".repeat(5_000));
+        assert_eq!(derive(&large_fence, Some("markdown")).kind, PasteKind::Code);
     }
 
     #[test]
@@ -635,6 +708,14 @@ mod tests {
             ("brew install localpaste", PasteKind::Code),
             ("just build", PasteKind::Code),
             ("make test", PasteKind::Code),
+            ("sudo systemctl restart nginx", PasteKind::Code),
+            ("echo hello world", PasteKind::Code),
+            ("printf hello world", PasteKind::Code),
+            ("INFO Starting the server", PasteKind::Log),
+            ("[INFO] Server started successfully", PasteKind::Log),
+            ("info Starting the server", PasteKind::Log),
+            ("[WARN] Retry in thirty seconds", PasteKind::Log),
+            ("thread 'main' panicked at src/main.rs:12:5", PasteKind::Log),
             ("error: unable to open database", PasteKind::Log),
             ("WARNING: database connection unavailable", PasteKind::Log),
             ("debug: true\nname: foo", PasteKind::Config),
@@ -650,6 +731,19 @@ mod tests {
             ("Just a reminder to save your work.", PasteKind::Document),
             ("just a reminder to save your work", PasteKind::Document),
             ("Make a note of the deployment window.", PasteKind::Document),
+            (
+                "Python 3.12 is now installed on the workstation.",
+                PasteKind::Document,
+            ),
+            (
+                "Git is down for scheduled maintenance.",
+                PasteKind::Document,
+            ),
+            (
+                "Brew is ready for the next deployment.",
+                PasteKind::Document,
+            ),
+            ("Ls lists the files in this folder.", PasteKind::Document),
             ("first name,age\nAda Lovelace,37", PasteKind::Other),
             ("name;age\nAda;37", PasteKind::Other),
             ("name\tage\nAda Lovelace\t37", PasteKind::Other),

@@ -675,6 +675,7 @@ mod resolver_tests {
     fn syntect_hint_uses_canonical_labels() {
         assert_eq!(syntect_language_hint(" csharp "), "cs");
         assert_eq!(syntect_language_hint("bash"), "shell");
+        assert_eq!(syntect_language_hint("jsonl"), "json");
         assert_eq!(syntect_language_hint(""), "text");
     }
 

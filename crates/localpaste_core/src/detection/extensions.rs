@@ -8,14 +8,8 @@
 /// # Returns
 /// A filename extension without the dot; unknown formats use `txt`.
 pub fn preferred_extension(language: Option<&str>) -> &'static str {
-    let raw = language.unwrap_or_default().trim().to_ascii_lowercase();
-    let canonical = super::canonical::canonicalize(&raw);
-    let label = if raw == "jsonl" {
-        raw.as_str()
-    } else {
-        canonical.as_str()
-    };
-    match label {
+    let canonical = super::canonical::canonicalize(language.unwrap_or_default());
+    match canonical.as_str() {
         "aidl" => "aidl",
         "appleplist" => "plist",
         "asm" => "s",

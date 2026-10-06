@@ -63,40 +63,91 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 }
 
 #[test]
-fn semantic_kinds_rebuild_from_version_four_and_survive_restart() {
+fn semantic_kinds_rebuild_from_version_five_and_survive_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
     let cases = [
         (
             "VGhpcyBpcyBhIHNlY3JldCB0b2tlbg==",
+            "text",
             PasteKind::Document,
             PasteKind::Other,
         ),
-        ("debug: true\nname: foo", PasteKind::Log, PasteKind::Config),
+        (
+            "debug: true\nname: foo",
+            "text",
+            PasteKind::Log,
+            PasteKind::Config,
+        ),
         (
             "Warning: do not touch the deployment settings.",
+            "text",
             PasteKind::Log,
             PasteKind::Document,
         ),
         (
             "Hello, Bob\nSee you soon, Alice",
+            "text",
             PasteKind::Other,
             PasteKind::Document,
         ),
         (
             "Just a reminder to save your work.",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "```python\nprint('hello')\n```",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "```json\n{\"a\":1}\n```",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Config,
+        ),
+        (
+            "sudo systemctl restart nginx",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "INFO Starting the server",
+            "text",
+            PasteKind::Document,
+            PasteKind::Log,
+        ),
+        (
+            "[INFO] Server started successfully",
+            "text",
+            PasteKind::Document,
+            PasteKind::Log,
+        ),
+        (
+            "thread 'main' panicked at src/main.rs:12:5",
+            "text",
+            PasteKind::Document,
+            PasteKind::Log,
+        ),
+        (
+            "Git is down for scheduled maintenance.",
+            "text",
             PasteKind::Code,
             PasteKind::Document,
         ),
     ];
     let pastes: Vec<_> = cases
         .iter()
-        .map(|(content, _, _)| {
+        .map(|(content, language, _, _)| {
             Paste::new_with_language(
                 (*content).into(),
                 "review notes".into(),
-                Some("text".into()),
+                Some((*language).into()),
                 true,
             )
         })
@@ -107,7 +158,7 @@ fn semantic_kinds_rebuild_from_version_four_and_survive_restart() {
     let txn = db.db.begin_write().unwrap();
     {
         let mut metas = txn.open_table(PASTES_META).unwrap();
-        for (paste, (_, stale_kind, _)) in pastes.iter().zip(&cases) {
+        for (paste, (_, _, stale_kind, _)) in pastes.iter().zip(&cases) {
             let mut stale = PasteMeta::from(paste);
             stale.derived.kind = *stale_kind;
             metas
@@ -122,7 +173,7 @@ fn semantic_kinds_rebuild_from_version_four_and_survive_restart() {
         .unwrap()
         .insert(
             META_SCHEMA_VERSION_KEY,
-            bincode::serialize(&4_u64).unwrap().as_slice(),
+            bincode::serialize(&5_u64).unwrap().as_slice(),
         )
         .unwrap();
     txn.commit().unwrap();
@@ -130,8 +181,8 @@ fn semantic_kinds_rebuild_from_version_four_and_survive_restart() {
 
     for _ in 0..2 {
         let reopened = open_test_database(path.to_str().unwrap());
-        let metas = reopened.pastes.list_meta(10, None).unwrap();
-        for (paste, (_, _, expected)) in pastes.iter().zip(&cases) {
+        let metas = reopened.pastes.list_meta(100, None).unwrap();
+        for (paste, (_, _, _, expected)) in pastes.iter().zip(&cases) {
             assert_eq!(
                 metas
                     .iter()

@@ -18,6 +18,9 @@ pub fn detect_language(content: &str) -> Option<String> {
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
     }
+    if looks_like_rust_panic(content) {
+        return Some("log".to_string());
+    }
 
     #[cfg(feature = "magika")]
     {
@@ -34,6 +37,17 @@ pub fn detect_language(content: &str) -> Option<String> {
         .filter(|label| !label.is_empty() && label != "text")
 }
 
+/// Recognize Rust's runtime panic header, rather than prose mentioning a panic.
+///
+/// # Returns
+/// Whether a sampled line has the runtime's thread and source-location prefix.
+pub(crate) fn looks_like_rust_panic(content: &str) -> bool {
+    content.lines().take(512).any(|line| {
+        let line = line.trim_start();
+        line.starts_with("thread '") && line.contains("' panicked at ")
+    })
+}
+
 #[derive(Clone, Copy)]
 struct MarkdownFence {
     marker: char,
@@ -48,28 +62,47 @@ fn markdown_fence_override_applies(content: &str) -> bool {
 }
 
 fn is_standalone_fenced_markdown_block(content: &str) -> bool {
-    let lines: Vec<&str> = content.lines().collect();
-    let Some((start_idx, fence)) = lines.iter().enumerate().find_map(|(idx, line)| {
-        (!line.trim().is_empty())
-            .then(|| parse_markdown_fence_opener(line).map(|fence| (idx, fence)))
-            .flatten()
-    }) else {
-        return false;
-    };
+    standalone_fenced_block(content).is_some()
+}
 
-    let Some(end_idx) = lines
-        .iter()
-        .enumerate()
-        .skip(start_idx.saturating_add(1))
-        .find_map(|(idx, line)| line_closes_markdown_fence(line, fence).then_some(idx))
-    else {
-        return false;
+/// Extract the info word and body when the entire paste is one fenced block.
+///
+/// The borrowed body excludes fence delimiters; surrounding prose prevents a
+/// match so real Markdown documents retain their document classification.
+///
+/// # Returns
+/// The optional info word and body when matching fences surround the entire paste.
+pub(crate) fn standalone_fenced_block(content: &str) -> Option<(&str, &str)> {
+    let trimmed = content.trim_end();
+    let mut lines = trimmed.split_inclusive('\n');
+    let mut offset = 0;
+    let first = loop {
+        let line = lines.next()?;
+        if !line.trim().is_empty() {
+            break line;
+        }
+        offset += line.len();
     };
-
-    lines
-        .iter()
-        .skip(end_idx.saturating_add(1))
-        .all(|line| line.trim().is_empty())
+    let fence = parse_markdown_fence_opener(first)?;
+    let opener = first.trim();
+    let info = opener
+        .get(fence.len..)?
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    let body_start = offset + first.len();
+    offset = body_start;
+    for line in lines {
+        if line_closes_markdown_fence(line, fence) {
+            return trimmed
+                .get(offset + line.len()..)?
+                .trim()
+                .is_empty()
+                .then_some((info, trimmed.get(body_start..offset)?));
+        }
+        offset += line.len();
+    }
+    None
 }
 
 fn parse_markdown_fence_opener(line: &str) -> Option<MarkdownFence> {
@@ -121,7 +154,47 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return Some("css".to_string());
     }
 
+    if label == "gitattributes" && !looks_like_gitattributes(content) {
+        return None;
+    }
+
+    // Magika can label even one ordinary JSON object as jsonl. Preserve the
+    // record format only when the sample establishes multiple valid records.
+    if label == "jsonl" && !heuristic::looks_like_json_lines(content) {
+        return Some("json".to_string());
+    }
+
     Some(label.to_string())
+}
+
+/// Require an attribute assignment or a path pattern before trusting Magika's
+/// gitattributes label, which otherwise also matches short whitespace prose.
+#[cfg(any(feature = "magika", test))]
+fn looks_like_gitattributes(content: &str) -> bool {
+    content.lines().take(512).any(|line| {
+        let mut parts = line.split_whitespace();
+        let Some(pattern) = parts.next() else {
+            return false;
+        };
+        if pattern.starts_with('#') {
+            return false;
+        }
+        let path_pattern = pattern.contains(['*', '?', '/', '.']);
+        let attributes: Vec<_> = parts.collect();
+        !attributes.is_empty()
+            && attributes.iter().all(|attribute| {
+                attribute.contains('=')
+                    || attribute.starts_with(['-', '!'])
+                    || matches!(
+                        *attribute,
+                        "text" | "binary" | "diff" | "merge" | "export-ignore"
+                    )
+                    || (path_pattern
+                        && attribute
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')))
+            })
+    })
 }
 
 /// Heuristically checks whether content resembles YAML mapping/sequence syntax.

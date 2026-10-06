@@ -2376,6 +2376,7 @@ dependencies = [
  "rand",
  "redb",
  "serde",
+ "serde_json",
  "similar",
  "tempfile",
  "thiserror 1.0.69",

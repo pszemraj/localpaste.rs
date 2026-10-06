@@ -2,6 +2,7 @@
 
 use super::canonical::canonicalize;
 use super::detect_language;
+use super::heuristic;
 use super::looks_like_flat_config_yaml;
 use super::looks_like_yaml;
 use super::refine_magika_label;
@@ -206,9 +207,61 @@ fn canonicalization_matrix_handles_aliases() {
         ("scss", "scss"),
         ("sass", "sass"),
         ("rust", "rust"),
+        ("JSONL", "jsonl"),
     ];
     for (input, expected) in cases {
         assert_eq!(canonicalize(input), expected, "input: {input}");
+    }
+}
+
+#[test]
+fn json_lines_keep_format_identity_through_detection_and_export() {
+    let content = "{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n";
+    assert_eq!(heuristic::detect(content).as_deref(), Some("jsonl"));
+    let language = detect_language(content).unwrap();
+    assert_eq!(language, "jsonl");
+    assert_eq!(super::preferred_extension(Some(&language)), "jsonl");
+    assert_eq!(
+        crate::semantic::derive(content, Some(&language)).kind,
+        crate::semantic::PasteKind::Config
+    );
+    assert_eq!(
+        heuristic::detect("{\n\"name\":\"Ada\"\n}").as_deref(),
+        Some("json")
+    );
+    for malformed in [
+        "{\"name\":\"Ada\"}\n{broken}",
+        "{\"name\":\"Ada\"}\n42",
+        "{\"name\":\"Ada\"}\nnot a record",
+    ] {
+        assert_ne!(heuristic::detect(malformed).as_deref(), Some("jsonl"));
+    }
+}
+
+#[test]
+fn gitattributes_refinement_rejects_short_clipboard_prose() {
+    for content in [
+        "clipboard review text",
+        "Hi team please review this",
+        "Python 3.12 is now installed",
+    ] {
+        assert_eq!(
+            refine_magika_label("gitattributes", content),
+            None,
+            "{content}"
+        );
+    }
+    for content in [
+        "* text=auto",
+        "*.rs diff=rust",
+        "README export-ignore",
+        "*.foo custom-attribute",
+    ] {
+        assert_eq!(
+            refine_magika_label("gitattributes", content).as_deref(),
+            Some("gitattributes"),
+            "{content}"
+        );
     }
 }
 

@@ -117,7 +117,15 @@ const CODE_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
 };
 
 const CONFIG_SUMMARY_PATTERN: SummaryPattern = SummaryPattern {
-    languages: &["json", "yaml", "toml", "xml", "dockerfile", "makefile"],
+    languages: &[
+        "json",
+        "jsonl",
+        "yaml",
+        "toml",
+        "xml",
+        "dockerfile",
+        "makefile",
+    ],
     name_needles: &[
         "config",
         "settings",
@@ -292,7 +300,7 @@ fn document_override_matches(item: &PasteSummary, collection: SidebarCollection)
                 // These two command names also introduce ordinary prose titles;
                 // a command-shaped body still supplies the authoritative Code kind.
                 || COMMAND_NAME_PREFIXES.iter().any(|prefix|
-                    !matches!(*prefix, "make " | "just ") && name.starts_with(prefix)),
+                    !matches!(*prefix, "make " | "just ") && item.name.trim().starts_with(prefix)),
         ),
         SidebarCollection::Config => (
             &CONFIG_SUMMARY_PATTERN,
@@ -328,7 +336,9 @@ fn document_override_matches(item: &PasteSummary, collection: SidebarCollection)
 /// `true` when derived kind or legacy summary heuristics match the requested
 /// semantic collection bucket.
 fn matches_semantic_collection(item: &PasteSummary, collection: SidebarCollection) -> bool {
-    if localpaste_core::semantic::is_document_language(item.language.as_deref()) {
+    if localpaste_core::semantic::is_document_language(item.language.as_deref())
+        && matches!(item.derived.kind, PasteKind::Other | PasteKind::Document)
+    {
         return collection == SidebarCollection::Documents;
     }
     if summary_has_kind(item, PasteKind::Document) {
@@ -456,6 +466,9 @@ mod tests {
             "Things to make tomorrow",
             "just notes",
             "make a note",
+            "Python 3.12 is now installed",
+            "Git is down for maintenance",
+            "Brew is ready for deployment",
         ] {
             item.name = title.into();
             assert!(
@@ -484,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn documents_exclude_code_even_with_code_titles_tags_and_legacy_kind() {
+    fn documents_exclude_code_even_with_code_titles_and_tags() {
         let mut item = PasteSummary {
             id: "doc".into(),
             name: "function snippet.rs".into(),
@@ -494,7 +507,7 @@ mod tests {
             folder_id: None,
             tags: vec!["code".into()],
             derived: localpaste_core::semantic::DerivedMeta {
-                kind: PasteKind::Code,
+                kind: PasteKind::Document,
                 ..Default::default()
             },
             match_excerpt: None,
@@ -518,6 +531,103 @@ mod tests {
             SidebarCollection::Documents
         ));
         assert!(!matches_semantic_collection(&item, SidebarCollection::Code));
+    }
+
+    #[test]
+    fn detected_fenced_snippets_and_documents_reach_their_semantic_collections() {
+        for (content, kind, collection) in [
+            (
+                "```python\nprint('hello')\n```",
+                PasteKind::Code,
+                SidebarCollection::Code,
+            ),
+            (
+                "```json\n{\"name\":\"Ada\"}\n```",
+                PasteKind::Config,
+                SidebarCollection::Config,
+            ),
+            (
+                "{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n",
+                PasteKind::Config,
+                SidebarCollection::Config,
+            ),
+            (
+                "~~~sh\necho hello world\n~~~",
+                PasteKind::Code,
+                SidebarCollection::Code,
+            ),
+            (
+                "```\necho hello world\n```",
+                PasteKind::Code,
+                SidebarCollection::Code,
+            ),
+            (
+                "# Notes\n```python\nprint('hello')\n```",
+                PasteKind::Document,
+                SidebarCollection::Documents,
+            ),
+            (
+                "```markdown\n# Read me\n```",
+                PasteKind::Document,
+                SidebarCollection::Documents,
+            ),
+            (
+                "sudo systemctl restart nginx",
+                PasteKind::Code,
+                SidebarCollection::Code,
+            ),
+            ("echo hello world", PasteKind::Code, SidebarCollection::Code),
+            (
+                "INFO Starting the server",
+                PasteKind::Log,
+                SidebarCollection::Logs,
+            ),
+            (
+                "[INFO] Server started successfully",
+                PasteKind::Log,
+                SidebarCollection::Logs,
+            ),
+            (
+                "thread 'main' panicked at src/main.rs:12:5",
+                PasteKind::Log,
+                SidebarCollection::Logs,
+            ),
+            (
+                "Python 3.12 is now installed on the workstation.",
+                PasteKind::Document,
+                SidebarCollection::Documents,
+            ),
+            (
+                "Git is down for scheduled maintenance.",
+                PasteKind::Document,
+                SidebarCollection::Documents,
+            ),
+        ] {
+            let paste = localpaste_core::models::paste::Paste::new(content.into(), "notes".into());
+            let meta = localpaste_core::models::paste::PasteMeta::from(&paste);
+            assert_eq!(meta.derived.kind, kind, "{content}: {:?}", meta.language);
+            let item = PasteSummary {
+                id: meta.id,
+                name: meta.name,
+                language: meta.language,
+                content_len: meta.content_len,
+                updated_at: meta.updated_at,
+                folder_id: meta.folder_id,
+                tags: meta.tags,
+                derived: meta.derived,
+                match_excerpt: None,
+            };
+            assert!(
+                matches_semantic_collection(&item, collection.clone()),
+                "{content}: {collection:?}"
+            );
+            if kind != PasteKind::Document {
+                assert!(
+                    !matches_semantic_collection(&item, SidebarCollection::Documents),
+                    "{content}"
+                );
+            }
+        }
     }
 
     #[test]

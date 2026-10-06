@@ -19,13 +19,14 @@ This keeps GUI/server detection broad by default while preserving portability fo
 
 For auto-detected language (`language_is_manual == false`):
 
-1. If `magika` feature is enabled:
+1. Recognize a standalone Markdown fence or Rust runtime panic header before statistical detection.
+2. If `magika` feature is enabled:
    - run Magika detection,
    - reject non-text results,
    - reject generic labels (`txt`, `randomtxt`, `unknown`, `empty`, `undefined`),
    - normalize and return if non-empty and not `text`.
-2. Otherwise (or if Magika is unavailable/fails/generic), run heuristic fallback.
-3. Normalize heuristic label and return unless empty/`text`.
+3. Otherwise (or if Magika is unavailable/fails/generic), run heuristic fallback.
+4. Normalize heuristic label and return unless empty/`text`.
 
 Auto mode is intentionally "pending detection":
 
@@ -76,13 +77,13 @@ This preserves interoperability across legacy and current labels (for example, `
 
 Search ranking also checks normalized language values to avoid losing metadata relevance as stored labels evolve.
 
-The Documents collection includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Explicit document languages take precedence over embedded code and misleading titles/tags. A fallback prose classification yields to explicit filename suffixes, command prefixes, URL-shaped names, languages, and whole-word tags, such as `deploy.log` or a `logs` tag. Title fragments such as `log` in `holographic` and `script` in `transcript` do not exclude prose. Ambiguous `make` and `just` title prefixes need a command-derived kind to exclude a document.
+The Documents collection includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Document languages take precedence over embedded code and misleading titles/tags. A paste consisting entirely of one fenced block is classified by its info word or body: Python/shell fences belong to Code, JSON/YAML fences to Config, and log output to Logs. The Markdown language label remains intact for highlighting and export. Fences embedded in surrounding prose, and fences explicitly containing a document language, remain Documents. A fallback prose classification yields to explicit filename suffixes, lowercase executable prefixes, URL-shaped names, languages, and whole-word tags, such as `deploy.log` or a `logs` tag. Title fragments such as `log` in `holographic` and `script` in `transcript` do not exclude prose. Ambiguous `make` and `just` title prefixes need a command-derived kind to exclude a document.
 
-Untyped prose needs at least three whitespace-separated words, at least 70% letters and at most 20% symbols among non-whitespace characters. Single tokens, hexadecimal blobs, and recognized commands stay out of Documents. Delimited records need consistent field counts; comma/semicolon rows also need compact or quoted fields, or numeric data, so comma-heavy sentences remain prose. Config handles take precedence over leading log levels. Lowercase/uppercase log levels are log signals, while sentence-style headings such as `Warning:` need other log evidence. Lowercase `make`/`just` recipe invocations remain code; ordinary sentences such as `Just a reminder…` remain prose. Markdown is excluded from Code. Derived kinds are rebuilt through the [storage projection repair policy](storage.md#compatibility-policy).
+Untyped prose needs at least three whitespace-separated words, at least 70% letters and at most 20% symbols among non-whitespace characters. Single tokens, hexadecimal blobs, and recognized commands stay out of Documents. Delimited records need consistent field counts; comma/semicolon rows also need compact or quoted fields, or numeric data, so comma-heavy sentences remain prose. Config handles take precedence over leading log levels. Lowercase/uppercase log levels with colons, spaces, or brackets, and Rust `panicked at` output, are log signals; sentence-style headings such as `Warning:` need other log evidence. Executable names are case-sensitive: lowercase `sudo`/`echo` and `make`/`just` recipe invocations remain code; ordinary sentences such as `Python is installed` or `Just a reminder…` remain prose. Derived kinds are rebuilt through the [storage projection repair policy](storage.md#compatibility-policy).
 
 ## Text Export Extensions
 
-[`preferred_extension`](../crates/localpaste_core/src/detection/extensions.rs) centrally maps recognized text formats to conventional extensions, independently of grammar support. CSV and TSV export as `.csv` and `.tsv`; document aliases resolve to `.md`, `.rst`, or `.tex`. Unsupported highlighting does not force `.txt`; unknown formats still use `.txt`. Export writes the current editor content unchanged.
+[`preferred_extension`](../crates/localpaste_core/src/detection/extensions.rs) centrally maps recognized text formats to conventional extensions, independently of grammar support. CSV and TSV export as `.csv` and `.tsv`; JSON Lines keeps its `jsonl` label and exports as `.jsonl` while sharing JSON highlighting. Document aliases resolve to `.md`, `.rst`, or `.tex`. Unsupported highlighting does not force `.txt`; unknown formats still use `.txt`. Export writes the current editor content unchanged.
 
 ## GUI Highlight Resolution
 
@@ -168,6 +169,8 @@ or multiple config-shaped flat mapping lines.
 Primary implementation:
 
 - [`../crates/localpaste_core/src/detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs)
+
+Magika's `gitattributes` label also requires attribute-shaped content: a path pattern with attribute tokens, or recognized attribute assignments. Short clipboard prose does not acquire that label merely because it contains whitespace-separated words. Manual language values remain unchanged by this guard.
 
 ## Validation Targets
 

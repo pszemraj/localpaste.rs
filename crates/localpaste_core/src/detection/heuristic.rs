@@ -31,8 +31,12 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("javascript".to_string());
     }
 
-    // JSON: structural check without full parsing (avoids expensive serde_json).
+    // JSON Lines needs independently valid records; ordinary JSON keeps the
+    // cheap structural fallback for large or sampled payloads.
     if sample.starts_with('{') || sample.starts_with('[') {
+        if looks_like_json_lines(sample) {
+            return Some("jsonl".to_string());
+        }
         // When sampling truncates very large JSON payloads, the prefix may not end
         // with the final closing delimiter. Keep large-document detection stable.
         let sample_truncated = sample.len() < trimmed.len();
@@ -410,6 +414,25 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Accept JSON Lines only with at least two valid object/array records in the
+/// bounded sample; a single JSON value cannot establish a line-record format.
+///
+/// # Returns
+/// Whether the sample consists of multiple independently valid JSON records.
+pub(super) fn looks_like_json_lines(content: &str) -> bool {
+    let sample = utf8_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
+    let records: Vec<_> = sample
+        .lines()
+        .take(512)
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    records.len() >= 2
+        && records.iter().all(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .is_ok_and(|value| value.is_object() || value.is_array())
+        })
 }
 
 fn shebang_interpreter(sample: &str) -> Option<String> {
