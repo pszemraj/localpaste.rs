@@ -22,10 +22,10 @@ struct FakeHighlightLine {
     name: &'static str,
 }
 
-fn aligned_names(aligned: &[Option<FakeHighlightLine>]) -> Vec<Option<&'static str>> {
+fn aligned_names(aligned: &[Option<(usize, FakeHighlightLine)>]) -> Vec<Option<&'static str>> {
     aligned
         .iter()
-        .map(|line| line.as_ref().map(|line| line.name))
+        .map(|line| line.as_ref().map(|(_, line)| line.name))
         .collect()
 }
 

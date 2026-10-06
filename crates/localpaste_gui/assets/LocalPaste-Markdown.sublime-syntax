@@ -67,6 +67,10 @@ contexts:
         # Block structure interrupts a paragraph before inline-code parsing.
         - match: '^(?= {0,3}(?:#{1,6}(?:[ \t]+|\r?$)|`{3,}[^`\n]*$|~{3,}|(?:={3,}|-{3,})[ \t]*\r?$))'
           pop: true
+        # Tight lists have no blank paragraph separator between their items.
+        # A new marker ends the prior item's span; indented continuation stays.
+        - match: '^(?=[ \t]*(?:[-+*]|\d+[.)])[ \t]+)'
+          pop: true
         - match: '(?<!`)\1(?!`)'
           pop: true
     - match: '\*\*[^*\n]+\*\*|__[^_\n]+__'

@@ -180,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_code_recovers_at_blank_paragraphs_without_breaking_multiline_spans() {
+    fn inline_code_recovers_at_block_boundaries_without_breaking_multiline_spans() {
         let settings = settings();
         let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
         let theme = &settings.ts.themes["base16-mocha.dark"];
@@ -207,6 +207,24 @@ mod tests {
         assert!(colors(&mut unmatched, "ordinary prose\n")
             .iter()
             .all(|(color, _)| *color == prose));
+
+        for marker in ["-", "+", "*", "1.", "2)"] {
+            let mut list = HighlightLines::new(syntax, theme);
+            colors(&mut list, "- unmatched `code\n");
+            assert!(colors(&mut list, "  continued within the same item\n")
+                .iter()
+                .all(|(color, _)| *color == code));
+            let next_item = colors(&mut list, &format!("{marker} ordinary prose\n"));
+            assert_eq!(next_item.last().unwrap().0, prose, "{marker:?}");
+        }
+
+        let mut list = HighlightLines::new(syntax, theme);
+        colors(&mut list, "- ``first line\n");
+        let continuation = colors(&mut list, "  second line`` after\n");
+        assert!(continuation
+            .iter()
+            .any(|(color, text)| *color == code && text.contains("second line")));
+        assert_eq!(continuation.last().unwrap().0, prose);
 
         let mut matched = HighlightLines::new(syntax, theme);
         colors(&mut matched, "``first line\n");

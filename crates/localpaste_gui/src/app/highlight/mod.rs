@@ -278,13 +278,13 @@ impl EditorLayoutCache {
             ..Default::default()
         };
         let mut line_start = 0usize;
-        let mut prev_line_reused = false;
+        let mut prev_reused_index = None;
 
         for (idx, line) in lines.iter().enumerate() {
             let line_hash = new_hashes[idx];
             if line_start_state_matches(
                 idx,
-                prev_line_reused,
+                prev_reused_index,
                 &old_lines,
                 &parse_state,
                 &highlight_state,
@@ -293,13 +293,13 @@ impl EditorLayoutCache {
             ) && line_hash_matches(&old_lines, idx, line_hash, |line: &HighlightLineCache| {
                 line.hash
             }) {
-                let old_line = old_lines[idx].take().expect("checked Some");
+                let (old_idx, old_line) = old_lines[idx].take().expect("checked Some");
                 append_sections(&mut job, &old_line.sections, line_start);
                 parse_state = old_line.end_state.parse.clone();
                 highlight_state = old_line.end_state.highlight.clone();
                 new_lines.push(old_line);
                 line_start += line.len();
-                prev_line_reused = true;
+                prev_reused_index = Some(old_idx);
                 continue;
             }
 
@@ -354,7 +354,7 @@ impl EditorLayoutCache {
             }
 
             line_start += line.len();
-            prev_line_reused = false;
+            prev_reused_index = None;
         }
 
         self.highlight_cache.lines = new_lines;

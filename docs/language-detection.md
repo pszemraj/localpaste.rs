@@ -86,7 +86,7 @@ Untyped prose needs at least three whitespace-separated words, at least 70% lett
 
 ## GUI Highlight Resolution
 
-Markdown uses the project-owned [LocalPaste Markdown grammar](../crates/localpaste_gui/assets/LocalPaste-Markdown.sublime-syntax). Footnote markers end at the reference/definition boundary so body text remains readable. Indented, list, and blockquote fence prefixes are recognized; matching or longer closing fences terminate the block. Top-level closers allow at most three spaces of indentation and no quote/list prefix. A quoted fence also ends when its containing blockquote ends, without consuming the following unquoted line. Escaped punctuation stays literal in prose; backslashes inside code do not escape delimiters. Inline-code spans retain their matching delimiter across content lines, but an unmatched span ends at a blank paragraph boundary or an interrupting heading, rule, or fence. Structural rules accept LF and CRLF line endings. Fenced bodies use one existing string color, with no embedded-language highlighting. Scope mappings use the current theme's foreground, string, and keyword colors.
+Markdown uses the project-owned [LocalPaste Markdown grammar](../crates/localpaste_gui/assets/LocalPaste-Markdown.sublime-syntax). Footnote markers end at the reference/definition boundary so body text remains readable. Indented, list, and blockquote fence prefixes are recognized; matching or longer closing fences terminate the block. Top-level closers allow at most three spaces of indentation and no quote/list prefix. A quoted fence also ends when its containing blockquote ends, without consuming the following unquoted line. Escaped punctuation stays literal in prose; backslashes inside code do not escape delimiters. Inline-code spans retain their matching delimiter across content lines within a paragraph or list item, but an unmatched span ends at a blank paragraph boundary or an interrupting heading, rule, fence, or new list item. Structural rules accept LF and CRLF line endings. Fenced bodies use one existing string color, with no embedded-language highlighting. Scope mappings use the current theme's foreground, string, and keyword colors.
 
 Other GUI highlight resolution uses a multi-step strategy instead of a fixed name table:
 
@@ -126,7 +126,7 @@ Flow:
 2. Worker coalesces queued requests and computes either:
    - full render (`HighlightRender`), or
    - changed-range patch (`HighlightPatch`) when the UI base snapshot matches the worker cache base.
-   A single-edit pass checks every touched line before reusing a matching tail; unchanged interior lines do not end a multiline edit. Bare CR and Unicode line separators use hash alignment because editor and syntax-parser line indices differ.
+   A single-edit pass checks every touched line before reusing a matching tail; unchanged interior lines do not end a multiline edit. Hash alignment retains original line indices so deleting a line cannot reuse a suffix with the deleted line's parser state. Bare CR and Unicode line separators use hash alignment because editor and syntax-parser line indices differ.
 3. UI merges matching patches into staged/current highlight state.
 4. Staged highlight applies:
    - immediately only when there is no current render,

@@ -245,8 +245,8 @@ fn highlight_in_worker(
             .unwrap_or(false)
         && edit_hint.is_some();
     if same_len_single_step {
-        let mut old_lines: Vec<Option<HighlightWorkerLine>> =
-            old_cached_lines.into_iter().map(Some).collect();
+        let mut old_lines: Vec<Option<(usize, HighlightWorkerLine)>> =
+            old_cached_lines.into_iter().enumerate().map(Some).collect();
         let start_line = edit_hint
             .map(|hint| hint.start_line)
             .unwrap_or(0)
@@ -256,7 +256,7 @@ fn highlight_in_worker(
             .unwrap_or(lines.len());
 
         for old_line_slot in old_lines.iter_mut().take(start_line) {
-            let old_line = old_line_slot
+            let (_, old_line) = old_line_slot
                 .take()
                 .expect("single-step path requires same-length cached line");
             parse_state = old_line.end_state.parse.clone();
@@ -271,7 +271,7 @@ fn highlight_in_worker(
             let can_reuse =
                 line_start_state_matches(
                     idx,
-                    false,
+                    None,
                     &old_lines,
                     &parse_state,
                     &highlight_state,
@@ -285,14 +285,14 @@ fn highlight_in_worker(
                 // block indentation) does not prove the rest of the edit is unchanged.
                 if changed_start.is_some() && idx >= edit_end_line {
                     for old_line_slot in old_lines.iter_mut().take(lines.len()).skip(idx) {
-                        let old_line = old_line_slot
+                        let (_, old_line) = old_line_slot
                             .take()
                             .expect("single-step path requires same-length cached tail");
                         new_lines.push(old_line);
                     }
                     break;
                 }
-                let old_line = old_lines[idx]
+                let (_, old_line) = old_lines[idx]
                     .take()
                     .expect("single-step path requires same-length cached line");
                 parse_state = old_line.end_state.parse.clone();
@@ -332,13 +332,13 @@ fn highlight_in_worker(
             .collect();
         let mut old_lines =
             align_old_lines_by_hash(old_cached_lines, &new_hashes, |line| line.hash);
-        let mut prev_line_reused = false;
+        let mut prev_reused_index = None;
 
         for (idx, line) in lines.iter().enumerate() {
             let line_hash = new_hashes[idx];
             if line_start_state_matches(
                 idx,
-                prev_line_reused,
+                prev_reused_index,
                 &old_lines,
                 &parse_state,
                 &highlight_state,
@@ -347,11 +347,11 @@ fn highlight_in_worker(
             ) && line_hash_matches(&old_lines, idx, line_hash, |line: &HighlightWorkerLine| {
                 line.hash
             }) {
-                let old_line = old_lines[idx].take().expect("checked Some");
+                let (old_idx, old_line) = old_lines[idx].take().expect("checked Some");
                 parse_state = old_line.end_state.parse.clone();
                 highlight_state = old_line.end_state.highlight.clone();
                 new_lines.push(old_line);
-                prev_line_reused = true;
+                prev_reused_index = Some(old_idx);
                 continue;
             }
             if changed_start.is_none() {
@@ -375,7 +375,7 @@ fn highlight_in_worker(
                 spans,
                 end_state,
             });
-            prev_line_reused = false;
+            prev_reused_index = None;
         }
     }
 
@@ -566,6 +566,36 @@ mod resolver_tests {
         let settings = SyntectSettings::default();
         for (before, old, new) in [
             (
+                "```rust\nfn main() {}\n```\nprose after fence\n",
+                "```rust\n",
+                "",
+            ),
+            (
+                "# Note\n```rust\nfn main() {}\n```\nprose after fence\nmore prose\n",
+                "```\nprose",
+                "prose",
+            ),
+            (
+                "# Note\n```rust\nfn main() {}\n```\nprose after fence\n",
+                "```rust\n",
+                "",
+            ),
+            (
+                "# Note\n```rust\nfn main() {}\nprose after fence\nmore prose\n",
+                "prose after fence",
+                "```\nprose after fence",
+            ),
+            (
+                "# Note\nfn main() {}\nmore prose\n",
+                "fn main() {}",
+                "```rust\nfn main() {}",
+            ),
+            (
+                "# Note\r\n```rust\r\nfn main() {}\r\n```\r\nprose after fence\r\n",
+                "```\r\nprose",
+                "prose",
+            ),
+            (
                 "# Note\n```rust\nfn main() {}\n```\nprose after fence\n",
                 "```\nprose",
                 "~~~\nprose",
@@ -602,7 +632,7 @@ mod resolver_tests {
             let cold = render_for_label(&settings, "markdown", &after);
             assert!(
                 base.lines == cold.lines,
-                "incremental result must match a fresh parse after a fence boundary changes"
+                "incremental result must match a fresh parse after {old:?} becomes {new:?}"
             );
             assert!(base.lines != render_for_label(&settings, "markdown", before).lines);
         }
