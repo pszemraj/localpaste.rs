@@ -60,6 +60,17 @@ impl LocalPasteApp {
                 _ => None,
             })
         });
+        let primary_release = ui.input(|input| {
+            input.events.iter().rev().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            })
+        });
         if primary_press.is_some() {
             self.virtual_pointer_press_modifiers = None;
             self.virtual_drag_active = false;
@@ -457,18 +468,20 @@ impl LocalPasteApp {
                             .interact_pos()
                             .or_else(|| input.pointer.latest_pos())
                     });
-                    let primary_release = ui.input(|input| {
-                        input.events.iter().rev().find_map(|event| match event {
-                            egui::Event::PointerButton {
-                                pos,
-                                button: egui::PointerButton::Primary,
-                                pressed: false,
-                                ..
-                            } => Some(*pos),
-                            _ => None,
-                        })
-                    });
                     let pointer_down = ui.input(|input| input.pointer.primary_down());
+                    let released_owned_drag = !self.virtual_drag_active
+                        && self.virtual_pointer_press_modifiers.is_some()
+                        && primary_release.is_some()
+                        && ui.input(|input| input.pointer.is_decidedly_dragging());
+                    if released_owned_drag {
+                        // egui clears a potential drag when the first threshold-crossing
+                        // movement and release arrive in one frame, so no row response
+                        // reports `drag_started`. The remembered content press still owns
+                        // that gesture; finish it through the ordinary drag endpoint path.
+                        self.virtual_drag_active = true;
+                        self.virtual_editor_state.clear_preferred_column();
+                        self.reset_virtual_click_streak();
+                    }
                     let finishing_drag = !pointer_down && primary_release.is_some();
                     if self.virtual_drag_active && (pointer_down || finishing_drag) {
                         if let Some(pointer_pos) = primary_release.or(pointer_pos).filter(|pos| {
