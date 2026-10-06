@@ -308,3 +308,225 @@ fn global_shortcut_uses_modifiers_at_key_press_even_after_release_in_same_frame(
         },
     );
 }
+
+#[test]
+fn partial_line_indentation_and_caret_reveal_cover_boundary_branches() {
+    for (text, start, end, expected) in [
+        ("alpha beta", 2, 7, "    alpha beta"),
+        ("alpha\nbeta\ngamma", 2, 8, "    alpha\n    beta\ngamma"),
+    ] {
+        for reverse in [false, true] {
+            let mut harness = make_app();
+            let ctx = egui::Context::default();
+            harness.app.reset_virtual_editor(text);
+            let (cursor, anchor) = if reverse { (start, end) } else { (end, start) };
+            harness.app.virtual_editor_state.restore_selection(
+                cursor,
+                Some(anchor),
+                text.chars().count(),
+            );
+            harness
+                .app
+                .apply_virtual_commands(&ctx, &[VirtualInputCommand::InsertTab]);
+            assert_eq!(harness.app.active_snapshot(), expected);
+            assert_eq!(
+                harness.app.virtual_editor_state.cursor()
+                    < harness.app.virtual_editor_state.anchor().unwrap(),
+                reverse
+            );
+            harness
+                .app
+                .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo]);
+            assert_eq!(harness.app.active_snapshot(), text);
+            assert_eq!(
+                (
+                    harness.app.virtual_editor_state.cursor(),
+                    harness.app.virtual_editor_state.anchor()
+                ),
+                (cursor, Some(anchor))
+            );
+        }
+    }
+    for (reveal, row, offset, height, expected) in [
+        (CursorReveal::Minimal, 5, 100.0, 100.0, 30.0),
+        (CursorReveal::Minimal, 19, 100.0, 100.0, 120.0),
+        (CursorReveal::Minimal, 15, 100.0, 100.0, 100.0),
+        (CursorReveal::Minimal, 0, 100.0, 5.0, 0.0),
+        (CursorReveal::Center, 15, 0.0, 100.0, 105.0),
+        (CursorReveal::Center, 0, 100.0, 100.0, 0.0),
+    ] {
+        assert_eq!(reveal.offset(row, offset, height, 10.0), expected);
+    }
+}
+
+fn review_frame(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    let modifiers = events
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            egui::Event::PointerButton { modifiers, .. } | egui::Event::Key { modifiers, .. } => {
+                Some(*modifiers)
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    run_full_update_with_input(
+        app,
+        ctx,
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 900.0),
+            )),
+            events,
+            modifiers,
+            ..Default::default()
+        },
+    )
+}
+
+fn rendered_label_center(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text == label => {
+                Some(text.pos + text.galley.size() / 2.0)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing rendered label {label}"))
+}
+
+fn review_click(app: &mut LocalPasteApp, ctx: &egui::Context, pos: egui::Pos2) {
+    for pressed in [true, false] {
+        review_frame(
+            app,
+            ctx,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+}
+
+#[test]
+fn find_mouse_navigation_retains_query_focus_for_enter_paste_and_escape() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.reset_virtual_editor("needle alpha needle beta");
+    harness.app.open_editor_find();
+    harness.app.set_editor_find_query("needle".into());
+    review_frame(&mut harness.app, &ctx, vec![]);
+    for (label, active) in [("Next", 1), ("Prev", 0)] {
+        let output = review_frame(&mut harness.app, &ctx, vec![]);
+        review_click(
+            &mut harness.app,
+            &ctx,
+            rendered_label_center(&output, label),
+        );
+        assert_eq!(harness.app.editor_find.active_match, Some(active));
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(EDITOR_FIND_INPUT_ID))));
+    }
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    assert_eq!(harness.app.editor_find.active_match, Some(1));
+    review_frame(&mut harness.app, &ctx, vec![egui::Event::Paste("X".into())]);
+    assert!(harness.app.editor_find.query.contains('X'));
+    assert_eq!(harness.app.active_snapshot(), "needle alpha needle beta");
+    assert!(!harness
+        .cmd_rx
+        .try_iter()
+        .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })));
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert!(!harness.app.editor_find.open);
+    assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
+}
+
+#[test]
+fn floating_help_buttons_preserve_the_underlying_caret_and_selection() {
+    for button in ["Clear", "Close"] {
+        let (mut harness, _event_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        let text = "editor text below help\n".repeat(80);
+        harness.app.reset_virtual_editor(&text);
+        harness
+            .app
+            .virtual_editor_state
+            .restore_selection(300, Some(290), text.chars().count());
+        harness.app.focus_editor_next = true;
+        review_frame(&mut harness.app, &ctx, vec![]);
+        harness.app.open_shortcut_help(&ctx);
+        harness.app.shortcut_help_query = "undo".into();
+        for _ in 0..3 {
+            review_frame(&mut harness.app, &ctx, vec![]);
+        }
+        let output = review_frame(&mut harness.app, &ctx, vec![]);
+        review_click(
+            &mut harness.app,
+            &ctx,
+            rendered_label_center(&output, button),
+        );
+        assert_eq!(
+            (
+                harness.app.virtual_editor_state.cursor(),
+                harness.app.virtual_editor_state.anchor()
+            ),
+            (300, Some(290)),
+            "{button}"
+        );
+        if harness.app.shortcut_help_open {
+            harness.app.close_shortcut_help(&ctx);
+        }
+        review_frame(&mut harness.app, &ctx, vec![egui::Event::Text("W".into())]);
+        assert_eq!(harness.app.virtual_editor_buffer.slice_chars(290..291), "W");
+    }
+}
+
+#[test]
+fn shift_click_extends_editor_selection_from_its_existing_anchor() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness
+        .app
+        .reset_virtual_editor("alpha beta gamma\nnext line\n");
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    let pos = harness.app.virtual_viewport.caret.unwrap().center() + egui::vec2(60.0, 0.0);
+    harness.app.virtual_editor_state.set_cursor(1, 27);
+    for pressed in [true, false] {
+        review_frame(
+            &mut harness.app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::SHIFT,
+                },
+            ],
+        );
+    }
+    assert_eq!(harness.app.virtual_editor_state.anchor(), Some(1));
+    assert!(harness.app.virtual_editor_state.cursor() > 1);
+}

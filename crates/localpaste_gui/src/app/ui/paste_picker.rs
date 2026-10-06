@@ -15,6 +15,7 @@ impl LocalPasteApp {
         self.command_palette_open = false;
         self.shortcut_help_open = false;
         self.paste_picker_open = true;
+        self.paste_picker_select_query = true;
         self.reset_paste_picker_selection();
         self.palette_search_results.clear();
         self.palette_search_last_sent.clear();
@@ -64,12 +65,25 @@ impl LocalPasteApp {
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
             .show(ctx, |ui| {
                 let mut query = self.paste_picker_query.clone();
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut query)
-                        .id(egui::Id::new(PASTE_PICKER_INPUT_ID))
-                        .return_key(None)
-                        .hint_text("Search pastes..."),
-                );
+                let query_id = egui::Id::new(PASTE_PICKER_INPUT_ID);
+                if std::mem::take(&mut self.paste_picker_select_query) {
+                    ctx.memory_mut(|memory| memory.request_focus(query_id));
+                    let mut state =
+                        egui::text_edit::TextEditState::load(ctx, query_id).unwrap_or_default();
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::two(
+                            egui::text::CCursor::new(0),
+                            egui::text::CCursor::new(query.chars().count()),
+                        )));
+                    state.store(ctx, query_id);
+                }
+                let response = egui::TextEdit::singleline(&mut query)
+                    .id(query_id)
+                    .return_key(None)
+                    .hint_text("Search pastes...")
+                    .show(ui)
+                    .response;
                 response.request_focus();
                 if response.changed() {
                     self.set_paste_picker_query(query);

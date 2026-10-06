@@ -103,6 +103,8 @@ pub(crate) struct LocalPasteApp {
     paste_picker_selected: usize,
     /// Reset the picker viewport when rows are available after a selection reset.
     paste_picker_scroll_reset_pending: bool,
+    /// Select the retained query once when a new picker session renders.
+    paste_picker_select_query: bool,
     paste_picker_scope: SearchScope,
     paste_picker_sent_scope: SearchScope,
     palette_search_results: Vec<PasteSummary>,
@@ -542,6 +544,7 @@ impl eframe::App for LocalPasteApp {
         });
         for action in runtime_actions {
             if self.keyboard_overlay_open()
+                && !self.version_overlay_open()
                 && matches!(
                     action,
                     RuntimeShortcutAction::NewPaste
@@ -549,6 +552,14 @@ impl eframe::App for LocalPasteApp {
                         | RuntimeShortcutAction::DeleteSelected
                         | RuntimeShortcutAction::ToggleProperties
                         | RuntimeShortcutAction::FocusSearch
+                )
+            {
+                continue;
+            }
+            if self.version_overlay_open()
+                && matches!(
+                    action,
+                    RuntimeShortcutAction::ToggleProperties | RuntimeShortcutAction::FocusSearch
                 )
             {
                 continue;
@@ -566,7 +577,11 @@ impl eframe::App for LocalPasteApp {
                     self.save_metadata_now();
                 }
                 RuntimeShortcutAction::DeleteSelected => {
-                    delete_selected_shortcut_pressed = true;
+                    if mutation_shortcut_blocked.is_some() {
+                        self.set_mutation_shortcut_blocked_status();
+                    } else {
+                        delete_selected_shortcut_pressed = true;
+                    }
                 }
                 RuntimeShortcutAction::FocusSearch => {
                     self.search_focus_requested = true;

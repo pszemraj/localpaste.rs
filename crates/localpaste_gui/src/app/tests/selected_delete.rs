@@ -194,6 +194,7 @@ fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediat
     }
 
     let mut nonselected = make_app();
+    let ctx = egui::Context::default();
     nonselected.app.paste_picker_open = true;
     set_active_content(&mut nonselected.app, "dirty selected");
     nonselected.app.save_status = SaveStatus::Dirty;
@@ -207,6 +208,21 @@ fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediat
             other
         ),
     }
+    nonselected.app.apply_event(CoreEvent::PasteDeleted {
+        id: "beta".into(),
+        undo_token: Some("undo-beta".into()),
+    });
+    assert_eq!(nonselected.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(nonselected.app.active_snapshot(), "dirty selected");
+    assert_eq!(nonselected.app.save_status, SaveStatus::Dirty);
+    run_full_update(&mut nonselected.app, &ctx, vec![]);
+    assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
+    run_full_update(
+        &mut nonselected.app,
+        &ctx,
+        vec![egui::Event::Text("R".into())],
+    );
+    assert_eq!(nonselected.app.active_snapshot(), "Rdirty selected");
 }
 
 #[test]

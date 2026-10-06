@@ -274,3 +274,58 @@ fn reset_in_flight_rejects_opening_version_overlays_after_history_closes() {
         Err(TryRecvError::Empty)
     ));
 }
+
+#[test]
+fn toolbar_version_opens_close_discovery_and_allow_save_with_blocked_mutation_feedback() {
+    for history in [false, true] {
+        for discovery in 0..3 {
+            let (mut harness, _event_tx) = make_app_with_event_tx();
+            let ctx = egui::Context::default();
+            harness.app.paste_picker_open = discovery == 0;
+            harness.app.command_palette_open = discovery == 1;
+            harness.app.shortcut_help_open = discovery == 2;
+            if history {
+                harness.app.open_history_modal();
+            } else {
+                harness.app.open_diff_modal();
+            }
+            assert!(
+                !harness.app.paste_picker_open
+                    && !harness.app.command_palette_open
+                    && !harness.app.shortcut_help_open
+            );
+            harness.cmd_rx.try_iter().for_each(drop);
+            set_active_content(&mut harness.app, "dirty before version window");
+            harness.app.mark_dirty();
+            run_full_update(
+                &mut harness.app,
+                &ctx,
+                vec![command_key_event(egui::Key::S)],
+            );
+            assert!(harness
+                .cmd_rx
+                .try_iter()
+                .any(|cmd| matches!(cmd, CoreCmd::UpdatePasteVirtual { .. })));
+            for key in [egui::Key::N, egui::Key::Delete] {
+                run_full_update(&mut harness.app, &ctx, vec![command_key_event(key)]);
+                assert!(harness
+                    .app
+                    .status
+                    .as_ref()
+                    .unwrap()
+                    .text
+                    .contains("version"));
+                assert!(!harness.cmd_rx.try_iter().any(|cmd| matches!(
+                    cmd,
+                    CoreCmd::CreatePaste { .. } | CoreCmd::DeletePaste { .. }
+                )));
+            }
+            run_full_update(
+                &mut harness.app,
+                &ctx,
+                vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+            );
+            assert!(!harness.app.version_overlay_open());
+        }
+    }
+}

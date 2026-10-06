@@ -398,6 +398,19 @@ fn paste_picker_reports_pending_searches_and_discards_closed_results() {
             .map(|status| status.text.as_str()),
         Some("Palette search failed: disk unavailable")
     );
+    assert!(harness.app.palette_search_last_input_at.is_none());
+    harness.app.maybe_dispatch_palette_search();
+    assert!(!harness
+        .cmd_rx
+        .try_iter()
+        .any(|cmd| matches!(cmd, CoreCmd::SearchPalette { .. })));
+    // The Retry affordance explicitly arms a new request for the same query.
+    harness.app.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+    harness.app.maybe_dispatch_palette_search();
+    assert!(harness
+        .cmd_rx
+        .try_iter()
+        .any(|cmd| matches!(cmd, CoreCmd::SearchPalette { .. })));
 
     harness.app.palette_search_pending = true;
     harness.app.handle_backend_event_channel_disconnected();
@@ -689,4 +702,86 @@ fn picker_selection_pin_clears_when_the_target_is_deleted() {
     });
     assert!(harness.app.picker_selection_pin.is_none());
     assert!(harness.app.selected_id.is_none());
+}
+
+#[test]
+fn picker_reopen_selects_the_retained_query_for_replacement() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.set_paste_picker_query("fence-delete".into());
+    harness.app.open_paste_picker();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Text("fresh".into())],
+    );
+    assert_eq!(harness.app.paste_picker_query, "fresh");
+    harness.app.close_paste_picker();
+    harness.app.open_paste_picker();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Text("again".into())],
+    );
+    assert_eq!(harness.app.paste_picker_query, "again");
+    harness.app.close_paste_picker();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(
+            egui::Key::K,
+            primary_command_modifiers() | egui::Modifiers::SHIFT,
+        )],
+    );
+    assert!(harness.app.paste_picker_open);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Text("shortcut".into())],
+    );
+    assert_eq!(harness.app.paste_picker_query, "shortcut");
+}
+
+#[test]
+fn sidebar_scope_changes_keep_the_loaded_document_and_reading_position() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    harness.app.set_search_query("body-only".into());
+    harness
+        .app
+        .virtual_editor_state
+        .restore_selection(6, Some(2), 7);
+    let epoch = harness.app.active_buffer_epoch;
+    let content = harness.app.active_snapshot();
+    for scope in [SearchScope::Title, SearchScope::Body] {
+        harness.app.set_search_scope(scope);
+        harness.app.apply_event(CoreEvent::SearchResults {
+            collection: crate::backend::SidebarCollection::All,
+            query: "body-only".into(),
+            scope,
+            folder_id: None,
+            language: None,
+            items: if scope == SearchScope::Body {
+                vec![test_summary("alpha", "Alpha", None, 7)]
+            } else {
+                vec![]
+            },
+        });
+        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+        assert_eq!(harness.app.active_buffer_epoch, epoch);
+        assert_eq!(harness.app.active_snapshot(), content);
+        assert_eq!(
+            (
+                harness.app.virtual_editor_state.cursor(),
+                harness.app.virtual_editor_state.anchor()
+            ),
+            (6, Some(2))
+        );
+        assert!(!harness
+            .cmd_rx
+            .try_iter()
+            .any(|cmd| matches!(cmd, CoreCmd::GetPaste { .. })));
+    }
 }

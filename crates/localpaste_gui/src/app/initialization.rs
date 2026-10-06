@@ -72,6 +72,7 @@ impl LocalPasteApp {
             paste_picker_query: String::new(),
             paste_picker_selected: 0,
             paste_picker_scroll_reset_pending: false,
+            paste_picker_select_query: false,
             paste_picker_scope: SearchScope::All,
             paste_picker_sent_scope: SearchScope::All,
             palette_search_results: Vec::new(),

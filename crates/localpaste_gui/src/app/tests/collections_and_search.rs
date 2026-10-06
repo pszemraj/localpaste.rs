@@ -358,7 +358,7 @@ fn failed_sidebar_search_dispatch_is_debounced_and_status_deduped() {
 }
 
 #[test]
-fn failed_palette_search_dispatch_is_debounced_and_status_deduped() {
+fn failed_palette_search_dispatch_waits_for_retry_and_dedupes_status() {
     let mut harness = make_app();
     harness.app.paste_picker_open = true;
     harness.app.set_paste_picker_query("alpha".to_string());
@@ -381,6 +381,7 @@ fn failed_palette_search_dispatch_is_debounced_and_status_deduped() {
         Some(expected)
     );
     let toast_len = harness.app.toasts.len();
+    assert!(harness.app.palette_search_last_input_at.is_none());
 
     harness.app.maybe_dispatch_palette_search();
     assert_eq!(harness.app.toasts.len(), toast_len);

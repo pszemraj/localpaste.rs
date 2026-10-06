@@ -192,11 +192,20 @@ pub(crate) fn runtime_shortcut_action(event: &egui::Event) -> Option<RuntimeShor
 ///
 /// # Panics
 /// Panics if a [`RuntimeShortcutAction`] variant is not present in [`RUNTIME_SHORTCUTS`].
-pub(crate) fn runtime_shortcut_label(action: RuntimeShortcutAction) -> &'static str {
+pub(crate) fn runtime_shortcut_label(action: RuntimeShortcutAction) -> String {
     RUNTIME_SHORTCUTS
         .iter()
         .find(|shortcut| shortcut.action == action)
-        .map(|shortcut| shortcut.help.keys)
+        .map(|shortcut| {
+            shortcut.help.keys.replace(
+                "Ctrl/Cmd",
+                if cfg!(target_os = "macos") {
+                    "Cmd"
+                } else {
+                    "Ctrl"
+                },
+            )
+        })
         .expect("runtime shortcut action must be registered")
 }
 
@@ -336,10 +345,24 @@ mod tests {
 
     #[test]
     fn runtime_shortcut_registry_has_unique_actions_and_labels() {
+        assert_eq!(
+            runtime_shortcut_label(RuntimeShortcutAction::NewPaste),
+            if cfg!(target_os = "macos") {
+                "Cmd+N"
+            } else {
+                "Ctrl+N"
+            }
+        );
+        assert_eq!(
+            runtime_shortcut_label(RuntimeShortcutAction::ToggleShortcutHelp),
+            "F1"
+        );
         let mut actions = HashSet::new();
         let mut labels = HashSet::new();
 
         for shortcut in RUNTIME_SHORTCUTS {
+            let label = runtime_shortcut_label(shortcut.action);
+            assert!(!label.contains("Ctrl/Cmd"));
             assert!(
                 actions.insert(shortcut.action),
                 "duplicate runtime shortcut action: {:?}",

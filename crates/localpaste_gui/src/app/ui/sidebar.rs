@@ -1,5 +1,6 @@
 //! Top bar and sidebar rendering for paste navigation and quick actions.
 
+use super::super::shortcuts::runtime_shortcut_label;
 use super::super::*;
 use chrono::{DateTime, Duration as ChronoDuration, Local, TimeZone, Utc};
 use eframe::egui::{self, RichText};
@@ -158,7 +159,10 @@ impl LocalPasteApp {
                 let search_resp = ui.add(
                     egui::TextEdit::singleline(&mut search_buf)
                         .id(egui::Id::new(SEARCH_INPUT_ID))
-                        .hint_text("Search pastes... (Ctrl/Cmd+F)"),
+                        .hint_text(format!(
+                            "Search pastes... ({})",
+                            runtime_shortcut_label(RuntimeShortcutAction::FocusSearch)
+                        )),
                 );
                 if self.search_focus_requested {
                     search_resp.request_focus();

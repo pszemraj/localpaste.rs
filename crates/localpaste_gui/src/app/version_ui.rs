@@ -244,6 +244,12 @@ impl LocalPasteApp {
             return false;
         }
         self.clear_pending_selection_request();
+        // Toolbar and palette actions share the same ownership transfer.
+        self.command_palette_open = false;
+        self.close_paste_picker();
+        self.shortcut_help_open = false;
+        self.shortcut_help_focus_requested = false;
+        self.discovery_return_focus = None;
         true
     }
 

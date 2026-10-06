@@ -194,12 +194,15 @@ impl LocalPasteApp {
 
                 if ui.add(editor_find_button("Prev")).clicked() {
                     previous_requested = true;
+                    response.request_focus();
                 }
                 if ui.add(editor_find_button("Next")).clicked() {
                     next_requested = true;
+                    response.request_focus();
                 }
                 if ui.checkbox(&mut case_sensitive, "Case").changed() {
                     case_changed = true;
+                    response.request_focus();
                 }
                 if ui.add(editor_find_button("Close")).clicked() {
                     close_requested = true;

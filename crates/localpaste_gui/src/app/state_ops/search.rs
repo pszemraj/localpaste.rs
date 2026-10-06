@@ -28,12 +28,12 @@ impl LocalPasteApp {
         self.palette_search_error = None;
     }
 
-    /// Retain a picker failure in the picker and re-arm its debounced retry.
+    /// Retain a picker failure until explicit Retry or new query/scope input.
     pub(super) fn fail_palette_search(&mut self, message: String) {
         self.palette_search_pending = false;
         self.palette_search_results.clear();
         self.palette_search_last_sent.clear();
-        self.palette_search_last_input_at = Some(Instant::now());
+        self.palette_search_last_input_at = None;
         self.palette_search_error = Some(message.clone());
         if self.status.as_ref().map(|status| status.text.as_str()) != Some(message.as_str()) {
             self.set_status(message);
@@ -191,7 +191,7 @@ impl LocalPasteApp {
             query: query.clone(),
             limit: PALETTE_SEARCH_LIMIT,
         }) {
-            // Mirror sidebar-search behavior: bounded retry cadence and deduped status.
+            // Leave the error visible until the user requests another attempt.
             const PALETTE_SEARCH_UNAVAILABLE: &str =
                 "Paste picker search failed: backend unavailable.";
             self.fail_palette_search(PALETTE_SEARCH_UNAVAILABLE.into());
@@ -205,9 +205,12 @@ impl LocalPasteApp {
     /// Updates sidebar scope and discards results from the previous field context.
     pub(in crate::app) fn set_search_scope(&mut self, scope: super::super::SearchScope) {
         if self.search_scope != scope {
+            let selection = self.selected_id.clone();
             self.search_scope = scope;
             self.pastes.clear();
             self.on_primary_filter_changed();
+            // Refining search fields changes rows, not the document being read.
+            self.picker_selection_pin = selection;
         }
     }
 

@@ -473,6 +473,7 @@ impl LocalPasteApp {
     pub(crate) fn send_palette_delete(&mut self, id: String) {
         if self.send_delete_paste(id) {
             self.close_paste_picker();
+            self.focus_editor_next = self.selected_paste.is_some();
         }
     }
 

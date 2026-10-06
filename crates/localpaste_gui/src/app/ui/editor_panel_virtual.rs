@@ -275,7 +275,7 @@ impl LocalPasteApp {
                                 .or_else(|| input.pointer.latest_pos());
                             let pressed_on_row =
                                 input.pointer.button_pressed(egui::PointerButton::Primary)
-                                    && pointer_pos.map(|pos| rect.contains(pos)).unwrap_or(false);
+                                    && response.contains_pointer();
                             (pressed_on_row, pointer_pos)
                         });
                         if pending_action.is_none()
@@ -347,8 +347,11 @@ impl LocalPasteApp {
                         editor_pointer_action_handled = true;
                         match action {
                             RowAction::Click { global } => {
-                                self.virtual_editor_state
-                                    .set_cursor(global, self.virtual_editor_buffer.len_chars());
+                                self.virtual_editor_state.move_cursor(
+                                    global,
+                                    self.virtual_editor_buffer.len_chars(),
+                                    ui.input(|input| input.modifiers.shift),
+                                );
                                 self.virtual_editor_state.clear_preferred_column();
                                 self.reset_virtual_caret_blink();
                             }
@@ -394,8 +397,10 @@ impl LocalPasteApp {
                                 self.reset_virtual_caret_blink();
                             }
                             RowAction::DragStart { global } => {
-                                self.virtual_editor_state
-                                    .set_cursor(global, self.virtual_editor_buffer.len_chars());
+                                if !ui.input(|input| input.modifiers.shift) {
+                                    self.virtual_editor_state
+                                        .set_cursor(global, self.virtual_editor_buffer.len_chars());
+                                }
                                 self.virtual_editor_state.move_cursor(
                                     global,
                                     self.virtual_editor_buffer.len_chars(),
@@ -599,7 +604,11 @@ impl LocalPasteApp {
                 .or_else(|| input.pointer.latest_pos())
         });
         let clicked_inside_editor = pointer_press_pos
-            .map(|pos| primary_pressed && interaction_rect.contains(pos))
+            .map(|pos| {
+                primary_pressed
+                    && interaction_rect.contains(pos)
+                    && ui.ctx().layer_id_at(pos) == Some(ui.layer_id())
+            })
             .unwrap_or(false);
         let clicked_inside_editor_content = pointer_press_pos
             .map(|pos| primary_pressed && scroll_output.inner_rect.contains(pos))
@@ -611,8 +620,11 @@ impl LocalPasteApp {
             if clicked_inside_editor_content && !editor_pointer_action_handled {
                 let eof =
                     self.clamp_virtual_cursor_for_render(self.virtual_editor_buffer.len_chars());
-                self.virtual_editor_state
-                    .set_cursor(eof, self.virtual_editor_buffer.len_chars());
+                self.virtual_editor_state.move_cursor(
+                    eof,
+                    self.virtual_editor_buffer.len_chars(),
+                    ui.input(|input| input.modifiers.shift),
+                );
                 self.virtual_editor_state.clear_preferred_column();
                 self.reset_virtual_click_streak();
                 self.reset_virtual_caret_blink();

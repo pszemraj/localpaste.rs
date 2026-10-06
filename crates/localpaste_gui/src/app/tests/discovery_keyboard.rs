@@ -271,7 +271,7 @@ fn palette_actions_keep_their_focus_destination_and_picker_cancel_returns_to_ope
 }
 
 #[test]
-fn failed_picker_search_stays_visible_and_retries_without_input_changes() {
+fn failed_picker_search_stays_visible_until_explicit_retry() {
     let (mut harness, _events) = make_app_with_event_tx();
     let ctx = egui::Context::default();
     harness.app.open_paste_picker();
@@ -304,9 +304,34 @@ fn failed_picker_search_stays_visible_and_retries_without_input_changes() {
     assert!(!texts.iter().any(|text| text.contains("No matching pastes")));
     assert!(
         harness.cmd_rx.try_recv().is_err(),
-        "retry must honor debounce"
+        "failure must wait for an explicit retry"
     );
-    harness.app.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+    assert!(harness.app.palette_search_last_input_at.is_none());
+    let retry = output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text == "Retry" => {
+                Some(text.pos + text.galley.size() / 2.0)
+            }
+            _ => None,
+        })
+        .expect("visible Retry button");
+    for pressed in [true, false] {
+        frame(
+            &mut harness.app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(retry),
+                egui::Event::PointerButton {
+                    pos: retry,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
     harness.app.maybe_dispatch_palette_search();
     assert!(
         matches!(recv_cmd(&harness.cmd_rx), CoreCmd::SearchPalette { query, .. } if query == "needle")

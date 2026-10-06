@@ -139,6 +139,7 @@ fn render_large_history_preview(ui: &mut egui::Ui, text: &str, lines: &EditorLin
     ui.add_space(6.0);
 
     egui::ScrollArea::vertical()
+        .id_salt("history_snapshot_preview")
         .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
         .auto_shrink([false, false])
         .show_rows(ui, row_height, line_count, |ui, range| {
@@ -171,6 +172,7 @@ fn render_large_history_preview(ui: &mut egui::Ui, text: &str, lines: &EditorLin
 
 fn render_inline_history_preview(ui: &mut egui::Ui, text: &mut String) {
     egui::ScrollArea::vertical()
+        .id_salt("history_snapshot_preview")
         .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -289,6 +291,7 @@ impl LocalPasteApp {
                         left.label(RichText::new("Versions").small().color(COLOR_TEXT_MUTED));
                         left.add_space(4.0);
                         egui::ScrollArea::vertical()
+                            .id_salt("history_versions_list")
                             .max_height(620.0)
                             .show(left, |ui| {
                                 let current_selected = self.version_ui.history_selected_index == 0;
