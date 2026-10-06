@@ -261,6 +261,13 @@ fn json_lines_keep_format_identity_through_detection_and_export() {
     }
     let malformed = format!("{{broken}}\n{large_records}");
     assert!(!heuristic::looks_like_json_lines(&malformed));
+    let malformed_after_line_cap = format!("{}not-json\n", "{\"ok\":true}\n".repeat(512));
+    assert!(malformed_after_line_cap.len() < crate::text::TEXT_SAMPLE_MAX_BYTES);
+    assert!(!heuristic::looks_like_json_lines(&malformed_after_line_cap));
+    assert_ne!(
+        detect_language(&malformed_after_line_cap).as_deref(),
+        Some("jsonl")
+    );
 }
 
 #[test]

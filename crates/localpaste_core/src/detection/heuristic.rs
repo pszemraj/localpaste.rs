@@ -440,16 +440,16 @@ pub(super) fn looks_like_json_lines(content: &str) -> bool {
     } else {
         prefix
     };
-    let records: Vec<_> = sample
-        .lines()
-        .take(512)
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    records.len() >= 2
-        && records.iter().all(|line| {
-            serde_json::from_str::<serde_json::Value>(line)
-                .is_ok_and(|value| value.is_object() || value.is_array())
-        })
+    let mut record_count = 0usize;
+    for line in sample.lines().filter(|line| !line.trim().is_empty()) {
+        if !serde_json::from_str::<serde_json::Value>(line)
+            .is_ok_and(|value| value.is_object() || value.is_array())
+        {
+            return false;
+        }
+        record_count += 1;
+    }
+    record_count >= 2
 }
 
 fn shebang_interpreter(sample: &str) -> Option<String> {
