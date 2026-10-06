@@ -286,7 +286,9 @@ impl LocalPasteApp {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                         }
                         let primary_pressed_on_row = primary_press.filter(|(pos, _)| {
-                            rect.contains(*pos) && ui.ctx().layer_id_at(*pos) == Some(ui.layer_id())
+                            rect.contains(*pos)
+                                && ui.clip_rect().contains(*pos)
+                                && ui.ctx().layer_id_at(*pos) == Some(ui.layer_id())
                         });
                         if let Some((_, modifiers)) = primary_pressed_on_row {
                             self.virtual_pointer_press_modifiers = Some(modifiers);
@@ -437,9 +439,22 @@ impl LocalPasteApp {
                             .interact_pos()
                             .or_else(|| input.pointer.latest_pos())
                     });
+                    let primary_release = ui.input(|input| {
+                        input.events.iter().rev().find_map(|event| match event {
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed: false,
+                                ..
+                            } => Some(*pos),
+                            _ => None,
+                        })
+                    });
                     let pointer_down = ui.input(|input| input.pointer.primary_down());
-                    if pointer_down && self.virtual_drag_active {
-                        if let Some(pointer_pos) = pointer_pos
+                    let finishing_drag = !pointer_down && primary_release.is_some();
+                    if self.virtual_drag_active && (pointer_down || finishing_drag) {
+                        if let Some(pointer_pos) = primary_release
+                            .or(pointer_pos)
                             .filter(|pos| ui.ctx().layer_id_at(*pos) == Some(ui.layer_id()))
                         {
                             let viewport_rect = ui.clip_rect();
@@ -482,17 +497,20 @@ impl LocalPasteApp {
                                 );
                                 self.reset_virtual_caret_blink();
                             }
-                            let scroll_delta = drag_autoscroll_delta(
-                                pointer_pos.y,
-                                viewport_rect.min.y,
-                                viewport_rect.max.y,
-                                self.virtual_line_height,
-                            );
-                            if scroll_delta != 0.0 {
-                                ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
+                            if pointer_down {
+                                let scroll_delta = drag_autoscroll_delta(
+                                    pointer_pos.y,
+                                    viewport_rect.min.y,
+                                    viewport_rect.max.y,
+                                    self.virtual_line_height,
+                                );
+                                if scroll_delta != 0.0 {
+                                    ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
+                                }
                             }
                         }
-                    } else if !pointer_down {
+                    }
+                    if !pointer_down {
                         self.virtual_drag_active = false;
                     }
 

@@ -421,6 +421,164 @@ fn review_click(app: &mut LocalPasteApp, ctx: &egui::Context, pos: egui::Pos2) {
 }
 
 #[test]
+fn clipped_editor_row_does_not_accept_a_press_above_the_viewport() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    let text = "alpha beta gamma delta\n".repeat(120);
+    harness.app.reset_virtual_editor(&text);
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    let height = harness.app.virtual_line_height;
+    harness.app.virtual_pending_scroll_offset_y = Some(height * 30.0 + height / 2.0);
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    harness
+        .app
+        .virtual_editor_state
+        .restore_selection(1200, Some(1100), text.len());
+    let viewport = harness.app.virtual_viewport.rect.unwrap();
+    let pos = egui::pos2(viewport.left() + 100.0, viewport.top() - height / 3.0);
+
+    review_click(&mut harness.app, &ctx, pos);
+
+    assert_eq!(
+        (
+            harness.app.virtual_editor_state.cursor(),
+            harness.app.virtual_editor_state.anchor()
+        ),
+        (1200, Some(1100)),
+        "clipped editor rows must not receive presses outside their viewport"
+    );
+}
+
+#[test]
+fn pointer_release_applies_the_final_owned_drag_position() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    let text = "alpha beta gamma delta omega\nsecond line\n";
+    harness.app.reset_virtual_editor(text);
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    let origin = harness.app.virtual_viewport.caret.unwrap().center();
+    let start = origin + egui::vec2(40.0, 0.0);
+    let middle = origin + egui::vec2(85.0, 0.0);
+    let end = origin + egui::vec2(155.0, 0.0);
+    review_click(&mut harness.app, &ctx, end);
+    let expected_end = harness.app.virtual_editor_state.cursor();
+    harness.app.reset_virtual_click_streak();
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::PointerMoved(middle)],
+    );
+    review_frame(&mut harness.app, &ctx, vec![]);
+    assert!(harness.app.virtual_drag_active);
+    let intermediate = harness.app.virtual_editor_state.cursor();
+    assert_ne!(intermediate, expected_end);
+
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(end),
+            egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        expected_end,
+        "release must finish the owned drag at its final position"
+    );
+    assert!(!harness.app.virtual_drag_active);
+}
+
+#[test]
+fn pointer_release_over_an_overlay_does_not_move_the_drag_selection() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    let text = "alpha beta gamma delta omega\nsecond line\n";
+    harness.app.reset_virtual_editor(text);
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    let origin = harness.app.virtual_viewport.caret.unwrap().center();
+    let start = origin + egui::vec2(40.0, 0.0);
+    let middle = origin + egui::vec2(85.0, 0.0);
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::PointerMoved(middle)],
+    );
+    review_frame(&mut harness.app, &ctx, vec![]);
+    assert!(harness.app.virtual_drag_active);
+    let cursor_before_overlay = harness.app.virtual_editor_state.cursor();
+
+    harness.app.open_shortcut_help(&ctx);
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    let overlay = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("Keyboard Shortcuts")))
+        .unwrap();
+    let release = overlay.center();
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(release),
+            egui::Event::PointerButton {
+                pos: release,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        cursor_before_overlay,
+        "an overlay-owned release must not update the editor drag"
+    );
+    assert!(!harness.app.virtual_drag_active);
+}
+
+#[test]
 fn find_mouse_navigation_retains_query_focus_for_enter_paste_and_escape() {
     let (mut harness, _event_tx) = make_app_with_event_tx();
     let ctx = egui::Context::default();
