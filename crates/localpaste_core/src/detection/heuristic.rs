@@ -34,7 +34,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     // JSON Lines needs independently valid records; ordinary JSON keeps the
     // cheap structural fallback for large or sampled payloads.
     if sample.starts_with('{') || sample.starts_with('[') {
-        if looks_like_json_lines(sample) {
+        if looks_like_json_lines(trimmed) {
             return Some("jsonl".to_string());
         }
         // When sampling truncates very large JSON payloads, the prefix may not end
@@ -422,7 +422,24 @@ pub(crate) fn detect(content: &str) -> Option<String> {
 /// # Returns
 /// Whether the sample consists of multiple independently valid JSON records.
 pub(super) fn looks_like_json_lines(content: &str) -> bool {
-    let sample = utf8_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
+    let trimmed = content.trim();
+    let prefix = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
+    // A bounded prefix may end inside a record. Validate only complete lines,
+    // including a record whose following newline falls just outside the sample.
+    let sample = if prefix.len() < trimmed.len()
+        && !prefix.ends_with(['\n', '\r'])
+        && !trimmed
+            .get(prefix.len()..)
+            .unwrap_or_default()
+            .starts_with(['\n', '\r'])
+    {
+        prefix
+            .rsplit_once('\n')
+            .map(|(complete, _)| complete)
+            .unwrap_or_default()
+    } else {
+        prefix
+    };
     let records: Vec<_> = sample
         .lines()
         .take(512)

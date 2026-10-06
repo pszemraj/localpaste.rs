@@ -63,7 +63,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 }
 
 #[test]
-fn semantic_kinds_rebuild_from_version_six_and_survive_restart() {
+fn semantic_kinds_rebuild_from_version_seven_and_survive_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
@@ -152,6 +152,54 @@ fn semantic_kinds_rebuild_from_version_six_and_survive_restart() {
             PasteKind::Code,
             PasteKind::Log,
         ),
+        (
+            "info about the current project",
+            "text",
+            PasteKind::Log,
+            PasteKind::Document,
+        ),
+        (
+            "echo chamber is a common metaphor",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "Dear team,\nsudo is required only in some environments.",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "info () { printf hello; }",
+            "shell",
+            PasteKind::Log,
+            PasteKind::Code,
+        ),
+        (
+            "ERROR\tcount\tname\n404\t2\twidget",
+            "tsv",
+            PasteKind::Log,
+            PasteKind::Other,
+        ),
+        (
+            "```\nhello world this is a plain note\n```",
+            "markdown",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "```text\nINFO Starting server\n```",
+            "markdown",
+            PasteKind::Log,
+            PasteKind::Document,
+        ),
+        (
+            "fn main() {}\n// thread 'main' panicked at src/main.rs:12:5",
+            "rust",
+            PasteKind::Log,
+            PasteKind::Code,
+        ),
     ];
     let pastes: Vec<_> = cases
         .iter()
@@ -185,7 +233,7 @@ fn semantic_kinds_rebuild_from_version_six_and_survive_restart() {
         .unwrap()
         .insert(
             META_SCHEMA_VERSION_KEY,
-            bincode::serialize(&6_u64).unwrap().as_slice(),
+            bincode::serialize(&7_u64).unwrap().as_slice(),
         )
         .unwrap();
     txn.commit().unwrap();

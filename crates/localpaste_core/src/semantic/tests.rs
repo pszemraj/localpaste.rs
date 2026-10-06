@@ -1,0 +1,248 @@
+//! Semantic classification and retrieval regressions.
+
+use super::{derive, extract_definition_handle_from_line, PasteKind};
+
+#[test]
+fn explicit_documents_override_code_and_log_signals() {
+    for language in ["markdown", "md", "rst", "restructuredtext", "latex", "tex"] {
+        assert_eq!(
+            derive(
+                "# Notes\n```rust\nfn main() {}\n```\nerror: panic caused by: bad input",
+                Some(language)
+            )
+            .kind,
+            PasteKind::Document,
+            "{language}"
+        );
+    }
+    assert_eq!(
+        derive("A short prose note to keep for later.", None).kind,
+        PasteKind::Document
+    );
+    assert_eq!(derive("", None).kind, PasteKind::Other);
+    assert_eq!(derive("fn main() {}", Some("rust")).kind, PasteKind::Code);
+    for (content, expected) in [
+        ("```python\nprint('hello')\n```", PasteKind::Code),
+        ("```json\n{\"name\":\"Ada\"}\n```", PasteKind::Config),
+        ("\n  ~~~sh\necho hello world\n  ~~~~\n", PasteKind::Code),
+        ("```\necho hello world\n```", PasteKind::Code),
+        (
+            "```text\nINFO Starting the server\n```",
+            PasteKind::Document,
+        ),
+        (
+            "```text\nA short prose note to keep.\n```",
+            PasteKind::Document,
+        ),
+        ("```\nA short prose note to keep.\n```", PasteKind::Document),
+        ("```\nhello\n```", PasteKind::Document),
+        (
+            "```\nfn main() { println!(\"hello\"); }\n```",
+            PasteKind::Code,
+        ),
+        ("```\n{\"a\":1}\n{\"a\":2}\n```", PasteKind::Config),
+        ("```markdown\n# Read me\n```", PasteKind::Document),
+        (
+            "Notes before the example\n```python\nprint('hello')\n```",
+            PasteKind::Document,
+        ),
+        (
+            "```python\nprint('hello')\n```\nNotes after the example",
+            PasteKind::Document,
+        ),
+        ("```python\nprint('hello')", PasteKind::Document),
+        ("```python\nprint('hello')\n~~~", PasteKind::Document),
+    ] {
+        assert_eq!(
+            derive(content, Some("markdown")).kind,
+            expected,
+            "{content}"
+        );
+    }
+    let large_fence = format!("```python\n{}\n```", "print('hello')\n".repeat(5_000));
+    assert_eq!(derive(&large_fence, Some("markdown")).kind, PasteKind::Code);
+}
+
+#[test]
+fn untyped_structural_content_does_not_default_to_document() {
+    let cases = [
+        ("name,age\nAda,37", PasteKind::Other),
+        ("name,age,city", PasteKind::Other),
+        ("deadbeefcafebabe0123456789abcdef", PasteKind::Other),
+        ("550e8400-e29b-41d4-a716-446655440000", PasteKind::Other),
+        ("VGhpcyBpcyBhIHNlY3JldCB0b2tlbg==", PasteKind::Other),
+        ("aLongAlphabeticTokenWithoutSpaces", PasteKind::Other),
+        ("ls -la /var/log", PasteKind::Code),
+        ("brew install localpaste", PasteKind::Code),
+        ("just build", PasteKind::Code),
+        ("make test", PasteKind::Code),
+        ("sudo systemctl restart nginx", PasteKind::Code),
+        ("echo hello world", PasteKind::Code),
+        ("printf hello world", PasteKind::Code),
+        ("INFO Starting the server", PasteKind::Log),
+        ("[INFO] Server started successfully", PasteKind::Log),
+        ("info Starting the server", PasteKind::Document),
+        ("info about the offsite agenda", PasteKind::Document),
+        ("error in the invoice needs correcting", PasteKind::Document),
+        ("echo chamber is a common expression", PasteKind::Document),
+        ("sudo is required for this command", PasteKind::Document),
+        (
+            "Hello team,\nsudo is required for installation.",
+            PasteKind::Document,
+        ),
+        ("echo 'this is a test'", PasteKind::Code),
+        ("[WARN] Retry in thirty seconds", PasteKind::Log),
+        ("thread 'main' panicked at src/main.rs:12:5", PasteKind::Log),
+        ("error: unable to open database", PasteKind::Log),
+        ("WARNING: database connection unavailable", PasteKind::Log),
+        ("debug: true\nname: foo", PasteKind::Config),
+        (
+            "Warning: do not touch the deployment settings.",
+            PasteKind::Document,
+        ),
+        ("Hello, Bob\nSee you soon, Alice", PasteKind::Document),
+        (
+            "First, check the plan, then confirm it.\nNext, send it.",
+            PasteKind::Document,
+        ),
+        ("Just a reminder to save your work.", PasteKind::Document),
+        ("just a reminder to save your work", PasteKind::Document),
+        ("Make a note of the deployment window.", PasteKind::Document),
+        (
+            "Python 3.12 is now installed on the workstation.",
+            PasteKind::Document,
+        ),
+        (
+            "Git is down for scheduled maintenance.",
+            PasteKind::Document,
+        ),
+        (
+            "Brew is ready for the next deployment.",
+            PasteKind::Document,
+        ),
+        ("Ls lists the files in this folder.", PasteKind::Document),
+        ("first name,age\nAda Lovelace,37", PasteKind::Other),
+        ("name;age\nAda;37", PasteKind::Other),
+        ("name\tage\nAda Lovelace\t37", PasteKind::Other),
+        (
+            "Bonjour à tous, à demain pour la réunion.",
+            PasteKind::Document,
+        ),
+    ];
+
+    for (content, expected) in cases {
+        for language in [None, Some("text")] {
+            assert_eq!(
+                derive(content, language).kind,
+                expected,
+                "{content}: {language:?}"
+            );
+        }
+    }
+    assert_eq!(
+        derive("A short prose note to keep for later.", Some("text")).kind,
+        PasteKind::Document
+    );
+}
+
+#[test]
+fn derive_matrix_covers_code_config_log_link_and_other() {
+    for (content, language, expected) in [
+        (
+            "[INFO] Server started\nINFO Starting worker\nWARN Queue full",
+            "dockerfile",
+            PasteKind::Log,
+        ),
+        ("INFO Starting the server", "dockerfile", PasteKind::Log),
+        (
+            "thread 'main' panicked at src/main.rs:12:5",
+            "html",
+            PasteKind::Log,
+        ),
+        ("[INFO]\nname = \"worker\"", "toml", PasteKind::Config),
+        ("INFO = \"Starting worker\"", "python", PasteKind::Code),
+        ("info () { echo \"ready\"; }", "shell", PasteKind::Code),
+        ("INFO () { echo \"ready\"; }", "shell", PasteKind::Code),
+        ("error\tamount\nmissing\t12", "tsv", PasteKind::Other),
+        ("INFO\tstatus\nready\t12", "tsv", PasteKind::Other),
+        (
+            "fn main() {}\nthread 'main' panicked at src/main.rs:12:5",
+            "rust",
+            PasteKind::Code,
+        ),
+        ("debug: true\nname: foo", "yaml", PasteKind::Config),
+        (
+            "FROM ubuntu\nRUN echo hello world",
+            "dockerfile",
+            PasteKind::Config,
+        ),
+        ("[INFO] Server started", "markdown", PasteKind::Document),
+    ] {
+        assert_eq!(
+            derive(content, Some(language)).kind,
+            expected,
+            "{language}: {content}"
+        );
+    }
+    let code = derive("fn handle_request(input: &str) {}\n", Some("rust"));
+    assert_eq!(code.kind, PasteKind::Code);
+    assert_eq!(code.handle.as_deref(), Some("fn handle_request"));
+
+    let config = derive("model: gpt-4\nbatch: 32\n", Some("yaml"));
+    assert_eq!(config.kind, PasteKind::Config);
+    assert_eq!(config.handle.as_deref(), Some("model gpt-4"));
+
+    let log = derive(
+        "panic: failed to bind\ncaused by: port already in use\n",
+        Some("text"),
+    );
+    assert_eq!(log.kind, PasteKind::Log);
+    assert!(log
+        .handle
+        .as_deref()
+        .map(|handle| handle.starts_with("panic"))
+        .unwrap_or(false));
+
+    let link = derive("https://example.com/docs\n", Some("text"));
+    assert_eq!(link.kind, PasteKind::Link);
+    assert_eq!(link.handle.as_deref(), Some("example.com"));
+
+    let short_text = derive("hi", Some("text"));
+    assert_eq!(short_text.kind, PasteKind::Other);
+    assert!(short_text.handle.is_none());
+}
+
+#[test]
+fn derive_terms_prefers_repeated_technical_tokens() {
+    let derived = derive(
+        "validation failed for fsdp2 after cublaslt retry\nfsdp2 validation repeated\n",
+        Some("text"),
+    );
+    assert!(derived.terms.iter().any(|term| term == "fsdp2"));
+    assert!(derived.terms.iter().any(|term| term == "validation"));
+    assert!(derived.terms.iter().any(|term| term == "cublaslt"));
+}
+
+#[test]
+fn definition_handle_extracts_exported_js_ts_declarations() {
+    let cases = [
+        (
+            "export const renderPanel = () => {};",
+            Some("typescript"),
+            Some("export const renderPanel"),
+        ),
+        (
+            "export class WorkspacePanel {}",
+            Some("javascript"),
+            Some("export class WorkspacePanel"),
+        ),
+    ];
+
+    for (line, language, expected) in cases {
+        assert_eq!(
+            extract_definition_handle_from_line(line, language).as_deref(),
+            expected,
+            "line: {line}"
+        );
+    }
+}

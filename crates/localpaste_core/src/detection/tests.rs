@@ -216,9 +216,12 @@ fn canonicalization_matrix_handles_aliases() {
 
 #[test]
 fn json_lines_keep_format_identity_through_detection_and_export() {
+    let large_record = format!("{{\"payload\":\"{}\"}}\n", "é".repeat(120));
+    let large_records = large_record.repeat(400);
     for content in [
         "{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n",
         "{\"a\":1}\n{\"a\":2}\n",
+        large_records.as_str(),
     ] {
         assert_eq!(heuristic::detect(content).as_deref(), Some("jsonl"));
         for label in ["json", "jsonl"] {
@@ -245,6 +248,48 @@ fn json_lines_keep_format_identity_through_detection_and_export() {
         "{\"name\":\"Ada\"}\nnot a record",
     ] {
         assert_ne!(heuristic::detect(malformed).as_deref(), Some("jsonl"));
+    }
+    for content in [
+        large_records.replace('\n', "\r\n"),
+        format!(
+            "{{\"a\":1}}\n{{\"padding\":\"{}\"}}\n{{\"a\":2}}\n",
+            "x".repeat(crate::text::TEXT_SAMPLE_MAX_BYTES - 24)
+        ),
+    ] {
+        assert!(heuristic::looks_like_json_lines(&content));
+        assert_eq!(detect_language(&content).as_deref(), Some("jsonl"));
+    }
+    let malformed = format!("{{broken}}\n{large_records}");
+    assert!(!heuristic::looks_like_json_lines(&malformed));
+}
+
+#[test]
+fn panic_detection_requires_a_leading_runtime_header() {
+    let panic = "thread 'main' panicked at src/main.rs:12:5";
+    assert!(super::looks_like_rust_panic(&format!("\n  {panic}\n")));
+    assert_eq!(detect_language(panic).as_deref(), Some("log"));
+    for (content, language) in [
+        (
+            format!(
+                "# Bug report\nSteps to reproduce:\n```text\n{panic}\n```\nPlease investigate."
+            ),
+            "markdown",
+        ),
+        (
+            format!("fn main() {{\n    println!(\"ready\");\n}}\n{panic}\nstack backtrace:"),
+            "rust",
+        ),
+    ] {
+        assert!(!super::looks_like_rust_panic(&content));
+        assert_eq!(detect_language(&content).as_deref(), Some(language));
+        assert_eq!(
+            crate::semantic::derive(&content, Some(language)).kind,
+            if language == "rust" {
+                crate::semantic::PasteKind::Code
+            } else {
+                crate::semantic::PasteKind::Document
+            }
+        );
     }
 }
 

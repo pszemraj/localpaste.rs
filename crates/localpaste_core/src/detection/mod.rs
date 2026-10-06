@@ -32,6 +32,14 @@ pub fn detect_language(content: &str) -> Option<String> {
         }
     }
 
+    detect_heuristically(content)
+}
+
+/// Detect structural language hints without statistical inference or a model lock.
+///
+/// # Returns
+/// A canonical language hint suitable for synchronous metadata derivation.
+pub(crate) fn detect_heuristically(content: &str) -> Option<String> {
     heuristic::detect(content)
         .map(|label| canonical::canonicalize(&label))
         .filter(|label| !label.is_empty() && label != "text")
@@ -40,12 +48,13 @@ pub fn detect_language(content: &str) -> Option<String> {
 /// Recognize Rust's runtime panic header, rather than prose mentioning a panic.
 ///
 /// # Returns
-/// Whether a sampled line has the runtime's thread and source-location prefix.
+/// Whether the first nonempty line has the runtime's thread and source-location prefix.
 pub(crate) fn looks_like_rust_panic(content: &str) -> bool {
-    content.lines().take(512).any(|line| {
-        let line = line.trim_start();
-        line.starts_with("thread '") && line.contains("' panicked at ")
-    })
+    content
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .is_some_and(|line| line.starts_with("thread '") && line.contains("' panicked at "))
 }
 
 #[derive(Clone, Copy)]
@@ -55,13 +64,6 @@ struct MarkdownFence {
 }
 
 fn markdown_fence_override_applies(content: &str) -> bool {
-    if !crate::models::paste::is_markdown_content(content) {
-        return false;
-    }
-    is_standalone_fenced_markdown_block(content)
-}
-
-fn is_standalone_fenced_markdown_block(content: &str) -> bool {
     standalone_fenced_block(content).is_some()
 }
 
