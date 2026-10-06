@@ -139,6 +139,14 @@ impl LocalPasteApp {
         let eof_padding_rows = (editor_height / self.virtual_line_height / 2.0).ceil() as usize + 3;
         let content_rows = self.virtual_layout.total_rows().max(1);
         let total_rows = content_rows.saturating_add(eof_padding_rows);
+        let scroll_style = ui.spacing().scroll;
+        let floating_scrollbar_hit_width = if scroll_style.floating
+            && total_rows as f32 * self.virtual_line_height > editor_height
+        {
+            scroll_style.bar_width
+        } else {
+            0.0
+        };
         self.virtual_galley_cache.prepare_frame(
             line_count,
             VirtualGalleyContext::new(
@@ -282,11 +290,18 @@ impl LocalPasteApp {
                                 .min(rect.max.x);
                         let text_origin = egui::pos2(text_min_x, rect.min.y);
                         let text_rect = egui::Rect::from_min_max(text_origin, rect.max);
+                        let row_hit_rect = egui::Rect::from_min_max(
+                            rect.min,
+                            egui::pos2(
+                                (rect.max.x - floating_scrollbar_hit_width).max(rect.min.x),
+                                rect.max.y,
+                            ),
+                        );
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                         }
                         let primary_pressed_on_row = primary_press.filter(|(pos, _)| {
-                            rect.contains(*pos)
+                            row_hit_rect.contains(*pos)
                                 && ui.clip_rect().contains(*pos)
                                 && ui.ctx().layer_id_at(*pos) == Some(ui.layer_id())
                         });
@@ -296,8 +311,11 @@ impl LocalPasteApp {
                         let pointer_pos = primary_pressed_on_row
                             .map(|(pos, _)| pos)
                             .or_else(|| response.interact_pointer_pos());
-                        let owns_pointer = pointer_pos
-                            .is_some_and(|pos| ui.ctx().layer_id_at(pos) == Some(ui.layer_id()));
+                        let owns_pointer = pointer_pos.is_some_and(|pos| {
+                            ui.ctx()
+                                .layer_id_at(pos)
+                                .is_none_or(|layer_id| layer_id == ui.layer_id())
+                        });
                         if pending_action.is_none()
                             && owns_pointer
                             && self.virtual_pointer_press_modifiers.is_some()
@@ -453,10 +471,11 @@ impl LocalPasteApp {
                     let pointer_down = ui.input(|input| input.pointer.primary_down());
                     let finishing_drag = !pointer_down && primary_release.is_some();
                     if self.virtual_drag_active && (pointer_down || finishing_drag) {
-                        if let Some(pointer_pos) = primary_release
-                            .or(pointer_pos)
-                            .filter(|pos| ui.ctx().layer_id_at(*pos) == Some(ui.layer_id()))
-                        {
+                        if let Some(pointer_pos) = primary_release.or(pointer_pos).filter(|pos| {
+                            ui.ctx()
+                                .layer_id_at(*pos)
+                                .is_none_or(|layer_id| layer_id == ui.layer_id())
+                        }) {
                             let viewport_rect = ui.clip_rect();
                             let target_row = rows
                                 .iter()
@@ -506,6 +525,7 @@ impl LocalPasteApp {
                                 );
                                 if scroll_delta != 0.0 {
                                     ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
+                                    ui.ctx().request_repaint();
                                 }
                             }
                         }
@@ -642,10 +662,23 @@ impl LocalPasteApp {
             })
             .unwrap_or(false);
         let clicked_inside_editor_content = pointer_press_pos
-            .map(|pos| primary_pressed && scroll_output.inner_rect.contains(pos))
+            .map(|pos| {
+                let content_rect = egui::Rect::from_min_max(
+                    scroll_output.inner_rect.min,
+                    egui::pos2(
+                        (scroll_output.inner_rect.max.x - floating_scrollbar_hit_width)
+                            .max(scroll_output.inner_rect.min.x),
+                        scroll_output.inner_rect.max.y,
+                    ),
+                );
+                primary_pressed && content_rect.contains(pos)
+            })
             .unwrap_or(false);
         if clicked_inside_editor {
-            self.virtual_pointer_press_modifiers = primary_press.map(|(_, modifiers)| modifiers);
+            if clicked_inside_editor_content {
+                self.virtual_pointer_press_modifiers =
+                    primary_press.map(|(_, modifiers)| modifiers);
+            }
             self.virtual_editor_state.has_focus = true;
             request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
             egui_focus = true;

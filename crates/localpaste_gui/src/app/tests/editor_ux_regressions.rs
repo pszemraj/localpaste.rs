@@ -454,6 +454,106 @@ fn clipped_editor_row_does_not_accept_a_press_above_the_viewport() {
 }
 
 #[test]
+fn dragging_the_floating_scrollbar_preserves_editor_selection() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    let text = "alpha beta gamma delta omega\n".repeat(240);
+    harness.app.reset_virtual_editor(&text);
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness
+        .app
+        .virtual_editor_state
+        .restore_selection(5, Some(24), len);
+    let selection_before = harness.app.virtual_editor_state.selection_range();
+    let viewport = harness.app.virtual_viewport.rect.unwrap();
+    let thumb = egui::pos2(viewport.right() - 1.0, viewport.top() + 5.0);
+    let dragged = thumb + egui::vec2(0.0, 140.0);
+    let offset_before = harness.app.virtual_viewport.offset_y;
+
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(thumb),
+            egui::Event::PointerButton {
+                pos: thumb,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::PointerMoved(dragged)],
+    );
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::PointerButton {
+            pos: dragged,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+
+    assert!(
+        harness.app.virtual_viewport.offset_y > offset_before,
+        "dragging the scrollbar thumb should move the viewport"
+    );
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        selection_before,
+        "scrollbar interaction must not become an editor row click"
+    );
+    assert!(!harness.app.virtual_drag_active);
+}
+
+#[test]
+fn drag_start_survives_first_movement_crossing_multiple_rows() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    let text = "alpha beta gamma delta omega\n".repeat(80);
+    harness.app.reset_virtual_editor(&text);
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    let viewport = harness.app.virtual_viewport.rect.unwrap();
+    let line_height = harness.app.virtual_line_height;
+    let start = egui::pos2(viewport.left() + 70.0, viewport.top() + line_height * 1.5);
+    let crossed_rows = start + egui::vec2(35.0, line_height * 5.0);
+
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let anchor_cursor = harness.app.virtual_editor_state.cursor();
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::PointerMoved(crossed_rows)],
+    );
+
+    assert!(harness.app.virtual_drag_active);
+    assert!(harness.app.virtual_editor_state.cursor() > anchor_cursor);
+    assert!(harness.app.virtual_editor_state.selection_range().is_some());
+}
+
+#[test]
 fn pointer_release_applies_the_final_owned_drag_position() {
     let (mut harness, _event_tx) = make_app_with_event_tx();
     let ctx = egui::Context::default();
@@ -515,6 +615,91 @@ fn pointer_release_applies_the_final_owned_drag_position() {
 }
 
 #[test]
+fn owned_drag_tracks_and_autoscrolls_outside_the_viewport_and_window() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    let text = "alpha beta gamma delta omega\n".repeat(160);
+    harness.app.reset_virtual_editor(&text);
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    let viewport = harness.app.virtual_viewport.rect.unwrap();
+    let start = egui::pos2(viewport.left() + 40.0, viewport.center().y);
+    let middle = start + egui::vec2(80.0, 12.0);
+    let outside_window = egui::pos2(viewport.center().x, 940.0);
+    assert!(ctx.layer_id_at(outside_window).is_none());
+
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::PointerMoved(middle)],
+    );
+    assert!(harness.app.virtual_drag_active);
+    let cursor_inside = harness.app.virtual_editor_state.cursor();
+    let offset_before = harness.app.virtual_viewport.offset_y;
+
+    let endpoint_output = review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::PointerMoved(outside_window)],
+    );
+    let cursor_outside = harness.app.virtual_editor_state.cursor();
+    assert!(endpoint_output
+        .viewport_output
+        .values()
+        .any(|viewport| viewport.repaint_delay == Duration::ZERO));
+    let first_repaint_output = review_frame(&mut harness.app, &ctx, vec![]);
+    let offset_after_first_repaint = harness.app.virtual_viewport.offset_y;
+    assert!(first_repaint_output
+        .viewport_output
+        .values()
+        .any(|viewport| viewport.repaint_delay == Duration::ZERO));
+    review_frame(&mut harness.app, &ctx, vec![]);
+
+    assert!(harness.app.virtual_drag_active);
+    assert!(
+        cursor_outside > cursor_inside,
+        "an owned drag outside the window should extend to the last rendered row"
+    );
+    assert!(
+        offset_after_first_repaint > offset_before,
+        "an owned drag below the window should start autoscrolling"
+    );
+    assert!(
+        harness.app.virtual_viewport.offset_y > offset_after_first_repaint,
+        "autoscroll should continue on repaint while the pointer stays held outside the window"
+    );
+
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(outside_window),
+            egui::Event::PointerButton {
+                pos: outside_window,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    assert!(!harness.app.virtual_drag_active);
+}
+
+#[test]
 fn pointer_release_over_an_overlay_does_not_move_the_drag_selection() {
     let (mut harness, _event_tx) = make_app_with_event_tx();
     let ctx = egui::Context::default();
@@ -547,6 +732,7 @@ fn pointer_release_over_an_overlay_does_not_move_the_drag_selection() {
     review_frame(&mut harness.app, &ctx, vec![]);
     assert!(harness.app.virtual_drag_active);
     let cursor_before_overlay = harness.app.virtual_editor_state.cursor();
+    let offset_before_overlay = harness.app.virtual_viewport.offset_y;
 
     harness.app.open_shortcut_help(&ctx);
     for _ in 0..3 {
@@ -574,6 +760,10 @@ fn pointer_release_over_an_overlay_does_not_move_the_drag_selection() {
         harness.app.virtual_editor_state.cursor(),
         cursor_before_overlay,
         "an overlay-owned release must not update the editor drag"
+    );
+    assert_eq!(
+        harness.app.virtual_viewport.offset_y, offset_before_overlay,
+        "an overlay-owned release must not autoscroll the editor"
     );
     assert!(!harness.app.virtual_drag_active);
 }
