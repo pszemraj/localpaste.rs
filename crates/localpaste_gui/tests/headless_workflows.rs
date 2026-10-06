@@ -275,7 +275,8 @@ fn backend_delete_rejects_foreign_lock_holder_and_preserves_paste() {
         })
         .expect("send delete");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::Error { message, .. } => {
+        CoreEvent::PasteDeleteFailed { id, message } => {
+            assert_eq!(id, paste_id);
             assert!(
                 message.contains("open for editing"),
                 "expected lock rejection, got: {}",
@@ -293,7 +294,10 @@ fn backend_delete_rejects_foreign_lock_holder_and_preserves_paste() {
         })
         .expect("send get after rejected delete");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste, .. } => assert_eq!(paste.id, paste_id),
+        CoreEvent::PasteLoaded { paste, .. } => {
+            assert_eq!(paste.id, paste_id);
+            assert_eq!(paste.content, "locked body");
+        }
         other => panic!("unexpected event: {:?}", other),
     }
 

@@ -119,6 +119,7 @@ pub(crate) struct LocalPasteApp {
     pending_picker_open: Option<PendingPickerOpen>,
     picker_selection_pin: Option<String>,
     pending_delete_id: Option<String>,
+    picker_delete_transition: Option<PickerDeleteTransition>,
     clipboard_outgoing: Option<String>,
     active_buffer_epoch: u64,
     virtual_editor_buffer: RopeBuffer,
@@ -220,6 +221,13 @@ struct PendingPickerOpen {
     input_events: Vec<egui::Event>,
     /// Matching load has completed and the retained input may enter its editor.
     input_ready: bool,
+}
+
+/// Selected-picker delete ownership retained through its replacement load.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PickerDeleteTransition {
+    deleted_id: String,
+    replacement_id: Option<String>,
 }
 
 // GUI-owned writes refresh immediately through backend events. This fallback is
@@ -545,6 +553,18 @@ impl eframe::App for LocalPasteApp {
             input.consume_key(egui::Modifiers::COMMAND, egui::Key::K);
         });
         for action in runtime_actions {
+            if self.picker_delete_transition_active()
+                && matches!(
+                    action,
+                    RuntimeShortcutAction::ToggleCommandPalette
+                        | RuntimeShortcutAction::ToggleCommandPaletteLegacy
+                        | RuntimeShortcutAction::TogglePastePicker
+                        | RuntimeShortcutAction::ToggleShortcutHelp
+                )
+            {
+                self.set_picker_delete_transition_blocked_status();
+                continue;
+            }
             if self.keyboard_overlay_open()
                 && !self.version_overlay_open()
                 && matches!(

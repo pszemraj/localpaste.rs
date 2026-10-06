@@ -171,7 +171,7 @@ fn delete_selected_with_in_flight_stale_save_dispatches_newer_save_before_delete
 
 #[test]
 fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediate() {
-    let mut selected = make_app();
+    let (mut selected, _selected_evt_tx) = make_app_with_event_tx();
     selected.app.paste_picker_open = true;
     set_active_content(&mut selected.app, "palette dirty");
     selected.app.save_status = SaveStatus::Dirty;
@@ -209,6 +209,7 @@ fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediat
     selected
         .app
         .apply_event(CoreEvent::PasteSaved { paste: saved });
+    assert!(selected.app.picker_delete_transition_active());
     assert!(selected
         .cmd_rx
         .try_iter()
@@ -279,12 +280,208 @@ fn palette_delete_selected_uses_deferred_save_but_nonselected_delete_is_immediat
 }
 
 #[test]
+fn selected_picker_delete_owns_escape_before_ack_and_replacement_load() {
+    let (mut harness, _evt_tx) = make_app_with_event_tx();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 12));
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.paste_picker_open = true;
+    let ctx = egui::Context::default();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+
+    harness.app.send_palette_delete(&ctx, "alpha".to_string());
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::DeletePaste { id } if id == "alpha"
+    ));
+    assert!(harness.app.picker_delete_transition_active());
+    harness.app.delete_selected();
+    harness.app.create_new_paste();
+    assert!(
+        matches!(harness.cmd_rx.try_recv(), Err(TryRecvError::Empty)),
+        "the accepted picker delete must be the only mutation dispatched"
+    );
+    harness.app.open_diff_modal();
+    assert!(!harness.app.version_overlay_open());
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
+    );
+    assert!(harness.app.paste_picker_open);
+    assert!(!harness.app.shortcut_help_open);
+
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![
+            key_event(egui::Key::Escape, egui::Modifiers::NONE),
+            egui::Event::Text("before".into()),
+        ],
+    );
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    assert!(harness.app.paste_picker_open);
+    assert_eq!(harness.app.paste_picker_query, "before");
+    assert!(!harness.app.select_paste("beta".to_string()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".into(),
+        undo_token: None,
+    });
+    let replacement_epoch = harness
+        .cmd_rx
+        .try_iter()
+        .find_map(|command| match command {
+            CoreCmd::GetPaste {
+                id,
+                selection_epoch,
+            } if id == "beta" => Some(selection_epoch),
+            _ => None,
+        })
+        .expect("adjacent paste load");
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    assert!(harness.app.picker_delete_transition_active());
+
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![
+            key_event(egui::Key::Escape, egui::Modifiers::NONE),
+            egui::Event::Text("-after".into()),
+        ],
+    );
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    assert!(harness.app.paste_picker_open);
+    assert_eq!(harness.app.paste_picker_query, "before-after");
+
+    let mut beta = Paste::new("beta content".into(), "Beta".into());
+    beta.id = "beta".into();
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: beta,
+        selection_epoch: replacement_epoch,
+    });
+    assert!(!harness.app.picker_delete_transition_active());
+    assert!(harness.app.paste_picker_open);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert!(!harness.app.paste_picker_open);
+}
+
+#[test]
+fn selected_picker_delete_failure_releases_ownership_fence() {
+    let mut harness = make_app();
+    harness.app.paste_picker_open = true;
+    let ctx = egui::Context::default();
+    harness.app.send_palette_delete(&ctx, "alpha".to_string());
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::DeletePaste { .. }
+    ));
+
+    harness.app.apply_event(CoreEvent::PasteDeleteFailed {
+        id: "alpha".into(),
+        message: "Delete failed: locked.".into(),
+    });
+
+    assert!(!harness.app.picker_delete_transition_active());
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert!(!harness.app.paste_picker_open);
+}
+
+#[test]
+fn selected_picker_delete_dispatch_failure_after_save_releases_ownership_fence() {
+    let mut harness = make_app();
+    harness.app.paste_picker_open = true;
+    set_active_content(&mut harness.app, "dirty content");
+    harness.app.save_status = SaveStatus::Dirty;
+    harness
+        .app
+        .send_palette_delete(&egui::Context::default(), "alpha".into());
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::UpdatePasteVirtual { .. }
+    ));
+    assert!(harness.app.picker_delete_transition_active());
+    let (_replacement_tx, replacement_rx) = unbounded();
+    let live_rx = std::mem::replace(&mut harness.cmd_rx, replacement_rx);
+    drop(live_rx);
+
+    let mut saved = Paste::new("dirty content".into(), "Alpha".into());
+    saved.id = "alpha".into();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    assert!(harness.app.pending_delete_id.is_none());
+    assert!(!harness.app.picker_delete_transition_active());
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+}
+
+#[test]
+fn selected_picker_replacement_load_failure_releases_ownership_fence() {
+    let mut harness = make_app();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 12));
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.paste_picker_open = true;
+    let ctx = egui::Context::default();
+    harness.app.send_palette_delete(&ctx, "alpha".to_string());
+    let _ = recv_cmd(&harness.cmd_rx);
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".into(),
+        undo_token: None,
+    });
+    let replacement_epoch = harness
+        .cmd_rx
+        .try_iter()
+        .find_map(|command| match command {
+            CoreCmd::GetPaste {
+                id,
+                selection_epoch,
+            } if id == "beta" => Some(selection_epoch),
+            _ => None,
+        })
+        .expect("adjacent paste load");
+
+    harness.app.apply_event(CoreEvent::PasteLoadFailed {
+        id: "beta".into(),
+        selection_epoch: replacement_epoch,
+        message: "Load failed: disk error.".into(),
+    });
+
+    assert!(!harness.app.picker_delete_transition_active());
+    assert!(harness.app.paste_picker_open);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert!(!harness.app.paste_picker_open);
+}
+
+#[test]
 fn save_error_cancels_pending_delete_and_preserves_dirty_selected_state() {
     let mut harness = make_app();
     set_active_content(&mut harness.app, "still dirty");
     harness.app.save_status = SaveStatus::Dirty;
 
-    harness.app.delete_selected();
+    harness.app.paste_picker_open = true;
+    harness
+        .app
+        .send_palette_delete(&egui::Context::default(), "alpha".into());
     assert!(matches!(
         recv_cmd(&harness.cmd_rx),
         CoreCmd::UpdatePasteVirtual { .. }
@@ -296,6 +493,7 @@ fn save_error_cancels_pending_delete_and_preserves_dirty_selected_state() {
     });
 
     assert!(harness.app.pending_delete_id.is_none());
+    assert!(!harness.app.picker_delete_transition_active());
     assert!(matches!(harness.app.save_status, SaveStatus::Dirty));
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
     assert!(matches!(
@@ -310,7 +508,10 @@ fn metadata_save_error_cancels_pending_delete_and_preserves_dirty_selected_state
     harness.app.metadata_dirty = true;
     harness.app.edit_name = "Still Dirty".to_string();
 
-    harness.app.delete_selected();
+    harness.app.paste_picker_open = true;
+    harness
+        .app
+        .send_palette_delete(&egui::Context::default(), "alpha".into());
     assert!(matches!(
         recv_cmd(&harness.cmd_rx),
         CoreCmd::UpdatePasteMeta { .. }
@@ -322,6 +523,7 @@ fn metadata_save_error_cancels_pending_delete_and_preserves_dirty_selected_state
     });
 
     assert!(harness.app.pending_delete_id.is_none());
+    assert!(!harness.app.picker_delete_transition_active());
     assert!(harness.app.metadata_dirty);
     assert!(!harness.app.metadata_save_in_flight);
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));

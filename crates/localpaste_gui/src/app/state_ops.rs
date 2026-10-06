@@ -10,8 +10,7 @@ use super::deferred_saves::rollback_deferred_save_dispatches;
 use super::util::parse_tags_csv;
 use super::{
     ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, SaveStatus, SidebarCollection,
-    ToastAction, BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW, PALETTE_SEARCH_LIMIT,
-    SEARCH_DEBOUNCE,
+    BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use localpaste_core::{
@@ -77,6 +76,9 @@ impl LocalPasteApp {
     /// Clears UI state that can only complete via backend events after the event channel closes.
     pub(super) fn handle_backend_event_channel_disconnected(&mut self) {
         self.pending_picker_open = None;
+        let picker_delete_pending = self.picker_delete_transition_active();
+        self.clear_picker_delete_transition();
+        self.cancel_pending_delete();
         let picker_search_pending = std::mem::take(&mut self.palette_search_pending);
         if picker_search_pending {
             self.fail_palette_search("Paste picker search canceled: backend unavailable.".into());
@@ -85,6 +87,8 @@ impl LocalPasteApp {
         if !self.pending_undo_restore_tokens.is_empty() {
             self.pending_undo_restore_tokens.clear();
             self.set_status("Undo delete canceled: backend unavailable.");
+        } else if picker_delete_pending {
+            self.set_status("Delete canceled: backend unavailable.");
         } else if picker_copy_pending {
             self.set_status("Paste copy canceled: backend unavailable.");
         } else if picker_search_pending {
@@ -146,7 +150,9 @@ impl LocalPasteApp {
                 }
             }
             CoreEvent::PasteLoaded { paste, .. } => {
+                let paste_id = paste.id.clone();
                 self.select_loaded_paste(paste);
+                self.clear_picker_delete_transition_for(paste_id.as_str());
             }
             CoreEvent::PasteCopyLoaded { paste, request_id } => {
                 self.apply_palette_copy_loaded(paste, request_id)
@@ -343,45 +349,14 @@ impl LocalPasteApp {
                 self.fail_palette_search(message);
             }
             CoreEvent::PasteDeleted { id, undo_token } => {
-                let deleted_index = self.pastes.iter().position(|paste| paste.id == id);
-                let was_selected = self.selected_id.as_deref() == Some(id.as_str());
-                self.all_pastes.retain(|paste| paste.id != id);
-                self.pastes.retain(|paste| paste.id != id);
-                self.palette_search_results.retain(|paste| paste.id != id);
-                if self.paste_picker_open {
-                    self.palette_search_last_sent.clear();
-                    self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+                self.apply_paste_deleted(id, undo_token);
+            }
+            CoreEvent::PasteDeleteFailed { id, message } => {
+                self.clear_picker_delete_transition_for(id.as_str());
+                if self.pending_delete_id.as_deref() == Some(id.as_str()) {
+                    self.cancel_pending_delete();
                 }
-                self.clear_pending_palette_copy_for(id.as_str());
-                self.clear_picker_selection_context_for(id.as_str());
-                if was_selected {
-                    let adjacent_id = deleted_index.and_then(|index| {
-                        self.pastes
-                            .get(index)
-                            .or_else(|| index.checked_sub(1).and_then(|prev| self.pastes.get(prev)))
-                            .map(|paste| paste.id.clone())
-                    });
-                    self.clear_selection();
-                    if let Some(adjacent_id) = adjacent_id {
-                        let _ = self.select_paste(adjacent_id);
-                    }
-                    if let Some(undo_token) = undo_token {
-                        self.set_status_with_action(
-                            "Paste deleted.",
-                            ToastAction::UndoDelete { undo_token },
-                        );
-                    } else {
-                        self.set_status("Paste deleted. Undo unavailable.");
-                    }
-                } else if let Some(undo_token) = undo_token {
-                    self.set_status_with_action(
-                        "Paste deleted; list refreshed.",
-                        ToastAction::UndoDelete { undo_token },
-                    );
-                } else {
-                    self.set_status("Paste deleted; list refreshed. Undo unavailable.");
-                }
-                self.request_refresh();
+                self.set_status(message);
             }
             CoreEvent::PasteRestored { paste, undo_token } => {
                 let paste_id = paste.id.clone();
@@ -424,6 +399,7 @@ impl LocalPasteApp {
                 self.remove_undo_toast(&undo_token);
             }
             CoreEvent::PasteMissing { id } | CoreEvent::PasteSelectionMissing { id, .. } => {
+                self.clear_picker_delete_transition_for(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_picker_selection_context_for(id.as_str());
@@ -451,6 +427,7 @@ impl LocalPasteApp {
                 self.request_refresh();
             }
             CoreEvent::PasteLoadFailed { id, message, .. } => {
+                self.clear_picker_delete_transition_for(id.as_str());
                 self.clear_picker_selection_context_for(id.as_str());
                 self.clear_selection();
                 self.set_status(message);
@@ -473,6 +450,9 @@ impl LocalPasteApp {
                 // unrelated metadata/content saves that are still awaiting an ack.
                 match source {
                     CoreErrorSource::SaveMetadata if self.metadata_save_in_flight => {
+                        if let Some(id) = self.pending_delete_id.clone() {
+                            self.clear_picker_delete_transition_for(id.as_str());
+                        }
                         self.cancel_queued_history_reset();
                         self.cancel_pending_delete();
                         self.metadata_dirty = true;
@@ -486,6 +466,9 @@ impl LocalPasteApp {
                         }
                     }
                     CoreErrorSource::SaveContent if self.save_in_flight => {
+                        if let Some(id) = self.pending_delete_id.clone() {
+                            self.clear_picker_delete_transition_for(id.as_str());
+                        }
                         self.cancel_queued_history_reset();
                         self.cancel_pending_delete();
                         if self.save_status == SaveStatus::Saving {
@@ -521,6 +504,10 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when selection was applied or successfully deferred, otherwise `false`.
     pub(super) fn select_paste(&mut self, id: String) -> bool {
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return false;
+        }
         self.pending_picker_open = None;
         self.picker_selection_pin = None;
         if self.selected_id.as_deref() == Some(id.as_str()) {
@@ -854,7 +841,8 @@ impl LocalPasteApp {
         self.metadata_dirty = false;
     }
 
-    fn clear_picker_selection_context_for(&mut self, id: &str) {
+    /// Discards picker-open and selection pins owned by a removed paste.
+    pub(super) fn clear_picker_selection_context_for(&mut self, id: &str) {
         if self.picker_selection_pin.as_deref() == Some(id) {
             self.picker_selection_pin = None;
         }

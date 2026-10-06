@@ -370,6 +370,16 @@ fn ctrl_home_after_command_palette_close_and_editor_click_stays_in_editor() {
             ..Default::default()
         },
     );
+    // Query focus waits until the cold window publishes a visible widget.
+    assert!(!ctx.memory(|m| m.has_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID))));
+    run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect()),
+            ..Default::default()
+        },
+    );
     assert!(ctx.memory(|m| m.has_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID))));
 
     let _ = run_full_update_with_input(

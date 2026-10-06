@@ -788,6 +788,8 @@ fn sidebar_scope_changes_keep_the_loaded_document_and_reading_position() {
         for scope in [SearchScope::Title, SearchScope::Body] {
             harness.app.set_search_scope(scope);
             if !query.is_empty() {
+                harness.app.maybe_dispatch_search();
+                let applied_before = harness.app.query_perf.search_results_applied;
                 harness.app.apply_event(CoreEvent::SearchResults {
                     collection: crate::backend::SidebarCollection::All,
                     query: query.into(),
@@ -796,6 +798,10 @@ fn sidebar_scope_changes_keep_the_loaded_document_and_reading_position() {
                     language: Some("rust".into()),
                     items: vec![],
                 });
+                assert_eq!(
+                    harness.app.query_perf.search_results_applied,
+                    applied_before + 1
+                );
             }
             for _ in 0..3 {
                 render(&mut harness.app);

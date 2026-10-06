@@ -86,6 +86,7 @@ impl LocalPasteApp {
             pending_picker_open: None,
             picker_selection_pin: None,
             pending_delete_id: None,
+            picker_delete_transition: None,
             clipboard_outgoing: None,
             active_buffer_epoch: 0,
             virtual_editor_buffer: RopeBuffer::new(""),

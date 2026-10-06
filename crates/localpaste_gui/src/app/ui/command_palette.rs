@@ -55,13 +55,13 @@ impl LocalPasteApp {
             .default_width(680.0)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
             .show(ctx, |ui| {
+                super::focus_visible_query(ui, egui::Id::new(COMMAND_PALETTE_INPUT_ID));
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.command_palette_query)
                         .id(egui::Id::new(COMMAND_PALETTE_INPUT_ID))
                         .return_key(None)
                         .hint_text("Search commands..."),
                 );
-                response.request_focus();
                 if response.changed() {
                     self.command_palette_selected = 0;
                 }
@@ -475,9 +475,14 @@ impl LocalPasteApp {
     /// - `ctx`: Context used to restore the originating input's focus.
     /// - `id`: Paste being deleted.
     pub(crate) fn send_palette_delete(&mut self, ctx: &egui::Context, id: String) {
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return;
+        }
         let deleting_selected = self.selected_id.as_deref() == Some(id.as_str());
-        if self.send_delete_paste(id) {
+        if self.send_delete_paste(id.clone()) {
             if deleting_selected {
+                self.begin_picker_delete_transition(id);
                 // The editor is about to be removed asynchronously. Keep typing in
                 // the picker rather than accepting edits into that doomed buffer.
                 self.focus_editor_next = false;
@@ -495,6 +500,10 @@ impl LocalPasteApp {
 
     /// Opens the selected palette result in the main editor view.
     pub(crate) fn open_palette_selection(&mut self, id: String) {
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return;
+        }
         let opening = PendingPickerOpen {
             id: id.clone(),
             query: self.paste_picker_query.trim().to_owned(),

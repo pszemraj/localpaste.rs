@@ -388,11 +388,10 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
             ) {
                 Ok(guards) => guards,
                 Err(err) => {
-                    send_error(
-                        &state.evt_tx,
-                        CoreErrorSource::Other,
-                        format!("Delete failed: {}", err),
-                    );
+                    let _ = state.evt_tx.send(CoreEvent::PasteDeleteFailed {
+                        id,
+                        message: format!("Delete failed: {}", err),
+                    });
                     return;
                 }
             };
@@ -439,11 +438,10 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
         }
         Err(err) => {
             error!("backend delete failed: {}", err);
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Delete failed: {}", err),
-            );
+            let _ = state.evt_tx.send(CoreEvent::PasteDeleteFailed {
+                id,
+                message: format!("Delete failed: {}", err),
+            });
         }
     }
 }

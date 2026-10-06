@@ -189,6 +189,8 @@ pub enum CoreEvent {
         /// succeeded through a path where undo is intentionally unavailable.
         undo_token: Option<String>,
     },
+    /// Deleting a specific paste failed before any row was removed.
+    PasteDeleteFailed { id: String, message: String },
     /// A live delete-undo token was evicted to keep the backend undo buffer bounded.
     PasteUndoEvicted { undo_token: String },
     /// Response confirming a paste was restored from delete undo.

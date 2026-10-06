@@ -335,11 +335,67 @@ fn toolbar_version_opens_close_discovery_and_allow_save_with_blocked_mutation_fe
 }
 
 #[test]
+fn floating_query_focus_waits_until_its_accessibility_node_can_render() {
+    for query_id in [
+        DIFF_QUERY_INPUT_ID,
+        COMMAND_PALETTE_INPUT_ID,
+        PASTE_PICKER_INPUT_ID,
+        "shortcut_help_query",
+    ] {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let id = egui::Id::new(query_id);
+        let mut requested = true;
+        let mut query = String::new();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.scope_builder(egui::UiBuilder::new().sizing_pass().invisible(), |ui| {
+                    if requested && super::super::ui::focus_visible_query(ui, id) {
+                        requested = false;
+                    }
+                    ui.add(egui::TextEdit::singleline(&mut query).id(id));
+                });
+            });
+        });
+        assert!(
+            requested,
+            "invisible sizing must retain the one-shot request"
+        );
+        assert!(!ctx.memory(|memory| memory.has_focus(id)));
+        assert_accessible_focus(&output);
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                if requested && super::super::ui::focus_visible_query(ui, id) {
+                    requested = false;
+                }
+                ui.add(egui::TextEdit::singleline(&mut query).id(id));
+            });
+        });
+        assert!(!requested);
+        assert!(ctx.memory(|memory| memory.has_focus(id)));
+        assert_accessible_focus(&output);
+    }
+}
+
+#[test]
 fn diff_open_focuses_query_once_for_toolbar_and_palette() {
     for palette in [false, true] {
         let (mut harness, _event_tx) = make_app_with_event_tx();
         let ctx = egui::Context::default();
-        run_full_update(&mut harness.app, &ctx, vec![]);
+        ctx.enable_accesskit();
+        harness.app.focus_editor_next = true;
+        let output = run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 900.0),
+                )),
+                ..Default::default()
+            },
+        );
+        assert_accessible_focus(&output);
         if palette {
             harness.app.command_palette_open = true;
             harness.app.command_palette_query = "open diff".into();
@@ -350,9 +406,38 @@ fn diff_open_focuses_query_once_for_toolbar_and_palette() {
                 vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
             );
         } else {
-            harness.app.open_diff_modal();
+            let target = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some("Diff"))
+                .unwrap()
+                .0;
+            assert_accessible_focus(&run_full_update_with_input(
+                &mut harness.app,
+                &ctx,
+                egui::RawInput {
+                    events: vec![egui::Event::AccessKitActionRequest(
+                        egui::accesskit::ActionRequest {
+                            action: egui::accesskit::Action::Click,
+                            target,
+                            data: None,
+                        },
+                    )],
+                    ..Default::default()
+                },
+            ));
         }
-        run_full_update(&mut harness.app, &ctx, vec![]);
+        for _ in 0..3 {
+            assert_accessible_focus(&run_full_update_with_input(
+                &mut harness.app,
+                &ctx,
+                egui::RawInput::default(),
+            ));
+        }
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(DIFF_QUERY_INPUT_ID))));
         run_full_update(
             &mut harness.app,
@@ -365,4 +450,30 @@ fn diff_open_focuses_query_once_for_toolbar_and_palette() {
         run_full_update(&mut harness.app, &ctx, vec![]);
         assert!(!ctx.memory(|memory| memory.has_focus(egui::Id::new(DIFF_QUERY_INPUT_ID))));
     }
+}
+
+/// Assert that each accessibility update's focus is reachable from its published root.
+///
+/// # Panics
+/// Panics if output omits the tree or points focus at a missing/hidden widget.
+fn assert_accessible_focus(output: &egui::FullOutput) {
+    let update = output.platform_output.accesskit_update.as_ref().unwrap();
+    let mut pending = vec![update.tree.as_ref().unwrap().root];
+    let mut visited = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        let node = update
+            .nodes
+            .iter()
+            .find(|(node_id, _)| *node_id == id)
+            .unwrap_or_else(|| panic!("missing accessible node {id:?}"));
+        pending.extend(node.1.children());
+    }
+    assert!(
+        visited.contains(&update.focus),
+        "unpublished focus {:?}",
+        update.focus
+    );
 }

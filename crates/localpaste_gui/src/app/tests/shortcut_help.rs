@@ -69,6 +69,10 @@ fn shortcut_help_escape_restores_editor_focus_and_selection() {
         vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
     );
     assert!(harness.app.shortcut_help_open);
+    assert!(harness.app.shortcut_help_focus_requested);
+    assert!(!ctx.memory(|memory| memory.has_focus(egui::Id::new(SHORTCUT_HELP_QUERY_ID))));
+    // A cold floating window must finish its invisible sizing pass first.
+    run_full_update(&mut harness.app, &ctx, Vec::new());
     assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(SHORTCUT_HELP_QUERY_ID))));
 
     run_full_update(
@@ -168,6 +172,8 @@ fn shortcut_help_escape_restores_sidebar_search_focus_without_editor_mutation() 
         &ctx,
         vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
     );
+    // A cold floating window must finish its invisible sizing pass first.
+    run_full_update(&mut harness.app, &ctx, Vec::new());
     assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(SHORTCUT_HELP_QUERY_ID))));
     run_full_update(
         &mut harness.app,
@@ -230,6 +236,8 @@ fn shortcut_help_handoff_focuses_the_destination_query() {
             &ctx,
             vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
         );
+        // A cold floating window must finish its invisible sizing pass first.
+        run_full_update(&mut harness.app, &ctx, Vec::new());
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(SHORTCUT_HELP_QUERY_ID))));
 
         run_full_update(
@@ -239,6 +247,7 @@ fn shortcut_help_handoff_focuses_the_destination_query() {
         );
         assert!(!harness.app.shortcut_help_open);
         assert!((destination.open)(&harness.app));
+        run_full_update(&mut harness.app, &ctx, Vec::new());
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(destination.input_id))));
 
         run_full_update(
@@ -274,6 +283,8 @@ fn shortcut_help_escape_leaves_detached_version_overlay_open() {
             vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
         );
         assert!(harness.app.shortcut_help_open, "{overlay:?}");
+        // A cold floating window must finish its invisible sizing pass first.
+        run_full_update(&mut harness.app, &ctx, Vec::new());
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(SHORTCUT_HELP_QUERY_ID))));
 
         run_full_update(

@@ -25,7 +25,14 @@ impl LocalPasteApp {
     }
 
     /// Close paste discovery and discard its stale result projection.
-    pub(in crate::app) fn close_paste_picker(&mut self) {
+    ///
+    /// # Returns
+    /// `false` while a selected-paste delete must retain picker ownership.
+    pub(in crate::app) fn close_paste_picker(&mut self) -> bool {
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return false;
+        }
         self.paste_picker_open = false;
         self.reset_paste_picker_selection();
         self.palette_search_results.clear();
@@ -33,6 +40,7 @@ impl LocalPasteApp {
         self.palette_search_last_input_at = None;
         self.palette_search_pending = false;
         self.palette_search_error = None;
+        true
     }
 
     /// Reset selection and defer the viewport reset until results can render.
@@ -66,8 +74,8 @@ impl LocalPasteApp {
             .show(ctx, |ui| {
                 let mut query = self.paste_picker_query.clone();
                 let query_id = egui::Id::new(PASTE_PICKER_INPUT_ID);
-                if std::mem::take(&mut self.paste_picker_select_query) {
-                    ctx.memory_mut(|memory| memory.request_focus(query_id));
+                let query_visible = super::focus_visible_query(ui, query_id);
+                if query_visible && std::mem::take(&mut self.paste_picker_select_query) {
                     let mut state =
                         egui::text_edit::TextEditState::load(ctx, query_id).unwrap_or_default();
                     state
@@ -84,7 +92,6 @@ impl LocalPasteApp {
                     .hint_text("Search pastes...")
                     .show(ui)
                     .response;
-                response.request_focus();
                 if response.changed() {
                     self.set_paste_picker_query(query);
                 }
@@ -95,8 +102,9 @@ impl LocalPasteApp {
                 );
                 self.set_paste_picker_scope(scope);
                 if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                    self.close_paste_picker();
-                    self.restore_discovery_focus(ctx);
+                    if self.close_paste_picker() {
+                        self.restore_discovery_focus(ctx);
+                    }
                     return;
                 }
                 let results: Vec<_> = if self.paste_picker_query.trim().is_empty() {

@@ -71,9 +71,6 @@ impl LocalPasteApp {
             return;
         };
 
-        if self.version_ui.diff_query_focus_requested {
-            ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(DIFF_QUERY_INPUT_ID)));
-        }
         let mut keep_open = true;
         let close_on_escape =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
@@ -87,16 +84,17 @@ impl LocalPasteApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Compare current paste against:");
-                    let query = ui.add(
+                    if self.version_ui.diff_query_focus_requested
+                        && super::focus_visible_query(ui, egui::Id::new(DIFF_QUERY_INPUT_ID))
+                    {
+                        self.version_ui.diff_query_focus_requested = false;
+                    }
+                    ui.add(
                         egui::TextEdit::singleline(&mut self.version_ui.diff_query)
                             .id(egui::Id::new(DIFF_QUERY_INPUT_ID))
                             .desired_width(280.0)
                             .hint_text("name, id, tag, language"),
                     );
-                    if self.version_ui.diff_query_focus_requested {
-                        query.request_focus();
-                        self.version_ui.diff_query_focus_requested = false;
-                    }
                 });
                 ui.add_space(8.0);
 

@@ -235,6 +235,10 @@ impl LocalPasteApp {
     }
 
     fn begin_version_overlay(&mut self) -> bool {
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return false;
+        }
         if !self.ensure_selected_paste_for_version_modal() {
             return false;
         }
@@ -620,6 +624,8 @@ impl LocalPasteApp {
             Some(RESET_TRANSITION_BLOCKED_STATUS)
         } else if self.history_reset_flush_active() {
             Some(RESET_FLUSH_BLOCKED_STATUS)
+        } else if self.picker_delete_transition_active() {
+            Some(super::delete_flow::PICKER_DELETE_TRANSITION_BLOCKED_STATUS)
         } else if self.version_overlay_open() {
             Some(VERSION_OVERLAY_SELECTION_BLOCKED_STATUS)
         } else {
@@ -641,6 +647,8 @@ impl LocalPasteApp {
             Some(reason)
         } else if self.history_reset_flush_active() {
             Some(RESET_FLUSH_BLOCKED_STATUS)
+        } else if self.picker_delete_transition_active() {
+            Some(super::delete_flow::PICKER_DELETE_TRANSITION_BLOCKED_STATUS)
         } else if self.version_overlay_open() {
             Some(VERSION_OVERLAY_MUTATION_BLOCKED_STATUS)
         } else {

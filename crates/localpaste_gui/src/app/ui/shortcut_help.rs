@@ -25,7 +25,7 @@ impl LocalPasteApp {
         let first_boundary = events.iter().enumerate().find_map(|(index, event)| {
             (discovery_toggle(event)
                 || (self.discovery_open() && discovery_escape(event))
-                || self.discovery_accepts_enter(ctx, event, index > 0))
+                || self.discovery_accepts_enter(event, index > 0))
             .then_some(index)
         });
         // Opening needs a rendered sizing pass before its query accepts input.
@@ -44,7 +44,7 @@ impl LocalPasteApp {
                     .find_map(|(index, event)| {
                         (discovery_toggle(event)
                             || discovery_escape(event)
-                            || self.discovery_accepts_enter(ctx, event, true))
+                            || self.discovery_accepts_enter(event, true))
                         .then_some(index)
                     })
             } else {
@@ -132,26 +132,19 @@ impl LocalPasteApp {
 
     /// Whether Enter can transfer a focused query into an available command or result.
     /// Earlier edits must render first before availability can be evaluated.
-    fn discovery_accepts_enter(
-        &self,
-        ctx: &egui::Context,
-        event: &egui::Event,
-        has_earlier_events: bool,
-    ) -> bool {
+    fn discovery_accepts_enter(&self, event: &egui::Event, has_earlier_events: bool) -> bool {
         if !matches!(event, egui::Event::Key {
             key: egui::Key::Enter, pressed: true, modifiers, ..
         } if modifiers.is_none())
         {
             return false;
         }
-        if self.command_palette_open
-            && ctx.memory(|memory| memory.has_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID)))
-        {
+        // These surfaces own keyboard input even before their first visible
+        // pass has published and focused a query accessibility node.
+        if self.command_palette_open {
             return has_earlier_events || !self.command_palette_actions().is_empty();
         }
-        if self.paste_picker_open
-            && ctx.memory(|memory| memory.has_focus(egui::Id::new(PASTE_PICKER_INPUT_ID)))
-        {
+        if self.paste_picker_open {
             return has_earlier_events
                 || if self.paste_picker_query.trim().is_empty() {
                     !self.all_pastes.is_empty()
@@ -194,7 +187,22 @@ impl LocalPasteApp {
         if self.cancel_virtual_ime_preedit_if_active(Instant::now()) {
             self.mark_dirty();
         }
-        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(input_id)));
+        self.virtual_editor_state.has_focus = false;
+        self.focus_editor_next = false;
+        // Cold floating windows have no query node during their sizing pass.
+        // Their visible renderer takes focus before creating the TextEdit.
+        if let Some(response) = ctx.read_response(egui::Id::new(input_id)) {
+            response.request_focus();
+        } else {
+            // The opener must stop consuming input while the new query sizes.
+            // Accessibility can safely publish root focus until the visible
+            // renderer creates and focuses the query node.
+            ctx.memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
+        }
     }
 
     /// Dismiss discovery at the start of its ordered slice, before the opener renders.
@@ -212,6 +220,13 @@ impl LocalPasteApp {
     ) -> bool {
         if !self.discovery_open() || !discovery_escape(event) {
             return false;
+        }
+        if self.picker_delete_transition_active() {
+            ctx.input_mut(|input| {
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+            });
+            self.set_picker_delete_transition_blocked_status();
+            return true;
         }
         self.command_palette_open = false;
         self.close_paste_picker();
@@ -243,6 +258,10 @@ impl LocalPasteApp {
 
     /// Open shortcut help as the sole keyboard-owning discovery surface.
     pub(in crate::app) fn open_shortcut_help(&mut self, ctx: &egui::Context) {
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return;
+        }
         if self.shortcut_help_open {
             self.shortcut_help_focus_requested = true;
             return;
@@ -257,6 +276,10 @@ impl LocalPasteApp {
 
     /// Dismiss help and return keyboard ownership to the input that opened it.
     pub(in crate::app) fn close_shortcut_help(&mut self, ctx: &egui::Context) {
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return;
+        }
         self.shortcut_help_open = false;
         self.shortcut_help_focus_requested = false;
         self.restore_discovery_focus(ctx);
@@ -284,6 +307,11 @@ impl LocalPasteApp {
                     ui.set_width(600.0);
                     let previous_query = self.shortcut_help_query.clone();
                     ui.horizontal(|ui| {
+                        if self.shortcut_help_focus_requested
+                            && super::focus_visible_query(ui, egui::Id::new("shortcut_help_query"))
+                        {
+                            self.shortcut_help_focus_requested = false;
+                        }
                         let response = ui.add_sized(
                             [ui.available_width() - 84.0, ui.spacing().interact_size.y],
                             egui::TextEdit::singleline(&mut self.shortcut_help_query)
@@ -291,10 +319,6 @@ impl LocalPasteApp {
                                 .hint_text("Search shortcuts...")
                                 .return_key(None),
                         );
-                        if self.shortcut_help_focus_requested {
-                            response.request_focus();
-                            self.shortcut_help_focus_requested = false;
-                        }
                         if ui
                             .add_enabled(
                                 !self.shortcut_help_query.is_empty(),
