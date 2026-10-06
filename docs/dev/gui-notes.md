@@ -26,7 +26,7 @@ Shortcut contract:
 
 - `Ctrl/Cmd+N`: create/select new paste.
 - `Ctrl/Cmd+S`: save content + metadata.
-- `Ctrl/Cmd+Delete`: delete selected paste when text input does not own focus.
+- `Ctrl/Cmd+Delete`: delete selected paste when text input does not own focus. `Delete` means forward Delete; on a MacBook keyboard use `Fn+Cmd+Delete`.
 - `Ctrl/Cmd+F`: focus sidebar search.
 - `Ctrl/Cmd+Shift+P`: toggle command palette.
 - `Ctrl/Cmd+K`: toggle the commands-only palette (also `Ctrl/Cmd+Shift+P`).
@@ -117,7 +117,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Sidebar and picker each retain their own session query and field scope: All fields (default), Title, Metadata, or Body. Metadata searches the existing title/tag/language/derived-term projection. Title and Metadata avoid loading bodies; every scope searches the full store before applying the result limit. HTTP and CLI search are unchanged.
 - Scope changes clear old results immediately; changing only sidebar scope retains the open document and reading position even if no rows match. Responses and backend cache keys carry the scope and collection so delayed results cannot leak between contexts. Collection rules apply in the backend before the search result limit, including when a matching collection row is older than the first 512 unfiltered results.
 - Opening the paste picker from its shortcut or the command palette refreshes its retained query and scope and selects the old query for replacement; responses discarded while it was closed cannot leave it stuck with empty results. Reopening or changing query/scope resets selection and scrolls to the first result once rows arrive; subsequent manual scrolling is preserved.
-- Picker Delete restores the originating input after deleting a different paste. Deleting the open paste keeps the picker as the keyboard owner and blocks dismissal, discovery toggles, and unrelated selection changes until the delete reply and adjacent paste load settle. A save, delete, or replacement-load failure releases the fence while preserving the picker; after a successful replacement load, Escape returns to the originating input.
+- Picker Delete restores the originating input after deleting a different paste. Deleting the open paste keeps the picker as the keyboard owner, including for typing and paste into its query, and blocks dismissal, discovery toggles, and unrelated selection changes until the delete reply and replacement paste load settle. A selection already queued before deletion is preferred over the adjacent fallback. A save, delete, or replacement-load failure releases the fence while preserving the picker; after a successful replacement load, Escape returns to the originating input.
 - Arrow navigation from a hidden selection starts at the first visible row.
 - The paste picker shows `Searching...` while a scoped request is in flight. Search failures remain visible in the picker with a Retry button. Requests resume only when Retry is clicked or query/scope changes; a successful response clears the error. Closing it discards displayed results and resets selection while retaining its query and scope. Language labels follow the sidebar's large-buffer plain-rendering rule.
 - Picker All fields and Body results show a compact excerpt around the first literal body match. Title and Metadata results use metadata alone and have no body excerpts.

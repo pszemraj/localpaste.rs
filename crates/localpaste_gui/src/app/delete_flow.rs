@@ -19,6 +19,10 @@ impl LocalPasteApp {
         let deleted_index = self.pastes.iter().position(|paste| paste.id == id);
         let was_selected = self.selected_id.as_deref() == Some(id.as_str());
         let picker_delete_transition = self.picker_delete_matches_deleted(id.as_str());
+        let requested_replacement_id = self
+            .pending_selection_id
+            .clone()
+            .filter(|pending_id| pending_id != &id);
         self.all_pastes.retain(|paste| paste.id != id);
         self.pastes.retain(|paste| paste.id != id);
         self.palette_search_results.retain(|paste| paste.id != id);
@@ -29,21 +33,23 @@ impl LocalPasteApp {
         self.clear_pending_palette_copy_for(id.as_str());
         self.clear_picker_selection_context_for(id.as_str());
         if was_selected {
-            let adjacent_id = deleted_index.and_then(|index| {
-                self.pastes
-                    .get(index)
-                    .or_else(|| index.checked_sub(1).and_then(|prev| self.pastes.get(prev)))
-                    .map(|paste| paste.id.clone())
+            let replacement_id = requested_replacement_id.or_else(|| {
+                deleted_index.and_then(|index| {
+                    self.pastes
+                        .get(index)
+                        .or_else(|| index.checked_sub(1).and_then(|prev| self.pastes.get(prev)))
+                        .map(|paste| paste.id.clone())
+                })
             });
             self.clear_selection();
-            if let Some(adjacent_id) = adjacent_id {
+            if let Some(replacement_id) = replacement_id {
                 if picker_delete_transition {
-                    self.select_picker_delete_replacement(id.as_str(), adjacent_id);
+                    self.select_picker_delete_replacement(id.as_str(), replacement_id);
                 } else {
-                    let _ = self.select_paste(adjacent_id);
+                    let _ = self.select_paste(replacement_id);
                 }
             } else if picker_delete_transition {
-                self.clear_picker_delete_transition_for(id.as_str());
+                self.clear_picker_delete_transition_for_deleted(id.as_str());
             }
             if let Some(undo_token) = undo_token {
                 self.set_status_with_action(
@@ -54,13 +60,13 @@ impl LocalPasteApp {
                 self.set_status("Paste deleted. Undo unavailable.");
             }
         } else if let Some(undo_token) = undo_token {
-            self.clear_picker_delete_transition_for(id.as_str());
+            self.clear_picker_delete_transition_for_deleted(id.as_str());
             self.set_status_with_action(
                 "Paste deleted; list refreshed.",
                 ToastAction::UndoDelete { undo_token },
             );
         } else {
-            self.clear_picker_delete_transition_for(id.as_str());
+            self.clear_picker_delete_transition_for_deleted(id.as_str());
             self.set_status("Paste deleted; list refreshed. Undo unavailable.");
         }
         self.request_refresh();
@@ -87,14 +93,23 @@ impl LocalPasteApp {
         self.set_status(PICKER_DELETE_TRANSITION_BLOCKED_STATUS);
     }
 
-    /// Clears a transition when `id` is either its deleted or replacement paste.
-    pub(super) fn clear_picker_delete_transition_for(&mut self, id: &str) {
+    /// Clears a transition when `id` is its successfully loaded or failed replacement paste.
+    pub(super) fn clear_picker_delete_transition_for_replacement(&mut self, id: &str) {
         let matches = self
             .picker_delete_transition
             .as_ref()
-            .is_some_and(|transition| {
-                transition.deleted_id == id || transition.replacement_id.as_deref() == Some(id)
-            });
+            .is_some_and(|transition| transition.replacement_id.as_deref() == Some(id));
+        if matches {
+            self.picker_delete_transition = None;
+        }
+    }
+
+    /// Clears a transition when `id` is the delete request that reached a terminal outcome.
+    pub(super) fn clear_picker_delete_transition_for_deleted(&mut self, id: &str) {
+        let matches = self
+            .picker_delete_transition
+            .as_ref()
+            .is_some_and(|transition| transition.deleted_id == id);
         if matches {
             self.picker_delete_transition = None;
         }
@@ -181,7 +196,7 @@ impl LocalPasteApp {
     }
 
     fn queue_delete_after_selected_flush(&mut self, id: String) -> bool {
-        self.pending_delete_id = Some(id);
+        self.pending_delete_id = Some(id.clone());
         let content_save_needed = self.save_status == SaveStatus::Dirty;
         let metadata_save_needed = self.metadata_dirty;
         if content_save_needed {
@@ -196,6 +211,7 @@ impl LocalPasteApp {
         if !content_save_dispatched || !metadata_save_dispatched {
             rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
             self.pending_delete_id = None;
+            self.clear_picker_delete_transition_for_deleted(id.as_str());
             self.set_status("Delete cancelled because current paste could not be saved.");
             return false;
         }
@@ -219,7 +235,7 @@ impl LocalPasteApp {
         // every GUI-owned selected-paste buffer has been persisted.
         if self.selected_id.as_deref() != Some(paste_id.as_str()) {
             self.pending_delete_id = None;
-            self.clear_picker_delete_transition_for(paste_id.as_str());
+            self.clear_picker_delete_transition_for_deleted(paste_id.as_str());
             self.set_status("Delete cancelled because the selected paste changed.");
             return;
         }
@@ -233,7 +249,7 @@ impl LocalPasteApp {
         }
         self.pending_delete_id = None;
         if !self.dispatch_delete_paste(paste_id.clone()) {
-            self.clear_picker_delete_transition_for(paste_id.as_str());
+            self.clear_picker_delete_transition_for_deleted(paste_id.as_str());
         }
     }
 }

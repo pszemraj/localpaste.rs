@@ -152,7 +152,7 @@ impl LocalPasteApp {
             CoreEvent::PasteLoaded { paste, .. } => {
                 let paste_id = paste.id.clone();
                 self.select_loaded_paste(paste);
-                self.clear_picker_delete_transition_for(paste_id.as_str());
+                self.clear_picker_delete_transition_for_replacement(paste_id.as_str());
             }
             CoreEvent::PasteCopyLoaded { paste, request_id } => {
                 self.apply_palette_copy_loaded(paste, request_id)
@@ -352,7 +352,7 @@ impl LocalPasteApp {
                 self.apply_paste_deleted(id, undo_token);
             }
             CoreEvent::PasteDeleteFailed { id, message } => {
-                self.clear_picker_delete_transition_for(id.as_str());
+                self.clear_picker_delete_transition_for_deleted(id.as_str());
                 if self.pending_delete_id.as_deref() == Some(id.as_str()) {
                     self.cancel_pending_delete();
                 }
@@ -399,7 +399,7 @@ impl LocalPasteApp {
                 self.remove_undo_toast(&undo_token);
             }
             CoreEvent::PasteMissing { id } | CoreEvent::PasteSelectionMissing { id, .. } => {
-                self.clear_picker_delete_transition_for(id.as_str());
+                self.clear_picker_delete_transition_for_replacement(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_picker_selection_context_for(id.as_str());
@@ -427,7 +427,7 @@ impl LocalPasteApp {
                 self.request_refresh();
             }
             CoreEvent::PasteLoadFailed { id, message, .. } => {
-                self.clear_picker_delete_transition_for(id.as_str());
+                self.clear_picker_delete_transition_for_replacement(id.as_str());
                 self.clear_picker_selection_context_for(id.as_str());
                 self.clear_selection();
                 self.set_status(message);
@@ -451,7 +451,7 @@ impl LocalPasteApp {
                 match source {
                     CoreErrorSource::SaveMetadata if self.metadata_save_in_flight => {
                         if let Some(id) = self.pending_delete_id.clone() {
-                            self.clear_picker_delete_transition_for(id.as_str());
+                            self.clear_picker_delete_transition_for_deleted(id.as_str());
                         }
                         self.cancel_queued_history_reset();
                         self.cancel_pending_delete();
@@ -467,7 +467,7 @@ impl LocalPasteApp {
                     }
                     CoreErrorSource::SaveContent if self.save_in_flight => {
                         if let Some(id) = self.pending_delete_id.clone() {
-                            self.clear_picker_delete_transition_for(id.as_str());
+                            self.clear_picker_delete_transition_for_deleted(id.as_str());
                         }
                         self.cancel_queued_history_reset();
                         self.cancel_pending_delete();

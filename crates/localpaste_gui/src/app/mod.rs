@@ -633,7 +633,9 @@ impl eframe::App for LocalPasteApp {
                     self.properties_drawer_open = !self.properties_drawer_open;
                 }
                 RuntimeShortcutAction::PlainPaste => {
-                    if mutation_shortcut_blocked.is_some() {
+                    let other_input_owns_paste =
+                        wants_keyboard_input_before && !virtual_editor_focus_active_pre;
+                    if mutation_shortcut_blocked.is_some() && !other_input_owns_paste {
                         self.set_mutation_shortcut_blocked_status();
                     } else {
                         // A newer plain paste intent should take precedence over any older
