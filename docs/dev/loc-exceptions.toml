@@ -10,8 +10,3 @@
 # path = "crates/localpaste_gui/src/app/mod.rs"
 # max_lines = 1200
 # reason = "Temporary during editor state extraction work"
-
-[[exceptions]]
-path = "crates/localpaste_gui/src/app/version_ui.rs"
-max_lines = 1100
-reason = "Temporary production version-workflow exception while extracting snapshot/diff caches, history-reset fencing, and version event handling into focused version_ui submodules."
