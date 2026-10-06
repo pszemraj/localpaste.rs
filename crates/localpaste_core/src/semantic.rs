@@ -144,6 +144,13 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Link;
     }
 
+    // Statistical detection can lock an incidental code/config label onto a
+    // real log. Structural runtime headers still determine retrieval kind.
+    // Attribute assignments and bare TOML table headers remain configuration.
+    if has_unambiguous_log_header(sample) || crate::detection::looks_like_rust_panic(sample) {
+        return PasteKind::Log;
+    }
+
     if matches!(
         lang.as_str(),
         "rust"
@@ -256,6 +263,30 @@ fn starts_with_log_level(sample: &str) -> bool {
         ]
         .iter()
         .any(|marker| marker.strip_suffix(':') == Some(lower.as_str()))
+}
+
+/// Whether a spaced or bracketed log level has a message rather than an assignment.
+///
+/// # Returns
+/// True for strong log headers even when a detector supplied a code/config label.
+fn has_unambiguous_log_header(sample: &str) -> bool {
+    if !starts_with_log_level(sample) {
+        return false;
+    }
+    let Some(first_line) = sample.lines().map(str::trim).find(|line| !line.is_empty()) else {
+        return false;
+    };
+    let message = if first_line.starts_with('[') {
+        first_line.split_once(']').map(|(_, message)| message)
+    } else {
+        first_line
+            .split_once(char::is_whitespace)
+            .and_then(|(level, message)| (!level.contains(':')).then_some(message))
+    };
+    message.is_some_and(|message| {
+        let message = message.trim_start();
+        !message.is_empty() && !message.starts_with(['=', ':'])
+    })
 }
 
 /// Returns whether untyped text resembles prose rather than a compact data blob.
@@ -770,6 +801,34 @@ mod tests {
 
     #[test]
     fn derive_matrix_covers_code_config_log_link_and_other() {
+        for (content, language, expected) in [
+            (
+                "[INFO] Server started\nINFO Starting worker\nWARN Queue full",
+                "dockerfile",
+                PasteKind::Log,
+            ),
+            ("INFO Starting the server", "dockerfile", PasteKind::Log),
+            (
+                "thread 'main' panicked at src/main.rs:12:5",
+                "html",
+                PasteKind::Log,
+            ),
+            ("[INFO]\nname = \"worker\"", "toml", PasteKind::Config),
+            ("INFO = \"Starting worker\"", "python", PasteKind::Code),
+            ("debug: true\nname: foo", "yaml", PasteKind::Config),
+            (
+                "FROM ubuntu\nRUN echo hello world",
+                "dockerfile",
+                PasteKind::Config,
+            ),
+            ("[INFO] Server started", "markdown", PasteKind::Document),
+        ] {
+            assert_eq!(
+                derive(content, Some(language)).kind,
+                expected,
+                "{language}: {content}"
+            );
+        }
         let code = derive("fn handle_request(input: &str) {}\n", Some("rust"));
         assert_eq!(code.kind, PasteKind::Code);
         assert_eq!(code.handle.as_deref(), Some("fn handle_request"));

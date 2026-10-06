@@ -341,6 +341,11 @@ fn matches_semantic_collection(item: &PasteSummary, collection: SidebarCollectio
     {
         return collection == SidebarCollection::Documents;
     }
+    // Strong runtime log structure can override an incidental locked detector
+    // label, so that stale label must not put the same log back in Code/Config.
+    if summary_has_kind(item, PasteKind::Log) {
+        return collection == SidebarCollection::Logs;
+    }
     if summary_has_kind(item, PasteKind::Document) {
         return if collection == SidebarCollection::Documents {
             ![
@@ -588,6 +593,11 @@ mod tests {
                 SidebarCollection::Logs,
             ),
             (
+                "[INFO] Server started\nINFO Starting worker\nWARN Queue full",
+                PasteKind::Log,
+                SidebarCollection::Logs,
+            ),
+            (
                 "thread 'main' panicked at src/main.rs:12:5",
                 PasteKind::Log,
                 SidebarCollection::Logs,
@@ -624,6 +634,16 @@ mod tests {
             if kind != PasteKind::Document {
                 assert!(
                     !matches_semantic_collection(&item, SidebarCollection::Documents),
+                    "{content}"
+                );
+            }
+            if kind == PasteKind::Log {
+                assert!(
+                    !matches_semantic_collection(&item, SidebarCollection::Config),
+                    "{content}"
+                );
+                assert!(
+                    !matches_semantic_collection(&item, SidebarCollection::Code),
                     "{content}"
                 );
             }
