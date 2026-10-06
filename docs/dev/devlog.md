@@ -117,6 +117,12 @@ rustdoc-checker crates --strict
 - Workflow/release helper changes:
   when touching `.github/workflows/*`, `.github/scripts/*`, or GUI packaging/release behavior, also run:
 
+  `workflow-lint` runs one Linux job when a PR is opened, reopened, or updated,
+  filtered to workflow YAML and Python/shell helpers under `.github/`. Superseded
+  runs are cancelled. Manual dispatch validates any selected ref; ordinary Rust
+  or documentation changes skip this workflow. A squash merge does not repeat
+  the PR validation on `main`.
+
 ```bash
 # release helper regression tests
 python -m unittest discover -s .github/scripts -p 'test_*.py'
