@@ -26,10 +26,7 @@ fn explicit_documents_override_code_and_log_signals() {
         ("```json\n{\"name\":\"Ada\"}\n```", PasteKind::Config),
         ("\n  ~~~sh\necho hello world\n  ~~~~\n", PasteKind::Code),
         ("```\necho hello world\n```", PasteKind::Code),
-        (
-            "```text\nINFO Starting the server\n```",
-            PasteKind::Document,
-        ),
+        ("```text\nINFO Starting the server\n```", PasteKind::Log),
         (
             "```text\nA short prose note to keep.\n```",
             PasteKind::Document,
@@ -82,6 +79,14 @@ fn untyped_structural_content_does_not_default_to_document() {
         ("aLongAlphabeticTokenWithoutSpaces", PasteKind::Other),
         ("ls -la /var/log", PasteKind::Code),
         ("brew install localpaste", PasteKind::Code),
+        ("cd app\nnpm install\nnpm run dev", PasteKind::Code),
+        ("conda activate misc\npip install requests", PasteKind::Code),
+        ("export MODE=dev\ncargo build", PasteKind::Code),
+        ("source .env\ncargo build", PasteKind::Code),
+        ("set -e\ncargo build", PasteKind::Code),
+        ("mkdir -p out\ncargo build", PasteKind::Code),
+        ("cd app\ngit status", PasteKind::Code),
+        ("cd app\necho ready", PasteKind::Code),
         ("just build", PasteKind::Code),
         ("just deploy prod", PasteKind::Code),
         ("just clean build test release", PasteKind::Code),
@@ -129,14 +134,33 @@ fn untyped_structural_content_does_not_default_to_document() {
             "just remember to save your work before leaving",
             PasteKind::Document,
         ),
+        (
+            "just wanted to say thanks for your help",
+            PasteKind::Document,
+        ),
+        ("just hoped we could talk today", PasteKind::Document),
         ("just remember this later", PasteKind::Document),
         (
             "make sure to save your work before leaving",
             PasteKind::Document,
         ),
         ("make sure to save", PasteKind::Document),
+        ("make sure you bring your badge", PasteKind::Document),
+        ("make yourself at home", PasteKind::Document),
+        ("just checking in", PasteKind::Document),
+        ("just a quick reminder for tomorrow", PasteKind::Document),
         ("git history helps explain this change", PasteKind::Document),
         ("git history helps explain", PasteKind::Document),
+        ("cd app\ngit history helps explain", PasteKind::Document),
+        (
+            "cd app\nmake sure you bring your badge",
+            PasteKind::Document,
+        ),
+        ("cd app\njust checking in", PasteKind::Document),
+        (
+            "cd app\necho chamber is a common expression",
+            PasteKind::Document,
+        ),
         ("Make a note of the deployment window.", PasteKind::Document),
         (
             "Python 3.12 is now installed on the workstation.",
@@ -158,6 +182,14 @@ fn untyped_structural_content_does_not_default_to_document() {
             "Bonjour à tous, à demain pour la réunion.",
             PasteKind::Document,
         ),
+        (
+            "info about the schedule\nerror in the report needs correction",
+            PasteKind::Document,
+        ),
+        (
+            "export controls are discussed here\nsource material follows",
+            PasteKind::Document,
+        ),
     ];
 
     for (content, expected) in cases {
@@ -173,6 +205,24 @@ fn untyped_structural_content_does_not_default_to_document() {
         derive("A short prose note to keep for later.", Some("text")).kind,
         PasteKind::Document
     );
+}
+
+#[test]
+fn git_subcommands_stay_consistent_across_detection_and_semantics() {
+    for subcommand in crate::detection::SHELL_GIT_SUBCOMMANDS {
+        let content = format!("git {subcommand} fixture\ncargo check\n");
+        assert!(
+            crate::detection::looks_like_shell_command_sequence(&content),
+            "{subcommand}"
+        );
+        let derived = derive(&content, None);
+        assert_eq!(derived.kind, PasteKind::Code, "{subcommand}");
+        assert_eq!(
+            derived.handle.as_deref(),
+            Some(format!("git {subcommand}").as_str()),
+            "{subcommand}"
+        );
+    }
 }
 
 #[test]
@@ -195,10 +245,27 @@ fn derive_matrix_covers_code_config_log_link_and_other() {
         ("INFO () { echo \"ready\"; }", "shell", PasteKind::Code),
         ("error\tamount\nmissing\t12", "tsv", PasteKind::Other),
         ("INFO\tstatus\nready\t12", "tsv", PasteKind::Other),
-        ("ERROR\tcount\tname", "tsv", PasteKind::Other),
         ("INFO\tstatus", "tsv", PasteKind::Other),
         ("INFO Starting the server", "tsv", PasteKind::Log),
+        ("INFO\t(main)\tstarting service", "tsv", PasteKind::Log),
+        ("ERROR\tcount\tname", "tsv", PasteKind::Other),
         ("[WARN] Retry in thirty seconds", "tsv", PasteKind::Log),
+        ("INFO (main) Starting the server", "text", PasteKind::Log),
+        (
+            "info Resolving packages\nwarning Retrying request\nsuccess Saved lockfile",
+            "text",
+            PasteKind::Log,
+        ),
+        (
+            "info Resolving packages\ninfo Fetching packages",
+            "text",
+            PasteKind::Log,
+        ),
+        (
+            "INFO\tStarting worker\nERROR\tWorker stopped",
+            "tsv",
+            PasteKind::Log,
+        ),
         (
             "fn main() {}\nthread 'main' panicked at src/main.rs:12:5",
             "rust",
@@ -244,6 +311,21 @@ fn derive_matrix_covers_code_config_log_link_and_other() {
     let short_text = derive("hi", Some("text"));
     assert_eq!(short_text.kind, PasteKind::Other);
     assert!(short_text.handle.is_none());
+}
+
+#[cfg(feature = "magika")]
+#[test]
+fn standalone_fence_kind_does_not_invoke_magika() {
+    let before = crate::detection::magika_detection_call_count();
+    assert_eq!(
+        derive(
+            "```\nfn main() { println!(\"hello\"); }\n```",
+            Some("markdown")
+        )
+        .kind,
+        PasteKind::Code
+    );
+    assert_eq!(crate::detection::magika_detection_call_count(), before);
 }
 
 #[test]

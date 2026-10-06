@@ -171,14 +171,14 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if lower.contains('{') && lower.contains('}') && lower.contains(':') && lower.contains(';') {
         let css_tokens = [
             "color:",
-            "background",
-            "margin",
-            "padding",
+            "background:",
+            "margin:",
+            "padding:",
             "font-",
-            "display",
-            "position",
-            "flex",
-            "grid",
+            "display:",
+            "position:",
+            "flex:",
+            "grid:",
         ];
         if css_tokens.iter().any(|token| lower.contains(token)) {
             return Some("css".to_string());
@@ -232,7 +232,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
             "rust",
             &[
                 "fn ", "impl", "crate::", "let ", "mut ", "pub ", "struct ", "enum", "match ",
-                "trait", "println!",
+                "trait", "println!", "panic!",
             ],
             2,
         ),
@@ -416,6 +416,92 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     None
 }
 
+/// Recognize a compact sequence of shell setup and executable command lines.
+///
+/// # Returns
+/// `true` when every non-comment line is a recognized command and at least two
+/// command lines are present.
+pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
+    const COMMANDS: &[&str] = &[
+        "brew",
+        "cargo",
+        "conda",
+        "curl",
+        "docker",
+        "echo",
+        "git",
+        "kubectl",
+        "ls",
+        "mkdir",
+        "npm",
+        "pip",
+        "pnpm",
+        "printf",
+        "pytest",
+        "python",
+        "ssh",
+        "sudo",
+        "systemctl",
+        "torchrun",
+        "uv",
+        "wget",
+        "yarn",
+    ];
+    const SETUP_COMMANDS: &[&str] = &["cd", "export", "set", "source"];
+
+    let sample = utf8_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
+    let mut commands = 0usize;
+    for line in sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.trim_matches('`').split_whitespace();
+        let Some(command) = parts.next() else {
+            return false;
+        };
+        if command != command.to_ascii_lowercase() {
+            return false;
+        }
+        let arguments: Vec<&str> = parts.collect();
+        let has_shell_syntax = line
+            .contains(['\'', '"', '$', '|', '>', '<', '=', '/', '\\', ';', '&'])
+            || arguments
+                .iter()
+                .any(|part| part.starts_with('-') || part.chars().any(|ch| ch.is_ascii_digit()));
+        let has_prose_copula = super::has_unquoted_prose_copula(&arguments, has_shell_syntax);
+        let command_line = if COMMANDS.contains(&command) {
+            !has_prose_copula
+                && (command != "git"
+                    || arguments.first().is_some_and(|subcommand| {
+                        super::SHELL_GIT_SUBCOMMANDS.contains(subcommand)
+                    }))
+        } else if SETUP_COMMANDS.contains(&command) {
+            match command {
+                "export" => arguments.iter().any(|argument| argument.contains('=')),
+                "set" => arguments
+                    .iter()
+                    .any(|argument| argument.starts_with('-') || argument.contains('=')),
+                "cd" => !arguments.is_empty(),
+                "source" => arguments
+                    .first()
+                    .is_some_and(|path| path.contains(['.', '/', '\\']) || path.starts_with('~')),
+                _ => false,
+            }
+        } else {
+            false
+        };
+        if !command_line {
+            return false;
+        }
+        commands = commands.saturating_add(1);
+    }
+    commands >= 2
+}
+
 /// Accept JSON Lines only with at least two valid object/array records in the
 /// bounded sample; a single JSON value cannot establish a line-record format.
 ///
@@ -424,22 +510,11 @@ pub(crate) fn detect(content: &str) -> Option<String> {
 pub(super) fn looks_like_json_lines(content: &str) -> bool {
     let trimmed = content.trim();
     let prefix = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
-    // A bounded prefix may end inside a record. Validate only complete lines,
-    // including a record whose following newline falls just outside the sample.
-    let sample = if prefix.len() < trimmed.len()
-        && !prefix.ends_with(['\n', '\r'])
-        && !trimmed
-            .get(prefix.len()..)
-            .unwrap_or_default()
-            .starts_with(['\n', '\r'])
-    {
-        prefix
-            .rsplit_once('\n')
-            .map(|(complete, _)| complete)
-            .unwrap_or_default()
-    } else {
-        prefix
-    };
+    // Validate every record that begins inside the bounded prefix. When the
+    // boundary cuts that final record, finish it only if the record itself also
+    // fits the byte cap. This keeps work bounded per record while allowing two
+    // independently valid records that are each larger than half the sample.
+    let sample = complete_crossing_jsonl_record(trimmed, prefix);
     let mut record_count = 0usize;
     for line in sample.lines().filter(|line| !line.trim().is_empty()) {
         if !serde_json::from_str::<serde_json::Value>(line)
@@ -450,6 +525,32 @@ pub(super) fn looks_like_json_lines(content: &str) -> bool {
         record_count += 1;
     }
     record_count >= 2
+}
+
+fn complete_crossing_jsonl_record<'a>(content: &'a str, prefix: &'a str) -> &'a str {
+    if prefix.len() == content.len()
+        || prefix.ends_with(['\n', '\r'])
+        || content
+            .get(prefix.len()..)
+            .unwrap_or_default()
+            .starts_with(['\n', '\r'])
+    {
+        return prefix;
+    }
+
+    let record_start = prefix.rfind('\n').map_or(0, |idx| idx.saturating_add(1));
+    let remainder = content.get(prefix.len()..).unwrap_or_default();
+    let prefix_record_bytes = prefix.len().saturating_sub(record_start);
+    let remaining_budget = TEXT_SAMPLE_MAX_BYTES.saturating_sub(prefix_record_bytes);
+    let bounded_remainder = utf8_prefix_by_bytes(remainder, remaining_budget.saturating_add(1));
+    if let Some(newline) = bounded_remainder.find('\n') {
+        return &content[..prefix.len().saturating_add(newline)];
+    }
+    if remainder.len() <= remaining_budget {
+        content
+    } else {
+        &prefix[..record_start]
+    }
 }
 
 fn shebang_interpreter(sample: &str) -> Option<String> {

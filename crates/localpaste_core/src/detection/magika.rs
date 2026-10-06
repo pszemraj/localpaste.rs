@@ -3,12 +3,20 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(test)]
+use std::cell::Cell;
+
 const GENERIC_LABELS: &[&str] = &["txt", "randomtxt", "unknown", "empty", "undefined"];
 const MAGIKA_FORCE_CPU_ENV: &str = "MAGIKA_FORCE_CPU";
 
 static MAGIKA_SESSION: OnceLock<Result<Mutex<magika::Session>, String>> = OnceLock::new();
 static MAGIKA_POISON_WARNED: AtomicBool = AtomicBool::new(false);
 static MAGIKA_IDENTIFY_WARNED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+thread_local! {
+    static DETECTION_CALLS: Cell<usize> = const { Cell::new(0) };
+}
 
 fn magika_force_cpu() -> bool {
     crate::config::parse_bool_env(MAGIKA_FORCE_CPU_ENV, true)
@@ -58,6 +66,9 @@ pub(crate) fn prewarm() {
 /// # Returns
 /// Detected non-generic text label when inference succeeds, otherwise `None`.
 pub(crate) fn detect(content: &str) -> Option<String> {
+    #[cfg(test)]
+    DETECTION_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
+
     let session = session()?;
     let mut guard = match session.lock() {
         Ok(guard) => guard,
@@ -97,6 +108,15 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     }
 
     Some(label.to_string())
+}
+
+#[cfg(test)]
+/// Return the number of Magika wrapper calls made by the current test thread.
+///
+/// # Returns
+/// Calls observed on the current thread.
+pub(super) fn detection_call_count() -> usize {
+    DETECTION_CALLS.with(Cell::get)
 }
 
 #[cfg(test)]

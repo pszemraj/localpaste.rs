@@ -10,6 +10,57 @@ mod magika;
 #[cfg(test)]
 mod tests;
 
+/// Git subcommands accepted as command structure without extra shell syntax.
+pub(crate) const SHELL_GIT_SUBCOMMANDS: &[&str] = &[
+    "add",
+    "bisect",
+    "branch",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "clone",
+    "commit",
+    "diff",
+    "fetch",
+    "grep",
+    "init",
+    "log",
+    "merge",
+    "mv",
+    "pull",
+    "push",
+    "rebase",
+    "remote",
+    "reset",
+    "restore",
+    "revert",
+    "rm",
+    "show",
+    "stash",
+    "status",
+    "switch",
+    "tag",
+    "worktree",
+];
+
+/// Recognize a prose copula near a command-shaped leading word.
+///
+/// # Arguments
+/// - `arguments`: Command arguments following the executable-shaped word.
+/// - `has_shell_syntax`: Whether quoting, options, paths, or operators already
+///   establish command structure.
+///
+/// # Returns
+/// `true` when the first three arguments contain an unquoted copula without
+/// other shell syntax establishing an actual command.
+pub(crate) fn has_unquoted_prose_copula(arguments: &[&str], has_shell_syntax: bool) -> bool {
+    !has_shell_syntax
+        && arguments
+            .iter()
+            .take(3)
+            .any(|part| matches!(*part, "is" | "are" | "was" | "were"))
+}
+
 /// Detect language/type of text content.
 ///
 /// # Returns
@@ -17,6 +68,9 @@ mod tests;
 pub fn detect_language(content: &str) -> Option<String> {
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
+    }
+    if looks_like_shell_command_sequence(content) {
+        return Some("shell".to_string());
     }
     if looks_like_rust_panic(content) {
         return Some("log".to_string());
@@ -45,16 +99,69 @@ pub(crate) fn detect_heuristically(content: &str) -> Option<String> {
         .filter(|label| !label.is_empty() && label != "text")
 }
 
+/// Recognize a multi-line shell command sequence before model inference.
+///
+/// # Returns
+/// Whether the content is composed of shell comments and at least two
+/// recognized command lines.
+pub(crate) fn looks_like_shell_command_sequence(content: &str) -> bool {
+    heuristic::looks_like_shell_command_sequence(content)
+}
+
 /// Recognize Rust's runtime panic header, rather than prose mentioning a panic.
 ///
 /// # Returns
-/// Whether the first nonempty line has the runtime's thread and source-location prefix.
+/// Whether the runtime's thread and source-location prefix appears first or
+/// follows only a recognized Cargo build/run preamble.
 pub(crate) fn looks_like_rust_panic(content: &str) -> bool {
-    content
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .is_some_and(|line| line.starts_with("thread '") && line.contains("' panicked at "))
+    for line in content.lines().take(64).map(str::trim) {
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with("thread '") && line.contains("' panicked at ") {
+            return true;
+        }
+        if !is_cargo_run_preamble(line) {
+            return false;
+        }
+    }
+    false
+}
+
+/// Accept Cargo's own build/run status and an entered `cargo run` command before
+/// a panic header. Any source, Markdown, or prose line ends the runtime preamble.
+fn is_cargo_run_preamble(line: &str) -> bool {
+    if line.strip_prefix("Compiling ").is_some_and(|status| {
+        status
+            .split_whitespace()
+            .any(|part| part.starts_with('v') && part.get(1..).is_some_and(|v| v.contains('.')))
+    }) || line
+        .strip_prefix("Finished ")
+        .is_some_and(|status| status.contains('`') && status.contains(" profile"))
+        || line.strip_prefix("Running ").is_some_and(|status| {
+            let status = status.trim();
+            status.starts_with('`') && status.get(1..).is_some_and(|rest| rest.contains('`'))
+        })
+    {
+        return true;
+    }
+
+    let command = line
+        .strip_prefix('$')
+        .or_else(|| line.strip_prefix('%'))
+        .or_else(|| line.strip_prefix('>'))
+        .map(str::trim_start)
+        .unwrap_or(line);
+    command == "cargo run" || command.starts_with("cargo run ")
+}
+
+#[cfg(all(test, feature = "magika"))]
+/// Return the current test thread's Magika wrapper call count.
+///
+/// # Returns
+/// Calls observed on the current thread.
+pub(crate) fn magika_detection_call_count() -> usize {
+    magika::detection_call_count()
 }
 
 #[derive(Clone, Copy)]

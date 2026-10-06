@@ -131,6 +131,68 @@ mod model_tests {
     }
 
     #[test]
+    fn test_paste_new_classifies_structural_runtime_fixtures() {
+        use crate::semantic::PasteKind;
+
+        let cases = [
+            (
+                "# setup environment\nexport MODE=dev\nsource .env\nmkdir -p out\ncargo build --release\n",
+                PasteKind::Code,
+            ),
+            (
+                "```text\nINFO (main) Starting worker\nERROR (main) Worker stopped\n```",
+                PasteKind::Log,
+            ),
+            (
+                "yarn install v1.22.22\ninfo Resolving packages\nwarning Retrying request\nsuccess Saved lockfile",
+                PasteKind::Log,
+            ),
+            (
+                "yarn install v1.22.22\ninfo resolving package graph\ninfo fetching packages",
+                PasteKind::Log,
+            ),
+            (
+                "INFO\tStarting worker\nERROR\tWorker stopped",
+                PasteKind::Log,
+            ),
+            (
+                "info about the meeting is below\nerror handling is a topic we should discuss",
+                PasteKind::Document,
+            ),
+            ("cd app\nsudo is required for installation", PasteKind::Document),
+            (
+                "fn main() {\n    println!(\"ready\");\n    // thread 'main' panicked at src/main.rs:12:5\n}",
+                PasteKind::Code,
+            ),
+            (
+                "# Runtime report\n\n```text\nthread 'main' panicked at src/main.rs:12:5\n```\n",
+                PasteKind::Document,
+            ),
+        ];
+        for (content, expected) in cases {
+            let paste = paste::Paste::new(content.to_string(), "fixture".to_string());
+            assert_eq!(
+                paste::PasteMeta::from(&paste).derived.kind,
+                expected,
+                "language {:?}: {content}",
+                paste.language
+            );
+        }
+
+        let manual_markdown = paste::Paste::new_with_language(
+            "# setup environment\nexport MODE=dev\nsource .env\nmkdir -p out\ncargo build --release\n"
+                .to_string(),
+            "manual notes".to_string(),
+            Some("markdown".to_string()),
+            true,
+        );
+        assert_eq!(
+            paste::PasteMeta::from(&manual_markdown).derived.kind,
+            PasteKind::Document
+        );
+    }
+
+    #[test]
     fn test_paste_is_markdown() {
         let md_paste = paste::Paste::new(
             "# Header\n```rust\ncode\n```".to_string(),

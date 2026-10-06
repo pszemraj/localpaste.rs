@@ -63,7 +63,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 }
 
 #[test]
-fn semantic_kinds_rebuild_from_version_eight_and_survive_restart() {
+fn semantic_kinds_rebuild_from_version_nine_and_survive_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
@@ -191,8 +191,8 @@ fn semantic_kinds_rebuild_from_version_eight_and_survive_restart() {
         (
             "```text\nINFO Starting server\n```",
             "markdown",
-            PasteKind::Log,
             PasteKind::Document,
+            PasteKind::Log,
         ),
         (
             "fn main() {}\n// thread 'main' panicked at src/main.rs:12:5",
@@ -223,6 +223,42 @@ fn semantic_kinds_rebuild_from_version_eight_and_survive_restart() {
             "text",
             PasteKind::Code,
             PasteKind::Document,
+        ),
+        (
+            "cd app\nnpm install\nnpm run dev",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "just wanted to say thanks for your help",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "INFO (main) Starting the server",
+            "text",
+            PasteKind::Document,
+            PasteKind::Log,
+        ),
+        (
+            "info Resolving packages\nwarning Retrying request\nsuccess Saved lockfile",
+            "text",
+            PasteKind::Document,
+            PasteKind::Log,
+        ),
+        (
+            "INFO\tStarting worker\nERROR\tWorker stopped",
+            "tsv",
+            PasteKind::Other,
+            PasteKind::Log,
+        ),
+        (
+            "$ cargo run\nthread 'main' panicked at src/main.rs:12:5",
+            "text",
+            PasteKind::Document,
+            PasteKind::Log,
         ),
     ];
     let pastes: Vec<_> = cases
@@ -257,7 +293,7 @@ fn semantic_kinds_rebuild_from_version_eight_and_survive_restart() {
         .unwrap()
         .insert(
             META_SCHEMA_VERSION_KEY,
-            bincode::serialize(&8_u64).unwrap().as_slice(),
+            bincode::serialize(&9_u64).unwrap().as_slice(),
         )
         .unwrap();
     txn.commit().unwrap();
@@ -274,7 +310,9 @@ fn semantic_kinds_rebuild_from_version_eight_and_survive_restart() {
                     .unwrap()
                     .derived
                     .kind,
-                *expected
+                *expected,
+                "content: {}",
+                paste.content
             );
             let stored = reopened.pastes.get(&paste.id).unwrap().unwrap();
             assert_eq!(stored.content, paste.content);
@@ -298,12 +336,41 @@ fn semantic_kinds_rebuild_from_version_eight_and_survive_restart() {
             })
             .count()
     };
-    assert_eq!(backup_count(), 1, "v8 upgrade must create one backup");
+    assert_eq!(backup_count(), 1, "v9 upgrade must create one backup");
 
     assert_rebuilt();
     assert_eq!(
         backup_count(),
         1,
-        "current v9 restart must not create another backup"
+        "current v10 restart must not create another backup"
+    );
+}
+
+#[test]
+fn auto_detected_shell_sequence_persists_as_code_projection() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let path = temp.path().join("db");
+    let db = open_test_database(path.to_str().unwrap());
+    let paste = Paste::new(
+        "# setup environment\nexport MODE=dev\nsource .env\nmkdir -p out\ncargo build --release\n"
+            .into(),
+        "setup".into(),
+    );
+    assert_eq!(paste.language.as_deref(), Some("shell"));
+    assert!(paste.language_is_manual);
+    db.pastes.create(&paste).unwrap();
+    assert_eq!(
+        db.pastes.list_meta(10, None).unwrap()[0].derived.kind,
+        PasteKind::Code
+    );
+    drop(db);
+
+    let reopened = open_test_database(path.to_str().unwrap());
+    let stored = reopened.pastes.get(&paste.id).unwrap().unwrap();
+    assert_eq!(stored.language.as_deref(), Some("shell"));
+    assert!(stored.language_is_manual);
+    assert_eq!(
+        reopened.pastes.list_meta(10, None).unwrap()[0].derived.kind,
+        PasteKind::Code
     );
 }

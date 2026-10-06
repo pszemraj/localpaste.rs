@@ -1,0 +1,183 @@
+//! Command-shaped semantic handles and their prose disambiguation.
+
+const COMMANDS: &[&str] = &[
+    "brew",
+    "cargo",
+    "git",
+    "docker",
+    "kubectl",
+    "python",
+    "pytest",
+    "uv",
+    "pip",
+    "npm",
+    "pnpm",
+    "yarn",
+    "make",
+    "just",
+    "curl",
+    "wget",
+    "ssh",
+    "torchrun",
+    "ls",
+    "sudo",
+    "echo",
+    "printf",
+    "systemctl",
+    "conda",
+    "mkdir",
+];
+const SETUP_COMMANDS: &[&str] = &["cd", "export", "source", "set"];
+
+/// Extract a compact handle from a leading command-shaped line.
+///
+/// # Returns
+/// A command and optional subcommand handle when the leading line has enough
+/// command structure and is not grammatical prose.
+pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
+    // Later command-shaped lines may be explanations or quoted email content.
+    // A command must lead the paste and use an executable's case-sensitive name.
+    let mut lines = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .peekable();
+    if crate::detection::looks_like_shell_command_sequence(sample) {
+        while lines.peek().is_some_and(|line| line.starts_with('#')) {
+            let _ = lines.next();
+        }
+    }
+    if let Some(line) = lines.next() {
+        let trimmed = line.trim_matches('`');
+
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        let first = *parts.first()?;
+        let cmd = first.to_ascii_lowercase();
+        let is_regular_command = COMMANDS.iter().any(|known| *known == cmd);
+        let is_setup_command = SETUP_COMMANDS.iter().any(|known| *known == cmd);
+        if first != cmd || (!is_regular_command && !is_setup_command) {
+            return None;
+        }
+
+        let arguments = parts.get(1..).unwrap_or_default();
+        let has_command_syntax = command_has_shell_syntax(trimmed, arguments);
+
+        if is_setup_command && !has_command_syntax && !lines.any(starts_with_command_word) {
+            return None;
+        }
+
+        if is_regular_command
+            && !regular_command_is_valid(cmd.as_str(), arguments, has_command_syntax)
+        {
+            return None;
+        }
+
+        let sub = parts
+            .get(1)
+            .copied()
+            .map(super::clean_atom)
+            .filter(|value| !value.is_empty() && !value.starts_with('-'));
+
+        return Some(match sub {
+            Some(sub) => format!("{} {}", cmd, sub),
+            None => cmd,
+        });
+    }
+
+    None
+}
+
+fn starts_with_command_word(line: &str) -> bool {
+    let line = line.trim().trim_matches('`');
+    let mut parts = line.split_whitespace();
+    let Some(command) = parts.next() else {
+        return false;
+    };
+    if command != command.to_ascii_lowercase() {
+        return false;
+    }
+    if COMMANDS.contains(&command) {
+        let arguments: Vec<&str> = parts.collect();
+        return regular_command_is_valid(
+            command,
+            arguments.as_slice(),
+            command_has_shell_syntax(line, arguments.as_slice()),
+        );
+    }
+    if !SETUP_COMMANDS.contains(&command) {
+        return false;
+    }
+    let arguments: Vec<&str> = parts.collect();
+    match command {
+        "export" => arguments.iter().any(|argument| argument.contains('=')),
+        "set" => arguments
+            .iter()
+            .any(|argument| argument.starts_with('-') || argument.contains('=')),
+        "cd" => !arguments.is_empty(),
+        "source" => arguments
+            .first()
+            .is_some_and(|path| path.contains(['.', '/', '\\']) || path.starts_with('~')),
+        _ => false,
+    }
+}
+
+fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {
+    line.contains(['\'', '"', '$', '|', '>', '<', '=', '/', '\\', ';', '&'])
+        || arguments
+            .iter()
+            .any(|part| part.starts_with('-') || part.chars().any(|ch| ch.is_ascii_digit()))
+}
+
+fn regular_command_is_valid(command: &str, arguments: &[&str], has_shell_syntax: bool) -> bool {
+    if command == "git"
+        && !has_shell_syntax
+        && !arguments
+            .first()
+            .is_some_and(|subcommand| crate::detection::SHELL_GIT_SUBCOMMANDS.contains(subcommand))
+    {
+        return false;
+    }
+    if matches!(command, "make" | "just")
+        && !has_shell_syntax
+        && ambiguous_recipe_is_prose(arguments)
+    {
+        return false;
+    }
+    // Unquoted copulas near the verb are prose evidence (`echo chamber is`,
+    // `sudo is required`). Quoting, options, and shell syntax supply command
+    // evidence even when the argument text contains those words.
+    !crate::detection::has_unquoted_prose_copula(arguments, has_shell_syntax)
+}
+
+fn ambiguous_recipe_is_prose(arguments: &[&str]) -> bool {
+    let words: Vec<String> = arguments
+        .iter()
+        .map(|word| {
+            word.trim_matches(|ch: char| !ch.is_ascii_alphabetic())
+                .to_ascii_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect();
+    let Some(predicate) = words.first() else {
+        return false;
+    };
+    let grammatical_marker = |word: &str| {
+        [
+            "a", "an", "at", "for", "i", "in", "me", "my", "of", "on", "our", "please", "that",
+            "the", "this", "to", "us", "we", "you", "your", "yourself",
+        ]
+        .contains(&word)
+    };
+    if grammatical_marker(predicate) {
+        return true;
+    }
+    let later_markers = words
+        .iter()
+        .skip(1)
+        .filter(|word| grammatical_marker(word))
+        .count();
+    let predicate_has_sentence_shape = predicate.ends_with("ed")
+        || predicate.ends_with("ing")
+        || matches!(predicate.as_str(), "remember" | "sure");
+    later_markers >= 2 || (predicate_has_sentence_shape && later_markers >= 1)
+}

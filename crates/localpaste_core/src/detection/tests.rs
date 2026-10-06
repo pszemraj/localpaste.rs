@@ -127,6 +127,39 @@ fn heuristic_does_not_treat_param_call_alone_as_powershell() {
 }
 
 #[test]
+fn shell_command_sequences_override_leading_setup_comments() {
+    for content in [
+        "cd app\nnpm install\nnpm run dev\n",
+        "conda activate misc\npip install requests\n",
+        "# setup environment\nexport MODE=dev\nsource .env\nmkdir -p out\ncargo build --release\n",
+        "# bootstrap\ncd app\n# install dependencies\nnpm install\nnpm run dev\n",
+        "cd repo\ngit cherry-pick abc123\ngit revert def456\ngit rm stale.txt\n",
+        "cd app\necho ready\n",
+    ] {
+        assert!(
+            super::looks_like_shell_command_sequence(content),
+            "{content}"
+        );
+        assert_eq!(
+            detect_language(content).as_deref(),
+            Some("shell"),
+            "{content}"
+        );
+    }
+    for content in [
+        "# Setup notes\nRun npm install before the demo.\n",
+        "just wanted to say thanks\nmake yourself at home\n",
+        "export controls are discussed here\nsource material follows\n",
+        "cd app\nsudo is required for installation\n",
+    ] {
+        assert!(
+            !super::looks_like_shell_command_sequence(content),
+            "{content}"
+        );
+    }
+}
+
+#[test]
 fn heuristic_avoids_common_single_token_false_positives() {
     let cases = [
         (
@@ -218,10 +251,13 @@ fn canonicalization_matrix_handles_aliases() {
 fn json_lines_keep_format_identity_through_detection_and_export() {
     let large_record = format!("{{\"payload\":\"{}\"}}\n", "é".repeat(120));
     let large_records = large_record.repeat(400);
+    let forty_kib_record = format!("{{\"payload\":\"{}\"}}\n", "x".repeat(40 * 1024));
+    let two_large_records = forty_kib_record.repeat(2);
     for content in [
         "{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n",
         "{\"a\":1}\n{\"a\":2}\n",
         large_records.as_str(),
+        two_large_records.as_str(),
     ] {
         assert_eq!(heuristic::detect(content).as_deref(), Some("jsonl"));
         for label in ["json", "jsonl"] {
@@ -261,6 +297,18 @@ fn json_lines_keep_format_identity_through_detection_and_export() {
     }
     let malformed = format!("{{broken}}\n{large_records}");
     assert!(!heuristic::looks_like_json_lines(&malformed));
+    let malformed_crossing_record =
+        format!("{forty_kib_record}{{broken:{}}}\n", "x".repeat(30 * 1024));
+    assert!(!heuristic::looks_like_json_lines(
+        &malformed_crossing_record
+    ));
+    let oversized_crossing_record = format!(
+        "{forty_kib_record}{{\"payload\":\"{}\"}}\n",
+        "x".repeat(crate::text::TEXT_SAMPLE_MAX_BYTES)
+    );
+    assert!(!heuristic::looks_like_json_lines(
+        &oversized_crossing_record
+    ));
     let malformed_after_line_cap = format!("{}not-json\n", "{\"ok\":true}\n".repeat(512));
     assert!(malformed_after_line_cap.len() < crate::text::TEXT_SAMPLE_MAX_BYTES);
     assert!(!heuristic::looks_like_json_lines(&malformed_after_line_cap));
@@ -275,6 +323,20 @@ fn panic_detection_requires_a_leading_runtime_header() {
     let panic = "thread 'main' panicked at src/main.rs:12:5";
     assert!(super::looks_like_rust_panic(&format!("\n  {panic}\n")));
     assert_eq!(detect_language(panic).as_deref(), Some("log"));
+    for content in [
+        format!(
+            "   Compiling demo v0.1.0\n    Finished `dev` profile\n     Running `target/debug/demo`\n{panic}\n"
+        ),
+        format!("$cargo run\n{panic}\n"),
+        format!("$ cargo run --quiet\n{panic}\n"),
+    ] {
+        assert!(super::looks_like_rust_panic(&content), "{content}");
+        assert_eq!(detect_language(&content).as_deref(), Some("log"));
+        assert_eq!(
+            crate::semantic::derive(&content, Some("text")).kind,
+            crate::semantic::PasteKind::Log
+        );
+    }
     for (content, language) in [
         (
             format!(
@@ -283,7 +345,9 @@ fn panic_detection_requires_a_leading_runtime_header() {
             "markdown",
         ),
         (
-            format!("fn main() {{\n    println!(\"ready\");\n}}\n{panic}\nstack backtrace:"),
+            format!(
+                "fn main() {{\n    panic!(\"boom\");\n}}\n{panic}\nnote: run with RUST_BACKTRACE=1 to display a backtrace"
+            ),
             "rust",
         ),
     ] {
@@ -298,6 +362,29 @@ fn panic_detection_requires_a_leading_runtime_header() {
             }
         );
     }
+    for prose in [
+        format!("Finished painting the wall\n{panic}\n"),
+        format!("Running errands before lunch\n{panic}\n"),
+        format!("Compiling notes for the meeting\n{panic}\n"),
+    ] {
+        assert!(!super::looks_like_rust_panic(&prose), "{prose}");
+    }
+}
+
+#[test]
+fn rust_display_implementation_is_not_css() {
+    let content = r#"use std::fmt::{self, Display};
+impl Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "panic: {self}")
+    }
+}"#;
+    assert_eq!(heuristic::detect(content).as_deref(), Some("rust"));
+    assert_eq!(detect_language(content).as_deref(), Some("rust"));
+    assert_eq!(
+        crate::semantic::derive(content, Some("rust")).kind,
+        crate::semantic::PasteKind::Code
+    );
 }
 
 #[test]
