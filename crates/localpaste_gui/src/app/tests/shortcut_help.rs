@@ -21,6 +21,120 @@ fn shortcut_help_input(events: Vec<egui::Event>) -> egui::RawInput {
     }
 }
 
+fn check_shortcut_help_toolbar_focus(query: &str, editor: bool) {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.reset_virtual_editor("before selection after");
+    harness
+        .app
+        .virtual_editor_state
+        .restore_selection(16, Some(7), 22);
+    let origin = egui::Id::new(if editor {
+        VIRTUAL_EDITOR_ID
+    } else {
+        SEARCH_INPUT_ID
+    });
+    ctx.memory_mut(|memory| memory.request_focus(origin));
+    for _ in 0..3 {
+        run_full_update_with_input(&mut harness.app, &ctx, shortcut_help_input(Vec::new()));
+    }
+
+    if !query.is_empty() {
+        run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            shortcut_help_input(vec![key_event(egui::Key::F1, egui::Modifiers::NONE)]),
+        );
+        run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            shortcut_help_input(vec![egui::Event::Text(query.into())]),
+        );
+        run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            shortcut_help_input(vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)]),
+        );
+    }
+    let output =
+        run_full_update_with_input(&mut harness.app, &ctx, shortcut_help_input(Vec::new()));
+    let button = output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text == "Shortcuts (F1)" => {
+                Some(text.pos + text.galley.size() / 2.0)
+            }
+            _ => None,
+        })
+        .expect("rendered Shortcuts toolbar button");
+    for pressed in [true, false] {
+        run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            shortcut_help_input(vec![
+                egui::Event::PointerMoved(button),
+                egui::Event::PointerButton {
+                    pos: button,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]),
+        );
+    }
+    for _ in 0..3 {
+        run_full_update_with_input(&mut harness.app, &ctx, shortcut_help_input(Vec::new()));
+    }
+    assert!(harness.app.shortcut_help_open);
+    assert!(
+        ctx.memory(|memory| memory.has_focus(egui::Id::new(SHORTCUT_HELP_QUERY_ID))),
+        "toolbar-opened help query should focus with retained query {query:?}"
+    );
+    assert_eq!(harness.app.shortcut_help_query, query);
+    run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        shortcut_help_input(vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)]),
+    );
+    assert!(
+        ctx.memory(|memory| memory.has_focus(origin)),
+        "Escape should restore toolbar opener's focus"
+    );
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(7..16)
+    );
+    run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        shortcut_help_input(vec![egui::Event::Text("replacement".into())]),
+    );
+    if editor {
+        assert_eq!(harness.app.active_snapshot(), "before replacement after");
+    } else {
+        assert_eq!(harness.app.search_query, "replacement");
+        assert_eq!(harness.app.active_snapshot(), "before selection after");
+    }
+}
+
+#[test]
+fn shortcut_help_toolbar_restores_editor_selection_on_escape() {
+    check_shortcut_help_toolbar_focus("", true);
+}
+
+#[test]
+fn shortcut_help_toolbar_reopening_focuses_retained_query() {
+    check_shortcut_help_toolbar_focus("picker", true);
+}
+
+#[test]
+fn shortcut_help_toolbar_returns_to_sidebar_search_on_first_and_repeated_open() {
+    for query in ["", "picker"] {
+        check_shortcut_help_toolbar_focus(query, false);
+    }
+}
+
 fn settled_shortcut_help_rect(query: &str) -> egui::Rect {
     let mut harness = make_app();
     let ctx = egui::Context::default();

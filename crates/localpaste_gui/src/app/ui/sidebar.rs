@@ -123,15 +123,23 @@ impl LocalPasteApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Background chrome should not enter egui's keyboard focus ring while the
                         // editor owns arrow/home/end navigation on muscle memory.
-                        if ui
-                            .add(
-                                egui::Button::new("Shortcuts (F1)")
-                                    .small()
-                                    .sense(non_focusable_click_sense()),
-                            )
-                            .clicked()
-                        {
+                        let shortcuts = ui.add(
+                            egui::Button::new("Shortcuts (F1)")
+                                .small()
+                                .sense(non_focusable_click_sense()),
+                        );
+                        // Capture the opener before the editor blurs on this press.
+                        if shortcuts.is_pointer_button_down_on() {
+                            self.remember_discovery_focus(ctx);
+                        }
+                        if shortcuts.clicked() {
                             self.open_shortcut_help(ctx);
+                        } else if ui.input(|input| input.pointer.primary_released())
+                            && !self.command_palette_open
+                            && !self.paste_picker_open
+                            && !self.shortcut_help_open
+                        {
+                            self.discovery_return_focus = None;
                         }
                     });
                 });

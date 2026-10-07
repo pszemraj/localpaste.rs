@@ -241,7 +241,11 @@ impl LocalPasteApp {
 
     /// Preserve the original input when opening or switching discovery surfaces.
     pub(in crate::app) fn remember_discovery_focus(&mut self, ctx: &egui::Context) {
-        if !self.command_palette_open && !self.paste_picker_open && !self.shortcut_help_open {
+        if !self.command_palette_open
+            && !self.paste_picker_open
+            && !self.shortcut_help_open
+            && self.discovery_return_focus.is_none()
+        {
             self.discovery_return_focus = ctx.memory(|memory| memory.focused());
         }
     }
@@ -307,11 +311,8 @@ impl LocalPasteApp {
                     ui.set_width(600.0);
                     let previous_query = self.shortcut_help_query.clone();
                     ui.horizontal(|ui| {
-                        if self.shortcut_help_focus_requested
-                            && super::focus_visible_query(ui, egui::Id::new("shortcut_help_query"))
-                        {
-                            self.shortcut_help_focus_requested = false;
-                        }
+                        let focus_requested = self.shortcut_help_focus_requested
+                            && super::focus_visible_query(ui, egui::Id::new("shortcut_help_query"));
                         let response = ui.add_sized(
                             [ui.available_width() - 84.0, ui.spacing().interact_size.y],
                             egui::TextEdit::singleline(&mut self.shortcut_help_query)
@@ -319,6 +320,12 @@ impl LocalPasteApp {
                                 .hint_text("Search shortcuts...")
                                 .return_key(None),
                         );
+                        if focus_requested {
+                            // TextEdit may surrender the pre-requested focus to the
+                            // toolbar pointer release that opened this window.
+                            response.request_focus();
+                            self.shortcut_help_focus_requested = false;
+                        }
                         if ui
                             .add_enabled(
                                 !self.shortcut_help_query.is_empty(),
