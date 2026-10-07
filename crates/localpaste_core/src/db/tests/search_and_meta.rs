@@ -652,22 +652,7 @@ fn database_new_rebuilds_stale_schema_meta_rows_for_semantic_handle_changes() {
         handle: Some("renderpanel".to_string()),
         terms: vec!["renderpanel".to_string()],
     };
-    let encoded_meta = bincode::serialize(&stale_meta).expect("serialize meta");
-    let old_schema_version = bincode::serialize(&1u64).expect("serialize old schema version");
-    let write_txn = db.db.begin_write().expect("begin write");
-    {
-        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
-        let mut meta_state = write_txn
-            .open_table(PASTES_META_STATE)
-            .expect("open meta state");
-        metas
-            .insert(paste_id.as_str(), encoded_meta.as_slice())
-            .expect("overwrite stale meta");
-        meta_state
-            .insert(META_SCHEMA_VERSION_KEY, old_schema_version.as_slice())
-            .expect("stamp old schema version");
-    }
-    write_txn.commit().expect("commit");
+    install_stale_meta_projection(&db, [stale_meta], 1);
     drop(db);
 
     let reopened = open_test_database(&db_path_str);
@@ -724,22 +709,7 @@ fn database_new_rebuilds_v3_document_classification() {
 
     let mut stale_meta = PasteMeta::from(&paste);
     stale_meta.derived.kind = crate::semantic::PasteKind::Document;
-    let encoded_meta = bincode::serialize(&stale_meta).expect("serialize meta");
-    let v3_schema_version = bincode::serialize(&3u64).expect("serialize v3 schema version");
-    let write_txn = db.db.begin_write().expect("begin write");
-    {
-        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
-        let mut meta_state = write_txn
-            .open_table(PASTES_META_STATE)
-            .expect("open meta state");
-        metas
-            .insert(paste_id.as_str(), encoded_meta.as_slice())
-            .expect("overwrite stale meta");
-        meta_state
-            .insert(META_SCHEMA_VERSION_KEY, v3_schema_version.as_slice())
-            .expect("stamp v3 schema version");
-    }
-    write_txn.commit().expect("commit");
+    install_stale_meta_projection(&db, [stale_meta], 3);
     drop(db);
 
     let reopened = open_test_database(&db_path_str);

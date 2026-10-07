@@ -1,8 +1,6 @@
 //! Document projection upgrade uses the ordinary startup backup/rebuild path.
 
 use super::*;
-use crate::db::paste::META_SCHEMA_VERSION_KEY;
-use crate::db::tables::{PASTES_META, PASTES_META_STATE};
 use crate::semantic::PasteKind;
 
 #[test]
@@ -19,22 +17,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
     db.pastes.create(&paste).unwrap();
     let mut stale = PasteMeta::from(&paste);
     stale.derived.kind = PasteKind::Code;
-    let txn = db.db.begin_write().unwrap();
-    txn.open_table(PASTES_META)
-        .unwrap()
-        .insert(
-            paste.id.as_str(),
-            bincode::serialize(&stale).unwrap().as_slice(),
-        )
-        .unwrap();
-    txn.open_table(PASTES_META_STATE)
-        .unwrap()
-        .insert(
-            META_SCHEMA_VERSION_KEY,
-            bincode::serialize(&2_u64).unwrap().as_slice(),
-        )
-        .unwrap();
-    txn.commit().unwrap();
+    install_stale_meta_projection(&db, [stale], 2);
     drop(db);
 
     let reopened = open_test_database(path.to_str().unwrap());
@@ -47,11 +30,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
         paste.content
     );
     assert!(
-        std::fs::read_dir(&path).unwrap().any(|entry| entry
-            .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .contains(".backup.")),
+        !startup_backup_files(&path).is_empty(),
         "upgrade must preserve a schema-repair backup"
     );
     drop(reopened);
@@ -473,29 +452,19 @@ fn semantic_kinds_rebuild_from_version_thirteen_and_survive_restart() {
     for paste in &pastes {
         db.pastes.create(paste).unwrap();
     }
-    let txn = db.db.begin_write().unwrap();
-    {
-        let mut metas = txn.open_table(PASTES_META).unwrap();
-        for (paste, (_, _, stale_kind, _)) in pastes.iter().zip(&cases) {
-            let mut stale = PasteMeta::from(paste);
-            stale.derived.kind = *stale_kind;
-            stale.derived.handle = Some("old projection handle".into());
-            metas
-                .insert(
-                    paste.id.as_str(),
-                    bincode::serialize(&stale).unwrap().as_slice(),
-                )
-                .unwrap();
-        }
-    }
-    txn.open_table(PASTES_META_STATE)
-        .unwrap()
-        .insert(
-            META_SCHEMA_VERSION_KEY,
-            bincode::serialize(&13_u64).unwrap().as_slice(),
-        )
-        .unwrap();
-    txn.commit().unwrap();
+    install_stale_meta_projection(
+        &db,
+        pastes
+            .iter()
+            .zip(&cases)
+            .map(|(paste, (_, _, stale_kind, _))| {
+                let mut stale = PasteMeta::from(paste);
+                stale.derived.kind = *stale_kind;
+                stale.derived.handle = Some("old projection handle".into());
+                stale
+            }),
+        13,
+    );
     drop(db);
 
     let assert_rebuilt = || {
@@ -518,24 +487,15 @@ fn semantic_kinds_rebuild_from_version_thirteen_and_survive_restart() {
     };
 
     assert_rebuilt();
-    let backup_count = || {
-        std::fs::read_dir(&path)
-            .unwrap()
-            .filter(|entry| {
-                entry
-                    .as_ref()
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .contains(".backup.")
-            })
-            .count()
-    };
-    assert_eq!(backup_count(), 1, "v13 upgrade must create one backup");
+    assert_eq!(
+        startup_backup_files(&path).len(),
+        1,
+        "v13 upgrade must create one backup"
+    );
 
     assert_rebuilt();
     assert_eq!(
-        backup_count(),
+        startup_backup_files(&path).len(),
         1,
         "current v14 restart must not create another backup"
     );

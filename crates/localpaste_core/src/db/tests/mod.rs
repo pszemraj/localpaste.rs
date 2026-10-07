@@ -1,8 +1,10 @@
 //! Database integration tests.
 
 use super::*;
+use crate::db::paste::META_SCHEMA_VERSION_KEY;
 use crate::db::tables::{
-    DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META,
+    DELETED_PASTES, DELETED_PASTE_VERSIONS_CONTENT, DELETED_PASTE_VERSIONS_META, PASTES_META,
+    PASTES_META_STATE, REDB_FILE_NAME,
 };
 use crate::error::AppError;
 use crate::models::{folder::*, paste::*};
@@ -11,8 +13,71 @@ pub(super) use crate::test_support::{
     with_db_init_test_lock,
 };
 use redb::{ReadableDatabase, ReadableTable};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier};
 use std::thread;
+
+/// Install stale metadata rows and their schema marker atomically for repair tests.
+///
+/// # Arguments
+/// - `db`: Database whose projection is overwritten.
+/// - `metas`: Stale projection rows to install.
+/// - `schema_version`: Historical projection schema version.
+///
+/// # Panics
+/// Panics if encoding or the write transaction fails.
+pub(super) fn install_stale_meta_projection(
+    db: &Database,
+    metas: impl IntoIterator<Item = PasteMeta>,
+    schema_version: u64,
+) {
+    let txn = db.db.begin_write().expect("begin stale projection write");
+    {
+        let mut table = txn.open_table(PASTES_META).expect("open metas");
+        for meta in metas {
+            let encoded = bincode::serialize(&meta).expect("serialize stale meta");
+            table
+                .insert(meta.id.as_str(), encoded.as_slice())
+                .expect("overwrite stale meta");
+        }
+        txn.open_table(PASTES_META_STATE)
+            .expect("open meta state")
+            .insert(
+                META_SCHEMA_VERSION_KEY,
+                bincode::serialize(&schema_version)
+                    .expect("serialize old schema version")
+                    .as_slice(),
+            )
+            .expect("stamp old schema version");
+    }
+    txn.commit().expect("commit stale projection");
+}
+
+/// List startup backups using the database backup filename contract.
+///
+/// # Arguments
+/// - `db_path`: Database directory to inspect.
+///
+/// # Returns
+/// Backup paths in sorted order.
+///
+/// # Panics
+/// Panics if the database directory cannot be read.
+pub(super) fn startup_backup_files(db_path: &Path) -> Vec<PathBuf> {
+    let prefix = format!("{REDB_FILE_NAME}.backup.");
+
+    let mut paths = std::fs::read_dir(db_path)
+        .expect("read db dir")
+        .map(|entry| entry.expect("backup entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".redb"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
 
 /// Builds an update request with the common optional fields used by DB tests.
 ///

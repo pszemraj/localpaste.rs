@@ -7,7 +7,7 @@ use crate::db::tables::{
     PASTES_META_STATE, REDB_FILE_NAME,
 };
 use redb::ReadableDatabase;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tempfile::TempDir;
 
 fn setup_temp_db_path(name: &str) -> (TempDir, String) {
@@ -15,22 +15,6 @@ fn setup_temp_db_path(name: &str) -> (TempDir, String) {
     let db_path = temp_dir.path().join(name);
     let db_path_str = db_path.to_str().expect("db path").to_string();
     (temp_dir, db_path_str)
-}
-
-fn startup_backup_files(db_path: &Path) -> Vec<PathBuf> {
-    let prefix = format!("{REDB_FILE_NAME}.backup.");
-
-    let mut paths = std::fs::read_dir(db_path)
-        .expect("read db dir")
-        .map(|entry| entry.expect("backup entry").path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".redb"))
-        })
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
 }
 
 #[test]
