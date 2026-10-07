@@ -9,7 +9,7 @@ Workflow and helper-script entrypoints:
 
 ## Workflow triggers
 
-Release packaging runs on version tags or manual dispatch. Packaging verification is manual-only. Workflow lint and release-helper tests run on manual dispatch or an explicit PR review request, with workflow/script path filters. The existing lint job has a ten-minute timeout and cancels superseded validation runs. Ordinary PR pushes, main pushes, and schedules do not trigger these workflows.
+Release packaging runs on version tags or manual dispatch. Packaging verification is manual-only. Workflow lint and release-helper tests run on manual dispatch or PR open, reopen, and new-commit events, with workflow/script path filters. The lint job has a ten-minute timeout and cancels superseded validation runs. Main pushes and schedules do not trigger these workflows.
 
 ## Modes
 
@@ -72,7 +72,9 @@ Release/packaging workflows enforce these baseline controls:
 - Least privilege by default: workflow-level `permissions: contents: read`, with publish-only elevation to `contents: write`.
 - Immutable action pinning (`uses:` entries pinned to commit SHAs) for release-critical jobs.
 - Deterministic source checkout for packaging jobs via resolved `SOURCE_REF` (no selective tree overlay from a different ref).
-- Windows WiX toolchain pinning (`3.14.1`) plus major-version assertion in `release_gui_prepare.py`.
+- Windows runner WiX discovery with a `3.14.1` installation fallback, plus an installed-tool major-version assertion in `release_gui_prepare.py`.
+
+The installed WiX preflight does not select cargo-packager's MSI compiler. The pinned cargo-packager `0.11.8` uses its own `WixTools` cache and downloads WiX `3.11.2` when that cache is absent; see its [WiX implementation](https://github.com/crabnebula-dev/cargo-packager/blob/cargo-packager-v0.11.8/crates/packager/src/package/wix/mod.rs). Its [packaging context](https://github.com/crabnebula-dev/cargo-packager/blob/cargo-packager-v0.11.8/crates/packager/src/package/context.rs) creates this cache beneath the platform cache directory.
 
 ## macOS Signing And Notarization
 
