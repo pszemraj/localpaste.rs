@@ -3,6 +3,172 @@
 use super::{derive, extract_definition_handle_from_line, PasteKind};
 
 #[test]
+fn explicit_setup_queries_chains_and_adjacent_commands_remain_code() {
+    for content in [
+        "set \"my variable\"",
+        "set \"alpha beta\" gamma",
+        "set PATH && echo done",
+        "set +o errexit\ncargo check",
+        "set alpha beta\ncargo check",
+        "export \"PATH\"",
+        "export PATH\ncargo check",
+        "export PATH HOME\ncargo check",
+        "export PATH && cargo check",
+        "source env\ncargo check",
+        "source activate myenv\ncargo check",
+        "source \"my env\" && cargo check",
+        "source .env && cargo check",
+        "cd Program Files\ngit status",
+        "cd Program Files2\ngit status",
+        "cd \"Program Files\" && git status",
+        "cd repo && git status",
+        "cd repo; git status",
+    ] {
+        for content in [
+            format!("{content}\n"),
+            format!("{content}\n").replace('\n', "\r\n"),
+        ] {
+            for language in [None, Some("text"), Some("batch")] {
+                assert_eq!(
+                    derive(&content, language).kind,
+                    PasteKind::Code,
+                    "{content}: {language:?}"
+                );
+            }
+            #[cfg(feature = "magika")]
+            {
+                let paste =
+                    crate::models::paste::Paste::new(content.clone(), "setup boundary".into());
+                assert_eq!(
+                    crate::models::paste::PasteMeta::from(&paste).derived.kind,
+                    PasteKind::Code,
+                    "{content}"
+                );
+            }
+        }
+    }
+    for content in ["export PATH2", "source env2"] {
+        for language in [None, Some("text"), Some("batch")] {
+            assert_eq!(
+                derive(content, language).kind,
+                PasteKind::Other,
+                "{content}"
+            );
+        }
+    }
+}
+
+#[test]
+fn incidental_operators_in_setup_prose_do_not_establish_commands() {
+    for content in [
+        "source code is at https://example.com?a=1&b=2",
+        "set timer for 10 minutes; remember tea",
+    ] {
+        for language in [None, Some("text"), Some("batch")] {
+            assert_ne!(derive(content, language).kind, PasteKind::Code, "{content}");
+            assert_eq!(
+                super::commands::extract_command_handle(content),
+                None,
+                "{content}"
+            );
+        }
+    }
+}
+
+#[test]
+fn setup_options_and_later_assignments_keep_code_kind() {
+    for content in [
+        "export -n PATH",
+        "export -p",
+        "export -f build",
+        "export -nf build",
+        "export PATH MODE=dev",
+        "cd -P repo",
+        "cd -L repo",
+        "cd -- repo",
+    ] {
+        for ending in ["\n", "\r\n"] {
+            let content = format!("{content}{ending}");
+            for language in [None, Some("text"), Some("batch")] {
+                assert_eq!(
+                    derive(&content, language).kind,
+                    PasteKind::Code,
+                    "{content}: {language:?}"
+                );
+            }
+            #[cfg(feature = "magika")]
+            {
+                let paste =
+                    crate::models::paste::Paste::new(content.clone(), "setup command".into());
+                assert_eq!(
+                    crate::models::paste::PasteMeta::from(&paste).derived.kind,
+                    PasteKind::Code,
+                    "{content}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn quoted_source_paths_with_spaces_keep_code_kind() {
+    for content in [
+        "source \"my project.env\"\n",
+        "source \"project setup.env\"\ncargo check\n",
+        "source 'project setup.env' arg\n",
+    ] {
+        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+            for language in [None, Some("text"), Some("batch")] {
+                let derived = derive(&content, language);
+                assert_eq!(derived.kind, PasteKind::Code, "{content}");
+                assert!(
+                    derived
+                        .handle
+                        .as_deref()
+                        .is_some_and(|handle| handle.starts_with("source ")),
+                    "{content}"
+                );
+            }
+            #[cfg(feature = "magika")]
+            {
+                let paste =
+                    crate::models::paste::Paste::new(content.clone(), "source command".into());
+                assert_eq!(
+                    crate::models::paste::PasteMeta::from(&paste).derived.kind,
+                    PasteKind::Code,
+                    "{content}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn cmd_variable_assignments_with_spaces_keep_code_kind() {
+    for content in [
+        "set \"long variable name=value\"",
+        "set \"my variable=hello world\"",
+        "set long variable name=value",
+        "set my variable=hello world",
+    ] {
+        for ending in ["", "\n", "\r\n"] {
+            let content = format!("{content}{ending}");
+            for language in [None, Some("text"), Some("batch")] {
+                let derived = derive(&content, language);
+                assert_eq!(derived.kind, PasteKind::Code, "{content}: {language:?}");
+                assert!(
+                    derived
+                        .handle
+                        .as_deref()
+                        .is_some_and(|handle| handle.starts_with("set ")),
+                    "{content}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn batch_setup_prose_is_document_without_broad_language_override() {
     for content in [
         "set timer for 10 minutes\r\n",
@@ -23,6 +189,7 @@ fn batch_setup_prose_is_document_without_broad_language_override() {
         ("set -e", PasteKind::Code),
         ("export MODE=dev", PasteKind::Code),
         ("source .env", PasteKind::Other),
+        ("source .env arg", PasteKind::Other),
         ("source .env\ncargo check", PasteKind::Code),
         ("source ./.env", PasteKind::Code),
         ("cd repo\ncargo check", PasteKind::Code),
@@ -31,13 +198,16 @@ fn batch_setup_prose_is_document_without_broad_language_override() {
             PasteKind::Other,
         ),
         ("rem keep this batch script comment", PasteKind::Other),
-        ("set /p prompt=Enter your full name", PasteKind::Other),
-        ("set /a count=10", PasteKind::Other),
-        ("cd /d C:\\Users\\project", PasteKind::Other),
+        ("set /p prompt=Enter your full name", PasteKind::Code),
+        ("set /a count=10", PasteKind::Code),
+        ("cd /d C:\\Users\\project", PasteKind::Code),
         ("cd Program Files", PasteKind::Other),
-        ("cd C:\\Program Files", PasteKind::Other),
-        ("set /?", PasteKind::Other),
-        ("set /? additional words", PasteKind::Other),
+        ("cd C:\\Program Files", PasteKind::Code),
+        ("cd /d Program Files", PasteKind::Code),
+        ("set /?", PasteKind::Code),
+        ("set /? additional words", PasteKind::Code),
+        ("set PATH", PasteKind::Other),
+        ("set PATH\necho hello world", PasteKind::Code),
         ("source\tcode\tlocation\nmain\trust\tpath", PasteKind::Other),
         ("source,code,location\nmain,rust,path", PasteKind::Other),
         ("export function renderPanel() {}", PasteKind::Other),

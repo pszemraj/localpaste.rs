@@ -451,8 +451,10 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
 
     let sample = utf8_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
     let mut commands = 0usize;
+    let mut next_command = false;
     for line in sample
         .lines()
+        .rev()
         .map(str::trim)
         .filter(|line| !line.is_empty())
     {
@@ -480,7 +482,7 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
                         super::SHELL_GIT_SUBCOMMANDS.contains(subcommand)
                     }))
         } else if SETUP_COMMANDS.contains(&command) {
-            super::setup_command_is_valid(command, &arguments)
+            super::setup_command_is_valid(command, &arguments, next_command)
         } else {
             false
         };
@@ -488,6 +490,7 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
             return false;
         }
         commands = commands.saturating_add(1);
+        next_command = command_line;
     }
     commands >= 2
 }

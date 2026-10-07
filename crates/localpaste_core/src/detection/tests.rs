@@ -9,6 +9,37 @@ use super::refine_magika_label;
 
 #[cfg(feature = "magika")]
 #[test]
+fn automatic_cmd_variable_assignments_keep_code_kind() {
+    let cases = [
+        "set \"long variable name=value\"",
+        "set \"my variable=hello world\"",
+        "set long variable name=value",
+        "set my variable=hello world",
+    ];
+    for content in cases {
+        for ending in ["\n", "\r\n"] {
+            let content = format!("{content}{ending}");
+            let paste = crate::models::paste::Paste::new(content.clone(), "CMD assignment".into());
+            assert_eq!(
+                refine_magika_label("batch", &content).as_deref(),
+                Some("batch"),
+                "{content}"
+            );
+            assert_eq!(
+                crate::models::paste::PasteMeta::from(&paste).derived.kind,
+                crate::semantic::PasteKind::Code,
+                "{content}"
+            );
+            if content.starts_with("set my variable=hello world") {
+                assert_eq!(paste.language.as_deref(), Some("batch"));
+                assert!(paste.language_is_manual);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "magika")]
+#[test]
 fn automatic_setup_word_notes_remain_documents() {
     let pastes: Vec<_> = [
         "set timer for 10 minutes\r\n",
@@ -41,6 +72,22 @@ fn batch_refinement_rejects_setup_prose_and_retains_script_structure() {
         "@echo off\r\nset MODE=dev\r\necho %MODE%\r\n",
         "rem keep this batch script comment",
         "set MODE=dev",
+        "set \"my variable\"",
+        "set \"alpha beta\" gamma",
+        "set PATH && echo done",
+        "set +o errexit\ncargo check",
+        "set alpha beta\ncargo check",
+        "export \"PATH\"",
+        "export PATH\ncargo check",
+        "export PATH HOME\ncargo check",
+        "export PATH && cargo check",
+        "source env\ncargo check",
+        "source activate myenv\ncargo check",
+        "cd Program Files\ngit status",
+        "cd Program Files2\ngit status",
+        "cd \"Program Files\" && git status",
+        "cd repo && git status",
+        "cd repo; git status",
         "set /p prompt=Enter your full name",
         "set /A count=10",
         "cd /D C:\\Users\\project",
@@ -49,7 +96,19 @@ fn batch_refinement_rejects_setup_prose_and_retains_script_structure() {
         "set /?",
         "set /? additional words",
         "source .env\ncargo check",
+        "source .env arg",
+        "source \"my project.env\"",
+        "source \"project setup.env\"\r\ncargo check",
+        "source 'project setup.env' arg",
         "export MODE=dev",
+        "export -n PATH",
+        "export -p",
+        "export -f build",
+        "export -nf build",
+        "export PATH MODE=dev",
+        "cd -P repo",
+        "cd -L repo",
+        "cd -- repo",
         "source\tcode\tlocation\nmain\trust\tpath",
         "export function renderPanel() {}",
     ] {
@@ -189,6 +248,11 @@ fn shell_command_sequences_override_leading_setup_comments() {
         "# bootstrap\ncd app\n# install dependencies\nnpm install\nnpm run dev\n",
         "cd repo\ngit cherry-pick abc123\ngit revert def456\ngit rm stale.txt\n",
         "cd app\necho ready\n",
+        "cd Program Files\ngit status\n",
+        "set alpha beta\ncargo check\n",
+        "export PATH HOME\ncargo check\n",
+        "source activate myenv\ncargo check\n",
+        "export PATH\nsource env\ncargo check\n",
         "cd repo\ngit submodule update\n",
         "git rev-parse HEAD\ngit blame README.md\n",
         "cd 'my repo'\r\ngit submodule update\r\n",

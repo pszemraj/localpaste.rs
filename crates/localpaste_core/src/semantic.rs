@@ -282,7 +282,8 @@ pub(crate) fn looks_like_batch_setup_prose(content: &str) -> bool {
             .first()
             .is_some_and(|argument| argument.starts_with('/'));
     !batch_option
-        && !crate::detection::setup_command_is_valid(command, &arguments)
+        && !crate::detection::setup_command_is_valid(command, &arguments, false)
+        && commands::extract_command_handle(sample).is_none()
         && looks_like_prose(sample)
 }
 

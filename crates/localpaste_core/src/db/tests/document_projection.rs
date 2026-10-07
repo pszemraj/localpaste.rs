@@ -63,11 +63,97 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 }
 
 #[test]
-fn semantic_kinds_rebuild_from_version_eleven_and_survive_restart() {
+fn semantic_kinds_rebuild_from_version_twelve_and_survive_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
     let cases = [
+        (
+            "cd Program Files\r\ngit status",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "set \"my variable\"\r\n",
+            "batch",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "export PATH\r\ncargo check",
+            "batch",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "source env\r\ncargo check",
+            "batch",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "cd repo && git status\r\n",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "export -n PATH\r\n",
+            "batch",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        ("export -p\n", "text", PasteKind::Other, PasteKind::Code),
+        (
+            "export PATH MODE=dev\r\n",
+            "batch",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        ("cd -P repo\r\n", "batch", PasteKind::Other, PasteKind::Code),
+        (
+            "source \"project setup.env\"\r\ncargo check",
+            "text",
+            PasteKind::Other,
+            PasteKind::Code,
+        ),
+        (
+            "set \"long variable name=value\"\r\n",
+            "batch",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "set \"my variable=hello world\"\n",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "set long variable name=value\r\n",
+            "batch",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "cd /d C:\\work\r\n",
+            "batch",
+            PasteKind::Other,
+            PasteKind::Code,
+        ),
+        (
+            "cd C:\\Program Files\r\n",
+            "batch",
+            PasteKind::Other,
+            PasteKind::Code,
+        ),
+        (
+            "set /p prompt=Enter your full name\r\n",
+            "batch",
+            PasteKind::Other,
+            PasteKind::Code,
+        ),
         (
             "set timer for 10 minutes\r\n",
             "batch",
@@ -360,7 +446,7 @@ fn semantic_kinds_rebuild_from_version_eleven_and_survive_restart() {
         .unwrap()
         .insert(
             META_SCHEMA_VERSION_KEY,
-            bincode::serialize(&11_u64).unwrap().as_slice(),
+            bincode::serialize(&12_u64).unwrap().as_slice(),
         )
         .unwrap();
     txn.commit().unwrap();
@@ -399,13 +485,13 @@ fn semantic_kinds_rebuild_from_version_eleven_and_survive_restart() {
             })
             .count()
     };
-    assert_eq!(backup_count(), 1, "v11 upgrade must create one backup");
+    assert_eq!(backup_count(), 1, "v12 upgrade must create one backup");
 
     assert_rebuilt();
     assert_eq!(
         backup_count(),
         1,
-        "current v12 restart must not create another backup"
+        "current v13 restart must not create another backup"
     );
 }
 

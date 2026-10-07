@@ -51,32 +51,73 @@ pub(crate) const SHELL_GIT_SUBCOMMANDS: &[&str] = &[
 /// # Arguments
 /// - `command`: Leading executable or shell builtin word.
 /// - `arguments`: Whitespace-separated arguments following that word.
+/// - `next_command`: Whether the immediately following substantive line is a command.
 ///
 /// # Returns
 /// Whether arguments form an assignment, shell option, or setup path rather
 /// than prose that merely contains punctuation or numbers.
-pub(crate) fn setup_command_is_valid(command: &str, arguments: &[&str]) -> bool {
-    match command {
-        "export" => arguments
-            .first()
-            .is_some_and(|argument| argument.contains('=')),
-        "set" => arguments
-            .first()
-            .is_some_and(|argument| argument.starts_with('-') || argument.contains('=')),
+pub(crate) fn setup_command_is_valid(
+    command: &str,
+    arguments: &[&str],
+    next_command: bool,
+) -> bool {
+    let quoted_argument = arguments.first().is_some_and(|first| {
+        ['\'', '"'].iter().any(|quote| {
+            first.starts_with(*quote) && arguments.iter().any(|part| part.ends_with(*quote))
+        })
+    });
+    let compact_arguments = |arguments: &[&str]| {
+        !arguments.is_empty()
+            && !has_unquoted_prose_copula(arguments, false)
+            && !arguments
+                .iter()
+                .any(|part| matches!(*part, "for" | "to" | "the"))
+            && arguments.iter().all(|part| {
+                part.chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+            })
+    };
+    let control_operator = arguments
+        .iter()
+        .enumerate()
+        .find(|(_, part)| part.contains(['&', '|', ';']))
+        .is_some_and(|(index, part)| {
+            let mut prefix: Vec<&str> = arguments.iter().take(index).copied().collect();
+            let head = part.split(['&', '|', ';']).next().unwrap_or_default();
+            if !head.is_empty() {
+                prefix.push(head);
+            }
+            compact_arguments(&prefix)
+        });
+    let structured = match command {
+        "export" => {
+            arguments
+                .first()
+                .is_some_and(|argument| argument.starts_with('-'))
+                || arguments.iter().any(|argument| argument.contains('='))
+        }
+        "set" => {
+            arguments.len() == 1
+                || arguments
+                    .first()
+                    .is_some_and(|argument| argument.starts_with(['-', '+', '/']))
+                || arguments.iter().any(|argument| argument.contains('='))
+        }
         "cd" => {
             arguments.len() == 1
-                || arguments.first().is_some_and(|path| {
-                    ['\'', '"'].iter().any(|quote| {
-                        path.starts_with(*quote)
-                            && arguments.last().is_some_and(|last| last.ends_with(*quote))
-                    })
-                })
+                || arguments
+                    .first()
+                    .is_some_and(|path| path.starts_with('-') || path.contains(['/', '\\']))
         }
         "source" => arguments
             .first()
             .is_some_and(|path| path.contains(['.', '/', '\\']) || path.starts_with('~')),
         _ => false,
-    }
+    };
+    structured
+        || quoted_argument
+        || control_operator
+        || (next_command && compact_arguments(arguments))
 }
 
 /// Recognize a prose copula near a command-shaped leading word.

@@ -42,7 +42,8 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .peekable();
-    if crate::detection::looks_like_shell_command_sequence(sample) {
+    let is_sequence = crate::detection::looks_like_shell_command_sequence(sample);
+    if is_sequence {
         while lines.peek().is_some_and(|line| line.starts_with('#')) {
             let _ = lines.next();
         }
@@ -63,14 +64,14 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         let has_command_syntax = command_has_shell_syntax(trimmed, arguments);
 
         if is_setup_command {
-            if !crate::detection::setup_command_is_valid(&cmd, arguments) {
+            let next_command = is_sequence
+                || lines
+                    .find(|line| !line.starts_with('#'))
+                    .is_some_and(starts_with_command_word);
+            if !crate::detection::setup_command_is_valid(&cmd, arguments, next_command) {
                 return None;
             }
-            if !has_command_syntax
-                && !lines
-                    .find(|line| !line.starts_with('#'))
-                    .is_some_and(starts_with_command_word)
-            {
+            if !has_command_syntax && !next_command {
                 return None;
             }
         }
@@ -117,7 +118,7 @@ fn starts_with_command_word(line: &str) -> bool {
         return false;
     }
     let arguments: Vec<&str> = parts.collect();
-    crate::detection::setup_command_is_valid(command, &arguments)
+    crate::detection::setup_command_is_valid(command, &arguments, false)
 }
 
 fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {
