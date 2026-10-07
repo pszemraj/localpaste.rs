@@ -1,6 +1,6 @@
 //! Rendered discovery-overlay keyboard ownership and recovery regressions.
 
-use super::virtual_editor_focus_support::screen_rect;
+use super::run_discovery_frame_once as frame;
 use super::*;
 
 fn linux_command(shift: bool) -> egui::Modifiers {
@@ -10,22 +10,6 @@ fn linux_command(shift: bool) -> egui::Modifiers {
         shift,
         ..Default::default()
     }
-}
-
-fn frame(
-    app: &mut LocalPasteApp,
-    ctx: &egui::Context,
-    events: Vec<egui::Event>,
-) -> egui::FullOutput {
-    run_full_update_with_input(
-        app,
-        ctx,
-        egui::RawInput {
-            screen_rect: Some(screen_rect()),
-            events,
-            ..Default::default()
-        },
-    )
 }
 
 #[test]
@@ -307,29 +291,12 @@ fn failed_picker_search_stays_visible_until_explicit_retry() {
         "failure must wait for an explicit retry"
     );
     assert!(harness.app.palette_search_last_input_at.is_none());
-    let retry = output
-        .shapes
-        .iter()
-        .find_map(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) if text.galley.job.text == "Retry" => {
-                Some(text.pos + text.galley.size() / 2.0)
-            }
-            _ => None,
-        })
-        .expect("visible Retry button");
+    let retry = rendered_label_center(&output, "Retry");
     for pressed in [true, false] {
         frame(
             &mut harness.app,
             &ctx,
-            vec![
-                egui::Event::PointerMoved(retry),
-                egui::Event::PointerButton {
-                    pos: retry,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
+            primary_pointer_events(retry, pressed),
         );
     }
     harness.app.maybe_dispatch_palette_search();

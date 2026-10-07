@@ -1,34 +1,22 @@
 //! Rendered discovery transition and same-frame input ownership regressions.
 
+use super::run_discovery_frame_once as one_frame;
 use super::virtual_editor_focus_support::screen_rect;
 use super::*;
 
 /// Runs one rendered full app frame with a fixed viewport.
 fn frame(app: &mut LocalPasteApp, ctx: &egui::Context, events: Vec<egui::Event>) {
     let remaining_frames = app.deferred_discovery_events.len() + events.len() + 1;
-    one_frame(app, ctx, events);
+    let _ = one_frame(app, ctx, events);
     for _ in 0..remaining_frames {
         if app.deferred_discovery_events.is_empty() {
             return;
         }
-        one_frame(app, ctx, vec![]);
+        let _ = one_frame(app, ctx, vec![]);
     }
     assert!(
         app.deferred_discovery_events.is_empty(),
         "input slices must make progress"
-    );
-}
-
-/// Runs exactly one rendered frame without draining scheduled input slices.
-fn one_frame(app: &mut LocalPasteApp, ctx: &egui::Context, events: Vec<egui::Event>) {
-    let _ = run_full_update_with_input(
-        app,
-        ctx,
-        egui::RawInput {
-            screen_rect: Some(screen_rect()),
-            events,
-            ..Default::default()
-        },
     );
 }
 
@@ -229,7 +217,7 @@ fn deferred_input_precedes_new_native_events() {
     let (mut harness, _events) = make_app_with_event_tx();
     let ctx = egui::Context::default();
     frame(&mut harness.app, &ctx, vec![]);
-    one_frame(
+    let _ = one_frame(
         &mut harness.app,
         &ctx,
         vec![discovery_chord(true), egui::Event::Text("older".into())],
@@ -555,7 +543,7 @@ fn unmatched_palette_enter_keeps_its_suffix_in_the_query() {
         &ctx,
         vec![egui::Event::Text("no_such_command".into())],
     );
-    one_frame(
+    let _ = one_frame(
         &mut harness.app,
         &ctx,
         vec![
@@ -779,6 +767,7 @@ fn pending_picker_input_is_discarded_on_failure_reselection_or_workflow_cancel()
         let (mut harness, _events) = make_app_with_event_tx();
         let ctx = egui::Context::default();
         frame(&mut harness.app, &ctx, vec![discovery_chord(true)]);
+        harness.app.set_paste_picker_query("needle".into());
         if outcome == "save failed" {
             harness.app.save_status = SaveStatus::Dirty;
         }

@@ -253,6 +253,61 @@ fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: eg
     let _ = run_editor_panel_once_output(app, ctx, input);
 }
 
+/// Settles direct editor geometry across four frames without acquiring app styling.
+fn render_editor_frames(app: &mut LocalPasteApp, ctx: &egui::Context, width: f32) {
+    for _ in 0..4 {
+        run_editor_panel_once(
+            app,
+            ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 600.0),
+                )),
+                ..Default::default()
+            },
+        );
+    }
+}
+
+/// Asserts that the app's rendered caret fits inside its observed viewport.
+fn assert_caret_visible(app: &LocalPasteApp) {
+    assert!(
+        app.virtual_viewport.caret_visible(),
+        "caret {:?}, viewport {:?}, offset {}",
+        app.virtual_viewport.caret,
+        app.virtual_viewport.rect,
+        app.virtual_viewport.offset_y
+    );
+}
+
+/// Finds the center of an exact rendered text label for pointer-driven tests.
+fn rendered_label_center(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text == label => {
+                Some(text.pos + text.galley.size() / 2.0)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing rendered label {label}"))
+}
+
+/// Builds one unmodified pointer-button step; callers retain their frame policy.
+fn primary_pointer_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+    vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]
+}
+
 /// Runs a full app update pass with the supplied raw egui events.
 ///
 /// # Arguments
@@ -294,6 +349,23 @@ pub(super) fn run_full_update_with_input(
     ctx.run(input, |ctx| {
         app.update(ctx, &mut frame);
     })
+}
+
+/// Runs exactly one discovery frame in the standard viewport, retaining its output.
+fn run_discovery_frame_once(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    run_full_update_with_input(
+        app,
+        ctx,
+        egui::RawInput {
+            screen_rect: Some(virtual_editor_focus_support::screen_rect()),
+            events,
+            ..Default::default()
+        },
+    )
 }
 
 fn make_app() -> TestHarness {

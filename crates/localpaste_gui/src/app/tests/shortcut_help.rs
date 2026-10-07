@@ -58,29 +58,12 @@ fn check_shortcut_help_toolbar_focus(query: &str, editor: bool) {
     }
     let output =
         run_full_update_with_input(&mut harness.app, &ctx, shortcut_help_input(Vec::new()));
-    let button = output
-        .shapes
-        .iter()
-        .find_map(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) if text.galley.job.text == "Shortcuts (F1)" => {
-                Some(text.pos + text.galley.size() / 2.0)
-            }
-            _ => None,
-        })
-        .expect("rendered Shortcuts toolbar button");
+    let button = rendered_label_center(&output, "Shortcuts (F1)");
     for pressed in [true, false] {
         run_full_update_with_input(
             &mut harness.app,
             &ctx,
-            shortcut_help_input(vec![
-                egui::Event::PointerMoved(button),
-                egui::Event::PointerButton {
-                    pos: button,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ]),
+            shortcut_help_input(primary_pointer_events(button, pressed)),
         );
     }
     for _ in 0..3 {
@@ -308,70 +291,6 @@ fn shortcut_help_escape_restores_sidebar_search_focus_without_editor_mutation() 
     );
     assert_eq!(harness.app.search_query, "tag search");
     assert_eq!(harness.app.active_snapshot(), "content");
-}
-
-#[test]
-fn shortcut_help_handoff_focuses_the_destination_query() {
-    struct Destination {
-        key: egui::Key,
-        modifiers: egui::Modifiers,
-        open: fn(&LocalPasteApp) -> bool,
-        query: fn(&LocalPasteApp) -> &str,
-        input_id: &'static str,
-    }
-
-    let command = primary_command_modifiers();
-    let command_shift = egui::Modifiers {
-        shift: true,
-        ..command
-    };
-    let destinations = [
-        Destination {
-            key: egui::Key::K,
-            modifiers: command,
-            open: |app| app.command_palette_open,
-            query: |app| app.command_palette_query.as_str(),
-            input_id: COMMAND_PALETTE_INPUT_ID,
-        },
-        Destination {
-            key: egui::Key::K,
-            modifiers: command_shift,
-            open: |app| app.paste_picker_open,
-            query: |app| app.paste_picker_query.as_str(),
-            input_id: PASTE_PICKER_INPUT_ID,
-        },
-    ];
-
-    for destination in destinations {
-        let mut harness = make_app();
-        let ctx = egui::Context::default();
-        run_full_update(
-            &mut harness.app,
-            &ctx,
-            vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
-        );
-        // A cold floating window must finish its invisible sizing pass first.
-        run_full_update(&mut harness.app, &ctx, Vec::new());
-        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(SHORTCUT_HELP_QUERY_ID))));
-
-        run_full_update(
-            &mut harness.app,
-            &ctx,
-            vec![key_event(destination.key, destination.modifiers)],
-        );
-        assert!(!harness.app.shortcut_help_open);
-        assert!((destination.open)(&harness.app));
-        run_full_update(&mut harness.app, &ctx, Vec::new());
-        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(destination.input_id))));
-
-        run_full_update(
-            &mut harness.app,
-            &ctx,
-            vec![egui::Event::Text("needle".into())],
-        );
-        assert_eq!((destination.query)(&harness.app), "needle");
-        assert_eq!(harness.app.active_snapshot(), "content");
-    }
 }
 
 #[test]

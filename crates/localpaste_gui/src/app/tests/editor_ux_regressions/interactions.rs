@@ -32,34 +32,9 @@ fn review_frame(
     )
 }
 
-fn rendered_label_center(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
-    output
-        .shapes
-        .iter()
-        .find_map(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) if text.galley.job.text == label => {
-                Some(text.pos + text.galley.size() / 2.0)
-            }
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("missing rendered label {label}"))
-}
-
 fn review_click(app: &mut LocalPasteApp, ctx: &egui::Context, pos: egui::Pos2) {
     for pressed in [true, false] {
-        review_frame(
-            app,
-            ctx,
-            vec![
-                egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-        );
+        review_frame(app, ctx, primary_pointer_events(pos, pressed));
     }
 }
 

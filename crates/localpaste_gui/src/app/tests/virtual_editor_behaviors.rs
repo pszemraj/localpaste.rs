@@ -684,25 +684,8 @@ fn highlight_edit_offsets_and_caret_remain_valid_across_non_lf_edits_and_undo() 
         harness.app.virtual_editor_state.set_cursor(start, len);
         let ctx = egui::Context::default();
         let render_and_assert_caret = |app: &mut LocalPasteApp| {
-            for _ in 0..4 {
-                run_editor_panel_once(
-                    app,
-                    &ctx,
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(1000.0, 600.0),
-                        )),
-                        ..Default::default()
-                    },
-                );
-            }
-            assert!(
-                app.virtual_viewport.caret_visible(),
-                "caret {:?}, viewport {:?}",
-                app.virtual_viewport.caret,
-                app.virtual_viewport.rect
-            );
+            render_editor_frames(app, &ctx, 1000.0);
+            assert_caret_visible(app);
             let cursor = app.virtual_editor_state.cursor();
             let (line, column) = app.virtual_editor_buffer.char_to_line_col(cursor);
             assert_eq!(

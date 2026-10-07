@@ -182,6 +182,9 @@ fn discovery_overlays_transfer_keyboard_ownership_when_switching() {
             &ctx,
             vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
         );
+        // A cold floating window must finish its invisible sizing pass first.
+        run_full_update(&mut harness.app, &ctx, Vec::new());
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("shortcut_help_query"))));
         run_full_update(
             &mut harness.app,
             &ctx,
@@ -201,6 +204,13 @@ fn discovery_overlays_transfer_keyboard_ownership_when_switching() {
         assert!(!harness.app.shortcut_help_open);
         assert_eq!(harness.app.paste_picker_open, picker);
         assert_eq!(harness.app.command_palette_open, !picker);
+        run_full_update(&mut harness.app, &ctx, Vec::new());
+        let destination_id = if picker {
+            PASTE_PICKER_INPUT_ID
+        } else {
+            COMMAND_PALETTE_INPUT_ID
+        };
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(destination_id))));
         run_full_update(
             &mut harness.app,
             &ctx,
@@ -212,6 +222,7 @@ fn discovery_overlays_transfer_keyboard_ownership_when_switching() {
             &harness.app.command_palette_query
         };
         assert_eq!(query, "needle");
+        assert_eq!(harness.app.active_snapshot(), "content");
 
         run_full_update(
             &mut harness.app,
@@ -221,6 +232,8 @@ fn discovery_overlays_transfer_keyboard_ownership_when_switching() {
         assert!(harness.app.shortcut_help_open);
         assert!(!harness.app.paste_picker_open);
         assert!(!harness.app.command_palette_open);
+        run_full_update(&mut harness.app, &ctx, Vec::new());
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("shortcut_help_query"))));
         run_full_update(
             &mut harness.app,
             &ctx,

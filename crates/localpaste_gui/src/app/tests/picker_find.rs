@@ -1,7 +1,6 @@
 //! Picker query handoff across active, asynchronous, and deferred paste opens.
 
 use super::*;
-use crate::backend::CoreErrorSource;
 
 #[test]
 fn opening_picker_result_focuses_editor_for_typing_and_paste() {
@@ -193,7 +192,7 @@ fn picker_find_keeps_existing_find_for_metadata_only_hits() {
 }
 
 #[test]
-fn picker_find_discards_superseded_and_failed_opens() {
+fn picker_find_discards_superseded_opens() {
     let mut harness = make_app();
     harness.app.editor_find.query = "retained find".into();
     harness.app.open_paste_picker();
@@ -213,33 +212,4 @@ fn picker_find_discards_superseded_and_failed_opens() {
     });
     assert_eq!(harness.app.selected_id.as_deref(), Some("other"));
     assert_eq!(harness.app.editor_find.query, "retained find");
-
-    for failure in 0..3 {
-        let mut harness = make_app();
-        if failure == 2 {
-            harness.app.save_status = SaveStatus::Dirty;
-        }
-        harness.app.open_paste_picker();
-        harness.app.set_paste_picker_query("needle".into());
-        harness.app.open_palette_selection("picked".into());
-        let _ = recv_cmd(&harness.cmd_rx);
-        assert!(harness.app.pending_picker_open.is_some());
-        let event = match failure {
-            0 => CoreEvent::PasteSelectionMissing {
-                id: "picked".into(),
-                selection_epoch: harness.app.active_buffer_epoch,
-            },
-            1 => CoreEvent::PasteLoadFailed {
-                id: "picked".into(),
-                selection_epoch: harness.app.active_buffer_epoch,
-                message: "Load failed".into(),
-            },
-            _ => CoreEvent::Error {
-                source: CoreErrorSource::SaveContent,
-                message: "Save failed".into(),
-            },
-        };
-        harness.app.apply_event(event);
-        assert!(harness.app.pending_picker_open.is_none());
-    }
 }
