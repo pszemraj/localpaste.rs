@@ -226,6 +226,51 @@ fn git_subcommands_stay_consistent_across_detection_and_semantics() {
 }
 
 #[test]
+fn setup_words_in_prose_do_not_acquire_command_handles() {
+    for content in [
+        "set timer for 10 minutes",
+        "set the table for 6 people before dinner",
+        "export markets are down 5% this quarter",
+        "source code is at https://example.com",
+        "set oven to 180C",
+        "set default timeout to 30s",
+        "export last year's notes",
+        "cd albums are on the shelf/desk",
+        "set timer for 10 minutes\nThis is a meeting note.\ncargo check",
+        "cd repo\nThis is a meeting note.\ncargo check",
+    ] {
+        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+            for language in [None, Some("text")] {
+                let derived = derive(&content, language);
+                assert_eq!(derived.kind, PasteKind::Document, "{content}");
+                assert_eq!(
+                    super::commands::extract_command_handle(&content),
+                    None,
+                    "{content}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn common_git_commands_keep_code_kind_and_handles() {
+    for (content, handle) in [
+        ("git rev-parse HEAD", "git rev-parse"),
+        ("git blame README.md", "git blame"),
+        ("cd repo\ngit submodule update", "cd repo"),
+    ] {
+        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+            for language in [None, Some("text")] {
+                let derived = derive(&content, language);
+                assert_eq!(derived.kind, PasteKind::Code, "{content}");
+                assert_eq!(derived.handle.as_deref(), Some(handle), "{content}");
+            }
+        }
+    }
+}
+
+#[test]
 fn derive_matrix_covers_code_config_log_link_and_other() {
     for (content, language, expected) in [
         (

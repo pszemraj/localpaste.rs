@@ -63,7 +63,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 }
 
 #[test]
-fn semantic_kinds_rebuild_from_version_nine_and_survive_restart() {
+fn semantic_kinds_rebuild_from_version_ten_and_survive_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
@@ -260,6 +260,60 @@ fn semantic_kinds_rebuild_from_version_nine_and_survive_restart() {
             PasteKind::Document,
             PasteKind::Log,
         ),
+        (
+            "set timer for 10 minutes",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "set the table for 6 people before dinner",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "export markets are down 5% this quarter",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "source code is at https://example.com",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "set oven to 180C",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "set default timeout to 30s",
+            "text",
+            PasteKind::Code,
+            PasteKind::Document,
+        ),
+        (
+            "git rev-parse HEAD",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "git blame README.md",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "cd repo\r\ngit submodule update",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
     ];
     let pastes: Vec<_> = cases
         .iter()
@@ -281,6 +335,7 @@ fn semantic_kinds_rebuild_from_version_nine_and_survive_restart() {
         for (paste, (_, _, stale_kind, _)) in pastes.iter().zip(&cases) {
             let mut stale = PasteMeta::from(paste);
             stale.derived.kind = *stale_kind;
+            stale.derived.handle = Some("old projection handle".into());
             metas
                 .insert(
                     paste.id.as_str(),
@@ -293,7 +348,7 @@ fn semantic_kinds_rebuild_from_version_nine_and_survive_restart() {
         .unwrap()
         .insert(
             META_SCHEMA_VERSION_KEY,
-            bincode::serialize(&9_u64).unwrap().as_slice(),
+            bincode::serialize(&10_u64).unwrap().as_slice(),
         )
         .unwrap();
     txn.commit().unwrap();
@@ -303,17 +358,13 @@ fn semantic_kinds_rebuild_from_version_nine_and_survive_restart() {
         let reopened = open_test_database(path.to_str().unwrap());
         let metas = reopened.pastes.list_meta(100, None).unwrap();
         for (paste, (_, _, _, expected)) in pastes.iter().zip(&cases) {
+            let rebuilt = metas.iter().find(|meta| meta.id == paste.id).unwrap();
             assert_eq!(
-                metas
-                    .iter()
-                    .find(|meta| meta.id == paste.id)
-                    .unwrap()
-                    .derived
-                    .kind,
-                *expected,
+                rebuilt.derived.kind, *expected,
                 "content: {}",
                 paste.content
             );
+            assert_eq!(rebuilt.derived, PasteMeta::from(paste).derived);
             let stored = reopened.pastes.get(&paste.id).unwrap().unwrap();
             assert_eq!(stored.content, paste.content);
             assert_eq!(stored.language, paste.language);
@@ -336,13 +387,13 @@ fn semantic_kinds_rebuild_from_version_nine_and_survive_restart() {
             })
             .count()
     };
-    assert_eq!(backup_count(), 1, "v9 upgrade must create one backup");
+    assert_eq!(backup_count(), 1, "v10 upgrade must create one backup");
 
     assert_rebuilt();
     assert_eq!(
         backup_count(),
         1,
-        "current v10 restart must not create another backup"
+        "current v11 restart must not create another backup"
     );
 }
 

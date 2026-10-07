@@ -62,8 +62,17 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         let arguments = parts.get(1..).unwrap_or_default();
         let has_command_syntax = command_has_shell_syntax(trimmed, arguments);
 
-        if is_setup_command && !has_command_syntax && !lines.any(starts_with_command_word) {
-            return None;
+        if is_setup_command {
+            if !crate::detection::setup_command_is_valid(&cmd, arguments) {
+                return None;
+            }
+            if !has_command_syntax
+                && !lines
+                    .find(|line| !line.starts_with('#'))
+                    .is_some_and(starts_with_command_word)
+            {
+                return None;
+            }
         }
 
         if is_regular_command
@@ -108,17 +117,7 @@ fn starts_with_command_word(line: &str) -> bool {
         return false;
     }
     let arguments: Vec<&str> = parts.collect();
-    match command {
-        "export" => arguments.iter().any(|argument| argument.contains('=')),
-        "set" => arguments
-            .iter()
-            .any(|argument| argument.starts_with('-') || argument.contains('=')),
-        "cd" => !arguments.is_empty(),
-        "source" => arguments
-            .first()
-            .is_some_and(|path| path.contains(['.', '/', '\\']) || path.starts_with('~')),
-        _ => false,
-    }
+    crate::detection::setup_command_is_valid(command, &arguments)
 }
 
 fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {

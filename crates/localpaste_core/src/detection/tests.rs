@@ -135,6 +135,9 @@ fn shell_command_sequences_override_leading_setup_comments() {
         "# bootstrap\ncd app\n# install dependencies\nnpm install\nnpm run dev\n",
         "cd repo\ngit cherry-pick abc123\ngit revert def456\ngit rm stale.txt\n",
         "cd app\necho ready\n",
+        "cd repo\ngit submodule update\n",
+        "git rev-parse HEAD\ngit blame README.md\n",
+        "cd 'my repo'\r\ngit submodule update\r\n",
     ] {
         assert!(
             super::looks_like_shell_command_sequence(content),
@@ -151,6 +154,10 @@ fn shell_command_sequences_override_leading_setup_comments() {
         "just wanted to say thanks\nmake yourself at home\n",
         "export controls are discussed here\nsource material follows\n",
         "cd app\nsudo is required for installation\n",
+        "set timer for 10 minutes\ncargo check\n",
+        "export markets are down 5% this quarter\ncargo check\n",
+        "source code is at https://example.com\ncargo check\n",
+        "cd albums are on the shelf/desk\ncargo check\n",
     ] {
         assert!(
             !super::looks_like_shell_command_sequence(content),

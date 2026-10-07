@@ -480,17 +480,7 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
                         super::SHELL_GIT_SUBCOMMANDS.contains(subcommand)
                     }))
         } else if SETUP_COMMANDS.contains(&command) {
-            match command {
-                "export" => arguments.iter().any(|argument| argument.contains('=')),
-                "set" => arguments
-                    .iter()
-                    .any(|argument| argument.starts_with('-') || argument.contains('=')),
-                "cd" => !arguments.is_empty(),
-                "source" => arguments
-                    .first()
-                    .is_some_and(|path| path.contains(['.', '/', '\\']) || path.starts_with('~')),
-                _ => false,
-            }
+            super::setup_command_is_valid(command, &arguments)
         } else {
             false
         };

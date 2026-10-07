@@ -14,6 +14,7 @@ mod tests;
 pub(crate) const SHELL_GIT_SUBCOMMANDS: &[&str] = &[
     "add",
     "bisect",
+    "blame",
     "branch",
     "checkout",
     "cherry-pick",
@@ -34,14 +35,49 @@ pub(crate) const SHELL_GIT_SUBCOMMANDS: &[&str] = &[
     "reset",
     "restore",
     "revert",
+    "rev-parse",
     "rm",
     "show",
     "stash",
     "status",
+    "submodule",
     "switch",
     "tag",
     "worktree",
 ];
+
+/// Recognize argument structure specific to shell setup commands.
+///
+/// # Arguments
+/// - `command`: Leading executable or shell builtin word.
+/// - `arguments`: Whitespace-separated arguments following that word.
+///
+/// # Returns
+/// Whether arguments form an assignment, shell option, or setup path rather
+/// than prose that merely contains punctuation or numbers.
+pub(crate) fn setup_command_is_valid(command: &str, arguments: &[&str]) -> bool {
+    match command {
+        "export" => arguments
+            .first()
+            .is_some_and(|argument| argument.contains('=')),
+        "set" => arguments
+            .first()
+            .is_some_and(|argument| argument.starts_with('-') || argument.contains('=')),
+        "cd" => {
+            arguments.len() == 1
+                || arguments.first().is_some_and(|path| {
+                    ['\'', '"'].iter().any(|quote| {
+                        path.starts_with(*quote)
+                            && arguments.last().is_some_and(|last| last.ends_with(*quote))
+                    })
+                })
+        }
+        "source" => arguments
+            .first()
+            .is_some_and(|path| path.contains(['.', '/', '\\']) || path.starts_with('~')),
+        _ => false,
+    }
+}
 
 /// Recognize a prose copula near a command-shaped leading word.
 ///
