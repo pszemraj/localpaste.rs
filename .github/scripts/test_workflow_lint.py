@@ -40,4 +40,11 @@ class WorkflowLintTriggerTests(unittest.TestCase):
         self.assertNotIn("push", triggers)
         self.assertNotIn("review_requested", pr["types"])
         self.assertEqual(len(workflow["jobs"]), 1)
-
+        self.assertEqual(
+            workflow["concurrency"],
+            {
+                "group": "workflow-lint-${{ github.event.pull_request.number || github.ref }}",
+                "cancel-in-progress": "true",
+            },
+        )
+        self.assertEqual(workflow["jobs"]["lint-workflows"]["timeout-minutes"], "10")
