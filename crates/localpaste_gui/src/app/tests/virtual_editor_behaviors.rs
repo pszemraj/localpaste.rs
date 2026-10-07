@@ -671,6 +671,43 @@ fn word_delete_forward_matches_word_navigation_boundaries() {
 }
 
 #[test]
+fn highlight_edit_offsets_stay_byte_based_across_non_lf_edits_and_undo() {
+    for separator in ["\r", "\u{2028}", "\r\n"] {
+        let mut harness = make_app();
+        let before = format!("é{separator}b\n# c\n");
+        harness.app.reset_virtual_editor(&before);
+        let start = before[..before.find('b').unwrap()].chars().count();
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        harness.app.virtual_editor_state.set_cursor(start, len);
+        let ctx = egui::Context::default();
+        assert!(
+            harness
+                .app
+                .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: false }])
+                .changed
+        );
+        let hint = harness.app.highlight_edit_hint.expect("mutation hint");
+        assert_eq!(hint.start_byte, before.find('b').unwrap());
+        assert_eq!(hint.touched_lines, 1);
+        for (command, expected) in [
+            (VirtualInputCommand::Undo, before.clone()),
+            (VirtualInputCommand::Redo, before.replace('b', "")),
+        ] {
+            assert!(harness.app.apply_virtual_commands(&ctx, &[command]).changed);
+            assert!(
+                harness.app.highlight_edit_hint.is_none(),
+                "history invalidates single-edit hints"
+            );
+            assert_eq!(harness.app.virtual_editor_buffer.to_string(), expected);
+        }
+        assert_eq!(
+            harness.app.virtual_editor_buffer.to_string(),
+            before.replace('b', "")
+        );
+    }
+}
+
+#[test]
 fn undo_restores_full_cursor_for_long_lines() {
     let mut harness = make_app();
     let long_line = "a".repeat(MAX_RENDER_CHARS_PER_LINE.saturating_add(64));

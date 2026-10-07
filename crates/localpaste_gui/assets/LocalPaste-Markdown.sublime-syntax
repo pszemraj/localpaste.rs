@@ -55,6 +55,8 @@ contexts:
       scope: markup.heading.markdown
     - match: '^ {0,3}>[ \t]?'
       scope: punctuation.definition.blockquote.markdown
+    # List continuation contexts are added at load time for marker widths 1..10.
+    - include: list-items
     - match: '^\s*(?:[-+*]|\d+[.)])[ \t]+'
       scope: punctuation.definition.list.markdown
     - match: '(`+)(?!`)'

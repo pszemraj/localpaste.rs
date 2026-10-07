@@ -2,6 +2,7 @@
 
 use super::SyntectSettings;
 use syntect::highlighting::{Highlighter, StyleModifier, ThemeItem, ThemeSet};
+use syntect::parsing::syntax_definition::Pattern;
 use syntect::parsing::{Scope, SyntaxDefinition, SyntaxSet};
 
 /// Build the shared syntax/theme sets with the project Markdown grammar.
@@ -12,15 +13,59 @@ use syntect::parsing::{Scope, SyntaxDefinition, SyntaxSet};
 /// # Panics
 /// Panics if the checked-in grammar or constant scope selectors are invalid.
 pub(super) fn settings() -> SyntectSettings {
+    // A backreference can retain indentation, but cannot turn a variable-width
+    // ordered marker into spaces. Generate the ten CommonMark marker widths
+    // (one bullet, or 1..9 digits plus punctuation) with the same list context.
+    let mut grammar = include_str!("../../../assets/LocalPaste-Markdown.sublime-syntax").to_owned();
+    grammar.push_str("\n  list-items:\n");
+    for width in 1..=10 {
+        let marker = if width == 1 {
+            "[-+*]".to_owned()
+        } else {
+            format!("[0-9]{{{}}}[.)]", width - 1)
+        };
+        let prefix = format!(r"\1{}\2", " ".repeat(width));
+        grammar.push_str(&format!(
+            r"    - match: '^([ ]*){marker}([ ]{{1,4}})(?=\S)'
+      scope: punctuation.definition.list.markdown
+      push:
+        - match: '^(?!{prefix}|[ \t]*\r?$)'
+          pop: true
+"
+        ));
+        for (fence, info) in [('`', r"[^`\n]*"), ('~', r"[^\n]*")] {
+            grammar.push_str(&format!(
+                r"        - match: '^({prefix}) {{0,3}}({fence}{{3,}}){info}$'
+          scope: punctuation.definition.raw.markdown.localpaste
+          push:
+            - meta_scope: markup.raw.block.markdown.localpaste
+            - match: '^(?!\1|[ \t]*\r?$)'
+              pop: true
+            - match: '^\1 {{0,3}}\2{fence}*[ \t]*\r?$'
+              scope: punctuation.definition.raw.markdown.localpaste
+              pop: true
+"
+            ));
+        }
+        grammar.push_str("        - include: main\n");
+    }
     let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
-    builder.add(
-        SyntaxDefinition::load_from_str(
-            include_str!("../../../assets/LocalPaste-Markdown.sublime-syntax"),
-            true,
-            None,
-        )
-        .expect("checked-in Markdown grammar"),
-    );
+    let mut syntax =
+        SyntaxDefinition::load_from_str(&grammar, true, None).expect("checked-in Markdown grammar");
+    // Syntect's YAML loader only marks pop patterns for external backreferences.
+    // List fence openers also need the enclosing item's captured indentation.
+    for context in syntax.contexts.values_mut() {
+        for pattern in &mut context.patterns {
+            let Pattern::Match(pattern) = pattern else {
+                continue;
+            };
+            if pattern.regex.regex_str().contains(r"\1") {
+                pattern.has_captures = true;
+                context.uses_backrefs = true;
+            }
+        }
+    }
+    builder.add(syntax);
     let mut themes = ThemeSet::load_defaults();
     for theme in themes.themes.values_mut() {
         let highlighter = Highlighter::new(theme);
@@ -308,6 +353,49 @@ mod tests {
                     .all(|(color, _)| *color == prose),
                 "{closing:?} should close the code fence"
             );
+        }
+    }
+
+    #[test]
+    fn list_continuation_fences_close_relative_to_the_item() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let prose = Highlighter::new(theme).get_default().foreground;
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~"] {
+            for (items, indent) in [
+                ("- item\n", "  "),
+                ("- outer\n  - inner\n", "    "),
+                ("1. item\n", "   "),
+                ("123456789. item\n", "           "),
+            ] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                for line in items.split_inclusive('\n') {
+                    styled_segments(&settings, &mut lines, line);
+                }
+                styled_segments(&settings, &mut lines, &format!("{indent} {fence}sh\n"));
+                styled_segments(&settings, &mut lines, &format!("{indent}    {fence}\n"));
+                assert!(
+                    non_empty_colors(
+                        &settings,
+                        &mut lines,
+                        &format!("{indent}   **still code**\n")
+                    )
+                    .iter()
+                    .all(|(color, _)| *color == code),
+                    "four relative spaces must not close a fence"
+                );
+                styled_segments(&settings, &mut lines, &format!("{indent}   {fence}\n"));
+                let result =
+                    non_empty_colors(&settings, &mut lines, &format!("{indent}prose after\n"));
+                assert!(
+                    result.iter().all(|(color, _)| *color == prose),
+                    "{items:?} {fence} {result:?}"
+                );
+            }
         }
     }
 

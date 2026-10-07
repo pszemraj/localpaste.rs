@@ -94,7 +94,7 @@ impl LocalPasteApp {
         if start == end && replacement.is_empty() {
             return false;
         }
-        let start_line = self.virtual_editor_buffer.char_to_line_col(start).0;
+        let start_byte = self.virtual_editor_buffer.rope().char_to_byte(start);
         let deleted = self.virtual_editor_buffer.slice_chars(start..end);
         let deleted_chars = end.saturating_sub(start);
         let inserted_chars = replacement.chars().count();
@@ -120,7 +120,7 @@ impl LocalPasteApp {
             let layout_apply_ms =
                 layout_started.map_or(0.0, |started| started.elapsed().as_secs_f32() * 1000.0);
             self.highlight_edit_hint = Some(VirtualEditHint {
-                start_line,
+                start_byte,
                 touched_lines,
                 inserted_chars,
                 deleted_chars,

@@ -906,7 +906,8 @@ impl HighlightRequestText {
 /// Lightweight edit metadata captured from virtual-editor operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct VirtualEditHint {
-    pub(super) start_line: usize,
+    /// Byte offset before the edit; the unchanged prefix gives LF worker coordinates.
+    pub(super) start_byte: usize,
     pub(super) touched_lines: usize,
     pub(super) inserted_chars: usize,
     pub(super) deleted_chars: usize,

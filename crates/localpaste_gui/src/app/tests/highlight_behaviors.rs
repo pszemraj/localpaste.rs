@@ -908,7 +908,7 @@ fn highlight_debounce_window_adapts_to_edit_size_and_buffer() {
     );
 
     harness.app.highlight_edit_hint = Some(VirtualEditHint {
-        start_line: 0,
+        start_byte: 0,
         touched_lines: 1,
         inserted_chars: 1,
         deleted_chars: 0,
