@@ -87,12 +87,24 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
         .expect("get after race");
     if delete_status.is_success() {
         match recv_event(&backend.evt_rx) {
-            CoreEvent::PasteMissing { id } => assert_eq!(id, paste_id),
+            CoreEvent::PasteSelectionMissing {
+                id,
+                selection_epoch,
+            } => {
+                assert_eq!(id, paste_id);
+                assert_eq!(selection_epoch, 42);
+            }
             other => panic!("unexpected post-race get result: {:?}", other),
         }
     } else {
         match recv_event(&backend.evt_rx) {
-            CoreEvent::PasteLoaded { paste, .. } => assert_eq!(paste.id, paste_id),
+            CoreEvent::PasteLoaded {
+                paste,
+                selection_epoch,
+            } => {
+                assert_eq!(paste.id, paste_id);
+                assert_eq!(selection_epoch, 42);
+            }
             other => panic!("unexpected post-race get result: {:?}", other),
         }
     }
