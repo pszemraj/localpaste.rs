@@ -57,14 +57,14 @@ impl LocalPasteApp {
     /// A cursor index guaranteed to land within buffer bounds and rendered line extent.
     pub(super) fn clamp_virtual_cursor_for_render(&self, char_index: usize) -> usize {
         let clamped = char_index.min(self.virtual_editor_buffer.len_chars());
-        let (line, column) = self.virtual_editor_buffer.char_to_line_col(clamped);
+        let line = self.virtual_editor_buffer.char_to_line_col(clamped).0;
         let render_chars = self.virtual_line_render_chars(line);
-        if column <= render_chars {
-            clamped
-        } else {
+        // char_to_line_col already clips columns inside CRLF to the line end.
+        // Compare absolute positions so that clipping cannot hide an invalid index.
+        clamped.min(
             self.virtual_editor_buffer
-                .line_col_to_char(line, render_chars)
-        }
+                .line_col_to_char(line, render_chars),
+        )
     }
 
     fn virtual_line_row_range(&self, line: usize, row_in_line: usize) -> Range<usize> {

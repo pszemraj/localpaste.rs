@@ -419,6 +419,17 @@ impl LocalPasteApp {
                             .saturating_add(1)
                             .min(self.virtual_editor_buffer.len_chars())
                     };
+                    // Forward movement crosses the whole CRLF pair; the render
+                    // clamp otherwise snaps an interior position back to its line end.
+                    let target = if target > cursor
+                        && target < self.virtual_editor_buffer.len_chars()
+                        && self.virtual_editor_buffer.rope().char(target - 1) == '\r'
+                        && self.virtual_editor_buffer.rope().char(target) == '\n'
+                    {
+                        target + 1
+                    } else {
+                        target
+                    };
                     let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,

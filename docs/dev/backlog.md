@@ -55,3 +55,5 @@ Status uses the same checklist markers as other dev docs:
 - [x] Add explicit `Paste as new paste` UX (`Ctrl/Cmd+Shift+V` + command palette action) so new-paste clipboard flow does not depend on editor blur/focus heuristics.
 
 - [ ] Consolidate the paired sidebar-to-Find tests in `crates/localpaste_gui/src/app/tests/editor_find.rs` if a table keeps the contrasting body-match and metadata-only assertions readable. The duplicate-code audit reports shared setup; behavior is intentionally distinct.
+
+`app/tests/virtual_editor_behaviors.rs` is intentionally on the LOC watchlist while remaining below the 1,000-line limit. Its non-LF regression keeps edit byte offsets, rendered caret geometry, Undo/Redo, typing, and CRLF navigation/selection in one scenario so correct buffer contents cannot hide an invisible caret. Preserve these assertions when reorganizing the test module.
