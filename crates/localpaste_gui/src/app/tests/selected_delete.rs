@@ -712,6 +712,36 @@ fn selected_picker_delete_failed_save_requeue_releases_ownership_fence() {
 }
 
 #[test]
+fn selected_picker_replacement_dispatch_failure_releases_ownership_fence() {
+    let mut harness = make_app();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 12));
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.paste_picker_open = true;
+    harness
+        .app
+        .send_palette_delete(&egui::Context::default(), "alpha".into());
+    assert!(matches!(recv_cmd(&harness.cmd_rx), CoreCmd::DeletePaste { id } if id == "alpha"));
+    assert!(harness.app.picker_delete_transition_active());
+
+    let (_replacement_tx, replacement_rx) = unbounded();
+    let live_rx = std::mem::replace(&mut harness.cmd_rx, replacement_rx);
+    drop(live_rx);
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".into(),
+        undo_token: None,
+    });
+
+    assert!(!harness.app.picker_delete_transition_active());
+    assert!(harness.app.paste_picker_open);
+    assert!(harness.app.selected_id.is_none());
+    assert_eq!(harness.app.active_snapshot(), "");
+    assert!(!harness.app.locks.is_locked("beta").unwrap());
+}
+
+#[test]
 fn selected_picker_replacement_load_failure_releases_ownership_fence() {
     let mut harness = make_app();
     harness

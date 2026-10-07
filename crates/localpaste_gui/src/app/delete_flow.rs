@@ -18,7 +18,11 @@ impl LocalPasteApp {
     pub(super) fn apply_paste_deleted(&mut self, id: String, undo_token: Option<String>) {
         let deleted_index = self.pastes.iter().position(|paste| paste.id == id);
         let was_selected = self.selected_id.as_deref() == Some(id.as_str());
-        let picker_delete_transition = self.picker_delete_matches_deleted(id.as_str());
+        let picker_delete_transition = if self.picker_delete_matches_deleted(id.as_str()) {
+            self.picker_delete_transition.take()
+        } else {
+            None
+        };
         let requested_replacement_id = self
             .pending_selection_id
             .clone()
@@ -43,13 +47,11 @@ impl LocalPasteApp {
             });
             self.clear_selection();
             if let Some(replacement_id) = replacement_id {
-                if picker_delete_transition {
-                    self.select_picker_delete_replacement(id.as_str(), replacement_id);
+                if let Some(transition) = picker_delete_transition {
+                    self.select_picker_delete_replacement(transition, replacement_id);
                 } else {
                     let _ = self.select_paste(replacement_id);
                 }
-            } else if picker_delete_transition {
-                self.clear_picker_delete_transition_for_deleted(id.as_str());
             }
             if let Some(undo_token) = undo_token {
                 self.set_status_with_action(
@@ -60,13 +62,11 @@ impl LocalPasteApp {
                 self.set_status("Paste deleted. Undo unavailable.");
             }
         } else if let Some(undo_token) = undo_token {
-            self.clear_picker_delete_transition_for_deleted(id.as_str());
             self.set_status_with_action(
                 "Paste deleted; list refreshed.",
                 ToastAction::UndoDelete { undo_token },
             );
         } else {
-            self.clear_picker_delete_transition_for_deleted(id.as_str());
             self.set_status("Paste deleted; list refreshed. Undo unavailable.");
         }
         self.request_refresh();
@@ -133,21 +133,13 @@ impl LocalPasteApp {
     /// Selects the adjacent paste without releasing picker ownership until its load settles.
     ///
     /// # Arguments
-    /// - `deleted_id`: Paste whose acknowledged deletion owns this transition.
+    /// - `transition`: Matching delete transition removed while selection is dispatched.
     /// - `replacement_id`: Adjacent paste to load before releasing ownership.
-    pub(super) fn select_picker_delete_replacement(
+    fn select_picker_delete_replacement(
         &mut self,
-        deleted_id: &str,
+        mut transition: PickerDeleteTransition,
         replacement_id: String,
     ) {
-        let Some(mut transition) = self.picker_delete_transition.take() else {
-            let _ = self.select_paste(replacement_id);
-            return;
-        };
-        if transition.deleted_id != deleted_id {
-            self.picker_delete_transition = Some(transition);
-            return;
-        }
         transition.replacement_id = Some(replacement_id.clone());
         if self.select_paste(replacement_id) {
             self.picker_delete_transition = Some(transition);

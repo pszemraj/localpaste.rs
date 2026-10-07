@@ -19,9 +19,13 @@ impl LocalPasteApp {
             return;
         }
         self.paste_picker_query = query;
-        self.reset_paste_picker_selection();
+        self.reset_paste_picker_results();
         self.palette_search_last_input_at = Some(Instant::now());
-        // Never leave previous-query results visible/actionable after input changes.
+    }
+
+    /// Clears stale picker results and selection while callers choose dispatch timing.
+    pub(in crate::app) fn reset_paste_picker_results(&mut self) {
+        self.reset_paste_picker_selection();
         self.palette_search_last_sent.clear();
         self.palette_search_results.clear();
         self.palette_search_pending = false;
@@ -223,12 +227,8 @@ impl LocalPasteApp {
     pub(in crate::app) fn set_paste_picker_scope(&mut self, scope: super::super::SearchScope) {
         if self.paste_picker_scope != scope {
             self.paste_picker_scope = scope;
-            self.palette_search_results.clear();
-            self.palette_search_last_sent.clear();
+            self.reset_paste_picker_results();
             self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
-            self.palette_search_pending = false;
-            self.palette_search_error = None;
-            self.reset_paste_picker_selection();
         }
     }
 }

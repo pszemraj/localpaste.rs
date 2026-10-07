@@ -16,12 +16,8 @@ impl LocalPasteApp {
         self.shortcut_help_open = false;
         self.paste_picker_open = true;
         self.paste_picker_select_query = true;
-        self.reset_paste_picker_selection();
-        self.palette_search_results.clear();
-        self.palette_search_last_sent.clear();
+        self.reset_paste_picker_results();
         self.palette_search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
-        self.palette_search_pending = false;
-        self.palette_search_error = None;
     }
 
     /// Close paste discovery and discard its stale result projection.
@@ -34,12 +30,8 @@ impl LocalPasteApp {
             return false;
         }
         self.paste_picker_open = false;
-        self.reset_paste_picker_selection();
-        self.palette_search_results.clear();
-        self.palette_search_last_sent.clear();
+        self.reset_paste_picker_results();
         self.palette_search_last_input_at = None;
-        self.palette_search_pending = false;
-        self.palette_search_error = None;
         true
     }
 
