@@ -400,6 +400,13 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteMissing { id } | CoreEvent::PasteSelectionMissing { id, .. } => {
                 self.clear_picker_delete_transition_for_replacement(id.as_str());
+                if self
+                    .picker_delete_transition
+                    .as_ref()
+                    .is_some_and(|transition| transition.replacement_id.is_none())
+                {
+                    self.clear_picker_delete_transition_for_deleted(id.as_str());
+                }
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_picker_selection_context_for(id.as_str());

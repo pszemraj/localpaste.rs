@@ -374,6 +374,85 @@ fn selected_picker_delete_owns_escape_before_ack_and_replacement_load() {
 }
 
 #[test]
+fn selected_picker_delete_missing_ack_releases_ownership_fence() {
+    let (mut harness, _evt_tx) = make_app_with_event_tx();
+    harness.app.paste_picker_open = true;
+    let ctx = egui::Context::default();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    harness.app.send_palette_delete(&ctx, "alpha".into());
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::DeletePaste { id } if id == "alpha"
+    ));
+    assert!(harness.app.picker_delete_transition_active());
+
+    harness
+        .app
+        .apply_event(CoreEvent::PasteMissing { id: "alpha".into() });
+
+    assert!(!harness.app.picker_delete_transition_active());
+    assert!(harness.app.selected_id.is_none());
+    assert!(harness.app.all_pastes.is_empty());
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert!(!harness.app.paste_picker_open);
+}
+
+#[test]
+fn selected_picker_delete_stale_missing_does_not_release_replacement_fence() {
+    let mut harness = make_app();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 12));
+    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.paste_picker_open = true;
+    harness
+        .app
+        .send_palette_delete(&egui::Context::default(), "alpha".into());
+    assert!(matches!(recv_cmd(&harness.cmd_rx), CoreCmd::DeletePaste { id } if id == "alpha"));
+    let dying_epoch = harness.app.active_buffer_epoch;
+    harness.app.apply_event(CoreEvent::PasteDeleted {
+        id: "alpha".into(),
+        undo_token: None,
+    });
+    let replacement_epoch = harness
+        .cmd_rx
+        .try_iter()
+        .find_map(|command| match command {
+            CoreCmd::GetPaste {
+                id,
+                selection_epoch,
+            } if id == "beta" => Some(selection_epoch),
+            _ => None,
+        })
+        .expect("replacement load");
+
+    harness
+        .app
+        .apply_event(CoreEvent::PasteMissing { id: "alpha".into() });
+    harness.app.apply_event(CoreEvent::PasteSelectionMissing {
+        id: "alpha".into(),
+        selection_epoch: dying_epoch,
+    });
+
+    assert!(harness.app.picker_delete_transition_active());
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    assert!(!harness.app.select_paste("gamma".into()));
+    let mut beta = Paste::new("beta body".into(), "Beta".into());
+    beta.id = "beta".into();
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: beta,
+        selection_epoch: replacement_epoch,
+    });
+    assert!(!harness.app.picker_delete_transition_active());
+    assert_eq!(harness.app.active_snapshot(), "beta body");
+}
+
+#[test]
 fn selected_picker_delete_ignores_a_dying_paste_load_before_delete_ack() {
     let mut harness = make_app();
     harness
