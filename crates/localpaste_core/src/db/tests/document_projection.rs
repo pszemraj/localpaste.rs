@@ -63,11 +63,57 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 }
 
 #[test]
-fn semantic_kinds_rebuild_from_version_twelve_and_survive_restart() {
+fn semantic_kinds_rebuild_from_version_thirteen_and_survive_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
     let cases = [
+        ("", "markdown", PasteKind::Other, PasteKind::Document),
+        (" \t\r\n", "markdown", PasteKind::Other, PasteKind::Document),
+        ("", "rst", PasteKind::Other, PasteKind::Document),
+        (" \t\r\n", "latex", PasteKind::Other, PasteKind::Document),
+        (
+            "# install\npip install foo",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "# run it\ndocker run -it --rm ubuntu bash",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "stderr:\n> error: failed\nexit code 1",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Log,
+        ),
+        (
+            "$ pip install foo bar",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "apt install -y git curl",
+            "text",
+            PasteKind::Document,
+            PasteKind::Other,
+        ),
+        (
+            "rustup update stable",
+            "text",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "FOO=bar cargo build --release",
+            "text",
+            PasteKind::Document,
+            PasteKind::Other,
+        ),
         (
             "cd Program Files\r\ngit status",
             "text",
@@ -446,7 +492,7 @@ fn semantic_kinds_rebuild_from_version_twelve_and_survive_restart() {
         .unwrap()
         .insert(
             META_SCHEMA_VERSION_KEY,
-            bincode::serialize(&12_u64).unwrap().as_slice(),
+            bincode::serialize(&13_u64).unwrap().as_slice(),
         )
         .unwrap();
     txn.commit().unwrap();
@@ -485,13 +531,13 @@ fn semantic_kinds_rebuild_from_version_twelve_and_survive_restart() {
             })
             .count()
     };
-    assert_eq!(backup_count(), 1, "v12 upgrade must create one backup");
+    assert_eq!(backup_count(), 1, "v13 upgrade must create one backup");
 
     assert_rebuilt();
     assert_eq!(
         backup_count(),
         1,
-        "current v13 restart must not create another backup"
+        "current v14 restart must not create another backup"
     );
 }
 

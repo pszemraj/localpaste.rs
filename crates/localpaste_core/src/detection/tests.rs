@@ -7,6 +7,120 @@ use super::looks_like_flat_config_yaml;
 use super::looks_like_yaml;
 use super::refine_magika_label;
 
+#[test]
+fn comment_prefixed_commands_and_log_wrappers_avoid_markdown_locks() {
+    let python_data = "# Compute things\nimport numpy as np\nprint('[label](url)')";
+    for content in [python_data.to_owned(), python_data.replace('\n', "\r\n")] {
+        assert_eq!(
+            refine_magika_label("markdown", &content).as_deref(),
+            Some("python")
+        );
+        assert_eq!(heuristic::detect(&content).as_deref(), Some("python"));
+    }
+    for (content, language) in [
+        ("# install\npip install foo", "shell"),
+        ("# run it\ndocker run -it --rm ubuntu bash", "shell"),
+        ("# update\nrustup update stable", "shell"),
+        ("# install\n$ pip install foo bar", "shell"),
+        ("# install\nprintf '[label](url)'", "shell"),
+        ("stderr:\n> error: failed\nexit code 1", "log"),
+        ("stderr:\n> error: [label](url)\nexit code 1", "log"),
+    ] {
+        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+            assert_eq!(
+                detect_language(&content).as_deref(),
+                Some(language),
+                "{content}"
+            );
+            assert_eq!(
+                refine_magika_label("markdown", &content).as_deref(),
+                Some(language)
+            );
+            let paste = crate::models::paste::Paste::new(content, "review technical body".into());
+            assert_eq!(paste.language.as_deref(), Some(language));
+            assert!(paste.language_is_manual);
+        }
+    }
+    for content in [
+        "# install\napt install -y git curl",
+        "# build\nFOO=bar cargo build --release",
+        "# install\n> apt install -y git curl",
+        "# build\n> FOO=bar cargo build --release",
+    ] {
+        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+            assert_eq!(refine_magika_label("markdown", &content), None, "{content}");
+            assert_ne!(
+                heuristic::detect(&content).as_deref(),
+                Some("markdown"),
+                "{content}"
+            );
+            let paste = crate::models::paste::Paste::new(content, "review technical body".into());
+            assert_ne!(
+                crate::models::paste::PasteMeta::from(&paste).derived.kind,
+                crate::semantic::PasteKind::Document
+            );
+        }
+    }
+    for content in [
+        "# Notes\n\nThis is ordinary explanatory prose.",
+        "> This is a quoted note for tomorrow.",
+        "# Notes\n> This is quoted prose about /usr/bin tools.",
+        "# Notes\n\n```shell\npip install foo\n```",
+        "# Notes\nimport numpy as np\nrelease details",
+        "# Notes\n[label](url)",
+    ] {
+        assert_eq!(
+            refine_magika_label("markdown", content).as_deref(),
+            Some("markdown")
+        );
+        assert_eq!(heuristic::detect(content).as_deref(), Some("markdown"));
+    }
+}
+
+#[test]
+fn shell_sequence_sampling_drops_only_a_cut_final_line() {
+    for ending in ["\n", "\r\n"] {
+        for offset in 0..20 {
+            let long_row = format!(
+                "# install{ending}echo {}{ending}{}",
+                "x".repeat(65_495 + offset),
+                format!("git push origin main{ending}").repeat(2)
+            );
+            assert_eq!(
+                heuristic::detect(&long_row).as_deref(),
+                Some("shell"),
+                "offset {offset} {ending:?}"
+            );
+            assert_eq!(
+                refine_magika_label("markdown", &long_row).as_deref(),
+                Some("shell")
+            );
+            let paste = crate::models::paste::Paste::new(long_row, "long command rows".into());
+            assert_eq!(paste.language.as_deref(), Some("shell"));
+            assert_eq!(
+                crate::models::paste::PasteMeta::from(&paste).derived.kind,
+                crate::semantic::PasteKind::Code
+            );
+        }
+        for offset in 0..40 {
+            let content = format!(
+                "# {}{ending}{}",
+                "x".repeat(offset),
+                format!("git push origin main{ending}").repeat(4_000)
+            );
+            assert!(
+                super::looks_like_shell_command_sequence(&content),
+                "offset {offset} {ending:?}"
+            );
+            assert_eq!(
+                detect_language(&content).as_deref(),
+                Some("shell"),
+                "offset {offset} {ending:?}"
+            );
+        }
+    }
+}
+
 #[cfg(feature = "magika")]
 #[test]
 fn automatic_cmd_variable_assignments_keep_code_kind() {
@@ -206,6 +320,10 @@ fn heuristic_detects_fallback_languages_and_conflict_matrix() {
     let cases = [
         ("fun main() { println(\"hi\") }", Some("kotlin")),
         (
+            "import java.util.Scanner\nfun main() { println(\"hi\") }",
+            Some("kotlin"),
+        ),
+        (
             "import Foundation\nfunc main() { print(\"hi\") }",
             Some("swift"),
         ),
@@ -222,6 +340,10 @@ fn heuristic_detects_fallback_languages_and_conflict_matrix() {
         ("defmodule Demo do\n  IO.puts(\"hi\")\nend", Some("elixir")),
         ("param($Name)\nWrite-Host $Name", Some("powershell")),
         ("#!/bin/python\nprint('hi')", Some("python")),
+        (
+            "from sqlite3 import connect\nquery = \"\"\"\nSELECT * FROM users WHERE id = 1\n\"\"\"",
+            Some("python"),
+        ),
         ("#!/usr/bin/env python\nprint('hi')", Some("python")),
         ("#!/bin/node\nconsole.log('hi')", Some("javascript")),
         ("#!/usr/bin/env bash\necho hi", Some("shell")),

@@ -26,8 +26,48 @@ const COMMANDS: &[&str] = &[
     "systemctl",
     "conda",
     "mkdir",
+    "rustup",
 ];
 const SETUP_COMMANDS: &[&str] = &["cd", "export", "source", "set"];
+
+/// Command-shape evidence for tools outside the executable handle list.
+///
+/// # Returns
+/// Whether the line has prompt, assignment, flag, or path structure rather than prose.
+pub(super) fn has_unlisted_command_syntax(line: &str) -> bool {
+    let line = line.trim();
+    let line = line.strip_prefix("> ").unwrap_or(line);
+    let words: Vec<_> = line.split_whitespace().collect();
+    if matches!(words.first().copied(), Some("$" | "%"))
+        || words.first().is_some_and(|word| {
+            word.contains('=')
+                && word.split('=').next().is_some_and(|name| {
+                    !name.is_empty()
+                        && name
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                })
+        })
+    {
+        return true;
+    }
+    let sentence_markers = [
+        "a", "an", "the", "for", "to", "about", "please", "should", "could", "would", "we", "you",
+        "our", "your",
+    ];
+    let leading_executable = words.first().is_some_and(|word| {
+        !word.is_empty()
+            && word
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || matches!(ch, '_' | '-'))
+    });
+    leading_executable
+        && !crate::detection::has_unquoted_prose_copula(words.get(1..).unwrap_or_default(), false)
+        && !words.iter().any(|word| sentence_markers.contains(word))
+        && words.iter().skip(1).any(|word| {
+            word.starts_with('-') || (word.contains(['/', '\\']) && !word.contains("://"))
+        })
+}
 
 /// Extract a compact handle from a leading command-shaped line.
 ///
@@ -43,13 +83,16 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         .filter(|line| !line.is_empty())
         .peekable();
     let is_sequence = crate::detection::looks_like_shell_command_sequence(sample);
-    if is_sequence {
-        while lines.peek().is_some_and(|line| line.starts_with('#')) {
-            let _ = lines.next();
-        }
+    while lines.peek().is_some_and(|line| line.starts_with('#')) {
+        let _ = lines.next();
     }
     if let Some(line) = lines.next() {
         let trimmed = line.trim_matches('`');
+        let trimmed = trimmed
+            .strip_prefix("$ ")
+            .or_else(|| trimmed.strip_prefix("% "))
+            .or_else(|| trimmed.strip_prefix("> "))
+            .unwrap_or(trimmed);
 
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
         let first = *parts.first()?;

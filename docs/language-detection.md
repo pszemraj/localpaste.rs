@@ -19,7 +19,7 @@ This keeps GUI/server detection broad by default while preserving portability fo
 
 For auto-detected language (`language_is_manual == false`):
 
-1. Recognize a standalone Markdown fence, a multi-line shell command sequence, or a Rust runtime panic header optionally following Cargo build/run status or an entered `cargo run` command before statistical detection.
+1. Recognize a standalone Markdown fence, a shell command sequence (including one command after a leading shell comment or prompt), or a Rust runtime panic header optionally following Cargo build/run status or an entered `cargo run` command before statistical detection.
 2. If `magika` feature is enabled:
    - run Magika detection,
    - reject non-text results,
@@ -36,6 +36,8 @@ Auto mode is intentionally "pending detection":
 - API create requests that omit `language_is_manual` detect immediately and lock when detection resolves; pass `language_is_manual: false` to start unresolved auto mode and defer detection until a later edit.
 
 For manual language (`language_is_manual == true`), content edits do not re-run auto detection.
+
+An inferred Markdown label is refined when the entire sampled body has strong technical structure: recognized shell commands, runtime log rows and wrappers, or comment-prefixed Python imports and source lines. Comment-prefixed commands with an environment assignment or executable flags/path syntax also reject the weak Markdown label without assigning a new language. Ordinary Markdown prose, links, and embedded fenced examples retain their document behavior. Other statistical language labels are unchanged by this Markdown refinement.
 
 > [!IMPORTANT]
 > Manual language selection disables automatic re-detection on edits until you switch back to auto mode.
@@ -67,6 +69,12 @@ Unknown values pass through in lowercase.
 Manual language picker values are defined centrally in `MANUAL_LANGUAGE_OPTIONS` and stored as normalized values.
 
 ## Filter And Search Semantics
+
+Retrieval kinds also apply this whole-body technical exception to stored Markdown labels. Automatically detected labels become locked, so the stored lock flag cannot distinguish them from user-selected labels. A command-only paste with explicitly selected Markdown therefore receives the same content-derived Code/Other kind as identical automatically labelled content; raw runtime output receives Log. This preserves the stored highlighting language and lock flag. Documentary headings or blockquotes with surrounding prose and embedded snippets remain Documents, as do reStructuredText and LaTeX labels. Empty or whitespace-only bodies with document-language labels also derive Document, with no handle or terms; other empty bodies derive Other. The Documents collection uses the derived Document kind so a Markdown highlighting label does not return technical Other content to that collection.
+
+Line-based semantic and shell-sequence samples are bounded to 64 KiB and retain complete LF/CRLF records: a final row cut by the byte cap is discarded when an earlier complete row exists. When no complete row fits, the UTF-8-safe bounded prefix remains available for prose and handles. This keeps long single-line prose readable while preventing a truncated command, CSV/TSV record, or log row from changing the sampled structure. JSONL retains its separate independently valid-record detection policy.
+
+Leading shell comments and `$`, `%`, or `>` command prompts are handled before extracting known command handles. `rustup` is included in the known executable vocabulary. Environment-prefixed commands and unknown lowercase executables with flags or path arguments are excluded from prose when they have command structure; ordinary notes mentioning options or paths retain the existing prose classification.
 
 Language filter matching normalizes both:
 

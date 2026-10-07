@@ -331,6 +331,11 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
     }
+    if label == "markdown" {
+        if let Some(technical) = crate::semantic::markdown_technical_language(content) {
+            return (technical != "text").then(|| technical.to_string());
+        }
+    }
 
     if label == "yaml" && !looks_like_yaml(content) && !looks_like_flat_config_yaml(content) {
         return None;

@@ -337,7 +337,7 @@ fn document_override_matches(item: &PasteSummary, collection: SidebarCollection)
 /// semantic collection bucket.
 fn matches_semantic_collection(item: &PasteSummary, collection: SidebarCollection) -> bool {
     if localpaste_core::semantic::is_document_language(item.language.as_deref())
-        && matches!(item.derived.kind, PasteKind::Other | PasteKind::Document)
+        && item.derived.kind == PasteKind::Document
     {
         return collection == SidebarCollection::Documents;
     }
@@ -540,7 +540,7 @@ mod tests {
 
     #[test]
     fn detected_fenced_snippets_and_documents_reach_their_semantic_collections() {
-        for (content, kind, collection) in [
+        let mut cases = [
             (
                 "```python\nprint('hello')\n```",
                 PasteKind::Code,
@@ -637,8 +637,47 @@ mod tests {
                 PasteKind::Document,
                 SidebarCollection::Documents,
             ),
+        ]
+        .into_iter()
+        .map(|(content, kind, collection)| {
+            (
+                localpaste_core::models::paste::Paste::new(content.into(), "notes".into()),
+                kind,
+                Some(collection),
+            )
+        })
+        .collect::<Vec<_>>();
+        for (content, kind) in [
+            ("# install\napt install -y git curl", PasteKind::Other),
+            ("# build\nFOO=bar cargo build --release", PasteKind::Other),
+            ("# install\n> apt install -y git curl", PasteKind::Other),
+            ("# build\n> FOO=bar cargo build --release", PasteKind::Other),
+            ("# Notes\nThis is a manual document.", PasteKind::Document),
+            ("", PasteKind::Document),
+            (" \n\t", PasteKind::Document),
         ] {
-            let paste = localpaste_core::models::paste::Paste::new(content.into(), "notes".into());
+            for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+                for language in if kind == PasteKind::Document {
+                    &["markdown", "rst", "latex"][..]
+                } else {
+                    &["markdown"][..]
+                } {
+                    let paste = localpaste_core::models::paste::Paste::new_with_language(
+                        content.clone(),
+                        "notes".into(),
+                        Some((*language).into()),
+                        true,
+                    );
+                    cases.push((
+                        paste,
+                        kind,
+                        (kind == PasteKind::Document).then_some(SidebarCollection::Documents),
+                    ));
+                }
+            }
+        }
+        for (paste, kind, collection) in cases {
+            let content = &paste.content;
             let meta = localpaste_core::models::paste::PasteMeta::from(&paste);
             assert_eq!(meta.derived.kind, kind, "{content}: {:?}", meta.language);
             let item = PasteSummary {
@@ -652,10 +691,12 @@ mod tests {
                 derived: meta.derived,
                 match_excerpt: None,
             };
-            assert!(
-                matches_semantic_collection(&item, collection.clone()),
-                "{content}: {collection:?}"
-            );
+            if let Some(collection) = collection {
+                assert!(
+                    matches_semantic_collection(&item, collection.clone()),
+                    "{content}: {collection:?}"
+                );
+            }
             if kind != PasteKind::Document {
                 assert!(
                     !matches_semantic_collection(&item, SidebarCollection::Documents),

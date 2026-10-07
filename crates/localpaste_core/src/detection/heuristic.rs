@@ -2,7 +2,7 @@
 
 use super::{looks_like_flat_config_yaml, looks_like_yaml};
 use crate::models::paste::is_markdown_content;
-use crate::text::{utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
+use crate::text::{complete_line_prefix_by_bytes, utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 
 /// Best-effort language detection based on simple heuristics.
 ///
@@ -134,7 +134,10 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("toml".to_string());
     }
 
-    if looks_like_python_from_import(sample) {
+    if looks_like_python_from_import(sample)
+        && (!is_markdown_content(sample)
+            || crate::semantic::markdown_technical_language(trimmed) == Some("python"))
+    {
         return Some("python".to_string());
     }
 
@@ -147,6 +150,9 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     let yaml_like = looks_like_yaml(sample) || looks_like_flat_config_yaml(sample);
 
     if is_markdown_content(sample) && !yaml_like {
+        if let Some(language) = crate::semantic::markdown_technical_language(trimmed) {
+            return Some(language.to_string());
+        }
         return Some("markdown".to_string());
     }
 
@@ -413,6 +419,13 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some(lang.to_string());
     }
 
+    if looks_like_python_import(sample)
+        && (!is_markdown_content(sample)
+            || crate::semantic::markdown_technical_language(trimmed) == Some("python"))
+    {
+        return Some("python".to_string());
+    }
+
     None
 }
 
@@ -446,10 +459,13 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
         "uv",
         "wget",
         "yarn",
+        "rustup",
     ];
     const SETUP_COMMANDS: &[&str] = &["cd", "export", "set", "source"];
 
-    let sample = utf8_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
+    let sample = complete_line_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
+    let has_leading_comment = sample.trim_start().starts_with('#');
+    let has_leading_prompt = sample.trim_start().starts_with(['$', '%', '>']);
     let mut commands = 0usize;
     let mut next_command = false;
     for line in sample
@@ -461,7 +477,13 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
         if line.starts_with('#') {
             continue;
         }
-        let mut parts = line.trim_matches('`').split_whitespace();
+        let line = line.trim_matches('`');
+        let line = line
+            .strip_prefix("$ ")
+            .or_else(|| line.strip_prefix("% "))
+            .or_else(|| line.strip_prefix("> "))
+            .unwrap_or(line);
+        let mut parts = line.split_whitespace();
         let Some(command) = parts.next() else {
             return false;
         };
@@ -492,7 +514,7 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
         commands = commands.saturating_add(1);
         next_command = command_line;
     }
-    commands >= 2
+    commands >= 2 || (commands >= 1 && (has_leading_comment || has_leading_prompt))
 }
 
 /// Accept JSON Lines only with at least two valid object/array records in the
@@ -577,13 +599,35 @@ fn path_basename(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-fn looks_like_python_from_import(sample: &str) -> bool {
+fn looks_like_python_import(sample: &str) -> bool {
     sample.lines().take(512).any(|line| {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             return false;
         }
-        let Some(rest) = trimmed.strip_prefix("from ") else {
+        if let Some(rest) = trimmed.strip_prefix("import ") {
+            let mut parts = rest.split_whitespace();
+            let module = parts.next().unwrap_or_default();
+            let module_valid = !module.is_empty()
+                && module
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'));
+            return module_valid
+                && match parts.next() {
+                    None => true,
+                    Some("as") => {
+                        parts.next().is_some_and(is_sql_identifier) && parts.next().is_none()
+                    }
+                    _ => false,
+                };
+        }
+        false
+    })
+}
+
+fn looks_like_python_from_import(sample: &str) -> bool {
+    sample.lines().take(512).any(|line| {
+        let Some(rest) = line.trim().strip_prefix("from ") else {
             return false;
         };
         let Some((module, imported)) = rest.split_once(" import ") else {

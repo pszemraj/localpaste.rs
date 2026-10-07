@@ -188,8 +188,25 @@ mod model_tests {
         );
         assert_eq!(
             paste::PasteMeta::from(&manual_markdown).derived.kind,
+            PasteKind::Code
+        );
+        assert_eq!(manual_markdown.language.as_deref(), Some("markdown"));
+        assert!(manual_markdown.language_is_manual);
+        assert!(manual_markdown.is_markdown);
+        let manual_note = paste::Paste::new_with_language(
+            "# Setup notes\n\nThese commands prepare the environment.\n\ncargo build --release"
+                .to_string(),
+            "manual notes".to_string(),
+            Some("markdown".to_string()),
+            true,
+        );
+        assert_eq!(
+            paste::PasteMeta::from(&manual_note).derived.kind,
             PasteKind::Document
         );
+        assert_eq!(manual_note.language.as_deref(), Some("markdown"));
+        assert!(manual_note.language_is_manual);
+        assert!(manual_note.is_markdown);
     }
 
     #[test]

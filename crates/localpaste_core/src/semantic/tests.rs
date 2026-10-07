@@ -3,6 +3,138 @@
 use super::{derive, extract_definition_handle_from_line, PasteKind};
 
 #[test]
+fn weak_markdown_labels_do_not_hide_whole_technical_bodies() {
+    for (content, expected) in [
+        ("# install\npip install foo", PasteKind::Code),
+        ("# run it\ndocker run -it --rm ubuntu bash", PasteKind::Code),
+        ("# update\nrustup update stable", PasteKind::Code),
+        ("# install\napt install -y git curl", PasteKind::Other),
+        ("# build\nFOO=bar cargo build --release", PasteKind::Other),
+        ("# install\n> apt install -y git curl", PasteKind::Other),
+        ("# build\n> FOO=bar cargo build --release", PasteKind::Other),
+        ("# install\n$ pip install foo bar", PasteKind::Code),
+        ("# install\nprintf '[label](url)'", PasteKind::Code),
+        ("stderr:\n> error: failed\nexit code 1", PasteKind::Log),
+        (
+            "stderr:\n> error: [label](url)\nexit code 1",
+            PasteKind::Log,
+        ),
+        (
+            "# Compute things\nimport numpy as np\nprint('[label](url)')",
+            PasteKind::Code,
+        ),
+        (
+            "# Compute things\nimport numpy as np\nvalues = np.array([1,2,3])\nprint(values.sum())",
+            PasteKind::Code,
+        ),
+    ] {
+        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+            assert_eq!(
+                derive(&content, Some("markdown")).kind,
+                expected,
+                "{content}"
+            );
+            for language in ["rst", "latex"] {
+                assert_eq!(derive(&content, Some(language)).kind, PasteKind::Document);
+            }
+        }
+    }
+    for content in [
+        "# Installation\n\nRun the command below.\n\npip install foo",
+        "> This is a quoted note for tomorrow.",
+        "# Notes\n> This is quoted prose about /usr/bin tools.",
+        "# Logs\n\nHere is the output:\n\n```text\nstderr:\n> error: failed\nexit code 1\n```",
+        "# Python notes\n\nHere is how the code works.\n\nimport numpy as np\nprint(np.arange(10))",
+        "# Python notes\nimport numpy as np\nThis paragraph explains the example.",
+        "# Notes\nimport numpy as np\nrelease details",
+        "# Notes\n[label](url)",
+        "> This is a quoted explanation.\n> The example uses `pip install foo`.",
+    ] {
+        assert_eq!(
+            derive(content, Some("markdown")).kind,
+            PasteKind::Document,
+            "{content}"
+        );
+    }
+}
+
+#[test]
+fn unlisted_or_prefixed_commands_do_not_become_prose_documents() {
+    for content in [
+        "$ pip install foo bar",
+        "apt install -y git curl",
+        "rustup update stable",
+        "FOO=bar cargo build --release",
+    ] {
+        for language in [None, Some("text")] {
+            assert_ne!(
+                derive(content, language).kind,
+                PasteKind::Document,
+                "{content}"
+            );
+        }
+    }
+    for content in [
+        "remember to use --release when building the app",
+        "notes about /usr/bin tools and their behavior",
+        "The --release option optimizes the build.",
+    ] {
+        assert_eq!(derive(content, None).kind, PasteKind::Document, "{content}");
+    }
+    let long_prose = "This is a long ordinary prose note about the release. ".repeat(2_000);
+    assert_eq!(derive(&long_prose, None).kind, PasteKind::Document);
+}
+
+#[test]
+fn complete_record_sampling_keeps_delimited_and_log_kinds_stable() {
+    for ending in ["\n", "\r\n"] {
+        let csv_row = format!(
+            "\"{}\",\"{}\"{ending}",
+            "alpha beta ".repeat(30),
+            "gamma delta ".repeat(30)
+        );
+        let tsv_row = format!("404\t{}\twidget{ending}", "alpha beta ".repeat(50));
+        let log_row = format!("INFO Starting worker {}{ending}", "alpha beta ".repeat(50));
+        for offset in 0..40 {
+            let csv = format!(
+                "\"{}{}\",\"{}\"{ending}{}",
+                "alpha beta ".repeat(30),
+                "x".repeat(offset),
+                "gamma delta ".repeat(30),
+                csv_row.repeat(140)
+            );
+            let tsv = format!(
+                "ERROR\tcount\tname{ending}4{}04\talpha beta\twidget{ending}{}",
+                "0".repeat(offset),
+                tsv_row.repeat(140)
+            );
+            let log = format!(
+                "INFO Starting {}worker{ending}{}",
+                "X".repeat(offset),
+                log_row.repeat(140)
+            );
+            for language in [None, Some("text")] {
+                assert_eq!(
+                    derive(&csv, language).kind,
+                    PasteKind::Other,
+                    "CSV offset {offset} {ending:?}"
+                );
+                assert_eq!(
+                    derive(&tsv, language).kind,
+                    PasteKind::Other,
+                    "TSV offset {offset} {ending:?}"
+                );
+                assert_eq!(
+                    derive(&log, language).kind,
+                    PasteKind::Log,
+                    "log offset {offset} {ending:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn explicit_setup_queries_chains_and_adjacent_commands_remain_code() {
     for content in [
         "set \"my variable\"",
@@ -490,6 +622,29 @@ fn common_git_commands_keep_code_kind_and_handles() {
 
 #[test]
 fn derive_matrix_covers_code_config_log_link_and_other() {
+    for content in ["", " \t\r\n"] {
+        for language in [
+            None,
+            Some("text"),
+            Some("python"),
+            Some("markdown"),
+            Some("md"),
+            Some("rst"),
+            Some("latex"),
+        ] {
+            let derived = derive(content, language);
+            assert_eq!(
+                derived.kind,
+                if super::is_document_language(language) {
+                    PasteKind::Document
+                } else {
+                    PasteKind::Other
+                }
+            );
+            assert!(derived.handle.is_none());
+            assert!(derived.terms.is_empty());
+        }
+    }
     for (content, language, expected) in [
         (
             "[INFO] Server started\nINFO Starting worker\nWARN Queue full",
@@ -540,7 +695,12 @@ fn derive_matrix_covers_code_config_log_link_and_other() {
             "dockerfile",
             PasteKind::Config,
         ),
-        ("[INFO] Server started", "markdown", PasteKind::Document),
+        ("[INFO] Server started", "markdown", PasteKind::Log),
+        (
+            "# Log notes\n\nThe server reported:\n\n[INFO] Server started",
+            "markdown",
+            PasteKind::Document,
+        ),
     ] {
         assert_eq!(
             derive(content, Some(language)).kind,

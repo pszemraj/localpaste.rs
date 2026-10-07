@@ -1,7 +1,7 @@
 //! Lightweight locally-derived semantic metadata for retrieval.
 
 use crate::detection::canonical::canonicalize;
-use crate::text::{utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
+use crate::text::{complete_line_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -60,7 +60,14 @@ pub struct DerivedMeta {
 pub fn derive(content: &str, language: Option<&str>) -> DerivedMeta {
     let sample = sample_prefix(content);
     if sample.trim().is_empty() {
-        return DerivedMeta::default();
+        return DerivedMeta {
+            kind: if is_document_language(language) {
+                PasteKind::Document
+            } else {
+                PasteKind::Other
+            },
+            ..DerivedMeta::default()
+        };
     }
 
     let kind = classify_kind(content, language);
@@ -85,7 +92,7 @@ fn sample_prefix(content: &str) -> &str {
         return trimmed;
     }
 
-    let prefix = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
+    let prefix = complete_line_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
 
     let mut line_end = prefix.len();
     let mut seen = 0usize;
@@ -143,6 +150,9 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
                     kind => kind,
                 };
             }
+        }
+        if let Some(technical_language) = markdown_technical_language(sample) {
+            return classify_kind(sample, Some(technical_language));
         }
     }
 
@@ -251,6 +261,93 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
     } else {
         PasteKind::Other
     }
+}
+
+/// Recognize a wholly technical body carrying an incidental Markdown label.
+///
+/// # Arguments
+/// - `content`: Paste content to inspect within the normal semantic sample.
+///
+/// # Returns
+/// A shell, log, Python, or generic text label for complete technical bodies, without
+/// reclassifying documentary prose, links, or embedded fenced examples.
+pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str> {
+    let sample = sample_prefix(content);
+    if crate::detection::looks_like_shell_command_sequence(sample) {
+        return Some("shell");
+    }
+    if sample.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("```") || line.starts_with("~~~")
+    }) {
+        return None;
+    }
+    let mut log_lines = 0;
+    let mut runtime_marker = false;
+    let whole_log = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .all(|line| {
+            let line = line.strip_prefix("> ").unwrap_or(line);
+            if matches!(line, "stderr:" | "stdout:")
+                || line
+                    .strip_prefix("exit code ")
+                    .is_some_and(|code| code.parse::<i32>().is_ok())
+            {
+                runtime_marker = true;
+                return true;
+            }
+            if let Some(header) = parse_log_header(line, false) {
+                log_lines += 1;
+                runtime_marker |= header.strong_single_line;
+                return true;
+            }
+            false
+        });
+    if whole_log && log_lines > 0 && runtime_marker {
+        return Some("log");
+    }
+    if !sample.starts_with('#') {
+        return None;
+    }
+    let mut source_lines = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'));
+    let first = source_lines.next()?;
+    if commands::has_unlisted_command_syntax(first)
+        && source_lines.clone().all(|line| {
+            commands::has_unlisted_command_syntax(line)
+                || commands::extract_command_handle(line).is_some()
+        })
+    {
+        return Some("text");
+    }
+    if crate::detection::detect_heuristically(first).as_deref() == Some("python")
+        && source_lines.all(|line| {
+            let identifier = |value: &str| {
+                !value.is_empty()
+                    && value
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'))
+                    && value
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            };
+            crate::detection::detect_heuristically(line).as_deref() == Some("python")
+                || line.split_once('=').is_some_and(|(name, value)| {
+                    identifier(name.trim()) && !value.trim().is_empty()
+                })
+                || line
+                    .split_once('(')
+                    .is_some_and(|(callee, _)| identifier(callee.trim()) && line.ends_with(')'))
+        })
+    {
+        return Some("python");
+    }
+    None
 }
 
 /// Recognize prose mistaken for Batch because it starts with a setup word.
@@ -430,6 +527,14 @@ fn looks_like_multiline_log(sample: &str) -> bool {
 /// snippets have too little evidence to become documents without a language hint.
 fn looks_like_prose(sample: &str) -> bool {
     if looks_like_delimited_records(sample) || looks_like_hex_blob(sample) {
+        return false;
+    }
+    let first_line = sample
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .unwrap_or_default();
+    if commands::has_unlisted_command_syntax(first_line) {
         return false;
     }
     let words = sample
