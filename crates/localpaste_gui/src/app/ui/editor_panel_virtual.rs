@@ -128,7 +128,6 @@ impl LocalPasteApp {
         let content_wrap_width =
             (wrap_width - line_number_gutter - VIRTUAL_EDITOR_TEXT_INSET).max(editor_char_width);
         self.virtual_wrap_width = wrap_width;
-        self.virtual_viewport_height = editor_height;
         if self.virtual_layout.needs_rebuild(
             self.virtual_editor_buffer.revision(),
             content_wrap_width,
@@ -665,13 +664,10 @@ impl LocalPasteApp {
         // Treat any primary click inside the editor viewport as an explicit focus
         // claim, even when no row hit-test action fired (e.g. empty space below
         // the last visual row).
-        let primary_pressed = primary_press.is_some();
         let pointer_press_pos = primary_press.map(|(pos, _)| pos);
         let clicked_inside_editor = pointer_press_pos
             .map(|pos| {
-                primary_pressed
-                    && interaction_rect.contains(pos)
-                    && ui.ctx().layer_id_at(pos) == Some(ui.layer_id())
+                interaction_rect.contains(pos) && ui.ctx().layer_id_at(pos) == Some(ui.layer_id())
             })
             .unwrap_or(false);
         let clicked_inside_editor_content = pointer_press_pos
@@ -684,7 +680,7 @@ impl LocalPasteApp {
                         scroll_output.inner_rect.max.y,
                     ),
                 );
-                primary_pressed && content_rect.contains(pos)
+                content_rect.contains(pos)
             })
             .unwrap_or(false);
         if clicked_inside_editor {
@@ -714,7 +710,7 @@ impl LocalPasteApp {
             self.virtual_pointer_press_modifiers = None;
         }
         let clicked_outside_editor = pointer_press_pos
-            .map(|pos| primary_pressed && !interaction_rect.contains(pos))
+            .map(|pos| !interaction_rect.contains(pos))
             .unwrap_or(false);
         let explicit_blur = should_explicitly_blur_virtual_editor(
             clicked_outside_editor,

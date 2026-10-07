@@ -687,15 +687,10 @@ impl LocalPasteApp {
                             self.virtual_editor_state.cursor(),
                         );
                     }
-                    self.virtual_editor_state.ime.preedit_range = None;
-                    self.virtual_editor_state.ime.preedit_text.clear();
-                    self.virtual_editor_state.ime.enabled = false;
                     self.virtual_editor_state.clear_preferred_column();
                 }
                 VirtualInputCommand::ImeDisabled => {
                     result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
-                    self.virtual_editor_state.ime.enabled = false;
-                    self.virtual_editor_state.ime.preedit_text.clear();
                     self.virtual_editor_state.clear_preferred_column();
                 }
             }
