@@ -375,12 +375,10 @@ fn matches_semantic_collection(item: &PasteSummary, collection: SidebarCollectio
             &CONFIG_SUMMARY_PATTERN,
             name_has_suffix_ci(item.name.as_str(), CONFIG_FILE_SUFFIXES),
         ),
-        SidebarCollection::Logs => summary_matches_kind_pattern_and_name(
-            item,
-            PasteKind::Log,
-            &LOG_SUMMARY_PATTERN,
-            name_has_suffix_ci(item.name.as_str(), LOG_FILE_SUFFIXES),
-        ),
+        SidebarCollection::Logs => {
+            summary_matches_pattern(item, &LOG_SUMMARY_PATTERN)
+                || name_has_suffix_ci(item.name.as_str(), LOG_FILE_SUFFIXES)
+        }
         SidebarCollection::Links => summary_matches_kind_pattern_and_name(
             item,
             PasteKind::Link,
