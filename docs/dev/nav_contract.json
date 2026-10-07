@@ -694,9 +694,9 @@
     },
     {
       "id": "ctrl_shift_delete_from_gamma",
-      "platforms": ["windows", "linux"],
+      "platforms": ["linux"],
       "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
-      "driver": {"windows": {"send_keys": ["^+{DEL}"]}, "linux_x11": {"keys": ["ctrl+shift+Delete"]}},
+      "driver": {"linux_x11": {"keys": ["ctrl+shift+Delete"]}},
       "expect": {
         "focus.virtual_editor": true,
         "editor.caret_visible": true,
@@ -718,6 +718,62 @@
         "applied_commands": "DeleteForward { word: true }"
       },
       "expect_events": [{"kind": "key", "key": "Delete", "pressed": true, "modifiers.ctrl": true, "modifiers.shift": true, "modifiers.command": true}]
+    },
+    {
+      "id": "ctrl_shift_delete_cut_without_selection",
+      "platforms": ["windows"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
+      "driver": {"windows": {"send_keys": ["^+{DEL}"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "editor.caret_visible": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 1,
+        "cursor.col": 0,
+        "cursor.buffer_len_chars": 36,
+        "editor.buffer_len_chars": 36,
+        "editor.buffer_revision": 0,
+        "editor.buffer_hash": "fcf7ebfa73942506",
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "Cut",
+        "applied_commands": "Cut"
+      },
+      "expect_events": [{"kind": "Cut"}]
+    },
+    {
+      "id": "ctrl_shift_delete_cut_selected_gamma",
+      "platforms": ["windows"],
+      "seed": {"text": "alpha beta\ngamma delta\nepsilon zeta\n", "cursor": "1:0"},
+      "driver": {"windows": {"send_keys": ["^+{RIGHT}", "^+{DEL}"]}},
+      "expect": {
+        "focus.virtual_editor": true,
+        "editor.caret_visible": true,
+        "focus.sidebar_search": false,
+        "focus.editor_title": false,
+        "focus.command_palette_query": false,
+        "focus.properties_name": false,
+        "focus.properties_tags": false,
+        "focus.diff_query": false,
+        "app.selected_id": "__nav_probe__",
+        "cursor.line": 1,
+        "cursor.col": 0,
+        "cursor.buffer_len_chars": 30,
+        "editor.buffer_len_chars": 30,
+        "selection": null
+      },
+      "expect_contains": {
+        "candidate_commands_if_editor_focused": "Cut",
+        "applied_commands": "Cut"
+      },
+      "expect_events": [{"kind": "Cut"}]
     },
     {
       "id": "mac_arrow_left_from_middle",

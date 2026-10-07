@@ -35,6 +35,7 @@ Shortcut contract:
 - `F1`: toggle shortcut help; search descriptions or key combinations (for example `picker` or `Cmd+Shift+K`).
 - `Ctrl/Cmd+A/C/X/Z/Y`: standard virtual-editor select-all/copy/cut/undo/redo when editor owns focus.
 - `Ctrl/Cmd+Shift+Z`: redo editor edit when editor owns focus.
+- Windows `Shift+Delete`, including `Ctrl+Shift+Delete`, cuts the editor selection; with no selection it leaves the buffer unchanged. `Ctrl+Delete` deletes the next word. The pinned [egui-winit 0.33.3 clipboard mapping](https://github.com/emilk/egui/blob/0.33.3/crates/egui-winit/src/lib.rs#L1008-L1012) consumes the shifted Delete press as a Cut event; Linux retains forward word deletion for `Ctrl+Shift+Delete`.
 - `Ctrl/Cmd+V`: insert when editor is focused; create new paste from clipboard when editor is not focused.
 - `Ctrl/Cmd+Shift+V`: explicit "force paste as new" fallback.
 
