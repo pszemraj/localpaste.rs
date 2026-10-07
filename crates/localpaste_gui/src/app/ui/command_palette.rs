@@ -167,12 +167,14 @@ impl LocalPasteApp {
                 self.command_palette_open = false;
             }
             CommandPaletteAction::Copy => {
-                self.clipboard_outgoing = Some(self.active_snapshot());
-                self.set_status("Copied paste content.");
+                if let Some(id) = self.selected_id.clone() {
+                    self.queue_palette_copy(id, false);
+                }
                 self.command_palette_open = false;
             }
             CommandPaletteAction::CopyLink => {
                 if let Some(id) = &self.selected_id {
+                    self.pending_copy_action = None;
                     self.clipboard_outgoing =
                         Some(util::api_paste_link_for_copy(self.server_addr, id));
                 }

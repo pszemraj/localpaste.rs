@@ -61,6 +61,76 @@ fn picker_copy_of_active_result_cancels_a_stale_detached_request() {
 }
 
 #[test]
+fn command_palette_copies_supersede_a_pending_picker_copy() {
+    for query in ["copy paste", "copy link"] {
+        let (mut harness, evt_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        set_active_content(&mut harness.app, "dirty alpha");
+        harness.app.save_status = SaveStatus::Dirty;
+        harness.app.open_paste_picker();
+        harness.app.queue_palette_copy("beta".into(), false);
+        let request_id = match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::GetPasteForCopy { id, request_id } => {
+                assert_eq!(id, "beta");
+                request_id
+            }
+            other => panic!("unexpected picker copy command: {other:?}"),
+        };
+
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![command_key_event(egui::Key::K)],
+        );
+        assert!(harness.app.command_palette_open);
+        assert!(!harness.app.paste_picker_open);
+        assert!(harness.app.pending_copy_action.is_some());
+        harness.app.command_palette_query = query.into();
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        let action_output = run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            egui::RawInput {
+                events: vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+                ..Default::default()
+            },
+        );
+
+        let expected = if query == "copy paste" {
+            "dirty alpha".to_string()
+        } else {
+            util::api_paste_link_for_copy(harness.app.server_addr, "alpha")
+        };
+        assert!(!harness.app.command_palette_open);
+        assert!(harness.app.pending_copy_action.is_none());
+
+        let mut beta = Paste::new("stale beta".into(), "Beta".into());
+        beta.id = "beta".into();
+        evt_tx
+            .send(CoreEvent::PasteCopyLoaded {
+                paste: beta,
+                request_id,
+            })
+            .unwrap();
+        let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+        let copied = action_output
+            .platform_output
+            .commands
+            .iter()
+            .chain(&output.platform_output.commands)
+            .filter_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(copied, vec![expected.as_str()], "{query}");
+        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+        assert_eq!(harness.app.active_snapshot(), "dirty alpha");
+        assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+    }
+}
+
+#[test]
 fn picker_copy_preserves_dirty_editor_and_drops_stale_responses() {
     let mut harness = make_app();
     set_active_content(&mut harness.app, "dirty alpha");
