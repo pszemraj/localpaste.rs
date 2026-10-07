@@ -138,6 +138,35 @@ pub(crate) fn has_unquoted_prose_copula(arguments: &[&str], has_shell_syntax: bo
             .any(|part| matches!(*part, "is" | "are" | "was" | "were"))
 }
 
+/// Remove an optional leading shell prompt from a command line.
+///
+/// # Arguments
+/// - `line`: Command line after whitespace and backtick trimming.
+///
+/// # Returns
+/// The line without a leading `$ `, `% `, or `> ` prompt.
+pub(crate) fn strip_shell_prompt(line: &str) -> &str {
+    line.strip_prefix("$ ")
+        .or_else(|| line.strip_prefix("% "))
+        .or_else(|| line.strip_prefix("> "))
+        .unwrap_or(line)
+}
+
+/// Recognize punctuation, options, or digits establishing shell command structure.
+///
+/// # Arguments
+/// - `line`: Command line without a leading shell prompt.
+/// - `arguments`: Whitespace-separated arguments following the command word.
+///
+/// # Returns
+/// Whether shell syntax supplies command evidence beyond the leading word.
+pub(crate) fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {
+    line.contains(['\'', '"', '$', '|', '>', '<', '=', '/', '\\', ';', '&'])
+        || arguments
+            .iter()
+            .any(|part| part.starts_with('-') || part.chars().any(|ch| ch.is_ascii_digit()))
+}
+
 /// Detect language/type of text content.
 ///
 /// # Returns

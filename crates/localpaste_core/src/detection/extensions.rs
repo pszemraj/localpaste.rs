@@ -113,7 +113,6 @@ pub fn preferred_extension(language: Option<&str>) -> &'static str {
         "toml" => "toml",
         "tsv" => "tsv",
         "twig" => "twig",
-        "txt" => "txt",
         "typescript" => "ts",
         "vba" => "vbs",
         "vcxproj" => "vcxproj",

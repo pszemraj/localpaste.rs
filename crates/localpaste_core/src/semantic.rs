@@ -167,10 +167,11 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
     // Statistical detection can lock an incidental code/config label onto a
     // real log. Structural runtime headers still determine retrieval kind.
     // Attribute assignments and bare TOML table headers remain configuration.
-    if looks_like_multiline_log(sample)
-        || has_unambiguous_log_header(sample, lang.as_str())
-        || crate::detection::looks_like_rust_panic(sample)
-    {
+    if looks_like_multiline_log(sample) || crate::detection::looks_like_rust_panic(sample) {
+        return PasteKind::Log;
+    }
+    let log_header = leading_log_header(sample, lang.as_str());
+    if log_header.is_some_and(|header| header.strong_single_line) {
         return PasteKind::Log;
     }
 
@@ -248,9 +249,7 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Config;
     }
 
-    if starts_with_log_level(sample, lang.as_str())
-        || crate::detection::looks_like_rust_panic(sample)
-    {
+    if log_header.is_some() {
         return PasteKind::Log;
     }
 
@@ -372,38 +371,23 @@ pub(crate) fn looks_like_batch_setup_prose(content: &str) -> bool {
         return false;
     }
     let arguments: Vec<_> = parts.collect();
-    // CMD accepts unquoted spaces in cd paths and slash-prefixed set options;
-    // preserve those forms rather than applying shell setup/prose rules.
-    let batch_option = command == "set"
-        && arguments
-            .first()
-            .is_some_and(|argument| argument.starts_with('/'));
-    !batch_option
-        && !crate::detection::setup_command_is_valid(command, &arguments, false)
+    !crate::detection::setup_command_is_valid(command, &arguments, false)
         && commands::extract_command_handle(sample).is_none()
         && looks_like_prose(sample)
 }
 
-/// Returns whether the first non-empty line starts with a machine-style log level.
+/// Parse a leading log header while excluding record and TSV header shapes.
 ///
 /// Spaced levels must be uppercase or bracketed. Lowercase words with spaces
 /// introduce ordinary prose; colon-delimited lowercase levels remain supported.
-fn starts_with_log_level(sample: &str, language: &str) -> bool {
-    if looks_like_multiline_log(sample) {
-        return true;
-    }
-    let Some(first_line) = sample
+fn leading_log_header(sample: &str, language: &str) -> Option<ParsedLogHeader> {
+    let first_line = sample
         .lines()
         .map(str::trim_start)
-        .find(|line| !line.is_empty())
-    else {
-        return false;
-    };
-    let Some(header) = parse_log_header(first_line, false) else {
-        return false;
-    };
+        .find(|line| !line.is_empty())?;
+    let header = parse_log_header(first_line, false)?;
     if looks_like_delimited_records(sample) && !header.contextual {
-        return false;
+        return None;
     }
     // A detector-provided TSV label plus a tab is sufficient to identify a
     // one-row header. Without this guard, an `INFO`/`ERROR` header is mistaken
@@ -411,23 +395,9 @@ fn starts_with_log_level(sample: &str, language: &str) -> bool {
     // An explicit parsed context such as `(main)` is log structure rather than
     // a typed table column and may pass the guard.
     if language == "tsv" && first_line.contains('\t') && !header.contextual {
-        return false;
+        return None;
     }
-    true
-}
-
-/// Whether a spaced or bracketed log level has a message rather than an assignment.
-///
-/// # Returns
-/// True for strong log headers even when a detector supplied a code/config label.
-fn has_unambiguous_log_header(sample: &str, language: &str) -> bool {
-    if !starts_with_log_level(sample, language) {
-        return false;
-    }
-    let Some(first_line) = sample.lines().map(str::trim).find(|line| !line.is_empty()) else {
-        return false;
-    };
-    parse_log_header(first_line, false).is_some_and(|header| header.strong_single_line)
+    Some(header)
 }
 
 #[derive(Clone, Copy)]

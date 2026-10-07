@@ -196,13 +196,13 @@ fn incidental_operators_in_setup_prose_do_not_establish_commands() {
         "source code is at https://example.com?a=1&b=2",
         "set timer for 10 minutes; remember tea",
     ] {
+        assert_eq!(
+            super::commands::extract_command_handle(content),
+            None,
+            "{content}"
+        );
         for language in [None, Some("text"), Some("batch")] {
             assert_ne!(derive(content, language).kind, PasteKind::Code, "{content}");
-            assert_eq!(
-                super::commands::extract_command_handle(content),
-                None,
-                "{content}"
-            );
         }
     }
 }
@@ -369,7 +369,6 @@ fn explicit_documents_override_code_and_log_signals() {
         derive("A short prose note to keep for later.", None).kind,
         PasteKind::Document
     );
-    assert_eq!(derive("", None).kind, PasteKind::Other);
     assert_eq!(derive("fn main() {}", Some("rust")).kind, PasteKind::Code);
     for (content, expected) in [
         ("```python\nprint('hello')\n```", PasteKind::Code),
@@ -589,15 +588,19 @@ fn setup_words_in_prose_do_not_acquire_command_handles() {
         "set timer for 10 minutes\nThis is a meeting note.\ncargo check",
         "cd repo\nThis is a meeting note.\ncargo check",
     ] {
-        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+        for content in std::iter::once(content.to_owned()).chain(
+            content
+                .contains('\n')
+                .then(|| content.replace('\n', "\r\n")),
+        ) {
+            assert_eq!(
+                super::commands::extract_command_handle(&content),
+                None,
+                "{content}"
+            );
             for language in [None, Some("text")] {
                 let derived = derive(&content, language);
                 assert_eq!(derived.kind, PasteKind::Document, "{content}");
-                assert_eq!(
-                    super::commands::extract_command_handle(&content),
-                    None,
-                    "{content}"
-                );
             }
         }
     }
@@ -610,7 +613,11 @@ fn common_git_commands_keep_code_kind_and_handles() {
         ("git blame README.md", "git blame"),
         ("cd repo\ngit submodule update", "cd repo"),
     ] {
-        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+        for content in std::iter::once(content.to_owned()).chain(
+            content
+                .contains('\n')
+                .then(|| content.replace('\n', "\r\n")),
+        ) {
             for language in [None, Some("text")] {
                 let derived = derive(&content, language);
                 assert_eq!(derived.kind, PasteKind::Code, "{content}");

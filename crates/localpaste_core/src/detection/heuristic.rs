@@ -419,10 +419,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some(lang.to_string());
     }
 
-    if looks_like_python_import(sample)
-        && (!is_markdown_content(sample)
-            || crate::semantic::markdown_technical_language(trimmed) == Some("python"))
-    {
+    if looks_like_python_import(sample) {
         return Some("python".to_string());
     }
 
@@ -477,12 +474,7 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
         if line.starts_with('#') {
             continue;
         }
-        let line = line.trim_matches('`');
-        let line = line
-            .strip_prefix("$ ")
-            .or_else(|| line.strip_prefix("% "))
-            .or_else(|| line.strip_prefix("> "))
-            .unwrap_or(line);
+        let line = super::strip_shell_prompt(line.trim_matches('`'));
         let mut parts = line.split_whitespace();
         let Some(command) = parts.next() else {
             return false;
@@ -491,11 +483,7 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
             return false;
         }
         let arguments: Vec<&str> = parts.collect();
-        let has_shell_syntax = line
-            .contains(['\'', '"', '$', '|', '>', '<', '=', '/', '\\', ';', '&'])
-            || arguments
-                .iter()
-                .any(|part| part.starts_with('-') || part.chars().any(|ch| ch.is_ascii_digit()));
+        let has_shell_syntax = super::command_has_shell_syntax(line, &arguments);
         let has_prose_copula = super::has_unquoted_prose_copula(&arguments, has_shell_syntax);
         let command_line = if COMMANDS.contains(&command) {
             !has_prose_copula

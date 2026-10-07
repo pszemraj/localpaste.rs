@@ -82,17 +82,11 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .peekable();
-    let is_sequence = crate::detection::looks_like_shell_command_sequence(sample);
     while lines.peek().is_some_and(|line| line.starts_with('#')) {
         let _ = lines.next();
     }
     if let Some(line) = lines.next() {
-        let trimmed = line.trim_matches('`');
-        let trimmed = trimmed
-            .strip_prefix("$ ")
-            .or_else(|| trimmed.strip_prefix("% "))
-            .or_else(|| trimmed.strip_prefix("> "))
-            .unwrap_or(trimmed);
+        let trimmed = crate::detection::strip_shell_prompt(line.trim_matches('`'));
 
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
         let first = *parts.first()?;
@@ -104,10 +98,10 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         }
 
         let arguments = parts.get(1..).unwrap_or_default();
-        let has_command_syntax = command_has_shell_syntax(trimmed, arguments);
+        let has_command_syntax = crate::detection::command_has_shell_syntax(trimmed, arguments);
 
         if is_setup_command {
-            let next_command = is_sequence
+            let next_command = crate::detection::looks_like_shell_command_sequence(sample)
                 || lines
                     .find(|line| !line.starts_with('#'))
                     .is_some_and(starts_with_command_word);
@@ -154,7 +148,7 @@ fn starts_with_command_word(line: &str) -> bool {
         return regular_command_is_valid(
             command,
             arguments.as_slice(),
-            command_has_shell_syntax(line, arguments.as_slice()),
+            crate::detection::command_has_shell_syntax(line, arguments.as_slice()),
         );
     }
     if !SETUP_COMMANDS.contains(&command) {
@@ -162,13 +156,6 @@ fn starts_with_command_word(line: &str) -> bool {
     }
     let arguments: Vec<&str> = parts.collect();
     crate::detection::setup_command_is_valid(command, &arguments, false)
-}
-
-fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {
-    line.contains(['\'', '"', '$', '|', '>', '<', '=', '/', '\\', ';', '&'])
-        || arguments
-            .iter()
-            .any(|part| part.starts_with('-') || part.chars().any(|ch| ch.is_ascii_digit()))
 }
 
 fn regular_command_is_valid(command: &str, arguments: &[&str], has_shell_syntax: bool) -> bool {
