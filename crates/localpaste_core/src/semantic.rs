@@ -244,11 +244,46 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Log;
     }
 
-    if (lang.is_empty() || lang == "text") && looks_like_prose(sample) {
+    if ((lang.is_empty() || lang == "text") && looks_like_prose(sample))
+        || (lang == "batch" && looks_like_batch_setup_prose(sample))
+    {
         PasteKind::Document
     } else {
         PasteKind::Other
     }
+}
+
+/// Recognize prose mistaken for Batch because it starts with a setup word.
+///
+/// # Arguments
+/// - `content`: Paste body whose Batch label is being inspected.
+///
+/// # Returns
+/// Whether a leading setup word lacks command-specific arguments and the
+/// sampled body is prose. Windows Batch options retain their script meaning.
+pub(crate) fn looks_like_batch_setup_prose(content: &str) -> bool {
+    let sample = sample_prefix(content);
+    let Some(line) = sample.lines().map(str::trim).find(|line| !line.is_empty()) else {
+        return false;
+    };
+    let mut parts = line.split_whitespace();
+    let command = parts.next().unwrap_or_default();
+    if !matches!(command, "set" | "export" | "source") {
+        return false;
+    }
+    if extract_definition_handle_from_line(line, Some("javascript")).is_some() {
+        return false;
+    }
+    let arguments: Vec<_> = parts.collect();
+    // CMD accepts unquoted spaces in cd paths and slash-prefixed set options;
+    // preserve those forms rather than applying shell setup/prose rules.
+    let batch_option = command == "set"
+        && arguments
+            .first()
+            .is_some_and(|argument| argument.starts_with('/'));
+    !batch_option
+        && !crate::detection::setup_command_is_valid(command, &arguments)
+        && looks_like_prose(sample)
 }
 
 /// Returns whether the first non-empty line starts with a machine-style log level.

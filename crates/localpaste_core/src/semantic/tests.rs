@@ -3,6 +3,54 @@
 use super::{derive, extract_definition_handle_from_line, PasteKind};
 
 #[test]
+fn batch_setup_prose_is_document_without_broad_language_override() {
+    for content in [
+        "set timer for 10 minutes\r\n",
+        "source code is at https://example.com\r\n",
+    ] {
+        assert_eq!(
+            derive(content, Some("batch")).kind,
+            PasteKind::Document,
+            "{content}"
+        );
+        assert_eq!(derive(content, Some("python")).kind, PasteKind::Code);
+        for language in ["csv", "tsv"] {
+            assert_eq!(derive(content, Some(language)).kind, PasteKind::Other);
+        }
+    }
+    for (content, expected) in [
+        ("set MODE=dev", PasteKind::Code),
+        ("set -e", PasteKind::Code),
+        ("export MODE=dev", PasteKind::Code),
+        ("source .env", PasteKind::Other),
+        ("source .env\ncargo check", PasteKind::Code),
+        ("source ./.env", PasteKind::Code),
+        ("cd repo\ncargo check", PasteKind::Code),
+        (
+            "@echo off\r\nset MODE=dev\r\necho %MODE%\r\n",
+            PasteKind::Other,
+        ),
+        ("rem keep this batch script comment", PasteKind::Other),
+        ("set /p prompt=Enter your full name", PasteKind::Other),
+        ("set /a count=10", PasteKind::Other),
+        ("cd /d C:\\Users\\project", PasteKind::Other),
+        ("cd Program Files", PasteKind::Other),
+        ("cd C:\\Program Files", PasteKind::Other),
+        ("set /?", PasteKind::Other),
+        ("set /? additional words", PasteKind::Other),
+        ("source\tcode\tlocation\nmain\trust\tpath", PasteKind::Other),
+        ("source,code,location\nmain,rust,path", PasteKind::Other),
+        ("export function renderPanel() {}", PasteKind::Other),
+    ] {
+        assert_eq!(derive(content, Some("batch")).kind, expected, "{content}");
+    }
+    assert_eq!(
+        derive("export function renderPanel() {}", Some("javascript")).kind,
+        PasteKind::Code
+    );
+}
+
+#[test]
 fn explicit_documents_override_code_and_log_signals() {
     for language in ["markdown", "md", "rst", "restructuredtext", "latex", "tex"] {
         assert_eq!(

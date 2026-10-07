@@ -172,7 +172,7 @@ Primary implementation:
 
 - [`../crates/localpaste_core/src/detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs)
 
-Magika's `gitattributes` label also requires attribute-shaped content: a path pattern with attribute tokens, or recognized attribute assignments. Short clipboard prose does not acquire that label merely because it contains whitespace-separated words. Manual language values remain unchanged by this guard.
+Magika's `gitattributes` label also requires attribute-shaped content: a path pattern with attribute tokens, or recognized attribute assignments. Short clipboard prose does not acquire that label merely because it contains whitespace-separated words. Manual language values remain unchanged by this guard. Likewise, automatic Batch labels are rejected for prose starting with `set`, `export`, or `source` when their arguments lack setup-command structure. Assignments, script headers/comments, slash-prefixed `set` options, and all Batch-labelled `cd` tails (including unquoted paths with spaces) retain their existing behavior. Stored Batch-labelled setup prose also belongs to Documents through structural derivation without changing its language or manual/locked state; other stored language precedence stays intact.
 
 ## Validation Targets
 

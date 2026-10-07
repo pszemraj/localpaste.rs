@@ -303,6 +303,10 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return None;
     }
 
+    if label == "batch" && crate::semantic::looks_like_batch_setup_prose(content) {
+        return None;
+    }
+
     // Magika uses either JSON label for both single values and record streams.
     // Establish the record format from multiple valid lines in the sample.
     if matches!(label, "json" | "jsonl") {

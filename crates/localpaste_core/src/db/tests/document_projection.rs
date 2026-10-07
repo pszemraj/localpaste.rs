@@ -63,11 +63,23 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 }
 
 #[test]
-fn semantic_kinds_rebuild_from_version_ten_and_survive_restart() {
+fn semantic_kinds_rebuild_from_version_eleven_and_survive_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
     let cases = [
+        (
+            "set timer for 10 minutes\r\n",
+            "batch",
+            PasteKind::Other,
+            PasteKind::Document,
+        ),
+        (
+            "source code is at https://example.com\r\n",
+            "batch",
+            PasteKind::Other,
+            PasteKind::Document,
+        ),
         (
             "VGhpcyBpcyBhIHNlY3JldCB0b2tlbg==",
             "text",
@@ -348,7 +360,7 @@ fn semantic_kinds_rebuild_from_version_ten_and_survive_restart() {
         .unwrap()
         .insert(
             META_SCHEMA_VERSION_KEY,
-            bincode::serialize(&10_u64).unwrap().as_slice(),
+            bincode::serialize(&11_u64).unwrap().as_slice(),
         )
         .unwrap();
     txn.commit().unwrap();
@@ -387,13 +399,13 @@ fn semantic_kinds_rebuild_from_version_ten_and_survive_restart() {
             })
             .count()
     };
-    assert_eq!(backup_count(), 1, "v10 upgrade must create one backup");
+    assert_eq!(backup_count(), 1, "v11 upgrade must create one backup");
 
     assert_rebuilt();
     assert_eq!(
         backup_count(),
         1,
-        "current v11 restart must not create another backup"
+        "current v12 restart must not create another backup"
     );
 }
 

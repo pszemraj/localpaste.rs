@@ -7,6 +7,60 @@ use super::looks_like_flat_config_yaml;
 use super::looks_like_yaml;
 use super::refine_magika_label;
 
+#[cfg(feature = "magika")]
+#[test]
+fn automatic_setup_word_notes_remain_documents() {
+    let pastes: Vec<_> = [
+        "set timer for 10 minutes\r\n",
+        "source code is at https://example.com\r\n",
+    ]
+    .into_iter()
+    .map(|content| crate::models::paste::Paste::new(content.into(), "review note".into()))
+    .collect();
+    for paste in pastes {
+        assert_eq!(paste.language, None);
+        assert!(!paste.language_is_manual);
+        assert_eq!(
+            crate::models::paste::PasteMeta::from(&paste).derived.kind,
+            crate::semantic::PasteKind::Document,
+            "{}",
+            paste.content
+        );
+    }
+}
+
+#[test]
+fn batch_refinement_rejects_setup_prose_and_retains_script_structure() {
+    for content in [
+        "set timer for 10 minutes\r\n",
+        "source code is at https://example.com\r\n",
+    ] {
+        assert_eq!(refine_magika_label("batch", content), None, "{content}");
+    }
+    for content in [
+        "@echo off\r\nset MODE=dev\r\necho %MODE%\r\n",
+        "rem keep this batch script comment",
+        "set MODE=dev",
+        "set /p prompt=Enter your full name",
+        "set /A count=10",
+        "cd /D C:\\Users\\project",
+        "cd Program Files",
+        "cd C:\\Program Files",
+        "set /?",
+        "set /? additional words",
+        "source .env\ncargo check",
+        "export MODE=dev",
+        "source\tcode\tlocation\nmain\trust\tpath",
+        "export function renderPanel() {}",
+    ] {
+        assert_eq!(
+            refine_magika_label("batch", content).as_deref(),
+            Some("batch"),
+            "{content}"
+        );
+    }
+}
+
 fn assert_detection_cases(cases: &[(&str, Option<&str>)]) {
     for (content, expected) in cases {
         assert_eq!(
