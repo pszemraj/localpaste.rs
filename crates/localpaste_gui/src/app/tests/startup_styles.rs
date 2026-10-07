@@ -41,7 +41,6 @@ fn normal_startup_first_paste_and_populated_restart_render_without_test_styles()
     let dir = TempDir::new().unwrap();
     let _db = EnvGuard::set("DB_PATH", dir.path().join("db").to_str().unwrap());
     let _port = EnvGuard::set("PORT", "0");
-    let _server = EnvGuard::set("LP_SERVER", "http://127.0.0.1:0");
     let _probe = EnvGuard::remove("LOCALPASTE_NAV_PROBE_LOG");
     let ctx = egui::Context::default();
     let mut app = LocalPasteApp::new().unwrap();
