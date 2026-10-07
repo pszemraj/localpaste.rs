@@ -1,6 +1,6 @@
 //! Shared text and host normalization helpers.
 
-use std::net::IpAddr;
+use std::{net::IpAddr, ops::Range};
 
 /// Maximum byte sample used by local text classification/detection paths.
 pub(crate) const TEXT_SAMPLE_MAX_BYTES: usize = 64 * 1024;
@@ -40,6 +40,31 @@ pub fn is_loopback_host(host: &str) -> bool {
         .parse::<IpAddr>()
         .map(|ip| ip.is_loopback())
         .unwrap_or(false)
+}
+
+/// Find the first ASCII case-insensitive match as a source-text byte range.
+///
+/// # Arguments
+/// - `content`: Original text to search.
+/// - `query_lower`: Nonempty, lowercase ASCII query.
+///
+/// # Returns
+/// The first matching byte range, or `None` when no match exists.
+///
+/// # Panics
+/// Panics when `query_lower` is empty; callers handle empty-query policy.
+pub fn find_ascii_case_insensitive_range(content: &str, query_lower: &str) -> Option<Range<usize>> {
+    let needle = query_lower.as_bytes();
+    content
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| {
+            window
+                .iter()
+                .map(u8::to_ascii_lowercase)
+                .eq(needle.iter().copied())
+        })
+        .map(|start| start..start + needle.len())
 }
 
 /// Return a byte-limited prefix without splitting a UTF-8 codepoint.

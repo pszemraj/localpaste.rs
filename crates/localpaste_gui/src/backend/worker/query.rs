@@ -496,21 +496,10 @@ fn find_search_range(content: &str, query: &str, case_sensitive: bool) -> Option
 
     let normalized_query = query.to_lowercase();
     if normalized_query.is_ascii() {
-        let needle = normalized_query.as_bytes();
-        let haystack = content.as_bytes();
-        if needle.len() > haystack.len() {
-            return None;
-        }
-        for start in 0..=haystack.len() - needle.len() {
-            if haystack[start..start + needle.len()]
-                .iter()
-                .map(u8::to_ascii_lowercase)
-                .eq(needle.iter().copied())
-            {
-                return Some(start..start + needle.len());
-            }
-        }
-        return None;
+        return localpaste_core::text::find_ascii_case_insensitive_range(
+            content,
+            &normalized_query,
+        );
     }
 
     let normalized_content = content.to_lowercase();
@@ -575,7 +564,7 @@ fn append_compact_text(output: &mut String, text: &str) {
 
 #[cfg(test)]
 mod excerpt_tests {
-    use super::{body_match_excerpt, MATCH_EXCERPT_MAX_CHARS};
+    use super::{body_match_excerpt, find_search_range, MATCH_EXCERPT_MAX_CHARS};
 
     #[test]
     fn body_excerpt_preserves_unicode_case_and_compacts_newlines() {
@@ -583,11 +572,20 @@ mod excerpt_tests {
             .expect("Unicode case-insensitive match");
         assert!(excerpt.contains("ÉCOLE"));
         assert!(!excerpt.contains('\n'));
+        assert_eq!(
+            find_search_range("before İ after", "i\u{307}", false),
+            Some(7..9)
+        );
     }
 
     #[test]
     fn body_excerpt_keeps_ascii_matching_compatible_with_canonical_search() {
         assert!(body_match_excerpt("İstanbul", "i", false).is_none());
+        assert!(body_match_excerpt("Needle", " ", false).is_none());
+        assert_eq!(
+            find_search_range("é NeEdLe needle", "needle", false),
+            Some(3..9)
+        );
     }
 
     #[test]

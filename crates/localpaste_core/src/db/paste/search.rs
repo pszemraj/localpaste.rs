@@ -196,44 +196,26 @@ impl PasteDb {
         } else {
             &query_lower
         };
-        let mut results = Vec::new();
-        if metadata_only {
-            for row in metas.iter()? {
-                let (_, value) = row?;
-                let meta = deserialize_meta(value.value())?;
-                if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref())
-                    || !(filter.predicate)(&meta)
-                {
-                    continue;
-                }
-                let score = if scope == SearchScope::Title {
-                    i32::from(helpers::contains_search(
-                        &meta.name,
-                        literal_query,
-                        options.case_sensitive,
-                    )) * 12
-                } else {
-                    score_meta_match(&meta, query, options.case_sensitive)
-                };
-                if score > 0 {
-                    push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
-                }
-            }
+        let pastes = if metadata_only {
+            None
         } else {
-            let pastes = read_txn.open_table(PASTES)?;
-            for row in metas.iter()? {
-                let (key, value) = row?;
-                let meta = deserialize_meta(value.value())?;
-                if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref())
-                    || !(filter.predicate)(&meta)
-                {
-                    continue;
-                }
+            Some(read_txn.open_table(PASTES)?)
+        };
+        let mut results = Vec::new();
+        for row in metas.iter()? {
+            let (key, value) = row?;
+            let meta = deserialize_meta(value.value())?;
+            if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref())
+                || !(filter.predicate)(&meta)
+            {
+                continue;
+            }
+            let score = if let Some(pastes) = &pastes {
                 let Some(value) = pastes.get(key.value())? else {
                     continue;
                 };
                 let paste = deserialize_paste(value.value())?;
-                let score = if scope == SearchScope::Body {
+                if scope == SearchScope::Body {
                     i32::from(helpers::contains_search(
                         &paste.content,
                         literal_query,
@@ -241,10 +223,18 @@ impl PasteDb {
                     ))
                 } else {
                     score_paste_match(&paste, &meta, query, options.case_sensitive)
-                };
-                if score > 0 {
-                    push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
                 }
+            } else if scope == SearchScope::Title {
+                i32::from(helpers::contains_search(
+                    &meta.name,
+                    literal_query,
+                    options.case_sensitive,
+                )) * 12
+            } else {
+                score_meta_match(&meta, query, options.case_sensitive)
+            };
+            if score > 0 {
+                push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
             }
         }
         Ok(finalize_meta_search_results(results, limit))
