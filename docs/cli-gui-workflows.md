@@ -3,7 +3,7 @@
 `lpaste` is the terminal-side companion to the desktop app. It talks to the same localhost API that the GUI exposes, so you can inspect, export, diff, or automate work without leaving the editor.
 
 > [!IMPORTANT]
-> GitHub release asset scope is listed in [README.md#releases](../README.md#releases). To use `lpaste`, build it from source with Cargo:
+> GitHub release asset scope is listed in [GUI release assets](release-gui.md#artifact-contract). To use `lpaste`, build it from source with Cargo:
 >
 > ```bash
 > cargo build -p localpaste_cli --bin lpaste
@@ -40,12 +40,6 @@ lpaste list --limit 20
 For terminal access to a GUI-owned store, follow [storage operational expectations](storage.md#operational-expectations).
 
 ## Useful complementary workflows
-
-List recent paste names and ids:
-
-```bash
-lpaste list --limit 20
-```
 
 Search metadata only. This is usually the fastest way to find a paste from the terminal when you remember tags, language, or derived retrieval terms:
 
@@ -111,18 +105,21 @@ The simplest robust export is JSON-first:
 
 That preserves content and metadata without guessing file extensions.
 
-### PowerShell example: export all pastes to `.\localpaste-all-pastes`
+### PowerShell 5.1/7 example: export all pastes to `.\localpaste-all-pastes`
 
 This writes `index.json` plus one `<safe-name>--<id>.json` file per paste in the current working directory.
 
 ```powershell
 $outDir = Join-Path (Get-Location) "localpaste-all-pastes"
 $limit = 100000
+$utf8Encoding = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $utf8Encoding
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-$items = lpaste --json list --limit $limit | ConvertFrom-Json
-$items | ConvertTo-Json -Depth 8 | Set-Content -Path (Join-Path $outDir "index.json")
+$indexJson = lpaste --json list --limit $limit | Out-String
+[IO.File]::WriteAllText((Join-Path $outDir "index.json"), $indexJson, $utf8Encoding)
+$items = $indexJson | ConvertFrom-Json
 
 foreach ($item in $items) {
     $id = [string]$item.id
@@ -133,9 +130,13 @@ foreach ($item in $items) {
     }
 
     $fileName = "{0}--{1}.json" -f $safeName.Substring(0, [Math]::Min($safeName.Length, 80)), $id
-    lpaste --json get $id | Set-Content -Path (Join-Path $outDir $fileName)
+    $payload = lpaste --json get $id | Out-String
+    [IO.File]::WriteAllText((Join-Path $outDir $fileName), $payload, $utf8Encoding)
 }
 ```
+
+The explicit encoding preserves native CLI Unicode output and writes UTF-8 without a BOM
+on both PowerShell versions. `index.json` remains an array for empty and single-paste stores.
 
 ### Bash example: export all pastes to `./localpaste-all-pastes`
 

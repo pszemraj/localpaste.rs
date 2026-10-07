@@ -23,22 +23,12 @@ LocalPaste gives those scraps a durable home:
 - recover older versions when a scratch edit goes sideways
 - automate through a CLI or localhost HTTP API when the terminal is faster
 
-## Highlights
-
-- **Fast capture**: paste in the app or pipe text from the terminal.
-- **Code-aware editor**: highlighting, language overrides, undo/redo, and large-buffer handling.
-- **Searchable library**: find snippets by content, name, tags, language, or metadata.
-- **Version recovery**: inspect, diff, duplicate, reset, or undo destructive GUI deletes.
-- **Shared interfaces**: GUI, server, and `lpaste` use the same local data model.
-- **Local by default**: loopback API, on-disk storage, no account, no cloud dependency.
-
 ## Quick Start
 
 Download the latest binary for your system from
-[GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases), then install and run LocalPaste.[^gui-release]
-
-[^gui-release]: Release downloads currently install the desktop GUI only. For most local paste workflows,
-    that is enough; build from source when you need `lpaste` or the standalone server.
+[GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases), then install and run LocalPaste.
+Release downloads install the desktop GUI; build from source for `lpaste` or the standalone server.
+See [GUI releases](docs/release-gui.md) for artifact names and platform installation details.
 
 To build from source:
 
@@ -46,12 +36,6 @@ To build from source:
 git clone https://github.com/pszemraj/localpaste.rs.git
 cd localpaste.rs
 cargo run
-```
-
-Or target the GUI binary explicitly after cloning:
-
-```bash
-cargo run -p localpaste_gui --bin localpaste-gui
 ```
 
 Use the standalone server and CLI when you want a headless workflow:
@@ -65,44 +49,17 @@ echo "hello from quickstart" | cargo run -p localpaste_cli --bin lpaste -- new -
 cargo run -p localpaste_cli --bin lpaste -- list --limit 5
 ```
 
-If the server is not on the default endpoint, pass `--server` or set `LP_SERVER`:
-
-```bash
-export LP_SERVER="http://127.0.0.1:38973"
-```
-
-```powershell
-$env:LP_SERVER = "http://127.0.0.1:38973"
-```
-
-When the GUI is already running, `lpaste` can usually discover the GUI's embedded API for the same `DB_PATH`:
-
-```bash
-lpaste list --limit 20
-lpaste search-meta validation
-lpaste get <paste-id>
-```
-
-## Configuration Notes
-
-- Language detection defaults: [`docs/language-detection.md#feature-topology`](docs/language-detection.md#feature-topology).
-- Version history, server exposure, CORS, size limits, and backup settings: [`docs/security.md#environment-variables`](docs/security.md#environment-variables).
-- Storage and single-writer rules: [`docs/storage.md`](docs/storage.md).
-
-## Releases
-
-GitHub Releases publish desktop GUI assets under `localpaste-*` filenames. The CLI (`lpaste`) and standalone server (`localpaste`) are source-built with Cargo.
-
-Artifact names, platform coverage, checksums, and macOS signing/notarization behavior are documented in [`docs/release-gui.md`](docs/release-gui.md).
+For endpoint selection, GUI discovery, and terminal examples, see
+[CLI workflows](docs/cli-gui-workflows.md).
 
 ## Documentation
 
 Start here:
 
 - Terminal workflows with the GUI: [`docs/cli-gui-workflows.md`](docs/cli-gui-workflows.md)
-- Language detection and highlighting: [`docs/language-detection.md`](docs/language-detection.md)
+- Language detection and highlighting: [`docs/language-detection.md`](docs/language-detection.md#feature-topology)
 - Storage and durability: [`docs/storage.md`](docs/storage.md)
-- Security and exposure model: [`docs/security.md`](docs/security.md)
+- Security, exposure, and configuration: [`docs/security.md`](docs/security.md#environment-variables)
 - Deployment and service operations: [`docs/deployment.md`](docs/deployment.md)
 - Full documentation map: [`docs/README.md`](docs/README.md)
 
@@ -110,7 +67,6 @@ For development:
 
 - Build, validation, and smoke-test workflow: [`docs/dev/devlog.md`](docs/dev/devlog.md)
 - GUI behavior notes, navigation probe, and manual test checklist: [`docs/dev/gui-notes.md`](docs/dev/gui-notes.md)
-- GUI release pipeline: [`docs/release-gui.md`](docs/release-gui.md)
 
 ## License
 

@@ -1,7 +1,5 @@
 # Documentation Map
 
-## Reference Map
-
 | Concept | Reference |
 | --- | --- |
 | Product overview and quick start | [../README.md](../README.md) |

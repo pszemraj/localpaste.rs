@@ -1,6 +1,6 @@
 # LocalPaste Desktop Palette
 
-These palette values are defined in the rewrite theme module:
+The desktop uses a dark palette defined in the theme module:
 [`../../crates/localpaste_gui/src/app/style.rs`](../../crates/localpaste_gui/src/app/style.rs).
 
 | Token                       | Hex         | Notes                                   |
@@ -11,8 +11,10 @@ These palette values are defined in the rewrite theme module:
 | `COLOR_TEXT_PRIMARY`        | `#C9D1D9`   | Body text                               |
 | `COLOR_TEXT_SECONDARY`      | `#8B949E`   | Secondary text                          |
 | `COLOR_TEXT_MUTED`          | `#6E7681`   | Labels / metadata                       |
-| `COLOR_ACCENT`              | `#E57000`   | Primary actions, selection              |
-| `COLOR_ACCENT_HOVER`        | `#CE422B`   | Accent hover state                      |
+| `COLOR_ACCENT_TEXT`         | `#D0843A`   | Accent text and links                   |
+| `COLOR_ACCENT_SURFACE`      | `#B86724`   | Filled controls                         |
+| `COLOR_ACCENT_SURFACE_HOVER` | `#C37431`  | Hovered controls                        |
+| `COLOR_MODAL_CHROME`        | `#8A522A`   | Modal title bars                        |
 | `COLOR_SELECTION_STROKE`    | `#3B82F6`   | Selection outline                       |
 | `COLOR_SELECTION_FILL_RGBA` | `#3B82F655` | Selection fill RGBA tuple (`[r,g,b,a]`) |
 | `COLOR_BORDER`              | `#30363D`   | Divider strokes                         |

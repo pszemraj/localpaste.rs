@@ -10,9 +10,11 @@ These instructions apply to the headless `localpaste` server. The desktop GUI (`
 - [macOS (launchd)](#macos-launchd)
 - [Windows](#windows)
 - [Common Patterns](#common-patterns)
+- [Backups](#backups)
 - [Embedded API Discovery](#embedded-api-discovery)
 
 ---
+
 ## Quick Start
 
 Build/install commands are documented in [dev/devlog.md](dev/devlog.md).
@@ -51,13 +53,13 @@ lsof -i :38411
 # lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
 
-> [!CAUTION]
-> `kill -9` can leave stale lock state and require manual recovery on next start.
+Use graceful shutdown first. Forced termination skips orderly request completion; the OS releases the database owner lock when the process exits.
 
 ### Lock Safety
 
 When lock acquisition fails, stop the owning process and retry.
 There is no `--force-unlock` path.
+The lock file's presence does not mean a process still owns it. Do not delete it to bypass a live writer; the lock is held by the OS on the open file.
 For semantics and error contracts, use:
 [dev/locking-model.md](dev/locking-model.md) and [storage.md](storage.md).
 
@@ -160,6 +162,12 @@ Register-ScheduledTask -TaskName "LocalPaste" -Action $Action -Trigger $Trigger
 
 ## Common Patterns
 
+### Backups
+
+Set `AUTO_BACKUP=true` to snapshot an existing database at startup, or run `localpaste --backup` while no other writer owns that `DB_PATH`. Backups are consistent redb snapshots stored beside `data.redb` as `data.redb.backup.<timestamp>.redb`, with an additional numeric suffix on name collisions. LocalPaste does not schedule backups or rotate them. Copy snapshots elsewhere for protection against loss of the DB directory.
+
+Startup compatibility repairs create a backup independently of `AUTO_BACKUP`; see the [repair policy](storage.md#compatibility-policy).
+
 ### Auto-restart on Crash
 
 With systemd:
@@ -197,6 +205,4 @@ curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "S
 
 ## Embedded API Discovery
 
-- Prefer explicit `--server`/`LP_SERVER` for deterministic automation.
-- Use `lpaste --no-discovery ...` to disable `.api-addr` discovery.
-- Discovery trust checks and fallback rules: [architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust)
+For CLI endpoint selection, trust checks, and fallback rules, see [Discovery And Trust](architecture.md#10-discovery-and-trust).

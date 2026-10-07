@@ -28,7 +28,6 @@ Shortcut contract:
 - `Ctrl/Cmd+S`: save content + metadata.
 - `Ctrl/Cmd+Delete`: delete selected paste when text input does not own focus. `Delete` means forward Delete; on a MacBook keyboard use `Fn+Cmd+Delete`.
 - `Ctrl/Cmd+F`: focus sidebar search.
-- `Ctrl/Cmd+Shift+P`: toggle command palette.
 - `Ctrl/Cmd+K`: toggle the commands-only palette (also `Ctrl/Cmd+Shift+P`).
 - `Ctrl/Cmd+Shift+K`: toggle the separate paste picker.
 - `Ctrl/Cmd+I`: toggle Properties drawer.
@@ -43,9 +42,10 @@ Navigation/selection contract:
 
 - Global sidebar navigation via `Up`/`Down` is bare-arrow only; modified arrows (`Ctrl`/`Alt`/`Shift`/`Cmd`) stay in editor-selection semantics.
 - `Tab` indents selected nonblank lines; without a selection it inserts four spaces. `Shift+Tab` removes one leading tab or up to four spaces from each affected line. This uses the buffer's line boundaries, including CR and Unicode separators, and preserves original line endings. Even a partial single-line selection indents that entire line. Directional selections survive indentation and undo/redo; each indentation is one undo step.
-- Window deactivation releases editor keyboard ownership after applying earlier text and paste events. When multiple native focus events arrive in one frame, the final event determines whether to blur. Uncommitted IME preedit is cancelled on deactivation or discovery focus transfer, restoring displaced text and selection so typing can resume. Committing composition creates one undoable replacement of the original selection. `Cmd+C` still copies that selection when no other text input owns the keyboard; `Cmd+V` creates a new paste. Click the editor to resume editing.
+- Window deactivation releases editor keyboard ownership after applying earlier text and paste events. When multiple native focus events arrive in one frame, the final event determines whether to blur. Uncommitted IME preedit is cancelled on deactivation or discovery focus transfer, restoring displaced text and selection so typing can resume. Committing composition creates one undoable replacement of the original selection. `Ctrl/Cmd+C` still copies that selection when no other text input owns the keyboard; `Ctrl/Cmd+V` creates a new paste. Click the editor to resume editing.
 - Shift-click and Shift-drag extend the editor selection from its existing anchor using modifiers captured at mouse press, even if Shift is released before the mouse. Floating-window clicks, including window edges, leave the underlying caret and selection untouched.
 - Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).
+- CRLF is one navigation boundary: Left/Right and shifted selection cross both characters without placing the caret between them. Edits and undo/redo keep the caret on a visible position and preserve unedited line endings.
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
 - Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
 
@@ -118,11 +118,11 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Sidebar and picker each retain their own session query and field scope: All fields (default), Title, Metadata, or Body. Metadata searches the existing title/tag/language/derived-term projection. Title and Metadata avoid loading bodies; every scope searches the full store before applying the result limit. HTTP and CLI search are unchanged.
 - Scope changes clear old results immediately; changing only sidebar scope retains the open document and reading position even if no rows match. Responses and backend cache keys carry the scope and collection so delayed results cannot leak between contexts. Collection rules apply in the backend before the search result limit, including when a matching collection row is older than the first 512 unfiltered results.
 - Opening the paste picker from its shortcut or the command palette refreshes its retained query and scope and selects the old query for replacement; responses discarded while it was closed cannot leave it stuck with empty results. Reopening or changing query/scope resets selection and scrolls to the first result once rows arrive; subsequent manual scrolling is preserved.
-- Picker Delete restores the originating input after deleting a different paste. Deleting the open paste keeps the picker as the keyboard owner, including for typing and paste into its query, and blocks dismissal, discovery toggles, and unrelated selection changes until the delete reply and replacement paste load settle. A selection already queued before deletion is preferred over the adjacent fallback. A save, delete, or replacement-load failure releases the fence while preserving the picker; after a successful replacement load, Escape returns to the originating input.
+- Picker Delete restores the originating input after deleting a different paste and preserves the editor draft through the delete reply. Deleting the open paste keeps the picker as the keyboard owner, including for typing and paste into its query, and blocks dismissal, discovery toggles, and unrelated selection changes until the delete reply and replacement paste load settle. A selection already queued before deletion is preferred over the adjacent fallback. A save, delete, or replacement-load failure releases the fence while preserving the picker; after a successful replacement load, Escape returns to the originating input.
 - Arrow navigation from a hidden selection starts at the first visible row.
 - The paste picker shows `Searching...` while a scoped request is in flight. Search failures remain visible in the picker with a Retry button. Requests resume only when Retry is clicked or query/scope changes; a successful response clears the error. Closing it discards displayed results and resets selection while retaining its query and scope. Language labels follow the sidebar's large-buffer plain-rendering rule.
 - Picker All fields and Body results show a compact excerpt around the first literal body match. Title and Metadata results use metadata alone and have no body excerpts.
-- Opening a picker result focuses its editor after loading. Text and paste received while the previous draft saves or the chosen body loads wait for that accepted selection; failed or cancelled opens discard their queued input. Native deactivation preserves earlier queued edits and leaves the editor blurred. Results outside current sidebar results stay selected through background refreshes until sidebar navigation, the search query, or collection/language filters change. Copying a picker result leaves the current editor selection and draft intact. Deleting another picker row returns focus to the input that opened the picker and preserves the editor draft through the delete reply.
+- Opening a picker result focuses its editor after loading. Text and paste received while the previous draft saves or the chosen body loads wait for that accepted selection; failed or cancelled opens discard their queued input. Native deactivation preserves earlier queued edits and leaves the editor blurred. Results outside current sidebar results stay selected through background refreshes until sidebar navigation, the search query, or collection/language filters change. Copying a picker result leaves the current editor selection and draft intact.
 - Repeated picker copies use the latest request's snapshot and format. Older loaded, missing, or failed replies cannot consume a newer copy action, including another copy of the same paste.
 - Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Opening a paste from a sidebar or picker All fields or Body search primes this in-paste find bar when that search query appears in the paste body. Picker opens retain their originating query through loading and save-before-switch, including when reopening the active draft. Metadata-only picker hits preserve the existing Find query.
 - Growing the Find query refines the current selected match from its start. Find keeps query focus after clicking Prev, Next, or Case and on `Enter`/`Shift+Enter` and advances to the next/previous match. `Escape` from its query or `Close` returns focus to the editor while preserving the matched selection and the query for reopening. Buttons and document jumps center the caret independently of editor focus.
@@ -140,7 +140,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Rename/title edits commit on `Enter` and on title-field blur.
 - Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
 - Properties drawer is non-modal; opening it does not disable virtual-editor typing, caret movement, or editor shortcuts.
-- Folder create/edit/move controls are intentionally removed from the rewrite GUI; organization is smart-filter + search based.
+- Folder create/edit/move controls are absent from the GUI; organize with smart filters and search.
 
 ## Diff And History Workflows
 
@@ -186,7 +186,7 @@ Run this checklist when touching detection/highlight/filter code.
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.
 9. Validate large-buffer guardrail:
-   - Paste content >= 256KB and verify display is plain regardless of language metadata.
+   - Use content over the [plain-rendering threshold](../language-detection.md#virtual-editor-async-highlight-flow) and verify display is plain regardless of language metadata.
 10. Re-run keyboard/navigation sanity checks listed in
     [Keyboard And Navigation Contract](#keyboard-and-navigation-contract)
     after language UI edits.
@@ -206,7 +206,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
 1. Launch sanity:
    - GUI opens without panic/crash and status bar shows API endpoint.
 2. Initial dataset sanity:
-   - Sidebar includes seeded pastes such as `perf-medium-python`, `perf-100kb-python`, `perf-300kb-rust`, `perf-scroll-5k-lines`.
+   - Confirm the named cases from the [perf runbook](gui-perf-protocol.md#runbook) appear in All, including `perf-scroll-5k-lines`.
 3. Focus behavior:
    - Click editor, type a character, caret remains visible and blinking.
    - Focus stays in editor during in-editor interaction.
@@ -216,11 +216,11 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
      [Keyboard And Navigation Contract](#keyboard-and-navigation-contract).
    - Confirm save transitions dirty -> saved after `Ctrl/Cmd+S`.
 5. Commands and paste discovery:
-   - `Cmd+K` lists commands; a paste-body query does not produce paste rows.
-   - `Cmd+Shift+K` opens the paste picker. With an empty query, open a different paste and confirm its body starts at the first line. With a Body query near the end of a long paste, confirm the result shows a matching excerpt; open it and confirm Find selects and reveals that passage.
+   - `Ctrl/Cmd+K` lists commands; a paste-body query does not produce paste rows.
+   - `Ctrl/Cmd+Shift+K` opens the paste picker. With an empty query, open a different paste and confirm its body starts at the first line. With a Body query near the end of a long paste, confirm the result shows a matching excerpt; open it and confirm Find selects and reveals that passage.
    - Copy and Copy Fenced work from picker results without changing the active editor or its unsaved draft; deleting a disposable result removes its row.
    - Open history and diff modals from palette queries (`history`, `diff`) when a paste is selected.
-   - `F1` help shows Mac key names and finds shortcuts by description and by key combination, including `Cmd+Shift+K`. Try an unmatched query and confirm the no-match message appears without resizing the window; Clear restores all shortcuts. Open help from the editor, then close with `Esc`, `F1`, or Close and confirm typing resumes at the same selection. Repeat from sidebar search and confirm typing resumes in its query.
+   - `F1` help shows native platform key names and finds shortcuts by description and by key combination, including `Cmd+Shift+K` on macOS or `Ctrl+Shift+K` on Windows/Linux. Try an unmatched query and confirm the no-match message appears without resizing the window; Clear restores all shortcuts. Open help from the editor, then close with `Esc`, `F1`, or Close and confirm typing resumes at the same selection. Repeat from sidebar search and confirm typing resumes in its query.
    - Open History, press `F1`, then `Esc`: help closes and History returns at the same snapshot. Repeat from Diff and confirm its comparison is retained.
 6. Search and filters:
    - Sidebar query narrows results and clearing query restores list.
@@ -228,7 +228,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Opening a paste from a sidebar body-text search selects and scrolls to the first matching substring in the editor.
    - Editor toolbar `Find` locates substrings within the selected paste; `Next`/`Prev` wrap through all matches and the `Case` toggle narrows matching.
    - Close Find with `Escape` or `Close`, then type; the matched selection is replaced in the editor without another click.
-   - Smart collections re-scope results; Markdown with fenced code appears under Documents and is excluded from Code.
+   - Smart collections re-scope results; verify prose with embedded fences and standalone technical fences against [filter semantics](../language-detection.md#filter-and-search-semantics).
    - Sidebar language filter (`All languages` + detected languages) stacks with active collection (not replacing it).
 7. Metadata/properties:
    - Open Properties drawer, edit name/tags/language, save, and confirm list projection updates.
@@ -244,6 +244,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - On a render-capped long line, double-click does not extend selection beyond the visible cap.
    - Triple-click selects line.
    - Drag selection across lines keeps expected range and autoscroll direction.
+   - Load `a\rb\n# c\n` (escapes denote actual line separators), move to `b`, and Delete it. Check the visible caret after deletion, undo, and redo; typing `x` after redo produces `ax\r\n# c\n`. Right/Left and Shift+Right/Left cross the CRLF pair without an invisible caret or changing the body.
 10. Wrap-boundary regression: down-move boundary intent:
     - Paste content `abcd\nab\n`.
     - Make editor narrow enough to wrap at ~4 columns.
@@ -257,34 +258,24 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
 12. Wide-glyph wrapping regression:
     - Paste `🦀` (or `你好`) and make viewport very narrow (`wrap_cols` effectively 1).
     - Expected: no blank first visual row; glyph remains visible; caret/selection maps to glyph correctly.
-13. Highlight matrix auto-detect sanity:
-    - Open several `lang-*` seeded pastes and verify language chip/highlighting is plausible for each.
-14. Manual plain override:
-    - Set language to `Plain text` in Properties, save, confirm chip shows `plain`.
-    - Edit into obvious code; expected: remains plain until switched back to auto.
-15. Large buffer fallback:
-    - Open `perf-300kb-rust`; expected: plain rendering by design (`>=256KB`) with smooth scrolling.
-16. Mid-size perf sanity:
+13. Run [Language/Highlight QA](#languagehighlight-qa-magika--fallback), using its representative snippets and smooth scrolling in `perf-300kb-rust`.
+14. Mid-size perf sanity:
     - Open `perf-scroll-5k-lines`, scroll rapidly, type near middle, no major hitching.
-17. Window reflow:
+15. Window reflow:
     - Resize window repeatedly; expected: no persistent plain-text gap artifacts and caret remains aligned.
-18. Lock behavior sanity:
+16. Lock behavior sanity:
     - While GUI is open on a paste, verify external API mutation attempts against same paste are lock-gated (423 behavior per lock model).
-19. Version workflow sanity:
+17. Version workflow sanity:
     - Open `Diff`, select another paste, and verify current unsaved edits appear on the left side.
     - Open `History`, navigate with `Older/Newer`, duplicate a historical snapshot, and verify a new paste is created.
     - Trigger reset-to-version and verify current paste updates to the selected snapshot.
-20. Trace sanity (if enabled):
+18. Trace sanity (if enabled):
     - Input trace logs show deterministic virtual input routing.
     - Highlight trace logs show queue/worker/apply flow with stale drops when applicable.
     - Perf logs emit frame percentiles (`avg/p50/p95/p99/worst`) periodically.
-21. Persistence check:
+19. Persistence check:
     - Close GUI and relaunch with the same `DB_PATH`; verify seeded/edited content persists.
 
 ## Edit Locks
 
-Detailed lock semantics are documented in [locking-model.md](locking-model.md).
-GUI-specific behavior remains:
-
-- Opening a paste in GUI acquires a paste edit lock for the app instance owner.
-- API `PUT`/`DELETE` against that paste return `423 Locked` while the lock is held.
+See [GUI lock ownership](locking-model.md#gui-ownership) and the [API error contract](locking-model.md#error-surface-contract).

@@ -58,12 +58,7 @@ flowchart LR
 4. Writes embedded API endpoint to `DB_PATH/.api-addr`.
 5. Runs UI and backend worker in-process.
 
-CLI behavior in this mode:
-
-- `lpaste` prefers explicit `--server` / `LP_SERVER`.
-- If unset and discovery is enabled, it reads `.api-addr`, validates discovered endpoint identity, and only then uses it.
-- If validation fails, it falls back to the default local endpoint.
-- `--no-discovery` disables `.api-addr` probing and uses only explicit/env/default resolution.
+CLI endpoint selection follows [Discovery And Trust](#10-discovery-and-trust).
 
 ### Headless Topology
 
@@ -111,11 +106,7 @@ Storage layout, projection tables, version-history storage, durability, and comp
 
 ## 4) Consistency Model
 
-redb write transactions are atomic across all opened tables, so LocalPaste uses:
-
-- single-write-transaction mutations for paste/meta/index/folder updates,
-- no metadata fault markers or reconcile state machine,
-- no cross-table rollback stack for folder-affecting operations.
+The [storage atomicity contract](storage.md#durability-and-atomicity) applies to paste, metadata, recency-index, and folder updates.
 
 Core transaction helper:
 
@@ -162,19 +153,7 @@ Read behavior:
 
 ## 6) Locking And Concurrency
 
-Two lock layers are used:
-
-1. DB owner lock (filesystem/process-wide): one writer process per DB path.
-2. Paste edit locks (in-memory/paste-scoped): prevent API/CLI/bulk mutations on GUI-open pastes.
-
-Lock reference:
-
-- [dev/locking-model.md](dev/locking-model.md)
-
-Primary implementation:
-
-- [`../crates/localpaste_core/src/db/lock.rs`](../crates/localpaste_core/src/db/lock.rs)
-- [`../crates/localpaste_server/src/locks.rs`](../crates/localpaste_server/src/locks.rs)
+See the [lock layers and mutation guards](dev/locking-model.md).
 
 ## 7) HTTP Layer And Security Boundaries
 
@@ -223,16 +202,21 @@ sequenceDiagram
 
 Embedded server discovery path:
 
-- GUI writes `.api-addr`.
-- CLI may consume it only when no explicit endpoint override is set.
+- `lpaste` prefers explicit `--server` / `LP_SERVER`.
+- If unset and discovery is enabled, it reads the GUI's `.api-addr` file and validates the discovered endpoint before using it.
+- If validation fails, it falls back to the default local endpoint.
+- `--no-discovery` disables `.api-addr` probing and uses only explicit/env/default resolution.
 - CLI validates:
-  - scheme/loopback constraints,
-  - LocalPaste response fingerprint (`x-localpaste-server: 1`).
+  - an HTTP URL with a loopback host,
+  - a successful `200` response from `/api/pastes/meta?limit=1`,
+  - JSON content type, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `x-localpaste-server: 1` headers.
+
+The probe uses 250 ms connection/read/write timeouts. These checks reject stale or unrelated endpoints; the headers identify a compatible API but do not authenticate a local process.
 
 Relevant code:
 
 - [`../crates/localpaste_server/src/embedded.rs`](../crates/localpaste_server/src/embedded.rs)
-- [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)
+- [`../crates/localpaste_cli/src/discovery.rs`](../crates/localpaste_cli/src/discovery.rs)
 
 ## 11) Validation Strategy
 

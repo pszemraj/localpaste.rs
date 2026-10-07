@@ -15,7 +15,7 @@ Release packaging runs on version tags or manual dispatch. Packaging verificatio
 
 `release-gui.yml` supports two source modes:
 
-- `release_tag`: package from an existing stable tag/version.
+- `release_tag`: package from an existing stable tag/version. Tag-triggered runs publish; manual runs publish only when `dry_run` is `false`.
 - `current_ref`: package from the current commit for verification; publish job is skipped and packaging metadata is derived from the workspace semver (stable or prerelease).
 
 Manual `workflow_dispatch` defaults to the safe verification path:
@@ -33,9 +33,6 @@ to `false`.
 - empty `tag` derives packaging metadata from `[workspace.package].version`, including prerelease workspace versions used for smoke/verification branches.
 
 When packaging metadata comes from a prerelease workspace version, artifact names and manifests keep the full prerelease tag. Windows packager config uses the numeric `major.minor.patch` core only, because WiX/MSI product versions do not accept prerelease/build metadata.
-
-`release_tag` publishes on tag-triggered runs and on manual runs where
-`dry_run` is `false`.
 
 `release_tag` gates:
 

@@ -1,6 +1,6 @@
-# GUI Perf Test Protocol (Rewrite)
+# GUI Performance Checks
 
-Release-gate evidence and regression checks for GUI perf.
+The GUI must stay responsive while scrolling, editing, and highlighting large pastes.
 
 ## Scope
 
@@ -15,7 +15,6 @@ Release-gate evidence and regression checks for GUI perf.
   - no multi-second plain fallback during newline-burst editing.
 - Next gate target after virtual-editor Phase 1+2 perf changes:
   - p95 frame time `<= 16 ms` once post-change measurements are captured and reviewed.
-  - Until that measurement evidence is captured, keep the current `<= 25 ms` release gate.
 
 Perf runs require an isolated `DB_PATH`; shared writers invalidate the measurements.
 
@@ -24,7 +23,7 @@ Perf runs require an isolated `DB_PATH`; shared writers invalidate the measureme
 - Automated headless tests use a broad regression budget, not release gating:
   - list latency `< 5s`
   - search latency `< 5s`
-- Source: `crates/localpaste_gui/tests/headless_workflows.rs` (`list_and_search_latency_stay_within_reasonable_headless_budget`).
+- Test: [headless_workflows.rs](../../crates/localpaste_gui/tests/headless_workflows.rs) (`list_and_search_latency_stay_within_reasonable_headless_budget`).
 
 ## Prereqs
 
@@ -40,7 +39,7 @@ Run this for reproducible perf checks:
 Flag behavior/meanings are documented in [gui-notes.md](gui-notes.md); this runbook only pins values used during perf validation.
 
 ```powershell
-$env:DB_PATH = Join-Path $env:TEMP "lpaste-perf-$([guid]::NewGuid().ToString('N'))"
+$env:DB_PATH = Join-Path (Get-Location) "target/lpaste-perf-$([guid]::NewGuid().ToString('N'))"
 $env:PORT = "38973"
 $env:LP_SERVER = "http://127.0.0.1:$env:PORT"
 $env:LOCALPASTE_EDITOR_PERF_LOG = "1"
@@ -53,6 +52,22 @@ cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
 While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks.
+In another PowerShell terminal, seed the named cases used below through that endpoint:
+
+```powershell
+$env:LP_SERVER = "http://127.0.0.1:38973" # Replace with the GUI status-bar endpoint.
+$fixtures = @{
+    "perf-medium-python" = "print('fixture')`n" * 100
+    "perf-100kb-python" = "print('fixture')`n" * 6400
+    "perf-300kb-rust" = "fn sample() {}`n" * 21000
+    "perf-scroll-5k-lines" = "fn sample() {}`n" * 5000
+}
+foreach ($fixture in $fixtures.GetEnumerator()) {
+    $fixture.Value | cargo run --quiet -p localpaste_cli --bin lpaste -- new --name $fixture.Key
+}
+```
+
+Run this seed block once per fresh dataset; the random generator does not create these fixed names.
 For standalone server-only smoke/perf validation, use
 [devlog.md#runtime-smoke-test-server-cli](devlog.md#runtime-smoke-test-server-cli).
 
@@ -60,7 +75,7 @@ For standalone server-only smoke/perf validation, use
 
 This runbook seeds a large mixed dataset via `generate-test-data`:
 
-- 10k pastes by default (configurable with `--count`)
+- 10k random pastes with `--count 10000`, plus the four named fixtures
 - weighted content-size distribution (small/medium/large/very large)
 - language-diverse snippets plus folder/tag metadata
 - GUI sidebar lists read metadata projections. Sidebar and paste-picker searches use the field scopes described in [GUI behavior](gui-notes.md#stable-behavior-notes).
@@ -73,13 +88,13 @@ Run the full functional GUI checklist first:
 
 Perf gating in this protocol is based on the checks below:
 
-1. Medium paste (~1-10KB): typing at start/middle/end stays responsive.
-2. Large paste (~10-50KB): highlighting stays visible while edits debounce/refresh.
-3. Very large paste (~50-256KB): async/staged highlight stays stable; transient plain fallback during refresh is acceptable but should not stick.
-4. Huge paste (`>= 256KB`): plain fallback is active by design and scrolling stays smooth.
+1. Medium paste (~1-10 KiB): typing at start/middle/end stays responsive.
+2. Large paste (~10-50 KiB): highlighting stays visible while edits debounce/refresh.
+3. Very large paste (~50-256 KiB): async/staged highlight stays stable; transient plain fallback during refresh is acceptable but should not stick.
+4. Huge paste: verify the [plain-rendering threshold](../language-detection.md#virtual-editor-async-highlight-flow) and smooth scrolling.
 5. Sustained typing: in a 5K-50K line document, hold a key for 3 seconds near the middle; no visible hitching and p95 stays within gate.
 6. Long wrapped line: type near the middle of a minified JSON/log payload and verify no multi-frame stalls.
-7. Idle baseline: open ~200KB content and verify CPU drops near idle between repaint intervals.
+7. Idle baseline: open ~200 KiB content and verify CPU drops near idle between repaint intervals.
 8. Window resize reflow: no long plain-text gaps after resize.
 9. Trace sanity (when enabled): validate `virtual input`, `highlight`, and `editor/backend perf` logs using the runtime-flag behavior in [gui-notes.md#runtime-flags](gui-notes.md#runtime-flags).
 
