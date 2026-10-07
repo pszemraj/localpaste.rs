@@ -97,6 +97,58 @@ fn parse_errors_fail_by_default_and_can_be_explicitly_allowed() {
 }
 
 #[test]
+fn parse_errors_in_test_only_files_are_reported_without_including_test_bodies() {
+    let temp = TempDir::new().expect("temp dir");
+    let root = temp.path().join("src");
+    fs::create_dir_all(root.join("tests")).unwrap();
+    write_file(
+        &root.join("lib.rs"),
+        "#[cfg(test)] mod support; pub fn good() {}",
+    );
+    write_file(&root.join("support.rs"), "fn broken( {");
+    write_file(&root.join("tests/broken.rs"), "fn broken( {");
+    let files = collect_rust_files(&root).unwrap();
+    for include_tests in [false, true] {
+        let scan = scan_sources(temp.path(), &root, files.clone(), 5, include_tests);
+        assert_eq!(scan.parse_errors.len(), 2);
+        assert_eq!(scan.functions.len(), 1);
+    }
+    let args = base_args(root.clone());
+    assert!(run(args).unwrap_err().contains("parse errors detected (2)"));
+    let mut args = base_args(root);
+    args.allow_parse_errors = true;
+    run(args).expect("explicit override permits partial audit");
+}
+
+#[test]
+fn checkout_under_tests_directory_keeps_production_bodies_in_the_audit() {
+    let temp = TempDir::new().expect("temp dir");
+    let checkout = temp.path().join("tests/checkout");
+    let root = checkout.join("src");
+    fs::create_dir_all(root.join("tests")).unwrap();
+    write_file(&root.join("lib.rs"), "fn production_helper() {}");
+    write_file(&root.join("tests/support.rs"), "fn test_helper() {}");
+    let files = collect_rust_files(&root).unwrap();
+    let scan = scan_sources(temp.path(), &root, files.clone(), 5, false);
+    assert_eq!(scan.functions.len(), 1);
+    assert_eq!(scan.functions[0].simple_name, "production_helper");
+    assert!(!scan.functions[0].has_cfg);
+    let with_tests = scan_sources(temp.path(), &root, files, 5, true);
+    assert_eq!(with_tests.functions.len(), 2);
+    assert!(
+        with_tests
+            .functions
+            .iter()
+            .find(|info| info.simple_name == "test_helper")
+            .unwrap()
+            .has_cfg
+    );
+    let mut args = base_args(root);
+    args.fail_on_findings = true;
+    assert!(run(args).unwrap_err().contains("findings detected"));
+}
+
+#[test]
 fn parse_helpers_reject_out_of_range_values() {
     assert!(parse_unit_interval("1.1").is_err());
     assert!(parse_positive_usize("0").is_err());
@@ -138,9 +190,9 @@ fn test_module_context_applies_to_inline_and_external_helpers() {
     args.fail_on_findings = true;
     run(args).expect("test-only helpers must not appear in the production audit");
     let files = collect_rust_files(&root).expect("collect fixtures");
-    let scan = scan_sources(temp.path(), files.clone(), 5, false);
+    let scan = scan_sources(temp.path(), &root, files.clone(), 5, false);
     assert!(scan.functions.is_empty());
-    let scan = scan_sources(temp.path(), files, 5, true);
+    let scan = scan_sources(temp.path(), &root, files, 5, true);
     assert_eq!(scan.functions.len(), 5);
     assert!(scan.functions.iter().all(|info| info.has_cfg));
 
@@ -189,14 +241,26 @@ fn attribute_callback_refs_preserve_live_callbacks_without_masking_unrelated_sym
         fn main() {}
         "#,
     );
-    let mut scan = scan_sources(temp.path(), collect_rust_files(&root).unwrap(), 5, false);
+    let mut scan = scan_sources(
+        temp.path(),
+        &root,
+        collect_rust_files(&root).unwrap(),
+        5,
+        false,
+    );
     let callback_refs = HashSet::from([
         "parse_cfg_default".to_string(),
         "parse_default".to_string(),
         "parse_limit".to_string(),
     ]);
     assert_eq!(scan.attribute_refs, callback_refs);
-    let include_tests = scan_sources(temp.path(), collect_rust_files(&root).unwrap(), 5, true);
+    let include_tests = scan_sources(
+        temp.path(),
+        &root,
+        collect_rust_files(&root).unwrap(),
+        5,
+        true,
+    );
     assert_eq!(include_tests.attribute_refs, callback_refs);
     for (id, function) in scan.functions.iter_mut().enumerate() {
         function.id = id;
@@ -230,7 +294,7 @@ fn production_declaration_keeps_shared_test_support_in_the_audit() {
     write_file(&root.join("shared.rs"), "fn unused_shared_helper() {}");
     let mut files = collect_rust_files(root).unwrap();
     for _ in 0..2 {
-        let scan = scan_sources(root, files.clone(), 5, false);
+        let scan = scan_sources(root, root, files.clone(), 5, false);
         assert_eq!(scan.functions.len(), 1);
         assert!(!scan.functions[0].has_cfg);
         files.reverse();
@@ -249,10 +313,10 @@ fn external_mod_file_inherits_test_context_without_becoming_a_root() {
     write_file(&root.join("support/mod.rs"), "fn support_helper() {}");
     let mut files = collect_rust_files(root).unwrap();
     for _ in 0..2 {
-        assert!(scan_sources(root, files.clone(), 5, false)
+        assert!(scan_sources(root, root, files.clone(), 5, false)
             .functions
             .is_empty());
-        let scan = scan_sources(root, files.clone(), 5, true);
+        let scan = scan_sources(root, root, files.clone(), 5, true);
         assert_eq!(scan.functions.len(), 1);
         assert!(scan.functions[0].has_cfg);
         files.reverse();
@@ -262,7 +326,7 @@ fn external_mod_file_inherits_test_context_without_becoming_a_root() {
         &root.join("lib.rs"),
         "#[cfg(test)] mod support; #[path = \"support/mod.rs\"] mod production;",
     );
-    let scan = scan_sources(root, files, 5, false);
+    let scan = scan_sources(root, root, files, 5, false);
     assert_eq!(scan.functions.len(), 1);
     assert!(!scan.functions[0].has_cfg);
 }
@@ -276,10 +340,10 @@ fn standalone_bin_modules_resolve_next_to_the_entrypoint() {
     write_file(&root.join("support.rs"), "fn support_helper() {}");
     let mut files = collect_rust_files(&root).unwrap();
     for _ in 0..2 {
-        let production = scan_sources(temp.path(), files.clone(), 5, false);
+        let production = scan_sources(temp.path(), &root, files.clone(), 5, false);
         assert_eq!(production.functions.len(), 1);
         assert_eq!(production.functions[0].simple_name, "main");
-        let with_tests = scan_sources(temp.path(), files.clone(), 5, true);
+        let with_tests = scan_sources(temp.path(), &root, files.clone(), 5, true);
         assert_eq!(with_tests.functions.len(), 2);
         assert!(
             with_tests
@@ -306,10 +370,10 @@ fn orphan_root_discovery_follows_path_modules_before_seeding_children() {
     write_file(&root.join("fixtures/nested.rs"), "fn nested_helper() {}");
     let mut files = collect_rust_files(&root).unwrap();
     for _ in 0..2 {
-        assert!(scan_sources(temp.path(), files.clone(), 5, false)
+        assert!(scan_sources(temp.path(), &root, files.clone(), 5, false)
             .functions
             .is_empty());
-        let scan = scan_sources(temp.path(), files.clone(), 5, true);
+        let scan = scan_sources(temp.path(), &root, files.clone(), 5, true);
         assert_eq!(scan.functions.len(), 1);
         assert!(scan.functions[0].has_cfg);
         files.reverse();

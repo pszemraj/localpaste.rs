@@ -170,7 +170,7 @@ fn run(args: Args) -> Result<(), String> {
     // Read module declarations before filtering tests so out-of-line helpers
     // inherit the same test-only context as their declaring module.
     let files = collect_rust_files(scan_root.as_path())?;
-    let scan = scan_sources(&cwd, files, args.k, args.include_tests);
+    let scan = scan_sources(&cwd, &scan_root, files, args.k, args.include_tests);
     let mut functions = scan.functions;
     let parse_errors = scan.parse_errors;
 
@@ -403,10 +403,7 @@ fn eligible_for_dead_check(info: &FunctionInfo, args: &Args) -> bool {
 }
 
 fn is_test_or_cfg_symbol(info: &FunctionInfo) -> bool {
-    info.is_test
-        || info.has_cfg
-        || info.module_path.iter().any(|segment| segment == "tests")
-        || path_has_tests_segment(info.file.as_path())
+    info.is_test || info.has_cfg || info.module_path.iter().any(|segment| segment == "tests")
 }
 
 #[derive(Debug)]

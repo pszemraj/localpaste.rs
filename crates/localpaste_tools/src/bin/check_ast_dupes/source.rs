@@ -14,6 +14,7 @@ pub(super) struct SourceScan {
 
 struct SourceFile {
     path: PathBuf,
+    test_path: bool,
     ast: Result<File, String>,
 }
 
@@ -21,6 +22,7 @@ struct SourceFile {
 ///
 /// # Arguments
 /// - `cwd`: Workspace directory used for relative report paths.
+/// - `audit_root`: Source root used to identify test directories within the audit.
 /// - `files`: Rust source paths, including test modules needed for context discovery.
 /// - `k`: Shingle width for normalized function bodies.
 /// - `include_tests`: Whether test-only bodies participate in similarity checks.
@@ -29,14 +31,19 @@ struct SourceFile {
 /// Function metadata, parse diagnostics, and conservative attribute references.
 pub(super) fn scan_sources(
     cwd: &Path,
+    audit_root: &Path,
     files: Vec<PathBuf>,
     k: usize,
     include_tests: bool,
 ) -> SourceScan {
+    let audit_root = audit_root
+        .canonicalize()
+        .unwrap_or_else(|_| audit_root.to_path_buf());
     let sources: Vec<SourceFile> = files
         .into_iter()
         .map(|file| {
             let path = file.canonicalize().unwrap_or(file);
+            let test_path = path_has_tests_segment(path.strip_prefix(&audit_root).unwrap_or(&path));
             let ast = fs::read_to_string(&path)
                 .map_err(|err| format!("{}: {}", normalize_path(&path), err))
                 .and_then(|src| {
@@ -44,7 +51,11 @@ pub(super) fn scan_sources(
                         format!("{}: failed to parse: {}", normalize_path(&path), err)
                     })
                 });
-            SourceFile { path, ast }
+            SourceFile {
+                path,
+                test_path,
+                ast,
+            }
         })
         .collect();
     let test_only = test_only_files(&sources);
@@ -55,9 +66,6 @@ pub(super) fn scan_sources(
     };
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     for (source, test_only) in sources.into_iter().zip(test_only) {
-        if test_only && !include_tests {
-            continue;
-        }
         let ast = match source.ast {
             Ok(ast) => ast,
             Err(err) => {
@@ -65,6 +73,9 @@ pub(super) fn scan_sources(
                 continue;
             }
         };
+        if test_only && !include_tests {
+            continue;
+        }
         let rel = source
             .path
             .strip_prefix(&cwd)
@@ -183,7 +194,7 @@ fn visit_module_context(
 ) {
     let source = &sources[id];
     let test_only = inherited_test
-        || path_has_tests_segment(&source.path)
+        || source.test_path
         || source
             .ast
             .as_ref()
