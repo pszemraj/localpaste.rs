@@ -13,6 +13,7 @@ use super::{
     BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
+use eframe::egui;
 use localpaste_core::{
     models::paste::Paste, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
 };
@@ -24,7 +25,84 @@ use self::filters::{
     language_extension, matches_active_filters, normalize_language_filter_value, sanitize_filename,
 };
 
+/// Observes native widget copies after egui's selectable-label end-pass writer.
+#[derive(Default)]
+struct NativeClipboardObserver {
+    /// Existing request and output prefix from before this pass's user input.
+    pass: Option<(u64, usize)>,
+    /// Request whose delayed reply must be ignored before the next event drain.
+    superseded_request: Option<u64>,
+}
+
+impl egui::Plugin for NativeClipboardObserver {
+    fn debug_name(&self) -> &'static str {
+        "localpaste_native_clipboard"
+    }
+
+    fn on_end_pass(&mut self, ctx: &egui::Context) {
+        let Some((request_id, command_start)) = self.pass.take() else {
+            return;
+        };
+        if ctx.output(|output| {
+            output
+                .commands
+                .iter()
+                .skip(command_start)
+                .any(|command| matches!(command, egui::OutputCommand::CopyText(_)))
+        }) {
+            self.superseded_request = Some(request_id);
+        }
+    }
+}
+
 impl LocalPasteApp {
+    /// Reconciles native clipboard writes before draining delayed copy replies.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context owning the observer, registered after built-in label selection.
+    pub(super) fn reconcile_native_clipboard(&mut self, ctx: &egui::Context) {
+        let superseded = ctx
+            .plugin_or_default::<NativeClipboardObserver>()
+            .lock()
+            .superseded_request
+            .take();
+        if superseded == Some(self.palette_copy_request_id) {
+            self.pending_copy_action = None;
+        }
+    }
+
+    /// Arms end-pass observation for native widget copies in this input pass.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context whose native widgets can copy text after app update returns.
+    pub(super) fn observe_native_clipboard(&self, ctx: &egui::Context) {
+        let command_start = ctx.output(|output| output.commands.len());
+        let pass = self
+            .pending_copy_action
+            .as_ref()
+            .map(|_| (self.palette_copy_request_id, command_start));
+        let _ = ctx.with_plugin::<NativeClipboardObserver, _>(|observer| observer.pass = pass);
+    }
+
+    /// Queues clipboard text and supersedes any older detached copy request.
+    ///
+    /// # Arguments
+    /// - `text`: Text produced by the newest completed copy action.
+    pub(super) fn queue_clipboard_text(&mut self, text: String) {
+        self.pending_copy_action = None;
+        self.clipboard_outgoing = Some(text);
+    }
+
+    /// Emits queued clipboard text once, preserving immediate editor copy output.
+    ///
+    /// # Arguments
+    /// - `ctx`: Egui context receiving the clipboard output command.
+    pub(super) fn flush_clipboard_output(&mut self, ctx: &egui::Context) {
+        if let Some(text) = self.clipboard_outgoing.take() {
+            ctx.send_cmd(egui::OutputCommand::CopyText(text));
+        }
+    }
+
     /// Sends a backend command and arms short-term event polling for its reply.
     ///
     /// Commands sent in quiet frames arm prompt repainting so worker responses

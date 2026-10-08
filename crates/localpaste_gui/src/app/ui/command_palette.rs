@@ -174,9 +174,7 @@ impl LocalPasteApp {
             }
             CommandPaletteAction::CopyLink => {
                 if let Some(id) = &self.selected_id {
-                    self.pending_copy_action = None;
-                    self.clipboard_outgoing =
-                        Some(util::api_paste_link_for_copy(self.server_addr, id));
+                    self.queue_clipboard_text(util::api_paste_link_for_copy(self.server_addr, id));
                 }
                 self.command_palette_open = false;
             }
@@ -358,9 +356,6 @@ impl LocalPasteApp {
         };
 
         if self.selected_id.as_deref() == Some(id.as_str()) && self.selected_paste.is_some() {
-            // An immediate active-buffer copy supersedes an earlier detached request.
-            // Its eventual response must not overwrite the newer clipboard value.
-            self.pending_copy_action = None;
             let language = self.edit_language.clone().or_else(|| {
                 self.selected_paste
                     .as_ref()
@@ -442,11 +437,11 @@ impl LocalPasteApp {
     ) {
         match action {
             PaletteCopyAction::Raw(_) => {
-                self.clipboard_outgoing = Some(content);
+                self.queue_clipboard_text(content);
                 self.set_status("Copied paste content.");
             }
             PaletteCopyAction::Fenced(_) => {
-                self.clipboard_outgoing = Some(super::super::util::format_fenced_code_block(
+                self.queue_clipboard_text(super::super::util::format_fenced_code_block(
                     content.as_str(),
                     language.as_deref(),
                 ));

@@ -161,12 +161,11 @@ impl LocalPasteApp {
                     self.save_metadata_now();
                 }
                 if copy_requested {
-                    self.clipboard_outgoing = Some(self.active_snapshot());
+                    self.queue_clipboard_text(self.active_snapshot());
                     self.set_status("Copied paste content.");
                 }
                 if copy_link_requested {
-                    self.clipboard_outgoing =
-                        Some(super::super::util::api_paste_link_for_copy(self.server_addr, &id));
+                    self.queue_clipboard_text(super::super::util::api_paste_link_for_copy(self.server_addr, &id));
                     self.set_status("Copied API paste link.");
                 }
                 if duplicate_requested {

@@ -2,6 +2,352 @@
 
 use super::*;
 
+fn copied_texts(output: &egui::FullOutput) -> Vec<&str> {
+    output
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|command| {
+            if let egui::OutputCommand::CopyText(text) = command {
+                Some(text.as_str())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn review_regression_native_query_copies_supersede_picker_requests() {
+    for event in [egui::Event::Copy, egui::Event::Cut] {
+        let (mut harness, evt_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness.app.open_paste_picker();
+        harness.app.set_paste_picker_query("query text".into());
+        for _ in 0..3 {
+            run_full_update(&mut harness.app, &ctx, vec![]);
+        }
+        harness.app.queue_palette_copy("beta".into(), false);
+        let request_id = harness.app.palette_copy_request_id;
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![command_key_event(egui::Key::A)],
+        );
+        let output = run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            egui::RawInput {
+                events: vec![event],
+                ..Default::default()
+            },
+        );
+        assert_eq!(copied_texts(&output), vec!["query text"]);
+        let mut beta = Paste::new("stale beta".into(), "Beta".into());
+        beta.id = "beta".into();
+        evt_tx
+            .send(CoreEvent::PasteCopyLoaded {
+                paste: beta,
+                request_id,
+            })
+            .unwrap();
+        let late = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+        assert!(!late
+            .platform_output
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::OutputCommand::CopyText(_))));
+        assert!(harness.app.pending_copy_action.is_none());
+        assert_eq!(harness.app.active_snapshot(), "content");
+    }
+}
+
+#[test]
+fn review_regression_label_copy_supersedes_picker_request_at_end_pass() {
+    let (mut harness, evt_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.queue_palette_copy("beta".into(), false);
+    let request_id = harness.app.palette_copy_request_id;
+    let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    let label = format!("- v{}", env!("CARGO_PKG_VERSION"));
+    let (start, end) = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape {
+                if text.galley.job.text == label {
+                    let y = text.galley.size().y / 2.0;
+                    return Some((
+                        text.pos + egui::vec2(0.0, y),
+                        text.pos + egui::vec2(text.galley.size().x + 1.0, y),
+                    ));
+                }
+            }
+            None
+        })
+        .expect("visible version label");
+    run_full_update(&mut harness.app, &ctx, primary_pointer_events(start, true));
+    run_full_update(&mut harness.app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    run_full_update(&mut harness.app, &ctx, primary_pointer_events(end, false));
+    assert!(harness.app.virtual_editor_state.selection_range().is_none());
+    // The callback runs before egui's label writer. Force a second pass with
+    // the delayed reply ready, so cancellation must precede that pass's drain.
+    let during_pass_tx = evt_tx.clone();
+    ctx.on_end_pass(
+        "late_copy_between_passes",
+        std::sync::Arc::new(move |ctx| {
+            if ctx.current_pass_index() == 0
+                && ctx.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::Copy))
+                })
+            {
+                let mut beta = Paste::new("stale beta".into(), "Beta".into());
+                beta.id = "beta".into();
+                during_pass_tx
+                    .send(CoreEvent::PasteCopyLoaded {
+                        paste: beta,
+                        request_id,
+                    })
+                    .unwrap();
+                ctx.request_discard("exercise clipboard cancellation between passes");
+            }
+        }),
+    );
+    let output = run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            events: vec![egui::Event::Copy],
+            ..Default::default()
+        },
+    );
+    assert!(output.platform_output.num_completed_passes >= 2);
+    assert_eq!(copied_texts(&output), vec![label.as_str()]);
+    let mut beta = Paste::new("stale beta".into(), "Beta".into());
+    beta.id = "beta".into();
+    evt_tx
+        .send(CoreEvent::PasteCopyLoaded {
+            paste: beta,
+            request_id,
+        })
+        .unwrap();
+    let late = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    assert!(!late
+        .platform_output
+        .commands
+        .iter()
+        .any(|command| matches!(command, egui::OutputCommand::CopyText(_))));
+    assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
+fn review_regression_noop_copy_and_older_queued_output_preserve_newer_requests() {
+    for older_output in [false, true] {
+        let (mut harness, evt_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness.app.focus_editor_next = true;
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        if older_output {
+            harness.app.queue_clipboard_text("older alpha".into());
+        }
+        harness.app.queue_palette_copy("beta".into(), false);
+        let request_id = harness.app.palette_copy_request_id;
+        let output = run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            egui::RawInput {
+                events: vec![egui::Event::Copy],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            copied_texts(&output),
+            if older_output {
+                vec!["older alpha"]
+            } else {
+                vec![]
+            }
+        );
+        assert!(harness.app.pending_copy_action.is_some());
+        let mut beta = Paste::new("newer beta".into(), "Beta".into());
+        beta.id = "beta".into();
+        evt_tx
+            .send(CoreEvent::PasteCopyLoaded {
+                paste: beta,
+                request_id,
+            })
+            .unwrap();
+        let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+        assert!(output.platform_output.commands.iter().any(
+            |command| matches!(command, egui::OutputCommand::CopyText(text) if text == "newer beta")
+        ));
+        assert!(harness.app.pending_copy_action.is_none());
+    }
+}
+
+#[test]
+fn review_regression_native_copy_keeps_a_later_detached_request_in_the_same_pass() {
+    let (mut harness, evt_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.open_paste_picker();
+    harness.app.set_paste_picker_query("query text".into());
+    for _ in 0..3 {
+        run_full_update(&mut harness.app, &ctx, vec![]);
+    }
+    harness.app.queue_palette_copy("beta".into(), false);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![command_key_event(egui::Key::A)],
+    );
+    let mut frame = eframe::Frame::_new_kittest();
+    let output = ctx.run(
+        egui::RawInput {
+            events: vec![egui::Event::Copy],
+            ..Default::default()
+        },
+        |ctx| {
+            harness.app.update(ctx, &mut frame);
+            if ctx.current_pass_index() == 0 {
+                harness.app.queue_palette_copy("gamma".into(), false);
+            }
+        },
+    );
+    assert!(output.platform_output.commands.iter().any(
+        |command| matches!(command, egui::OutputCommand::CopyText(text) if text == "query text")
+    ));
+    let request_id = harness.app.palette_copy_request_id;
+    let mut gamma = Paste::new("newest gamma".into(), "Gamma".into());
+    gamma.id = "gamma".into();
+    evt_tx
+        .send(CoreEvent::PasteCopyLoaded {
+            paste: gamma,
+            request_id,
+        })
+        .unwrap();
+    let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    assert!(output.platform_output.commands.iter().any(
+        |command| matches!(command, egui::OutputCommand::CopyText(text) if text == "newest gamma")
+    ));
+    assert!(harness.app.pending_copy_action.is_none());
+}
+
+#[test]
+fn review_regression_editor_and_toolbar_copies_supersede_picker_requests() {
+    for action in [
+        "editor copy",
+        "editor cut",
+        "unfocused copy",
+        "toolbar copy",
+        "toolbar link",
+    ] {
+        let (mut harness, evt_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        set_active_content(&mut harness.app, "dirty alpha");
+        harness.app.selected_paste.as_mut().unwrap().id = "alpha".into();
+        harness.app.save_status = SaveStatus::Dirty;
+        harness.app.focus_editor_next = true;
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        harness
+            .app
+            .virtual_editor_state
+            .restore_selection(11, Some(6), 11);
+        harness.app.open_paste_picker();
+        harness.app.queue_palette_copy("beta".into(), false);
+        let request_id = match recv_cmd(&harness.cmd_rx) {
+            CoreCmd::GetPasteForCopy { id, request_id } => {
+                assert_eq!(id, "beta");
+                request_id
+            }
+            other => panic!("unexpected copy command: {other:?}"),
+        };
+        assert!(harness.app.close_paste_picker());
+        assert!(harness.app.pending_copy_action.is_some());
+        let mut outputs = Vec::new();
+        if action.starts_with("toolbar") {
+            let output =
+                run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+            let label = if action == "toolbar link" {
+                "Copy Link"
+            } else {
+                "Copy"
+            };
+            let pos = rendered_label_center(&output, label);
+            for pressed in [true, false] {
+                outputs.push(run_full_update_with_input(
+                    &mut harness.app,
+                    &ctx,
+                    egui::RawInput {
+                        events: primary_pointer_events(pos, pressed),
+                        ..Default::default()
+                    },
+                ));
+            }
+            outputs.push(run_full_update_with_input(
+                &mut harness.app,
+                &ctx,
+                egui::RawInput::default(),
+            ));
+        } else {
+            if action == "unfocused copy" {
+                run_full_update(
+                    &mut harness.app,
+                    &ctx,
+                    vec![egui::Event::WindowFocused(false)],
+                );
+                assert!(!harness.app.virtual_editor_state.has_focus);
+            }
+            let event = if action == "editor cut" {
+                egui::Event::Cut
+            } else {
+                egui::Event::Copy
+            };
+            outputs.push(run_full_update_with_input(
+                &mut harness.app,
+                &ctx,
+                egui::RawInput {
+                    events: vec![egui::Event::WindowFocused(true), event],
+                    ..Default::default()
+                },
+            ));
+        }
+        let expected = match action {
+            "toolbar copy" => "dirty alpha".to_string(),
+            "toolbar link" => util::api_paste_link_for_copy(harness.app.server_addr, "alpha"),
+            _ => "alpha".to_string(),
+        };
+        let mut beta = Paste::new("stale beta".into(), "Beta".into());
+        beta.id = "beta".into();
+        evt_tx
+            .send(CoreEvent::PasteCopyLoaded {
+                paste: beta,
+                request_id,
+            })
+            .unwrap();
+        outputs.push(run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            egui::RawInput::default(),
+        ));
+        let copies = outputs.iter().flat_map(copied_texts).collect::<Vec<_>>();
+        assert_eq!(copies, vec![expected.as_str()], "{action}");
+        assert!(harness.app.pending_copy_action.is_none(), "{action}");
+        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+        assert_eq!(
+            harness.app.active_snapshot(),
+            if action == "editor cut" {
+                "dirty "
+            } else {
+                "dirty alpha"
+            }
+        );
+        assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+    }
+}
+
 #[test]
 fn paste_picker_copy_loads_the_requested_result() {
     let mut harness = make_app();
@@ -113,15 +459,9 @@ fn command_palette_copies_supersede_a_pending_picker_copy() {
             })
             .unwrap();
         let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
-        let copied = action_output
-            .platform_output
-            .commands
-            .iter()
-            .chain(&output.platform_output.commands)
-            .filter_map(|command| match command {
-                egui::OutputCommand::CopyText(text) => Some(text.as_str()),
-                _ => None,
-            })
+        let copied = copied_texts(&action_output)
+            .into_iter()
+            .chain(copied_texts(&output))
             .collect::<Vec<_>>();
         assert_eq!(copied, vec![expected.as_str()], "{query}");
         assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));

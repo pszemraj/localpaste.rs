@@ -490,6 +490,7 @@ impl eframe::App for LocalPasteApp {
         }
         self.prune_expired_toasts(now);
 
+        self.reconcile_native_clipboard(ctx);
         loop {
             match self.backend.evt_rx.try_recv() {
                 Ok(event) => self.apply_event(event),
@@ -503,9 +504,10 @@ impl eframe::App for LocalPasteApp {
         self.poll_export_result();
         self.replay_pending_picker_input(ctx);
 
-        if let Some(text) = self.clipboard_outgoing.take() {
-            ctx.send_cmd(egui::OutputCommand::CopyText(text));
-        }
+        self.flush_clipboard_output(ctx);
+        // Exclude older queued writes; native TextEdit and selectable labels copy
+        // during/after rendering. A later request in this pass remains the newest intent.
+        self.observe_native_clipboard(ctx);
 
         while let Ok(result) = self.highlight_worker.rx.try_recv() {
             match result {
@@ -711,7 +713,8 @@ impl eframe::App for LocalPasteApp {
         });
         if copy_virtual_unfocused && !ctx.wants_keyboard_input() {
             if let Some(selection) = self.virtual_selected_text() {
-                ctx.send_cmd(egui::OutputCommand::CopyText(selection));
+                self.queue_clipboard_text(selection);
+                self.flush_clipboard_output(ctx);
             }
         }
 

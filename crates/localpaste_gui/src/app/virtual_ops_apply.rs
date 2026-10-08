@@ -195,7 +195,8 @@ impl LocalPasteApp {
                 }
                 VirtualInputCommand::Copy => {
                     if let Some(selection) = self.virtual_selected_text() {
-                        ctx.send_cmd(egui::OutputCommand::CopyText(selection));
+                        self.queue_clipboard_text(selection);
+                        self.flush_clipboard_output(ctx);
                         result.copied = true;
                     }
                 }
@@ -203,7 +204,8 @@ impl LocalPasteApp {
                     result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     if let Some(range) = self.virtual_editor_state.selection_range() {
                         if let Some(selection) = self.virtual_selected_text() {
-                            ctx.send_cmd(egui::OutputCommand::CopyText(selection));
+                            self.queue_clipboard_text(selection);
+                            self.flush_clipboard_output(ctx);
                             result.copied = true;
                         }
                         result.changed |=
