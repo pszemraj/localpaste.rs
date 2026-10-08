@@ -263,16 +263,20 @@ fn is_markdown_heading_line(line: &str) -> bool {
     bytes.get(hash_count) == Some(&b' ')
 }
 
-fn is_markdown_ordered_list_line(line: &str) -> bool {
+/// Recognize a decimal Markdown list marker followed by a space.
+///
+/// # Returns
+/// Whether a line begins with an ordered list item using `.` or `)`.
+pub(crate) fn is_markdown_ordered_list_line(line: &str) -> bool {
     let bytes = line.as_bytes();
-    let mut digits = 0usize;
-    while digits < bytes.len() && bytes[digits].is_ascii_digit() {
-        digits += 1;
-    }
+    let digits = bytes
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
     if digits == 0 {
         return false;
     }
-    bytes.get(digits) == Some(&b'.') && bytes.get(digits + 1) == Some(&b' ')
+    matches!(bytes.get(digits), Some(b'.' | b')')) && bytes.get(digits + 1) == Some(&b' ')
 }
 
 fn is_markdown_list_line(line: &str) -> bool {

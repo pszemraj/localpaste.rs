@@ -42,11 +42,20 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 }
 
 #[test]
-fn semantic_kinds_rebuild_from_version_thirteen_and_survive_restart() {
+fn semantic_kinds_rebuild_from_version_fourteen_and_survive_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
     let cases = [
+        ("check logs in /var/log/app", "text", PasteKind::Other, PasteKind::Document),
+        ("inspect logs at C:\\projects\\app", "batch", PasteKind::Other, PasteKind::Document),
+        ("buy milk - 2 cartons", "text", PasteKind::Other, PasteKind::Document),
+        ("$ 5 for a coffee is too much honestly", "text", PasteKind::Other, PasteKind::Document),
+        ("> python rocks", "markdown", PasteKind::Code, PasteKind::Document),
+        ("# Todo\nls", "markdown", PasteKind::Code, PasteKind::Document),
+        ("```\nfrom os import path\n# Load\nx = 1\n```", "markdown", PasteKind::Document, PasteKind::Code),
+        ("# build all\nfor f in *.c; do cc \"$f\"; done", "markdown", PasteKind::Document, PasteKind::Code),
+        ("Traceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    int('bad')\n> ValueError: invalid literal for int()", "markdown", PasteKind::Document, PasteKind::Log),
         ("", "markdown", PasteKind::Other, PasteKind::Document),
         (" \t\r\n", "markdown", PasteKind::Other, PasteKind::Document),
         ("", "rst", PasteKind::Other, PasteKind::Document),
@@ -463,7 +472,7 @@ fn semantic_kinds_rebuild_from_version_thirteen_and_survive_restart() {
                 stale.derived.handle = Some("old projection handle".into());
                 stale
             }),
-        13,
+        14,
     );
     drop(db);
 
@@ -490,14 +499,14 @@ fn semantic_kinds_rebuild_from_version_thirteen_and_survive_restart() {
     assert_eq!(
         startup_backup_files(&path).len(),
         1,
-        "v13 upgrade must create one backup"
+        "v14 upgrade must create one backup"
     );
 
     assert_rebuilt();
     assert_eq!(
         startup_backup_files(&path).len(),
         1,
-        "current v14 restart must not create another backup"
+        "current v15 restart must not create another backup"
     );
 }
 

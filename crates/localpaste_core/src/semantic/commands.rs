@@ -38,7 +38,12 @@ pub(super) fn has_unlisted_command_syntax(line: &str) -> bool {
     let line = line.trim();
     let line = line.strip_prefix("> ").unwrap_or(line);
     let words: Vec<_> = line.split_whitespace().collect();
-    if matches!(words.first().copied(), Some("$" | "%"))
+    if (matches!(words.first().copied(), Some("$" | "%"))
+        && words.get(1).is_some_and(|word| {
+            word.chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        }))
         || words.first().is_some_and(|word| {
             word.contains('=')
                 && word.split('=').next().is_some_and(|name| {
@@ -53,7 +58,7 @@ pub(super) fn has_unlisted_command_syntax(line: &str) -> bool {
     }
     let sentence_markers = [
         "a", "an", "the", "for", "to", "about", "please", "should", "could", "would", "we", "you",
-        "our", "your",
+        "our", "your", "in", "at", "by",
     ];
     let leading_executable = words.first().is_some_and(|word| {
         !word.is_empty()
@@ -64,9 +69,13 @@ pub(super) fn has_unlisted_command_syntax(line: &str) -> bool {
     leading_executable
         && !crate::detection::has_unquoted_prose_copula(words.get(1..).unwrap_or_default(), false)
         && !words.iter().any(|word| sentence_markers.contains(word))
-        && words.iter().skip(1).any(|word| {
-            word.starts_with('-') || (word.contains(['/', '\\']) && !word.contains("://"))
-        })
+        && (words
+            .iter()
+            .skip(1)
+            .any(|word| crate::detection::is_shell_option(word))
+            || words
+                .get(1)
+                .is_some_and(|word| crate::detection::is_shell_path(word)))
 }
 
 /// Extract a compact handle from a leading command-shaped line.
@@ -82,6 +91,7 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .peekable();
+    let leading_comment = lines.peek().is_some_and(|line| line.starts_with('#'));
     while lines.peek().is_some_and(|line| line.starts_with('#')) {
         let _ = lines.next();
     }
@@ -99,6 +109,15 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
 
         let arguments = parts.get(1..).unwrap_or_default();
         let has_command_syntax = crate::detection::command_has_shell_syntax(trimmed, arguments);
+        let explicit_arguments =
+            crate::detection::command_has_explicit_arguments(&cmd, trimmed, arguments);
+        if (line.starts_with("> ") && !explicit_arguments)
+            || (leading_comment
+                && !explicit_arguments
+                && !crate::detection::looks_like_shell_command_sequence(sample))
+        {
+            return None;
+        }
 
         if is_setup_command {
             let next_command = crate::detection::looks_like_shell_command_sequence(sample)

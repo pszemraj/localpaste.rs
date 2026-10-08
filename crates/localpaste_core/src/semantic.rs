@@ -167,7 +167,10 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
     // Statistical detection can lock an incidental code/config label onto a
     // real log. Structural runtime headers still determine retrieval kind.
     // Attribute assignments and bare TOML table headers remain configuration.
-    if looks_like_multiline_log(sample) || crate::detection::looks_like_rust_panic(sample) {
+    if looks_like_multiline_log(sample)
+        || crate::detection::looks_like_rust_panic(sample)
+        || crate::detection::looks_like_python_traceback(sample)
+    {
         return PasteKind::Log;
     }
     let log_header = leading_log_header(sample, lang.as_str());
@@ -254,7 +257,7 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
     }
 
     if ((lang.is_empty() || lang == "text") && looks_like_prose(sample))
-        || (lang == "batch" && looks_like_batch_setup_prose(sample))
+        || (lang == "batch" && looks_like_batch_prose(sample))
     {
         PasteKind::Document
     } else {
@@ -280,6 +283,12 @@ pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str>
         line.starts_with("```") || line.starts_with("~~~")
     }) {
         return None;
+    }
+    if crate::detection::looks_like_python_traceback(sample) {
+        return Some("log");
+    }
+    if crate::detection::looks_like_python_source(sample) {
+        return Some("python");
     }
     let mut log_lines = 0;
     let mut runtime_marker = false;
@@ -323,55 +332,44 @@ pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str>
     {
         return Some("text");
     }
-    if crate::detection::detect_heuristically(first).as_deref() == Some("python")
-        && source_lines.all(|line| {
-            let identifier = |value: &str| {
-                !value.is_empty()
-                    && value
-                        .chars()
-                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'))
-                    && value
-                        .chars()
-                        .next()
-                        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
-            };
-            crate::detection::detect_heuristically(line).as_deref() == Some("python")
-                || line.split_once('=').is_some_and(|(name, value)| {
-                    identifier(name.trim()) && !value.trim().is_empty()
-                })
-                || line
-                    .split_once('(')
-                    .is_some_and(|(callee, _)| identifier(callee.trim()) && line.ends_with(')'))
-        })
-    {
-        return Some("python");
-    }
     None
 }
 
-/// Recognize prose mistaken for Batch because it starts with a setup word.
+/// Recognize setup prose and sentences containing a later path mistaken for Batch.
 ///
 /// # Arguments
 /// - `content`: Paste body whose Batch label is being inspected.
 ///
 /// # Returns
-/// Whether a leading setup word lacks command-specific arguments and the
-/// sampled body is prose. Windows Batch options retain their script meaning.
-pub(crate) fn looks_like_batch_setup_prose(content: &str) -> bool {
+/// Whether prose lacks command-specific arguments. Windows Batch directives,
+/// immediate path operands, and options retain their script meaning.
+pub(crate) fn looks_like_batch_prose(content: &str) -> bool {
     let sample = sample_prefix(content);
     let Some(line) = sample.lines().map(str::trim).find(|line| !line.is_empty()) else {
         return false;
     };
     let mut parts = line.split_whitespace();
     let command = parts.next().unwrap_or_default();
-    if !matches!(command, "set" | "export" | "source") {
-        return false;
-    }
     if extract_definition_handle_from_line(line, Some("javascript")).is_some() {
         return false;
     }
     let arguments: Vec<_> = parts.collect();
-    !crate::detection::setup_command_is_valid(command, &arguments, false)
+    let prose_arguments = if matches!(command, "set" | "export" | "source") {
+        !crate::detection::setup_command_is_valid(command, &arguments, false)
+    } else {
+        !line.starts_with(['@', ':'])
+            && !["rem", "if", "for", "dir", "type", "copy", "move", "call"]
+                .iter()
+                .any(|directive| command.eq_ignore_ascii_case(directive))
+            && arguments
+                .iter()
+                .zip(arguments.iter().skip(1))
+                .any(|(&word, &next)| {
+                    matches!(word, "in" | "at" | "by") && crate::detection::is_shell_path(next)
+                })
+            && !crate::detection::command_has_explicit_arguments(command, line, &arguments)
+    };
+    prose_arguments
         && commands::extract_command_handle(sample).is_none()
         && looks_like_prose(sample)
 }

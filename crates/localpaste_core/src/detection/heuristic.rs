@@ -16,6 +16,12 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
+    if super::looks_like_python_traceback(trimmed) {
+        return Some("log".to_string());
+    }
+    if looks_like_shell_command_sequence(trimmed) {
+        return Some("shell".to_string());
+    }
     let sample = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
     let lower = sample.to_ascii_lowercase();
     let lines = || sample.lines().take(SAMPLE_MAX_LINES);
@@ -134,10 +140,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("toml".to_string());
     }
 
-    if looks_like_python_from_import(sample)
-        && (!is_markdown_content(sample)
-            || crate::semantic::markdown_technical_language(trimmed) == Some("python"))
-    {
+    if looks_like_python_from_import(sample) && looks_like_python_source(sample) {
         return Some("python".to_string());
     }
 
@@ -419,7 +422,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some(lang.to_string());
     }
 
-    if looks_like_python_import(sample) {
+    if looks_like_python_source(sample) {
         return Some("python".to_string());
     }
 
@@ -461,10 +464,14 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
     const SETUP_COMMANDS: &[&str] = &["cd", "export", "set", "source"];
 
     let sample = complete_line_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
+    if looks_like_shell_for_loop(sample) {
+        return true;
+    }
     let has_leading_comment = sample.trim_start().starts_with('#');
     let has_leading_prompt = sample.trim_start().starts_with(['$', '%', '>']);
     let mut commands = 0usize;
     let mut next_command = false;
+    let mut explicit_single_command = false;
     for line in sample
         .lines()
         .rev()
@@ -474,7 +481,10 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
         if line.starts_with('#') {
             continue;
         }
-        let line = super::strip_shell_prompt(line.trim_matches('`'));
+        let line = line.trim_matches('`');
+        let explicit_prompt = line.starts_with("$ ") || line.starts_with("% ");
+        let quoted = line.starts_with("> ");
+        let line = super::strip_shell_prompt(line);
         let mut parts = line.split_whitespace();
         let Some(command) = parts.next() else {
             return false;
@@ -484,6 +494,10 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
         }
         let arguments: Vec<&str> = parts.collect();
         let has_shell_syntax = super::command_has_shell_syntax(line, &arguments);
+        let explicit_arguments = super::command_has_explicit_arguments(command, line, &arguments);
+        if quoted && !explicit_arguments {
+            return false;
+        }
         let has_prose_copula = super::has_unquoted_prose_copula(&arguments, has_shell_syntax);
         let command_line = if COMMANDS.contains(&command) {
             !has_prose_copula
@@ -500,9 +514,43 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
             return false;
         }
         commands = commands.saturating_add(1);
+        explicit_single_command = explicit_prompt || explicit_arguments;
         next_command = command_line;
     }
-    commands >= 2 || (commands >= 1 && (has_leading_comment || has_leading_prompt))
+    commands >= 2
+        || (commands == 1 && (has_leading_comment || has_leading_prompt) && explicit_single_command)
+}
+
+fn looks_like_shell_for_loop(sample: &str) -> bool {
+    let mut lines = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'));
+    let Some(first) = lines.next().and_then(|line| line.strip_prefix("for ")) else {
+        return false;
+    };
+    let Some((name, values)) = first.split_once(" in ") else {
+        return false;
+    };
+    let name = name.trim();
+    if !name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        || values.trim().is_empty()
+    {
+        return false;
+    }
+    let mut has_do = values.contains("; do");
+    let mut last = first;
+    for line in lines {
+        has_do |= line == "do" || line.starts_with("do ");
+        last = line;
+    }
+    has_do && (last == "done" || last.ends_with("; done"))
 }
 
 /// Accept JSON Lines only with at least two valid object/array records in the
@@ -585,6 +633,145 @@ fn shebang_interpreter(sample: &str) -> Option<String> {
 
 fn path_basename(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+/// Keep Python source anchors unless surrounding Markdown or prose supplies stronger evidence.
+///
+/// # Returns
+/// Whether imports/definitions anchor a source body, including multiline and incomplete statements.
+pub(crate) fn looks_like_python_source(sample: &str) -> bool {
+    matches!(
+        python_body_evidence(sample),
+        PythonBodyEvidence::AnchoredSource
+    )
+}
+
+/// Recognize surrounding documents without requiring an import or definition.
+///
+/// # Returns
+/// Whether positive prose or Markdown evidence wraps the apparent Python body.
+#[cfg(any(feature = "magika", test))]
+pub(super) fn has_python_document_wrapper(sample: &str) -> bool {
+    matches!(python_body_evidence(sample), PythonBodyEvidence::Document)
+}
+
+enum PythonBodyEvidence {
+    AnchoredSource,
+    Unanchored,
+    Document,
+}
+
+fn python_body_evidence(sample: &str) -> PythonBodyEvidence {
+    let sample = utf8_prefix_by_bytes(sample, TEXT_SAMPLE_MAX_BYTES);
+    let mut anchored = false;
+    let mut string_block: Option<&str> = None;
+    for raw_line in sample.lines().take(512) {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(quote) = string_block {
+            if line.matches(quote).count() % 2 == 1 {
+                string_block = None;
+            }
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some(quote) = ["\"\"\"", "'''"]
+            .into_iter()
+            .find(|quote| line.contains(*quote))
+        {
+            if line.matches(quote).count() % 2 == 1 {
+                string_block = Some(quote);
+            }
+            continue;
+        }
+        if looks_like_python_import(line)
+            || looks_like_python_from_import(line)
+            || (["def ", "async def ", "class "]
+                .iter()
+                .any(|prefix| line.starts_with(*prefix))
+                && line.contains(['(', ':']))
+        {
+            anchored = true;
+            continue;
+        }
+        if ["```", "~~~", "> "]
+            .iter()
+            .any(|prefix| line.starts_with(*prefix))
+            || (!raw_line.starts_with(char::is_whitespace)
+                && (["- ", "* ", "+ "]
+                    .iter()
+                    .any(|prefix| line.starts_with(*prefix))
+                    || crate::models::paste::is_markdown_ordered_list_line(line)))
+            || (line.starts_with('[') && (line.contains("](") || line.contains("]:")))
+        {
+            return PythonBodyEvidence::Document;
+        }
+        let words: Vec<_> = line.split_whitespace().collect();
+        let plain_words = words.iter().all(|word| {
+            let word = word.trim_matches(['.', ',', '!', '?', ';']);
+            word.chars().any(char::is_alphabetic)
+                && word
+                    .chars()
+                    .all(|ch| ch.is_alphabetic() || matches!(ch, '-' | '’'))
+        });
+        let prose_lead = words.len() >= 3
+            && words
+                .iter()
+                .take(2)
+                .all(|word| word.chars().all(char::is_alphabetic));
+        let statement_keyword = words.first().is_some_and(|word| {
+            matches!(
+                *word,
+                "return"
+                    | "raise"
+                    | "yield"
+                    | "await"
+                    | "assert"
+                    | "del"
+                    | "global"
+                    | "nonlocal"
+                    | "if"
+                    | "elif"
+                    | "for"
+                    | "while"
+                    | "with"
+                    | "except"
+                    | "match"
+                    | "case"
+                    | "async"
+                    | "pass"
+                    | "break"
+                    | "continue"
+            )
+        });
+        let expression_operator = words
+            .iter()
+            .any(|word| matches!(*word, "is" | "in" | "not" | "and" | "or" | "if" | "else"));
+        let sentence_start = words.first().is_some_and(|word| {
+            [
+                "this", "that", "the", "these", "those", "here", "we", "you", "our", "please",
+            ]
+            .iter()
+            .any(|start| word.eq_ignore_ascii_case(start))
+        });
+        if (plain_words || prose_lead)
+            && !raw_line.starts_with(char::is_whitespace)
+            && !statement_keyword
+            && words.len() >= 2
+            && (!expression_operator || sentence_start)
+        {
+            return PythonBodyEvidence::Document;
+        }
+    }
+    if anchored {
+        PythonBodyEvidence::AnchoredSource
+    } else {
+        PythonBodyEvidence::Unanchored
+    }
 }
 
 fn looks_like_python_import(sample: &str) -> bool {

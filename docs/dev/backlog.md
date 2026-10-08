@@ -52,3 +52,5 @@
 - [ ] Consolidate the paired sidebar-to-Find tests in `crates/localpaste_gui/src/app/tests/editor_find.rs` if a table keeps the contrasting body-match and metadata-only assertions readable. The duplicate-code audit reports shared setup; behavior is intentionally distinct.
 
 `app/tests/virtual_editor_behaviors.rs` is intentionally on the LOC watchlist while remaining below the 1,000-line limit. Its non-LF regression keeps edit byte offsets, rendered caret geometry, Undo/Redo, typing, and CRLF navigation/selection in one scenario so correct buffer contents cannot hide an invisible caret. Preserve these assertions when reorganizing the test module.
+
+`detection/mod.rs` remains below 1,000 lines; its command lexical helpers are shared with semantic classification to keep both paths consistent. `detection/tests.rs` keeps the source/prose matrices together so fallback and Magika configurations exercise the same boundaries. The AST visibility suggestion for `detection/heuristic.rs::looks_like_python_source` is a false positive: `detection/mod.rs` re-exports it for `semantic.rs`, so crate visibility is required.

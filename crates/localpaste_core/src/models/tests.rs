@@ -193,6 +193,18 @@ mod model_tests {
         assert_eq!(manual_markdown.language.as_deref(), Some("markdown"));
         assert!(manual_markdown.language_is_manual);
         assert!(manual_markdown.is_markdown);
+        let manual_command = paste::Paste::new_with_language(
+            "# Todo\ngit pull".into(),
+            "manual command".into(),
+            Some("markdown".into()),
+            true,
+        );
+        assert_eq!(
+            paste::PasteMeta::from(&manual_command).derived.kind,
+            PasteKind::Code
+        );
+        assert_eq!(manual_command.language.as_deref(), Some("markdown"));
+        assert!(manual_command.language_is_manual);
         let manual_note = paste::Paste::new_with_language(
             "# Setup notes\n\nThese commands prepare the environment.\n\ncargo build --release"
                 .to_string(),

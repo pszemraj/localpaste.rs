@@ -8,6 +8,125 @@ use super::looks_like_yaml;
 use super::refine_magika_label;
 
 #[test]
+fn review_regression_commented_python_and_unlabeled_fences() {
+    use crate::models::paste::{Paste, PasteMeta};
+    use crate::semantic::PasteKind;
+
+    for source in [
+        "from flask import Flask\napp = Flask(__name__)\n# routes\n@app.route('/')\ndef index():\n    return 'hello'",
+        "from a import b\n# helper\ndef f():\n    return b()",
+        "from dataclasses import dataclass\n\n# A point\n@dataclass\nclass Point:\n    x: float\n    y: float",
+        "import os\n# Load paths\nroot = os.getcwd()\nprint(root)",
+        "root = '.'\nfrom pathlib import Path\n# Walk paths\nfor path in Path(root).glob('*.txt'):\n    print(path)",
+        "from asyncio import sleep\n# Run task\nasync def run():\n    await sleep(1)\n    return 'done'",
+        "from pathlib import Path\n# Read configuration\nconfig = load_config(\n    Path('settings.json'),\n    defaults={'mode': 'dev'},\n)",
+        "from collections import defaultdict\n# Process rows\ntry:\n    rows = defaultdict(list)\n    rows['key'].append(1)\nexcept ValueError as exc:\n    raise RuntimeError('bad row') from exc",
+        "from typing import Iterable\n# Typed values\nvalues: Iterable[int] = [\n    1,\n    2,\n]\ncache['values'] = values",
+        "from pathlib import (\n    Path,\n    PurePath,\n)\n# Choose path\nroot = Path('.')",
+        "from pathlib import Path\n# Document source\n\"\"\"Load the configured source directory.\nThis paragraph describes the module behavior.\n\"\"\"\nroot = Path('.')",
+        "from math import sqrt\n# Unicode values\nα = sqrt(4)\n结果 = α + 1",
+        "from pathlib import Path\n# Partial call\nroot = Path(\n    'unfinished',",
+        "from pathlib import Path\n# Partial function\ndef read_config(",
+        "\"\"\"Utilities for loading a configuration.\nThis documentation belongs to the Python module.\n\"\"\"\nfrom pathlib import Path\n# Load root\nroot = Path('.')",
+        "from flags import enabled\n# Compare flags\nenabled is not None\nassert enabled is not None",
+        "from totals import total, discount\n# Calculate remaining\ntotal - discount",
+    ] {
+        for source in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert_eq!(heuristic::detect(&source).as_deref(), Some("python"), "{source}");
+            assert_eq!(refine_magika_label("markdown", &source).as_deref(), Some("python"));
+            let paste = Paste::new(source.clone(), "Python source".into());
+            assert_eq!(paste.language.as_deref(), Some("python"), "{source}");
+            assert!(paste.language_is_manual);
+            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Code);
+            assert_eq!(super::preferred_extension(paste.language.as_deref()), "py");
+            let fence = Paste::new(format!("```\n{source}\n```"), "Python fence".into());
+            assert_eq!(fence.language.as_deref(), Some("markdown"));
+            assert_eq!(PasteMeta::from(&fence).derived.kind, PasteKind::Code, "{source}");
+        }
+    }
+    for source in [
+        "# greeting\nprint('hello')",
+        "# Values\nx = 1\nprint(x)",
+        "# Compare\nenabled is not None",
+        "# Index\n[Reference][1]\nfrom values import Reference",
+    ] {
+        for source in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert_eq!(
+                refine_magika_label("python", &source).as_deref(),
+                Some("python"),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn review_regression_shell_control_flow_and_python_tracebacks() {
+    use crate::models::paste::{Paste, PasteMeta};
+    use crate::semantic::PasteKind;
+
+    for (content, language, kind) in [
+        ("# build all\nfor f in *.c; do cc \"$f\"; done", "shell", PasteKind::Code),
+        ("# build all\nfor f in *.c\ndo\n    cc \"$f\"\ndone", "shell", PasteKind::Code),
+        ("# setup\nsource .env", "shell", PasteKind::Code),
+        ("# install\npip uninstall old-package", "shell", PasteKind::Code),
+        ("# install\nnpm ci", "shell", PasteKind::Code),
+        ("Traceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    int('bad')\n> ValueError: invalid literal for int()", "log", PasteKind::Log),
+        ("stderr:\nTraceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    raise ValueError()\n> ValueError", "log", PasteKind::Log),
+        ("Traceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    fetch()\n> requests.exceptions.HTTPError: failed request", "log", PasteKind::Log),
+    ] {
+        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+            assert_eq!(heuristic::detect(&content).as_deref(), Some(language), "{content}");
+            assert_eq!(refine_magika_label("markdown", &content).as_deref(), Some(language));
+            let paste = Paste::new(content.clone(), "runtime fixture".into());
+            assert_eq!(paste.language.as_deref(), Some(language), "{content}");
+            assert_eq!(PasteMeta::from(&paste).derived.kind, kind);
+            let fence = Paste::new(format!("```\n{content}\n```"), "runtime fence".into());
+            assert_eq!(PasteMeta::from(&fence).derived.kind, kind, "{content}");
+        }
+    }
+}
+
+#[test]
+fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
+    use crate::models::paste::{Paste, PasteMeta};
+    use crate::semantic::PasteKind;
+
+    for content in [
+        "> python rocks",
+        "> curl up by the fireplace",
+        "# Todo\nls",
+        "# Todo\ncurl up by the fireplace",
+        "Reminders\nimport taxes\ncall mom",
+        "# Reminders\nimport taxes\ncall mom",
+        "# Python notes\n\nThe example below reads a file.\nfrom pathlib import Path\nprint(Path('note.txt').read_text())",
+        "# Loop notes\n\nThe script loops over source files.\nfor f in *.c; do cc \"$f\"; done",
+        "# Error notes\nTraceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n> ValueError: bad value",
+        "# Python notes\nfrom pathlib import Path\nThis paragraph explains how the example works.",
+        "# Python notes\nfrom pathlib import Path\nThis is a prose explanation of the code.",
+        "# Python notes\nfrom pathlib import Path\nThis paragraph explains the code at https://example.com/docs.",
+        "# Source notes\nRead the path from the setting.\nfrom pathlib import Path\nroot = Path('.')",
+        "# Import notes\n- Read the input first\nfrom pathlib import Path\nroot = Path('.')",
+        "# Python notes\nfrom pathlib import Path\n1. Read the input.\n2. Write the output.",
+        "# Python notes\nfrom pathlib import Path\n1) Read the input.\n2) Write the output.",
+        "# Python notes\nfrom pathlib import Path\n[Reference][1]\n\n[1]: https://example.com/docs",
+    ] {
+        assert!(!super::looks_like_shell_command_sequence(content), "{content}");
+        assert!(!matches!(heuristic::detect(content).as_deref(), Some("shell" | "python")), "{content}");
+        let paste = Paste::new(content.into(), "ordinary note".into());
+        assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document, "{content}: {:?}", paste.language);
+    }
+    for content in [
+        "# Python notes\n\nThe example below reads a file.\nfrom pathlib import Path\nprint(Path('note.txt').read_text())",
+        "# Python notes\nfrom pathlib import Path\n1. Read the input.\n2. Write the output.",
+        "# Python notes\nfrom pathlib import Path\n1) Read the input.\n2) Write the output.",
+        "# Python notes\nfrom pathlib import Path\n[Reference][1]\n\n[1]: https://example.com/docs",
+    ] {
+        assert_eq!(refine_magika_label("python", content), None, "{content}");
+    }
+}
+
+#[test]
 fn comment_prefixed_commands_and_log_wrappers_avoid_markdown_locks() {
     let python_data = "# Compute things\nimport numpy as np\nprint('[label](url)')";
     for content in [python_data.to_owned(), python_data.replace('\n', "\r\n")] {
@@ -179,12 +298,22 @@ fn batch_refinement_rejects_setup_prose_and_retains_script_structure() {
     for content in [
         "set timer for 10 minutes\r\n",
         "source code is at https://example.com\r\n",
+        "inspect logs at C:\\projects\\app",
     ] {
         assert_eq!(refine_magika_label("batch", content), None, "{content}");
     }
     for content in [
         "@echo off\r\nset MODE=dev\r\necho %MODE%\r\n",
         "rem keep this batch script comment",
+        "rem inspect logs at C:\\projects\\app",
+        "copy source destination",
+        "dir logs in C:\\projects\\app",
+        "type notes at C:\\projects\\app\\file.txt",
+        "copy source in C:\\projects\\app",
+        "move source at C:\\projects\\app",
+        "call inspect logs at C:\\projects\\app",
+        "if exist file echo found",
+        "for %%f in C:\\input\\* do echo %%f",
         "set MODE=dev",
         "set \"my variable\"",
         "set \"alpha beta\" gamma",

@@ -5,6 +5,7 @@ pub mod canonical;
 mod extensions;
 pub use extensions::preferred_extension;
 mod heuristic;
+pub(crate) use heuristic::looks_like_python_source;
 #[cfg(feature = "magika")]
 mod magika;
 #[cfg(test)]
@@ -167,6 +168,93 @@ pub(crate) fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {
             .any(|part| part.starts_with('-') || part.chars().any(|ch| ch.is_ascii_digit()))
 }
 
+/// Recognize an option token rather than a separated prose dash.
+///
+/// # Returns
+/// Whether a dash-prefixed token contains an option name or number.
+pub(crate) fn is_shell_option(value: &str) -> bool {
+    value
+        .strip_prefix('-')
+        .map(|rest| rest.trim_start_matches('-'))
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+}
+
+/// Recognize a compact path operand, excluding URLs.
+///
+/// # Returns
+/// Whether the argument names a path rather than a prose URL.
+pub(crate) fn is_shell_path(value: &str) -> bool {
+    !value.contains("://")
+        && (value.contains(['/', '\\'])
+            || matches!(value, "." | "..")
+            || value
+                .strip_prefix('.')
+                .and_then(|rest| rest.chars().next())
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_'))
+}
+
+/// Require executable-specific arguments before treating a quote/comment as a command.
+///
+/// # Arguments
+/// - `command`: Executable name.
+/// - `line`: Command line inspected for shell operators and quoting.
+/// - `arguments`: Whitespace-delimited operands after the executable.
+///
+/// # Returns
+/// Whether the command has shell structure or a recognized tool action.
+pub(crate) fn command_has_explicit_arguments(
+    command: &str,
+    line: &str,
+    arguments: &[&str],
+) -> bool {
+    let Some(first) = arguments.first() else {
+        return false;
+    };
+    if arguments.iter().any(|argument| is_shell_option(argument))
+        || is_shell_path(first)
+        || first.contains('$')
+        || line.contains(['|', '>', '<', '=', ';', '&'])
+        || ['\'', '"'].iter().any(|quote| {
+            first.starts_with(*quote) && arguments.iter().any(|part| part.ends_with(*quote))
+        })
+    {
+        return true;
+    }
+    match command {
+        "git" => SHELL_GIT_SUBCOMMANDS.contains(first),
+        "echo" | "printf" => true,
+        "python" | "pytest" | "torchrun" => first.ends_with(".py"),
+        "brew" | "cargo" | "conda" | "docker" | "kubectl" | "npm" | "pip" | "pnpm" | "rustup"
+        | "systemctl" | "uv" | "yarn" => [
+            "activate",
+            "add",
+            "build",
+            "check",
+            "ci",
+            "clippy",
+            "exec",
+            "fmt",
+            "get",
+            "install",
+            "list",
+            "remove",
+            "restart",
+            "run",
+            "show",
+            "start",
+            "status",
+            "stop",
+            "test",
+            "toolchain",
+            "uninstall",
+            "update",
+        ]
+        .contains(first),
+        _ => false,
+    }
+}
+
 /// Detect language/type of text content.
 ///
 /// # Returns
@@ -178,7 +266,7 @@ pub fn detect_language(content: &str) -> Option<String> {
     if looks_like_shell_command_sequence(content) {
         return Some("shell".to_string());
     }
-    if looks_like_rust_panic(content) {
+    if looks_like_rust_panic(content) || looks_like_python_traceback(content) {
         return Some("log".to_string());
     }
 
@@ -232,6 +320,48 @@ pub(crate) fn looks_like_rust_panic(content: &str) -> bool {
         }
     }
     false
+}
+
+/// Recognize a complete Python traceback with a frame and final exception row.
+///
+/// # Returns
+/// Whether runtime structure occupies the sampled body, including quoted exception rows.
+pub(crate) fn looks_like_python_traceback(content: &str) -> bool {
+    let sample = crate::text::complete_line_prefix_by_bytes(
+        content.trim(),
+        crate::text::TEXT_SAMPLE_MAX_BYTES,
+    );
+    let mut lines = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.strip_prefix("> ").unwrap_or(line));
+    let first = lines.next().unwrap_or_default();
+    let first = if matches!(first, "stderr:" | "stdout:") {
+        lines.next().unwrap_or_default()
+    } else {
+        first
+    };
+    if first != "Traceback (most recent call last):" {
+        return false;
+    }
+    let mut frame = false;
+    let mut last = "";
+    for line in lines {
+        frame |= line.starts_with("File \"") && line.contains("\", line ");
+        last = line;
+    }
+    let name = last.split_once(':').map_or(last, |(name, _)| name);
+    frame
+        && name.rsplit('.').next().is_some_and(|class| {
+            class
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+        })
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'))
 }
 
 /// Accept Cargo's own build/run status and an entered `cargo run` command before
@@ -366,6 +496,13 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         }
     }
 
+    if label == "python"
+        && crate::models::paste::is_markdown_content(content)
+        && heuristic::has_python_document_wrapper(content)
+    {
+        return None;
+    }
+
     if label == "yaml" && !looks_like_yaml(content) && !looks_like_flat_config_yaml(content) {
         return None;
     }
@@ -378,7 +515,7 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return None;
     }
 
-    if label == "batch" && crate::semantic::looks_like_batch_setup_prose(content) {
+    if label == "batch" && crate::semantic::looks_like_batch_prose(content) {
         return None;
     }
 

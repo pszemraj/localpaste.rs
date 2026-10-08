@@ -3,6 +3,45 @@
 use super::{derive, extract_definition_handle_from_line, PasteKind};
 
 #[test]
+fn review_regression_prose_flags_paths_and_currency_stay_documents() {
+    for content in [
+        "check logs in /var/log/app",
+        "buy milk - 2 cartons",
+        "$ 5 for a coffee is too much honestly",
+        "% 5 is a small percentage of the budget",
+        "inspect logs at C:\\projects\\app",
+        "write notes - remember tomorrow",
+        "check logs -- remember tomorrow",
+        "inspect report/example for errors",
+    ] {
+        for language in [None, Some("text")] {
+            assert_eq!(
+                derive(content, language).kind,
+                PasteKind::Document,
+                "{content}"
+            );
+        }
+        let paste = crate::models::paste::Paste::new(content.into(), "ordinary note".into());
+        assert_eq!(
+            crate::models::paste::PasteMeta::from(&paste).derived.kind,
+            PasteKind::Document,
+            "{content}: {:?}",
+            paste.language
+        );
+    }
+    for content in [
+        "apt install -y git curl",
+        "rsync ./source ./dest",
+        "$ apt install git",
+        "% apt install git",
+        "$ python script",
+        "> python script.py",
+    ] {
+        assert_ne!(derive(content, None).kind, PasteKind::Document, "{content}");
+    }
+}
+
+#[test]
 fn weak_markdown_labels_do_not_hide_whole_technical_bodies() {
     for (content, expected) in [
         ("# install\npip install foo", PasteKind::Code),
@@ -305,6 +344,7 @@ fn batch_setup_prose_is_document_without_broad_language_override() {
     for content in [
         "set timer for 10 minutes\r\n",
         "source code is at https://example.com\r\n",
+        "inspect logs at C:\\projects\\app",
     ] {
         assert_eq!(
             derive(content, Some("batch")).kind,
@@ -330,6 +370,18 @@ fn batch_setup_prose_is_document_without_broad_language_override() {
             PasteKind::Other,
         ),
         ("rem keep this batch script comment", PasteKind::Other),
+        ("rem inspect logs at C:\\projects\\app", PasteKind::Other),
+        ("copy source destination", PasteKind::Other),
+        ("dir logs in C:\\projects\\app", PasteKind::Other),
+        (
+            "type notes at C:\\projects\\app\\file.txt",
+            PasteKind::Other,
+        ),
+        ("copy source in C:\\projects\\app", PasteKind::Other),
+        ("move source at C:\\projects\\app", PasteKind::Other),
+        ("call inspect logs at C:\\projects\\app", PasteKind::Other),
+        ("if exist file echo found", PasteKind::Other),
+        ("for %%f in C:\\input\\* do echo %%f", PasteKind::Other),
         ("set /p prompt=Enter your full name", PasteKind::Code),
         ("set /a count=10", PasteKind::Code),
         ("cd /d C:\\Users\\project", PasteKind::Code),

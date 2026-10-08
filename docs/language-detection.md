@@ -19,7 +19,7 @@ This keeps GUI/server detection broad by default while preserving portability fo
 
 For auto-detected language (`language_is_manual == false`):
 
-1. Recognize a standalone Markdown fence, a shell command sequence (including one command after a leading shell comment or prompt), or a Rust runtime panic header optionally following Cargo build/run status or an entered `cargo run` command before statistical detection.
+1. Recognize a standalone Markdown fence, a shell command sequence or `for` loop, a command with explicit arguments after a leading comment/quote (or a terminal prompt), or runtime traceback/panic structure before statistical detection.
 2. If `magika` feature is enabled:
    - run Magika detection,
    - reject non-text results,
@@ -37,7 +37,7 @@ Auto mode is intentionally "pending detection":
 
 For manual language (`language_is_manual == true`), content edits do not re-run auto detection.
 
-An inferred Markdown label is refined using [whole-body technical structure](#documents-and-fenced-content). This can replace or reject weak Markdown without changing other statistical labels. Ordinary documents retain their language behavior.
+An inferred Markdown label is refined using [whole-body technical structure](#documents-and-fenced-content). Inferred Python labels are rejected when surrounding prose or Markdown structure supplies document evidence; an absent import/definition alone does not reject Python. Inferred Batch labels receive the [prose-boundary checks](#yaml-refinement-guardrail) described below. These refinements apply during detection; manual stored language values remain unchanged.
 
 Magika session lifecycle:
 
@@ -71,7 +71,7 @@ Manual language picker values are defined centrally in `MANUAL_LANGUAGE_OPTIONS`
 
 The Documents collection uses the derived Document kind, independently of the highlighting label. It includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Embedded examples and misleading titles/tags do not override a document language. Empty document-language bodies derive Document with no handle or terms; other empty bodies derive Other.
 
-Whole-body technical structure overrides a stored Markdown label: commands derive Code or Other, comment-prefixed Python imports/source derive Code, and runtime output derives Log. Automatically detected labels become locked, so the stored flag cannot distinguish them from user-selected labels; both receive the same content-derived exception. Language and lock fields remain unchanged.
+Whole-body technical structure overrides a stored Markdown label: commands derive Code or Other, bodies anchored by Python imports/definitions derive Code, and runtime output derives Log. Python comments can appear before or between statements; multiline and incomplete statements remain source when stronger surrounding Markdown/prose evidence is absent. Imports mentioned inside prose do not establish a source body. This is a structural heuristic, not a Python parser. Automatically detected labels become locked, so the stored flag cannot distinguish them from user-selected labels; both receive the same content-derived exception. Language and lock fields remain unchanged.
 
 A paste containing only one fence is classified by its info word or body:
 
@@ -89,7 +89,9 @@ Fallback prose yields to explicit filename suffixes, lowercase executable prefix
 
 Command handles use the first command after optional leading shell comments and `$`, `%`, or `>` prompts. A command mentioned later in an ordinary note cannot reclassify that note. Executable names are case-sensitive; known commands include `rustup`, `conda`, `mkdir`, `sudo`, `echo`, and `make`/`just` target lists. `git` requires a known subcommand (including `blame`, `rev-parse`, and `submodule`) unless shell syntax makes the command explicit. Determiners, pronouns, prepositions, and verb inflection keep sentence-shaped `make`/`just` prose in Documents.
 
-Environment-prefixed commands and unknown lowercase executables with flags or path arguments are excluded from prose when they have command structure. Notes mentioning options or paths retain prose classification.
+A single command after a comment or `>` quote needs an option, path, quoted operand, operator, or recognized executable action. A bare `ls` after `# Todo` and quoted prose such as `> python rocks` remain documents. Complete `for ... in ...; do ...; done` loops remain shell scripts even when a leading comment resembles a heading.
+
+Environment-prefixed commands and unknown lowercase executables with real option tokens or an immediately following path operand are excluded from prose when they have command structure. A separated ` - `, a later path in a sentence, or `$`/`%` followed by an amount supplies no command evidence. Notes mentioning options or paths retain prose classification.
 
 Setup commands require specific arguments:
 
@@ -107,6 +109,8 @@ Delimited records require consistent field counts. Comma/semicolon rows also nee
 Uppercase spaced levels and lower/uppercase levels with colons or brackets are single-line log signals. Lowercase spaced prose, shell function definitions, and tabular headers are excluded. Two leading strong machine-level rows establish a log even when tab-delimited. Repeated lowercase spaced levels also establish a log after a Yarn command or when every message has machine-style capitalization. An optional context such as `INFO (main)` is part of the header; sentence-style headings such as `Warning:` need other log evidence.
 
 A Rust panic needs a leading runtime header or Cargo run preamble. Runtime rows/panic headers override incidental Code/Config labels, including locked labels, without changing language or lock fields. Derived Logs remain in Logs rather than Code/Config. Config handles take precedence over ambiguous colon-prefixed levels; assignments (`INFO = value`), bare TOML headers (`[INFO]`), and genuine Dockerfile instructions remain code/config.
+
+A Python traceback needs its leading runtime header, a file-frame row, and a final exception row; an optional `stderr:`/`stdout:` wrapper or quoted exception row remains runtime output. Surrounding explanatory prose or embedded examples retain document classification.
 
 ### Sampling And Stored Projections
 
@@ -211,7 +215,7 @@ Primary implementation:
 
 - [`../crates/localpaste_core/src/detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs)
 
-Magika's `gitattributes` label also requires attribute-shaped content: a path pattern with attribute tokens, or recognized attribute assignments. Short clipboard prose does not acquire that label merely because it contains whitespace-separated words. Manual language values remain unchanged by this guard. Automatic Batch labels are rejected for prose starting with `set`, `export`, or `source` when their arguments lack the [setup-command structure](#commands). Script headers/comments keep their existing behavior; stored Batch-labelled setup prose derives Document without changing its language or manual/locked state.
+Magika's `gitattributes` label also requires attribute-shaped content: a path pattern with attribute tokens, or recognized attribute assignments. Short clipboard prose does not acquire that label merely because it contains whitespace-separated words. Manual language values remain unchanged by this guard. Automatic Batch labels are rejected for prose starting with `set`, `export`, or `source` when their arguments lack the [setup-command structure](#commands), and for prose with `in`, `at`, or `by` before a later path and no explicit command arguments. Immediate path operands, options, script headers, and Batch directives retain their behavior; stored Batch-labelled prose with these same boundaries derives Document without changing its language or manual/locked state.
 
 ## Validation Targets
 
