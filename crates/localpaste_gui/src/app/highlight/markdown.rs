@@ -25,23 +25,25 @@ pub(super) fn settings() -> SyntectSettings {
             format!("[0-9]{{{}}}[.)]", width - 1)
         };
         let prefix = format!(r"\1{}\2", " ".repeat(width));
+        // External-backreference patterns bypass syntect's per-line search cache.
+        // Absolute anchors reject later token offsets without rescanning the tail.
         grammar.push_str(&format!(
             r"    - match: '^([ ]*){marker}([ ]{{1,4}})(?=\S)'
       scope: punctuation.definition.list.markdown
       push:
-        - match: '^(?!{prefix}|[ \t]*\r?$)'
+        - match: '\A(?!{prefix}|[ \t]*\r?$)'
           pop: true
 "
         ));
         for (fence, info) in [('`', r"[^`\n]*"), ('~', r"[^\n]*")] {
             grammar.push_str(&format!(
-                r"        - match: '^({prefix}) {{0,3}}({fence}{{3,}}){info}$'
+                r"        - match: '\A({prefix}) {{0,3}}({fence}{{3,}}){info}$'
           scope: punctuation.definition.raw.markdown.localpaste
           push:
             - meta_scope: markup.raw.block.markdown.localpaste
-            - match: '^(?!\1|[ \t]*\r?$)'
+            - match: '\A(?!\1|[ \t]*\r?$)'
               pop: true
-            - match: '^\1 {{0,3}}\2{fence}*[ \t]*\r?$'
+            - match: '\A\1 {{0,3}}\2{fence}*[ \t]*\r?$'
               scope: punctuation.definition.raw.markdown.localpaste
               pop: true
 "
@@ -396,6 +398,122 @@ mod tests {
                     "{items:?} {fence} {result:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn shallower_list_fence_reopens_as_a_top_level_block() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~"] {
+            for (item, indent, shallow) in [
+                ("- item\n", "  ", ""),
+                ("1. item\n", "   ", " "),
+                ("123456789. item\n", "           ", "   "),
+            ] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                styled_segments(&settings, &mut lines, item);
+                styled_segments(&settings, &mut lines, &format!("{indent}{fence}\n"));
+                styled_segments(&settings, &mut lines, &format!("{indent}inside list\n"));
+                styled_segments(&settings, &mut lines, &format!("{shallow}{fence}\n"));
+                assert!(
+                    non_empty_colors(&settings, &mut lines, "**outside but still code**\n")
+                        .iter()
+                        .all(|(color, _)| *color == code),
+                    "{item:?} {shallow:?}{fence} must reopen outside the list"
+                );
+                styled_segments(&settings, &mut lines, &format!("{fence}\n"));
+                assert!(non_empty_colors(&settings, &mut lines, "ordinary prose\n")
+                    .iter()
+                    .all(|(color, _)| *color == prose));
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_inline_spans_preserve_list_and_continuation_markup() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for (seed, prefix) in [
+            ("", "- "),
+            ("- item\n", "  "),
+            ("- outer\n  - inner\n", "    "),
+            ("", "123456789. "),
+        ] {
+            let mut lines = HighlightLines::new(syntax, theme);
+            for line in seed.split_inclusive('\n') {
+                styled_segments(&settings, &mut lines, line);
+            }
+            let text = format!(
+                "{prefix}{}\\*literal\\* **bold** [link](url) tail\n",
+                "`span` ".repeat(1_000)
+            );
+            let segments = styled_segments(&settings, &mut lines, &text);
+            assert_eq!(
+                segments
+                    .iter()
+                    .filter(|(style, _)| style.foreground == code)
+                    .map(|(_, text)| text.matches("span").count())
+                    .sum::<usize>(),
+                1_000,
+                "{seed:?} {prefix:?}"
+            );
+            assert!(segments.iter().any(|(style, text)| {
+                text.contains("literal") && style.foreground == prose && style.font_style.is_empty()
+            }));
+            assert!(segments.iter().any(|(style, text)| {
+                text.contains("bold") && style.font_style.contains(FontStyle::BOLD)
+            }));
+            assert!(segments
+                .iter()
+                .any(|(style, text)| { text.contains("[link](url)") && style.foreground == code }));
+            assert_eq!(segments.last().unwrap().0.foreground, prose);
+        }
+    }
+
+    #[test]
+    #[ignore = "bounded manual timing probe; run with --ignored --nocapture"]
+    fn list_inline_span_scaling_probe() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for count in [1_000, 5_000, 10_000] {
+            let text = format!("- {}tail\n", "`span` ".repeat(count));
+            let mut lines = HighlightLines::new(syntax, theme);
+            let started = std::time::Instant::now();
+            let segments = styled_segments(&settings, &mut lines, &text);
+            let elapsed = started.elapsed();
+            let spans = segments
+                .iter()
+                .filter(|(style, _)| style.foreground == code)
+                .map(|(_, text)| text.matches("span").count())
+                .sum::<usize>();
+            assert_eq!(
+                spans,
+                count,
+                "first segments: {:?}",
+                &segments[..segments.len().min(8)]
+            );
+            eprintln!(
+                "list spans={count}, bytes={}, segments={}, elapsed={elapsed:?}",
+                text.len(),
+                segments.len()
+            );
         }
     }
 

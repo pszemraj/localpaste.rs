@@ -25,6 +25,14 @@ Perf runs require an isolated `DB_PATH`; shared writers invalidate the measureme
   - search latency `< 5s`
 - Test: [headless_workflows.rs](../../crates/localpaste_gui/tests/headless_workflows.rs) (`list_and_search_latency_stay_within_reasonable_headless_budget`).
 
+For list Markdown containing repeated inline code, run the real-parser scaling probe:
+
+```powershell
+cargo test -p localpaste_gui --lib list_inline_span_scaling_probe -- --ignored --nocapture
+```
+
+It reports timings and rendered span counts at 1,000, 5,000, and 10,000 spans. Compare growth across sizes; elapsed times depend on the machine and build profile.
+
 ## Prereqs
 
 Use the build matrix in [devlog.md](devlog.md).
