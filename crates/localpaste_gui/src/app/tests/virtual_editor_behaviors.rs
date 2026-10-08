@@ -609,37 +609,40 @@ fn word_navigation_crosses_line_boundaries() {
 #[test]
 fn word_delete_crosses_line_boundaries() {
     let ctx = egui::Context::default();
+    for separator in ["\n", "\r\n", "\r", "\u{2028}"] {
+        let content = format!("alpha{separator}beta gamma");
 
-    let mut forward = make_app();
-    configure_virtual_editor_with_wrap(&mut forward.app, "alpha\nbeta gamma", 200.0);
-    let forward_len = forward.app.virtual_editor_buffer.len_chars();
-    let first_line_end = forward.app.virtual_editor_buffer.line_col_to_char(0, 5);
-    forward
-        .app
-        .virtual_editor_state
-        .set_cursor(first_line_end, forward_len);
-    let forward_result = forward
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
-    assert!(forward_result.changed);
-    assert_eq!(
-        forward.app.virtual_editor_buffer.to_string(),
-        "alphabeta gamma"
-    );
+        let mut forward = make_app();
+        configure_virtual_editor_with_wrap(&mut forward.app, &content, 200.0);
+        let forward_len = forward.app.virtual_editor_buffer.len_chars();
+        let first_line_end = forward.app.virtual_editor_buffer.line_col_to_char(0, 5);
+        forward
+            .app
+            .virtual_editor_state
+            .set_cursor(first_line_end, forward_len);
+        let forward_result = forward
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
+        assert!(forward_result.changed);
+        assert_eq!(
+            forward.app.virtual_editor_buffer.to_string(),
+            "alphabeta gamma"
+        );
 
-    let mut backward = make_app();
-    configure_virtual_editor_with_wrap(&mut backward.app, "alpha\nbeta gamma", 200.0);
-    let backward_len = backward.app.virtual_editor_buffer.len_chars();
-    let second_line_start = backward.app.virtual_editor_buffer.line_col_to_char(1, 0);
-    backward
-        .app
-        .virtual_editor_state
-        .set_cursor(second_line_start, backward_len);
-    let backward_result = backward
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::Backspace { word: true }]);
-    assert!(backward_result.changed);
-    assert_eq!(backward.app.virtual_editor_buffer.to_string(), "beta gamma");
+        let mut backward = make_app();
+        configure_virtual_editor_with_wrap(&mut backward.app, &content, 200.0);
+        let backward_len = backward.app.virtual_editor_buffer.len_chars();
+        let second_line_start = backward.app.virtual_editor_buffer.line_col_to_char(1, 0);
+        backward
+            .app
+            .virtual_editor_state
+            .set_cursor(second_line_start, backward_len);
+        let backward_result = backward
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Backspace { word: true }]);
+        assert!(backward_result.changed);
+        assert_eq!(backward.app.virtual_editor_buffer.to_string(), "beta gamma");
+    }
 }
 
 #[test]

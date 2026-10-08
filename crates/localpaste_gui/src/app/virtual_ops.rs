@@ -10,6 +10,26 @@ use std::ops::Range;
 use std::time::Instant;
 
 impl LocalPasteApp {
+    /// Completes a forward target across CRLF, treating it as one line terminator.
+    ///
+    /// # Arguments
+    /// - `cursor`: Current character index.
+    /// - `target`: Requested forward position within the buffer.
+    ///
+    /// # Returns
+    /// The target past the complete line ending, before render-extent clamping.
+    pub(super) fn complete_virtual_forward_target(&self, cursor: usize, target: usize) -> usize {
+        if target > cursor
+            && target < self.virtual_editor_buffer.len_chars()
+            && self.virtual_editor_buffer.rope().char(target - 1) == '\r'
+            && self.virtual_editor_buffer.rope().char(target) == '\n'
+        {
+            target + 1
+        } else {
+            target
+        }
+    }
+
     /// Clamps the active cursor after layout changes that shorten renderable line spans.
     ///
     /// # Returns

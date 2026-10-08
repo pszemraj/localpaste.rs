@@ -2,6 +2,55 @@
 
 use super::*;
 
+#[test]
+fn review_regression_line_break_deletion_joins_lines_atomically() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    for prefix in ["", "a", "é", "🦀"] {
+        for separator in [
+            "\n", "\r", "\u{000b}", "\u{000c}", "\u{0085}", "\u{2028}", "\u{2029}", "\r\n",
+        ] {
+            for suffix in ["", "b"] {
+                for backward in [false, true] {
+                    let before = format!("{prefix}{separator}{suffix}");
+                    let expected = format!("{prefix}{suffix}");
+                    harness.app.reset_virtual_editor(&before);
+                    let boundary = prefix.chars().count();
+                    let cursor = boundary
+                        + if backward {
+                            separator.chars().count()
+                        } else {
+                            0
+                        };
+                    let len = harness.app.virtual_editor_buffer.len_chars();
+                    harness.app.virtual_editor_state.set_cursor(cursor, len);
+                    let command = if backward {
+                        VirtualInputCommand::Backspace { word: false }
+                    } else {
+                        VirtualInputCommand::DeleteForward { word: false }
+                    };
+                    assert!(harness.app.apply_virtual_commands(&ctx, &[command]).changed);
+                    assert_eq!(
+                        harness.app.active_snapshot(),
+                        expected,
+                        "{before:?}, backward={backward}"
+                    );
+                    assert_eq!(harness.app.virtual_editor_state.cursor(), boundary);
+                    assert_eq!(harness.app.virtual_editor_buffer.line_count(), 1);
+                    for (command, text, expected_cursor) in [
+                        (VirtualInputCommand::Undo, before.as_str(), cursor),
+                        (VirtualInputCommand::Redo, expected.as_str(), boundary),
+                    ] {
+                        assert!(harness.app.apply_virtual_commands(&ctx, &[command]).changed);
+                        assert_eq!(harness.app.active_snapshot(), text);
+                        assert_eq!(harness.app.virtual_editor_state.cursor(), expected_cursor);
+                    }
+                }
+            }
+        }
+    }
+}
+
 mod interactions;
 
 #[test]

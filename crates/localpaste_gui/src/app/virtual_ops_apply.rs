@@ -279,7 +279,16 @@ impl LocalPasteApp {
                         let start = if *word {
                             self.virtual_word_left(cursor)
                         } else {
-                            cursor.saturating_sub(1)
+                            let previous = cursor.saturating_sub(1);
+                            // Delete the terminator, independently of a long line's rendered prefix.
+                            if previous > 0
+                                && self.virtual_editor_buffer.rope().char(previous) == '\n'
+                                && self.virtual_editor_buffer.rope().char(previous - 1) == '\r'
+                            {
+                                previous - 1
+                            } else {
+                                previous
+                            }
                         };
                         result.changed |= self.replace_virtual_range(
                             start..cursor,
@@ -306,9 +315,12 @@ impl LocalPasteApp {
                         let end = if *word {
                             self.virtual_word_delete_forward(cursor)
                         } else {
-                            cursor
-                                .saturating_add(1)
-                                .min(self.virtual_editor_buffer.len_chars())
+                            self.complete_virtual_forward_target(
+                                cursor,
+                                cursor
+                                    .saturating_add(1)
+                                    .min(self.virtual_editor_buffer.len_chars()),
+                            )
                         };
                         if end > cursor {
                             result.changed |= self.replace_virtual_range(
@@ -419,17 +431,7 @@ impl LocalPasteApp {
                             .saturating_add(1)
                             .min(self.virtual_editor_buffer.len_chars())
                     };
-                    // Forward movement crosses the whole CRLF pair; the render
-                    // clamp otherwise snaps an interior position back to its line end.
-                    let target = if target > cursor
-                        && target < self.virtual_editor_buffer.len_chars()
-                        && self.virtual_editor_buffer.rope().char(target - 1) == '\r'
-                        && self.virtual_editor_buffer.rope().char(target) == '\n'
-                    {
-                        target + 1
-                    } else {
-                        target
-                    };
+                    let target = self.complete_virtual_forward_target(cursor, target);
                     let target = self.clamp_virtual_cursor_for_render(target);
                     self.virtual_editor_state.move_cursor(
                         target,
