@@ -377,30 +377,16 @@ impl LocalPasteApp {
             }
             return;
         }
-        enum PatchBaseSource {
-            Staged,
-            Current,
-        }
-        let staged_base = self.highlight_staged.as_ref().filter(|render| {
+        // A matching staged base was handled in place above. The fallback
+        // preserves the displayed render and clones its lines only after validation.
+        let Some(base) = self.highlight_render.as_ref().filter(|render| {
             render.matches_context(
                 patch.paste_id.as_str(),
                 patch.language_hint.as_str(),
                 patch.theme_key.as_str(),
             ) && render.revision == patch.base_revision
                 && render.text_len == patch.base_text_len
-        });
-        let current_base = self.highlight_render.as_ref().filter(|render| {
-            render.matches_context(
-                patch.paste_id.as_str(),
-                patch.language_hint.as_str(),
-                patch.theme_key.as_str(),
-            ) && render.revision == patch.base_revision
-                && render.text_len == patch.base_text_len
-        });
-        let Some((base, base_source)) = staged_base
-            .map(|render| (render.clone(), PatchBaseSource::Staged))
-            .or_else(|| current_base.map(|render| (render.clone(), PatchBaseSource::Current)))
-        else {
+        }) else {
             self.trace_highlight("drop", "patch ignored: no matching active render to merge");
             return;
         };
@@ -430,22 +416,14 @@ impl LocalPasteApp {
             return;
         }
 
-        let mut merged_lines = base.lines;
+        let mut merged_lines = base.lines.clone();
         let hint_range = range.clone();
         merged_lines.splice(range, patch.lines);
-        let staged_invalidation = match base_source {
-            PatchBaseSource::Staged => Some(Self::merge_staged_invalidation_with_patch(
-                self.highlight_staged_invalidation.clone(),
-                patch.base_revision,
-                patch.base_text_len,
-                hint_range.clone(),
-            )),
-            PatchBaseSource::Current => Some(StagedHighlightInvalidation {
-                base_revision: patch.base_revision,
-                base_text_len: patch.base_text_len,
-                line_ranges: vec![hint_range.clone()],
-            }),
-        };
+        let staged_invalidation = Some(StagedHighlightInvalidation {
+            base_revision: patch.base_revision,
+            base_text_len: patch.base_text_len,
+            line_ranges: vec![hint_range.clone()],
+        });
         self.queue_highlight_render_with_invalidation(
             HighlightRender {
                 paste_id: patch.paste_id,

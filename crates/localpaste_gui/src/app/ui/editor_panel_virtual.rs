@@ -190,6 +190,33 @@ impl LocalPasteApp {
                         text_origin: egui::Pos2,
                         galley: Arc<egui::Galley>,
                     }
+                    impl RowRender {
+                        /// Maps a pointer position to a character within this rendered row.
+                        ///
+                        /// # Arguments
+                        /// - `pointer_pos`: Pointer location in the row's UI coordinates.
+                        ///
+                        /// # Returns
+                        /// Global character index clamped to this row's character range.
+                        ///
+                        /// # Panics
+                        /// Panics if the rendered row's rectangle bounds are invalid.
+                        fn char_index_at(&self, pointer_pos: egui::Pos2) -> usize {
+                            let local_pos = egui::vec2(
+                                (pointer_pos
+                                    .x
+                                    .clamp(self.text_rect.min.x, self.text_rect.max.x)
+                                    - self.text_origin.x)
+                                    .max(0.0),
+                                (pointer_pos.y.clamp(self.rect.min.y, self.rect.max.y)
+                                    - self.text_origin.y)
+                                    .max(0.0),
+                            );
+                            let cursor = self.galley.cursor_from_pos(local_pos);
+                            self.segment_start
+                                .saturating_add(cursor.index.min(self.segment_chars))
+                        }
+                    }
                     enum RowAction {
                         Click {
                             global: usize,
@@ -326,6 +353,17 @@ impl LocalPasteApp {
                                 .layer_id_at(pos)
                                 .is_none_or(|layer_id| layer_id == ui.layer_id())
                         });
+                        let row = RowRender {
+                            line_idx,
+                            segment_start: segment_range.start,
+                            segment_chars,
+                            starts_line,
+                            ends_line,
+                            rect,
+                            text_rect,
+                            text_origin,
+                            galley,
+                        };
                         if pending_action.is_none()
                             && owns_pointer
                             && self.virtual_pointer_press_modifiers.is_some()
@@ -334,16 +372,8 @@ impl LocalPasteApp {
                                 || primary_pressed_on_row.is_some())
                         {
                             if let Some(pointer_pos) = pointer_pos {
-                                let clamped_x =
-                                    pointer_pos.x.clamp(text_rect.min.x, text_rect.max.x);
-                                let clamped_y = pointer_pos.y.clamp(rect.min.y, rect.max.y);
-                                let local_pos = egui::vec2(
-                                    (clamped_x - text_origin.x).max(0.0),
-                                    (clamped_y - text_origin.y).max(0.0),
-                                );
-                                let cursor = galley.cursor_from_pos(local_pos);
-                                let local_col = cursor.index.min(segment_chars);
-                                let global = segment_range.start.saturating_add(local_col);
+                                let global = row.char_index_at(pointer_pos);
+                                let local_col = global.saturating_sub(row.segment_start);
                                 if response.drag_started() {
                                     self.reset_virtual_click_streak();
                                     pending_action = Some(RowAction::DragStart { global });
@@ -371,17 +401,7 @@ impl LocalPasteApp {
                                 }
                             }
                         }
-                        rows.push(RowRender {
-                            line_idx,
-                            segment_start: segment_range.start,
-                            segment_chars,
-                            starts_line,
-                            ends_line,
-                            rect,
-                            text_rect,
-                            text_origin,
-                            galley,
-                        });
+                        rows.push(row);
                     }
 
                     if let Some(action) = pending_action {
@@ -507,20 +527,7 @@ impl LocalPasteApp {
                                     }
                                 });
                             if let Some(row) = target_row {
-                                let clamped_pos = egui::pos2(
-                                    pointer_pos
-                                        .x
-                                        .clamp(row.text_rect.min.x, row.text_rect.max.x),
-                                    pointer_pos.y.clamp(row.rect.min.y, row.rect.max.y),
-                                );
-                                let local_pos = egui::vec2(
-                                    (clamped_pos.x - row.text_origin.x).max(0.0),
-                                    (clamped_pos.y - row.text_origin.y).max(0.0),
-                                );
-                                let cursor = row.galley.cursor_from_pos(local_pos);
-                                let global = row
-                                    .segment_start
-                                    .saturating_add(cursor.index.min(row.segment_chars));
+                                let global = row.char_index_at(pointer_pos);
                                 self.virtual_editor_state.move_cursor(
                                     global,
                                     self.virtual_editor_buffer.len_chars(),
