@@ -202,11 +202,27 @@ pub(crate) fn regular_command_is_valid(
     {
         return false;
     }
-    if matches!(command, "make" | "just")
-        && !has_shell_syntax
-        && ambiguous_recipe_is_prose(arguments)
-    {
-        return false;
+    if matches!(command, "make" | "just") && ambiguous_recipe_is_prose(arguments) {
+        // A quoted operand may follow other targets. An apostrophe inside
+        // `it's` is prose punctuation, not an opening shell quote.
+        let quoted_operand = arguments.iter().enumerate().any(|(index, word)| {
+            ['\'', '"'].iter().any(|quote| {
+                word.starts_with(*quote)
+                    && arguments
+                        .iter()
+                        .skip(index)
+                        .any(|part| part.ends_with(*quote))
+            })
+        });
+        if !quoted_operand
+            && !crate::detection::command_has_explicit_arguments(
+                command,
+                &arguments.join(" "),
+                arguments,
+            )
+        {
+            return false;
+        }
     }
     // Unquoted copulas near the verb are prose evidence (`echo chamber is`,
     // `sudo is required`). Quoting, options, and shell syntax supply command
@@ -229,7 +245,7 @@ fn ambiguous_recipe_is_prose(arguments: &[&str]) -> bool {
     let grammatical_marker = |word: &str| {
         [
             "a", "an", "at", "for", "i", "in", "me", "my", "of", "on", "our", "please", "that",
-            "the", "this", "to", "us", "we", "you", "your", "yourself",
+            "the", "this", "to", "us", "we", "you", "your", "yourself", "before", "after",
         ]
         .contains(&word)
     };

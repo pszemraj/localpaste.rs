@@ -684,6 +684,7 @@ fn canonicalization_matrix_handles_aliases() {
         ("scss", "scss"),
         ("sass", "sass"),
         ("rust", "rust"),
+        ("JSON", "json"),
         ("JSONL", "jsonl"),
     ];
     for (input, expected) in cases {

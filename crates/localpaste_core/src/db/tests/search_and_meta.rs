@@ -484,6 +484,34 @@ fn search_language_filters_are_case_insensitive_and_trimmed_for_full_and_meta_qu
                 assert_eq!(results[0].id, python.id);
             }
         }
+        for language in ["json", "jsonl"] {
+            let paste = Paste::new_with_language(
+                "{\"record\":1}".into(),
+                "record format".into(),
+                Some(language.into()),
+                true,
+            );
+            db.pastes.create(&paste).expect("create record");
+        }
+        for language in ["json", "jsonl"] {
+            let labels: Vec<_> = match case {
+                SearchKind::Full => db
+                    .pastes
+                    .search("record", 10, None, Some(language.into()))
+                    .expect("search record")
+                    .into_iter()
+                    .map(|paste| paste.language)
+                    .collect(),
+                SearchKind::Meta => db
+                    .pastes
+                    .search_meta("record", 10, None, Some(language.into()))
+                    .expect("search record metadata")
+                    .into_iter()
+                    .map(|paste| paste.language)
+                    .collect(),
+            };
+            assert_eq!(labels, vec![Some(language.into())]);
+        }
     }
 }
 

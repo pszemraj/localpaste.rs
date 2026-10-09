@@ -409,6 +409,10 @@ pub(crate) fn detect(content: &str) -> Option<String> {
 
     let mut best_match: Option<(&str, usize)> = None;
     for (lang, keywords, threshold) in scored_languages {
+        // `let` and `function` also co-occur in ordinary English sentences.
+        if *lang == "javascript" && crate::semantic::javascript_keyword_prose(sample) {
+            continue;
+        }
         let hits = keyword_hits(keywords);
         if hits >= *threshold {
             match best_match {

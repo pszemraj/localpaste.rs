@@ -43,7 +43,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 
 #[test]
 fn semantic_kinds_rebuild_from_prior_versions_and_survive_restart() {
-    for schema_version in [14, 15, 16, 17] {
+    for schema_version in [14, 15, 16, 17, 18] {
         assert_semantic_kinds_rebuild_and_survive_restart(schema_version);
     }
 }
@@ -53,6 +53,21 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
     let cases = [
+        ("# Build\nSRCS = a.c \\\n       b.c\nall: $(SRCS)\n\t$(CC) $(SRCS)\n", "markdown", PasteKind::Document, PasteKind::Code),
+        ("# Build\noverride CFLAGS += -g\nall:\n\t$(CC) main.c\n", "markdown", PasteKind::Document, PasteKind::Code),
+        ("# Build\nvpath %.c src\nall:\n\tcc main.c\n", "markdown", PasteKind::Document, PasteKind::Code),
+        ("# Build\nall:\n\t$(call compile,main.c)\n", "markdown", PasteKind::Document, PasteKind::Code),
+        ("# Build\nall:\n\t[ -d out ] || mkdir out\n", "markdown", PasteKind::Document, PasteKind::Code),
+        ("# Build\n$(info Building the project)\nall:\n\tcc main.c\n", "markdown", PasteKind::Document, PasteKind::Code),
+        ("# Shopping\nDairy:\n\tmilk\n\teggs\n", "markdown", PasteKind::Code, PasteKind::Document),
+        ("# Shopping\nDairy:\n\tmilk\n\teggs\n", "shell", PasteKind::Code, PasteKind::Document),
+        ("# Todo\nToday:\n\tcall the bank\n\treply to emails\n", "markdown", PasteKind::Code, PasteKind::Document),
+        ("# Todo\nToday:\n\tcall the bank\n\treply to emails\n", "makefile", PasteKind::Config, PasteKind::Document),
+        ("Let me know if the function works for you", "javascript", PasteKind::Code, PasteKind::Document),
+        ("Let me know if the function works for you (please)", "javascript", PasteKind::Code, PasteKind::Document),
+        ("Let me know if the function works for you; thanks", "javascript", PasteKind::Code, PasteKind::Document),
+        ("make sure it's done before friday", "", PasteKind::Code, PasteKind::Document),
+        ("```\nLet me know if the function works for you\n```", "markdown", PasteKind::Code, PasteKind::Document),
         ("# Load project rules\ninclude rules.mk\n", "markdown", PasteKind::Document, PasteKind::Code),
         ("# Build recipe\ndefine compile\n\t$(CC) main.c\nendef\n", "markdown", PasteKind::Document, PasteKind::Code),
         ("check logs in /var/log/app", "text", PasteKind::Other, PasteKind::Document),
@@ -515,8 +530,8 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
             Paste::new_with_language(
                 (*content).into(),
                 "review notes".into(),
-                Some((*language).into()),
-                true,
+                (!language.is_empty()).then(|| (*language).into()),
+                !language.is_empty(),
             )
         })
         .collect();
@@ -540,7 +555,7 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
 
     let assert_rebuilt = || {
         let reopened = open_test_database(path.to_str().unwrap());
-        let metas = reopened.pastes.list_meta(100, None).unwrap();
+        let metas = reopened.pastes.list_meta(pastes.len(), None).unwrap();
         for (paste, (_, _, _, expected)) in pastes.iter().zip(&cases) {
             let rebuilt = metas.iter().find(|meta| meta.id == paste.id).unwrap();
             assert_eq!(

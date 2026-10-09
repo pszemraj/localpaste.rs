@@ -70,6 +70,12 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     DETECTION_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
     let session = session()?;
+    // Normalize inference input before locking; copying a large CRLF paste must
+    // not hold the shared session. Canonical content keeps its original bytes.
+    let normalized = content
+        .contains("\r\n")
+        .then(|| content.replace("\r\n", "\n"));
+    let content = normalized.as_deref().unwrap_or(content);
     let mut guard = match session.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
@@ -81,12 +87,6 @@ pub(crate) fn detect(content: &str) -> Option<String> {
             poisoned.into_inner()
         }
     };
-    // Line endings must not change a text label. Normalize only inference input;
-    // canonical paste content and downstream structural checks keep their bytes.
-    let normalized = content
-        .contains("\r\n")
-        .then(|| content.replace("\r\n", "\n"));
-    let content = normalized.as_deref().unwrap_or(content);
     let result = match guard.identify_content_sync(content.as_bytes()) {
         Ok(result) => result,
         Err(err) => {
@@ -127,7 +127,7 @@ pub(super) fn detection_call_count() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::magika_force_cpu;
+    use super::{detect, magika_force_cpu};
     use crate::env::{env_lock, EnvGuard};
 
     #[test]
@@ -143,6 +143,18 @@ mod tests {
         for value in ["0", "false", "no", "off"] {
             let _set = EnvGuard::set("MAGIKA_FORCE_CPU", value);
             assert!(!magika_force_cpu(), "value: {value}");
+        }
+    }
+
+    #[test]
+    fn raw_inference_matches_for_lf_and_crlf() {
+        let makefile = "# Build the project\nSRCS = a.c \\\n       b.c\nall: $(SRCS)\n\t$(CC) $(SRCS) -o app\n";
+        assert_eq!(detect(makefile).as_deref(), Some("makefile"));
+        for content in [
+            "# Meeting agenda\nTopics:\n\tReview project status\n",
+            makefile,
+        ] {
+            assert_eq!(detect(&content.replace('\n', "\r\n")), detect(content));
         }
     }
 }

@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Shared command recognition and semantic-handle extraction.
 pub(crate) mod commands;
+mod makefile;
+pub(crate) use makefile::{makefile_body_language, makefile_note_body};
 
 const SAMPLE_MAX_LINES: usize = 256;
 const MAX_TERMS: usize = 4;
@@ -120,10 +122,44 @@ pub fn is_document_language(language: Option<&str>) -> bool {
     )
 }
 
+/// Recognize a single prose sentence containing incidental JavaScript keywords.
+///
+/// # Arguments
+/// - `content`: Body to inspect for grammatical prose around language keywords.
+///
+/// # Returns
+/// Whether grammatical words establish a note rather than source declarations.
+pub(crate) fn javascript_keyword_prose(content: &str) -> bool {
+    let sample = sample_prefix(content);
+    let lower = sample.to_ascii_lowercase();
+    // This grammatical imperative cannot be a JavaScript declaration; ordinary
+    // parentheses or a semicolon later in the sentence do not turn it into one.
+    let note_lead = lower.starts_with("let me know ");
+    (note_lead || !sample.contains(['\n', '=', '(', ')', '{', '}', ';']))
+        && !["//", "/*"].iter().any(|prefix| sample.starts_with(prefix))
+        && lower.contains("let ")
+        && lower.contains("function")
+        && looks_like_prose(sample)
+        && sample.split_whitespace().any(|word| {
+            matches!(
+                word.to_ascii_lowercase().as_str(),
+                "me" | "you" | "your" | "our" | "the" | "please"
+            )
+        })
+}
+
 fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
     let sample = sample_prefix(content);
     let lang = canonicalize(language.unwrap_or_default().trim());
     let lower = sample.to_ascii_lowercase();
+
+    // Detection locks inferred labels too. Positive note structure corrects the
+    // retrieval kind without rewriting a stored highlighting/export choice.
+    if (matches!(lang.as_str(), "shell" | "makefile") && makefile_note_body(sample))
+        || (lang == "javascript" && javascript_keyword_prose(sample))
+    {
+        return PasteKind::Document;
+    }
 
     // Highlight language describes the wrapper; retrieval kind describes what
     // the standalone fence contains. Prose plus fences remains a document.
@@ -398,98 +434,6 @@ fn has_positive_markdown_document_evidence(sample: &str) -> bool {
 
     (non_empty > 0 && quoted == non_empty)
         || (commands::extract_command_handle(sample).is_none() && looks_like_prose(sample))
-}
-
-/// Recognize complete Makefile bodies, including includes and closed definitions.
-///
-/// # Returns
-/// `makefile` for distinctive directive-only bodies, `shell` for target/recipe
-/// bodies, or `None` when the body also contains prose or unrelated syntax.
-pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
-    let sample = sample_prefix(content);
-    let mut saw_target = false;
-    let mut saw_recipe = false;
-    let mut saw_directive = false;
-    let mut in_definition = false;
-    for line in sample.lines().filter(|line| !line.trim().is_empty()) {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') {
-            continue;
-        }
-        if in_definition {
-            in_definition = trimmed != "endef";
-            continue;
-        }
-        if makefile_directive_with_argument(trimmed, "define") {
-            in_definition = true;
-            saw_directive = true;
-            continue;
-        }
-        if looks_like_makefile_assignment(trimmed)
-            || ["include", "-include", "ifeq", "ifneq", "ifdef", "ifndef"]
-                .iter()
-                .any(|directive| makefile_directive_with_argument(trimmed, directive))
-            || matches!(trimmed, "export" | "else" | "endif")
-            || trimmed.starts_with("export ")
-            || trimmed.starts_with("else ")
-        {
-            saw_directive |= ["include", "-include"].iter().any(|directive| {
-                makefile_directive_with_argument(trimmed, directive)
-                    && trimmed
-                        .split_whitespace()
-                        .skip(1)
-                        .all(|path| path.ends_with(".mk"))
-            });
-            continue;
-        }
-        if line.starts_with('\t') {
-            let recipe = trimmed.trim_start_matches(['@', '+', '-']);
-            let command = recipe.split_whitespace().next().unwrap_or_default();
-            let executable = !command.is_empty()
-                && command.chars().all(|ch| {
-                    ch.is_ascii_lowercase()
-                        || ch.is_ascii_digit()
-                        || matches!(ch, '_' | '-' | '.' | '/' | '\\')
-                });
-            if !saw_target
-                || !(executable
-                    || commands::has_unlisted_command_syntax(recipe)
-                    || (command.starts_with("$(") && command.ends_with(')')))
-            {
-                return None;
-            }
-            saw_recipe = true;
-        } else if trimmed.split_once(':').is_some_and(|(target, _)| {
-            let target = target.trim();
-            !(target.is_empty() || (target.starts_with('[') && target.ends_with(']')))
-        }) {
-            saw_target = true;
-        } else {
-            return None;
-        }
-    }
-    if in_definition {
-        None
-    } else if saw_target && saw_recipe {
-        Some("shell")
-    } else {
-        saw_directive.then_some("makefile")
-    }
-}
-
-fn makefile_directive_with_argument(line: &str, directive: &str) -> bool {
-    line.strip_prefix(directive)
-        .is_some_and(|rest| rest.starts_with(char::is_whitespace) && !rest.trim().is_empty())
-}
-
-fn looks_like_makefile_assignment(line: &str) -> bool {
-    let line = line.strip_prefix("export ").unwrap_or(line);
-    ["?=", ":=", "+=", "!=", "="].iter().any(|operator| {
-        line.split_once(operator).is_some_and(|(name, _)| {
-            let name = name.trim();
-            !name.is_empty() && !name.ends_with(':') && !name.contains(char::is_whitespace)
-        })
-    })
 }
 
 /// Recognize setup prose and sentences containing a later path mistaken for Batch.
