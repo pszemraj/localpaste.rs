@@ -206,6 +206,16 @@ impl LocalPasteApp {
         render: HighlightRender,
         staged_invalidation: Option<StagedHighlightInvalidation>,
     ) {
+        if self
+            .highlight_pending
+            .as_ref()
+            .is_some_and(|pending| pending.matches_render(&render))
+        {
+            // Receiving the reply completes this request even if validation
+            // rejects its result. A later request must remain pending.
+            self.highlight_pending = None;
+            self.trace_highlight("pending_clear", "worker render completed request");
+        }
         let Some(selected_id) = self.selected_id.as_deref() else {
             self.trace_highlight("drop", "render ignored: no selected paste");
             return;
@@ -249,12 +259,6 @@ impl LocalPasteApp {
                 return;
             }
         }
-        if let Some(pending) = &self.highlight_pending {
-            if pending.matches_render(&render) {
-                self.highlight_pending = None;
-                self.trace_highlight("pending_clear", "pending request matched worker render");
-            }
-        }
         self.trace_highlight_lazy("queue", || {
             format!(
                 "queued staged render revision={} text_len={}",
@@ -275,6 +279,21 @@ impl LocalPasteApp {
     /// # Panics
     /// Panics if staged-patch merge invariants fail after prior guard checks.
     pub(super) fn queue_highlight_patch(&mut self, patch: HighlightPatch) {
+        if self.highlight_pending.as_ref().is_some_and(|pending| {
+            pending.matches(
+                patch.revision,
+                patch.text_len,
+                &patch.language_hint,
+                &patch.theme_key,
+                &patch.paste_id,
+            )
+        }) {
+            // A rejected patch cannot keep the identical request suppressed.
+            // Retrying against the worker's advanced cache yields a full render
+            // when the displayed base no longer matches it.
+            self.highlight_pending = None;
+            self.trace_highlight("pending_clear", "worker patch completed request");
+        }
         let Some(selected_id) = self.selected_id.as_deref() else {
             self.trace_highlight("drop", "patch ignored: no selected paste");
             return;
@@ -353,21 +372,6 @@ impl LocalPasteApp {
                     ));
             }
             if let Some(staged) = self.highlight_staged.as_ref() {
-                if let Some(pending) = &self.highlight_pending {
-                    if pending.matches(
-                        staged.revision,
-                        staged.text_len,
-                        staged.language_hint.as_str(),
-                        staged.theme_key.as_str(),
-                        staged.paste_id.as_str(),
-                    ) {
-                        self.highlight_pending = None;
-                        self.trace_highlight(
-                            "pending_clear",
-                            "pending request matched staged patch",
-                        );
-                    }
-                }
                 self.trace_highlight_lazy("queue", || {
                     format!(
                         "merged patch into staged render revision={} text_len={}",
