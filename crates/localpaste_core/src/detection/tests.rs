@@ -17,6 +17,12 @@ fn review_regression_commented_python_and_unlabeled_fences() {
         "from a import b\n# helper\ndef f():\n    return b()",
         "from dataclasses import dataclass\n\n# A point\n@dataclass\nclass Point:\n    x: float\n    y: float",
         "import os\n# Load paths\nroot = os.getcwd()\nprint(root)",
+        "import os, sys\n# Platform info\nprint(os.name)\nprint(sys.version)",
+        "import os  # operating system\n# Platform info\nprint(os.name)",
+        "import os; import sys\n# Platform info\nprint(os.name)",
+        "# Imports\nimport os, \\\n    sys\nprint(os.name)",
+        "# Imports\nimport os,\n",
+        "import os; x = 1\n# Value\nprint(x)",
         "root = '.'\nfrom pathlib import Path\n# Walk paths\nfor path in Path(root).glob('*.txt'):\n    print(path)",
         "from asyncio import sleep\n# Run task\nasync def run():\n    await sleep(1)\n    return 'done'",
         "from pathlib import Path\n# Read configuration\nconfig = load_config(\n    Path('settings.json'),\n    defaults={'mode': 'dev'},\n)",
@@ -80,6 +86,14 @@ fn review_regression_shell_control_flow_and_python_tracebacks() {
         ),
         ("# connect\nssh user@host", "shell", PasteKind::Code),
         ("# containers\ndocker ps", "shell", PasteKind::Code),
+        ("# deps\npip freeze", "shell", PasteKind::Code),
+        ("# deps\nnpm ls", "shell", PasteKind::Code),
+        ("# run tests\npytest tests", "shell", PasteKind::Code),
+        ("# containers\ndocker images", "shell", PasteKind::Code),
+        ("# fetch the page\nwget https://example.com", "shell", PasteKind::Code),
+        ("# setup\nmkdir out", "shell", PasteKind::Code),
+        ("# build\nmake all", "shell", PasteKind::Code),
+        ("# build\njust build", "shell", PasteKind::Code),
         ("Traceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    int('bad')\n> ValueError: invalid literal for int()", "log", PasteKind::Log),
         ("stderr:\nTraceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    raise ValueError()\n> ValueError", "log", PasteKind::Log),
         ("Traceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    fetch()\n> requests.exceptions.HTTPError: failed request", "log", PasteKind::Log),
@@ -107,7 +121,15 @@ fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
         "> curl up by the fireplace",
         "# Todo\nls",
         "# Todo\ncurl up by the fireplace",
+        "# Notes\npytest is useful",
+        "# Notes\nmake sure to call mom",
+        "# references\n[api]: https://example.com\n\t\"API reference\"",
+        "# Tasks\nMeeting notes:\n\tDiscuss timeline tomorrow",
+        "# Meeting agenda\nTopics:\n\tReview project status",
         "Reminders\nimport taxes\ncall mom",
+        "Reminders\nimport taxes; call mom",
+        "Reminders\nimport taxes; call mom tomorrow",
+        "import os; this is a note\n# check\nprint(os.name)",
         "# Reminders\nimport taxes\ncall mom",
         "# Python notes\n\nThe example below reads a file.\nfrom pathlib import Path\nprint(Path('note.txt').read_text())",
         "# Loop notes\n\nThe script loops over source files.\nfor f in *.c; do cc \"$f\"; done",
@@ -125,6 +147,26 @@ fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
         assert!(!matches!(heuristic::detect(content).as_deref(), Some("shell" | "python")), "{content}");
         let paste = Paste::new(content.into(), "ordinary note".into());
         assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document, "{content}: {:?}", paste.language);
+    }
+    for content in [
+        "# Tasks\nMeeting notes:\n\tDiscuss timeline tomorrow",
+        "# Meeting agenda\nTopics:\n\tReview project status",
+    ] {
+        assert_eq!(
+            refine_magika_label("makefile", content).as_deref(),
+            Some("markdown"),
+            "{content}"
+        );
+    }
+    for content in [
+        "# build\nall: main.c\n\tcc main.c",
+        "# build\nall: main.c\n\t$(CC) main.c",
+    ] {
+        assert_eq!(
+            refine_magika_label("makefile", content).as_deref(),
+            Some("makefile"),
+            "{content}"
+        );
     }
     for content in [
         "# Python notes\n\nThe example below reads a file.\nfrom pathlib import Path\nprint(Path('note.txt').read_text())",

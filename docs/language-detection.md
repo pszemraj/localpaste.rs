@@ -19,7 +19,7 @@ This keeps GUI/server detection broad by default while preserving portability fo
 
 For auto-detected language (`language_is_manual == false`):
 
-1. Recognize a standalone Markdown fence, a shell command sequence or `for` loop, a command with explicit arguments after a leading comment/quote (or a terminal prompt), or runtime traceback/panic structure before statistical detection.
+1. Recognize a standalone Markdown fence, a shell command sequence or `for` loop, a listed executable after a leading comment, a command with explicit arguments after a leading quote (or a terminal prompt), or runtime traceback/panic structure before statistical detection.
 2. If `magika` feature is enabled:
    - run Magika detection,
    - reject non-text results,
@@ -71,7 +71,7 @@ Manual language picker values are defined centrally in `MANUAL_LANGUAGE_OPTIONS`
 
 The Documents collection uses the derived Document kind, independently of the highlighting label. It includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Embedded examples and misleading titles/tags do not override a document language. Empty document-language bodies derive Document with no handle or terms; other empty bodies derive Other.
 
-Whole-body technical structure overrides a stored Markdown label: commands and target-plus-tabbed-command recipes derive Code or Other, bodies anchored by Python imports/definitions derive Code, and runtime output derives Log. A weak Markdown label yields Document only when the body supplies positive document evidence such as a heading, list, link, fence, wholly quoted prose, or ordinary prose shape. Python comments can appear before or between statements; multiline and incomplete statements remain source when stronger surrounding Markdown/prose evidence is absent. Imports mentioned inside prose do not establish a source body. This is a structural heuristic, not a Python parser. Automatically detected labels become locked, so the stored flag cannot distinguish them from user-selected labels; both receive the same content-derived exception. Language and lock fields remain unchanged.
+Whole-body technical structure overrides a stored Markdown label: commands and target-plus-tabbed-command recipes derive Code or Other, bodies anchored by Python imports/definitions derive Code, and runtime output derives Log. A weak Markdown label yields Document only when the body supplies positive document evidence such as headings, lists, links, fences, emphasis, rules, tables, wholly quoted prose, or ordinary prose shape. Surrounding headings and explanatory prose retain document classification even when a command comes first. Python comments can appear before or between statements; comma-separated imports, trailing import comments, semicolon-separated statements, and multiline or incomplete statements remain source when stronger surrounding Markdown/prose evidence is absent. Imports mentioned inside prose do not establish a source body. This is a structural heuristic, not a Python parser. Automatically detected labels become locked, so the stored flag cannot distinguish them from user-selected labels; both receive the same content-derived exception. Language and lock fields remain unchanged.
 
 A paste containing only one fence is classified by its info word or body:
 
@@ -80,6 +80,7 @@ A paste containing only one fence is classified by its info word or body:
 - Other explicit `text` fences and unlabeled prose fences remain Documents.
 - Unlabeled bodies use structural heuristics without statistical detection or a language lock. Structural data that remains Other does not become prose merely because it is fenced.
 - Fences containing a document language, or embedded in surrounding prose, remain Documents.
+- An unlabeled fence whose body is Markdown remains a Document; inner fences are literal body content and are not recursively unwrapped.
 
 Retrieval derivation leaves the stored Markdown highlighting/export label intact. Fallback prose needs at least three whitespace-separated words, at least 70% letters, and at most 20% symbols among non-whitespace characters. Single tokens, hexadecimal blobs, and recognized commands remain outside Documents.
 
@@ -89,7 +90,7 @@ Fallback prose yields to explicit filename suffixes, lowercase executable prefix
 
 Command handles use the first command after optional leading shell comments and `$`, `%`, or `>` prompts. A command mentioned later in an ordinary note cannot reclassify that note. Executable names are case-sensitive; known commands include `rustup`, `conda`, `mkdir`, `sudo`, `echo`, and `make`/`just` target lists. `git` requires a known subcommand (including `blame`, `rev-parse`, and `submodule`) unless shell syntax makes the command explicit. Determiners, pronouns, prepositions, and verb inflection keep sentence-shaped `make`/`just` prose in Documents.
 
-A single command after a comment or `>` quote needs an option, path, quoted operand, operator, or recognized executable action. Comment-led `pytest` is also accepted without operands. Recognized actions and operands include compact forms such as `npm i`, `docker ps`, HTTP(S) operands for `curl`, and `user@host` operands for `ssh`. A bare `ls` after `# Todo` and quoted prose such as `> python rocks` remain documents. Complete `for ... in ...; do ...; done` loops remain shell scripts even when a leading comment resembles a heading.
+A listed executable after a leading comment supplies command evidence without enumerating tool actions such as `pip freeze`, `npm ls`, or `docker images`. Grammatical prose arguments retain document classification, and bare `ls` after `# Todo` remains a document. A `>` quote still needs an option, path, quoted operand, operator, or recognized executable action; quoted prose such as `> python rocks` remains a document. Complete `for ... in ...; do ...; done` loops remain shell scripts even when a leading comment resembles a heading.
 
 Environment-prefixed commands and unknown lowercase executables with real option tokens or an immediately following path operand are excluded from prose when they have command structure. A separated ` - `, a later path in a sentence, or `$`/`%` followed by an amount supplies no command evidence. Notes mentioning options or paths retain prose classification.
 
@@ -119,6 +120,8 @@ Line-based semantic and shell-sequence samples retain complete LF/CRLF records w
 JSONL detection parses every complete record beginning within the 64 KiB sample. A cut final record is finished only when that individual record also fits 64 KiB; larger records remain outside JSONL classification. Complete records at the boundary and CRLF input remain eligible.
 
 Derived kinds are rebuilt through the [storage projection repair policy](storage.md#compatibility-policy).
+
+Standalone-fence recognition checks the full body to distinguish a closing fence from trailing prose, even beyond the semantic sample. Classification samples the borrowed body afterward and does not recursively unwrap nested Markdown fences.
 
 ### Normalized Filters
 

@@ -1,6 +1,7 @@
 //! Command-shaped semantic handles and their prose disambiguation.
 
-const COMMANDS: &[&str] = &[
+/// Listed executable names shared by detection and semantic command handles.
+pub(crate) const COMMANDS: &[&str] = &[
     "brew",
     "cargo",
     "git",
@@ -179,7 +180,20 @@ fn starts_with_command_word(line: &str) -> bool {
     crate::detection::setup_command_is_valid(command, &arguments, false)
 }
 
-fn regular_command_is_valid(command: &str, arguments: &[&str], has_shell_syntax: bool) -> bool {
+/// Reject prose uses of a listed executable while retaining command syntax.
+///
+/// # Arguments
+/// - `command`: Listed executable name.
+/// - `arguments`: Whitespace-delimited arguments following the executable.
+/// - `has_shell_syntax`: Whether options, quoting, or operators supply command evidence.
+///
+/// # Returns
+/// Whether the command passes its Git, recipe, and prose-boundary rules.
+pub(crate) fn regular_command_is_valid(
+    command: &str,
+    arguments: &[&str],
+    has_shell_syntax: bool,
+) -> bool {
     if command == "git"
         && !has_shell_syntax
         && !arguments

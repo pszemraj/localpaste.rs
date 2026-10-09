@@ -42,7 +42,13 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 }
 
 #[test]
-fn semantic_kinds_rebuild_from_version_fourteen_and_survive_restart() {
+fn semantic_kinds_rebuild_from_prior_versions_and_survive_restart() {
+    for schema_version in [14, 15] {
+        assert_semantic_kinds_rebuild_and_survive_restart(schema_version);
+    }
+}
+
+fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
@@ -526,7 +532,7 @@ fn semantic_kinds_rebuild_from_version_fourteen_and_survive_restart() {
                 stale.derived.handle = Some("old projection handle".into());
                 stale
             }),
-        14,
+        schema_version,
     );
     drop(db);
 
@@ -553,14 +559,14 @@ fn semantic_kinds_rebuild_from_version_fourteen_and_survive_restart() {
     assert_eq!(
         startup_backup_files(&path).len(),
         1,
-        "v14 upgrade must create one backup"
+        "v{schema_version} upgrade must create one backup"
     );
 
     assert_rebuilt();
     assert_eq!(
         startup_backup_files(&path).len(),
         1,
-        "current v15 restart must not create another backup"
+        "current projection restart must not create another backup"
     );
 }
 

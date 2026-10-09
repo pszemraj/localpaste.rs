@@ -435,32 +435,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
 /// `true` when every non-comment line is a recognized command and at least two
 /// command lines are present.
 pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
-    const COMMANDS: &[&str] = &[
-        "brew",
-        "cargo",
-        "conda",
-        "curl",
-        "docker",
-        "echo",
-        "git",
-        "kubectl",
-        "ls",
-        "mkdir",
-        "npm",
-        "pip",
-        "pnpm",
-        "printf",
-        "pytest",
-        "python",
-        "ssh",
-        "sudo",
-        "systemctl",
-        "torchrun",
-        "uv",
-        "wget",
-        "yarn",
-        "rustup",
-    ];
+    use crate::semantic::commands::{regular_command_is_valid, COMMANDS};
     const SETUP_COMMANDS: &[&str] = &["cd", "export", "set", "source"];
 
     let sample = complete_line_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
@@ -499,13 +474,8 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
         if quoted && !explicit_arguments {
             return false;
         }
-        let has_prose_copula = super::has_unquoted_prose_copula(&arguments, has_shell_syntax);
         let command_line = if COMMANDS.contains(&command) {
-            !has_prose_copula
-                && (command != "git"
-                    || arguments.first().is_some_and(|subcommand| {
-                        super::SHELL_GIT_SUBCOMMANDS.contains(subcommand)
-                    }))
+            regular_command_is_valid(command, &arguments, has_shell_syntax)
         } else if SETUP_COMMANDS.contains(&command) {
             super::setup_command_is_valid(command, &arguments, next_command)
         } else {
@@ -667,7 +637,7 @@ fn python_body_evidence(sample: &str) -> PythonBodyEvidence {
     let mut anchored = false;
     let mut string_block: Option<&str> = None;
     for raw_line in sample.lines().take(512) {
-        let line = raw_line.trim();
+        let mut line = raw_line.trim();
         if line.is_empty() {
             continue;
         }
@@ -688,6 +658,13 @@ fn python_body_evidence(sample: &str) -> PythonBodyEvidence {
                 string_block = Some(quote);
             }
             continue;
+        }
+        while let Some((statement, tail)) = line.split_once(';') {
+            if !looks_like_python_import(statement) && !looks_like_python_from_import(statement) {
+                break;
+            }
+            anchored = true;
+            line = tail.trim_start();
         }
         if looks_like_python_import(line)
             || looks_like_python_from_import(line)
@@ -782,20 +759,25 @@ fn looks_like_python_import(sample: &str) -> bool {
             return false;
         }
         if let Some(rest) = trimmed.strip_prefix("import ") {
-            let mut parts = rest.split_whitespace();
-            let module = parts.next().unwrap_or_default();
-            let module_valid = !module.is_empty()
-                && module
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'));
-            return module_valid
-                && match parts.next() {
-                    None => true,
-                    Some("as") => {
-                        parts.next().is_some_and(is_sql_identifier) && parts.next().is_none()
+            let rest = rest.split(['#', ';']).next().unwrap_or_default().trim_end();
+            let rest = rest.strip_suffix('\\').unwrap_or(rest).trim_end();
+            let rest = rest.strip_suffix(',').unwrap_or(rest);
+            return rest.split(',').all(|module| {
+                let mut parts = module.split_whitespace();
+                let module = parts.next().unwrap_or_default();
+                let module_valid = !module.is_empty()
+                    && module
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'));
+                module_valid
+                    && match parts.next() {
+                        None => true,
+                        Some("as") => {
+                            parts.next().is_some_and(is_sql_identifier) && parts.next().is_none()
+                        }
+                        _ => false,
                     }
-                    _ => false,
-                };
+            });
         }
         false
     })

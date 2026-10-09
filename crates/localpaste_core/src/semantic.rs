@@ -5,7 +5,8 @@ use crate::text::{complete_line_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-mod commands;
+/// Shared command recognition and semantic-handle extraction.
+pub(crate) mod commands;
 
 const SAMPLE_MAX_LINES: usize = 256;
 const MAX_TERMS: usize = 4;
@@ -140,6 +141,12 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
                     .is_empty()
                     .then(|| crate::detection::detect_heuristically(body))
                     .flatten();
+                // A Markdown body contains literal markup, including inner
+                // fences; unwrapping those again changes its meaning and makes
+                // nested fences rescan the whole body at every level.
+                if detected.as_deref() == Some("markdown") {
+                    return PasteKind::Document;
+                }
                 return match classify_kind(
                     body,
                     detected.as_deref().or(Some(inner_language.as_str())),
@@ -345,12 +352,9 @@ fn has_positive_markdown_document_evidence(sample: &str) -> bool {
     if sample.contains("```") || sample.contains("~~~") || sample.contains("](") {
         return true;
     }
-    if commands::extract_command_handle(sample).is_some() {
-        return false;
-    }
-
     let mut non_empty = 0usize;
     let mut quoted = 0usize;
+    let mut previous = "";
     for line in sample
         .lines()
         .map(str::trim)
@@ -362,12 +366,38 @@ fn has_positive_markdown_document_evidence(sample: &str) -> bool {
             || ((line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ "))
                 && !line.contains(": "))
             || crate::models::paste::is_markdown_ordered_list_line(line)
+            || (line.starts_with('[') && line.contains("]:"))
+            || (line.chars().filter(|ch| !ch.is_whitespace()).count() >= 3
+                && ['-', '*', '_']
+                    .iter()
+                    .any(|marker| line.chars().all(|ch| ch == *marker || ch.is_whitespace())))
+            || (!previous.is_empty() && line.chars().all(|ch| ch == '='))
+            || (line.contains('|')
+                && line.trim_matches('|').split('|').all(|cell| {
+                    let cell = cell.trim().trim_matches(':');
+                    cell.len() >= 3 && cell.chars().all(|ch| ch == '-')
+                }))
+            || ["**", "__", "*", "_", "~~", "`"].iter().any(|marker| {
+                line.split_once(marker).is_some_and(|(before, rest)| {
+                    rest.split_once(marker).is_some_and(|(body, after)| {
+                        !body.is_empty()
+                            && !body.starts_with(char::is_whitespace)
+                            && !body.ends_with(char::is_whitespace)
+                            && (!marker.starts_with('_')
+                                || (!before.ends_with(char::is_alphanumeric)
+                                    && !after.starts_with(char::is_alphanumeric)))
+                    })
+                })
+            })
+            || (looks_like_prose(line) && commands::extract_command_handle(line).is_none())
         {
             return true;
         }
+        previous = line;
     }
 
-    (non_empty > 0 && quoted == non_empty) || looks_like_prose(sample)
+    (non_empty > 0 && quoted == non_empty)
+        || (commands::extract_command_handle(sample).is_none() && looks_like_prose(sample))
 }
 
 /// Recognize a whole target-and-tabbed-command body without treating embedded examples as code.
@@ -380,11 +410,26 @@ fn looks_like_tabbed_command_recipe(sample: &str) -> bool {
             continue;
         }
         if line.starts_with('\t') {
-            if !saw_target || commands::extract_command_handle(trimmed).is_none() {
+            let recipe = trimmed.trim_start_matches(['@', '+', '-']);
+            let command = recipe.split_whitespace().next().unwrap_or_default();
+            let executable = !command.is_empty()
+                && command.chars().all(|ch| {
+                    ch.is_ascii_lowercase()
+                        || ch.is_ascii_digit()
+                        || matches!(ch, '_' | '-' | '.' | '/' | '\\')
+                });
+            if !saw_target
+                || !(executable
+                    || commands::has_unlisted_command_syntax(recipe)
+                    || (command.starts_with("$(") && command.ends_with(')')))
+            {
                 return false;
             }
             saw_recipe = true;
-        } else if trimmed.ends_with(':') {
+        } else if trimmed.split_once(':').is_some_and(|(target, _)| {
+            let target = target.trim();
+            !(target.is_empty() || (target.starts_with('[') && target.ends_with(']')))
+        }) {
             saw_target = true;
         } else {
             return false;

@@ -55,7 +55,20 @@ fn weak_markdown_labels_do_not_hide_whole_technical_bodies() {
         ),
         ("# connect\nssh user@host", PasteKind::Code),
         ("# containers\ndocker ps", PasteKind::Code),
+        ("# deps\npip freeze", PasteKind::Code),
+        ("# deps\nnpm ls", PasteKind::Code),
+        ("# run tests\npytest tests", PasteKind::Code),
+        ("# containers\ndocker images", PasteKind::Code),
+        ("# fetch the page\nwget https://example.com", PasteKind::Code),
+        ("# setup\nmkdir out", PasteKind::Code),
+        ("# build\nmake all", PasteKind::Code),
+        ("# build\njust build", PasteKind::Code),
         ("# build\nall:\n\tcargo build", PasteKind::Code),
+        ("# build\nall: src/main.rs\n\t@cargo build", PasteKind::Code),
+        ("# build\nall:\n\tcc main.c -o app", PasteKind::Code),
+        ("# build\nall clean:\n\tcargo build", PasteKind::Code),
+        ("# build\nall : main.c\n\tcc main.c", PasteKind::Code),
+        ("# build\nall: main.c\n\t$(CC) main.c", PasteKind::Code),
         (
             "npm ERR! code 1\nnpm ERR! command failed\n> demo@1.0.0 test\n> pytest",
             PasteKind::Code,
@@ -106,11 +119,39 @@ fn weak_markdown_labels_do_not_hide_whole_technical_bodies() {
         "# Notes\nimport numpy as np\nrelease details",
         "# Notes\nrelease details",
         "# Notes\n[label](url)",
+        "npm install foo\n\n# Usage\nUse this package in the application.",
+        "cargo build\n\n# Build notes\nThe build takes several minutes.",
+        "> npm i\n\n# Install\nThese are the quoted instructions.",
+        "cargo build\n\nThe build takes several minutes.",
+        "# Build notes\nThis recipe builds the app.\nall:\n\tcargo build",
+        "# Tasks\nMeeting notes:\n\tDiscuss timeline tomorrow",
+        "# Meeting agenda\nTopics:\n\tReview project status",
+        "**bold**",
+        "*italic*",
+        "__bold__",
+        "_italic_",
+        "`inline code`",
+        "---",
+        "* * *",
+        "___",
+        "Heading\n=======",
+        "Heading\n-------",
+        "| A | B |\n|---|---|\n| a | b |",
+        "[label]: https://example.com",
+        "# references\n[api]: https://example.com\n\t\"API reference\"",
+        "[api]: https://example.com\n\t\"API reference\"",
         "> This is a quoted explanation.\n> The example uses `pip install foo`.",
     ] {
         assert_eq!(
             derive(content, Some("markdown")).kind,
             PasteKind::Document,
+            "{content}"
+        );
+    }
+    for content in ["get_user_id", "DB_READ_TIMEOUT", "foo__bar__baz"] {
+        assert_eq!(
+            derive(content, Some("markdown")).kind,
+            PasteKind::Other,
             "{content}"
         );
     }
@@ -468,6 +509,10 @@ fn explicit_documents_override_code_and_log_signals() {
         ),
         ("```markdown\n# Read me\n```", PasteKind::Document),
         (
+            "````\n```python\nprint('hello')\n```\n````",
+            PasteKind::Document,
+        ),
+        (
             "Notes before the example\n```python\nprint('hello')\n```",
             PasteKind::Document,
         ),
@@ -486,6 +531,20 @@ fn explicit_documents_override_code_and_log_signals() {
     }
     let large_fence = format!("```python\n{}\n```", "print('hello')\n".repeat(5_000));
     assert_eq!(derive(&large_fence, Some("markdown")).kind, PasteKind::Code);
+    let mut nested_fences = String::new();
+    for width in (3..=1_602).rev() {
+        nested_fences.push_str(&"`".repeat(width));
+        nested_fences.push('\n');
+    }
+    nested_fences.push_str("This is a short note.\n");
+    for width in 3..=1_602 {
+        nested_fences.push_str(&"`".repeat(width));
+        nested_fences.push('\n');
+    }
+    assert_eq!(
+        derive(&nested_fences, Some("markdown")).kind,
+        PasteKind::Document
+    );
 }
 
 #[test]

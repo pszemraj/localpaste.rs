@@ -261,7 +261,7 @@ pub(crate) fn command_has_explicit_arguments(
     }
 }
 
-/// Accept comment-led commands whose executable is unambiguous without operands.
+/// Accept listed executables after comments without enumerating every tool action.
 ///
 /// Quoted lines intentionally continue to require [`command_has_explicit_arguments`]
 /// so ordinary blockquotes do not become shell snippets.
@@ -275,7 +275,15 @@ pub(crate) fn command_has_explicit_arguments(
 /// Whether a leading comment plus this command supplies enough technical evidence.
 pub(crate) fn command_has_comment_evidence(command: &str, line: &str, arguments: &[&str]) -> bool {
     command_has_explicit_arguments(command, line, arguments)
-        || (command == "pytest" && arguments.is_empty())
+        || (command != "ls"
+            && !has_unquoted_prose_copula(arguments, false)
+            && !arguments.iter().any(|word| {
+                [
+                    "a", "an", "the", "for", "to", "about", "please", "should", "could", "would",
+                    "we", "you", "our", "your", "in", "at", "by",
+                ]
+                .contains(word)
+            }))
 }
 
 /// Detect language/type of text content.
@@ -511,6 +519,14 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     }
 
     if markdown_fence_override_applies(content) {
+        return Some("markdown".to_string());
+    }
+    // Magika also calls heading-led notes with a colon and an indented sentence
+    // Makefiles. Trust that label only when the complete body has a recipe.
+    if label == "makefile"
+        && crate::models::paste::is_markdown_content(content)
+        && crate::semantic::markdown_technical_language(content).is_none()
+    {
         return Some("markdown".to_string());
     }
     if label == "markdown" {
