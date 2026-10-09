@@ -665,6 +665,105 @@ fn language_filter_options_dedupe_case_variants() {
 }
 
 #[test]
+fn sidebar_search_failure_retains_rows_and_retries_only_when_requested() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    harness.app.search_query = "needle".into();
+    harness.app.pastes = vec![test_summary("previous", "Previous result", Some("rust"), 1)];
+    harness.app.set_active_language_filter(Some("rust".into()));
+    harness.app.set_search_scope(SearchScope::Body);
+    harness.app.maybe_dispatch_search();
+    let _ = recv_cmd(&harness.cmd_rx);
+    for (scope, query, collection, folder_id, language) in [
+        (
+            SearchScope::Title,
+            "needle",
+            SidebarCollection::All,
+            None,
+            Some("rust"),
+        ),
+        (
+            SearchScope::Body,
+            "old",
+            SidebarCollection::All,
+            None,
+            Some("rust"),
+        ),
+        (
+            SearchScope::Body,
+            "needle",
+            SidebarCollection::Code,
+            None,
+            Some("rust"),
+        ),
+        (
+            SearchScope::Body,
+            "needle",
+            SidebarCollection::All,
+            Some("old-folder"),
+            Some("rust"),
+        ),
+        (
+            SearchScope::Body,
+            "needle",
+            SidebarCollection::All,
+            None,
+            Some("python"),
+        ),
+    ] {
+        harness.app.apply_event(CoreEvent::SearchFailed {
+            collection,
+            scope,
+            query: query.into(),
+            folder_id: folder_id.map(str::to_owned),
+            language: language.map(str::to_owned),
+            message: "stale failure".into(),
+        });
+        assert!(harness.app.search_error.is_none());
+        assert!(harness.app.status.is_none());
+    }
+    harness.app.apply_event(CoreEvent::SearchFailed {
+        collection: SidebarCollection::All,
+        scope: SearchScope::Body,
+        query: "needle".into(),
+        folder_id: None,
+        language: Some("rust".into()),
+        message: "Search failed: disk unavailable".into(),
+    });
+    assert_eq!(harness.app.pastes[0].id, "previous");
+    assert_eq!(
+        harness.app.search_error.as_deref(),
+        Some("Search failed: disk unavailable")
+    );
+    assert!(harness.app.search_last_input_at.is_none());
+    harness.app.maybe_dispatch_search();
+    assert!(
+        harness.cmd_rx.try_recv().is_err(),
+        "failure must not retry every frame"
+    );
+
+    let ctx = egui::Context::default();
+    let output = run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
+    let retry = rendered_label_center(&output, "Retry search");
+    run_full_update(&mut harness.app, &ctx, primary_pointer_events(retry, true));
+    run_full_update(&mut harness.app, &ctx, primary_pointer_events(retry, false));
+    harness.app.maybe_dispatch_search();
+    assert!(matches!(recv_cmd(&harness.cmd_rx), CoreCmd::SearchPastes {
+        scope: SearchScope::Body, query, language, ..
+    } if query == "needle" && language.as_deref() == Some("rust")));
+    assert!(harness.app.search_error.is_none());
+    assert_eq!(harness.app.pastes[0].id, "previous");
+    harness.app.apply_event(CoreEvent::SearchResults {
+        collection: SidebarCollection::All,
+        scope: SearchScope::Body,
+        query: "needle".into(),
+        folder_id: None,
+        language: Some("rust".into()),
+        items: vec![test_summary("replacement", "New result", Some("rust"), 1)],
+    });
+    assert_eq!(harness.app.pastes[0].id, "replacement");
+}
+
+#[test]
 fn language_filter_aliases_match_in_client_projection() {
     let mut harness = make_app();
     harness.app.apply_event(CoreEvent::PasteList {

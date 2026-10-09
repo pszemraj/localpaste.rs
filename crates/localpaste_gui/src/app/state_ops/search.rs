@@ -9,6 +9,7 @@ impl LocalPasteApp {
             return;
         }
         self.search_query = query;
+        self.search_error = None;
         self.picker_selection_pin = None;
         self.search_last_input_at = Some(Instant::now());
     }
@@ -72,6 +73,7 @@ impl LocalPasteApp {
     /// Refreshes search rows after filters change, respecting a retained document pin.
     fn refresh_search_projection(&mut self) {
         self.search_last_sent.clear();
+        self.search_error = None;
         if self.search_query.trim().is_empty() {
             self.recompute_visible_pastes();
             self.ensure_selection_after_list_update();
@@ -159,6 +161,7 @@ impl LocalPasteApp {
             return;
         }
         self.search_last_sent = query;
+        self.search_error = None;
         self.search_sent_scope = self.search_scope;
         self.query_perf.search_requests_sent =
             self.query_perf.search_requests_sent.saturating_add(1);
@@ -211,12 +214,76 @@ impl LocalPasteApp {
         self.palette_search_pending = true;
     }
 
-    /// Updates sidebar scope and discards results from the previous field context.
+    /// Retains search failures and existing rows until explicit Retry or changed input.
+    ///
+    /// # Arguments
+    /// - `collection`: Collection used by the failed request.
+    /// - `scope`: Fields searched by the failed request.
+    /// - `query`: Query sent to the backend.
+    /// - `folder_id`: Folder constraint sent to the backend.
+    /// - `language`: Language constraint sent to the backend.
+    /// - `message`: Backend failure shown to the user.
+    pub(super) fn fail_sidebar_search(
+        &mut self,
+        collection: SidebarCollection,
+        scope: super::super::SearchScope,
+        query: String,
+        folder_id: Option<String>,
+        language: Option<String>,
+        message: String,
+    ) {
+        if !self.sidebar_search_response_is_current(
+            &collection,
+            scope,
+            &query,
+            folder_id.as_deref(),
+            language.as_deref(),
+        ) {
+            return;
+        }
+        self.search_last_sent.clear();
+        self.search_last_input_at = None;
+        self.query_perf.search_last_sent_at = None;
+        self.search_error = Some(message.clone());
+        self.set_status(message);
+    }
+
+    /// Checks sidebar response identity against the active query, scope, and filters.
+    ///
+    /// # Arguments
+    /// - `collection`: Collection echoed by the response.
+    /// - `scope`: Search scope echoed by the response.
+    /// - `query`: Query echoed by the response.
+    /// - `folder_id`: Folder constraint echoed by the response.
+    /// - `language`: Language constraint echoed by the response.
+    ///
+    /// # Returns
+    /// Whether the response still belongs to the active sidebar request.
+    pub(super) fn sidebar_search_response_is_current(
+        &self,
+        collection: &SidebarCollection,
+        scope: super::super::SearchScope,
+        query: &str,
+        folder_id: Option<&str>,
+        language: Option<&str>,
+    ) -> bool {
+        let active_query = self.search_query.trim();
+        let (expected_folder_id, expected_language) = self.search_backend_filters();
+        !active_query.is_empty()
+            && collection == &self.active_collection
+            && query.trim() == active_query
+            && query.trim() == self.search_last_sent.trim()
+            && scope == self.search_scope
+            && scope == self.search_sent_scope
+            && folder_id == expected_folder_id.as_deref()
+            && normalize_language_filter_value(language) == expected_language
+    }
+
+    /// Updates sidebar scope, retaining visible rows until replacement results arrive.
     pub(in crate::app) fn set_search_scope(&mut self, scope: super::super::SearchScope) {
         if self.search_scope != scope {
             let selection = self.selected_id.clone();
             self.search_scope = scope;
-            self.pastes.clear();
             // Install the pin before an empty query can recompute and select rows.
             self.picker_selection_pin = selection;
             self.refresh_search_projection();

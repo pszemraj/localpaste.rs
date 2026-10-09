@@ -71,6 +71,32 @@ fn editor_find_rebuilds_after_buffer_revision_changes() {
 }
 
 #[test]
+fn editor_find_selects_first_match_after_switching_pastes() {
+    for scope in [SearchScope::All, SearchScope::Title] {
+        let mut harness = make_app();
+        harness.app.search_scope = scope;
+        harness.app.reset_virtual_editor("needle old needle");
+        harness.app.open_editor_find();
+        harness.app.set_editor_find_query("needle".into());
+        harness.app.editor_find_next();
+        let paste = Paste::new("new needle then needle".into(), "Next paste".into());
+        harness.app.select_loaded_paste(paste);
+        let ctx = egui::Context::default();
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        assert_eq!(harness.app.editor_find.active_match, Some(0));
+        assert_eq!(
+            harness.app.virtual_editor_state.selection_range(),
+            Some(4..10)
+        );
+        harness.app.editor_find_next();
+        assert_eq!(
+            harness.app.virtual_editor_state.selection_range(),
+            Some(16..22)
+        );
+    }
+}
+
+#[test]
 fn editor_find_reopen_with_saved_query_selects_active_match() {
     let mut harness = make_app();
     harness.app.editor_find.query = "needle".to_string();

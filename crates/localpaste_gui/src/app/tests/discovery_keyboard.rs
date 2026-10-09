@@ -151,7 +151,14 @@ fn discovery_cancellation_returns_focus_to_metadata_input() {
 #[test]
 fn discovery_overlays_block_background_mutation_and_properties_chords() {
     for overlay in ["palette", "picker", "help"] {
-        for key in [egui::Key::N, egui::Key::S, egui::Key::Delete, egui::Key::I] {
+        for (key, shift, immediate_payload) in [
+            (egui::Key::N, false, false),
+            (egui::Key::S, false, false),
+            (egui::Key::Delete, false, false),
+            (egui::Key::I, false, false),
+            (egui::Key::V, true, false),
+            (egui::Key::V, true, true),
+        ] {
             let (mut harness, _events) = make_app_with_event_tx();
             let ctx = egui::Context::default();
             frame(&mut harness.app, &ctx, vec![]);
@@ -177,18 +184,46 @@ fn discovery_overlays_block_background_mutation_and_properties_chords() {
                 ctx.memory_mut(|memory| memory.surrender_focus(id));
             }
             harness.app.virtual_editor_state.has_focus = false;
+            if key == egui::Key::V {
+                harness.app.mark_dirty();
+            }
             let selected = harness.app.selected_id.clone();
             let properties_open = harness.app.properties_drawer_open;
             while harness.cmd_rx.try_recv().is_ok() {}
-            frame(
-                &mut harness.app,
-                &ctx,
-                vec![key_event(key, linux_command(false))],
-            );
+            let mut events = vec![key_event(key, linux_command(shift))];
+            if immediate_payload {
+                events.push(egui::Event::Paste("clipboard payload".into()));
+            }
+            let output = frame(&mut harness.app, &ctx, events);
             assert_eq!(harness.app.selected_id, selected, "{overlay}: {key:?}");
             assert_eq!(harness.app.properties_drawer_open, properties_open);
             assert_eq!(harness.app.active_snapshot(), "content");
             assert!(harness.cmd_rx.try_recv().is_err(), "{overlay}: {key:?}");
+            if key == egui::Key::V {
+                assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+            }
+            assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+            assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+            assert!(!output.viewport_output.values().any(|viewport| viewport
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::RequestPaste))));
+            if key == egui::Key::V && !immediate_payload {
+                frame(
+                    &mut harness.app,
+                    &ctx,
+                    vec![egui::Event::Paste("delayed clipboard payload".into())],
+                );
+                assert_eq!(
+                    harness.app.selected_id, selected,
+                    "{overlay}: delayed paste"
+                );
+                assert_eq!(harness.app.active_snapshot(), "content");
+                assert!(!harness.cmd_rx.try_iter().any(|command| matches!(
+                    command,
+                    CoreCmd::CreatePaste { .. } | CoreCmd::UpdatePasteVirtual { .. }
+                )));
+            }
         }
     }
 }

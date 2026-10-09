@@ -91,6 +91,7 @@ pub(crate) struct LocalPasteApp {
     search_sent_scope: SearchScope,
     search_last_input_at: Option<Instant>,
     search_last_sent: String,
+    search_error: Option<String>,
     search_focus_requested: bool,
     active_collection: SidebarCollection,
     active_language_filter: Option<String>,
@@ -572,6 +573,7 @@ impl eframe::App for LocalPasteApp {
                 && matches!(
                     action,
                     RuntimeShortcutAction::NewPaste
+                        | RuntimeShortcutAction::PasteAsNew
                         | RuntimeShortcutAction::Save
                         | RuntimeShortcutAction::DeleteSelected
                         | RuntimeShortcutAction::ToggleProperties

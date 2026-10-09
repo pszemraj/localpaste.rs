@@ -136,6 +136,15 @@ pub enum CoreEvent {
         language: Option<String>,
         items: Vec<PasteSummary>,
     },
+    /// A sidebar search could not complete in this query/filter context.
+    SearchFailed {
+        collection: SidebarCollection,
+        scope: SearchScope,
+        query: String,
+        folder_id: Option<String>,
+        language: Option<String>,
+        message: String,
+    },
     /// Response containing command palette search results.
     PaletteSearchResults {
         scope: SearchScope,

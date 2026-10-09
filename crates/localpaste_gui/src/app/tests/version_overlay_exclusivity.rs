@@ -130,6 +130,59 @@ fn closing_version_overlays_reconciles_hidden_selection_back_to_visible_projecti
 }
 
 #[test]
+fn refused_version_overlay_selection_preserves_picker_pin_and_queued_state() {
+    for history in [false, true] {
+        let mut harness = make_app();
+        harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)];
+        harness.app.picker_selection_pin = Some("alpha".into());
+        harness.app.version_ui.history_modal_open = history;
+        harness.app.version_ui.diff_modal_open = !history;
+        harness.app.pending_selection_id = Some("queued".into());
+        harness.app.pending_picker_open = Some(PendingPickerOpen {
+            id: "queued".into(),
+            query: "needle".into(),
+            scope: SearchScope::Body,
+            case_sensitive: true,
+            input_events: vec![egui::Event::Text("retained input".into())],
+            input_ready: false,
+        });
+        harness.app.pending_delete_id = Some("alpha".into());
+
+        for target in ["beta", "alpha"] {
+            assert!(!harness.app.select_paste(target.into()));
+            assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+            assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+            assert_eq!(harness.app.pending_selection_id.as_deref(), Some("queued"));
+            assert_eq!(harness.app.pending_delete_id.as_deref(), Some("alpha"));
+            let opening = harness.app.pending_picker_open.as_ref().unwrap();
+            assert_eq!(opening.id, "queued");
+            assert_eq!(opening.query, "needle");
+            assert_eq!(opening.scope, SearchScope::Body);
+            assert!(opening.case_sensitive);
+            assert_eq!(
+                opening.input_events,
+                vec![egui::Event::Text("retained input".into())]
+            );
+            assert!(!opening.input_ready);
+            assert!(harness.cmd_rx.try_recv().is_err());
+        }
+
+        // Once unrelated queued work is removed, closing the version window
+        // must leave the picker-opened paste selected outside the sidebar filter.
+        harness.app.clear_pending_selection_request();
+        harness.app.cancel_pending_delete();
+        if history {
+            harness.app.close_history_modal();
+        } else {
+            harness.app.close_diff_modal();
+        }
+        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+        assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+        assert!(harness.cmd_rx.try_recv().is_err());
+    }
+}
+
+#[test]
 fn diff_modal_rejects_opening_history_modal_while_it_owns_version_workflow() {
     let mut harness = make_app();
     harness.app.version_ui.diff_modal_open = true;

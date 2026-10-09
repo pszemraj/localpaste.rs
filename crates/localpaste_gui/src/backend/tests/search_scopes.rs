@@ -161,4 +161,45 @@ fn picker_metadata_scopes_do_not_deserialize_canonical_bodies() {
             other => panic!("unexpected {other:?}"),
         }
     }
+    // Body searches encounter the corrupt canonical row and must echo the
+    // request context so each UI surface can reject stale failures and retry.
+    for picker in [false, true] {
+        let command = if picker {
+            CoreCmd::SearchPalette {
+                query: "needle".into(),
+                scope: SearchScope::Body,
+                limit: 10,
+            }
+        } else {
+            CoreCmd::SearchPastes {
+                collection: SidebarCollection::All,
+                query: "needle".into(),
+                scope: SearchScope::Body,
+                limit: 10,
+                folder_id: None,
+                language: None,
+            }
+        };
+        backend.cmd_tx.send(command).unwrap();
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::SearchFailed {
+                collection,
+                scope,
+                query,
+                folder_id,
+                language,
+                ..
+            } if !picker => {
+                assert_eq!(collection, SidebarCollection::All);
+                assert_eq!(scope, SearchScope::Body);
+                assert_eq!(query, "needle");
+                assert!(folder_id.is_none() && language.is_none());
+            }
+            CoreEvent::PaletteSearchFailed { scope, query, .. } if picker => {
+                assert_eq!(scope, SearchScope::Body);
+                assert_eq!(query, "needle");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
 }

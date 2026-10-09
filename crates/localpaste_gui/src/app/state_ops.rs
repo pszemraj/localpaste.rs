@@ -369,23 +369,18 @@ impl LocalPasteApp {
                 items,
             } => {
                 // Drop stale search responses when query or backend filter context changed.
-                let active_query = self.search_query.trim();
-                let expected_sent_query = self.search_last_sent.trim();
-                let (expected_folder_id, expected_language) = self.search_backend_filters();
-                let response_language = normalize_language_filter_value(language.as_deref());
-                if active_query.is_empty()
-                    || collection != self.active_collection
-                    || query.trim() != active_query
-                    || query.trim() != expected_sent_query
-                    || scope != self.search_scope
-                    || scope != self.search_sent_scope
-                    || folder_id != expected_folder_id
-                    || response_language != expected_language
-                {
+                if !self.sidebar_search_response_is_current(
+                    &collection,
+                    scope,
+                    &query,
+                    folder_id.as_deref(),
+                    language.as_deref(),
+                ) {
                     self.query_perf.search_stale_drops =
                         self.query_perf.search_stale_drops.saturating_add(1);
                     return;
                 }
+                self.search_error = None;
                 self.query_perf.search_results_applied =
                     self.query_perf.search_results_applied.saturating_add(1);
                 if let Some(sent_at) = self.query_perf.search_last_sent_at.take() {
@@ -395,6 +390,14 @@ impl LocalPasteApp {
                 self.pastes = self.filter_by_collection(&items);
                 self.ensure_selection_after_list_update();
             }
+            CoreEvent::SearchFailed {
+                collection,
+                scope,
+                query,
+                folder_id,
+                language,
+                message,
+            } => self.fail_sidebar_search(collection, scope, query, folder_id, language, message),
             CoreEvent::PaletteSearchResults {
                 query,
                 items,
@@ -593,6 +596,12 @@ impl LocalPasteApp {
             self.set_picker_delete_transition_blocked_status();
             return false;
         }
+        // Detached version workflows own the current subject paste; switching away would
+        // invalidate the open modal context and, during reset, release the held lock too early.
+        if self.selection_transition_block_reason().is_some() {
+            self.set_selection_transition_blocked_status();
+            return false;
+        }
         self.pending_picker_open = None;
         self.picker_selection_pin = None;
         if self.selected_id.as_deref() == Some(id.as_str()) {
@@ -600,12 +609,6 @@ impl LocalPasteApp {
             return true;
         }
         self.cancel_pending_delete();
-        // Detached version workflows own the current subject paste; switching away would
-        // invalidate the open modal context and, during reset, release the held lock too early.
-        if self.selection_transition_block_reason().is_some() {
-            self.set_selection_transition_blocked_status();
-            return false;
-        }
         if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
             self.queue_pending_selection(id);
             let content_save_needed = self.save_status == SaveStatus::Dirty;

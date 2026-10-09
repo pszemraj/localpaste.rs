@@ -28,6 +28,12 @@ fn sidebar_and_picker_reject_stale_scopes_and_keep_independent_queries() {
             ..
         }
     ));
+    let retained_ids: Vec<_> = harness
+        .app
+        .pastes
+        .iter()
+        .map(|item| item.id.clone())
+        .collect();
     for scope in [SearchScope::All, SearchScope::Body, SearchScope::Metadata] {
         harness.app.apply_event(CoreEvent::SearchResults {
             collection: crate::backend::SidebarCollection::All,
@@ -37,7 +43,15 @@ fn sidebar_and_picker_reject_stale_scopes_and_keep_independent_queries() {
             language: None,
             items: vec![test_summary("stale", "stale", None, 1)],
         });
-        assert!(harness.app.pastes.is_empty());
+        assert_eq!(
+            harness
+                .app
+                .pastes
+                .iter()
+                .map(|item| item.id.clone())
+                .collect::<Vec<_>>(),
+            retained_ids
+        );
     }
     for scope in [SearchScope::All, SearchScope::Title, SearchScope::Metadata] {
         harness.app.apply_event(CoreEvent::PaletteSearchResults {
@@ -55,8 +69,10 @@ fn sidebar_and_picker_reject_stale_scopes_and_keep_independent_queries() {
     assert_eq!(harness.app.palette_search_results[0].id, "valid");
     assert_eq!(harness.app.search_query, "sidebar");
     assert_eq!(harness.app.search_scope, SearchScope::Title);
+    harness.app.pastes = vec![test_summary("previous", "Previous result", None, 1)];
     // Changing only the field scope must dispatch even with identical query text.
     harness.app.set_search_scope(SearchScope::Metadata);
+    assert_eq!(harness.app.pastes[0].id, "previous");
     harness.app.maybe_dispatch_search();
     assert!(matches!(
         recv_cmd(&harness.cmd_rx),

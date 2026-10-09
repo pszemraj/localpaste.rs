@@ -275,7 +275,10 @@ impl LocalPasteApp {
         {
             return;
         }
-        self.rebuild_editor_find_matches(false);
+        // A replacement buffer resets selection; select its first active hit so
+        // the displayed index and the next navigation step agree with the editor.
+        let select_match = self.editor_find.last_buffer_epoch != Some(self.active_buffer_epoch);
+        self.rebuild_editor_find_matches(select_match);
     }
 
     fn rebuild_editor_find_matches(&mut self, select_match: bool) {

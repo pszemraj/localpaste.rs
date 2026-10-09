@@ -117,6 +117,10 @@ impl LocalPasteApp {
             })
         });
         if explicit_shortcut {
+            if self.keyboard_overlay_open() && !self.version_overlay_open() {
+                self.cancel_paste_as_new_intent();
+                return false;
+            }
             if self.mutation_shortcut_block_reason().is_some() {
                 self.cancel_paste_as_new_intent();
                 self.set_mutation_shortcut_blocked_status();
@@ -155,9 +159,9 @@ impl LocalPasteApp {
             self.paste_as_new_clipboard_requested_at = None;
             return false;
         }
-        if self.mutation_shortcut_block_reason().is_some() {
-            // Detached version windows and reset fences must not let older
-            // clipboard intents materialize into a hidden new-paste mutation.
+        if self.mutation_shortcut_block_reason().is_some() || self.keyboard_overlay_open() {
+            // Overlay ownership and reset fences also cancel older clipboard
+            // intents whose payload arrives after the overlay opens.
             self.cancel_paste_as_new_intent();
             return false;
         }

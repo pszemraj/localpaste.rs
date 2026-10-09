@@ -907,25 +907,33 @@ fn explicit_paste_as_new_shortcut_is_rejected_while_version_overlay_is_open() {
 }
 
 #[test]
-fn version_overlay_cancels_pending_paste_as_new_and_blocks_implicit_clipboard_create() {
-    let mut harness = make_app();
-    harness.app.arm_paste_as_new_intent();
-    harness.app.version_ui.diff_modal_open = true;
+fn keyboard_overlays_cancel_pending_paste_as_new_and_block_implicit_clipboard_create() {
+    for overlay in ["diff", "history", "picker", "palette", "help"] {
+        let mut harness = make_app();
+        harness.app.arm_paste_as_new_intent();
+        match overlay {
+            "diff" => harness.app.version_ui.diff_modal_open = true,
+            "history" => harness.app.version_ui.history_modal_open = true,
+            "picker" => harness.app.open_paste_picker(),
+            "palette" => harness.app.command_palette_open = true,
+            _ => harness.app.shortcut_help_open = true,
+        }
 
-    let mut explicit_clipboard = Some("from clipboard".to_string());
-    assert!(!harness
-        .app
-        .maybe_consume_explicit_paste_as_new(&mut explicit_clipboard));
-    assert_eq!(explicit_clipboard.as_deref(), Some("from clipboard"));
-    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
-    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
-    assert!(harness.cmd_rx.try_recv().is_err());
+        let mut explicit_clipboard = Some("from clipboard".to_string());
+        assert!(!harness
+            .app
+            .maybe_consume_explicit_paste_as_new(&mut explicit_clipboard));
+        assert_eq!(explicit_clipboard.as_deref(), Some("from clipboard"));
+        assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+        assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+        assert!(harness.cmd_rx.try_recv().is_err());
 
-    assert!(!harness.app.maybe_route_implicit_global_clipboard_create(
-        Some("from clipboard".to_string()),
-        false,
-        false,
-        false,
-    ));
-    assert!(harness.cmd_rx.try_recv().is_err());
+        assert!(!harness.app.maybe_route_implicit_global_clipboard_create(
+            Some("from clipboard".to_string()),
+            false,
+            false,
+            false,
+        ));
+        assert!(harness.cmd_rx.try_recv().is_err());
+    }
 }

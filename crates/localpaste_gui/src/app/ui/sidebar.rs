@@ -182,6 +182,12 @@ impl LocalPasteApp {
                 let scope =
                     super::search_scope::scope_selector(ui, "sidebar_scope", self.search_scope);
                 self.set_search_scope(scope);
+                if let Some(error) = &self.search_error {
+                    ui.label(RichText::new(error).small().color(COLOR_TEXT_MUTED));
+                    if ui.button("Retry search").clicked() {
+                        self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+                    }
+                }
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {

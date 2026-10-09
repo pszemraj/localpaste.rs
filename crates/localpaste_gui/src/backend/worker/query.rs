@@ -387,32 +387,42 @@ pub(super) fn handle_search(
             collection,
             folder_id,
             language,
-        } => handle_search_variant(
-            state,
-            query,
-            limit,
-            SearchVariant {
-                collection: collection.clone(),
-                folder_id,
-                language,
-                op: "search",
-                error_prefix: "Search",
-                include_body_match_excerpt: false,
-            },
-            scope,
-            move |query, folder_id, language, items| CoreEvent::SearchResults {
-                collection: collection.clone(),
-                scope,
+        } => {
+            let error_query = query.clone();
+            let error_collection = collection.clone();
+            let error_folder_id = folder_id.clone();
+            let error_language = language.clone();
+            handle_search_variant(
+                state,
                 query,
-                folder_id,
-                language,
-                items,
-            },
-            |message| CoreEvent::Error {
-                source: CoreErrorSource::Other,
-                message,
-            },
-        ),
+                limit,
+                SearchVariant {
+                    collection: collection.clone(),
+                    folder_id,
+                    language,
+                    op: "search",
+                    error_prefix: "Search",
+                    include_body_match_excerpt: false,
+                },
+                scope,
+                move |query, folder_id, language, items| CoreEvent::SearchResults {
+                    collection: collection.clone(),
+                    scope,
+                    query,
+                    folder_id,
+                    language,
+                    items,
+                },
+                move |message| CoreEvent::SearchFailed {
+                    collection: error_collection.clone(),
+                    scope,
+                    query: error_query.clone(),
+                    folder_id: error_folder_id.clone(),
+                    language: error_language.clone(),
+                    message,
+                },
+            )
+        }
         SearchRoute::Palette => {
             let error_query = query.clone();
             handle_search_variant(

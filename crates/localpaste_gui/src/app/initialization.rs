@@ -100,6 +100,7 @@ impl LocalPasteApp {
             search_sent_scope: SearchScope::All,
             search_last_input_at: None,
             search_last_sent: String::new(),
+            search_error: None,
             search_focus_requested: false,
             active_collection: SidebarCollection::All,
             active_language_filter: None,
