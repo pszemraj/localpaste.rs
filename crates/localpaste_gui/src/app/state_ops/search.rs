@@ -116,6 +116,39 @@ impl LocalPasteApp {
         langs.into_iter().collect()
     }
 
+    /// Schedules pending sidebar and picker searches independently of further input.
+    ///
+    /// # Arguments
+    /// - `now`: Current repaint scheduling time.
+    ///
+    /// # Returns
+    /// Time until the earliest eligible search debounce expires, or `None` when idle.
+    pub(in crate::app) fn search_repaint_after(&self, now: Instant) -> Option<Duration> {
+        let mut next_input = None;
+        let query = self.search_query.trim();
+        if self.search_error.is_none()
+            && !query.is_empty()
+            && (self.search_last_sent != query || self.search_sent_scope != self.search_scope)
+        {
+            next_input = self.search_last_input_at;
+        }
+        let picker_query = self.paste_picker_query.trim();
+        if self.paste_picker_open
+            && !self.palette_search_pending
+            && self.palette_search_error.is_none()
+            && !picker_query.is_empty()
+            && (self.palette_search_last_sent != picker_query
+                || self.paste_picker_sent_scope != self.paste_picker_scope)
+        {
+            if let Some(picker_input) = self.palette_search_last_input_at {
+                next_input = Some(next_input.map_or(picker_input, |sidebar_input| {
+                    sidebar_input.min(picker_input)
+                }));
+            }
+        }
+        next_input.map(|input| SEARCH_DEBOUNCE.saturating_sub(now.saturating_duration_since(input)))
+    }
+
     /// Dispatches a debounced sidebar search request when inputs and filters are ready.
     pub(in crate::app) fn maybe_dispatch_search(&mut self) {
         if self.search_error.is_some() {

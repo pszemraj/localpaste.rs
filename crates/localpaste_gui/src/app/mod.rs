@@ -817,16 +817,8 @@ impl eframe::App for LocalPasteApp {
         } else {
             EXTERNAL_REFRESH_INTERVAL
         };
-        if self.paste_picker_open
-            && !self.palette_search_pending
-            && !self.paste_picker_query.trim().is_empty()
-            && self.palette_search_last_sent != self.paste_picker_query.trim()
-        {
-            if let Some(last_input_at) = self.palette_search_last_input_at {
-                // Retrying must not depend on a new key press or the next refresh poll.
-                repaint_after =
-                    repaint_after.min(SEARCH_DEBOUNCE.saturating_sub(last_input_at.elapsed()));
-            }
+        if let Some(until) = self.search_repaint_after(Instant::now()) {
+            repaint_after = repaint_after.min(until);
         }
         if let Some(status) = &self.status {
             let until = status.expires_at.saturating_duration_since(Instant::now());
