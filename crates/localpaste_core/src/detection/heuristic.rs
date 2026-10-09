@@ -495,6 +495,7 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
         let arguments: Vec<&str> = parts.collect();
         let has_shell_syntax = super::command_has_shell_syntax(line, &arguments);
         let explicit_arguments = super::command_has_explicit_arguments(command, line, &arguments);
+        let comment_evidence = super::command_has_comment_evidence(command, line, &arguments);
         if quoted && !explicit_arguments {
             return false;
         }
@@ -514,7 +515,7 @@ pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
             return false;
         }
         commands = commands.saturating_add(1);
-        explicit_single_command = explicit_prompt || explicit_arguments;
+        explicit_single_command = explicit_prompt || explicit_arguments || comment_evidence;
         next_command = command_line;
     }
     commands >= 2

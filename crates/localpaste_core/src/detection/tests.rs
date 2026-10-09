@@ -71,6 +71,15 @@ fn review_regression_shell_control_flow_and_python_tracebacks() {
         ("# setup\nsource .env", "shell", PasteKind::Code),
         ("# install\npip uninstall old-package", "shell", PasteKind::Code),
         ("# install\nnpm ci", "shell", PasteKind::Code),
+        ("# deps\nnpm i", "shell", PasteKind::Code),
+        ("# run tests\npytest", "shell", PasteKind::Code),
+        (
+            "# fetch the page\ncurl https://example.com",
+            "shell",
+            PasteKind::Code,
+        ),
+        ("# connect\nssh user@host", "shell", PasteKind::Code),
+        ("# containers\ndocker ps", "shell", PasteKind::Code),
         ("Traceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    int('bad')\n> ValueError: invalid literal for int()", "log", PasteKind::Log),
         ("stderr:\nTraceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    raise ValueError()\n> ValueError", "log", PasteKind::Log),
         ("Traceback (most recent call last):\n  File \"demo.py\", line 1, in <module>\n    fetch()\n> requests.exceptions.HTTPError: failed request", "log", PasteKind::Log),
@@ -94,6 +103,7 @@ fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
 
     for content in [
         "> python rocks",
+        "> pytest",
         "> curl up by the fireplace",
         "# Todo\nls",
         "# Todo\ncurl up by the fireplace",

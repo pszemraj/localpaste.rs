@@ -111,9 +111,11 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         let has_command_syntax = crate::detection::command_has_shell_syntax(trimmed, arguments);
         let explicit_arguments =
             crate::detection::command_has_explicit_arguments(&cmd, trimmed, arguments);
+        let comment_evidence =
+            crate::detection::command_has_comment_evidence(&cmd, trimmed, arguments);
         if (line.starts_with("> ") && !explicit_arguments)
             || (leading_comment
-                && !explicit_arguments
+                && !comment_evidence
                 && !crate::detection::looks_like_shell_command_sequence(sample))
         {
             return None;

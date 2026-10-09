@@ -73,6 +73,36 @@ fn semantic_kinds_rebuild_from_version_fourteen_and_survive_restart() {
             PasteKind::Code,
         ),
         (
+            "# deps\nnpm i",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "# run tests\npytest",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "# fetch the page\ncurl https://example.com",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "# connect\nssh user@host",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "# containers\ndocker ps",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
             "stderr:\n> error: failed\nexit code 1",
             "markdown",
             PasteKind::Document,

@@ -225,6 +225,12 @@ pub(crate) fn command_has_explicit_arguments(
         "git" => SHELL_GIT_SUBCOMMANDS.contains(first),
         "echo" | "printf" => true,
         "python" | "pytest" | "torchrun" => first.ends_with(".py"),
+        "curl" => first.starts_with("https://") || first.starts_with("http://"),
+        "ssh" => first
+            .split_once('@')
+            .is_some_and(|(user, host)| !user.is_empty() && !host.is_empty()),
+        "docker" if *first == "ps" => true,
+        "npm" if *first == "i" => true,
         "brew" | "cargo" | "conda" | "docker" | "kubectl" | "npm" | "pip" | "pnpm" | "rustup"
         | "systemctl" | "uv" | "yarn" => [
             "activate",
@@ -253,6 +259,23 @@ pub(crate) fn command_has_explicit_arguments(
         .contains(first),
         _ => false,
     }
+}
+
+/// Accept comment-led commands whose executable is unambiguous without operands.
+///
+/// Quoted lines intentionally continue to require [`command_has_explicit_arguments`]
+/// so ordinary blockquotes do not become shell snippets.
+///
+/// # Arguments
+/// - `command`: Executable name.
+/// - `line`: Command line without a leading prompt.
+/// - `arguments`: Whitespace-delimited operands after the executable.
+///
+/// # Returns
+/// Whether a leading comment plus this command supplies enough technical evidence.
+pub(crate) fn command_has_comment_evidence(command: &str, line: &str, arguments: &[&str]) -> bool {
+    command_has_explicit_arguments(command, line, arguments)
+        || (command == "pytest" && arguments.is_empty())
 }
 
 /// Detect language/type of text content.
