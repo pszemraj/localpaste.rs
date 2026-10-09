@@ -891,22 +891,12 @@ impl HighlightRequestText {
             Self::Rope(rope) => rope.len_bytes(),
         }
     }
-
-    /// Converts request text payload into an owned [`String`].
-    ///
-    /// # Returns
-    /// Owned string representation of this request payload.
-    pub(super) fn into_string(self) -> String {
-        match self {
-            Self::Rope(rope) => rope.to_string(),
-        }
-    }
 }
 
 /// Lightweight edit metadata captured from virtual-editor operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct VirtualEditHint {
-    /// Byte offset before the edit; the unchanged prefix gives LF worker coordinates.
+    /// Byte offset before the edit, mapped onto the editor's Rope line coordinates.
     pub(super) start_byte: usize,
     pub(super) touched_lines: usize,
     pub(super) inserted_chars: usize,

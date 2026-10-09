@@ -49,7 +49,8 @@ pub(super) fn settings() -> SyntectSettings {
 "
             ));
         }
-        grammar.push_str("        - include: main\n");
+        // Item indentation is structural, not top-level indented code.
+        grammar.push_str("        - include: markup\n");
     }
     let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
     let mut syntax =
@@ -355,6 +356,22 @@ mod tests {
                     .all(|(color, _)| *color == prose),
                 "{closing:?} should close the code fence"
             );
+        }
+        for indent in ["    ", "     ", "\t"] {
+            for fence in ["```", "~~~"] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                non_empty_colors(&settings, &mut lines, &format!("{indent}{fence}rust\n"));
+                assert!(
+                    non_empty_colors(
+                        &settings,
+                        &mut lines,
+                        "ordinary prose after indented code\n"
+                    )
+                    .iter()
+                    .all(|(color, _)| *color == prose),
+                    "{indent:?}{fence} is indented code, not an open fence"
+                );
+            }
         }
     }
 

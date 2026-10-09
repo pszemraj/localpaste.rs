@@ -5,6 +5,15 @@ file_extensions: [md, markdown]
 scope: text.html.markdown.localpaste
 contexts:
   main:
+    # Four spaces or a tab starts literal indented code, including fence-looking
+    # text. It ends on dedent, rather than waiting for a closing fence.
+    - match: '^(?: {4}|\t)'
+      push:
+        - meta_scope: markup.raw.block.markdown.localpaste
+        - match: '^(?!(?: {4}|\t)|[ \t]*\r?$)'
+          pop: true
+    - include: markup
+  markup:
     # Consume escaped punctuation before it can open inline markup. Code
     # contexts deliberately do not include this rule: backslashes are literal.
     - match: '\\[[:punct:]]'
@@ -24,9 +33,11 @@ contexts:
         - match: '^ {0,3}\1~*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
-    # Capture the quote marker and delimiter independently. A quoted fence
-    # ends before the next unquoted line; an empty marker disables that rule.
-    - match: '^[ \t]*(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,})[^`\n]*$'
+    # Require a real quote/list container; optional markers must not admit an
+    # arbitrarily indented top-level fence. Capture quote/delimiter independently.
+    # A quoted fence ends before the next unquoted line; an empty marker disables
+    # that rule for list fences.
+    - match: '^[ \t]*(?=>|(?:[-+*]|\d+[.)])[ \t]+)(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,})[^`\n]*$'
       scope: punctuation.definition.raw.markdown.localpaste
       push:
         - meta_scope: markup.raw.block.markdown.localpaste
@@ -35,7 +46,7 @@ contexts:
         - match: '^[ \t]*\1[ \t]*\2`*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
-    - match: '^[ \t]*(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(~{3,})[^\n]*$'
+    - match: '^[ \t]*(?=>|(?:[-+*]|\d+[.)])[ \t]+)(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(~{3,})[^\n]*$'
       scope: punctuation.definition.raw.markdown.localpaste
       push:
         - meta_scope: markup.raw.block.markdown.localpaste

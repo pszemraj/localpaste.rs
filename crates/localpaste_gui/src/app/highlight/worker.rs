@@ -12,7 +12,6 @@ use std::thread;
 use std::time::Instant;
 use syntect::highlighting::{HighlightState, Highlighter};
 use syntect::parsing::{ParseState, ScopeStack};
-use syntect::util::LinesWithEndings;
 use tracing::info;
 
 /// Background worker handles syntect highlighting off the UI thread.
@@ -104,12 +103,25 @@ fn highlight_line_spans(
     highlight_state: &mut HighlightState,
     line: &str,
 ) -> Vec<HighlightSpan> {
+    // Syntect grammars expect LF terminators. Normalize only the parser's view;
+    // render spans still use the original Rope line bytes, including Unicode.
+    let normalized = line
+        .chars()
+        .next_back()
+        .filter(|last| {
+            matches!(
+                last,
+                '\r' | '\u{b}' | '\u{c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+            )
+        })
+        .map(|last| format!("{}\n", &line[..line.len() - last.len_utf8()]));
+    let parse_line = normalized.as_deref().unwrap_or(line);
     let mut spans = Vec::new();
-    if let Ok(ops) = parse_state.parse_line(line, &settings.ps) {
+    if let Ok(ops) = parse_state.parse_line(parse_line, &settings.ps) {
         let iter = syntect::highlighting::RangedHighlightIterator::new(
             highlight_state,
             &ops[..],
-            line,
+            parse_line,
             highlighter,
         );
         for (style, _token, range) in iter {
@@ -117,7 +129,11 @@ fn highlight_line_spans(
                 continue;
             }
             spans.push(HighlightSpan {
-                range,
+                range: range.start..if range.end == parse_line.len() {
+                    line.len()
+                } else {
+                    range.end
+                },
                 style: HighlightStyle {
                     color: [
                         style.foreground.r,
@@ -172,16 +188,23 @@ fn highlight_in_worker(
         patch_base_revision,
         patch_base_text_len,
     } = req;
-    let text = text.into_string();
+    let super::HighlightRequestText::Rope(rope) = text;
+    // Render rows and edit hints must use the same physical lines as the editor,
+    // including bare CR and Ropey's additional Unicode line separators.
+    let edit_start_line =
+        edit_hint.map(|hint| rope.byte_to_line(hint.start_byte.min(rope.len_bytes())));
+    let text = rope.to_string();
     let text_len = text.len();
-    // The prefix before an edit is unchanged. Count LF here, off the UI thread,
-    // rather than mixing Rope's CR/Unicode line indices with syntect's lines.
-    let edit_start_line = edit_hint.map(|hint| {
-        text.bytes()
-            .take(hint.start_byte)
-            .filter(|byte| *byte == b'\n')
-            .count()
-    });
+    let mut start = 0;
+    let lines: Vec<&str> = rope
+        .lines()
+        .map(|line| {
+            let end = start + line.len_bytes();
+            let line = &text[start..end];
+            start = end;
+            line
+        })
+        .collect();
 
     if cache.language_hint != language_hint || cache.theme_key != theme_key {
         cache.language_hint = language_hint.clone();
@@ -200,7 +223,8 @@ fn highlight_in_worker(
         .get(theme_key.as_str())
         .or_else(|| settings.ts.themes.values().next());
     let Some(theme) = theme else {
-        let lines = LinesWithEndings::from(text.as_str())
+        let lines = lines
+            .iter()
             .map(|line| HighlightRenderLine {
                 len: line.len(),
                 spans: Vec::new(),
@@ -224,7 +248,6 @@ fn highlight_in_worker(
 
     let had_cached_lines = !cache.lines.is_empty();
     let cached_line_count = cache.lines.len();
-    let lines: Vec<&str> = LinesWithEndings::from(text.as_str()).collect();
     let old_cached_lines = std::mem::take(&mut cache.lines);
 
     let highlighter = Highlighter::new(theme);
@@ -529,7 +552,22 @@ mod resolver_tests {
     #[test]
     fn editor_line_hints_remain_safe_with_non_lf_line_breaks() {
         let settings = SyntectSettings::default();
-        for separator in ["\r", "\u{2028}", "\r\n"] {
+        for separator in [
+            "\r", "\n", "\r\n", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}",
+        ] {
+            let comment = format!("// comment{separator}let b = 2;\n");
+            let fence = format!("```text{separator}body{separator}```{separator}prose\n");
+            for (label, text, following_line, expected) in [
+                ("rust", comment, 1, "let b = 2;\n"),
+                ("markdown", fence, 3, "prose\n"),
+            ] {
+                let render = render_for_label(&settings, label, &text);
+                let standalone = render_for_label(&settings, label, expected);
+                assert!(
+                    render.lines[following_line] == standalone.lines[0],
+                    "stateful {label} with {separator:?}"
+                );
+            }
             let before = format!("let a = 1;{separator}let b = 2;\n");
             let after = before.replace('2', "200");
             let mut cache = HighlightWorkerCache::default();
@@ -538,6 +576,25 @@ mod resolver_tests {
             else {
                 panic!("cold render")
             };
+            let rope = Rope::from_str(&before);
+            assert_eq!(
+                base.lines.len(),
+                rope.len_lines(),
+                "line separator {separator:?}"
+            );
+            for (highlighted, line) in base.lines.iter().zip(rope.lines()) {
+                assert_eq!(highlighted.len, line.len_bytes());
+                let source = line.to_string();
+                for span in &highlighted.spans {
+                    assert!(source.is_char_boundary(span.range.start));
+                    assert!(source.is_char_boundary(span.range.end));
+                }
+            }
+            let following = render_for_label(&settings, "rust", "let b = 2;\n");
+            assert!(
+                base.lines[1] == following.lines[0],
+                "line separator {separator:?}"
+            );
             let mut next = rust_request(2, &after, Some(1), Some(before.len()));
             next.edit_hint = Some(super::super::VirtualEditHint {
                 start_byte: before.find('2').unwrap(),

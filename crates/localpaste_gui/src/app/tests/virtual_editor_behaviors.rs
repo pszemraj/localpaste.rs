@@ -565,6 +565,41 @@ fn long_line_navigation_commands_cross_legacy_render_cap_without_truncation() {
 }
 
 #[test]
+fn home_and_end_exclude_every_rope_line_terminator() {
+    for separator in [
+        "\r", "\n", "\r\n", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}",
+    ] {
+        let mut harness = make_app();
+        let text = format!("alpha{separator}beta");
+        configure_virtual_editor_with_wrap(&mut harness.app, &text, 400.0);
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        harness.app.virtual_editor_state.set_cursor(1, len);
+        let ctx = egui::Context::default();
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
+        assert_eq!(
+            harness.app.virtual_editor_state.cursor(),
+            5,
+            "line separator {separator:?}"
+        );
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
+        assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+        harness.app.virtual_editor_state.set_cursor(len, len);
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
+        assert_eq!(
+            harness.app.virtual_editor_state.cursor(),
+            5 + separator.chars().count()
+        );
+        assert_eq!(harness.app.virtual_editor_buffer.to_string(), text);
+    }
+}
+
+#[test]
 fn word_navigation_crosses_line_boundaries() {
     let mut harness = make_app();
     configure_virtual_editor_with_wrap(&mut harness.app, "alpha\nbeta gamma", 200.0);
