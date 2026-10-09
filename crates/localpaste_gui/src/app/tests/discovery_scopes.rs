@@ -853,3 +853,75 @@ fn sidebar_scope_changes_keep_the_loaded_document_and_reading_position() {
         }
     }
 }
+
+#[test]
+fn duplicate_sidebar_success_recovers_current_failure_without_retry() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    harness.app.set_search_query("needle".into());
+    harness.app.set_search_scope(SearchScope::Body);
+    harness.app.maybe_dispatch_search();
+    let _ = recv_cmd(&harness.cmd_rx);
+    // Refresh may dispatch the same request again before the first one replies.
+    harness.app.search_last_sent.clear();
+    harness.app.maybe_dispatch_search();
+    let _ = recv_cmd(&harness.cmd_rx);
+    let failure = |message: &str| CoreEvent::SearchFailed {
+        collection: SidebarCollection::All,
+        scope: SearchScope::Body,
+        query: "needle".into(),
+        folder_id: None,
+        language: None,
+        message: message.into(),
+    };
+    harness.app.apply_event(failure("first request failed"));
+    assert!(harness.app.search_error.is_some());
+    harness.app.maybe_dispatch_search();
+    assert!(harness.cmd_rx.try_recv().is_err());
+    harness.app.apply_event(CoreEvent::SearchResults {
+        collection: SidebarCollection::All,
+        scope: SearchScope::Body,
+        query: "needle".into(),
+        folder_id: None,
+        language: None,
+        items: vec![test_summary("alpha", "Needle", None, 1)],
+    });
+    assert!(harness.app.search_error.is_none());
+    assert_eq!(harness.app.pastes[0].name, "Needle");
+    // A later failure retains the successful rows without automatic retry.
+    harness.app.apply_event(failure("later request failed"));
+    assert_eq!(
+        harness.app.search_error.as_deref(),
+        Some("later request failed")
+    );
+    assert_eq!(harness.app.pastes[0].name, "Needle");
+    harness.app.maybe_dispatch_search();
+    assert!(harness.cmd_rx.try_recv().is_err());
+}
+
+#[test]
+fn failed_sidebar_search_retries_after_query_changes_back_before_debounce() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    harness.app.set_search_query("needle".into());
+    harness.app.set_search_scope(SearchScope::Body);
+    harness.app.maybe_dispatch_search();
+    let _ = recv_cmd(&harness.cmd_rx);
+    harness.app.apply_event(CoreEvent::SearchFailed {
+        collection: SidebarCollection::All,
+        scope: SearchScope::Body,
+        query: "needle".into(),
+        folder_id: None,
+        language: None,
+        message: "search failed".into(),
+    });
+    harness.app.maybe_dispatch_search();
+    assert!(harness.cmd_rx.try_recv().is_err());
+
+    harness.app.set_search_query("needles".into());
+    harness.app.set_search_query("needle".into());
+    harness.app.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+    harness.app.maybe_dispatch_search();
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Ok(CoreCmd::SearchPastes { query, .. }) if query == "needle"
+    ));
+}

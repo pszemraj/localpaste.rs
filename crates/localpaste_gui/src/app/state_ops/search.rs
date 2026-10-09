@@ -9,7 +9,9 @@ impl LocalPasteApp {
             return;
         }
         self.search_query = query;
-        self.search_error = None;
+        if self.search_error.take().is_some() {
+            self.search_last_sent.clear();
+        }
         self.picker_selection_pin = None;
         self.search_last_input_at = Some(Instant::now());
     }
@@ -244,7 +246,6 @@ impl LocalPasteApp {
         ) {
             return;
         }
-        self.search_last_sent.clear();
         self.search_last_input_at = None;
         self.query_perf.search_last_sent_at = None;
         self.search_error = Some(message.clone());

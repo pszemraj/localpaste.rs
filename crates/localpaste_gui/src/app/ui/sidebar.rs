@@ -186,6 +186,7 @@ impl LocalPasteApp {
                     ui.label(RichText::new(error).small().color(COLOR_TEXT_MUTED));
                     if ui.button("Retry search").clicked() {
                         self.search_error = None;
+                        self.search_last_sent.clear();
                         self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                     }
                 }
