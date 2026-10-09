@@ -906,3 +906,39 @@ fn smart_collections_use_derived_kind_without_name_or_language_hints() {
     assert_collection_ids(&mut harness, SidebarCollection::Logs, &["log"]);
     assert_collection_ids(&mut harness, SidebarCollection::Links, &["link"]);
 }
+
+#[test]
+fn retained_sidebar_failure_survives_list_and_save_refreshes() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    harness.app.set_search_query("needle".into());
+    harness.app.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+    harness.app.maybe_dispatch_search();
+    let _ = recv_cmd(&harness.cmd_rx);
+    harness.app.apply_event(CoreEvent::SearchFailed {
+        collection: SidebarCollection::All,
+        scope: SearchScope::All,
+        query: "needle".into(),
+        folder_id: None,
+        language: None,
+        message: "disk unavailable".into(),
+    });
+    let mut paste = Paste::new("needle".into(), "Changed".into());
+    paste.id = "alpha".into();
+    for event in [
+        CoreEvent::PasteList {
+            items: vec![test_summary("gamma", "Gamma", None, 4)],
+        },
+        CoreEvent::PasteSaved { paste },
+    ] {
+        harness.app.apply_event(event);
+        harness.app.maybe_dispatch_search();
+        assert_eq!(
+            harness.app.search_error.as_deref(),
+            Some("disk unavailable")
+        );
+        assert!(!harness
+            .cmd_rx
+            .try_iter()
+            .any(|cmd| matches!(cmd, CoreCmd::SearchPastes { .. })));
+    }
+}

@@ -72,11 +72,56 @@ impl LocalPasteApp {
     /// Clears any pending explicit "paste as new" intent state.
     pub(super) fn cancel_paste_as_new_intent(&mut self) {
         self.paste_as_new_pending_frames = 0;
-        self.paste_as_new_clipboard_requested_at = None;
+        if let Some(requested_at) = self.paste_as_new_clipboard_requested_at.take() {
+            self.canceled_paste_request_at = Some(requested_at);
+        }
+    }
+
+    /// Discards a canceled native clipboard reply before any text widget sees it.
+    ///
+    /// Egui paste events carry text without request identity. A newer observed
+    /// paste shortcut therefore supersedes the canceled request; otherwise its
+    /// next payload is discarded within the existing clipboard wait window.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context whose native paste events are filtered before rendering.
+    pub(super) fn discard_canceled_clipboard_reply(&mut self, ctx: &egui::Context) {
+        if self.keyboard_overlay_open() || self.mutation_shortcut_block_reason().is_some() {
+            self.cancel_paste_as_new_intent();
+        }
+        let Some(requested_at) = self.canceled_paste_request_at else {
+            return;
+        };
+        ctx.input_mut(|input| {
+            if requested_at.elapsed() >= PASTE_AS_NEW_CLIPBOARD_WAIT_TIMEOUT {
+                self.canceled_paste_request_at = None;
+                return;
+            }
+            let mut discarded = false;
+            input.events.retain(|event| {
+                if matches!(event, egui::Event::Key {
+                    key: egui::Key::V, pressed: true, modifiers, ..
+                } if modifiers.command)
+                {
+                    self.canceled_paste_request_at = None;
+                }
+                if self.canceled_paste_request_at.is_some()
+                    && matches!(event, egui::Event::Paste(_))
+                {
+                    discarded = true;
+                    return false;
+                }
+                true
+            });
+            if discarded {
+                self.canceled_paste_request_at = None;
+            }
+        });
     }
 
     /// Arms the short-lived "paste as new" intent window.
     pub(super) fn arm_paste_as_new_intent(&mut self) {
+        self.canceled_paste_request_at = None;
         self.paste_as_new_pending_frames = PASTE_AS_NEW_PENDING_TTL_FRAMES;
         self.paste_as_new_clipboard_requested_at = None;
     }
@@ -166,6 +211,9 @@ impl LocalPasteApp {
             return false;
         }
         if let Some(text) = pasted_text.take() {
+            // The reply has arrived; completing it must not leave a canceled
+            // request marker that would discard the next independent paste.
+            self.paste_as_new_clipboard_requested_at = None;
             self.cancel_paste_as_new_intent();
             if Self::should_create_paste_from_clipboard(
                 text.as_str(),

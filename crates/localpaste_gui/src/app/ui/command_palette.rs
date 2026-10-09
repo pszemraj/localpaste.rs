@@ -514,7 +514,9 @@ impl LocalPasteApp {
             if self.selected_id.as_deref() == Some(id.as_str()) && self.selected_paste.is_some() {
                 self.prime_editor_find_from_picker_open();
             }
-            self.picker_selection_pin = Some(id);
+            // Keep the loaded document pinned while prerequisite saves defer
+            // target acquisition; successful selection transfers the pin.
+            self.picker_selection_pin = self.selected_id.clone().or(Some(id));
             self.close_paste_picker();
         }
     }

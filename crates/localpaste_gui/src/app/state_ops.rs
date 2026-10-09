@@ -602,14 +602,14 @@ impl LocalPasteApp {
             self.set_selection_transition_blocked_status();
             return false;
         }
-        self.pending_picker_open = None;
-        self.picker_selection_pin = None;
         if self.selected_id.as_deref() == Some(id.as_str()) {
+            self.picker_selection_pin = None;
             self.clear_pending_selection_request();
             return true;
         }
-        self.cancel_pending_delete();
         if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
+            let previous_pending_selection = self.pending_selection_id.clone();
+            let previous_picker_open = self.pending_picker_open.clone();
             self.queue_pending_selection(id);
             let content_save_needed = self.save_status == SaveStatus::Dirty;
             let metadata_save_needed = self.metadata_dirty;
@@ -623,9 +623,11 @@ impl LocalPasteApp {
             let metadata_save_dispatched = !metadata_save_needed || self.metadata_save_in_flight;
             if !content_save_dispatched || !metadata_save_dispatched {
                 rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
-                self.clear_pending_selection_request();
+                self.pending_selection_id = previous_pending_selection;
+                self.pending_picker_open = previous_picker_open;
                 return false;
             }
+            self.cancel_pending_delete();
             self.set_status("Saving current paste before switching...");
             return true;
         }
@@ -634,6 +636,7 @@ impl LocalPasteApp {
             || self.save_status == SaveStatus::Saving;
         if save_in_progress {
             self.queue_pending_selection(id);
+            self.cancel_pending_delete();
             self.set_status("Saving current paste before switching...");
             return true;
         }
@@ -709,12 +712,30 @@ impl LocalPasteApp {
     }
 
     fn apply_selection_now(&mut self, id: String) -> bool {
-        self.cancel_pending_delete();
         // Acquire target lock before releasing current selection lock so failed
         // switches never drop the currently editable paste unexpectedly.
         if !self.acquire_paste_lock(id.as_str()) {
-            self.pending_picker_open = None;
+            if self
+                .pending_picker_open
+                .as_ref()
+                .is_some_and(|opening| opening.id == id)
+            {
+                // A failed target must not keep capturing editor input.
+                self.pending_picker_open = None;
+            }
             return false;
+        }
+        self.cancel_pending_delete();
+        self.pending_selection_id = None;
+        if self
+            .pending_picker_open
+            .as_ref()
+            .is_some_and(|opening| opening.id == id)
+        {
+            self.picker_selection_pin = Some(id.clone());
+        } else {
+            self.pending_picker_open = None;
+            self.picker_selection_pin = None;
         }
         if let Some(prev) = self.selected_id.replace(id.clone()) {
             self.release_paste_lock(prev.as_str());

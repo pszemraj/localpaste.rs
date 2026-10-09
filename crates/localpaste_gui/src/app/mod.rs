@@ -155,6 +155,7 @@ pub(crate) struct LocalPasteApp {
     last_virtual_click_count: u8,
     paste_as_new_pending_frames: u8,
     paste_as_new_clipboard_requested_at: Option<Instant>,
+    canceled_paste_request_at: Option<Instant>,
     db_path: String,
     locks: Arc<PasteLockManager>,
     lock_owner_id: LockOwnerId,
@@ -526,6 +527,9 @@ impl eframe::App for LocalPasteApp {
         let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
+        // Respect clipboard event order before a newer explicit shortcut can
+        // re-arm intent and replace the canceled request's identity.
+        self.discard_canceled_clipboard_reply(ctx);
         let explicit_paste_as_new_shortcut_pressed =
             self.maybe_arm_paste_as_new_shortcut_intent(ctx);
         let mut copy_virtual_unfocused = false;
@@ -664,6 +668,7 @@ impl eframe::App for LocalPasteApp {
                 }
             }
         }
+        self.discard_canceled_clipboard_reply(ctx);
         ctx.input(|input| {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());

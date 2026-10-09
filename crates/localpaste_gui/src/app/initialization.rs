@@ -191,6 +191,7 @@ impl LocalPasteApp {
             last_virtual_click_count: 0,
             paste_as_new_pending_frames: 0,
             paste_as_new_clipboard_requested_at: None,
+            canceled_paste_request_at: None,
             editor_input_trace_enabled: false,
             highlight_trace_enabled: false,
             nav_probe: None,

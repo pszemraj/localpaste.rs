@@ -116,6 +116,9 @@ impl LocalPasteApp {
 
     /// Dispatches a debounced sidebar search request when inputs and filters are ready.
     pub(in crate::app) fn maybe_dispatch_search(&mut self) {
+        if self.search_error.is_some() {
+            return;
+        }
         let query = self.search_query.trim().to_string();
         if query.is_empty() {
             let should_restore_list =

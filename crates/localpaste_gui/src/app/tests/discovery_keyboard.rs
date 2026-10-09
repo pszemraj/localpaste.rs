@@ -444,3 +444,127 @@ fn delete_shortcut_guard_preserves_editor_delete_ownership_and_global_unfocused_
             .any(|cmd| matches!(cmd, CoreCmd::DeletePaste { .. })));
     }
 }
+
+#[test]
+fn canceled_clipboard_reply_after_discovery_dismissal_does_not_edit_current_paste() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.reset_virtual_editor("original");
+    harness.app.focus_editor_next = true;
+    run_discovery_frame_once(&mut harness.app, &ctx, vec![]);
+    harness.app.request_paste_as_new(&ctx);
+    run_discovery_frame_once(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
+    );
+    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+    run_discovery_frame_once(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    run_discovery_frame_once(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Paste("late clipboard".into())],
+    );
+    assert_eq!(harness.app.active_snapshot(), "original");
+    assert!(!harness
+        .cmd_rx
+        .try_iter()
+        .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })));
+    // Once the outstanding reply is discarded, independent native paste works.
+    run_discovery_frame_once(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Paste("fresh".into())],
+    );
+    assert_eq!(harness.app.active_snapshot(), "freshoriginal");
+}
+
+#[test]
+fn newer_plain_paste_supersedes_canceled_request_with_same_or_later_payload() {
+    for delayed in [false, true] {
+        let (mut harness, _event_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness.app.reset_virtual_editor("original");
+        harness.app.focus_editor_next = true;
+        run_discovery_frame_once(&mut harness.app, &ctx, vec![]);
+        harness.app.request_paste_as_new(&ctx);
+        harness.app.cancel_paste_as_new_intent();
+        let mut events = vec![command_key_event(egui::Key::V)];
+        if !delayed {
+            events.push(egui::Event::Paste("fresh".into()));
+        }
+        run_discovery_frame_once(&mut harness.app, &ctx, events);
+        if delayed {
+            run_discovery_frame_once(
+                &mut harness.app,
+                &ctx,
+                vec![egui::Event::Paste("fresh".into())],
+            );
+        }
+        assert_eq!(harness.app.active_snapshot(), "freshoriginal");
+    }
+}
+
+#[test]
+fn canceled_reply_preceding_new_paste_shortcut_is_discarded_in_event_order() {
+    for explicit in [false, true] {
+        for delayed in [false, true] {
+            let (mut harness, _event_tx) = make_app_with_event_tx();
+            let ctx = egui::Context::default();
+            harness.app.reset_virtual_editor("original");
+            harness.app.focus_editor_next = true;
+            run_discovery_frame_once(&mut harness.app, &ctx, vec![]);
+            harness.app.request_paste_as_new(&ctx);
+            harness.app.cancel_paste_as_new_intent();
+            let modifiers = primary_command_modifiers()
+                | if explicit {
+                    egui::Modifiers::SHIFT
+                } else {
+                    egui::Modifiers::NONE
+                };
+            let mut events = vec![
+                egui::Event::Paste("stale payload".into()),
+                key_event(egui::Key::V, modifiers),
+            ];
+            if !delayed {
+                events.push(egui::Event::Paste("fresh".into()));
+            }
+            run_discovery_frame_once(&mut harness.app, &ctx, events);
+            if delayed {
+                run_discovery_frame_once(
+                    &mut harness.app,
+                    &ctx,
+                    vec![egui::Event::Paste("fresh".into())],
+                );
+            }
+            assert_eq!(
+                harness.app.active_snapshot(),
+                if explicit {
+                    "original"
+                } else {
+                    "freshoriginal"
+                }
+            );
+            let created: Vec<_> = harness
+                .cmd_rx
+                .try_iter()
+                .filter_map(|cmd| match cmd {
+                    CoreCmd::CreatePaste { content } => Some(content),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                created,
+                if explicit {
+                    vec!["fresh".to_owned()]
+                } else {
+                    vec![]
+                }
+            );
+        }
+    }
+}

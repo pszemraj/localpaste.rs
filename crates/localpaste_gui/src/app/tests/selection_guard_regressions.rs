@@ -433,3 +433,125 @@ fn hidden_metadata_draft_remains_locked_until_the_latest_save_ack() {
     assert!(!harness.app.metadata_dirty);
     assert!(!harness.app.locks.is_locked("alpha").unwrap());
 }
+
+#[test]
+fn refused_mutating_target_preserves_hidden_document_and_pending_picker_input() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    harness.app.picker_selection_pin = Some("alpha".into());
+    harness.app.pastes = vec![test_summary("gamma", "Gamma", None, 4)];
+    harness.app.all_pastes = harness.app.pastes.clone();
+    harness.app.pending_selection_id = Some("queued".into());
+    harness.app.pending_delete_id = Some("alpha".into());
+    harness.app.pending_picker_open = Some(PendingPickerOpen {
+        id: "alpha".into(),
+        query: "needle".into(),
+        scope: SearchScope::Body,
+        case_sensitive: true,
+        input_events: vec![egui::Event::Text("retained".into())],
+        input_ready: false,
+    });
+    let locks = harness.app.locks.clone();
+    let _mutation = locks.begin_mutation("beta").unwrap();
+    let epoch = harness.app.active_buffer_epoch;
+    assert!(!harness.app.select_paste("beta".into()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("queued"));
+    assert_eq!(harness.app.pending_delete_id.as_deref(), Some("alpha"));
+    let pending = harness.app.pending_picker_open.as_ref().unwrap();
+    assert_eq!(pending.id, "alpha");
+    assert_eq!(pending.query, "needle");
+    assert_eq!(pending.scope, SearchScope::Body);
+    assert!(pending.case_sensitive);
+    assert_eq!(
+        pending.input_events,
+        vec![egui::Event::Text("retained".into())]
+    );
+    assert!(!pending.input_ready);
+    // Reconcile the hidden document after unrelated previously accepted work ends.
+    harness.app.pending_selection_id = None;
+    harness.app.pending_delete_id = None;
+    harness.app.ensure_selection_after_list_update();
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.active_buffer_epoch, epoch);
+    assert_eq!(harness.app.active_snapshot(), "content");
+    assert!(harness.cmd_rx.try_recv().is_err());
+}
+
+#[test]
+fn deferred_target_lock_refusal_preserves_hidden_document_after_content_or_metadata_flush() {
+    for metadata in [false, true] {
+        for picker in [false, true] {
+            for refused in [false, true] {
+                let (mut harness, _event_tx) = make_app_with_event_tx();
+                let mut alpha = Paste::new("saved".into(), "Alpha".into());
+                alpha.id = "alpha".into();
+                harness.app.select_loaded_paste(alpha.clone());
+                assert!(harness.app.acquire_paste_lock("alpha"));
+                harness.app.picker_selection_pin = Some("alpha".into());
+                harness.app.search_query = "gamma".into();
+                harness.app.search_last_sent = "gamma".into();
+                harness.app.pastes = vec![test_summary("gamma", "Gamma", None, 4)];
+                if !refused {
+                    harness
+                        .app
+                        .pastes
+                        .insert(0, test_summary("beta", "Beta gamma", None, 4));
+                }
+                harness.app.all_pastes = harness.app.pastes.clone();
+                if metadata {
+                    harness.app.edit_name = "Renamed".into();
+                    harness.app.metadata_dirty = true;
+                    alpha.name = "Renamed".into();
+                } else {
+                    insert_active_text(&mut harness.app, "edited ", 0);
+                    harness.app.mark_dirty();
+                    alpha.content = "edited saved".into();
+                }
+                if picker {
+                    harness.app.open_paste_picker();
+                    harness.app.open_palette_selection("beta".into());
+                } else {
+                    assert!(harness.app.select_paste("beta".into()));
+                }
+                assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+                let save = recv_cmd(&harness.cmd_rx);
+                assert!(matches!(save, CoreCmd::UpdatePasteMeta { .. }) == metadata);
+                assert!(matches!(save, CoreCmd::UpdatePasteVirtual { .. }) != metadata);
+                let locks = harness.app.locks.clone();
+                let _mutation = refused.then(|| locks.begin_mutation("beta").unwrap());
+                let expected_content = alpha.content.clone();
+                let epoch = harness.app.active_buffer_epoch;
+                harness.app.apply_event(if metadata {
+                    CoreEvent::PasteMetaSaved { paste: alpha }
+                } else {
+                    CoreEvent::PasteSaved { paste: alpha }
+                });
+                harness.app.ensure_selection_after_list_update();
+                if !refused {
+                    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+                    assert_eq!(
+                        harness.app.picker_selection_pin.as_deref(),
+                        picker.then_some("beta")
+                    );
+                    assert!(harness.app.pending_selection_id.is_none());
+                    assert_eq!(harness.app.pending_picker_open.is_some(), picker);
+                    assert!(!harness.app.locks.is_locked("alpha").unwrap());
+                    assert!(harness.app.locks.is_locked("beta").unwrap());
+                    assert!(
+                        matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id, .. } if id == "beta")
+                    );
+                    continue;
+                }
+                assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+                assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+                assert_eq!(harness.app.active_buffer_epoch, epoch);
+                assert_eq!(harness.app.active_snapshot(), expected_content);
+                assert!(harness.app.locks.is_locked("alpha").unwrap());
+                assert!(harness.app.pending_selection_id.is_none());
+                assert!(harness.app.pending_picker_open.is_none());
+                assert!(harness.cmd_rx.try_recv().is_err());
+            }
+        }
+    }
+}

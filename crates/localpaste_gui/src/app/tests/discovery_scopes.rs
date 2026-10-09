@@ -686,7 +686,7 @@ fn picker_selection_pin_survives_deferred_open_and_clears_after_target_failure()
     harness.app.open_paste_picker();
     harness.app.open_palette_selection("picked".into());
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("picked"));
-    assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("picked"));
+    assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
 
     let mut saved = Paste::new("saved alpha".into(), "Alpha".into());
     saved.id = "alpha".into();
