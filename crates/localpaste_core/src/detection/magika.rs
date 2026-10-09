@@ -81,6 +81,12 @@ pub(crate) fn detect(content: &str) -> Option<String> {
             poisoned.into_inner()
         }
     };
+    // Line endings must not change a text label. Normalize only inference input;
+    // canonical paste content and downstream structural checks keep their bytes.
+    let normalized = content
+        .contains("\r\n")
+        .then(|| content.replace("\r\n", "\n"));
+    let content = normalized.as_deref().unwrap_or(content);
     let result = match guard.identify_content_sync(content.as_bytes()) {
         Ok(result) => result,
         Err(err) => {

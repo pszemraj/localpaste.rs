@@ -142,10 +142,11 @@ fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
         "# Python notes\nfrom pathlib import Path\n1. Read the input.\n2. Write the output.",
         "# Python notes\nfrom pathlib import Path\n1) Read the input.\n2) Write the output.",
         "# Python notes\nfrom pathlib import Path\n[Reference][1]\n\n[1]: https://example.com/docs",
-    ] {
-        assert!(!super::looks_like_shell_command_sequence(content), "{content}");
-        assert!(!matches!(heuristic::detect(content).as_deref(), Some("shell" | "python")), "{content}");
-        let paste = Paste::new(content.into(), "ordinary note".into());
+    ].into_iter().flat_map(|content| [content.to_owned(), content.replace('\n', "\r\n")]) {
+        assert!(!super::looks_like_shell_command_sequence(&content), "{content}");
+        assert!(!matches!(heuristic::detect(&content).as_deref(), Some("shell" | "python")), "{content}");
+        let paste = Paste::new(content.clone(), "ordinary note".into());
+        assert_eq!(paste.content, content);
         assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document, "{content}: {:?}", paste.language);
     }
     for content in [
