@@ -511,6 +511,11 @@ impl LocalPasteApp {
         };
         if self.select_paste(id.clone()) {
             self.pending_picker_open = Some(opening);
+            self.pending_picker_selection_pin = self
+                .pending_selection_id
+                .as_ref()
+                .filter(|pending| *pending == &id)
+                .cloned();
             if self.selected_id.as_deref() == Some(id.as_str()) && self.selected_paste.is_some() {
                 self.prime_editor_find_from_picker_open();
             }

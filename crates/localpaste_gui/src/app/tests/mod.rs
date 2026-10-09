@@ -380,12 +380,23 @@ fn run_discovery_frame_once(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
+    run_discovery_frame_with_modifiers(app, ctx, events, egui::Modifiers::NONE)
+}
+
+/// Runs a discovery frame with the modifier snapshot used by native Paste events.
+fn run_discovery_frame_with_modifiers(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    modifiers: egui::Modifiers,
+) -> egui::FullOutput {
     run_full_update_with_input(
         app,
         ctx,
         egui::RawInput {
             screen_rect: Some(virtual_editor_focus_support::screen_rect()),
             events,
+            modifiers,
             ..Default::default()
         },
     )

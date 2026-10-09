@@ -105,13 +105,11 @@ fn canceling_discovery_returns_focus_and_following_paste_to_editor() {
         frame(&mut harness.app, &ctx, vec![cancel]);
         assert!(!harness.app.keyboard_overlay_open());
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
-        frame(
+        run_discovery_frame_with_modifiers(
             &mut harness.app,
             &ctx,
-            vec![
-                key_event(egui::Key::V, linux_command(false)),
-                egui::Event::Paste("inserted".into()),
-            ],
+            vec![egui::Event::Paste("inserted".into())],
+            linux_command(false),
         );
         assert!(harness.app.active_snapshot().contains("inserted"));
         assert!(!harness
@@ -190,11 +188,17 @@ fn discovery_overlays_block_background_mutation_and_properties_chords() {
             let selected = harness.app.selected_id.clone();
             let properties_open = harness.app.properties_drawer_open;
             while harness.cmd_rx.try_recv().is_ok() {}
-            let mut events = vec![key_event(key, linux_command(shift))];
-            if immediate_payload {
-                events.push(egui::Event::Paste("clipboard payload".into()));
-            }
-            let output = frame(&mut harness.app, &ctx, events);
+            let events = if immediate_payload {
+                vec![egui::Event::Paste("clipboard payload".into())]
+            } else {
+                vec![key_event(key, linux_command(shift))]
+            };
+            let output = run_discovery_frame_with_modifiers(
+                &mut harness.app,
+                &ctx,
+                events,
+                linux_command(shift),
+            );
             assert_eq!(harness.app.selected_id, selected, "{overlay}: {key:?}");
             assert_eq!(harness.app.properties_drawer_open, properties_open);
             assert_eq!(harness.app.active_snapshot(), "content");
@@ -481,6 +485,77 @@ fn canceled_clipboard_reply_after_discovery_dismissal_does_not_edit_current_past
         vec![egui::Event::Paste("fresh".into())],
     );
     assert_eq!(harness.app.active_snapshot(), "freshoriginal");
+}
+
+#[test]
+fn native_paste_as_new_after_same_frame_discovery_dismissal_uses_returned_focus() {
+    for explicit in [false, true] {
+        let (mut harness, _events) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness.app.focus_editor_next = true;
+        frame(&mut harness.app, &ctx, vec![]);
+        harness.app.open_shortcut_help(&ctx);
+        frame(&mut harness.app, &ctx, vec![]);
+        run_discovery_frame_with_modifiers(
+            &mut harness.app,
+            &ctx,
+            vec![
+                key_event(egui::Key::Escape, egui::Modifiers::NONE),
+                egui::Event::Paste("fresh".into()),
+            ],
+            linux_command(explicit),
+        );
+        assert!(!harness.app.keyboard_overlay_open());
+        assert_eq!(
+            harness.app.active_snapshot(),
+            if explicit { "content" } else { "freshcontent" }
+        );
+        let created: Vec<_> = harness
+            .cmd_rx
+            .try_iter()
+            .filter_map(|command| match command {
+                CoreCmd::CreatePaste { content } => Some(content),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(created, if explicit { vec!["fresh"] } else { vec![] });
+    }
+}
+
+#[test]
+fn deferred_native_paste_keeps_its_modifiers_after_release() {
+    for explicit in [false, true] {
+        let (mut harness, _events) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness.app.focus_editor_next = true;
+        frame(&mut harness.app, &ctx, vec![]);
+        run_discovery_frame_with_modifiers(
+            &mut harness.app,
+            &ctx,
+            vec![
+                key_event(egui::Key::F1, egui::Modifiers::NONE),
+                key_event(egui::Key::Escape, egui::Modifiers::NONE),
+                egui::Event::Paste("fresh".into()),
+            ],
+            linux_command(explicit),
+        );
+        assert!(harness.app.shortcut_help_open);
+        frame(&mut harness.app, &ctx, vec![]);
+        assert!(!harness.app.keyboard_overlay_open());
+        assert_eq!(
+            harness.app.active_snapshot(),
+            if explicit { "content" } else { "freshcontent" }
+        );
+        let created: Vec<_> = harness
+            .cmd_rx
+            .try_iter()
+            .filter_map(|command| match command {
+                CoreCmd::CreatePaste { content } => Some(content),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(created, if explicit { vec!["fresh"] } else { vec![] });
+    }
 }
 
 #[test]

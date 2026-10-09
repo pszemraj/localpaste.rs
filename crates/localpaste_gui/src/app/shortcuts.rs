@@ -171,10 +171,50 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
 pub(crate) fn pressed_runtime_shortcuts(
     input: &egui::InputState,
 ) -> impl Iterator<Item = RuntimeShortcutAction> + '_ {
-    input.events.iter().filter_map(runtime_shortcut_action)
+    // egui-winit emits Paste instead of Key(V). Other integrations may supply
+    // the key too; retain its position without dispatching the same paste twice.
+    let has_paste_key = input.events.iter().any(|event| {
+        matches!(
+            runtime_shortcut_action(event),
+            Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteAsNew)
+        )
+    });
+    input.events.iter().filter_map(move |event| {
+        runtime_shortcut_action(event).or_else(|| {
+            if has_paste_key {
+                None
+            } else {
+                native_paste_shortcut_action(event, input.modifiers)
+            }
+        })
+    })
 }
 
-/// Matches one native event without changing the order or multiplicity of chords.
+/// Matches egui-winit's paste-only shortcut representation.
+///
+/// # Arguments
+/// - `event`: Native event, which has no embedded modifiers for paste.
+/// - `modifiers`: Modifier snapshot accompanying this input frame.
+///
+/// # Returns
+/// Paste action inferred from Command and Shift, or `None` for other input.
+pub(crate) fn native_paste_shortcut_action(
+    event: &egui::Event,
+    modifiers: egui::Modifiers,
+) -> Option<RuntimeShortcutAction> {
+    if !matches!(event, egui::Event::Paste(_)) {
+        return None;
+    }
+    if is_command_shift_shortcut(modifiers) {
+        Some(RuntimeShortcutAction::PasteAsNew)
+    } else if is_plain_command_shortcut(modifiers) {
+        Some(RuntimeShortcutAction::PlainPaste)
+    } else {
+        None
+    }
+}
+
+/// Matches one key event without changing the order or multiplicity of chords.
 ///
 /// # Returns
 /// The registered action for a pressed shortcut event, or `None` for other input.
@@ -306,6 +346,52 @@ mod tests {
             command: true,
             shift: true,
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn native_paste_events_match_frame_modifiers_without_duplicate_key_dispatch() {
+        for (modifiers, expected) in [
+            (command_modifiers(), Some(RuntimeShortcutAction::PlainPaste)),
+            (
+                command_shift_modifiers(),
+                Some(RuntimeShortcutAction::PasteAsNew),
+            ),
+            (egui::Modifiers::NONE, None),
+            (
+                egui::Modifiers {
+                    alt: true,
+                    ..command_shift_modifiers()
+                },
+                None,
+            ),
+        ] {
+            for include_key in [false, true] {
+                let ctx = egui::Context::default();
+                let mut events = vec![];
+                if include_key {
+                    events.push(egui::Event::Key {
+                        key: egui::Key::V,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    });
+                }
+                events.push(egui::Event::Paste("clip".into()));
+                let _ = ctx.run(
+                    egui::RawInput {
+                        modifiers,
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        let actual =
+                            ctx.input(|input| pressed_runtime_shortcuts(input).collect::<Vec<_>>());
+                        assert_eq!(actual, expected.into_iter().collect::<Vec<_>>());
+                    },
+                );
+            }
         }
     }
 

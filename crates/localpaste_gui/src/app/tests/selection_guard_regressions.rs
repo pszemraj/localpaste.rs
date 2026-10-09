@@ -441,6 +441,7 @@ fn refused_mutating_target_preserves_hidden_document_and_pending_picker_input() 
     harness.app.pastes = vec![test_summary("gamma", "Gamma", None, 4)];
     harness.app.all_pastes = harness.app.pastes.clone();
     harness.app.pending_selection_id = Some("queued".into());
+    harness.app.pending_picker_selection_pin = Some("queued".into());
     harness.app.pending_delete_id = Some("alpha".into());
     harness.app.pending_picker_open = Some(PendingPickerOpen {
         id: "alpha".into(),
@@ -457,6 +458,10 @@ fn refused_mutating_target_preserves_hidden_document_and_pending_picker_input() 
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
     assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("queued"));
+    assert_eq!(
+        harness.app.pending_picker_selection_pin.as_deref(),
+        Some("queued")
+    );
     assert_eq!(harness.app.pending_delete_id.as_deref(), Some("alpha"));
     let pending = harness.app.pending_picker_open.as_ref().unwrap();
     assert_eq!(pending.id, "alpha");
@@ -470,6 +475,7 @@ fn refused_mutating_target_preserves_hidden_document_and_pending_picker_input() 
     assert!(!pending.input_ready);
     // Reconcile the hidden document after unrelated previously accepted work ends.
     harness.app.pending_selection_id = None;
+    harness.app.pending_picker_selection_pin = None;
     harness.app.pending_delete_id = None;
     harness.app.ensure_selection_after_list_update();
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
@@ -535,6 +541,7 @@ fn deferred_target_lock_refusal_preserves_hidden_document_after_content_or_metad
                         picker.then_some("beta")
                     );
                     assert!(harness.app.pending_selection_id.is_none());
+                    assert!(harness.app.pending_picker_selection_pin.is_none());
                     assert_eq!(harness.app.pending_picker_open.is_some(), picker);
                     assert!(!harness.app.locks.is_locked("alpha").unwrap());
                     assert!(harness.app.locks.is_locked("beta").unwrap());
@@ -550,8 +557,125 @@ fn deferred_target_lock_refusal_preserves_hidden_document_after_content_or_metad
                 assert!(harness.app.locks.is_locked("alpha").unwrap());
                 assert!(harness.app.pending_selection_id.is_none());
                 assert!(harness.app.pending_picker_open.is_none());
+                assert!(harness.app.pending_picker_selection_pin.is_none());
                 assert!(harness.cmd_rx.try_recv().is_err());
             }
         }
+    }
+}
+
+#[test]
+fn deferred_picker_target_survives_input_transfer_before_save_ack() {
+    for metadata in [false, true] {
+        for transfer in [None, Some(false), Some(true)] {
+            let (mut harness, _event_tx) = make_app_with_event_tx();
+            let ctx = egui::Context::default();
+            harness.app.search_query = "sidebar".into();
+            harness.app.search_last_sent = "sidebar".into();
+            let mut alpha = Paste::new("saved alpha".into(), "Alpha".into());
+            alpha.id = "alpha".into();
+            harness.app.select_loaded_paste(alpha.clone());
+            if metadata {
+                harness.app.edit_name = "renamed alpha".into();
+                harness.app.metadata_dirty = true;
+                alpha.name = "renamed alpha".into();
+            } else {
+                harness.app.save_status = SaveStatus::Dirty;
+            }
+            harness.app.open_paste_picker();
+            harness.app.open_palette_selection("picked".into());
+            let _ = recv_cmd(&harness.cmd_rx);
+            let mut input = egui::RawInput::default();
+            if let Some(escape) = transfer {
+                input.events = if escape {
+                    vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)]
+                } else {
+                    primary_pointer_events(egui::pos2(1.0, 1.0), true)
+                };
+            }
+            harness.app.stage_discovery_input(&ctx, &mut input);
+            assert_eq!(
+                harness.app.pending_picker_open.is_some(),
+                transfer.is_none()
+            );
+            harness.app.apply_event(if metadata {
+                CoreEvent::PasteMetaSaved { paste: alpha }
+            } else {
+                CoreEvent::PasteSaved { paste: alpha }
+            });
+            assert_eq!(harness.app.selected_id.as_deref(), Some("picked"));
+            let _ = recv_cmd(&harness.cmd_rx);
+            harness.app.maybe_dispatch_search();
+            assert!(matches!(
+                recv_cmd(&harness.cmd_rx),
+                CoreCmd::SearchPastes { .. }
+            ));
+            let mut picked = Paste::new("picked body".into(), "Picked".into());
+            picked.id = "picked".into();
+            harness.app.apply_event(CoreEvent::PasteLoaded {
+                paste: picked,
+                selection_epoch: harness.app.active_buffer_epoch,
+            });
+            harness.app.apply_event(CoreEvent::SearchResults {
+                collection: SidebarCollection::All,
+                scope: SearchScope::All,
+                query: "sidebar".into(),
+                folder_id: None,
+                language: None,
+                items: vec![test_summary("alpha", "Alpha sidebar", None, 10)],
+            });
+            assert_eq!(
+                harness.app.selected_id.as_deref(),
+                Some("picked"),
+                "metadata={metadata}, transfer={transfer:?}"
+            );
+            assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("picked"));
+            assert_eq!(harness.app.active_snapshot(), "picked body");
+        }
+    }
+}
+
+#[test]
+fn native_paste_during_deferred_picker_open_retains_only_plain_paste_input() {
+    for shift in [false, true] {
+        let (mut harness, _event_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness.app.save_status = SaveStatus::Dirty;
+        harness.app.open_paste_picker();
+        harness.app.open_palette_selection("picked".into());
+        let _ = recv_cmd(&harness.cmd_rx);
+        let before = harness.app.active_snapshot();
+        let mut modifiers = primary_command_modifiers();
+        modifiers.shift = shift;
+        let mut input = egui::RawInput {
+            events: vec![egui::Event::Paste("native payload".into())],
+            modifiers,
+            ..Default::default()
+        };
+        harness.app.stage_discovery_input(&ctx, &mut input);
+        assert_eq!(harness.app.pending_picker_open.is_none(), shift);
+        assert_eq!(input.events.is_empty(), !shift);
+        assert_eq!(
+            harness.app.pending_picker_selection_pin.as_deref(),
+            Some("picked")
+        );
+        if shift {
+            run_full_update_with_input(&mut harness.app, &ctx, input);
+            let commands: Vec<_> = harness.cmd_rx.try_iter().collect();
+            assert!(commands.iter().any(|command| matches!(command,
+                CoreCmd::CreatePaste { content } if content == "native payload")));
+        } else {
+            assert_eq!(
+                harness
+                    .app
+                    .pending_picker_open
+                    .as_ref()
+                    .unwrap()
+                    .input_events,
+                vec![egui::Event::Paste("native payload".into())]
+            );
+            assert!(harness.cmd_rx.try_recv().is_err());
+        }
+        assert_eq!(harness.app.active_snapshot(), before);
     }
 }

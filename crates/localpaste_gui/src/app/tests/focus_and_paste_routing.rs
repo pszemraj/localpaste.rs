@@ -152,10 +152,7 @@ fn focused_plain_paste_with_payload_does_not_request_second_paste() {
     let output = ctx.run(
         egui::RawInput {
             modifiers,
-            events: vec![
-                key_event(egui::Key::V, modifiers),
-                egui::Event::Paste(" beta".to_string()),
-            ],
+            events: vec![egui::Event::Paste(" beta".to_string())],
             ..Default::default()
         },
         |ctx| {
@@ -536,16 +533,8 @@ fn command_shift_v_arms_paste_as_new_before_virtual_routing() {
 
     let _ = ctx.run(
         egui::RawInput {
-            events: vec![
-                egui::Event::Key {
-                    key: egui::Key::V,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers,
-                },
-                egui::Event::Paste("from clipboard".to_string()),
-            ],
+            modifiers,
+            events: vec![egui::Event::Paste("from clipboard".to_string())],
             ..Default::default()
         },
         |ctx| {
@@ -885,7 +874,8 @@ fn explicit_paste_as_new_shortcut_is_rejected_while_version_overlay_is_open() {
     let mut armed = false;
     let _ = ctx.run(
         egui::RawInput {
-            events: vec![key_event(egui::Key::V, modifiers)],
+            modifiers,
+            events: vec![egui::Event::Paste("blocked clipboard".into())],
             ..Default::default()
         },
         |ctx| {

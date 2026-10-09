@@ -43,9 +43,8 @@ use highlight::{
     HighlightWorker, HighlightWorkerResult, VirtualEditHint,
 };
 pub(super) use interaction_helpers::{
-    drag_autoscroll_delta, is_command_shift_shortcut, is_editor_word_char,
-    next_virtual_click_count, non_focusable_click_sense, paint_virtual_selection_overlay,
-    should_route_sidebar_arrows,
+    drag_autoscroll_delta, is_editor_word_char, next_virtual_click_count,
+    non_focusable_click_sense, paint_virtual_selection_overlay, should_route_sidebar_arrows,
 };
 use localpaste_core::config::env_flag_enabled;
 use localpaste_core::models::paste::{Paste, SearchScope};
@@ -118,6 +117,7 @@ pub(crate) struct LocalPasteApp {
     palette_copy_request_id: u64,
     pending_selection_id: Option<String>,
     pending_picker_open: Option<PendingPickerOpen>,
+    pending_picker_selection_pin: Option<String>,
     picker_selection_pin: Option<String>,
     pending_delete_id: Option<String>,
     picker_delete_transition: Option<PickerDeleteTransition>,
@@ -464,6 +464,7 @@ impl LocalPasteApp {
 
 impl eframe::App for LocalPasteApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        Self::stage_native_paste_shortcuts(input);
         self.stage_discovery_input(ctx, input);
     }
 
@@ -530,11 +531,8 @@ impl eframe::App for LocalPasteApp {
         // Respect clipboard event order before a newer explicit shortcut can
         // re-arm intent and replace the canceled request's identity.
         self.discard_canceled_clipboard_reply(ctx);
-        let explicit_paste_as_new_shortcut_pressed =
-            self.maybe_arm_paste_as_new_shortcut_intent(ctx);
         let mut copy_virtual_unfocused = false;
         let mut request_virtual_paste = false;
-        let mut request_paste_as_new = explicit_paste_as_new_shortcut_pressed;
         let mut plain_paste_shortcut_pressed = false;
         let mut delete_selected_shortcut_pressed = false;
         let mut pasted_text: Option<String> = None;
@@ -550,6 +548,8 @@ impl eframe::App for LocalPasteApp {
                 break;
             }
         }
+        // A dismissal returns ownership before the following native paste.
+        let mut request_paste_as_new = self.maybe_arm_paste_as_new_shortcut_intent(ctx);
         // TextEdit treats Ctrl+K (including Shift) as delete-to-paragraph-end.
         // Consume the shifted chord first: egui's plain pattern accepts extra Shift.
         ctx.input_mut(|input| {
@@ -718,6 +718,15 @@ impl eframe::App for LocalPasteApp {
                 }
             }
         });
+        if self.paste_as_new_pending_frames > 0 {
+            // The explicit payload was captured above. It belongs to the new
+            // paste, so metadata/search TextEdits must not also insert it.
+            ctx.input_mut(|input| {
+                input
+                    .events
+                    .retain(|event| !matches!(event, egui::Event::Paste(_)));
+            });
+        }
         if copy_virtual_unfocused && !ctx.wants_keyboard_input() {
             if let Some(selection) = self.virtual_selected_text() {
                 self.queue_clipboard_text(selection);

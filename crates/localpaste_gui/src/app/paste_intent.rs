@@ -20,6 +20,39 @@ pub(super) enum ClipboardCreatePolicy {
 }
 
 impl LocalPasteApp {
+    /// Captures native paste modifiers before discovery splits input across frames.
+    ///
+    /// Egui-winit replaces Command+V with Paste, whose text carries no modifiers.
+    /// An ordered key marker preserves the observed chord when a deferred slice
+    /// is replayed after Command or Shift has been released.
+    ///
+    /// # Arguments
+    /// - `input`: Native events to stage, with their current modifier snapshot.
+    pub(super) fn stage_native_paste_shortcuts(input: &mut egui::RawInput) {
+        if input.events.iter().any(|event| {
+            matches!(
+                shortcuts::runtime_shortcut_action(event),
+                Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteAsNew)
+            )
+        }) {
+            return;
+        }
+        let mut events = Vec::with_capacity(input.events.len());
+        for event in std::mem::take(&mut input.events) {
+            if shortcuts::native_paste_shortcut_action(&event, input.modifiers).is_some() {
+                events.push(egui::Event::Key {
+                    key: egui::Key::V,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: input.modifiers,
+                });
+            }
+            events.push(event);
+        }
+        input.events = events;
+    }
+
     /// Merges a newly observed paste payload into the current frame snapshot.
     ///
     /// Keeps the most complete payload deterministically so shorter/partial
@@ -81,7 +114,9 @@ impl LocalPasteApp {
     ///
     /// Egui paste events carry text without request identity. A newer observed
     /// paste shortcut therefore supersedes the canceled request; otherwise its
-    /// next payload is discarded within the existing clipboard wait window.
+    /// next payload without a recognized shortcut is discarded within the wait window.
+    /// A reply arriving with Command held is indistinguishable from a fresh
+    /// native shortcut, so the observed shortcut takes precedence.
     ///
     /// # Arguments
     /// - `ctx`: Context whose native paste events are filtered before rendering.
@@ -97,11 +132,20 @@ impl LocalPasteApp {
                 self.canceled_paste_request_at = None;
                 return;
             }
+            let has_paste_key = input.events.iter().any(|event| {
+                matches!(event, egui::Event::Key {
+                    key: egui::Key::V, pressed: true, modifiers, ..
+                } if modifiers.command)
+            });
+            let native_modifiers = input.modifiers;
             let mut discarded = false;
             input.events.retain(|event| {
                 if matches!(event, egui::Event::Key {
                     key: egui::Key::V, pressed: true, modifiers, ..
                 } if modifiers.command)
+                    || (!has_paste_key
+                        && shortcuts::native_paste_shortcut_action(event, native_modifiers)
+                            .is_some())
                 {
                     self.canceled_paste_request_at = None;
                 }
@@ -149,17 +193,8 @@ impl LocalPasteApp {
     /// `true` when the explicit shortcut was observed and intent was armed.
     pub(super) fn maybe_arm_paste_as_new_shortcut_intent(&mut self, ctx: &egui::Context) -> bool {
         let explicit_shortcut = ctx.input(|input| {
-            input.events.iter().any(|event| {
-                matches!(
-                    event,
-                    egui::Event::Key {
-                        key: egui::Key::V,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } if is_command_shift_shortcut(*modifiers)
-                )
-            })
+            pressed_runtime_shortcuts(input)
+                .any(|action| action == RuntimeShortcutAction::PasteAsNew)
         });
         if explicit_shortcut {
             if self.keyboard_overlay_open() && !self.version_overlay_open() {

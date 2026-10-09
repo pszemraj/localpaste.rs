@@ -21,7 +21,7 @@ impl LocalPasteApp {
     ) {
         let mut events = std::mem::take(&mut self.deferred_discovery_events);
         events.append(&mut input.events);
-        self.retain_pending_picker_input(&mut events);
+        self.retain_pending_picker_input(&mut events, input.modifiers);
         let first_boundary = events.iter().enumerate().find_map(|(index, event)| {
             (discovery_toggle(event)
                 || (self.discovery_open() && discovery_escape(event))
@@ -63,13 +63,18 @@ impl LocalPasteApp {
     }
 
     /// Holds editor events with their accepted picker selection until its load completes.
-    fn retain_pending_picker_input(&mut self, events: &mut Vec<egui::Event>) {
+    fn retain_pending_picker_input(
+        &mut self,
+        events: &mut Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+    ) {
         if self.discovery_open() || self.pending_picker_open.is_none() {
             return;
         }
         let mut retaining = true;
         events.retain(|event| {
-            let action = super::super::shortcuts::runtime_shortcut_action(event);
+            let action = super::super::shortcuts::native_paste_shortcut_action(event, modifiers)
+                .or_else(|| super::super::shortcuts::runtime_shortcut_action(event));
             let transfers_input = discovery_escape(event)
                 || matches!(event, egui::Event::PointerButton { pressed: true, .. })
                 || action.is_some_and(|action| {

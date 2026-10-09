@@ -154,6 +154,7 @@ impl LocalPasteApp {
     /// Clears UI state that can only complete via backend events after the event channel closes.
     pub(super) fn handle_backend_event_channel_disconnected(&mut self) {
         self.pending_picker_open = None;
+        self.pending_picker_selection_pin = None;
         let picker_delete_pending = self.picker_delete_transition_active();
         self.clear_picker_delete_transition();
         self.cancel_pending_delete();
@@ -610,6 +611,7 @@ impl LocalPasteApp {
         if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
             let previous_pending_selection = self.pending_selection_id.clone();
             let previous_picker_open = self.pending_picker_open.clone();
+            let previous_picker_pin = self.pending_picker_selection_pin.clone();
             self.queue_pending_selection(id);
             let content_save_needed = self.save_status == SaveStatus::Dirty;
             let metadata_save_needed = self.metadata_dirty;
@@ -625,6 +627,7 @@ impl LocalPasteApp {
                 rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
                 self.pending_selection_id = previous_pending_selection;
                 self.pending_picker_open = previous_picker_open;
+                self.pending_picker_selection_pin = previous_picker_pin;
                 return false;
             }
             self.cancel_pending_delete();
@@ -644,6 +647,9 @@ impl LocalPasteApp {
     }
 
     fn queue_pending_selection(&mut self, id: String) {
+        if self.pending_picker_selection_pin.as_deref() != Some(id.as_str()) {
+            self.pending_picker_selection_pin = None;
+        }
         if self
             .pending_picker_open
             .as_ref()
@@ -661,6 +667,7 @@ impl LocalPasteApp {
     pub(super) fn clear_pending_selection_request(&mut self) {
         self.pending_selection_id = None;
         self.pending_picker_open = None;
+        self.pending_picker_selection_pin = None;
     }
 
     /// Applies a fully loaded paste into editor state and resets transient edit caches.
@@ -715,6 +722,9 @@ impl LocalPasteApp {
         // Acquire target lock before releasing current selection lock so failed
         // switches never drop the currently editable paste unexpectedly.
         if !self.acquire_paste_lock(id.as_str()) {
+            if self.pending_picker_selection_pin.as_deref() == Some(id.as_str()) {
+                self.pending_picker_selection_pin = None;
+            }
             if self
                 .pending_picker_open
                 .as_ref()
@@ -727,11 +737,7 @@ impl LocalPasteApp {
         }
         self.cancel_pending_delete();
         self.pending_selection_id = None;
-        if self
-            .pending_picker_open
-            .as_ref()
-            .is_some_and(|opening| opening.id == id)
-        {
+        if self.pending_picker_selection_pin.take().as_deref() == Some(id.as_str()) {
             self.picker_selection_pin = Some(id.clone());
         } else {
             self.pending_picker_open = None;
@@ -952,6 +958,9 @@ impl LocalPasteApp {
 
     /// Discards picker-open and selection pins owned by a removed paste.
     pub(super) fn clear_picker_selection_context_for(&mut self, id: &str) {
+        if self.pending_picker_selection_pin.as_deref() == Some(id) {
+            self.pending_picker_selection_pin = None;
+        }
         if self.picker_selection_pin.as_deref() == Some(id) {
             self.picker_selection_pin = None;
         }
