@@ -103,6 +103,30 @@ fn semantic_kinds_rebuild_from_version_fourteen_and_survive_restart() {
             PasteKind::Code,
         ),
         (
+            "# build\nall:\n\tcargo build",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "npm ERR! code 1\nnpm ERR! command failed\n> demo@1.0.0 test\n> pytest",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
+            "> Traceback (most recent call last):\n>   File \"demo.py\", line 1, in <module>\n> ValueError: bad value",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Log,
+        ),
+        (
+            "import X",
+            "markdown",
+            PasteKind::Document,
+            PasteKind::Code,
+        ),
+        (
             "stderr:\n> error: failed\nexit code 1",
             "markdown",
             PasteKind::Document,

@@ -251,12 +251,13 @@ pub fn normalize_language_filter(language: Option<&str>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn is_markdown_heading_line(line: &str) -> bool {
+/// Recognize an ATX Markdown heading with one to six leading hash marks.
+///
+/// # Returns
+/// Whether `line` begins with a valid ATX heading marker followed by a space.
+pub(crate) fn is_markdown_heading_line(line: &str) -> bool {
     let bytes = line.as_bytes();
-    let mut hash_count = 0usize;
-    while hash_count < bytes.len() && bytes[hash_count] == b'#' {
-        hash_count += 1;
-    }
+    let hash_count = bytes.iter().take_while(|byte| **byte == b'#').count();
     if hash_count == 0 || hash_count > 6 {
         return false;
     }

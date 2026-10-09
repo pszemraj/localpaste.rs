@@ -358,7 +358,7 @@ pub(crate) fn looks_like_python_traceback(content: &str) -> bool {
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(|line| line.strip_prefix("> ").unwrap_or(line));
+        .map(|line| line.strip_prefix("> ").unwrap_or(line).trim_start());
     let first = lines.next().unwrap_or_default();
     let first = if matches!(first, "stderr:" | "stdout:") {
         lines.next().unwrap_or_default()

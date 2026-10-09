@@ -154,9 +154,12 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
         if let Some(technical_language) = markdown_technical_language(sample) {
             return classify_kind(sample, Some(technical_language));
         }
+        if has_positive_markdown_document_evidence(sample) {
+            return PasteKind::Document;
+        }
     }
 
-    if is_document_language(language) {
+    if lang != "markdown" && is_document_language(language) {
         return PasteKind::Document;
     }
 
@@ -275,7 +278,9 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
 /// reclassifying documentary prose, links, or embedded fenced examples.
 pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str> {
     let sample = sample_prefix(content);
-    if crate::detection::looks_like_shell_command_sequence(sample) {
+    if crate::detection::looks_like_shell_command_sequence(sample)
+        || looks_like_tabbed_command_recipe(sample)
+    {
         return Some("shell");
     }
     if sample.lines().any(|line| {
@@ -333,6 +338,59 @@ pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str>
         return Some("text");
     }
     None
+}
+
+/// Require body-level document structure before trusting a weak Markdown label.
+fn has_positive_markdown_document_evidence(sample: &str) -> bool {
+    if sample.contains("```") || sample.contains("~~~") || sample.contains("](") {
+        return true;
+    }
+    if commands::extract_command_handle(sample).is_some() {
+        return false;
+    }
+
+    let mut non_empty = 0usize;
+    let mut quoted = 0usize;
+    for line in sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        non_empty = non_empty.saturating_add(1);
+        quoted = quoted.saturating_add(usize::from(line.starts_with("> ")));
+        if crate::models::paste::is_markdown_heading_line(line)
+            || ((line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ "))
+                && !line.contains(": "))
+            || crate::models::paste::is_markdown_ordered_list_line(line)
+        {
+            return true;
+        }
+    }
+
+    (non_empty > 0 && quoted == non_empty) || looks_like_prose(sample)
+}
+
+/// Recognize a whole target-and-tabbed-command body without treating embedded examples as code.
+fn looks_like_tabbed_command_recipe(sample: &str) -> bool {
+    let mut saw_target = false;
+    let mut saw_recipe = false;
+    for line in sample.lines().filter(|line| !line.trim().is_empty()) {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('\t') {
+            if !saw_target || commands::extract_command_handle(trimmed).is_none() {
+                return false;
+            }
+            saw_recipe = true;
+        } else if trimmed.ends_with(':') {
+            saw_target = true;
+        } else {
+            return false;
+        }
+    }
+    saw_target && saw_recipe
 }
 
 /// Recognize setup prose and sentences containing a later path mistaken for Batch.

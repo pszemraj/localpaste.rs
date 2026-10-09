@@ -55,6 +55,16 @@ fn weak_markdown_labels_do_not_hide_whole_technical_bodies() {
         ),
         ("# connect\nssh user@host", PasteKind::Code),
         ("# containers\ndocker ps", PasteKind::Code),
+        ("# build\nall:\n\tcargo build", PasteKind::Code),
+        (
+            "npm ERR! code 1\nnpm ERR! command failed\n> demo@1.0.0 test\n> pytest",
+            PasteKind::Code,
+        ),
+        (
+            "> Traceback (most recent call last):\n>   File \"demo.py\", line 1, in <module>\n> ValueError: bad value",
+            PasteKind::Log,
+        ),
+        ("import X", PasteKind::Code),
         ("# install\napt install -y git curl", PasteKind::Other),
         ("# build\nFOO=bar cargo build --release", PasteKind::Other),
         ("# install\n> apt install -y git curl", PasteKind::Other),
@@ -94,6 +104,7 @@ fn weak_markdown_labels_do_not_hide_whole_technical_bodies() {
         "# Python notes\n\nHere is how the code works.\n\nimport numpy as np\nprint(np.arange(10))",
         "# Python notes\nimport numpy as np\nThis paragraph explains the example.",
         "# Notes\nimport numpy as np\nrelease details",
+        "# Notes\nrelease details",
         "# Notes\n[label](url)",
         "> This is a quoted explanation.\n> The example uses `pip install foo`.",
     ] {
