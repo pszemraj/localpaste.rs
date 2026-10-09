@@ -19,7 +19,7 @@ This keeps GUI/server detection broad by default while preserving portability fo
 
 For auto-detected language (`language_is_manual == false`):
 
-1. Recognize a standalone Markdown fence, then a known source shebang, before ambiguous body structure. Complete Makefiles with command-bearing recipes or distinctive directives, shell command sequences or `for` loops, listed executables after a leading comment, commands with explicit arguments after a leading quote (or a terminal prompt), and runtime traceback/panic structure also precede statistical detection.
+1. Recognize a standalone Markdown fence, then a known source shebang, before ambiguous body structure. Complete Makefiles with targets and tabbed recipes or distinctive directives, shell command sequences or `for` loops, listed executables after a leading comment, commands with explicit arguments after a leading quote (or a terminal prompt), and runtime traceback/panic structure also precede statistical detection.
 2. If `magika` feature is enabled:
    - run Magika detection with CRLF normalized to LF for inference only (stored content stays unchanged),
    - reject non-text results,
@@ -39,7 +39,7 @@ For manual language (`language_is_manual == true`), content edits do not re-run 
 
 An inferred Markdown label is refined using [whole-body technical structure](#documents-and-fenced-content). Inferred Python labels are rejected when surrounding prose or Markdown structure supplies document evidence; an absent import/definition alone does not reject Python. Inferred Batch labels receive the [prose-boundary checks](#yaml-refinement-guardrail) described below. These refinements apply during detection; manual stored language values remain unchanged.
 
-Makefile recognition accepts continued lines, `override` assignments, `vpath`, Make function calls, `.mk` includes, closed `define` blocks, and tabbed recipes with command evidence. Lowercase words alone do not establish a command. A headed body made entirely of indented prose or list items resolves to Markdown before model inference. An inferred Makefile label changes to Markdown only for that positive note structure; unfamiliar Make syntax alone does not justify relabeling it.
+Makefile recognition accepts continued lines, `override` assignments, `vpath`, Make function calls, `.mk` includes, closed `define` blocks, and target-plus-tabbed-recipe bodies without enumerating every build tool. Positive note structure resolves indented prose or short items under agenda/list/todo headings to Markdown; prerequisites, additional targets, directives, and command syntax veto that note interpretation. Sole `Example:` or `Steps:` labels defer to document detection, preserving README command examples. Unfamiliar Make syntax alone does not justify relabeling an inferred Makefile.
 
 Python compound statements can also resemble targets and tabbed recipes. They retain Python classification when the sampled body consistently contains Python-shaped headers and statements, including attribute, subscript, tuple, and annotated assignments. Strings and comments may contain dollar signs; unquoted shell variables remain recipe evidence. Unrelated targets, Make directives, and command recipes elsewhere in the sample prevent this compound-source override. An explicit source shebang retains precedence.
 

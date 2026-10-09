@@ -38,6 +38,8 @@ Shortcut contract:
 - `Ctrl/Cmd+V`: insert when editor is focused; create new paste from clipboard when editor is not focused.
 - `Ctrl/Cmd+Shift+V`: explicit "force paste as new" fallback.
 
+Native paste routing recognizes egui-winit's Paste-only events as well as key-plus-payload input. Under CPU load, the pinned backend can deliver the payload after discarding all shortcut modifiers; `Ctrl/Cmd+Shift+V` then inserts into the current editor. The [backend follow-up](backlog.md#current-items) must preserve the press chord to resolve that case.
+
 Navigation/selection contract:
 
 - Global sidebar navigation via `Up`/`Down` is bare-arrow only; modified arrows (`Ctrl`/`Alt`/`Shift`/`Cmd`) stay in editor-selection semantics.
