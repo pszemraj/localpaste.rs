@@ -1,9 +1,32 @@
 //! Owned Markdown grammar and readable mappings onto existing syntax colors.
 
 use super::SyntectSettings;
+use std::collections::BTreeMap;
 use syntect::highlighting::{Highlighter, StyleModifier, ThemeItem, ThemeSet};
 use syntect::parsing::syntax_definition::Pattern;
 use syntect::parsing::{Scope, SyntaxDefinition, SyntaxSet};
+
+/// Matches whitespace occupying exactly `columns` from a starting tab column.
+///
+/// # Arguments
+/// - `columns`: Number of whitespace columns to consume.
+/// - `start_column`: Column before the whitespace, used to resolve tab stops.
+///
+/// # Returns
+/// A non-capturing regex accepting equivalent spaces and four-column tabs.
+fn indentation_pattern(columns: usize, start_column: usize) -> String {
+    let first_stop = 4 - start_column % 4;
+    if columns < first_stop {
+        return " ".repeat(columns);
+    }
+    let mut pattern = format!(r"(?: {{{first_stop}}}| {{0,{}}}\t)", first_stop - 1);
+    let remaining = columns - first_stop;
+    for _ in 0..remaining / 4 {
+        pattern.push_str(r"(?: {4}| {0,3}\t)");
+    }
+    pattern.push_str(&" ".repeat(remaining % 4));
+    pattern
+}
 
 /// Build the shared syntax/theme sets with the project Markdown grammar.
 ///
@@ -18,40 +41,203 @@ pub(super) fn settings() -> SyntectSettings {
     // (one bullet, or 1..9 digits plus punctuation) with the same list context.
     let mut grammar = include_str!("../../../assets/LocalPaste-Markdown.sublime-syntax").to_owned();
     grammar.push_str("\n  list-items:\n");
+    let mut list_contexts = String::new();
+    let mut variants = Vec::new();
+    let mut ordinary_items = Vec::new();
+    let mut direct_openings: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    let mut quoted_openings: BTreeMap<usize, Vec<String>> = BTreeMap::new();
     for width in 1..=10 {
         let marker = if width == 1 {
             "[-+*]".to_owned()
         } else {
             format!("[0-9]{{{}}}[.)]", width - 1)
         };
-        let prefix = format!(r"\1{}\2", " ".repeat(width));
-        // External-backreference patterns bypass syntect's per-line search cache.
-        // Absolute anchors reject later token offsets without rescanning the tail.
-        grammar.push_str(&format!(
-            r"    - match: '^([ ]*){marker}([ ]{{1,4}})(?=\S)'
-      scope: punctuation.definition.list.markdown
-      push:
-        - match: '\A(?!{prefix}|[ \t]*\r?$)'
-          pop: true
-"
+        ordinary_items.push((
+            format!("list-item-{width}"),
+            format!(r"^([ ]*){marker}([ ]{{1,4}})"),
+            format!(r"\1{}\2", " ".repeat(width)),
+            String::new(),
+            true,
+            false,
         ));
-        for (fence, info) in [('`', r"[^`\n]*"), ('~', r"[^\n]*")] {
+        for residue in 0..4 {
+            for padding in 1..=4 {
+                direct_openings
+                    .entry(residue + width + padding)
+                    .or_default()
+                    .push(format!(
+                        "{}{marker}{}",
+                        " ".repeat(residue),
+                        " ".repeat(padding)
+                    ));
+            }
+            // A gap of at most four columns has at most one tab. Spaces before
+            // it share the same next stop; trailing spaces determine the indent.
+            let stop = 4 - (residue + width) % 4;
+            for trailing in 0..=4 - stop {
+                direct_openings
+                    .entry(residue + width + stop + trailing)
+                    .or_default()
+                    .push(format!(
+                        r"{}{marker} {{0,{}}}\t{}",
+                        " ".repeat(residue),
+                        stop - 1,
+                        " ".repeat(trailing)
+                    ));
+            }
+            for leading in 0..4 {
+                for separator in 0..=1 {
+                    let quote = format!(
+                        "{}>{}",
+                        " ".repeat(leading),
+                        if separator == 1 { " " } else { "(?! )" }
+                    );
+                    for padding in 1..=4 {
+                        quoted_openings
+                            .entry(residue + width + padding)
+                            .or_default()
+                            .push(format!(
+                                "{quote}{}{marker}{}",
+                                " ".repeat(residue),
+                                " ".repeat(padding)
+                            ));
+                    }
+                    let stop = 4 - (leading + 1 + separator + residue + width) % 4;
+                    for trailing in 0..=4 - stop {
+                        quoted_openings
+                            .entry(residue + width + stop + trailing)
+                            .or_default()
+                            .push(format!(
+                                r"{quote}{}{marker} {{0,{}}}\t{}",
+                                " ".repeat(residue),
+                                stop - 1,
+                                " ".repeat(trailing)
+                            ));
+                    }
+                }
+            }
+        }
+    }
+    // Direct fences share frames by item indentation, rather than duplicating
+    // contexts for every marker, gap, and quote-column combination.
+    for (quoted, openings_by_indent) in [(false, direct_openings), (true, quoted_openings)] {
+        for (indent, openings) in openings_by_indent {
+            let mut prefixes = Vec::new();
+            for extra in 0..4 {
+                if quoted {
+                    for leading in 0..4 {
+                        for separator in 0..=1 {
+                            prefixes.push(format!(
+                                "{}>{}{}",
+                                " ".repeat(leading),
+                                if separator == 1 { " " } else { "(?! )" },
+                                indentation_pattern(indent + extra, leading + 1 + separator)
+                            ));
+                        }
+                    }
+                } else {
+                    prefixes.push(indentation_pattern(indent + extra, 0));
+                }
+            }
+            let prefix = format!("(?:{})", prefixes.join("|"));
+            let item_name = format!(
+                "direct-list-item-{}-{indent}",
+                if quoted { "quote" } else { "root" }
+            );
+            variants.push((
+                item_name.clone(),
+                format!(r"^()()(?:{})", openings.join("|")),
+                prefix.clone(),
+                prefix.clone(),
+                false,
+                quoted,
+            ));
+            if !quoted {
+                variants.push((
+                    format!("{item_name}-nested"),
+                    format!(r"^((?: {{4}})+)(?:{})()", openings.join("|")),
+                    format!(r"\1{prefix}"),
+                    prefix,
+                    false,
+                    false,
+                ));
+            }
+        }
+    }
+    variants.extend(ordinary_items);
+    for (item_name, opening, prefix, continuation_prefix, ordinary_item, quoted) in variants {
+        let blank = if quoted {
+            r"[ ]{0,3}>[ \t]*\r?$"
+        } else {
+            r"[ \t]*\r?$"
+        };
+        if !ordinary_item {
+            for (name, fence, info) in [("backtick", '`', r"[^`\n]*"), ("tilde", '~', r"[^\n]*")] {
+                grammar.push_str(&format!(
+                    r"    - match: '{opening}({fence}{{3,}}){info}$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push: [{item_name}, {item_name}-{name}]
+"
+                ));
+                list_contexts.push_str(&format!(
+                    r"  {item_name}-{name}:
+    - meta_scope: markup.raw.block.markdown.localpaste
+    - match: '\A(?!{prefix}|{blank})'
+      pop: true
+    - match: '\A{prefix}(?={fence}{{3,}}[ \t]*\r?$)'
+    - match: '\G\3{fence}*[ \t]*\r?$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      pop: true
+"
+                ));
+            }
+        } else {
             grammar.push_str(&format!(
-                r"        - match: '\A({prefix}) {{0,3}}({fence}{{3,}}){info}$'
-          scope: punctuation.definition.raw.markdown.localpaste
-          push:
-            - meta_scope: markup.raw.block.markdown.localpaste
-            - match: '\A(?!\1|[ \t]*\r?$)'
-              pop: true
-            - match: '\A\1 {{0,3}}\2{fence}*[ \t]*\r?$'
-              scope: punctuation.definition.raw.markdown.localpaste
-              pop: true
+                r"    - match: '{opening}(?=\S)'
+      scope: punctuation.definition.list.markdown
+      push: {item_name}
 "
             ));
         }
-        // Item indentation is structural, not top-level indented code.
-        grammar.push_str("        - include: markup\n");
+        // Absolute anchors reject later token offsets without rescanning the
+        // tail when external backreferences bypass syntect's search cache.
+        list_contexts.push_str(&format!(
+            r"  {item_name}:
+    - match: '\A(?!{prefix}|{blank})'
+      pop: true
+"
+        ));
+        for (name, fence, info) in [("backtick", '`', r"[^`\n]*"), ("tilde", '~', r"[^\n]*")] {
+            if ordinary_item {
+                list_contexts.push_str(&format!(
+                    r"    - match: '\A({prefix}) {{0,3}}({fence}{{3,}}){info}$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push:
+        - meta_scope: markup.raw.block.markdown.localpaste
+        - match: '\A(?!\1|{blank})'
+          pop: true
+        - match: '\A\1 {{0,3}}\2{fence}*[ \t]*\r?$'
+          scope: punctuation.definition.raw.markdown.localpaste
+          pop: true
+"
+                ));
+            } else {
+                let captures = if prefix.starts_with(r"\1") {
+                    r"(\1)()"
+                } else {
+                    r"()()"
+                };
+                list_contexts.push_str(&format!(
+                    r"    - match: '\A{captures}{continuation_prefix}({fence}{{3,}}){info}$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push: {item_name}-{name}
+"
+                ));
+            }
+        }
+        list_contexts.push_str("    - include: markup\n");
     }
+    grammar.push_str(&list_contexts);
     let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
     let mut syntax =
         SyntaxDefinition::load_from_str(&grammar, true, None).expect("checked-in Markdown grammar");
@@ -100,12 +286,25 @@ pub(super) fn settings() -> SyntectSettings {
 }
 
 #[cfg(test)]
-mod tests {
+/// Shared Markdown style probes and grammar regression tests.
+pub(super) mod tests {
     use super::*;
     use syntect::easy::HighlightLines;
     use syntect::highlighting::{FontStyle, Style};
 
-    fn styled_segments(
+    /// Returns owned styled segments for one parser line.
+    ///
+    /// # Arguments
+    /// - `settings`: Syntax definitions used by the parser.
+    /// - `lines`: Stateful highlighter advanced by this line.
+    /// - `text`: Complete parser line to highlight.
+    ///
+    /// # Returns
+    /// Styles paired with their owned text segments.
+    ///
+    /// # Panics
+    /// Panics if the checked-in grammar cannot highlight the line.
+    pub(crate) fn styled_segments(
         settings: &SyntectSettings,
         lines: &mut HighlightLines<'_>,
         text: &str,
@@ -118,7 +317,16 @@ mod tests {
             .collect()
     }
 
-    fn non_empty_colors(
+    /// Returns foreground colors and text for non-whitespace segments.
+    ///
+    /// # Arguments
+    /// - `settings`: Syntax definitions used by the parser.
+    /// - `lines`: Stateful highlighter advanced by this line.
+    /// - `text`: Complete parser line to highlight.
+    ///
+    /// # Returns
+    /// Foreground colors paired with non-whitespace text segments.
+    pub(crate) fn non_empty_colors(
         settings: &SyntectSettings,
         lines: &mut HighlightLines<'_>,
         text: &str,
@@ -357,7 +565,7 @@ mod tests {
                 "{closing:?} should close the code fence"
             );
         }
-        for indent in ["    ", "     ", "\t"] {
+        for indent in ["    ", "     ", "\t", " \t", "  \t", "   \t", "\t "] {
             for fence in ["```", "~~~"] {
                 let mut lines = HighlightLines::new(syntax, theme);
                 non_empty_colors(&settings, &mut lines, &format!("{indent}{fence}rust\n"));
@@ -385,17 +593,31 @@ mod tests {
             .style_for_stack(&[Scope::new("string").unwrap()])
             .foreground;
         for fence in ["```", "~~~"] {
-            for (items, indent) in [
-                ("- item\n", "  "),
-                ("- outer\n  - inner\n", "    "),
-                ("1. item\n", "   "),
-                ("123456789. item\n", "           "),
+            for (items, opening, indent) in [
+                ("- item\n", "   ", "  "),
+                ("- outer\n  - inner\n", "     ", "    "),
+                ("1. item\n", "    ", "   "),
+                ("123456789. item\n", "            ", "           "),
+                ("", "- ", "  "),
+                ("- outer\n", "  - ", "    "),
+                ("", "1. ", "   "),
+                ("", "123456789. ", "           "),
+                ("", "-\t", "    "),
+                ("", "1.\t", "\t"),
+                ("", "12.\t", "    "),
+                ("", "1234.\t", "\t\t"),
+                ("", "123456789.\t", "            "),
+                ("", " -\t", "\t"),
+                ("", "  -\t", "    "),
+                ("", "   -\t", "\t\t"),
+                ("", "- \t ", "     "),
+                ("- outer\n", "  -\t", "\t"),
             ] {
                 let mut lines = HighlightLines::new(syntax, theme);
                 for line in items.split_inclusive('\n') {
                     styled_segments(&settings, &mut lines, line);
                 }
-                styled_segments(&settings, &mut lines, &format!("{indent} {fence}sh\n"));
+                styled_segments(&settings, &mut lines, &format!("{opening}{fence}sh\n"));
                 styled_segments(&settings, &mut lines, &format!("{indent}    {fence}\n"));
                 assert!(
                     non_empty_colors(

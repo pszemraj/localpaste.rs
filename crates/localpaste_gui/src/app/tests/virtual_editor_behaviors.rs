@@ -2,26 +2,6 @@
 
 use super::*;
 
-fn run_virtual_editor_frame(
-    app: &mut LocalPasteApp,
-    ctx: &egui::Context,
-    events: Vec<egui::Event>,
-) -> bool {
-    let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-    let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
-    let focus_active_pre = egui_focus_pre;
-
-    let raw_input = egui::RawInput {
-        events,
-        ..Default::default()
-    };
-    let _ = ctx.run(raw_input, |ctx| {
-        app.render_editor_panel(ctx);
-    });
-
-    focus_active_pre
-}
-
 #[test]
 fn virtual_copy_and_cut_report_expected_mutation_state() {
     struct ClipboardCase {
@@ -596,6 +576,29 @@ fn home_and_end_exclude_every_rope_line_terminator() {
             5 + separator.chars().count()
         );
         assert_eq!(harness.app.virtual_editor_buffer.to_string(), text);
+    }
+}
+
+#[test]
+fn multiline_edit_hints_count_rope_lines_after_unchanged_interior_rows() {
+    for separator in [
+        "\r", "\n", "\r\n", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}",
+    ] {
+        let mut harness = make_app();
+        let before = format!("a{separator}b{separator}c{separator}tail");
+        harness.app.reset_virtual_editor(&before);
+        let replacement = format!("AA{separator}b{separator}// comment");
+        let end = before[..before.find('c').unwrap() + 1].chars().count();
+        assert!(harness.app.replace_virtual_range(
+            0..end,
+            &replacement,
+            virtual_editor::EditIntent::Paste,
+            true,
+            Instant::now(),
+        ));
+        let hint = harness.app.highlight_edit_hint.expect("mutation hint");
+        assert_eq!(hint.start_byte, 0);
+        assert_eq!(hint.touched_lines, 3, "separator {separator:?}");
     }
 }
 

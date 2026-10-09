@@ -98,6 +98,29 @@ pub(super) fn configure_virtual_editor_test_ctx(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// Renders an editor frame and reports whether the editor owned focus before input.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `ctx`: Persistent test context carrying keyboard focus between frames.
+/// - `events`: Input events delivered to this frame.
+///
+/// # Returns
+/// Whether the virtual editor had keyboard focus before rendering.
+fn run_virtual_editor_frame(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> bool {
+    let focus_active_pre = ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+    let raw_input = egui::RawInput {
+        events,
+        ..Default::default()
+    };
+    let _ = ctx.run(raw_input, |ctx| app.render_editor_panel(ctx));
+    focus_active_pre
+}
+
 /// Reset the virtual editor and rebuild wrapping metrics for a test buffer.
 ///
 /// # Arguments

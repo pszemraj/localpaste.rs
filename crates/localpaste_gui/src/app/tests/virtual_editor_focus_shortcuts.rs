@@ -4,23 +4,6 @@ use super::virtual_editor_focus_support::*;
 use super::*;
 use crate::app::virtual_editor::PlatformFlavor;
 
-fn run_virtual_editor_frame(
-    app: &mut LocalPasteApp,
-    ctx: &egui::Context,
-    events: Vec<egui::Event>,
-) -> bool {
-    let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-    let focus_active_pre = ctx.memory(|m| m.has_focus(focus_id));
-    let raw_input = egui::RawInput {
-        events,
-        ..Default::default()
-    };
-    let _ = ctx.run(raw_input, |ctx| {
-        app.render_editor_panel(ctx);
-    });
-    focus_active_pre
-}
-
 #[test]
 fn focused_home_end_keys_do_not_break_follow_on_vertical_arrows() {
     with_platform(PlatformFlavor::Other, || {

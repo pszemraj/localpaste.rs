@@ -187,6 +187,7 @@ Run this checklist when touching detection/highlight/filter code.
    [language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.
+   - In Markdown, put a Rust fence after a `- ` list marker, add an indented body, then an unindented `ordinary prose` line. The final line returns to prose colors; repeat with an ordered marker, tildes, and a following sibling list item.
 9. Validate large-buffer guardrail:
    - Use content over the [plain-rendering threshold](../language-detection.md#virtual-editor-async-highlight-flow) and verify display is plain regardless of language metadata.
 10. Re-run keyboard/navigation sanity checks listed in
@@ -242,6 +243,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Paste a 20-30 line block near the bottom of the visible editor; expected: the inserted tail/caret scrolls into view.
    - `Ctrl/Cmd+V` outside editor focus creates a new paste from clipboard.
    - `Ctrl/Cmd+Shift+V` can still be used as explicit force-new fallback.
+   - Start Paste as New, open help with `F1`, close it with `Escape`, then paste fresh text with `Ctrl/Cmd+V`. The fresh paste reaches the editor; an older canceled clipboard reply must not overwrite or prepend it.
    - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not switch sidebar filters.
 9. Virtual editor selection:
    - Double-click selects word.
@@ -250,6 +252,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Drag selection across lines keeps expected range and autoscroll direction.
    - Load `a\rb\n# c\n` (escapes denote actual line separators), move to `b`, and Delete it. Check the visible caret after deletion, undo, and redo; typing `x` after redo produces `ax\r\n# c\n`. Right/Left and Shift+Right/Left cross the CRLF pair without an invisible caret or changing the body.
    - Load Rust `// comment\u2028let b = 2;\u2029let c = 3;` with actual Unicode separators. Both `let` rows retain Rust colors; `Ctrl/Cmd+Home`, `End`, `Shift+Home`, Copy selects only `// comment`, excluding its separator.
+   - Replace several Rust rows separated by Unicode line breaks, keeping a middle row unchanged and making the last replaced row a comment. Its colors must update immediately, including after Undo/Redo.
 10. Wrap-boundary regression: down-move boundary intent:
     - Paste content `abcd\nab\n`.
     - Make editor narrow enough to wrap at ~4 columns.

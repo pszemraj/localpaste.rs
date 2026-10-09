@@ -197,3 +197,141 @@ fn render_job_clamps_stale_line_offsets_with_emoji_boundaries() {
         });
     });
 }
+
+mod markdown_fence_boundaries {
+    use super::super::markdown::{
+        settings,
+        tests::{non_empty_colors, styled_segments},
+    };
+    use super::super::resolve_syntax;
+    use syntect::easy::HighlightLines;
+    use syntect::highlighting::Highlighter;
+    use syntect::parsing::Scope;
+    #[test]
+    fn direct_list_fences_end_at_dedent_or_a_sibling_item() {
+        let settings = settings();
+        let syntax = resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~", "````", "~~~~"] {
+            for (items, marker, indent) in [
+                ("", "- ", "  "),
+                ("", "1. ", "   "),
+                ("", "123456789. ", "           "),
+                ("- outer\n", "  - ", "    "),
+                ("", "-\t", "\t"),
+                ("", "1.\t", "    "),
+                ("", "12.\t", "\t"),
+                ("", "1234.\t", "        "),
+                ("", "123456789.\t", "\t\t\t"),
+                ("", " -\t", "    "),
+                ("", "  -\t", "\t"),
+                ("", "   -\t", "        "),
+                ("", "- \t ", "     "),
+                ("- outer\n", "  -\t", "    "),
+            ] {
+                for boundary in [
+                    "ordinary prose\n",
+                    "- ordinary prose\n",
+                    "1. ordinary prose\n",
+                ] {
+                    let mut lines = HighlightLines::new(syntax, theme);
+                    for line in items.split_inclusive('\n') {
+                        styled_segments(&settings, &mut lines, line);
+                    }
+                    styled_segments(&settings, &mut lines, &format!("{marker}{fence}rust\n"));
+                    if fence.len() > 3 {
+                        styled_segments(
+                            &settings,
+                            &mut lines,
+                            &format!("{indent}{}\n", &fence[..3]),
+                        );
+                    }
+                    assert!(non_empty_colors(
+                        &settings,
+                        &mut lines,
+                        &format!("{indent}**literal body**\n")
+                    )
+                    .iter()
+                    .all(|(color, _)| *color == code));
+                    let result = non_empty_colors(&settings, &mut lines, boundary);
+                    assert_eq!(
+                        result.last().unwrap().0,
+                        prose,
+                        "{items:?}{marker}{fence}, {boundary:?}: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn quoted_list_fences_end_with_the_item_or_quote() {
+        let settings = settings();
+        let syntax = resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~", "````", "~~~~"] {
+            for (marker, indent) in [
+                ("> - ", ">   "),
+                ("> 1. ", "  >    "),
+                ("> 123456789. ", ">            "),
+                ("> -\t", "> \t"),
+                (">- \t", ">    "),
+                (">1.\t", "> \t "),
+                ("  > -\t", ">     "),
+                ("> - ", "  > \t"),
+            ] {
+                for boundary in [
+                    "> ordinary prose\n",
+                    "> - ordinary prose\n",
+                    "> 1. ordinary prose\n",
+                    "ordinary prose\n",
+                ] {
+                    let mut lines = HighlightLines::new(syntax, theme);
+                    styled_segments(&settings, &mut lines, &format!("{marker}{fence}rust\n"));
+                    styled_segments(&settings, &mut lines, ">\n");
+                    styled_segments(&settings, &mut lines, &format!("{indent}    {fence}\n"));
+                    if fence.len() > 3 {
+                        styled_segments(
+                            &settings,
+                            &mut lines,
+                            &format!("{indent}{}\n", &fence[..3]),
+                        );
+                    }
+                    assert!(non_empty_colors(
+                        &settings,
+                        &mut lines,
+                        &format!("{indent}**literal body**\n")
+                    )
+                    .iter()
+                    .all(|(color, _)| *color == code));
+                    let result = non_empty_colors(&settings, &mut lines, boundary);
+                    assert_eq!(
+                        result.last().unwrap().0,
+                        prose,
+                        "{marker:?}{fence}: {result:?}"
+                    );
+                }
+                let mut lines = HighlightLines::new(syntax, theme);
+                styled_segments(&settings, &mut lines, &format!("{marker}{fence}rust\n"));
+                styled_segments(&settings, &mut lines, &format!("{indent}{fence}\n"));
+                let result =
+                    non_empty_colors(&settings, &mut lines, &format!("{indent}prose after\n"));
+                assert_eq!(
+                    result.last().unwrap().0,
+                    prose,
+                    "{marker:?}{fence}: {result:?}"
+                );
+            }
+        }
+    }
+}

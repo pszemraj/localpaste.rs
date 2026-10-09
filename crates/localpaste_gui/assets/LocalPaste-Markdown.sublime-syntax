@@ -7,10 +7,10 @@ contexts:
   main:
     # Four spaces or a tab starts literal indented code, including fence-looking
     # text. It ends on dedent, rather than waiting for a closing fence.
-    - match: '^(?: {4}|\t)'
+    - match: '^(?: {4}| {0,3}\t)'
       push:
         - meta_scope: markup.raw.block.markdown.localpaste
-        - match: '^(?!(?: {4}|\t)|[ \t]*\r?$)'
+        - match: '^(?!(?: {4}| {0,3}\t)|[ \t]*\r?$)'
           pop: true
     - include: markup
   markup:
@@ -33,11 +33,10 @@ contexts:
         - match: '^ {0,3}\1~*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
-    # Require a real quote/list container; optional markers must not admit an
-    # arbitrarily indented top-level fence. Capture quote/delimiter independently.
-    # A quoted fence ends before the next unquoted line; an empty marker disables
-    # that rule for list fences.
-    - match: '^[ \t]*(?=>|(?:[-+*]|\d+[.)])[ \t]+)(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,})[^`\n]*$'
+    # List contexts retain their item indentation, including when a fence opens
+    # directly after the marker. A quoted fence ends at the next unquoted line.
+    - include: list-items
+    - match: '^[ \t]*(>)[ \t]*(`{3,})[^`\n]*$'
       scope: punctuation.definition.raw.markdown.localpaste
       push:
         - meta_scope: markup.raw.block.markdown.localpaste
@@ -46,7 +45,7 @@ contexts:
         - match: '^[ \t]*\1[ \t]*\2`*[ \t]*\r?$'
           scope: punctuation.definition.raw.markdown.localpaste
           pop: true
-    - match: '^[ \t]*(?=>|(?:[-+*]|\d+[.)])[ \t]+)(>?)[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(~{3,})[^\n]*$'
+    - match: '^[ \t]*(>)[ \t]*(~{3,})[^\n]*$'
       scope: punctuation.definition.raw.markdown.localpaste
       push:
         - meta_scope: markup.raw.block.markdown.localpaste
@@ -66,8 +65,6 @@ contexts:
       scope: markup.heading.markdown
     - match: '^ {0,3}>[ \t]?'
       scope: punctuation.definition.blockquote.markdown
-    # List continuation contexts are added at load time for marker widths 1..10.
-    - include: list-items
     - match: '^\s*(?:[-+*]|\d+[.)])[ \t]+'
       scope: punctuation.definition.list.markdown
     - match: '(`+)(?!`)'

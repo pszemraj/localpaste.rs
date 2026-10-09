@@ -191,8 +191,10 @@ fn highlight_in_worker(
     let super::HighlightRequestText::Rope(rope) = text;
     // Render rows and edit hints must use the same physical lines as the editor,
     // including bare CR and Ropey's additional Unicode line separators.
-    let edit_start_line =
-        edit_hint.map(|hint| rope.byte_to_line(hint.start_byte.min(rope.len_bytes())));
+    // A CRLF edit can move the boundary behind the edit byte. Recheck that
+    // boundary's preceding row too, without scanning the unchanged prefix.
+    let edit_start_line = edit_hint
+        .map(|hint| rope.byte_to_line(hint.start_byte.saturating_sub(1).min(rope.len_bytes())));
     let text = rope.to_string();
     let text_len = text.len();
     let mut start = 0;
@@ -273,8 +275,13 @@ fn highlight_in_worker(
         let mut old_lines: Vec<Option<(usize, HighlightWorkerLine)>> =
             old_cached_lines.into_iter().enumerate().map(Some).collect();
         let start_line = edit_start_line.unwrap_or(0).min(lines.len());
+        // The boundary check can start one row before the edit's Rope delta.
         let edit_end_line = edit_hint
-            .map(|hint| start_line.saturating_add(hint.touched_lines))
+            .map(|hint| {
+                start_line
+                    .saturating_add(hint.touched_lines)
+                    .saturating_add(1)
+            })
             .unwrap_or(lines.len());
 
         for old_line_slot in old_lines.iter_mut().take(start_line) {
@@ -521,32 +528,40 @@ mod resolver_tests {
     #[test]
     fn multiline_edit_rechecks_changed_lines_after_unchanged_interior_line() {
         let settings = SyntectSettings::default();
-        let before = "let a = 1;\n\nlet b = 2;\nlet c = 3;\n";
-        let after = "    let a = 1;\n\n    let b = 2;\nlet c = 3;\n";
-        let mut cache = HighlightWorkerCache::default();
-        let HighlightWorkerResult::Render(mut base) =
-            highlight_in_worker(&settings, &mut cache, rust_request(1, before, None, None))
-        else {
-            panic!("cold render")
-        };
-        let mut next = rust_request(2, after, Some(1), Some(before.len()));
-        next.edit_hint = Some(super::super::VirtualEditHint {
-            start_byte: 0,
-            touched_lines: 3,
-            inserted_chars: after.find("let c").unwrap(),
-            deleted_chars: before.find("let c").unwrap(),
-        });
-        match highlight_in_worker(&settings, &mut cache, next) {
-            HighlightWorkerResult::Render(render) => base = render,
-            HighlightWorkerResult::Patch(patch) => {
-                base.lines.splice(patch.line_range, patch.lines);
+        for separator in [
+            "\r", "\n", "\r\n", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}",
+        ] {
+            let before = format!(
+                "let a = 1;{separator}{separator}let b = 2;{separator}let c = 3;{separator}"
+            );
+            let after = format!(
+                "    let a = 1;{separator}{separator}// let b = 2;{separator}let c = 3;{separator}"
+            );
+            let mut cache = HighlightWorkerCache::default();
+            let HighlightWorkerResult::Render(mut base) =
+                highlight_in_worker(&settings, &mut cache, rust_request(1, &before, None, None))
+            else {
+                panic!("cold render")
+            };
+            let mut next = rust_request(2, &after, Some(1), Some(before.len()));
+            next.edit_hint = Some(super::super::VirtualEditHint {
+                start_byte: 0,
+                touched_lines: 3,
+                inserted_chars: after.find("let c").unwrap(),
+                deleted_chars: before.find("let c").unwrap(),
+            });
+            match highlight_in_worker(&settings, &mut cache, next) {
+                HighlightWorkerResult::Render(render) => base = render,
+                HighlightWorkerResult::Patch(patch) => {
+                    base.lines.splice(patch.line_range, patch.lines);
+                }
             }
+            let cold = render_for_label(&settings, "rust", &after);
+            assert!(
+                base.lines == cold.lines,
+                "block edits must match a cold parse with {separator:?}"
+            );
         }
-        let cold = render_for_label(&settings, "rust", after);
-        assert!(
-            base.lines == cold.lines,
-            "block edits must match a cold parse"
-        );
     }
 
     #[test]
@@ -568,7 +583,7 @@ mod resolver_tests {
                     "stateful {label} with {separator:?}"
                 );
             }
-            let before = format!("let a = 1;{separator}let b = 2;\n");
+            let before = format!("let café = 1;{separator}let été = 2;\n");
             let after = before.replace('2', "200");
             let mut cache = HighlightWorkerCache::default();
             let HighlightWorkerResult::Render(mut base) =
@@ -590,7 +605,7 @@ mod resolver_tests {
                     assert!(source.is_char_boundary(span.range.end));
                 }
             }
-            let following = render_for_label(&settings, "rust", "let b = 2;\n");
+            let following = render_for_label(&settings, "rust", "let été = 2;\n");
             assert!(
                 base.lines[1] == following.lines[0],
                 "line separator {separator:?}"
@@ -614,30 +629,36 @@ mod resolver_tests {
     }
 
     #[test]
-    fn deleting_after_bare_cr_does_not_reuse_a_stale_prefix_line() {
+    fn crlf_boundary_edits_do_not_reuse_stale_prefix_lines() {
         let settings = SyntectSettings::default();
-        let before = "a\rb\n# c\n";
-        let after = "a\r\n# c\n";
-        let mut cache = HighlightWorkerCache::default();
-        let HighlightWorkerResult::Render(mut base) =
-            highlight_in_worker(&settings, &mut cache, rust_request(1, before, None, None))
-        else {
-            panic!("cold render")
-        };
-        let mut next = rust_request(2, after, Some(1), Some(before.len()));
-        next.edit_hint = Some(super::super::VirtualEditHint {
-            start_byte: 2,
-            touched_lines: 1,
-            inserted_chars: 0,
-            deleted_chars: 1,
-        });
-        match highlight_in_worker(&settings, &mut cache, next) {
-            HighlightWorkerResult::Render(render) => base = render,
-            HighlightWorkerResult::Patch(patch) => {
-                base.lines.splice(patch.line_range, patch.lines);
+        for (before, old, new) in [
+            ("a\rb\n# c\n", "b", ""),
+            ("// alpha\r\nlet b=2;\n", "\n", "x"),
+            ("// alpha\r\nlet b=2;\n", "\n", ""),
+            ("// alpha\rxlet b=2;\n", "x", "\n"),
+        ] {
+            let after = before.replacen(old, new, 1);
+            let mut cache = HighlightWorkerCache::default();
+            let HighlightWorkerResult::Render(mut base) =
+                highlight_in_worker(&settings, &mut cache, rust_request(1, before, None, None))
+            else {
+                panic!("cold render")
+            };
+            let mut next = rust_request(2, &after, Some(1), Some(before.len()));
+            next.edit_hint = Some(super::super::VirtualEditHint {
+                start_byte: before.find(old).unwrap(),
+                touched_lines: 2,
+                inserted_chars: new.chars().count(),
+                deleted_chars: old.chars().count(),
+            });
+            match highlight_in_worker(&settings, &mut cache, next) {
+                HighlightWorkerResult::Render(render) => base = render,
+                HighlightWorkerResult::Patch(patch) => {
+                    base.lines.splice(patch.line_range, patch.lines);
+                }
             }
+            assert!(base.lines == render_for_label(&settings, "rust", &after).lines);
         }
-        assert!(base.lines == render_for_label(&settings, "rust", after).lines);
     }
 
     #[test]

@@ -98,9 +98,6 @@ impl LocalPasteApp {
         let deleted = self.virtual_editor_buffer.slice_chars(start..end);
         let deleted_chars = end.saturating_sub(start);
         let inserted_chars = replacement.chars().count();
-        let inserted_newlines = replacement.chars().filter(|ch| *ch == '\n').count();
-        let deleted_newlines = deleted.chars().filter(|ch| *ch == '\n').count();
-        let touched_lines = inserted_newlines.max(deleted_newlines).saturating_add(1);
         let before_cursor =
             self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
         let perf_enabled = self.perf_log_enabled;
@@ -111,6 +108,11 @@ impl LocalPasteApp {
         let rope_apply_ms =
             rope_started.map_or(0.0, |started| started.elapsed().as_secs_f32() * 1000.0);
         if let Some(delta) = delta {
+            let touched_lines = delta
+                .old_end_line
+                .max(delta.new_end_line)
+                .saturating_sub(delta.start_line)
+                .saturating_add(1);
             let mut galley_apply_ms = 0.0f32;
             let layout_started = perf_enabled.then(Instant::now);
             let layout_recovered = self.apply_virtual_layout_delta_with_recovery(
