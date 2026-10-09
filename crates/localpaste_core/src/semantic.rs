@@ -404,9 +404,28 @@ fn has_positive_markdown_document_evidence(sample: &str) -> bool {
 fn looks_like_tabbed_command_recipe(sample: &str) -> bool {
     let mut saw_target = false;
     let mut saw_recipe = false;
+    let mut in_definition = false;
     for line in sample.lines().filter(|line| !line.trim().is_empty()) {
         let trimmed = line.trim();
         if trimmed.starts_with('#') {
+            continue;
+        }
+        if in_definition {
+            in_definition = trimmed != "endef";
+            continue;
+        }
+        if makefile_directive_with_argument(trimmed, "define") {
+            in_definition = true;
+            continue;
+        }
+        if looks_like_makefile_assignment(trimmed)
+            || ["include", "-include", "ifeq", "ifneq", "ifdef", "ifndef"]
+                .iter()
+                .any(|directive| makefile_directive_with_argument(trimmed, directive))
+            || matches!(trimmed, "export" | "else" | "endif")
+            || trimmed.starts_with("export ")
+            || trimmed.starts_with("else ")
+        {
             continue;
         }
         if line.starts_with('\t') {
@@ -435,7 +454,22 @@ fn looks_like_tabbed_command_recipe(sample: &str) -> bool {
             return false;
         }
     }
-    saw_target && saw_recipe
+    saw_target && saw_recipe && !in_definition
+}
+
+fn makefile_directive_with_argument(line: &str, directive: &str) -> bool {
+    line.strip_prefix(directive)
+        .is_some_and(|rest| rest.starts_with(char::is_whitespace) && !rest.trim().is_empty())
+}
+
+fn looks_like_makefile_assignment(line: &str) -> bool {
+    let line = line.strip_prefix("export ").unwrap_or(line);
+    ["?=", ":=", "+=", "!=", "="].iter().any(|operator| {
+        line.split_once(operator).is_some_and(|(name, _)| {
+            let name = name.trim();
+            !name.is_empty() && !name.ends_with(':') && !name.contains(char::is_whitespace)
+        })
+    })
 }
 
 /// Recognize setup prose and sentences containing a later path mistaken for Batch.

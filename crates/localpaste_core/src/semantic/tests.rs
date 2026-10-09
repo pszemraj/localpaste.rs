@@ -69,6 +69,7 @@ fn weak_markdown_labels_do_not_hide_whole_technical_bodies() {
         ("# build\nall clean:\n\tcargo build", PasteKind::Code),
         ("# build\nall : main.c\n\tcc main.c", PasteKind::Code),
         ("# build\nall: main.c\n\t$(CC) main.c", PasteKind::Code),
+        ("# build settings\nexport CC\nCFLAGS += -O2\nVERSION != git describe\n-include local.mk\nifdef DEBUG\nCFLAGS += -g\nendif\nifndef PREFIX\nPREFIX = /usr/local\nendif\nifneq ($(CC),)\nexport READY = yes\nendif\ndefine announce\n@echo $(VERSION)\nendef\nall:\n\t$(CC) main.c", PasteKind::Code),
         (
             "npm ERR! code 1\nnpm ERR! command failed\n> demo@1.0.0 test\n> pytest",
             PasteKind::Code,

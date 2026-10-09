@@ -43,7 +43,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 
 #[test]
 fn semantic_kinds_rebuild_from_prior_versions_and_survive_restart() {
-    for schema_version in [14, 15] {
+    for schema_version in [14, 15, 16] {
         assert_semantic_kinds_rebuild_and_survive_restart(schema_version);
     }
 }
@@ -109,7 +109,7 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
             PasteKind::Code,
         ),
         (
-            "# build\nall:\n\tcargo build",
+            "# Makefile for app\nCC = gcc\nall:\n\t$(CC) main.c",
             "markdown",
             PasteKind::Document,
             PasteKind::Code,

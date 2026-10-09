@@ -158,15 +158,30 @@ fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
             "{content}"
         );
     }
+    let real_makefiles = [
+        "# Makefile for app\nCC = gcc\napp: main.c\n\t$(CC) main.c -o app",
+        "# Project tasks\ninclude config.mk\nall:\n\t$(MAKE) build",
+        "## Variables\nPREFIX ?= /usr/local\ninstall:\n\tmkdir -p $(PREFIX)/bin",
+        "# OS detection\nifeq ($(OS),Windows_NT)\nEXE := .exe\nelse\nEXE :=\nendif\napp:\n\t$(CC) main.c -o app$(EXE)",
+    ];
     for content in [
         "# build\nall: main.c\n\tcc main.c",
         "# build\nall: main.c\n\t$(CC) main.c",
-    ] {
+    ]
+    .into_iter()
+    .chain(real_makefiles)
+    {
         assert_eq!(
             refine_magika_label("makefile", content).as_deref(),
             Some("makefile"),
             "{content}"
         );
+    }
+    #[cfg(feature = "magika")]
+    for content in real_makefiles {
+        let paste = Paste::new(content.to_owned(), "makefile regression".into());
+        assert_eq!(paste.language.as_deref(), Some("makefile"), "{content}");
+        assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Config);
     }
     for content in [
         "# Python notes\n\nThe example below reads a file.\nfrom pathlib import Path\nprint(Path('note.txt').read_text())",
