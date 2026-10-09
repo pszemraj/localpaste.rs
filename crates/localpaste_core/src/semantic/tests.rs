@@ -3,6 +3,36 @@
 use super::{derive, extract_definition_handle_from_line, PasteKind};
 
 #[test]
+fn directive_only_makefiles_keep_their_language_without_a_local_recipe() {
+    for content in [
+        "# Load project rules\ninclude rules.mk\n",
+        "# Build recipe\ndefine compile\n\t$(CC) main.c\nendef\n",
+    ] {
+        for content in [content.to_owned(), content.replace('\n', "\r\n")] {
+            let paste = crate::models::paste::Paste::new(content.clone(), "build rules".into());
+            assert_eq!(paste.language.as_deref(), Some("makefile"), "{content}");
+            assert_eq!(paste.content, content);
+            assert_eq!(
+                crate::models::paste::PasteMeta::from(&paste).derived.kind,
+                PasteKind::Config
+            );
+            assert_eq!(derive(&content, Some("markdown")).kind, PasteKind::Code);
+        }
+    }
+    for content in [
+        "# Planning\ninclude everyone in the review\n",
+        "# Build notes\ninclude rules.mk\nExplain the changes to the team.\n",
+        "# Build notes\ndefine compile\nExplain the changes to the team.\n",
+    ] {
+        assert_eq!(derive(content, Some("markdown")).kind, PasteKind::Document);
+    }
+    assert_eq!(
+        crate::detection::detect_language("def main():\n\tpass\n").as_deref(),
+        Some("python")
+    );
+}
+
+#[test]
 fn review_regression_prose_flags_paths_and_currency_stay_documents() {
     for content in [
         "check logs in /var/log/app",

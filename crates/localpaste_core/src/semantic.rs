@@ -286,7 +286,7 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
 pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str> {
     let sample = sample_prefix(content);
     if crate::detection::looks_like_shell_command_sequence(sample)
-        || looks_like_tabbed_command_recipe(sample)
+        || makefile_body_language(sample).is_some()
     {
         return Some("shell");
     }
@@ -400,10 +400,16 @@ fn has_positive_markdown_document_evidence(sample: &str) -> bool {
         || (commands::extract_command_handle(sample).is_none() && looks_like_prose(sample))
 }
 
-/// Recognize a whole target-and-tabbed-command body without treating embedded examples as code.
-fn looks_like_tabbed_command_recipe(sample: &str) -> bool {
+/// Recognize complete Makefile bodies, including includes and closed definitions.
+///
+/// # Returns
+/// `makefile` for distinctive directive-only bodies, `shell` for target/recipe
+/// bodies, or `None` when the body also contains prose or unrelated syntax.
+pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
+    let sample = sample_prefix(content);
     let mut saw_target = false;
     let mut saw_recipe = false;
+    let mut saw_directive = false;
     let mut in_definition = false;
     for line in sample.lines().filter(|line| !line.trim().is_empty()) {
         let trimmed = line.trim();
@@ -416,6 +422,7 @@ fn looks_like_tabbed_command_recipe(sample: &str) -> bool {
         }
         if makefile_directive_with_argument(trimmed, "define") {
             in_definition = true;
+            saw_directive = true;
             continue;
         }
         if looks_like_makefile_assignment(trimmed)
@@ -426,6 +433,13 @@ fn looks_like_tabbed_command_recipe(sample: &str) -> bool {
             || trimmed.starts_with("export ")
             || trimmed.starts_with("else ")
         {
+            saw_directive |= ["include", "-include"].iter().any(|directive| {
+                makefile_directive_with_argument(trimmed, directive)
+                    && trimmed
+                        .split_whitespace()
+                        .skip(1)
+                        .all(|path| path.ends_with(".mk"))
+            });
             continue;
         }
         if line.starts_with('\t') {
@@ -442,7 +456,7 @@ fn looks_like_tabbed_command_recipe(sample: &str) -> bool {
                     || commands::has_unlisted_command_syntax(recipe)
                     || (command.starts_with("$(") && command.ends_with(')')))
             {
-                return false;
+                return None;
             }
             saw_recipe = true;
         } else if trimmed.split_once(':').is_some_and(|(target, _)| {
@@ -451,10 +465,16 @@ fn looks_like_tabbed_command_recipe(sample: &str) -> bool {
         }) {
             saw_target = true;
         } else {
-            return false;
+            return None;
         }
     }
-    saw_target && saw_recipe && !in_definition
+    if in_definition {
+        None
+    } else if saw_target && saw_recipe {
+        Some("shell")
+    } else {
+        saw_directive.then_some("makefile")
+    }
 }
 
 fn makefile_directive_with_argument(line: &str, directive: &str) -> bool {

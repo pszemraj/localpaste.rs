@@ -43,7 +43,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 
 #[test]
 fn semantic_kinds_rebuild_from_prior_versions_and_survive_restart() {
-    for schema_version in [14, 15, 16] {
+    for schema_version in [14, 15, 16, 17] {
         assert_semantic_kinds_rebuild_and_survive_restart(schema_version);
     }
 }
@@ -53,6 +53,8 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
     let path = temp.path().join("db");
     let db = open_test_database(path.to_str().unwrap());
     let cases = [
+        ("# Load project rules\ninclude rules.mk\n", "markdown", PasteKind::Document, PasteKind::Code),
+        ("# Build recipe\ndefine compile\n\t$(CC) main.c\nendef\n", "markdown", PasteKind::Document, PasteKind::Code),
         ("check logs in /var/log/app", "text", PasteKind::Other, PasteKind::Document),
         ("inspect logs at C:\\projects\\app", "batch", PasteKind::Other, PasteKind::Document),
         ("buy milk - 2 cartons", "text", PasteKind::Other, PasteKind::Document),

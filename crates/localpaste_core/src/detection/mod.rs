@@ -294,6 +294,9 @@ pub fn detect_language(content: &str) -> Option<String> {
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
     }
+    if crate::semantic::makefile_body_language(content) == Some("makefile") {
+        return Some("makefile".to_string());
+    }
     if looks_like_shell_command_sequence(content) {
         return Some("shell".to_string());
     }

@@ -19,7 +19,7 @@ This keeps GUI/server detection broad by default while preserving portability fo
 
 For auto-detected language (`language_is_manual == false`):
 
-1. Recognize a standalone Markdown fence, a shell command sequence or `for` loop, a listed executable after a leading comment, a command with explicit arguments after a leading quote (or a terminal prompt), or runtime traceback/panic structure before statistical detection.
+1. Recognize a standalone Markdown fence, a complete Makefile made of `.mk` includes or closed `define` blocks, a shell command sequence or `for` loop, a listed executable after a leading comment, a command with explicit arguments after a leading quote (or a terminal prompt), or runtime traceback/panic structure before statistical detection.
 2. If `magika` feature is enabled:
    - run Magika detection with CRLF normalized to LF for inference only (stored content stays unchanged),
    - reject non-text results,
