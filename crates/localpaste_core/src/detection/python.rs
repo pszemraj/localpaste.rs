@@ -37,6 +37,18 @@ pub(super) fn compound_body(sample: &str) -> bool {
             return false;
         }
         let mut header = compound_header(line);
+        if !compound && matches!(line, "else:" | "except:" | "finally:") {
+            return false;
+        }
+        // A call/condition followed immediately by a brace opens a C-family
+        // block. Python dictionary literals can open in expressions elsewhere.
+        if !header
+            && line
+                .strip_suffix('{')
+                .is_some_and(|prefix| prefix.trim_end().ends_with(')'))
+        {
+            return false;
+        }
         let starts_header = !header
             && nesting == 0
             && matches!(
@@ -136,35 +148,61 @@ fn statement(line: &str) -> bool {
 }
 
 fn assignment_target(target: &str) -> bool {
-    let mut pending = vec![target];
-    while let Some(target) = pending.pop() {
-        let mut target = target.trim();
-        if let Some(idx) = top_level_delimiter(target, ',') {
-            pending.push(&target[..idx]);
-            let tail = target[idx + 1..].trim();
-            if !tail.is_empty() {
-                pending.push(tail);
+    // Mark unquoted syntax and pair brackets once. Delimiter searches then
+    // jump whole nested groups instead of rescanning each parenthesis level.
+    let mut brackets = vec![usize::MAX; target.len()];
+    let mut openings = Vec::new();
+    for (idx, ch) in syntax_chars(target) {
+        brackets[idx] = idx;
+        match ch {
+            '(' | '[' | '{' => openings.push((idx, ch)),
+            ')' | ']' | '}' => {
+                let Some((opening, kind)) = openings.pop() else {
+                    return false;
+                };
+                if !matches!((kind, ch), ('(', ')') | ('[', ']') | ('{', '}')) {
+                    return false;
+                }
+                brackets[opening] = idx;
+            }
+            _ => {}
+        }
+    }
+    if !openings.is_empty() {
+        return false;
+    }
+    let mut pending = vec![(0, target.len())];
+    while let Some((start, end)) = pending.pop() {
+        let start = end - target[start..end].trim_start().len();
+        let end = start + target[start..end].trim_end().len();
+        if let Some(idx) = target_delimiter(target, start, end, &brackets, ',') {
+            pending.push((start, idx));
+            if !target[idx + 1..end].trim().is_empty() {
+                pending.push((idx + 1, end));
             }
             continue;
         }
-        if target.starts_with(['(', '[']) {
-            let Some(idx) = closing_bracket(target).filter(|idx| idx + 1 == target.len()) else {
-                return false;
-            };
-            pending.push(&target[1..idx]);
-            continue;
-        }
-        if let Some(idx) = top_level_delimiter(target, ':') {
-            if target[idx + 1..].trim().is_empty() {
+        let mut part = &target[start..end];
+        if part.starts_with(['(', '[']) {
+            let idx = brackets[start];
+            if idx + 1 != end {
                 return false;
             }
-            target = target[..idx].trim_end();
+            pending.push((start + 1, idx));
+            continue;
         }
-        target = target.strip_prefix('*').unwrap_or(target).trim_start();
-        let Some(end) = identifier_end(target) else {
+        if let Some(idx) = target_delimiter(target, start, end, &brackets, ':') {
+            if target[idx + 1..end].trim().is_empty() {
+                return false;
+            }
+            part = target[start..idx].trim_end();
+        }
+        let part_end = start + part.len();
+        part = part.strip_prefix('*').unwrap_or(part).trim_start();
+        let Some(end) = identifier_end(part) else {
             return false;
         };
-        let mut rest = target[end..].trim_start();
+        let mut rest = part[end..].trim_start();
         while !rest.is_empty() {
             if let Some(attribute) = rest.strip_prefix('.') {
                 let attribute = attribute.trim_start();
@@ -173,9 +211,8 @@ fn assignment_target(target: &str) -> bool {
                 };
                 rest = attribute[end..].trim_start();
             } else if rest.starts_with('[') {
-                let Some(end) = closing_bracket(rest) else {
-                    return false;
-                };
+                let start = part_end - rest.len();
+                let end = brackets[start] - start;
                 if rest[1..end].trim().is_empty() {
                     return false;
                 }
@@ -186,6 +223,31 @@ fn assignment_target(target: &str) -> bool {
         }
     }
     true
+}
+
+fn target_delimiter(
+    value: &str,
+    mut start: usize,
+    end: usize,
+    brackets: &[usize],
+    delimiter: char,
+) -> Option<usize> {
+    while start < end {
+        let ch = value[start..].chars().next()?;
+        if brackets[start] == usize::MAX {
+            start += ch.len_utf8();
+            continue;
+        }
+        if ch == delimiter {
+            return Some(start);
+        }
+        start = if matches!(ch, '(' | '[' | '{') {
+            brackets[start].checked_add(1)?
+        } else {
+            start + ch.len_utf8()
+        };
+    }
+    None
 }
 
 fn identifier(value: &str) -> bool {
@@ -203,23 +265,6 @@ fn identifier_end(value: &str) -> Option<usize> {
             .find_map(|(idx, ch)| (!(ch == '_' || ch.is_alphanumeric())).then_some(idx))
             .unwrap_or(value.len()),
     )
-}
-
-fn closing_bracket(value: &str) -> Option<usize> {
-    let mut depth = 0usize;
-    for (idx, ch) in syntax_chars(value) {
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(idx);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 fn top_level_delimiter(value: &str, delimiter: char) -> Option<usize> {

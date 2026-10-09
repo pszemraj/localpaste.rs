@@ -8,13 +8,15 @@ use super::{commands, sample_prefix};
 /// - `content`: Paste body sampled for complete Makefile structure.
 ///
 /// # Returns
-/// `makefile` for distinctive directives, `shell` for target/recipe bodies, or
-/// `None` for prose, incomplete definitions, or syntax this recognizer cannot prove.
+/// `makefile` for distinctive directives or complete target/recipe bodies, or
+/// `None` for prose, documentary labels, incomplete definitions, or unknown syntax.
 pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
     let sample = sample_prefix(content);
+    let note_body = makefile_note_body(sample);
     let mut saw_target = false;
     let mut saw_recipe = false;
     let mut saw_directive = false;
+    let mut documentary_target = false;
     let mut in_definition = false;
     let mut continuation = false;
     for line in sample.lines().filter(|line| !line.trim().is_empty()) {
@@ -31,7 +33,7 @@ pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
             continue;
         }
         if line.starts_with('\t') {
-            if !saw_target || !recipe_has_command_evidence(trimmed) {
+            if !saw_target || (!recipe_has_command_evidence(trimmed) && note_body) {
                 return None;
             }
             saw_recipe = true;
@@ -62,6 +64,10 @@ pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
             let target = target.trim();
             !(target.is_empty() || (target.starts_with('[') && target.ends_with(']')))
         }) {
+            documentary_target = !saw_target
+                && trimmed.strip_suffix(':').is_some_and(|target| {
+                    target.eq_ignore_ascii_case("example") || target.eq_ignore_ascii_case("steps")
+                });
             saw_target = true;
         } else {
             return None;
@@ -74,8 +80,8 @@ pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
         // Source anchors resolve ambiguous recipes, while a closed Make define
         // or another distinctive directive may itself contain Python source.
         None
-    } else if saw_target && saw_recipe {
-        Some("shell")
+    } else if saw_target && saw_recipe && (!documentary_target || saw_directive) {
+        Some("makefile")
     } else {
         saw_directive.then_some("makefile")
     }
@@ -84,7 +90,8 @@ pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
 /// Require a complete note body before replacing an inferred Makefile label.
 ///
 /// Unknown Make syntax alone is not document evidence. A target-shaped note
-/// needs indented sentences or multiple plain-word list items and no commands.
+/// needs indented sentences or multiple one-word list items and no commands.
+/// Explicit note headings also support short items such as an agenda entry.
 ///
 /// # Arguments
 /// - `content`: Paste body to inspect for a complete indented note.
@@ -95,26 +102,52 @@ pub(crate) fn makefile_note_body(content: &str) -> bool {
     let mut saw_heading = false;
     let mut saw_prose = false;
     let mut word_items = 0;
+    let mut note_heading = false;
+    let has_note_words = |heading: &str| {
+        heading.split_whitespace().any(|word| {
+            ["agenda", "notes", "list", "todo"]
+                .iter()
+                .any(|note| word.eq_ignore_ascii_case(note))
+        })
+    };
     for line in sample_prefix(content)
         .lines()
         .filter(|line| !line.trim().is_empty())
     {
         let trimmed = line.trim();
         if trimmed.starts_with('#') {
+            note_heading |= has_note_words(trimmed.trim_start_matches('#'));
             continue;
         }
         if line.starts_with('\t') && saw_heading {
             if recipe_has_command_evidence(trimmed) {
                 return false;
             }
-            saw_prose |= super::looks_like_prose(trimmed);
             let arguments: Vec<_> = trimmed.split_whitespace().skip(1).collect();
             saw_prose |= crate::detection::has_unquoted_prose_copula(&arguments, false);
-            word_items += usize::from(trimmed.chars().all(char::is_alphabetic));
+            saw_prose |= super::looks_like_prose(trimmed)
+                && (note_heading
+                    || arguments.iter().any(|word| {
+                        [
+                            "a", "an", "the", "for", "to", "about", "please", "we", "you", "our",
+                            "your",
+                        ]
+                        .contains(word)
+                    }));
+            let words: Vec<_> = trimmed.split_whitespace().collect();
+            let plain_words = words
+                .iter()
+                .all(|word| word.chars().all(char::is_alphabetic));
+            word_items += usize::from(plain_words && words.len() == 1);
+            saw_prose |= note_heading && plain_words && words.len() <= 2;
         } else if trimmed.strip_suffix(':').is_some_and(|heading| {
             !heading.is_empty() && heading.chars().all(|ch| ch.is_alphabetic() || ch == ' ')
         }) {
+            if saw_heading {
+                return false;
+            }
             saw_heading = true;
+            note_heading |= has_note_words(trimmed.trim_end_matches(':'));
         } else {
             return false;
         }

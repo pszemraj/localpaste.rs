@@ -303,12 +303,10 @@ pub fn detect_language(content: &str) -> Option<String> {
     if python::compound_body(content) && heuristic::looks_like_python_source(content) {
         return Some("python".to_string());
     }
-    if crate::models::paste::is_markdown_content(content)
-        && crate::semantic::makefile_note_body(content)
-    {
+    if crate::semantic::makefile_note_body(content) {
         return Some("markdown".to_string());
     }
-    if crate::semantic::makefile_body_language(content).is_some() {
+    if crate::semantic::makefile_body_language(content) == Some("makefile") {
         return Some("makefile".to_string());
     }
     if looks_like_shell_command_sequence(content) {
@@ -543,10 +541,7 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     }
     // Magika also calls heading-led notes with a colon and an indented sentence
     // Makefiles. Unknown Make syntax is not prose evidence; require a whole note.
-    if label == "makefile"
-        && crate::models::paste::is_markdown_content(content)
-        && crate::semantic::makefile_note_body(content)
-    {
+    if label == "makefile" && crate::semantic::makefile_note_body(content) {
         return Some("markdown".to_string());
     }
     if label == "markdown" {
