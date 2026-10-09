@@ -769,7 +769,7 @@ fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
         .rx
         .recv_timeout(Duration::from_secs(30))
         .expect("recovery render");
-    let HighlightWorkerResult::Render(render) = reply else {
+    let HighlightWorkerResult::Render(render) = reply.result else {
         panic!("unmatched worker base requires full render")
     };
     app.queue_highlight_render(render);

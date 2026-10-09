@@ -3,7 +3,8 @@
 use super::{
     align_old_lines_by_hash, hash_bytes, line_hash_matches, line_start_state_matches,
     resolve_syntax, HighlightPatch, HighlightRender, HighlightRenderLine, HighlightRequest,
-    HighlightSpan, HighlightStateSnapshot, HighlightStyle, HighlightWorkerResult, SyntectSettings,
+    HighlightSpan, HighlightStateSnapshot, HighlightStyle, HighlightWorkerReply,
+    HighlightWorkerResult, SyntectSettings,
 };
 use crossbeam_channel::{Receiver, Sender};
 use localpaste_core::config::env_flag_enabled;
@@ -17,7 +18,7 @@ use tracing::info;
 /// Background worker handles syntect highlighting off the UI thread.
 pub(crate) struct HighlightWorker {
     pub(crate) tx: Sender<HighlightRequest>,
-    pub(crate) rx: Receiver<HighlightWorkerResult>,
+    pub(crate) rx: Receiver<HighlightWorkerReply>,
 }
 
 #[derive(Default)]
@@ -52,9 +53,11 @@ pub(crate) fn spawn_highlight_worker() -> HighlightWorker {
     thread::Builder::new()
         .name("localpaste-gui-highlight".to_string())
         .spawn(move || {
-            let settings = SyntectSettings::default();
+            let mut settings = None;
             let mut cache = HighlightWorkerCache::default();
             for req in rx_cmd.iter() {
+                // A worker whose caller never requests highlighting needs no grammar.
+                let settings = settings.get_or_insert_with(SyntectSettings::default);
                 let mut latest: HighlightRequest = req;
                 // Coalesce backlog bursts so stale highlight work is skipped.
                 while let Ok(next) = rx_cmd.try_recv() {
@@ -64,8 +67,12 @@ pub(crate) fn spawn_highlight_worker() -> HighlightWorker {
                 let trace_paste_id = latest.paste_id.clone();
                 let trace_revision = latest.revision;
                 let trace_len = latest.text.len_bytes();
-                let render = highlight_in_worker(&settings, &mut cache, latest);
-                let _ = tx_evt.send(render);
+                let buffer_epoch = latest.buffer_epoch;
+                let render = highlight_in_worker(settings, &mut cache, latest);
+                let _ = tx_evt.send(HighlightWorkerReply {
+                    buffer_epoch,
+                    result: render,
+                });
                 if trace_enabled {
                     let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
                     info!(
@@ -179,6 +186,7 @@ fn highlight_in_worker(
     req: HighlightRequest,
 ) -> HighlightWorkerResult {
     let HighlightRequest {
+        buffer_epoch: _,
         paste_id,
         revision,
         text,
@@ -468,6 +476,7 @@ mod resolver_tests {
     fn render_for_label(settings: &SyntectSettings, label: &str, text: &str) -> HighlightRender {
         let mut cache = HighlightWorkerCache::default();
         let req = HighlightRequest {
+            buffer_epoch: 0,
             paste_id: "test".to_string(),
             revision: 1,
             text: HighlightRequestText::Rope(Rope::from_str(text)),
@@ -507,6 +516,7 @@ mod resolver_tests {
         patch_base_text_len: Option<usize>,
     ) -> HighlightRequest {
         HighlightRequest {
+            buffer_epoch: 0,
             paste_id: "test".to_string(),
             revision,
             text: HighlightRequestText::Rope(Rope::from_str(text)),
@@ -902,6 +912,7 @@ mod resolver_tests {
         let settings = SyntectSettings::default();
         let mut cache = HighlightWorkerCache::default();
         let req = HighlightRequest {
+            buffer_epoch: 0,
             paste_id: "test".to_string(),
             revision: 1,
             text: HighlightRequestText::Rope(ropey::Rope::from_str("let a = 1;\n")),

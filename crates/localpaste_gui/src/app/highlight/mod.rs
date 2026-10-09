@@ -816,6 +816,12 @@ pub(super) enum HighlightWorkerResult {
     Patch(HighlightPatch),
 }
 
+/// Worker output owned by one lifetime of the active editor buffer.
+pub(super) struct HighlightWorkerReply {
+    pub(super) buffer_epoch: u64,
+    pub(super) result: HighlightWorkerResult,
+}
+
 impl HighlightRender {
     /// Checks whether render context matches paste/language/theme identifiers.
     ///
@@ -865,6 +871,7 @@ impl HighlightRender {
 /// Highlight request payload sent to the worker thread.
 #[derive(Clone)]
 pub(super) struct HighlightRequest {
+    pub(super) buffer_epoch: u64,
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text: HighlightRequestText,

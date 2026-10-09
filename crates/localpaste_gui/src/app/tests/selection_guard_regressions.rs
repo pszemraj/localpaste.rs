@@ -3,6 +3,95 @@
 use super::*;
 
 #[test]
+fn reloading_same_paste_rejects_highlight_from_previous_buffer() {
+    use super::super::highlight::HighlightRequestText;
+
+    for patch_reply in [false, true] {
+        let mut harness = make_app();
+        let app = &mut harness.app;
+        let request = |app: &mut LocalPasteApp| {
+            app.dispatch_highlight_request(
+                app.active_revision(),
+                HighlightRequestText::Rope(app.virtual_editor_buffer.rope().clone()),
+                "rust",
+                "base16-mocha.dark",
+                "alpha",
+            );
+        };
+        let mut paste = Paste::new_with_language(
+            "let n = 1;\nlet x = 1;\n".into(),
+            "Alpha".into(),
+            Some("rust".into()),
+            true,
+        );
+        paste.id = "alpha".into();
+        app.select_loaded_paste(paste.clone());
+        if patch_reply {
+            request(app);
+            let base = app
+                .highlight_worker
+                .rx
+                .recv_timeout(Duration::from_secs(30))
+                .unwrap();
+            app.queue_highlight_reply(base);
+            app.maybe_apply_staged_highlight(Instant::now());
+            app.virtual_editor_buffer
+                .replace_char_range(8..9, "2")
+                .unwrap();
+        }
+        request(app);
+        let old_reply = app
+            .highlight_worker
+            .rx
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(
+            matches!(old_reply.result, HighlightWorkerResult::Patch(_)),
+            patch_reply
+        );
+        let old_line = match &old_reply.result {
+            HighlightWorkerResult::Render(render) => render.lines[0].clone(),
+            HighlightWorkerResult::Patch(patch) => patch.lines[0].clone(),
+        };
+
+        // A reload resets revisions, so id/revision/length can all match old work.
+        paste.content = "// note 1;\nlet x = 1;\n".into();
+        app.select_loaded_paste(paste);
+        if patch_reply {
+            app.virtual_editor_buffer
+                .replace_char_range(8..9, "2")
+                .unwrap();
+        }
+        request(app);
+        app.queue_highlight_reply(old_reply);
+        assert!(
+            app.highlight_staged.is_none(),
+            "old colors must not be staged"
+        );
+        assert!(
+            app.highlight_pending.is_some(),
+            "new request must stay pending"
+        );
+        let new_reply = app
+            .highlight_worker
+            .rx
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap();
+        app.queue_highlight_reply(new_reply);
+        app.maybe_apply_staged_highlight(Instant::now());
+        assert!(app.highlight_pending.is_none());
+        let render = app
+            .highlight_render
+            .as_ref()
+            .expect("current colors must recover");
+        assert!(
+            render.lines[0] != old_line,
+            "reloaded comment must use its own colors"
+        );
+    }
+}
+
+#[test]
 fn revisiting_paste_ignores_snapshot_from_previous_selection_lock() {
     let mut harness = make_app();
     let dir = TempDir::new().expect("temporary database");

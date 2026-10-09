@@ -37,10 +37,12 @@ use crate::backend::{
 use editor_reveal::{CursorReveal, EditorViewport};
 use eframe::egui::{self, text::CCursor, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
+#[cfg(test)]
+use highlight::HighlightWorkerResult;
 use highlight::{
     build_virtual_line_segment_job_owned, spawn_highlight_worker, syntect_language_hint,
     syntect_theme_key, HighlightRender, HighlightRequestMeta, HighlightRequestText,
-    HighlightWorker, HighlightWorkerResult, VirtualEditHint,
+    HighlightWorker, VirtualEditHint,
 };
 pub(super) use interaction_helpers::{
     drag_autoscroll_delta, is_editor_word_char, next_virtual_click_count,
@@ -512,11 +514,8 @@ impl eframe::App for LocalPasteApp {
         // during/after rendering. A later request in this pass remains the newest intent.
         self.observe_native_clipboard(ctx);
 
-        while let Ok(result) = self.highlight_worker.rx.try_recv() {
-            match result {
-                HighlightWorkerResult::Render(render) => self.queue_highlight_render(render),
-                HighlightWorkerResult::Patch(patch) => self.queue_highlight_patch(patch),
-            }
+        while let Ok(reply) = self.highlight_worker.rx.try_recv() {
+            self.queue_highlight_reply(reply);
         }
 
         let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);

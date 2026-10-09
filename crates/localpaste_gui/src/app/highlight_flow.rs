@@ -2,6 +2,7 @@
 
 use super::highlight::{
     HighlightPatch, HighlightRender, HighlightRequest, HighlightRequestMeta, HighlightRequestText,
+    HighlightWorkerReply, HighlightWorkerResult,
 };
 use super::{
     LocalPasteApp, StagedHighlightInvalidation, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_DEBOUNCE_LARGE,
@@ -267,6 +268,22 @@ impl LocalPasteApp {
         });
         self.highlight_staged = Some(render);
         self.highlight_staged_invalidation = staged_invalidation;
+    }
+
+    /// Rejects obsolete buffer replies before they can clear pending work or stage colors.
+    ///
+    /// # Arguments
+    /// - `reply`: Worker output carrying the requesting editor's buffer epoch.
+    pub(super) fn queue_highlight_reply(&mut self, reply: HighlightWorkerReply) {
+        // Revisions restart on reload, including when the same paste is revisited.
+        if reply.buffer_epoch != self.active_buffer_epoch {
+            self.trace_highlight("drop", "worker reply belongs to a replaced buffer");
+            return;
+        }
+        match reply.result {
+            HighlightWorkerResult::Render(render) => self.queue_highlight_render(render),
+            HighlightWorkerResult::Patch(patch) => self.queue_highlight_patch(patch),
+        }
     }
 
     /// Queues a full render result from the highlight worker.
@@ -651,6 +668,7 @@ impl LocalPasteApp {
             )
         });
         let request = HighlightRequest {
+            buffer_epoch: self.active_buffer_epoch,
             paste_id: paste_id.to_string(),
             revision,
             text,
