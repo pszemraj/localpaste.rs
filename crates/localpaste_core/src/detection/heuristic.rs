@@ -36,6 +36,9 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if matches!(shebang.as_deref(), Some("node" | "nodejs" | "deno" | "bun")) {
         return Some("javascript".to_string());
     }
+    if super::python::compound_body(trimmed) && looks_like_python_source(trimmed) {
+        return Some("python".to_string());
+    }
 
     // JSON Lines needs independently valid records; ordinary JSON keeps the
     // cheap structural fallback for large or sampled payloads.
@@ -579,6 +582,20 @@ fn complete_crossing_jsonl_record<'a>(content: &'a str, prefix: &'a str) -> &'a 
     }
 }
 
+/// Resolve a recognized source interpreter before ambiguous body structure.
+///
+/// # Returns
+/// A canonical language for a leading supported shebang, otherwise `None`.
+pub(super) fn shebang_language(sample: &str) -> Option<&'static str> {
+    match shebang_interpreter(sample.trim())?.as_str() {
+        "python" | "python2" | "python3" | "pypy" | "pypy3" => Some("python"),
+        "node" | "nodejs" | "deno" | "bun" => Some("javascript"),
+        "perl" => Some("perl"),
+        "sh" | "bash" | "zsh" | "ksh" | "dash" | "fish" | "ash" => Some("shell"),
+        _ => None,
+    }
+}
+
 fn shebang_interpreter(sample: &str) -> Option<String> {
     let first_line = sample.lines().next()?.trim();
     let interpreter_line = first_line.strip_prefix("#!")?.trim();
@@ -613,7 +630,7 @@ fn path_basename(path: &str) -> &str {
 /// Keep Python source anchors unless surrounding Markdown or prose supplies stronger evidence.
 ///
 /// # Returns
-/// Whether imports/definitions anchor a source body, including multiline and incomplete statements.
+/// Whether a shebang, imports, definitions, or compound statements anchor source.
 pub(crate) fn looks_like_python_source(sample: &str) -> bool {
     matches!(
         python_body_evidence(sample),
@@ -638,7 +655,8 @@ enum PythonBodyEvidence {
 
 fn python_body_evidence(sample: &str) -> PythonBodyEvidence {
     let sample = utf8_prefix_by_bytes(sample, TEXT_SAMPLE_MAX_BYTES);
-    let mut anchored = false;
+    let mut anchored =
+        shebang_language(sample) == Some("python") || super::python::compound_body(sample);
     let mut string_block: Option<&str> = None;
     for raw_line in sample.lines().take(512) {
         let mut line = raw_line.trim();

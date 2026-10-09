@@ -5,6 +5,7 @@ pub mod canonical;
 mod extensions;
 pub use extensions::preferred_extension;
 mod heuristic;
+mod python;
 pub(crate) use heuristic::looks_like_python_source;
 #[cfg(test)]
 mod classification_tests;
@@ -296,6 +297,12 @@ pub fn detect_language(content: &str) -> Option<String> {
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
     }
+    if let Some(language) = heuristic::shebang_language(content) {
+        return Some(language.to_string());
+    }
+    if python::compound_body(content) && heuristic::looks_like_python_source(content) {
+        return Some("python".to_string());
+    }
     if crate::models::paste::is_markdown_content(content)
         && crate::semantic::makefile_note_body(content)
     {
@@ -530,6 +537,9 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
 
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
+    }
+    if label == "makefile" && python::compound_body(content) {
+        return Some("python".to_string());
     }
     // Magika also calls heading-led notes with a colon and an indented sentence
     // Makefiles. Unknown Make syntax is not prose evidence; require a whole note.

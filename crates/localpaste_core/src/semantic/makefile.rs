@@ -12,11 +12,6 @@ use super::{commands, sample_prefix};
 /// `None` for prose, incomplete definitions, or syntax this recognizer cannot prove.
 pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
     let sample = sample_prefix(content);
-    // Python definitions also end with ':' and allow tabbed bodies containing
-    // assignments or comparisons. Keep their existing whole-source precedence.
-    if crate::detection::looks_like_python_source(sample) {
-        return None;
-    }
     let mut saw_target = false;
     let mut saw_recipe = false;
     let mut saw_directive = false;
@@ -74,6 +69,10 @@ pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
         continuation = trimmed.ends_with('\\');
     }
     if in_definition || continuation {
+        None
+    } else if !saw_directive && crate::detection::looks_like_python_source(sample) {
+        // Source anchors resolve ambiguous recipes, while a closed Make define
+        // or another distinctive directive may itself contain Python source.
         None
     } else if saw_target && saw_recipe {
         Some("shell")
