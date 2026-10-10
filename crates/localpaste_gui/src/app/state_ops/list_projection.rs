@@ -65,6 +65,21 @@ impl LocalPasteApp {
             .collect()
     }
 
+    /// Records that `pastes` now holds the rows for the active query and filters.
+    ///
+    /// Callers are the two places that rebuild the rows for the current state:
+    /// the unsearched list recompute and an applied search reply, whose query,
+    /// scope, and filters were checked against the active ones. The sidebar
+    /// reveals the selection once when this record changes.
+    pub(in crate::app) fn note_sidebar_rows_filter(&mut self) {
+        self.sidebar_rows_filter = Some(super::super::SidebarRowsFilter {
+            query: self.search_query.trim().to_string(),
+            scope: self.search_scope,
+            collection: self.active_collection.clone(),
+            language: self.active_language_filter.clone(),
+        });
+    }
+
     /// Drops cached result rows that no longer match collection or language filters.
     pub(super) fn retain_search_results_for_active_filters(&mut self) {
         let (today_local, week_cutoff_day, recent_cutoff) =

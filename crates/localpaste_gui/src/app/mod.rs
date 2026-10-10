@@ -122,6 +122,10 @@ pub(crate) struct LocalPasteApp {
     restored_selection_id: Option<String>,
     /// Selection the sidebar last scrolled into view; a different `selected_id` reveals its row once.
     sidebar_revealed_id: Option<String>,
+    /// Filters that produced the current `pastes` rows; `None` until rows are first built.
+    sidebar_rows_filter: Option<SidebarRowsFilter>,
+    /// Rows filter the sidebar last revealed for; a different `sidebar_rows_filter` reveals once.
+    sidebar_revealed_filter: Option<SidebarRowsFilter>,
     pending_picker_open: Option<PendingPickerOpen>,
     pending_picker_selection_pin: Option<String>,
     picker_selection_pin: Option<String>,
@@ -208,6 +212,24 @@ enum SaveStatus {
     Saved,
     Dirty,
     Saving,
+}
+
+/// Search and filter state that produced the sidebar rows on screen.
+///
+/// Recorded only when rows are rebuilt for it, so a change becomes visible
+/// once the new rows exist (after the reply, for a search) and never while
+/// the previous rows are still shown. Refreshes, saves, and renames record an
+/// equal value, which lets the sidebar tell them apart from filter changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SidebarRowsFilter {
+    /// Trimmed search query; empty for the unsearched list.
+    query: String,
+    /// Fields the query searches.
+    scope: SearchScope,
+    /// Active smart filter.
+    collection: SidebarCollection,
+    /// Canonical language filter, if any.
+    language: Option<String>,
 }
 #[derive(Clone, Debug)]
 struct StagedHighlightInvalidation {

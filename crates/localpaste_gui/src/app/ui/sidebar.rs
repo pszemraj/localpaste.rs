@@ -339,12 +339,16 @@ impl LocalPasteApp {
             });
     }
 
-    /// Returns the list offset that brings a newly selected row into view.
+    /// Returns the list offset that brings the selected row into view.
     ///
     /// Fires once per selection change, as soon as the selected row is in the
-    /// list, and only when that row is outside the viewport, so manual
-    /// scrolling is left alone until the selection changes again. A row
-    /// directly under a date header reveals the header with it.
+    /// list, and once per change of the search or filters that produced the
+    /// rows (`sidebar_rows_filter`), on the first frame that shows the new
+    /// rows. Rebuilds under unchanged filters, such as background refreshes,
+    /// saves, and renames, do not fire it. It scrolls only when the selected
+    /// row is outside the viewport, so manual scrolling is left alone until
+    /// the selection or the filters change again. A row directly under a date
+    /// header reveals the header with it.
     ///
     /// # Arguments
     /// - `ui`: Sidebar UI about to add the rows scroll area.
@@ -359,7 +363,9 @@ impl LocalPasteApp {
         items: &[SidebarListItem],
         row_height: f32,
     ) -> Option<f32> {
-        if self.sidebar_revealed_id == self.selected_id {
+        if self.sidebar_revealed_filter != self.sidebar_rows_filter {
+            self.sidebar_revealed_filter = self.sidebar_rows_filter.clone();
+        } else if self.sidebar_revealed_id == self.selected_id {
             return None;
         }
         let Some(selected) = self.selected_id.as_deref() else {

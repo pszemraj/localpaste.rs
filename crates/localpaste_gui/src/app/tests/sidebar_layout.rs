@@ -198,14 +198,18 @@ fn the_minimum_window_shows_six_sidebar_rows() {
 }
 
 /// Sidebar list of `count` pastes named `Sidebar row N`, newest first.
+///
+/// Update times step back one second per row, so a recomputed list keeps this order.
 fn long_sidebar_list(count: usize) -> Vec<PasteSummary> {
+    let newest = Utc::now();
     (0..count)
         .map(|index| {
-            test_summary(
+            test_summary_at(
                 &format!("paste-{index}"),
                 &format!("Sidebar row {index}"),
                 None,
                 1,
+                newest - chrono::Duration::seconds(index as i64),
             )
         })
         .collect()
@@ -345,5 +349,276 @@ fn a_new_paste_scrolls_a_wheel_scrolled_list_back_to_the_top() {
         sidebar_visible_label_count(&output, "Today"),
         2,
         "date header revealed with the first row"
+    );
+}
+
+/// Labels of the sidebar rows painted in view, top to bottom, with their vertical positions.
+fn visible_sidebar_rows(output: &egui::FullOutput) -> Vec<(String, f32)> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text)
+                if text.galley.job.text.starts_with("Sidebar row ")
+                    && text.pos.x < 300.0
+                    && clipped
+                        .clip_rect
+                        .contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())) =>
+            {
+                Some((text.galley.job.text.clone(), text.pos.y))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Enters `query` in the sidebar search with its debounce already elapsed.
+fn search_sidebar(app: &mut LocalPasteApp, query: &str) {
+    app.set_search_query(query.to_string());
+    app.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+}
+
+/// Answers the latest sidebar search the app dispatched with `items`, as the backend would.
+fn answer_sidebar_search(
+    harness: &TestHarness,
+    events: &Sender<CoreEvent>,
+    items: Vec<PasteSummary>,
+) {
+    let request = harness
+        .cmd_rx
+        .try_iter()
+        .filter_map(|cmd| match cmd {
+            CoreCmd::SearchPastes {
+                scope,
+                query,
+                collection,
+                folder_id,
+                language,
+                ..
+            } => Some((scope, query, collection, folder_id, language)),
+            _ => None,
+        })
+        .last();
+    let (scope, query, collection, folder_id, language) =
+        request.expect("a dispatched sidebar search");
+    events
+        .send(CoreEvent::SearchResults {
+            collection,
+            scope,
+            query,
+            folder_id,
+            language,
+            items,
+        })
+        .expect("app receives backend events");
+}
+
+/// Starts a sidebar from a backend list, as at launch, with its first row selected.
+fn sidebar_from_backend(
+    rows: Vec<PasteSummary>,
+) -> (TestHarness, Sender<CoreEvent>, SidebarFrames) {
+    let (mut harness, events) = make_app_with_event_tx();
+    let mut frames = SidebarFrames::new();
+    events
+        .send(CoreEvent::PasteList { items: rows })
+        .expect("app receives backend events");
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.selected_id.as_deref(), Some("paste-0"));
+    assert!(sidebar_label_is_visible(&output, "Sidebar row 0"));
+    assert!(!sidebar_label_is_visible(&output, "Sidebar row 50"));
+    (harness, events, frames)
+}
+
+#[test]
+fn clearing_a_search_reveals_the_selected_row_in_the_full_list() {
+    let rows = long_sidebar_list(60);
+    let (mut harness, events, mut frames) = sidebar_from_backend(rows.clone());
+
+    // Cmd+F, "row 5": rows 5 and 50-59 remain, and the user picks row 50.
+    search_sidebar(&mut harness.app, "row 5");
+    frames.render(&mut harness.app, vec![]);
+    let matches = rows
+        .iter()
+        .filter(|row| row.name.contains("row 5"))
+        .cloned()
+        .collect();
+    answer_sidebar_search(&harness, &events, matches);
+    frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 11);
+    assert!(harness.app.select_paste("paste-50".to_string()));
+    let output = frames.render(&mut harness.app, vec![]);
+    assert!(sidebar_label_is_visible(&output, "Sidebar row 50"));
+
+    // Cmd+A, Backspace: the full list returns with the selection still in view.
+    harness.app.set_search_query(String::new());
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 60);
+    assert_eq!(harness.app.selected_id.as_deref(), Some("paste-50"));
+    assert!(
+        sidebar_label_is_visible(&output, "Sidebar row 50"),
+        "selection revealed in the restored list"
+    );
+}
+
+/// Sidebar rows where rows 50-59 are code, so the Code smart filter keeps only those.
+fn sidebar_list_with_code_tail() -> Vec<PasteSummary> {
+    let mut rows = long_sidebar_list(60);
+    for row in &mut rows[50..] {
+        row.derived.kind = localpaste_core::semantic::PasteKind::Code;
+    }
+    rows
+}
+
+#[test]
+fn returning_to_all_reveals_the_row_selected_under_a_smart_filter() {
+    let (mut harness, _events, mut frames) = sidebar_from_backend(sidebar_list_with_code_tail());
+
+    harness.app.set_active_collection(SidebarCollection::Code);
+    frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 10);
+    assert!(harness.app.select_paste("paste-55".to_string()));
+    let output = frames.render(&mut harness.app, vec![]);
+    assert!(sidebar_label_is_visible(&output, "Sidebar row 55"));
+
+    harness.app.set_active_collection(SidebarCollection::All);
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 60);
+    assert!(
+        sidebar_label_is_visible(&output, "Sidebar row 55"),
+        "selection revealed in the All list"
+    );
+}
+
+#[test]
+fn a_filter_change_under_a_search_reveals_once_its_results_arrive() {
+    let rows = sidebar_list_with_code_tail();
+    let (mut harness, events, mut frames) = sidebar_from_backend(rows.clone());
+    harness.app.set_active_collection(SidebarCollection::Code);
+    search_sidebar(&mut harness.app, "Sidebar row");
+    frames.render(&mut harness.app, vec![]);
+    answer_sidebar_search(&harness, &events, rows[50..].to_vec());
+    frames.render(&mut harness.app, vec![]);
+    assert!(harness.app.select_paste("paste-55".to_string()));
+    let output = frames.render(&mut harness.app, vec![]);
+    assert!(sidebar_label_is_visible(&output, "Sidebar row 55"));
+
+    // All under an active search: the Code results stay on screen until the
+    // new reply, with the selection already visible in them.
+    harness.app.set_active_collection(SidebarCollection::All);
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 10);
+    assert!(sidebar_label_is_visible(&output, "Sidebar row 55"));
+
+    answer_sidebar_search(&harness, &events, rows.clone());
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 60);
+    assert!(
+        sidebar_label_is_visible(&output, "Sidebar row 55"),
+        "selection revealed in the rows the reply brought"
+    );
+}
+
+/// Selects row 50, then wheels the list part way back up, away from it.
+///
+/// # Returns
+/// The sidebar rows in view afterwards, with their positions.
+fn wheel_away_from_row_50(
+    harness: &mut TestHarness,
+    frames: &mut SidebarFrames,
+) -> Vec<(String, f32)> {
+    assert!(harness.app.select_paste("paste-50".to_string()));
+    let output = frames.render(&mut harness.app, vec![]);
+    assert!(sidebar_label_is_visible(&output, "Sidebar row 50"));
+    let output = frames.wheel(&mut harness.app, 200.0);
+    assert!(!sidebar_label_is_visible(&output, "Sidebar row 50"));
+    assert!(!sidebar_label_is_visible(&output, "Sidebar row 0"));
+    visible_sidebar_rows(&output)
+}
+
+/// `rows` as a periodic refresh returns them after an API write: one row's
+/// metadata changed and an older paste was added at the end.
+fn externally_updated(rows: &[PasteSummary]) -> Vec<PasteSummary> {
+    let mut refreshed = rows.to_vec();
+    refreshed[10].content_len = 99;
+    let oldest = rows[rows.len() - 1].updated_at - chrono::Duration::seconds(1);
+    refreshed.push(test_summary_at(
+        "paste-60",
+        "Sidebar row 60",
+        None,
+        1,
+        oldest,
+    ));
+    refreshed
+}
+
+#[test]
+fn a_background_refresh_leaves_a_manually_scrolled_list_in_place() {
+    let rows = long_sidebar_list(60);
+    let (mut harness, events, mut frames) = sidebar_from_backend(rows.clone());
+    let before = wheel_away_from_row_50(&mut harness, &mut frames);
+
+    events
+        .send(CoreEvent::PasteList {
+            items: externally_updated(&rows),
+        })
+        .expect("app receives backend events");
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 61);
+    assert_eq!(visible_sidebar_rows(&output), before);
+}
+
+#[test]
+fn a_background_refresh_under_a_search_leaves_a_manually_scrolled_list_in_place() {
+    let rows = long_sidebar_list(60);
+    let (mut harness, events, mut frames) = sidebar_from_backend(rows.clone());
+    search_sidebar(&mut harness.app, "Sidebar row");
+    frames.render(&mut harness.app, vec![]);
+    answer_sidebar_search(&harness, &events, rows.clone());
+    frames.render(&mut harness.app, vec![]);
+    let before = wheel_away_from_row_50(&mut harness, &mut frames);
+
+    // A refresh with an external change re-runs the unchanged search.
+    let refreshed = externally_updated(&rows);
+    events
+        .send(CoreEvent::PasteList {
+            items: refreshed.clone(),
+        })
+        .expect("app receives backend events");
+    frames.render(&mut harness.app, vec![]);
+    answer_sidebar_search(&harness, &events, refreshed);
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 61);
+    assert_eq!(visible_sidebar_rows(&output), before);
+}
+
+#[test]
+fn a_selection_outside_the_search_results_is_revealed_when_the_search_is_cleared() {
+    let rows = long_sidebar_list(60);
+    let (mut harness, events, mut frames) = sidebar_from_backend(rows.clone());
+    search_sidebar(&mut harness.app, "Sidebar row");
+    frames.render(&mut harness.app, vec![]);
+    answer_sidebar_search(&harness, &events, rows.clone());
+    frames.render(&mut harness.app, vec![]);
+    assert!(harness.app.select_paste("paste-50".to_string()));
+    let output = frames.render(&mut harness.app, vec![]);
+    assert!(sidebar_label_is_visible(&output, "Sidebar row 50"));
+
+    // A Body-scope search leaves the selection open but out of the results.
+    harness.app.set_search_scope(SearchScope::Body);
+    frames.render(&mut harness.app, vec![]);
+    answer_sidebar_search(&harness, &events, rows[..10].to_vec());
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 10);
+    assert_eq!(harness.app.selected_id.as_deref(), Some("paste-50"));
+    assert!(!sidebar_label_is_visible(&output, "Sidebar row 50"));
+
+    // Clearing the search brings it back into the list, and into view.
+    harness.app.set_search_query(String::new());
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(harness.app.pastes.len(), 60);
+    assert_eq!(harness.app.selected_id.as_deref(), Some("paste-50"));
+    assert!(
+        sidebar_label_is_visible(&output, "Sidebar row 50"),
+        "selection revealed once it is listed again"
     );
 }

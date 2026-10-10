@@ -125,6 +125,8 @@ impl LocalPasteApp {
             pending_selection_id: None,
             restored_selection_id: None,
             sidebar_revealed_id: None,
+            sidebar_rows_filter: None,
+            sidebar_revealed_filter: None,
             pending_picker_open: None,
             pending_picker_selection_pin: None,
             picker_selection_pin: None,
