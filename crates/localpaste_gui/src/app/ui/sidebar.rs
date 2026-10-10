@@ -255,11 +255,7 @@ impl LocalPasteApp {
                                     if let Some(paste) = self.pastes.get(idx) {
                                         let selected =
                                             self.selected_id.as_deref() == Some(paste.id.as_str());
-                                        let lang_label = display_language_label(
-                                            paste.language.as_deref(),
-                                            false,
-                                            paste.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
-                                        );
+                                        let lang_label = paste_list_language_label(paste);
                                         let row_width = ui.available_width().max(1.0);
                                         let (row_rect, row_response) = ui.allocate_exact_size(
                                             egui::vec2(row_width, row_height),

@@ -444,7 +444,7 @@ fn diff_open_focuses_query_once_for_toolbar_and_palette() {
         assert_accessible_focus(&output);
         if palette {
             harness.app.command_palette_open = true;
-            harness.app.command_palette_query = "open diff".into();
+            harness.app.command_palette_query = "compare".into();
             run_full_update(&mut harness.app, &ctx, vec![]);
             run_full_update(
                 &mut harness.app,

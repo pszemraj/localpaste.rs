@@ -154,57 +154,10 @@ impl LocalPasteApp {
                     .show(ui, |ui| {
                         for (index, item) in results.iter().enumerate() {
                             let selected = self.paste_picker_selected == index;
-                            let row_response = ui
-                                .vertical(|ui| {
-                                    ui.horizontal(|ui| {
-                                        let response = ui.selectable_label(selected, &item.name);
-                                        if response.clicked() {
-                                            pending = Some(CommandPaletteAction::OpenPaste(
-                                                item.id.clone(),
-                                            ));
-                                        }
-                                        ui.label(
-                                            RichText::new(display_language_label(
-                                                item.language.as_deref(),
-                                                false,
-                                                item.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
-                                            ))
-                                            .small()
-                                            .color(COLOR_TEXT_MUTED),
-                                        );
-                                        for (label, action) in [
-                                            (
-                                                "Copy",
-                                                CommandPaletteAction::CopyPasteRaw(item.id.clone()),
-                                            ),
-                                            (
-                                                "Copy Fenced",
-                                                CommandPaletteAction::CopyPasteFenced(
-                                                    item.id.clone(),
-                                                ),
-                                            ),
-                                            (
-                                                "Delete",
-                                                CommandPaletteAction::DeletePaste(item.id.clone()),
-                                            ),
-                                        ] {
-                                            if ui.small_button(label).clicked() {
-                                                pending = Some(action);
-                                            }
-                                        }
-                                    });
-                                    if let Some(excerpt) = item.match_excerpt.as_deref() {
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(excerpt)
-                                                    .small()
-                                                    .color(COLOR_TEXT_MUTED),
-                                            )
-                                            .wrap(),
-                                        );
-                                    }
-                                })
-                                .response;
+                            let (row_response, action) = render_picker_row(ui, item, selected);
+                            if action.is_some() {
+                                pending = action;
+                            }
                             if selected && (down || up) {
                                 row_response.scroll_to_me(None);
                             }
@@ -215,4 +168,57 @@ impl LocalPasteApp {
             self.execute_command_palette_action(ctx, action);
         }
     }
+}
+
+/// Renders one picker result: a full-width open row with right-aligned actions,
+/// followed by its body excerpt when the search matched the body.
+///
+/// # Returns
+/// The row's response for scrolling and the action chosen this frame, if any.
+fn render_picker_row(
+    ui: &mut egui::Ui,
+    item: &PasteSummary,
+    selected: bool,
+) -> (egui::Response, Option<CommandPaletteAction>) {
+    let inner = ui.vertical(|ui| {
+        // The row takes exactly the list width. Actions are laid out first from
+        // its right edge so every row's buttons share one column, and the name
+        // truncates in whatever width remains.
+        let (row_rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+            egui::Sense::hover(),
+        );
+        let mut actions_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(row_rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        let mut action = None;
+        // Right-to-left: the first button is rightmost.
+        for (label, row_action) in [
+            ("Delete", CommandPaletteAction::DeletePaste(item.id.clone())),
+            (
+                "Copy Fenced",
+                CommandPaletteAction::CopyPasteFenced(item.id.clone()),
+            ),
+            ("Copy", CommandPaletteAction::CopyPasteRaw(item.id.clone())),
+        ] {
+            if actions_ui.small_button(label).clicked() {
+                action = Some(row_action);
+            }
+        }
+        let open_right = actions_ui.min_rect().left() - ui.spacing().item_spacing.x;
+        let mut open_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(row_rect.with_max_x(open_right.max(row_rect.left())))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let language = paste_list_language_label(item);
+        let open = super::list_row(&mut open_ui, selected, &item.name, &language).clicked();
+        if let Some(excerpt) = item.match_excerpt.as_deref() {
+            ui.add(egui::Label::new(RichText::new(excerpt).small().color(COLOR_TEXT_MUTED)).wrap());
+        }
+        action.or_else(|| open.then(|| CommandPaletteAction::OpenPaste(item.id.clone())))
+    });
+    (inner.response, inner.inner)
 }

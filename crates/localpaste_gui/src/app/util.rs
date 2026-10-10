@@ -13,6 +13,24 @@ pub(super) fn count_label(count: usize, singular: &str, plural: &str) -> String 
     format!("{count} {}", if count == 1 { singular } else { plural })
 }
 
+/// Formats the language label shown for a paste in list rows.
+///
+/// The sidebar, paste picker, and Diff candidates share this so a paste reads
+/// the same in every list, including the large-buffer plain-rendering rule.
+///
+/// # Arguments
+/// - `paste`: Metadata row being listed.
+///
+/// # Returns
+/// User-facing language label such as `rust`, `auto`, or `plain`.
+pub(super) fn paste_list_language_label(paste: &crate::backend::PasteSummary) -> String {
+    display_language_label(
+        paste.language.as_deref(),
+        false,
+        paste.content_len >= super::HIGHLIGHT_PLAIN_THRESHOLD,
+    )
+}
+
 /// Formats the language label shown in the UI, falling back to auto/plain.
 ///
 /// # Arguments

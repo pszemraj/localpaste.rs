@@ -22,6 +22,35 @@ pub(in crate::app) fn focus_visible_query(ui: &egui::Ui, id: egui::Id) -> bool {
     true
 }
 
+/// Renders a full-width selectable list row.
+///
+/// The selection and hover highlight span the row. The label is left-aligned
+/// and truncates with an ellipsis; a non-empty `hint` (a shortcut or short
+/// description) is right-aligned in the muted text color.
+///
+/// # Arguments
+/// - `ui`: Vertical list UI receiving the row.
+/// - `selected`: Whether the row carries the selection highlight.
+/// - `label`: Primary row text.
+/// - `hint`: Right-aligned secondary text; empty for none.
+///
+/// # Returns
+/// The row's click response.
+pub(in crate::app) fn list_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    label: &str,
+    hint: &str,
+) -> egui::Response {
+    let mut row = egui::Button::selectable(selected, label)
+        .min_size(egui::vec2(ui.available_width(), 0.0))
+        .truncate();
+    if !hint.is_empty() {
+        row = row.shortcut_text(hint);
+    }
+    ui.add(row)
+}
+
 /// Command palette modal and quick-action behavior.
 pub(super) mod command_palette;
 /// Detached diff modal for side-by-side compare operations.

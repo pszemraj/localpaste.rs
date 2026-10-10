@@ -355,8 +355,8 @@ fn command_palette_arrows_keep_first_and_last_commands_visible() {
     }
     let count = harness.app.command_palette_actions().len();
     for (key, selected, label) in [
-        (egui::Key::ArrowDown, count - 1, "Refresh list  "),
-        (egui::Key::ArrowUp, 0, "New paste  "),
+        (egui::Key::ArrowDown, count - 1, "Refresh list"),
+        (egui::Key::ArrowUp, 0, "New paste"),
     ] {
         for _ in 0..count {
             render(

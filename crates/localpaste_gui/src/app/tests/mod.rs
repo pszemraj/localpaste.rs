@@ -474,6 +474,7 @@ mod creation_and_projection;
 mod delete_selected_shortcut;
 mod discovery_input_order;
 mod discovery_keyboard;
+mod discovery_rows;
 mod discovery_scopes;
 mod editor_find;
 mod editor_ux_regressions;

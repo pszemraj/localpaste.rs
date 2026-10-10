@@ -61,7 +61,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use style::*;
 use tracing::{info, warn};
-use util::{count_label, display_language_label, word_range_at};
+use util::{count_label, display_language_label, paste_list_language_label, word_range_at};
 use version_ui::VersionUiState;
 use virtual_editor::{
     commands_from_events, RopeBuffer, VirtualEditorHistory, VirtualEditorState, VirtualGalleyCache,

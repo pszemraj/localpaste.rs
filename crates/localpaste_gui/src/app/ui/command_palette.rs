@@ -99,10 +99,7 @@ impl LocalPasteApp {
                     .show(ui, |ui| {
                         for (index, item) in actions.iter().enumerate() {
                             let selected = index == self.command_palette_selected;
-                            let row = ui.selectable_label(
-                                selected,
-                                format!("{}  {}", item.label, item.hint),
-                            );
+                            let row = super::list_row(ui, selected, &item.label, &item.hint);
                             if selected
                                 && (down || up || response.changed() || response.gained_focus())
                             {
@@ -258,7 +255,7 @@ impl LocalPasteApp {
 
         items.push(CommandPaletteItem {
             label: "New paste".to_string(),
-            hint: shortcut_hint(RuntimeShortcutAction::NewPaste),
+            hint: runtime_shortcut_label(RuntimeShortcutAction::NewPaste),
             action: CommandPaletteAction::NewPaste,
         });
         items.push(CommandPaletteItem {
@@ -268,7 +265,7 @@ impl LocalPasteApp {
         });
         items.push(CommandPaletteItem {
             label: "Open paste picker".into(),
-            hint: shortcut_hint(RuntimeShortcutAction::TogglePastePicker),
+            hint: runtime_shortcut_label(RuntimeShortcutAction::TogglePastePicker),
             action: CommandPaletteAction::PastePicker,
         });
         if self.selected_id.is_some() {
@@ -287,43 +284,43 @@ impl LocalPasteApp {
             }
             items.push(CommandPaletteItem {
                 label: "Delete selected".to_string(),
-                hint: shortcut_hint(RuntimeShortcutAction::DeleteSelected),
+                hint: runtime_shortcut_label(RuntimeShortcutAction::DeleteSelected),
                 action: CommandPaletteAction::DeleteSelected,
             });
             items.push(CommandPaletteItem {
                 label: "Save now".to_string(),
-                hint: shortcut_hint(RuntimeShortcutAction::Save),
+                hint: runtime_shortcut_label(RuntimeShortcutAction::Save),
                 action: CommandPaletteAction::SaveNow,
             });
             items.push(CommandPaletteItem {
                 label: "Save metadata".to_string(),
-                hint: "persist title/type/tags".to_string(),
+                hint: "title, language, tags".to_string(),
                 action: CommandPaletteAction::SaveMetadata,
             });
             items.push(CommandPaletteItem {
-                label: "Open diff modal".to_string(),
-                hint: "compare current paste".to_string(),
+                label: "Compare with another paste".to_string(),
+                hint: "line diff".to_string(),
                 action: CommandPaletteAction::OpenDiffModal,
             });
             items.push(CommandPaletteItem {
-                label: "Open history modal".to_string(),
+                label: "Version history".to_string(),
                 hint: "browse snapshots".to_string(),
                 action: CommandPaletteAction::OpenHistoryModal,
             });
         }
         items.push(CommandPaletteItem {
             label: "Focus sidebar search".to_string(),
-            hint: shortcut_hint(RuntimeShortcutAction::FocusSearch),
+            hint: runtime_shortcut_label(RuntimeShortcutAction::FocusSearch),
             action: CommandPaletteAction::FocusSearch,
         });
         items.push(CommandPaletteItem {
             label: "Toggle properties".to_string(),
-            hint: shortcut_hint(RuntimeShortcutAction::ToggleProperties),
+            hint: runtime_shortcut_label(RuntimeShortcutAction::ToggleProperties),
             action: CommandPaletteAction::ToggleProperties,
         });
         items.push(CommandPaletteItem {
             label: "Refresh list".to_string(),
-            hint: "reload from backend".to_string(),
+            hint: "reload from the database".to_string(),
             action: CommandPaletteAction::RefreshList,
         });
 
@@ -525,8 +522,4 @@ impl LocalPasteApp {
             self.close_paste_picker();
         }
     }
-}
-
-fn shortcut_hint(action: RuntimeShortcutAction) -> String {
-    format!("({})", runtime_shortcut_label(action))
 }

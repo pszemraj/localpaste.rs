@@ -156,6 +156,8 @@ The command palette, paste picker, and shortcut help are mutually exclusive: ope
 
 While any of the three is open, background New, Paste into Editor, Save, Delete, sidebar-search focus, and Properties shortcuts are blocked, including delayed `Paste as new paste` clipboard replies; actions chosen inside the palette remain available. [Diff and History](#diff-and-history-workflows) use separate workflow fences. The palette keeps the selected command visible during keyboard navigation and query changes.
 
+Palette and picker rows are full-width, so the hover and selection highlight spans the row. Palette rows show the command on the left and its shortcut or a short description right-aligned in muted text; the palette query matches both. Picker rows show the paste name with its list language label right-aligned, keep Copy, Copy Fenced, and Delete in a right-aligned column, and truncate long names with an ellipsis.
+
 App-level shortcut dispatch, palette hints, and shortcut help share one runtime shortcut registry, and dispatch preserves native event order, including repeated chords. Help lists the app bindings plus selected editor combinations and omits basic navigation and the standard select/copy/cut/undo/redo keys. Palette query terms such as `diff` and `history` are palette discoverability rather than keyboard shortcuts, so help intentionally excludes them.
 
 The `F1` window has a stable scrollable layout with key labels in the native platform's spelling. Search matches descriptions and key combinations, omits empty sections, reports when nothing matches, and returns to the first result when edited. Clear keeps search focus; `Escape`, `F1`, and Close return focus to the input that opened help, unless a different discovery surface opened in its place. Opening help over History or Diff hides that window without disturbing its workflow; closing help brings it back, and `Escape` dismisses only help.
@@ -171,7 +173,7 @@ The app has a single dark palette. It selects the dark theme before installing c
 ![Diff window comparing the open paste against another paste, with removed lines in red](../../assets/screenshots/diff.png)
 
 - Editor toolbar exposes `Diff` and `History` for the selected paste.
-- Command palette exposes `Open diff modal` and `Open history modal` when a paste is selected.
+- Command palette exposes `Compare with another paste` (Diff) and `Version history` (History) when a paste is selected; the queries `diff` and `history` find them.
 - Opening either window closes discovery surfaces and prevents command-palette and paste-picker opens. Escape closes the version window.
 - Opening Diff focuses its candidate query once; later focus changes remain under user control. Floating-window query focus waits for a visible render pass and retains its one-shot request through egui's sizing pass, so accessibility focus always refers to a node in the published tree.
 - Diff is detached from main editor state:
