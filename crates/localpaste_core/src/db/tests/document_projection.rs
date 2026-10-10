@@ -43,7 +43,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 
 #[test]
 fn semantic_kinds_rebuild_from_prior_versions_and_survive_restart() {
-    for schema_version in [14, 15, 16, 17, 18] {
+    for schema_version in [14, 15, 16, 17, 18, 19] {
         assert_semantic_kinds_rebuild_and_survive_restart(schema_version);
     }
 }
@@ -134,8 +134,8 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
         (
             "npm ERR! code 1\nnpm ERR! command failed\n> demo@1.0.0 test\n> pytest",
             "markdown",
-            PasteKind::Document,
             PasteKind::Code,
+            PasteKind::Document,
         ),
         (
             "> Traceback (most recent call last):\n>   File \"demo.py\", line 1, in <module>\n> ValueError: bad value",

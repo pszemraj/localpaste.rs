@@ -102,7 +102,7 @@ fn weak_markdown_labels_do_not_hide_whole_technical_bodies() {
         ("# build settings\nexport CC\nCFLAGS += -O2\nVERSION != git describe\n-include local.mk\nifdef DEBUG\nCFLAGS += -g\nendif\nifndef PREFIX\nPREFIX = /usr/local\nendif\nifneq ($(CC),)\nexport READY = yes\nendif\ndefine announce\n@echo $(VERSION)\nendef\nall:\n\t$(CC) main.c", PasteKind::Code),
         (
             "npm ERR! code 1\nnpm ERR! command failed\n> demo@1.0.0 test\n> pytest",
-            PasteKind::Code,
+            PasteKind::Document,
         ),
         (
             "> Traceback (most recent call last):\n>   File \"demo.py\", line 1, in <module>\n> ValueError: bad value",
@@ -609,7 +609,7 @@ fn untyped_structural_content_does_not_default_to_document() {
         ("git add README Cargo docs notes", PasteKind::Code),
         ("sudo systemctl restart nginx", PasteKind::Code),
         ("echo hello world", PasteKind::Code),
-        ("echo hello there this is fine", PasteKind::Code),
+        ("echo hello there this is fine", PasteKind::Document),
         ("docker run ubuntu echo hello world", PasteKind::Code),
         ("printf hello world", PasteKind::Code),
         ("INFO Starting the server", PasteKind::Log),
@@ -719,7 +719,7 @@ fn untyped_structural_content_does_not_default_to_document() {
 
 #[test]
 fn git_subcommands_stay_consistent_across_detection_and_semantics() {
-    for subcommand in super::commands::SHELL_GIT_SUBCOMMANDS {
+    for subcommand in super::commands::GIT_SUBCOMMANDS {
         let content = format!("git {subcommand} fixture\ncargo check\n");
         assert!(
             super::commands::looks_like_shell_command_sequence(&content),

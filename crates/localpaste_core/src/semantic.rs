@@ -806,6 +806,9 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
 }
 
+/// Command-versus-prose regression coverage.
+#[cfg(test)]
+mod command_tests;
 /// Content classification and retrieval regression coverage.
 #[cfg(test)]
 mod tests;

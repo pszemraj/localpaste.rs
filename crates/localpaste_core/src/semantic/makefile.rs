@@ -142,18 +142,12 @@ pub(crate) fn makefile_note_body(content: &str) -> bool {
             if recipe_has_command_evidence(trimmed) {
                 return false;
             }
-            let arguments: Vec<_> = trimmed.split_whitespace().skip(1).collect();
-            saw_prose |= commands::has_unquoted_prose_copula(&arguments, false);
-            saw_prose |= super::looks_like_prose(trimmed)
-                && (note_label
-                    || (note_comment && !recipe_is_invocation(trimmed))
-                    || arguments.iter().any(|word| {
-                        [
-                            "a", "an", "the", "for", "to", "about", "please", "we", "you", "our",
-                            "your",
-                        ]
-                        .contains(word)
-                    }));
+            let arguments = trimmed
+                .split_once(char::is_whitespace)
+                .map_or("", |(_, rest)| rest);
+            saw_prose |= commands::has_prose_grammar(arguments)
+                || (super::looks_like_prose(trimmed)
+                    && (note_label || (note_comment && !recipe_is_invocation(trimmed))));
             let words: Vec<_> = trimmed.split_whitespace().collect();
             let plain_words = words
                 .iter()
@@ -204,9 +198,14 @@ fn recipe_has_command_evidence(line: &str) -> bool {
     let command = recipe.split_whitespace().next().unwrap_or_default();
     commands::extract_command_handle(recipe).is_some()
         || commands::has_unlisted_command_syntax(recipe)
+        // Recipes print status sentences (`@echo Building the app`); under a
+        // target, `echo` is a command whatever words it prints.
         || matches!(
             command,
-            "cc" | "gcc"
+            "echo"
+                | "printf"
+                | "cc"
+                | "gcc"
                 | "clang"
                 | "c++"
                 | "g++"

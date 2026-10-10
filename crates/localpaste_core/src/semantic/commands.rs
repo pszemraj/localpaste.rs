@@ -1,4 +1,9 @@
 //! Command-line recognition shared by language detection and semantic kinds.
+//!
+//! A line is a command when it leads with a listed executable and none of its
+//! unquoted words read as English grammar (see [`has_prose_grammar`]). Options,
+//! paths, quotes, and operators establish command structure, but they never
+//! outweigh prose evidence: sentences mention flags, paths, and numbers too.
 
 use crate::text::{complete_line_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 
@@ -31,7 +36,278 @@ pub(crate) const COMMANDS: &[&str] = &[
     "mkdir",
     "rustup",
 ];
+
+/// Shell builtins that prepare the session for the commands that follow.
 const SETUP_COMMANDS: &[&str] = &["cd", "export", "source", "set"];
+
+/// Git's own subcommands, which a bare `git` line must name to be a command.
+pub(crate) const GIT_SUBCOMMANDS: &[&str] = &[
+    "add",
+    "am",
+    "annotate",
+    "apply",
+    "archive",
+    "bisect",
+    "blame",
+    "branch",
+    "bundle",
+    "cat-file",
+    "check-attr",
+    "check-ignore",
+    "checkout",
+    "cherry",
+    "cherry-pick",
+    "clean",
+    "clone",
+    "commit",
+    "config",
+    "count-objects",
+    "credential",
+    "describe",
+    "diff",
+    "difftool",
+    "fetch",
+    "filter-branch",
+    "format-patch",
+    "fsck",
+    "gc",
+    "grep",
+    "hash-object",
+    "help",
+    "init",
+    "lfs",
+    "log",
+    "ls-files",
+    "ls-remote",
+    "ls-tree",
+    "maintenance",
+    "merge",
+    "merge-base",
+    "mergetool",
+    "mv",
+    "notes",
+    "prune",
+    "pull",
+    "push",
+    "range-diff",
+    "rebase",
+    "reflog",
+    "remote",
+    "repack",
+    "replace",
+    "rerere",
+    "reset",
+    "restore",
+    "rev-list",
+    "rev-parse",
+    "revert",
+    "rm",
+    "shortlog",
+    "show",
+    "show-ref",
+    "sparse-checkout",
+    "stash",
+    "status",
+    "submodule",
+    "switch",
+    "symbolic-ref",
+    "tag",
+    "update-index",
+    "update-ref",
+    "verify-commit",
+    "verify-tag",
+    "version",
+    "whatchanged",
+    "worktree",
+];
+
+/// Closed-class English words: articles, pronouns, prepositions, auxiliaries,
+/// conjunctions, and question words. None of them is an operand of the listed
+/// tools, so one unquoted occurrence marks a sentence that merely starts with a
+/// tool name, such as `cargo build takes forever on my laptop`. The pronoun `I`
+/// matches only in uppercase (`npm i` installs) and `am` is absent (`git am`).
+const FUNCTION_WORDS: &[&str] = &[
+    "a",
+    "an",
+    "the",
+    "this",
+    "that",
+    "these",
+    "those",
+    "some",
+    "any",
+    "every",
+    "my",
+    "your",
+    "our",
+    "their",
+    "his",
+    "her",
+    "its",
+    "me",
+    "you",
+    "we",
+    "us",
+    "they",
+    "them",
+    "he",
+    "him",
+    "she",
+    "it",
+    "someone",
+    "anyone",
+    "everyone",
+    "nothing",
+    "something",
+    "everything",
+    "myself",
+    "yourself",
+    "itself",
+    "about",
+    "after",
+    "at",
+    "before",
+    "behind",
+    "between",
+    "by",
+    "during",
+    "for",
+    "from",
+    "in",
+    "into",
+    "of",
+    "on",
+    "onto",
+    "over",
+    "per",
+    "since",
+    "through",
+    "to",
+    "under",
+    "until",
+    "upon",
+    "with",
+    "within",
+    "without",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "has",
+    "have",
+    "had",
+    "do",
+    "does",
+    "did",
+    "can",
+    "could",
+    "will",
+    "would",
+    "shall",
+    "should",
+    "may",
+    "might",
+    "must",
+    "not",
+    "and",
+    "or",
+    "but",
+    "because",
+    "so",
+    "if",
+    "when",
+    "while",
+    "than",
+    "then",
+    "what",
+    "why",
+    "how",
+    "who",
+    "which",
+    "where",
+    "please",
+];
+
+/// Recognize English grammar among the unquoted words of a would-be command.
+///
+/// Prose evidence is closed-class: a function word, a contraction or other
+/// mid-word apostrophe, a typographic quote, or sentence-ending punctuation
+/// attached to a word (`ideas?`, `ERR!`, `tomorrow.`). Commas are not evidence
+/// on their own because operand lists use them too. Quoted text and a trailing
+/// `#` comment are skipped, so `echo 'this is a test'` stays a command.
+///
+/// # Arguments
+/// - `text`: Command arguments, or a whole line, to inspect.
+///
+/// # Returns
+/// Whether any unquoted word reads as part of a sentence.
+pub(crate) fn has_prose_grammar(text: &str) -> bool {
+    let mut chars = text.chars();
+    let mut word = String::new();
+    let mut quoted = false;
+    loop {
+        let ch = chars.next();
+        match ch {
+            None | Some(' ' | '\t' | '\r' | '\n') => {
+                if !quoted && is_prose_word(&word) {
+                    return true;
+                }
+                word.clear();
+                quoted = false;
+                if ch.is_none() {
+                    return false;
+                }
+            }
+            Some('#') if word.is_empty() && !quoted => return false,
+            Some('’' | '‘' | '“' | '”') => return true,
+            Some('\\') => {
+                let _ = chars.next();
+                word.push('_');
+            }
+            Some(quote @ ('\'' | '"')) => {
+                // A shell never opens a quote mid-word in `it's` or `twitter's`;
+                // only prose puts an apostrophe after letters.
+                if quote == '\'' && !word.is_empty() && word.chars().all(char::is_alphabetic) {
+                    return true;
+                }
+                quoted = true;
+                loop {
+                    match chars.next() {
+                        // A quote continuing past this text is a multi-line string.
+                        None => return false,
+                        Some(close) if close == quote => break,
+                        Some('\\') if quote == '"' => {
+                            let _ = chars.next();
+                        }
+                        Some(_) => {}
+                    }
+                }
+            }
+            Some(other) => word.push(other),
+        }
+    }
+}
+
+fn is_prose_word(word: &str) -> bool {
+    let bare = word.trim_end_matches([',', ';', ':']);
+    let stem = bare.trim_end_matches(['?', '!', '.']);
+    !stem.is_empty()
+        && (stem == "I"
+            || FUNCTION_WORDS.contains(&stem.to_lowercase().as_str())
+            || (stem.len() < bare.len() && stem.chars().all(char::is_alphabetic)))
+}
+
+/// Apply the prose check to a command's operands.
+///
+/// CMD's `set name=value` takes the rest of the line as the value, so an
+/// assignment on a `set` line is structure regardless of the words around it.
+fn operands_read_as_prose(command: &str, arguments: &[&str]) -> bool {
+    let text = arguments.join(" ");
+    !(command == "set" && text.contains('=')) && has_prose_grammar(&text)
+}
 
 /// Command-shape evidence for tools outside the executable handle list.
 ///
@@ -59,10 +335,6 @@ pub(super) fn has_unlisted_command_syntax(line: &str) -> bool {
     {
         return true;
     }
-    let sentence_markers = [
-        "a", "an", "the", "for", "to", "about", "please", "should", "could", "would", "we", "you",
-        "our", "your", "in", "at", "by",
-    ];
     let leading_executable = words.first().is_some_and(|word| {
         !word.is_empty()
             && word
@@ -70,20 +342,22 @@ pub(super) fn has_unlisted_command_syntax(line: &str) -> bool {
                 .all(|ch| ch.is_ascii_lowercase() || matches!(ch, '_' | '-'))
     });
     leading_executable
-        && !has_unquoted_prose_copula(words.get(1..).unwrap_or_default(), false)
-        && !words.iter().any(|word| sentence_markers.contains(word))
+        && !has_prose_grammar(&words.get(1..).unwrap_or_default().join(" "))
         && (words.iter().skip(1).any(|word| is_shell_option(word))
             || words.get(1).is_some_and(|word| is_shell_path(word)))
 }
 
-/// Extract a compact handle from a leading command-shaped line.
+/// Extract a compact handle from a body led by a command.
+///
+/// The command must lead the paste (after optional `#` comments) and use an
+/// executable's case-sensitive name. A body whose later lines include a prose
+/// sentence is a note that quotes a command, so it gets no command handle,
+/// unless a `$ ` or `% ` prompt marks the paste as a terminal transcript.
 ///
 /// # Returns
 /// A command and optional subcommand handle when the leading line has enough
-/// command structure and is not grammatical prose.
+/// command structure and no line reads as grammatical prose.
 pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
-    // Later command-shaped lines may be explanations or quoted email content.
-    // A command must lead the paste and use an executable's case-sensitive name.
     let mut lines = sample
         .lines()
         .map(str::trim)
@@ -93,200 +367,95 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
     while lines.peek().is_some_and(|line| line.starts_with('#')) {
         let _ = lines.next();
     }
-    if let Some(line) = lines.next() {
-        let trimmed = strip_shell_prompt(line.trim_matches('`'));
-
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        let first = *parts.first()?;
-        let cmd = first.to_ascii_lowercase();
-        let is_regular_command = COMMANDS.iter().any(|known| *known == cmd);
-        let is_setup_command = SETUP_COMMANDS.iter().any(|known| *known == cmd);
-        if first != cmd || (!is_regular_command && !is_setup_command) {
-            return None;
-        }
-
-        let arguments = parts.get(1..).unwrap_or_default();
-        let has_command_syntax = command_has_shell_syntax(trimmed, arguments);
-        let explicit_arguments = command_has_explicit_arguments(&cmd, trimmed, arguments);
-        let comment_evidence = command_has_comment_evidence(&cmd, trimmed, arguments);
-        if (line.starts_with("> ") && !explicit_arguments)
-            || (leading_comment && !comment_evidence && !looks_like_shell_command_sequence(sample))
-        {
-            return None;
-        }
-
-        if is_setup_command {
-            let next_command = looks_like_shell_command_sequence(sample)
-                || lines
-                    .find(|line| !line.starts_with('#'))
-                    .is_some_and(starts_with_command_word);
-            if !setup_command_is_valid(&cmd, arguments, next_command) {
-                return None;
-            }
-            if !has_command_syntax && !next_command {
-                return None;
-            }
-        }
-
-        if is_regular_command
-            && !regular_command_is_valid(cmd.as_str(), arguments, has_command_syntax)
-        {
-            return None;
-        }
-
-        let sub = parts
-            .get(1)
-            .copied()
-            .map(super::clean_atom)
-            .filter(|value| !value.is_empty() && !value.starts_with('-'));
-
-        return Some(match sub {
-            Some(sub) => format!("{} {}", cmd, sub),
-            None => cmd,
-        });
+    let line = lines.next()?;
+    let trimmed = strip_shell_prompt(line.trim_matches('`'));
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    let command = *parts.first()?;
+    let is_regular_command = COMMANDS.contains(&command);
+    let is_setup_command = SETUP_COMMANDS.contains(&command);
+    if !is_regular_command && !is_setup_command {
+        return None;
     }
 
-    None
+    let arguments = parts.get(1..).unwrap_or_default();
+    let has_command_syntax = command_has_shell_syntax(trimmed, arguments);
+    let explicit_arguments = command_has_explicit_arguments(command, trimmed, arguments);
+    if (line.starts_with("> ") && !explicit_arguments)
+        || (leading_comment
+            && !command_has_comment_evidence(command, explicit_arguments)
+            && !looks_like_shell_command_sequence(sample))
+    {
+        return None;
+    }
+
+    let rest: Vec<&str> = lines.filter(|line| !line.starts_with('#')).collect();
+    let valid = if is_setup_command {
+        let next_command = looks_like_shell_command_sequence(sample)
+            || rest
+                .first()
+                .is_some_and(|line| line_is_command(line, false));
+        setup_command_is_valid(command, arguments, next_command)
+            && (has_command_syntax || next_command)
+    } else {
+        regular_command_is_valid(command, arguments, has_command_syntax)
+    };
+    // A prompt marks a terminal transcript, whose later lines are output.
+    let transcript = line.starts_with("$ ") || line.starts_with("% ");
+    if !valid
+        || (!transcript
+            && rest
+                .iter()
+                .any(|line| has_prose_grammar(line) && super::looks_like_prose(line)))
+    {
+        return None;
+    }
+
+    let sub = parts
+        .get(1)
+        .copied()
+        .map(super::clean_atom)
+        .filter(|value| !value.is_empty() && !value.starts_with('-'));
+    Some(match sub {
+        Some(sub) => format!("{command} {sub}"),
+        None => command.to_string(),
+    })
 }
 
-fn starts_with_command_word(line: &str) -> bool {
-    let line = line.trim().trim_matches('`');
+/// Validate one line as a listed or setup command.
+///
+/// # Arguments
+/// - `line`: Candidate line, optionally prompt-prefixed or backtick-wrapped.
+/// - `next_command`: Whether the following substantive line is a command, which
+///   lets plain setup operands such as `cd repo` count.
+fn line_is_command(line: &str, next_command: bool) -> bool {
+    let line = strip_shell_prompt(line.trim().trim_matches('`'));
     let mut parts = line.split_whitespace();
     let Some(command) = parts.next() else {
         return false;
     };
-    if command != command.to_ascii_lowercase() {
-        return false;
-    }
-    if COMMANDS.contains(&command) {
-        let arguments: Vec<&str> = parts.collect();
-        return regular_command_is_valid(
-            command,
-            arguments.as_slice(),
-            command_has_shell_syntax(line, arguments.as_slice()),
-        );
-    }
-    if !SETUP_COMMANDS.contains(&command) {
-        return false;
-    }
     let arguments: Vec<&str> = parts.collect();
-    setup_command_is_valid(command, &arguments, false)
+    if COMMANDS.contains(&command) {
+        regular_command_is_valid(
+            command,
+            &arguments,
+            command_has_shell_syntax(line, &arguments),
+        )
+    } else if SETUP_COMMANDS.contains(&command) {
+        setup_command_is_valid(command, &arguments, next_command)
+    } else {
+        false
+    }
 }
 
-/// Reject prose uses of a listed executable while retaining command syntax.
-///
-/// # Arguments
-/// - `command`: Listed executable name.
-/// - `arguments`: Whitespace-delimited arguments following the executable.
-/// - `has_shell_syntax`: Whether options, quoting, or operators supply command evidence.
-///
-/// # Returns
-/// Whether the command passes its Git, recipe, and prose-boundary rules.
-pub(crate) fn regular_command_is_valid(
-    command: &str,
-    arguments: &[&str],
-    has_shell_syntax: bool,
-) -> bool {
-    if command == "git"
-        && !has_shell_syntax
-        && !arguments
-            .first()
-            .is_some_and(|subcommand| SHELL_GIT_SUBCOMMANDS.contains(subcommand))
-    {
-        return false;
-    }
-    if matches!(command, "make" | "just") && ambiguous_recipe_is_prose(arguments) {
-        // A quoted operand may follow other targets. An apostrophe inside
-        // `it's` is prose punctuation, not an opening shell quote.
-        let quoted_operand = arguments.iter().enumerate().any(|(index, word)| {
-            ['\'', '"'].iter().any(|quote| {
-                word.starts_with(*quote)
-                    && arguments
-                        .iter()
-                        .skip(index)
-                        .any(|part| part.ends_with(*quote))
-            })
-        });
-        if !quoted_operand
-            && !command_has_explicit_arguments(command, &arguments.join(" "), arguments)
-        {
-            return false;
-        }
-    }
-    // Unquoted copulas near the verb are prose evidence (`echo chamber is`,
-    // `sudo is required`). Quoting, options, and shell syntax supply command
-    // evidence even when the argument text contains those words.
-    !has_unquoted_prose_copula(arguments, has_shell_syntax)
+/// Reject prose uses of a listed executable and Git lines without a subcommand.
+fn regular_command_is_valid(command: &str, arguments: &[&str], has_shell_syntax: bool) -> bool {
+    !operands_read_as_prose(command, arguments)
+        && (command != "git"
+            || has_shell_syntax
+            || arguments
+                .first()
+                .is_some_and(|subcommand| GIT_SUBCOMMANDS.contains(subcommand)))
 }
-
-fn ambiguous_recipe_is_prose(arguments: &[&str]) -> bool {
-    let words: Vec<String> = arguments
-        .iter()
-        .map(|word| {
-            word.trim_matches(|ch: char| !ch.is_ascii_alphabetic())
-                .to_ascii_lowercase()
-        })
-        .filter(|word| !word.is_empty())
-        .collect();
-    let Some(predicate) = words.first() else {
-        return false;
-    };
-    let grammatical_marker = |word: &str| {
-        [
-            "a", "an", "at", "for", "i", "in", "me", "my", "of", "on", "our", "please", "that",
-            "the", "this", "to", "us", "we", "you", "your", "yourself", "before", "after",
-        ]
-        .contains(&word)
-    };
-    if grammatical_marker(predicate) {
-        return true;
-    }
-    let later_markers = words
-        .iter()
-        .skip(1)
-        .filter(|word| grammatical_marker(word))
-        .count();
-    let predicate_has_sentence_shape = predicate.ends_with("ed")
-        || predicate.ends_with("ing")
-        || matches!(predicate.as_str(), "remember" | "sure");
-    later_markers >= 2 || (predicate_has_sentence_shape && later_markers >= 1)
-}
-
-/// Git subcommands accepted as command structure without extra shell syntax.
-pub(crate) const SHELL_GIT_SUBCOMMANDS: &[&str] = &[
-    "add",
-    "bisect",
-    "blame",
-    "branch",
-    "checkout",
-    "cherry-pick",
-    "clean",
-    "clone",
-    "commit",
-    "diff",
-    "fetch",
-    "grep",
-    "init",
-    "log",
-    "merge",
-    "mv",
-    "pull",
-    "push",
-    "rebase",
-    "remote",
-    "reset",
-    "restore",
-    "revert",
-    "rev-parse",
-    "rm",
-    "show",
-    "stash",
-    "status",
-    "submodule",
-    "switch",
-    "tag",
-    "worktree",
-];
 
 /// Recognize argument structure specific to shell setup commands.
 ///
@@ -298,11 +467,14 @@ pub(crate) const SHELL_GIT_SUBCOMMANDS: &[&str] = &[
 /// # Returns
 /// Whether arguments form an assignment, shell option, or setup path rather
 /// than prose that merely contains punctuation or numbers.
-pub(crate) fn setup_command_is_valid(
+pub(super) fn setup_command_is_valid(
     command: &str,
     arguments: &[&str],
     next_command: bool,
 ) -> bool {
+    if operands_read_as_prose(command, arguments) {
+        return false;
+    }
     let quoted_argument = arguments.first().is_some_and(|first| {
         ['\'', '"'].iter().any(|quote| {
             first.starts_with(*quote) && arguments.iter().any(|part| part.ends_with(*quote))
@@ -310,10 +482,6 @@ pub(crate) fn setup_command_is_valid(
     });
     let compact_arguments = |arguments: &[&str]| {
         !arguments.is_empty()
-            && !has_unquoted_prose_copula(arguments, false)
-            && !arguments
-                .iter()
-                .any(|part| matches!(*part, "for" | "to" | "the"))
             && arguments.iter().all(|part| {
                 part.chars()
                     .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
@@ -362,24 +530,6 @@ pub(crate) fn setup_command_is_valid(
         || (next_command && compact_arguments(arguments))
 }
 
-/// Recognize a prose copula near a command-shaped leading word.
-///
-/// # Arguments
-/// - `arguments`: Command arguments following the executable-shaped word.
-/// - `has_shell_syntax`: Whether quoting, options, paths, or operators already
-///   establish command structure.
-///
-/// # Returns
-/// `true` when the first three arguments contain an unquoted copula without
-/// other shell syntax establishing an actual command.
-pub(crate) fn has_unquoted_prose_copula(arguments: &[&str], has_shell_syntax: bool) -> bool {
-    !has_shell_syntax
-        && arguments
-            .iter()
-            .take(3)
-            .any(|part| matches!(*part, "is" | "are" | "was" | "were"))
-}
-
 /// Remove an optional leading shell prompt from a command line.
 ///
 /// # Arguments
@@ -387,14 +537,14 @@ pub(crate) fn has_unquoted_prose_copula(arguments: &[&str], has_shell_syntax: bo
 ///
 /// # Returns
 /// The line without a leading `$ `, `% `, or `> ` prompt.
-pub(crate) fn strip_shell_prompt(line: &str) -> &str {
+fn strip_shell_prompt(line: &str) -> &str {
     line.strip_prefix("$ ")
         .or_else(|| line.strip_prefix("% "))
         .or_else(|| line.strip_prefix("> "))
         .unwrap_or(line)
 }
 
-/// Recognize punctuation, options, or digits establishing shell command structure.
+/// Recognize quoting, operators, paths, or options establishing shell structure.
 ///
 /// # Arguments
 /// - `line`: Command line without a leading shell prompt.
@@ -402,18 +552,16 @@ pub(crate) fn strip_shell_prompt(line: &str) -> &str {
 ///
 /// # Returns
 /// Whether shell syntax supplies command evidence beyond the leading word.
-pub(crate) fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {
+fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {
     line.contains(['\'', '"', '$', '|', '>', '<', '=', '/', '\\', ';', '&'])
-        || arguments
-            .iter()
-            .any(|part| part.starts_with('-') || part.chars().any(|ch| ch.is_ascii_digit()))
+        || arguments.iter().any(|part| part.starts_with('-'))
 }
 
 /// Recognize an option token rather than a separated prose dash.
 ///
 /// # Returns
 /// Whether a dash-prefixed token contains an option name or number.
-pub(crate) fn is_shell_option(value: &str) -> bool {
+fn is_shell_option(value: &str) -> bool {
     value
         .strip_prefix('-')
         .map(|rest| rest.trim_start_matches('-'))
@@ -425,7 +573,7 @@ pub(crate) fn is_shell_option(value: &str) -> bool {
 ///
 /// # Returns
 /// Whether the argument names a path rather than a prose URL.
-pub(crate) fn is_shell_path(value: &str) -> bool {
+pub(super) fn is_shell_path(value: &str) -> bool {
     !value.contains("://")
         && (value.contains(['/', '\\'])
             || matches!(value, "." | "..")
@@ -444,7 +592,7 @@ pub(crate) fn is_shell_path(value: &str) -> bool {
 ///
 /// # Returns
 /// Whether the command has shell structure or a recognized tool action.
-pub(crate) fn command_has_explicit_arguments(
+pub(super) fn command_has_explicit_arguments(
     command: &str,
     line: &str,
     arguments: &[&str],
@@ -463,7 +611,7 @@ pub(crate) fn command_has_explicit_arguments(
         return true;
     }
     match command {
-        "git" => SHELL_GIT_SUBCOMMANDS.contains(first),
+        "git" => GIT_SUBCOMMANDS.contains(first),
         "echo" | "printf" => true,
         "python" | "pytest" | "torchrun" => first.ends_with(".py"),
         "curl" => first.starts_with("https://") || first.starts_with("http://"),
@@ -504,27 +652,12 @@ pub(crate) fn command_has_explicit_arguments(
 
 /// Accept listed executables after comments without enumerating every tool action.
 ///
-/// Quoted lines intentionally continue to require [`command_has_explicit_arguments`]
-/// so ordinary blockquotes do not become shell snippets.
-///
-/// # Arguments
-/// - `command`: Executable name.
-/// - `line`: Command line without a leading prompt.
-/// - `arguments`: Whitespace-delimited operands after the executable.
-///
-/// # Returns
-/// Whether a leading comment plus this command supplies enough technical evidence.
-pub(crate) fn command_has_comment_evidence(command: &str, line: &str, arguments: &[&str]) -> bool {
-    command_has_explicit_arguments(command, line, arguments)
-        || (command != "ls"
-            && !has_unquoted_prose_copula(arguments, false)
-            && !arguments.iter().any(|word| {
-                [
-                    "a", "an", "the", "for", "to", "about", "please", "should", "could", "would",
-                    "we", "you", "our", "your", "in", "at", "by",
-                ]
-                .contains(word)
-            }))
+/// The prose check has already run, so any listed command except a bare `ls`
+/// (a common to-do word) is technical once a comment introduces it. Quoted lines
+/// continue to require [`command_has_explicit_arguments`] so ordinary
+/// blockquotes do not become shell snippets.
+fn command_has_comment_evidence(command: &str, explicit_arguments: bool) -> bool {
+    explicit_arguments || command != "ls"
 }
 
 /// Recognize a compact sequence of shell setup and executable command lines.
@@ -559,29 +692,15 @@ pub(crate) fn looks_like_shell_command_sequence(content: &str) -> bool {
         let Some(command) = parts.next() else {
             return false;
         };
-        if command != command.to_ascii_lowercase() {
-            return false;
-        }
         let arguments: Vec<&str> = parts.collect();
-        let has_shell_syntax = command_has_shell_syntax(line, &arguments);
         let explicit_arguments = command_has_explicit_arguments(command, line, &arguments);
-        let comment_evidence = command_has_comment_evidence(command, line, &arguments);
-        if quoted && !explicit_arguments {
-            return false;
-        }
-        let command_line = if COMMANDS.contains(&command) {
-            regular_command_is_valid(command, &arguments, has_shell_syntax)
-        } else if SETUP_COMMANDS.contains(&command) {
-            setup_command_is_valid(command, &arguments, next_command)
-        } else {
-            false
-        };
-        if !command_line {
+        if (quoted && !explicit_arguments) || !line_is_command(line, next_command) {
             return false;
         }
         commands = commands.saturating_add(1);
-        explicit_single_command = explicit_prompt || explicit_arguments || comment_evidence;
-        next_command = command_line;
+        explicit_single_command =
+            explicit_prompt || command_has_comment_evidence(command, explicit_arguments);
+        next_command = true;
     }
     commands >= 2
         || (commands == 1 && (has_leading_comment || has_leading_prompt) && explicit_single_command)
