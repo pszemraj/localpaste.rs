@@ -910,10 +910,9 @@ fn derive_matrix_covers_code_config_log_link_and_other() {
     assert!(short_text.handle.is_none());
 }
 
-#[cfg(feature = "magika")]
 #[test]
 fn standalone_fence_kind_does_not_invoke_magika() {
-    let before = crate::detection::magika_detection_call_count();
+    let before = crate::detection::model_step_call_count();
     assert_eq!(
         derive(
             "```\nfn main() { println!(\"hello\"); }\n```",
@@ -922,7 +921,10 @@ fn standalone_fence_kind_does_not_invoke_magika() {
         .kind,
         PasteKind::Code
     );
-    assert_eq!(crate::detection::magika_detection_call_count(), before);
+    assert_eq!(crate::detection::model_step_call_count(), before);
+    // The counter is live: full detection of a plain body reaches the model step.
+    let _ = crate::detection::detect_language("fn main() { println!(\"hello\"); }");
+    assert_eq!(crate::detection::model_step_call_count(), before + 1);
 }
 
 #[test]

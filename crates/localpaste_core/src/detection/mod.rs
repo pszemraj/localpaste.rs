@@ -41,6 +41,8 @@ pub fn detect_language(content: &str) -> Option<String> {
         return Some("log".to_string());
     }
 
+    #[cfg(test)]
+    MODEL_STEP_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
     #[cfg(feature = "magika")]
     {
         if let Some(label) = magika::detect(content) {
@@ -64,13 +66,21 @@ pub(crate) fn detect_heuristically(content: &str) -> Option<String> {
         .filter(|label| !label.is_empty() && label != "text")
 }
 
-#[cfg(all(test, feature = "magika"))]
-/// Return the current test thread's Magika wrapper call count.
+#[cfg(test)]
+thread_local! {
+    /// Times the current test thread reached the Magika step of
+    /// `detect_language`, counted in every build so tests without the
+    /// feature still prove a path never asks for model inference.
+    static MODEL_STEP_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+/// Return how often the current test thread reached the Magika step.
 ///
 /// # Returns
-/// Calls observed on the current thread.
-pub(crate) fn magika_detection_call_count() -> usize {
-    magika::detection_call_count()
+/// Calls observed on the current thread, with or without the `magika` feature.
+pub(crate) fn model_step_call_count() -> usize {
+    MODEL_STEP_CALLS.with(std::cell::Cell::get)
 }
 
 #[derive(Clone, Copy)]
