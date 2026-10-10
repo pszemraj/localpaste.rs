@@ -540,7 +540,17 @@ impl LocalPasteApp {
                                     viewport_rect.max.y,
                                     self.virtual_line_height,
                                 );
-                                if scroll_delta != 0.0 {
+                                // egui repaints for every nonzero scroll delta, so a drag
+                                // held past an edge the viewport already reached must stop
+                                // requesting scrolls instead of repainting every frame.
+                                let max_offset_y = (total_rows as f32 * self.virtual_line_height
+                                    - self.virtual_viewport_height)
+                                    .max(0.0);
+                                if drag_autoscroll_can_move(
+                                    scroll_delta,
+                                    self.virtual_viewport.offset_y,
+                                    max_offset_y,
+                                ) {
                                     ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
                                     ui.ctx().request_repaint();
                                 }

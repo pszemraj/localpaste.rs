@@ -100,6 +100,21 @@ pub(super) fn request_virtual_editor_focus(
     });
 }
 
+/// Returns whether a drag autoscroll delta can still move the viewport.
+///
+/// # Arguments
+/// - `delta`: Autoscroll delta; positive scrolls toward the start, negative toward the end.
+/// - `offset_y`: Current vertical scroll offset.
+/// - `max_offset_y`: Largest offset that still shows content at the viewport bottom.
+///
+/// # Returns
+/// `true` while the offset has room to move in the delta's direction.
+pub(super) fn drag_autoscroll_can_move(delta: f32, offset_y: f32, max_offset_y: f32) -> bool {
+    // Sub-pixel slack absorbs egui's rounding of the clamped content rect.
+    const EDGE_SLACK: f32 = 0.5;
+    (delta > 0.0 && offset_y > EDGE_SLACK) || (delta < 0.0 && offset_y < max_offset_y - EDGE_SLACK)
+}
+
 /// Returns the width at the viewport's right edge owned by a floating vertical scrollbar.
 ///
 /// # Arguments
@@ -271,6 +286,16 @@ mod tests {
         let clamped = line_number_gutter_width(999, 0.0);
         let expected = (3.0 * 1.0) + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
         assert!((clamped - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn drag_autoscroll_moves_only_while_the_offset_has_room() {
+        assert!(drag_autoscroll_can_move(12.0, 40.0, 400.0));
+        assert!(!drag_autoscroll_can_move(12.0, 0.0, 400.0));
+        assert!(drag_autoscroll_can_move(-12.0, 40.0, 400.0));
+        assert!(!drag_autoscroll_can_move(-12.0, 400.0, 400.0));
+        assert!(!drag_autoscroll_can_move(-12.0, 0.0, 0.0));
+        assert!(!drag_autoscroll_can_move(0.0, 40.0, 400.0));
     }
 
     #[test]
