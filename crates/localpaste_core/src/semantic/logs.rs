@@ -57,8 +57,9 @@ pub(crate) fn looks_like_runtime_log(content: &str) -> bool {
 ///
 /// Spaced levels must be uppercase or bracketed. Lowercase words with spaces
 /// introduce ordinary prose; colon-delimited lowercase levels remain supported
-/// unless several of them open the body without any machine token, which is a
-/// glossary, to-do list, or mapping rather than output.
+/// unless several of them open the body without output evidence (see
+/// [`ParsedLogHeader::output_evidence`]), which makes them a glossary, to-do
+/// list, or mapping rather than output.
 ///
 /// # Arguments
 /// - `sample`: Bounded semantic sample whose first non-empty line is parsed.
@@ -95,9 +96,11 @@ pub(super) fn leading_log_header(sample: &str, language: &str) -> Option<ParsedL
 pub(super) struct ParsedLogHeader {
     /// Bracketed or uppercase spaced levels, which identify a log on their own.
     pub(super) strong_single_line: bool,
-    /// An uppercase level or a message with a path, version, quote, or similar
-    /// token, which a note written in lowercase level words lacks.
-    machine_evidence: bool,
+    /// An uppercase level, or a message shaped like tool output (a progress
+    /// ellipsis, or after a colon a nested `label: ` or backtick code span),
+    /// which neither a note written in lowercase level words nor a mapping
+    /// keyed by them has.
+    output_evidence: bool,
     contextual: bool,
 }
 
@@ -121,7 +124,7 @@ pub(super) fn parse_log_header(
     {
         return NPM_LEVELS.contains(&level).then_some(ParsedLogHeader {
             strong_single_line: true,
-            machine_evidence: true,
+            output_evidence: true,
             contextual: false,
         });
     }
@@ -170,14 +173,19 @@ pub(super) fn parse_log_header(
     }
 
     // `error: /var/log/error.log` or `info: "Saved."` is a mapping entry whose
-    // value is one scalar, so its path or quote is not evidence of output.
+    // value is one scalar, so nothing inside it is evidence of output.
     let scalar_value = colon
         && (!message.contains(char::is_whitespace)
             || (message.len() > 1 && message.starts_with('"') && message.ends_with('"')));
+    // To-do items and mapping values name paths, versions, and files as often
+    // as output does. Neither prints a progress ellipsis, and a mapping value
+    // cannot hold a second `label: ` or, in practice, a backtick code span,
+    // both of which compiler and VCS diagnostics put after `error:`.
+    let output_shape =
+        message.contains("...") || (colon && (message.contains(": ") || message.contains('`')));
     Some(ParsedLogHeader {
         strong_single_line: bracketed || (!colon && level == level.to_ascii_uppercase()),
-        machine_evidence: level == level.to_ascii_uppercase()
-            || (!scalar_value && has_machine_token(message)),
+        output_evidence: level == level.to_ascii_uppercase() || (!scalar_value && output_shape),
         contextual,
     })
 }
@@ -225,16 +233,18 @@ fn leading_header_run(sample: &str) -> HeaderRun {
         };
         run.headers = run.headers.saturating_add(1);
         run.strong |= header.strong_single_line;
-        run.corroborated |= header.machine_evidence;
+        run.corroborated |= header.output_evidence;
     }
     run
 }
 
 /// Recognize a run of at least two level-prefixed lines that is output.
 ///
-/// Lowercase levels are also ordinary words (`debug the crash`, `info: desk
-/// hours`), so a run of only lowercase levels needs a yarn banner or progress
-/// step, or a machine token such as a path or version in some message.
+/// Lowercase levels are also ordinary words (`debug the crash in login.rs`)
+/// and mapping keys (`info: version 1.2`), so a run of only lowercase levels
+/// needs a yarn banner or progress step, or output evidence in some message:
+/// a progress ellipsis, or after a colon a nested `label: ` or a backtick code
+/// span. Paths, versions, and file names appear in notes and mappings too.
 ///
 /// # Returns
 /// Whether the leading header run has two lines and is strong or corroborated.

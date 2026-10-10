@@ -102,6 +102,9 @@ fn prose_about_failures_is_not_a_log() {
         "debug Safari crash on login\ntrace Network calls in staging",
         "info Desk opens at 9 on weekdays\nerror Rate dropped after the fix",
         "debug: Find and fix defects in code.\ntrace: Record of program execution.\nerror: A mistake in the program.",
+        // To-do items name files and versions as often as output does.
+        "debug crash in auth/login.rs\ndebug memory leak in parser.rs",
+        "info bump the version in package.json\ninfo update docs for v1.2",
     ] {
         for content in with_crlf(content) {
             for language in [None, Some("text"), Some("markdown")] {
@@ -134,6 +137,10 @@ fn level_keyed_mappings_stay_config() {
         "error: /var/log/app/error.log\ninfo: /var/log/app/info.log",
         "debug: \"true\"\ninfo: v1.2.3\nport: 8080",
         "error: \"Something went wrong, please try again.\"\ninfo: \"Your changes were saved.\"",
+        // Multi-word values with versions and paths are still mapping values.
+        "info: version 1.2\nwarn: deprecated in 2.0",
+        "info: listening on port 8080 by default\nwarn: deprecated since v2.0, see docs/migrate.md",
+        "info: \"Loading...\"\nerror: \"Retrying...\"",
     ] {
         for content in with_crlf(content) {
             assert!(!super::logs::looks_like_runtime_log(&content), "{content}");
@@ -142,16 +149,35 @@ fn level_keyed_mappings_stay_config() {
                 Some("log"),
                 "{content}"
             );
-            assert_eq!(
-                derive(&content, Some("yaml")).kind,
-                PasteKind::Config,
-                "{content}"
-            );
+            assert_ne!(stored_kind(&content), PasteKind::Log, "{content}");
+            for language in ["yaml", "toml", "json"] {
+                assert_eq!(
+                    derive(&content, Some(language)).kind,
+                    PasteKind::Config,
+                    "{content}: {language}"
+                );
+            }
         }
     }
-    let output =
-        "error: unable to open database file: /home/me/.cache/x\nwarning: unused import `std::io`";
-    assert_eq!(derive(output, Some("yaml")).kind, PasteKind::Log);
+    // A nested `label: ` or a backtick code span cannot be a mapping value.
+    for output in [
+        "error: unable to open database file: /home/me/.cache/x\nwarning: unused import `std::io`",
+        "error: could not compile `demo` due to 2 previous errors\nwarning: unused variable `x`",
+        "fatal: not a git repository (or any of the parent directories): .git\nerror: pathspec did not match: src/",
+    ] {
+        for output in with_crlf(output) {
+            assert!(super::logs::looks_like_runtime_log(&output), "{output}");
+            assert_eq!(detect_language(&output).as_deref(), Some("log"), "{output}");
+            for language in [None, Some("yaml")] {
+                assert_eq!(derive(&output, language).kind, PasteKind::Log, "{output}");
+            }
+        }
+    }
+    // Lowercase levels after a timestamp are output, as Go and Node loggers print them.
+    let stamped =
+        "2026-10-10T06:00:01Z info: server listening on :8080\n2026-10-10T06:00:02Z warn: slow request took 812ms";
+    assert_eq!(detect_language(stamped).as_deref(), Some("log"));
+    assert_eq!(derive(stamped, Some("yaml")).kind, PasteKind::Log);
 }
 
 #[test]
