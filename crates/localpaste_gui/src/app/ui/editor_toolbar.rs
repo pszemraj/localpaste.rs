@@ -105,7 +105,8 @@ impl LocalPasteApp {
                 + TITLE_MARGIN.sum().x
                 + LANGUAGE_COMBO_WIDTH
                 + button_width(ui, "Apply")
-                + 2.0 * ui.spacing().item_spacing.x;
+                + 2.0 * ui.spacing().item_spacing.x
+                + overflow_chip_reserve(ui, parse_tags_csv(self.edit_tags.as_str()).len());
             if ui.available_width() >= metadata_min_width + GROUP_GAP + actions_width {
                 let (row_rect, _) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
@@ -387,6 +388,24 @@ fn visible_tag_chips(ui: &egui::Ui, tags: &[String], available_width: f32) -> Ve
         }
     }
     chips
+}
+
+/// Room the one-row layout keeps for tags: the widest `+N` chip and its spacing.
+///
+/// Reserving it means a paste with tags always shows tag chips or the `+N`
+/// chip, rather than losing both just above the two-row threshold.
+///
+/// # Arguments
+/// - `ui`: UI in the toolbar's style.
+/// - `tag_count`: Number of tags on the paste.
+///
+/// # Returns
+/// The reserved width, or zero for a paste without tags.
+fn overflow_chip_reserve(ui: &egui::Ui, tag_count: usize) -> f32 {
+    if tag_count == 0 {
+        return 0.0;
+    }
+    button_width(ui, &format!("+{tag_count}")) + ui.spacing().item_spacing.x
 }
 
 /// Width of a toolbar button showing `label` in the current style.

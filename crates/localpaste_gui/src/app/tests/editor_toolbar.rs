@@ -139,6 +139,64 @@ fn tag_chips_cap_at_three_with_an_overflow_count() {
     assert!(harness.app.properties_drawer_open);
 }
 
+/// Rendered text rects right of the sidebar whose text satisfies `pick`.
+fn editor_texts_where(output: &egui::FullOutput, pick: impl Fn(&str) -> bool) -> Vec<egui::Rect> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.pos.x > 300.0 && pick(&text.galley.job.text) => {
+                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn tags_always_show_a_chip_or_overflow_count_clear_of_the_actions() {
+    let is_chip = |text: &str| {
+        text.starts_with('#')
+            || text.strip_prefix('+').is_some_and(|count| {
+                !count.is_empty() && count.chars().all(|ch| ch.is_ascii_digit())
+            })
+    };
+    // Toolbar buttons pad their text by 8 points on each side.
+    let button_padding = 8.0;
+    for tags in ["infra", "infra, deploy, backend, staging, urgent"] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        harness.app.edit_tags = tags.to_string();
+        for width in (MIN_WINDOW_SIZE[0] as u32..=1400).step_by(10) {
+            let width = width as f32;
+            let output = render_at(&mut harness.app, &ctx, width);
+            let chips = editor_texts_where(&output, is_chip);
+            assert!(!chips.is_empty(), "tags {tags:?} vanished at width {width}");
+
+            let actions = editor_texts_where(&output, |text| ROW_ACTIONS.contains(&text));
+            let actions_left = actions
+                .iter()
+                .map(|rect| rect.left())
+                .fold(f32::INFINITY, f32::min);
+            let action_row = actions[0].center().y;
+            for label in chips.iter().chain(
+                ["Alpha", "Apply"]
+                    .iter()
+                    .filter_map(|label| editor_text_rect(&output, label))
+                    .collect::<Vec<_>>()
+                    .iter(),
+            ) {
+                if (label.center().y - action_row).abs() < 3.0 {
+                    assert!(
+                        label.right() + 2.0 * button_padding <= actions_left,
+                        "{label:?} overlaps the actions at width {width} with tags {tags:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn more_menu_holds_the_secondary_actions() {
     let mut harness = make_app();
