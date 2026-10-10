@@ -501,6 +501,8 @@ impl eframe::App for LocalPasteApp {
         let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
+        // An open combo list or menu owns bare keys, though no widget has focus.
+        let popup_open_pre = egui::Popup::is_any_open(ctx);
         // Respect clipboard event order before a newer explicit shortcut can
         // re-arm intent and replace the canceled request's identity.
         self.discard_canceled_clipboard_reply(ctx);
@@ -688,7 +690,7 @@ impl eframe::App for LocalPasteApp {
                         !self.pastes.is_empty(),
                         virtual_editor_focus_active_pre,
                         self.command_palette_open || self.paste_picker_open,
-                        version_overlay_open,
+                        version_overlay_open || popup_open_pre,
                         self.shortcut_help_open,
                     ) {
                         match key {
@@ -750,6 +752,7 @@ impl eframe::App for LocalPasteApp {
             }
         }
         if delete_selected_shortcut_pressed
+            && !popup_open_pre
             && self.should_route_delete_selected_shortcut(Self::keyboard_focus_state(
                 virtual_editor_focus_post,
                 wants_keyboard_input_after,

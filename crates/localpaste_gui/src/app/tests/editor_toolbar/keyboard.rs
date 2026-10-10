@@ -1,6 +1,7 @@
 //! Keyboard ownership around metadata fields and open popups.
 
 use super::*;
+use crate::app::virtual_editor::PlatformFlavor;
 
 /// Clicks the rendered text field `id`, which gives it keyboard focus.
 fn click_field(app: &mut LocalPasteApp, ctx: &egui::Context, id: &str) {
@@ -142,4 +143,128 @@ fn escape_in_drawer_name_and_tags_restores_them() {
             "{id} saves nothing"
         );
     }
+}
+
+/// The popups the arrow and delete routing tests open over the editor.
+#[derive(Clone, Copy, Debug)]
+enum OpenPopup {
+    ToolbarLanguage,
+    DrawerLanguage,
+    MoreMenu,
+}
+
+/// Opens `popup` without changing any metadata.
+fn open_popup(app: &mut LocalPasteApp, ctx: &egui::Context, popup: OpenPopup) {
+    match popup {
+        OpenPopup::ToolbarLanguage => {
+            let _ = open_combo_showing(app, ctx, LanguageCombo::Toolbar, "Auto");
+        }
+        OpenPopup::DrawerLanguage => {
+            let _ = open_combo_showing(app, ctx, LanguageCombo::Drawer, "Auto");
+        }
+        OpenPopup::MoreMenu => {
+            let output = render_at(app, ctx, LANGUAGE_COMBO_FRAME_WIDTH);
+            let more = editor_text_rect(&output, MORE_MENU_LABEL)
+                .expect("More button")
+                .center();
+            let _ = click(app, ctx, LANGUAGE_COMBO_FRAME_WIDTH, more);
+        }
+    }
+    assert!(egui::Popup::is_any_open(ctx), "{popup:?} is open");
+}
+
+#[test]
+fn arrow_keys_leave_the_selection_alone_while_a_popup_is_open() {
+    for popup in [
+        OpenPopup::ToolbarLanguage,
+        OpenPopup::DrawerLanguage,
+        OpenPopup::MoreMenu,
+    ] {
+        let mut harness = make_app();
+        harness
+            .app
+            .all_pastes
+            .push(test_summary("beta", "Beta", None, 4));
+        harness.app.pastes = harness.app.all_pastes.clone();
+        let ctx = egui::Context::default();
+        let (key, neighbor) = match harness.app.sidebar_arrow_target_id(1) {
+            Some(id) => (egui::Key::ArrowDown, id),
+            None => (
+                egui::Key::ArrowUp,
+                harness.app.sidebar_arrow_target_id(-1).expect("neighbor"),
+            ),
+        };
+        open_popup(&mut harness.app, &ctx, popup);
+        if !matches!(popup, OpenPopup::MoreMenu) {
+            // A switch would save the type-ahead choice before leaving the paste.
+            let _ = type_keys(&mut harness.app, &ctx, "py", TYPEAHEAD_PAUSE);
+            assert!(harness.app.metadata_dirty);
+        }
+        let _ = metadata_save_dispatched(&harness.cmd_rx);
+
+        for arrow in [egui::Key::ArrowDown, egui::Key::ArrowUp] {
+            let _ = press_key(&mut harness.app, &ctx, arrow);
+            assert_eq!(
+                harness.app.selected_id.as_deref(),
+                Some("alpha"),
+                "{arrow:?} under {popup:?}"
+            );
+            assert!(egui::Popup::is_any_open(&ctx), "{arrow:?} under {popup:?}");
+        }
+        assert!(
+            !metadata_save_dispatched(&harness.cmd_rx),
+            "no switch saved the type-ahead choice under {popup:?}"
+        );
+
+        // Once the popup closes, arrows move the sidebar selection again.
+        let _ = press_key(&mut harness.app, &ctx, egui::Key::Escape);
+        assert!(!egui::Popup::is_any_open(&ctx), "{popup:?}");
+        assert!(!harness.app.metadata_dirty, "{popup:?}");
+        let _ = press_key(&mut harness.app, &ctx, key);
+        assert_eq!(
+            harness.app.selected_id.as_deref(),
+            Some(neighbor.as_str()),
+            "after {popup:?}"
+        );
+    }
+}
+
+#[test]
+fn delete_selected_chord_waits_while_a_popup_is_open() {
+    let mac_command = egui::Modifiers {
+        command: true,
+        mac_cmd: true,
+        ..Default::default()
+    };
+    with_platform(PlatformFlavor::Mac, || {
+        for popup in [OpenPopup::ToolbarLanguage, OpenPopup::MoreMenu] {
+            for key in [egui::Key::Backspace, egui::Key::Delete] {
+                let (mut harness, _events) = make_app_with_event_tx();
+                let ctx = egui::Context::default();
+                open_popup(&mut harness.app, &ctx, popup);
+                let delete_sent = |cmd_rx: &Receiver<CoreCmd>| {
+                    cmd_rx
+                        .try_iter()
+                        .any(|cmd| matches!(cmd, CoreCmd::DeletePaste { id } if id == "alpha"))
+                };
+                let _ = delete_sent(&harness.cmd_rx);
+
+                let chord = egui::RawInput {
+                    events: vec![key_event(key, mac_command)],
+                    modifiers: mac_command,
+                    ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
+                };
+                let _ = run_full_update_with_input(&mut harness.app, &ctx, chord.clone());
+                assert!(!delete_sent(&harness.cmd_rx), "Cmd+{key:?} under {popup:?}");
+
+                // Once the popup closes, the chord deletes the selected paste again.
+                let _ = press_key(&mut harness.app, &ctx, egui::Key::Escape);
+                let _ = run_full_update_with_input(&mut harness.app, &ctx, chord);
+                assert!(
+                    delete_sent(&harness.cmd_rx),
+                    "Cmd+{key:?} after {popup:?} closes"
+                );
+            }
+        }
+    });
 }

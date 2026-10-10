@@ -24,7 +24,7 @@ Shortcut contract:
 
 - `Ctrl/Cmd+N`: create/select new paste.
 - `Ctrl/Cmd+S`: save content + metadata.
-- `Ctrl+Delete` (Windows/Linux) or `Cmd+Backspace` / `Cmd+Delete` (macOS): delete selected paste when no text input (editor, title, search, picker or palette query, or any other field) owns focus; there the chord keeps its text-editing meaning (`Cmd+Backspace` deletes to line start). `Delete` means forward Delete. `Ctrl+Backspace` is word deletion on Windows/Linux and never deletes the paste.
+- `Ctrl+Delete` (Windows/Linux) or `Cmd+Backspace` / `Cmd+Delete` (macOS): delete selected paste when no text input (editor, title, search, picker or palette query, or any other field) owns focus and no popup (a combo list such as the language selector, or a menu such as `More`) is open; in a field the chord keeps its text-editing meaning (`Cmd+Backspace` deletes to line start), and under a popup it does nothing. `Delete` means forward Delete. `Ctrl+Backspace` is word deletion on Windows/Linux and never deletes the paste.
 - `Ctrl/Cmd+F`: focus sidebar search.
 - `Ctrl/Cmd+K`: toggle the commands-only palette (also `Ctrl/Cmd+Shift+P`).
 - `Ctrl/Cmd+Shift+K`: toggle the separate paste picker.
@@ -42,7 +42,7 @@ Focus ownership: the virtual editor keeps the keyboard until the window loses na
 
 Navigation/selection contract:
 
-- `Up`/`Down` move the sidebar selection only as bare arrows while neither the editor nor a text input owns the keyboard and no overlay is open; if the selected paste is not in the visible list, the first press selects the first visible row. Arrows with `Ctrl`/`Alt`/`Shift`/`Cmd` stay with editor-selection semantics.
+- `Up`/`Down` move the sidebar selection only as bare arrows while neither the editor nor a text input owns the keyboard and no overlay, combo list, or menu is open, so arrows pressed with a language popup open never switch pastes or save its type-ahead choice; if the selected paste is not in the visible list, the first press selects the first visible row. Arrows with `Ctrl`/`Alt`/`Shift`/`Cmd` stay with editor-selection semantics.
 - `Tab` indents each selected line that has non-whitespace content by four spaces, and inserts four spaces at a single caret. `Shift+Tab` removes one leading tab or up to four spaces from each affected line. A partial single-line selection indents the whole line, directional selections survive indentation and undo/redo, and each indentation is one undo step.
 - Shift-click and Shift-drag extend the editor selection from its existing anchor using the modifiers captured at mouse press, even if Shift is released before the mouse. Clicks on floating windows, including their edges, leave the underlying caret and selection untouched.
 - Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).

@@ -11,7 +11,7 @@ use std::time::Instant;
 /// Returns whether bare arrow keys should drive sidebar selection navigation.
 ///
 /// Sidebar navigation is intentionally disabled whenever keyboard ownership is
-/// ambiguous (focused editor, open modal/drawer, or active modifiers).
+/// ambiguous (focused editor, open modal/drawer/popup, or active modifiers).
 ///
 /// # Arguments
 /// - `wants_keyboard_input_before`: Egui keyboard-input ownership snapshot.
@@ -20,7 +20,8 @@ use std::time::Instant;
 /// - `editor_claims_navigation_pre`: Whether the virtual editor already owns,
 ///   or is in the middle of explicitly claiming, navigation keys this frame.
 /// - `command_palette_open`: Whether command palette modal is open.
-/// - `modal_overlay_open`: Whether a modal keyboard-owning overlay is open.
+/// - `modal_overlay_open`: Whether a modal keyboard-owning overlay, or an egui
+///   popup such as a combo list or menu, is open.
 /// - `shortcut_help_open`: Whether shortcut help modal is open.
 ///
 /// # Returns

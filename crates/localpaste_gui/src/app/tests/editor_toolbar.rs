@@ -677,7 +677,8 @@ fn escape_after_switching_pastes_leaves_the_new_paste_alone() {
     let ctx = egui::Context::default();
     let _ = open_language_combo(app, &ctx, LanguageCombo::Toolbar);
 
-    // Sidebar arrow keys can load another paste while the popup stays open.
+    // Another paste can finish loading while the popup is open, such as one
+    // selected just before the popup opened.
     let mut beta = Paste::new("fn main() {}".to_string(), "Beta".to_string());
     beta.id = "beta".to_string();
     beta.language = Some("rust".to_string());
