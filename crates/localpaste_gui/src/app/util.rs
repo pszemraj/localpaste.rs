@@ -67,23 +67,18 @@ pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) ->
 /// - `clipboard`: Clipboard text containing a single HTTP(S) URL.
 ///
 /// # Returns
-/// A link retaining the original URL spelling, or `None` for ordinary pasted text.
+/// A link retaining the original URL spelling, or `None` for ordinary pasted text
+/// and for a selection that is itself a URL, which the paste replaces.
 ///
 /// # Panics
 /// Code-span offsets come from ASCII backtick matches, so slices are always on UTF-8 boundaries.
 pub(super) fn format_markdown_link(label: &str, clipboard: &str) -> Option<String> {
-    let destination = clipboard.trim();
-    if destination
-        .chars()
-        .any(|ch| ch.is_whitespace() || ch.is_control())
-    {
+    let destination = web_url(clipboard)?;
+    // Replacing a URL, including one inside an existing link or reference
+    // definition, must not nest a new link around it.
+    if web_url(label).is_some() {
         return None;
     }
-    let (scheme, _) = destination.split_once("://")?;
-    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
-        return None;
-    }
-    url::Url::parse(destination).ok()?.host_str()?;
     // Only equal-length backtick runs delimit code spans. Index their next
     // matches once so many unmatched runs cannot cause repeated suffix scans.
     let mut ticks: Vec<(usize, usize)> = Vec::new();
@@ -147,6 +142,20 @@ pub(super) fn format_markdown_link(label: &str, clipboard: &str) -> Option<Strin
     }
     link.push(')');
     Some(link)
+}
+
+/// Returns trimmed text when it is exactly one HTTP(S) URL with a host.
+fn web_url(text: &str) -> Option<&str> {
+    let url = text.trim();
+    if url.chars().any(|ch| ch.is_whitespace() || ch.is_control()) {
+        return None;
+    }
+    let (scheme, _) = url.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    url::Url::parse(url).ok()?.host_str()?;
+    Some(url)
 }
 
 /// Parses comma-separated tags, trimming whitespace and removing case-insensitive duplicates.

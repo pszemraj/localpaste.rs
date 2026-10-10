@@ -216,6 +216,32 @@ fn markdown_url_paste_leaves_other_paste_cases_literal() {
 }
 
 #[test]
+fn markdown_url_paste_replaces_a_selected_url_instead_of_nesting_links() {
+    let (old, new) = ("https://old.test/x", "https://new.test/y");
+    for before in [
+        "See https://old.test/x for details",
+        "[docs](https://old.test/x)",
+        "[docs]: https://old.test/x",
+        "<https://old.test/x>",
+    ] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        harness.app.reset_virtual_editor(before);
+        harness.app.edit_language = Some("markdown".into());
+        let start = before[..before.find(old).unwrap()].chars().count();
+        harness.app.virtual_editor_state.restore_selection(
+            start + old.chars().count(),
+            Some(start),
+            before.chars().count(),
+        );
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Paste(new.into())]);
+        assert_eq!(harness.app.active_snapshot(), before.replace(old, new));
+    }
+}
+
+#[test]
 fn markdown_url_paste_history_stays_separate_from_surrounding_edits() {
     let mut harness = make_app();
     let ctx = egui::Context::default();
