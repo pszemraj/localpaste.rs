@@ -116,6 +116,8 @@ Smart filters (All, Today, This Week, Recent (30d), Unfiled, Documents, Code, Co
 
 Empty filter results never discard work in progress: unsaved content, unsaved metadata, and pending saves keep their paste and edit lock until saving completes. Selecting the already-active paste cancels a queued switch to another, and a repeated load reply cannot overwrite an initialized editor draft.
 
+The app's own edits update the list immediately. Writes through the embedded API, such as from `lpaste`, appear in the list when the window regains focus (at most once every 2 seconds) and otherwise within 30 seconds.
+
 ### Editor
 
 The editor toolbar is a single row. Title, language, Apply, and up to three tag chips sit on the left; further tags, or tags that do not fit, collapse into a `+N` chip that opens Properties. Copy, Find, Diff, History, a `More` menu (Copy Link, Duplicate, Export, Properties), and Delete sit on the right. When the editor is too narrow for both groups, the actions move to a second row. Title edits commit on `Enter` and on title-field blur. The Properties drawer holds the expanded metadata fields and is non-modal, so opening it does not disable typing, caret movement, or editor shortcuts. A language label displays as `auto` when automatic detection has not resolved one and as `plain` when the language is manually pinned without a value. The GUI has no folder create, edit, or move controls; organization is by smart filters and search. Virtual-editor highlight debounce and staging policy is defined in [highlighting.md](highlighting.md).

@@ -73,6 +73,22 @@ pub(crate) fn non_focusable_click_sense() -> egui::Sense {
     sense
 }
 
+/// Returns the native window focus state this frame settles on.
+///
+/// A frame can carry several focus events (a deactivate-and-reactivate pair);
+/// the last one decides.
+///
+/// # Returns
+/// `Some(focused)` from the frame's last `WindowFocused` event, or `None`.
+pub(crate) fn last_window_focus(ctx: &egui::Context) -> Option<bool> {
+    ctx.input(|input| {
+        input.events.iter().rev().find_map(|event| match event {
+            egui::Event::WindowFocused(focused) => Some(*focused),
+            _ => None,
+        })
+    })
+}
+
 /// Returns whether a character should be treated as an editor "word" character.
 ///
 /// This is **code-editor oriented**:

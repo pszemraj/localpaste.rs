@@ -770,3 +770,44 @@ fn palette_copy_send_failure_keeps_active_selection_and_lock() {
     assert!(app.pending_selection_id.is_none());
     assert!(app.picker_selection_pin.is_none());
 }
+
+#[test]
+fn regaining_window_focus_refreshes_the_list_after_a_debounce() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    let list_refreshes = |harness: &TestHarness| {
+        harness
+            .cmd_rx
+            .try_iter()
+            .filter(|cmd| matches!(cmd, CoreCmd::ListPastes { .. }))
+            .count()
+    };
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    let _ = list_refreshes(&harness);
+
+    // A focus return right after a refresh is absorbed by the debounce.
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::WindowFocused(true)],
+    );
+    assert_eq!(list_refreshes(&harness), 0);
+
+    harness.app.last_refresh_at = Instant::now() - FOCUS_REFRESH_DEBOUNCE;
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::WindowFocused(false)],
+    );
+    assert_eq!(list_refreshes(&harness), 0, "losing focus does not refresh");
+
+    // The last focus event of a frame decides, so a flap that ends focused refreshes.
+    let flap = vec![
+        egui::Event::WindowFocused(false),
+        egui::Event::WindowFocused(true),
+    ];
+    run_full_update(&mut harness.app, &ctx, flap.clone());
+    assert_eq!(list_refreshes(&harness), 1);
+    run_full_update(&mut harness.app, &ctx, flap);
+    assert_eq!(list_refreshes(&harness), 0, "debounced");
+}

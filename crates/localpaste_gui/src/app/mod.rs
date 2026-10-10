@@ -45,7 +45,7 @@ use highlight::{
     HighlightWorker, VirtualEditHint,
 };
 pub(super) use interaction_helpers::{
-    drag_autoscroll_delta, is_editor_word_char, next_virtual_click_count,
+    drag_autoscroll_delta, is_editor_word_char, last_window_focus, next_virtual_click_count,
     non_focusable_click_sense, paint_virtual_selection_overlay, should_route_sidebar_arrows,
 };
 use localpaste_core::config::env_flag_enabled;
@@ -248,6 +248,9 @@ struct PickerDeleteTransition {
 // only for out-of-process writers sharing `DB_PATH`, so keep it low-frequency
 // until worker-driven external invalidation replaces polling.
 const EXTERNAL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+// Returning to the window also refreshes, since that is when writes made from
+// the CLI or another process are most likely; the debounce absorbs focus flapping.
+const FOCUS_REFRESH_DEBOUNCE: Duration = Duration::from_secs(2);
 const BACKEND_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const BACKEND_EVENT_POLL_WINDOW: Duration = Duration::from_secs(5);
 const STATUS_TTL: Duration = Duration::from_secs(5);
@@ -772,7 +775,10 @@ impl eframe::App for LocalPasteApp {
         self.maybe_dispatch_palette_search();
         self.maybe_dispatch_search();
         self.maybe_autosave();
-        if self.last_refresh_at.elapsed() >= EXTERNAL_REFRESH_INTERVAL
+        let since_refresh = self.last_refresh_at.elapsed();
+        let regained_focus = last_window_focus(ctx) == Some(true);
+        if (since_refresh >= EXTERNAL_REFRESH_INTERVAL
+            || (regained_focus && since_refresh >= FOCUS_REFRESH_DEBOUNCE))
             && !self.nav_probe_seed_active()
         {
             self.request_refresh();
