@@ -7,6 +7,7 @@ use eframe::egui::{self, RichText};
 
 const APP_VERSION_LABEL: &str = concat!("- v", env!("CARGO_PKG_VERSION"));
 const SIDEBAR_LANGUAGE_COLUMN_WIDTH: f32 = 84.0;
+const SIDEBAR_ROWS_SCROLL_SALT: &str = "sidebar_rows";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SidebarTimeBucket {
@@ -231,86 +232,143 @@ impl LocalPasteApp {
                     self.search_query.as_str(),
                     Local::now(),
                 );
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show_rows(ui, row_height, sidebar_items.len(), |ui, range| {
-                        for item_idx in range {
-                            match sidebar_items.get(item_idx).copied() {
-                                Some(SidebarListItem::Header(bucket)) => {
+                let mut rows_scroll = egui::ScrollArea::vertical()
+                    .id_salt(SIDEBAR_ROWS_SCROLL_SALT)
+                    .auto_shrink([false; 2]);
+                if let Some(offset) = self.sidebar_reveal_offset(ui, &sidebar_items, row_height) {
+                    rows_scroll = rows_scroll.vertical_scroll_offset(offset);
+                }
+                rows_scroll.show_rows(ui, row_height, sidebar_items.len(), |ui, range| {
+                    for item_idx in range {
+                        match sidebar_items.get(item_idx).copied() {
+                            Some(SidebarListItem::Header(bucket)) => {
+                                let row_width = ui.available_width().max(1.0);
+                                let (row_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(row_width, row_height),
+                                    egui::Sense::hover(),
+                                );
+                                let text_pos = egui::pos2(row_rect.left(), row_rect.center().y);
+                                ui.painter().text(
+                                    text_pos,
+                                    egui::Align2::LEFT_CENTER,
+                                    bucket.label(),
+                                    egui::TextStyle::Small.resolve(ui.style()),
+                                    COLOR_TEXT_MUTED,
+                                );
+                            }
+                            Some(SidebarListItem::Row(idx)) => {
+                                if let Some(paste) = self.pastes.get(idx) {
+                                    let selected =
+                                        self.selected_id.as_deref() == Some(paste.id.as_str());
+                                    let lang_label = paste_list_language_label(paste);
                                     let row_width = ui.available_width().max(1.0);
-                                    let (row_rect, _) = ui.allocate_exact_size(
+                                    let (row_rect, row_response) = ui.allocate_exact_size(
                                         egui::vec2(row_width, row_height),
-                                        egui::Sense::hover(),
+                                        egui::Sense::click(),
                                     );
-                                    let text_pos = egui::pos2(row_rect.left(), row_rect.center().y);
-                                    ui.painter().text(
-                                        text_pos,
+                                    let row_visuals =
+                                        ui.style().interact_selectable(&row_response, selected);
+                                    ui.painter().rect(
+                                        row_rect.expand(row_visuals.expansion),
+                                        row_visuals.corner_radius,
+                                        row_visuals.bg_fill,
+                                        row_visuals.bg_stroke,
+                                        egui::StrokeKind::Middle,
+                                    );
+
+                                    let (title_rect, lang_rect) = sidebar_row_text_rects(
+                                        row_rect,
+                                        ui.spacing().button_padding.x,
+                                        ui.spacing().item_spacing.x,
+                                    );
+                                    ui.painter().with_clip_rect(title_rect).text(
+                                        egui::pos2(title_rect.left(), title_rect.center().y),
                                         egui::Align2::LEFT_CENTER,
-                                        bucket.label(),
+                                        paste.name.as_str(),
+                                        egui::TextStyle::Button.resolve(ui.style()),
+                                        row_visuals.text_color(),
+                                    );
+                                    ui.painter().with_clip_rect(lang_rect).text(
+                                        egui::pos2(lang_rect.right(), lang_rect.center().y),
+                                        egui::Align2::RIGHT_CENTER,
+                                        lang_label.as_str(),
                                         egui::TextStyle::Small.resolve(ui.style()),
                                         COLOR_TEXT_MUTED,
                                     );
-                                }
-                                Some(SidebarListItem::Row(idx)) => {
-                                    if let Some(paste) = self.pastes.get(idx) {
-                                        let selected =
-                                            self.selected_id.as_deref() == Some(paste.id.as_str());
-                                        let lang_label = paste_list_language_label(paste);
-                                        let row_width = ui.available_width().max(1.0);
-                                        let (row_rect, row_response) = ui.allocate_exact_size(
-                                            egui::vec2(row_width, row_height),
-                                            egui::Sense::click(),
-                                        );
-                                        let row_visuals =
-                                            ui.style().interact_selectable(&row_response, selected);
-                                        ui.painter().rect(
-                                            row_rect.expand(row_visuals.expansion),
-                                            row_visuals.corner_radius,
-                                            row_visuals.bg_fill,
-                                            row_visuals.bg_stroke,
-                                            egui::StrokeKind::Middle,
-                                        );
 
-                                        let (title_rect, lang_rect) = sidebar_row_text_rects(
-                                            row_rect,
-                                            ui.spacing().button_padding.x,
-                                            ui.spacing().item_spacing.x,
-                                        );
-                                        ui.painter().with_clip_rect(title_rect).text(
-                                            egui::pos2(title_rect.left(), title_rect.center().y),
-                                            egui::Align2::LEFT_CENTER,
-                                            paste.name.as_str(),
-                                            egui::TextStyle::Button.resolve(ui.style()),
-                                            row_visuals.text_color(),
-                                        );
-                                        ui.painter().with_clip_rect(lang_rect).text(
-                                            egui::pos2(lang_rect.right(), lang_rect.center().y),
-                                            egui::Align2::RIGHT_CENTER,
-                                            lang_label.as_str(),
-                                            egui::TextStyle::Small.resolve(ui.style()),
-                                            COLOR_TEXT_MUTED,
-                                        );
-
-                                        if row_response
-                                            .on_hover_text(sidebar_hover_text(paste))
-                                            .clicked()
-                                        {
-                                            if selection_blocked {
-                                                self.set_selection_transition_blocked_status();
-                                            } else {
-                                                pending_select = Some(paste.id.clone());
-                                            }
+                                    if row_response
+                                        .on_hover_text(sidebar_hover_text(paste))
+                                        .clicked()
+                                    {
+                                        if selection_blocked {
+                                            self.set_selection_transition_blocked_status();
+                                        } else {
+                                            pending_select = Some(paste.id.clone());
                                         }
                                     }
                                 }
-                                None => {}
                             }
+                            None => {}
                         }
-                    });
+                    }
+                });
                 if let Some(id) = pending_select {
                     self.select_paste(id);
                 }
             });
+    }
+
+    /// Returns the list offset that brings a newly selected row into view.
+    ///
+    /// Fires once per selection change, as soon as the selected row is in the
+    /// list, and only when that row is outside the viewport, so manual
+    /// scrolling is left alone until the selection changes again. A row
+    /// directly under a date header reveals the header with it.
+    ///
+    /// # Arguments
+    /// - `ui`: Sidebar UI about to add the rows scroll area.
+    /// - `items`: Rendered list items, headers included.
+    /// - `row_height`: Height of one list item, without spacing.
+    ///
+    /// # Returns
+    /// The vertical offset to apply this frame, or `None` to keep the current one.
+    fn sidebar_reveal_offset(
+        &mut self,
+        ui: &egui::Ui,
+        items: &[SidebarListItem],
+        row_height: f32,
+    ) -> Option<f32> {
+        if self.sidebar_revealed_id == self.selected_id {
+            return None;
+        }
+        let Some(selected) = self.selected_id.as_deref() else {
+            self.sidebar_revealed_id = None;
+            return None;
+        };
+        let row = items.iter().position(|item| {
+            matches!(item, SidebarListItem::Row(idx)
+                if self.pastes.get(*idx).is_some_and(|paste| paste.id == selected))
+        })?;
+        self.sidebar_revealed_id = self.selected_id.clone();
+
+        let first = match row.checked_sub(1).map(|prev| items[prev]) {
+            Some(SidebarListItem::Header(_)) => row - 1,
+            _ => row,
+        };
+        let stride = row_height + ui.spacing().item_spacing.y;
+        let top = first as f32 * stride;
+        let bottom = row as f32 * stride + row_height;
+        let viewport = ui.available_rect_before_wrap().height();
+        let scroll_id = ui.make_persistent_id(SIDEBAR_ROWS_SCROLL_SALT);
+        let offset =
+            egui::scroll_area::State::load(ui.ctx(), scroll_id).map_or(0.0, |state| state.offset.y);
+        if top < offset {
+            Some(top)
+        } else if bottom > offset + viewport {
+            Some(bottom - viewport)
+        } else {
+            None
+        }
     }
 
     fn render_collection_filters(&mut self, ui: &mut egui::Ui) {

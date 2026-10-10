@@ -2,7 +2,8 @@
 
 use super::*;
 
-fn row_is_visible(output: &egui::FullOutput, label: &str) -> bool {
+/// Whether an exact text label is painted fully inside its clip rect.
+pub(super) fn row_is_visible(output: &egui::FullOutput, label: &str) -> bool {
     output.shapes.iter().any(|clipped| {
         if let egui::Shape::Text(text) = &clipped.shape {
             text.galley.job.text == label

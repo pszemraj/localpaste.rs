@@ -120,6 +120,8 @@ pub(crate) struct LocalPasteApp {
     pending_selection_id: Option<String>,
     /// Session-restored selection whose first load has not replied; a missing reply clears quietly.
     restored_selection_id: Option<String>,
+    /// Selection the sidebar last scrolled into view; a different `selected_id` reveals its row once.
+    sidebar_revealed_id: Option<String>,
     pending_picker_open: Option<PendingPickerOpen>,
     pending_picker_selection_pin: Option<String>,
     picker_selection_pin: Option<String>,

@@ -124,6 +124,7 @@ impl LocalPasteApp {
             palette_copy_request_id: 0,
             pending_selection_id: None,
             restored_selection_id: None,
+            sidebar_revealed_id: None,
             pending_picker_open: None,
             pending_picker_selection_pin: None,
             picker_selection_pin: None,
