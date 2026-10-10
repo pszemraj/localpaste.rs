@@ -644,7 +644,7 @@ fn version_overlay_blocks_mutating_shortcuts_and_reports_reason() {
 
     assert_eq!(
         harness.app.mutation_shortcut_block_reason(),
-        Some("Close the open version window before mutating the selected paste.")
+        Some("Close History or Diff to create, edit, or delete pastes.")
     );
     assert!(harness.app.save_block_reason().is_none());
     harness.app.set_mutation_shortcut_blocked_status();
@@ -654,7 +654,7 @@ fn version_overlay_blocks_mutating_shortcuts_and_reports_reason() {
             .status
             .as_ref()
             .map(|status| status.text.as_str()),
-        Some("Close the open version window before mutating the selected paste.")
+        Some("Close History or Diff to create, edit, or delete pastes.")
     );
 }
 
@@ -676,7 +676,7 @@ fn version_overlay_blocks_background_destructive_dispatches() {
             .status
             .as_ref()
             .map(|status| status.text.as_str()),
-        Some("Close the open version window before mutating the selected paste.")
+        Some("Close History or Diff to create, edit, or delete pastes.")
     );
     assert!(matches!(
         harness.cmd_rx.try_recv(),
@@ -697,7 +697,7 @@ fn version_overlay_blocks_selection_switches_and_auto_reselection() {
             .status
             .as_ref()
             .map(|status| status.text.as_str()),
-        Some("Close the open version window before changing selection.")
+        Some("Close History or Diff to switch pastes.")
     );
 
     harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)];

@@ -195,9 +195,9 @@ Startup reopens the paste that was open when the app last closed, along with the
   - reset restores the selected snapshot and archives the outgoing head as a recoverable snapshot.
   - dirty save-and-reset saves local edits before reset so the just-saved outgoing head is recoverable.
 - History, Diff, and reset-confirm windows fence background mutations:
-  - create/delete/paste-into-editor and other destructive workflow shortcuts are blocked while a version window is open; New and Delete report why,
+  - create/delete/paste-into-editor and other destructive workflow shortcuts are blocked while a version window is open; New and Delete report why ("Close History or Diff to create, edit, or delete pastes." in the status bar and under the sidebar buttons),
   - autosave and explicit save still persist already-dirty content/metadata while a version window is open,
-  - selection changes and automatic reselection are blocked while a version window is open; a refused sidebar selection preserves the picker-opened document and its pending input,
+  - selection changes and automatic reselection are blocked while a version window is open; a refused sidebar selection preserves the picker-opened document and its pending input and reports "Close History or Diff to switch pastes.",
   - the selected paste stays pinned during a queued hard reset,
   - the selected paste is temporarily read-only until reset success/error arrives.
 - Diff preview generation runs on the backend worker against frozen left/right text snapshots; the UI only renders cached results.

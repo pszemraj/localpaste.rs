@@ -3,9 +3,9 @@
 use super::*;
 use crossbeam_channel::TryRecvError;
 
-const REENTRY_STATUS: &str = "Close the open version window before opening another one.";
-const CREATE_DEFERRED_STATUS: &str =
-    "Created new paste; current selection stays pinned until the version workflow finishes.";
+const REENTRY_STATUS: &str = "Close History or Diff before opening another one.";
+const MUTATION_STATUS: &str = "Close History or Diff to create, edit, or delete pastes.";
+const CREATE_DEFERRED_STATUS: &str = "Created new paste; it opens once you close History or Diff.";
 const RESET_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
 
 #[test]
@@ -365,13 +365,7 @@ fn toolbar_version_opens_close_discovery_and_allow_save_with_blocked_mutation_fe
                     ctx.memory_mut(|memory| memory.surrender_focus(id));
                 }
                 run_full_update(&mut harness.app, &ctx, vec![command_key_event(key)]);
-                assert!(harness
-                    .app
-                    .status
-                    .as_ref()
-                    .unwrap()
-                    .text
-                    .contains("version"));
+                assert_eq!(harness.app.status.as_ref().unwrap().text, MUTATION_STATUS);
                 assert!(!harness.cmd_rx.try_iter().any(|cmd| matches!(
                     cmd,
                     CoreCmd::CreatePaste { .. } | CoreCmd::DeletePaste { .. }

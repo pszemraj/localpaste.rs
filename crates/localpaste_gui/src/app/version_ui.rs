@@ -17,11 +17,10 @@ const RESET_TRANSITION_BLOCKED_STATUS: &str = "Reset in progress; editor is temp
 const RESET_FLUSH_BLOCKED_STATUS: &str =
     "Saving current paste before reset; editor is temporarily read-only.";
 const VERSION_OVERLAY_MUTATION_BLOCKED_STATUS: &str =
-    "Close the open version window before mutating the selected paste.";
-const VERSION_OVERLAY_SELECTION_BLOCKED_STATUS: &str =
-    "Close the open version window before changing selection.";
+    "Close History or Diff to create, edit, or delete pastes.";
+const VERSION_OVERLAY_SELECTION_BLOCKED_STATUS: &str = "Close History or Diff to switch pastes.";
 const VERSION_OVERLAY_REENTRY_BLOCKED_STATUS: &str =
-    "Close the open version window before opening another one.";
+    "Close History or Diff before opening another one.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingHistoryReset {

@@ -270,9 +270,7 @@ impl LocalPasteApp {
                     || self.save_status == SaveStatus::Saving;
                 if paste_visible && self.selection_transition_block_reason().is_some() {
                     self.queue_pending_selection(paste_id);
-                    self.notify(
-                        "Created new paste; current selection stays pinned until the version workflow finishes.",
-                    );
+                    self.notify("Created new paste; it opens once you close History or Diff.");
                     return;
                 }
                 if paste_visible && (has_unsaved_edits || save_in_progress) {
