@@ -59,6 +59,8 @@ pub(super) mod diff_modal;
 pub(super) mod editor_panel;
 /// Virtual preview/editor panel rendering.
 pub(super) mod editor_panel_virtual;
+/// Editor toolbar: metadata fields, tag chips, and paste actions.
+pub(super) mod editor_toolbar;
 /// Detached version-history modal for historical snapshots/reset.
 pub(super) mod history_modal;
 /// Separate paste discovery and result actions.

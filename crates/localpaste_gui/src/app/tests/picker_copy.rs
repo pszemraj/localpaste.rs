@@ -1,5 +1,6 @@
 //! Picker copy actions, request identity, and detached response regressions.
 
+use super::super::ui::editor_toolbar::MORE_MENU_LABEL;
 use super::*;
 
 fn copied_texts(output: &egui::FullOutput) -> Vec<&str> {
@@ -268,9 +269,24 @@ fn review_regression_editor_and_toolbar_copies_supersede_picker_requests() {
         assert!(harness.app.pending_copy_action.is_some());
         let mut outputs = Vec::new();
         if action.starts_with("toolbar") {
-            let output =
+            let mut output =
                 run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
             let label = if action == "toolbar link" {
+                // Copy Link lives in the toolbar's More menu.
+                let more = rendered_label_center(&output, MORE_MENU_LABEL);
+                for pressed in [true, false] {
+                    run_full_update_with_input(
+                        &mut harness.app,
+                        &ctx,
+                        egui::RawInput {
+                            events: primary_pointer_events(more, pressed),
+                            ..Default::default()
+                        },
+                    );
+                }
+                // The menu's first frame is an invisible sizing pass.
+                output =
+                    run_full_update_with_input(&mut harness.app, &ctx, egui::RawInput::default());
                 "Copy Link"
             } else {
                 "Copy"

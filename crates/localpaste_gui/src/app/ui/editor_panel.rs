@@ -2,10 +2,6 @@
 
 use super::super::*;
 use super::editor_panel_virtual::VirtualEditorRenderOptions;
-use super::properties_drawer::{
-    apply_language_choice, auto_language_choice_key, render_language_choice_combo,
-};
-use crate::app::util::parse_tags_csv;
 use eframe::egui;
 
 impl LocalPasteApp {
@@ -23,167 +19,45 @@ impl LocalPasteApp {
                     ctx.memory(|m| m.has_focus(editor_id)) || self.virtual_editor_state.has_focus;
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
-                let visible_tags = parse_tags_csv(self.edit_tags.as_str())
-                    .into_iter()
-                    .take(4)
-                    .collect::<Vec<_>>();
                 let mutation_block_reason = self.mutation_shortcut_block_reason();
-                let save_blocked = self.save_block_reason().is_some();
-                let background_mutation_blocked = mutation_block_reason.is_some();
-                let mut preserve_virtual_editor_focus = false;
-                let mut pending_tag_search: Option<String> = None;
-                let mut apply_metadata = false;
-                let mut copy_requested = false;
-                let mut copy_link_requested = false;
-                let mut duplicate_requested = false;
-                let mut export_requested = false;
-                let mut find_requested = false;
-                let mut open_properties = false;
-                let mut delete_requested = false;
-                ui.scope(|ui| {
-                    apply_compact_meta_row_style(ui);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add_enabled_ui(!background_mutation_blocked, |ui| {
-                            let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
-                            let name_response = ui.add(
-                                egui::TextEdit::singleline(&mut self.edit_name)
-                                    .id(egui::Id::new(TITLE_INPUT_ID))
-                                    .font(egui::TextStyle::Button)
-                                    .desired_width(title_width)
-                                    .muted_hint("Untitled paste"),
-                            );
-                            if name_response.changed() {
-                                self.metadata_dirty = true;
-                            }
-                            if name_response.lost_focus() && self.metadata_dirty {
-                                apply_metadata = true;
-                            }
-                            if name_response.has_focus()
-                                && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                            {
-                                apply_metadata = true;
-                            }
-                            if name_response.has_focus()
-                                && ui.input(|input| input.key_pressed(egui::Key::Escape))
-                            {
-                                if let Some(paste) = self.selected_paste.as_ref() {
-                                    self.edit_name = paste.name.clone();
-                                    self.metadata_dirty = self.edit_name != paste.name
-                                        || self.edit_language != paste.language
-                                        || self.edit_language_is_manual != paste.language_is_manual
-                                        || self.edit_tags != paste.tags.join(", ");
-                                }
-                            }
-
-                            let current_manual_value = self
-                                .edit_language
-                                .as_deref()
-                                .map(localpaste_core::detection::canonical::canonicalize)
-                                .filter(|value| !value.is_empty())
-                                .unwrap_or_else(|| "text".to_string());
-                            let mut language_choice = if self.edit_language_is_manual {
-                                current_manual_value.clone()
-                            } else {
-                                auto_language_choice_key().to_string()
-                            };
-                            let previous_language_choice = language_choice.clone();
-                            render_language_choice_combo(
-                                ui,
-                                "header_language_select",
-                                Some(160.0),
-                                &mut language_choice,
-                            );
-                            if language_choice != previous_language_choice {
-                                apply_language_choice(
-                                    &mut self.edit_language_is_manual,
-                                    &mut self.edit_language,
-                                    &mut self.metadata_dirty,
-                                    language_choice.as_str(),
-                                    current_manual_value.as_str(),
-                                );
-                            }
-                        });
-                        for tag in &visible_tags {
-                            if non_focusable_small_toolbar_button(ui, format!("#{}", tag)).clicked()
-                            {
-                                pending_tag_search = Some(tag.clone());
-                            }
-                        }
-                        ui.separator();
-                        if ui
-                            .add_enabled(
-                                !save_blocked && self.metadata_dirty && !self.metadata_save_in_flight,
-                                toolbar_button("Apply"),
-                            )
-                            .clicked()
-                        {
-                            apply_metadata = true;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Copy").clicked() {
-                            copy_requested = true;
-                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Copy Link").clicked() {
-                            copy_link_requested = true;
-                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-                        }
-                        if ui
-                            .add_enabled(!background_mutation_blocked, toolbar_button("Duplicate"))
-                            .clicked()
-                        {
-                            duplicate_requested = true;
-                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Export").clicked() {
-                            export_requested = true;
-                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Find").clicked() {
-                            find_requested = true;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Properties").clicked() {
-                            open_properties = true;
-                        }
-                        if ui
-                            .add_enabled(!background_mutation_blocked, toolbar_button("Delete"))
-                            .clicked()
-                        {
-                            delete_requested = true;
-                        }
-                        preserve_virtual_editor_focus |=
-                            self.render_version_toolbar(ui, editor_had_virtual_focus);
-                    });
-                });
-                if let Some(tag) = pending_tag_search {
+                let toolbar = self.render_editor_toolbar(ui, editor_had_virtual_focus);
+                if let Some(tag) = toolbar.tag_search {
                     self.set_search_query(tag);
                 }
-                if apply_metadata {
+                if toolbar.apply_metadata {
                     self.save_metadata_now();
                 }
-                if copy_requested {
+                if toolbar.copy {
                     self.queue_clipboard_text(self.active_snapshot());
                     self.set_status("Copied paste content.");
                 }
-                if copy_link_requested {
+                if toolbar.copy_link {
                     self.queue_clipboard_text(super::super::util::api_paste_link_for_copy(self.server_addr, &id));
                     self.set_status("Copied API paste link.");
                 }
-                if duplicate_requested {
+                if toolbar.duplicate {
                     self.create_new_paste_with_content(self.active_snapshot());
                     self.set_status("Duplicated paste into a new draft.");
                 }
-                if export_requested {
+                if toolbar.export {
                     self.export_selected_paste();
                 }
-                if find_requested {
+                if toolbar.find {
                     self.open_editor_find();
                 }
-                if open_properties {
+                if toolbar.properties {
                     self.properties_drawer_open = true;
                 }
-                if delete_requested {
+                if toolbar.delete {
                     self.delete_selected();
                 }
+                if toolbar.diff {
+                    self.open_diff_modal();
+                }
+                if toolbar.history {
+                    self.open_history_modal();
+                }
+                let preserve_virtual_editor_focus = toolbar.preserve_editor_focus;
 
                 self.render_editor_find_bar(ui);
                 if self.editor_find.open {
@@ -350,43 +224,4 @@ impl LocalPasteApp {
             }
         });
     }
-}
-
-fn toolbar_button(label: impl Into<egui::WidgetText>) -> egui::Button<'static> {
-    egui::Button::new(label).sense(non_focusable_click_sense())
-}
-
-fn non_focusable_small_toolbar_button(
-    ui: &mut egui::Ui,
-    label: impl Into<egui::WidgetText>,
-) -> egui::Response {
-    ui.add(toolbar_button(label).small())
-}
-
-fn apply_compact_meta_row_style(ui: &mut egui::Ui) {
-    let mut compact_style = (**ui.style()).clone();
-    if let Some(body_font) = compact_style
-        .text_styles
-        .get(&egui::TextStyle::Body)
-        .cloned()
-    {
-        compact_style.text_styles.insert(
-            egui::TextStyle::Body,
-            egui::FontId::new((body_font.size - 2.0).max(10.0), body_font.family),
-        );
-    }
-    if let Some(button_font) = compact_style
-        .text_styles
-        .get(&egui::TextStyle::Button)
-        .cloned()
-    {
-        compact_style.text_styles.insert(
-            egui::TextStyle::Button,
-            egui::FontId::new((button_font.size - 2.0).max(10.0), button_font.family),
-        );
-    }
-    compact_style.spacing.button_padding = egui::vec2(8.0, 4.0);
-    compact_style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    compact_style.spacing.interact_size.y = 28.0;
-    ui.set_style(compact_style);
 }

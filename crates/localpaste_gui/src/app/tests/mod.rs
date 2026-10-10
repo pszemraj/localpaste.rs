@@ -477,6 +477,7 @@ mod discovery_keyboard;
 mod discovery_rows;
 mod discovery_scopes;
 mod editor_find;
+mod editor_toolbar;
 mod editor_ux_regressions;
 mod focus_and_paste_routing;
 mod highlight_behaviors;

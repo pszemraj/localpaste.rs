@@ -2,9 +2,7 @@
 
 use super::deferred_saves::rollback_deferred_save_dispatches;
 use super::ui::diff_modal::InlineDiffPreview;
-use super::{
-    editor::EditorLineIndex, non_focusable_click_sense, LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE,
-};
+use super::{editor::EditorLineIndex, LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE};
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use eframe::egui;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
@@ -811,48 +809,6 @@ impl LocalPasteApp {
             }
             _ => {}
         }
-    }
-
-    /// Renders history/diff entry points in the editor toolbar.
-    ///
-    /// # Arguments
-    /// - `ui`: Toolbar UI row receiving the version-action buttons.
-    /// - `editor_had_virtual_focus`: Whether the virtual editor owned keyboard
-    ///   focus before the toolbar action was triggered this frame.
-    ///
-    /// # Returns
-    /// Returns whether the virtual editor should keep keyboard focus after this
-    /// frame because a mouse-first toolbar action fired.
-    pub(super) fn render_version_toolbar(
-        &mut self,
-        ui: &mut egui::Ui,
-        editor_had_virtual_focus: bool,
-    ) -> bool {
-        let mut preserve_virtual_editor_focus = false;
-        ui.separator();
-        if ui
-            .add(
-                egui::Button::new("Diff")
-                    .small()
-                    .sense(non_focusable_click_sense()),
-            )
-            .clicked()
-        {
-            self.open_diff_modal();
-            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-        }
-        if ui
-            .add(
-                egui::Button::new("History")
-                    .small()
-                    .sense(non_focusable_click_sense()),
-            )
-            .clicked()
-        {
-            self.open_history_modal();
-            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-        }
-        preserve_virtual_editor_focus
     }
 
     /// Renders detached history and diff modal dialogs.
